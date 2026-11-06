@@ -10,7 +10,7 @@ says. This program does steps 0, 2 and 4 to 7 of the restart, listed below. The 
 being restarted does steps 1 and 3 itself: it gets ready (no subagent and no
 test run of its own still running, its work committed, its walk-minutes written), runs this
 program, and, when the program prints that the handoff-supervisor is frozen, writes its
-session-handoff with the /handoff skill, without --dont-restart, naming in its next step the
+session-handoff with the /handoff skill, without --ask-user-before-restart, naming in its next step the
 result file this program prints, and stops working. On ned-box it runs this program through
 `ssh nedlern@ned-box '<command>'`, because the Bash sandbox cannot signal the
 handoff-supervisor.
@@ -53,7 +53,7 @@ Failures, keyed on the agent-seat's state:
   handoff-supervisor carries on as before, consuming a session-handoff already written. The
   foreground sends the SIGCONT when the freeze did not hold or the second half could not start;
   the second half sends it when no new session-handoff came within the limit, when it was
-  written with --dont-restart, which would make the new handoff-supervisor wait for an answer on
+  written with --ask-user-before-restart, which would make the new handoff-supervisor wait for an answer on
   a terminal nobody watches, or when step 4's ps check could not answer or its SIGKILL was
   refused;
 - after step 4, while no new handoff-supervisor runs: the program removes the processes left
@@ -117,8 +117,11 @@ ned_box_home_path_constants = load_module(
     "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
     REPOSITORY / "nc-systems" / "general-tools"
     / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+reference_checkout_steps = load_module(
+    "handoff_reference_checkout_fetch_and_fast_forward_to_origin_main_check_common",
+    SYSTEM_DIRECTORY / "handoff-reference-checkout-fetch-and-fast-forward-to-origin-main-check-common.py")
 
-REFERENCE_CHECKOUT = Path("~/Projects/nedschorus").expanduser()
+REFERENCE_CHECKOUT = reference_checkout_steps.REFERENCE_CHECKOUT
 HANDOFF_DIRECTORY = Path("~/.claude/handoffs").expanduser()
 AGENTS_ROOT = Path("~/agents").expanduser()
 PROJECTS_ROOT = Path("~/.claude/projects").expanduser()
@@ -267,21 +270,11 @@ def end_process(process_id: int, command_line: str, sleep=time.sleep) -> str:
 
 
 def step_0_fast_forward_reference_checkout(checkout: Path) -> str:
-    for arguments in (["fetch", "origin"], ["merge", "--ff-only", "origin/main"]):
-        status, output = run(["git", "-C", str(checkout), *arguments], timeout=300)
-        if status != 0:
-            raise RestartFailure(f"step 0: `git -C {checkout} {' '.join(arguments)}` exited "
-                                 f"{status}, printing:\n{output}")
-    _, head = run(["git", "-C", str(checkout), "rev-parse", "HEAD"])
-    _, main = run(["git", "-C", str(checkout), "rev-parse", "origin/main"])
-    if not head or head != main:
-        raise RestartFailure(f"step 0: the reference-checkout {checkout} is at {head or 'nothing'}, "
-                             f"not at origin/main {main or '(unknown)'}")
-    status, changed = run(["git", "-C", str(checkout), "status", "--porcelain",
-                           "--untracked-files=no"])
-    if status != 0 or changed:
-        raise RestartFailure(f"step 0: the reference-checkout {checkout} has changed tracked files "
-                             f"or `git status` failed (exit {status}):\n{changed}")
+    try:
+        reference_checkout_steps.git_fetch_origin_or_raise(checkout)
+        main = reference_checkout_steps.fast_forward_to_origin_main_and_check_or_raise(checkout)
+    except reference_checkout_steps.ReferenceCheckoutGitStepFailed as error:
+        raise RestartFailure(f"step 0: {error}") from None
     return f"step 0: the reference-checkout {checkout} is at origin/main {main}"
 
 
@@ -410,7 +403,7 @@ def foreground(seat: str, start_second_half=start_second_half, sleep=time.sleep)
           f"handoff-supervisor from {REFERENCE_CHECKOUT}; the second half writes what it prints to "
           f"{log_directory / 'detached-output.log'}.\n"
           f"If you are the agent-seat {seat}: write your session-handoff now with the /handoff skill, "
-          f"without --dont-restart, because that flag makes the new handoff-supervisor wait for an "
+          f"without --ask-user-before-restart, because that flag makes the new handoff-supervisor wait for an "
           f"answer on the terminal. Add this sentence to the session-handoff's next step, keeping "
           f"what the next step already says: \"Read {result_path} and tell the user the restart's "
           f"result it reports.\" Then end your turn and start no new work: the second half ends "
@@ -576,10 +569,11 @@ class SecondHalf:
                 f"{unfreeze(supervisor_id, supervisor_command)}.")
         self.record(f"step 4: the session-handoff of {self.seat} was written after the freeze")
         handoff_path = supervisor.handoff_file_path(HANDOFF_DIRECTORY, self.seat)
-        if supervisor.parse_handoff_file(handoff_path).get(supervisor.DONT_RESTART_FIELD):
+        if supervisor.read_ask_user_before_restart_reason_from_session_handoff_fields(
+                supervisor.parse_handoff_file(handoff_path)):
             # A new handoff-supervisor would wait for an answer on a terminal nobody watches.
             return self.fail(
-                f"the session-handoff {handoff_path} was written with --dont-restart, so a new "
+                f"the session-handoff {handoff_path} was written with --ask-user-before-restart, so a new "
                 f"handoff-supervisor would wait for an answer on the agent-seat's terminal. "
                 f"{unfreeze(supervisor_id, supervisor_command)}.")
         try:

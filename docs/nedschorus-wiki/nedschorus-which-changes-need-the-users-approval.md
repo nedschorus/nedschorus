@@ -20,6 +20,7 @@ A change is the difference an agent's work makes, from before it starts to after
 ## Exceptions: changes that need no approval, even when they fall under the list above
 
 - A user-approved-change.
+- Deleting a guarded-file, as the project glossary defines it, even one the user has not retired and whose change the list above covers, such as `CLAUDE.md`, a skill or a hook; the guarded-file hook, `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`, does not ask about a deletion either. A rename or a move is not a deletion: it is judged as the paragraph that begins "A change is the difference an agent's work makes" says. Emptying a file is a change to its text, not a deletion.
 - An obvious-error-fix, which the project glossary defines; it covers prose only.
 - A cosmetic-change; it covers prose only.
 - The wording of a message a program prints, such as an error, a refusal or a warning, when the message still tells the agent to do the same thing. Only the message's words change, together with each test or document that quotes the old words, changed to quote the new; the code that fills in the message's placeholders does not change. Before pushing, the agent that changes the wording saves the new wording to a file in its scratchpad, runs a cold-read-fast-read on that file, and applies each finding that holds without changing what the message tells the agent to do.

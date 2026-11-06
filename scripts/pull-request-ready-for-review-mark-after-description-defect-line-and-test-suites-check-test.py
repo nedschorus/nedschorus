@@ -14,7 +14,15 @@ import io
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+_removal_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).with_name("git-redirecting-environment-removal-test-fixture.py"))
+_removal_module = importlib.util.module_from_spec(_removal_spec)
+_removal_spec.loader.exec_module(_removal_module)
+_removal_module.remove_git_redirecting_environment_variables_from_this_process()
 
 PROGRAM_PATH = (Path(__file__).resolve().parent / "pull-request-ready-for-review-mark-after-"
                 "description-defect-line-and-test-suites-check.py")
@@ -35,6 +43,8 @@ def check(case_name, condition, detail=""):
 
 
 HEAD = "a" * 40
+OTHER = "b" * 40
+BRANCH = "example-topic-branch"
 CHECKOUT = "/work/pull-request-checkout"
 URL = "https://github.com/example/example/pull/77"
 GOOD_BODY = "Adds a command.\n\n#no_defect_fixed\n"
@@ -46,20 +56,33 @@ def completed(command, status=0, stdout="", stderr=""):
 
 def view_answer(**fields):
     pull_request = {"number": 77, "title": "Adds a command", "url": URL, "state": "OPEN",
-                    "isDraft": True, "headRefOid": HEAD, "body": GOOD_BODY}
+                    "isDraft": True, "headRefOid": HEAD, "headRefName": BRANCH,
+                    "body": GOOD_BODY}
     pull_request.update(fields)
     return json.dumps(pull_request)
 
 
-class FakeRunner:
-    """Answers gh pr view, git rev-parse HEAD, the test suite runner and gh pr ready; any of
-    them can be replaced by a behaviour(command) that returns or raises. Records each call."""
+def ancestors(*pairs):
+    """git merge-base --is-ancestor answering yes for each (ancestor, descendant) pair given,
+    and no for every other."""
+    return lambda command: completed(command, 0 if tuple(command[3:5]) in pairs else 1)
 
-    def __init__(self, view=None, rev_parse=None, suites=None, ready=None):
+
+class FakeRunner:
+    """Answers gh pr view, git rev-parse HEAD, git branch --show-current, git cat-file -e, git
+    merge-base --is-ancestor, git status, the test suite runner and gh pr ready; any of them can
+    be replaced by a behaviour(command) that returns or raises. Records each call."""
+
+    def __init__(self, view=None, rev_parse=None, status=None, suites=None, ready=None,
+                 branch=None, cat_file=None, ancestor=None):
         self.behaviours = {
             "view": view or (lambda command: completed(command, 0, view_answer())),
             "rev-parse": rev_parse or (lambda command: completed(command, 0,
                                                                    f"{CHECKOUT}\n{HEAD}\n")),
+            "branch": branch or (lambda command: completed(command, 0, BRANCH + "\n")),
+            "cat-file": cat_file or (lambda command: completed(command, 0)),
+            "ancestor": ancestor or ancestors(),
+            "status": status or (lambda command: completed(command, 0, "")),
             "suites": suites or (lambda command: completed(command, 0)),
             "ready": ready or (lambda command: completed(command, 0)),
         }
@@ -70,6 +93,14 @@ class FakeRunner:
             kind = "view"
         elif command[:2] == ["git", "rev-parse"]:
             kind = "rev-parse"
+        elif command == ["git", "branch", "--show-current"]:
+            kind = "branch"
+        elif command[:3] == ["git", "cat-file", "-e"]:
+            kind = "cat-file"
+        elif command[:3] == ["git", "merge-base", "--is-ancestor"]:
+            kind = "ancestor"
+        elif command == program.UNCOMMITTED_CHANGES_COMMAND:
+            kind = "status"
         elif command == program.selective_test_run_command(CHECKOUT):
             kind = "suites"
         elif command[:3] == ["gh", "pr", "ready"]:
@@ -113,9 +144,10 @@ def main():
     status, output, errors = run(runner)
     check("a draft with a defect line, its head checked out and passing suites is marked ready, "
           "the suites running before gh pr ready",
-          status == program.EXIT_MARKED_READY and runner.calls == ["view", "rev-parse", "suites",
-                                                                   "ready"]
-          and f"#77 ({URL}) is marked ready for review." in output,
+          status == program.EXIT_MARKED_READY
+          and runner.calls == ["view", "rev-parse", "status", "suites", "ready"]
+          and f"#77 ({URL}) is marked ready for review." in output
+          and "merge-lane-2" not in output + errors,
           (status, runner.calls, output, errors))
     check("the test suites run with the checkout's own runner, by the command CLAUDE.md gives "
           "for before a push",
@@ -130,7 +162,8 @@ def main():
     status, output, errors = run(runner)
     check("a pull request already ready for review is left as it is, with nothing run",
           status == program.EXIT_MARKED_READY and runner.calls == ["view"]
-          and "already ready for review, so it was left as it is." in output,
+          and "already ready for review, so it was left as it is." in output
+          and "merge-lane-2" not in output + errors,
           (status, output, errors))
 
     # Refusals, each before gh pr ready.
@@ -138,39 +171,110 @@ def main():
             ("a closed pull request", FakeRunner(view=answers(view_answer(state="CLOSED"))),
              ["view"], ["is closed, not open, so it cannot be marked ready for review.",
                         "If you meant another pull request: run this again with its number.",
-                        "If you meant this one and it is closed: read why with gh pr view 77 "
-                        "--comments; when that reason no longer holds, reopen it with gh pr "
-                        "reopen 77, then run this again; otherwise leave it closed."]),
+                        "If you meant this one: do not reopen it yourself. "
+                        "Tell the user, in one sentence, that it is closed and you meant to mark "
+                        "it ready for review, and ask whether to reopen it;",
+                        "If the answer is yes: run gh pr reopen 77, then run this again.",
+                        "If the answer is no: leave it closed, and do not run this again for "
+                        "it."]),
             ("a merged pull request", FakeRunner(view=answers(view_answer(state="MERGED"))),
              ["view"], ["is merged, not open, so it cannot be marked ready for review.",
-                        "If you meant this one and it is merged: its review is over, so there "
+                        "If you meant this one: its review is over, so there "
                         "is nothing to mark."]),
-            ("a checkout whose HEAD is not the pushed head",
-             FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{'b' * 40}\n")), ["view", "rev-parse"],
+            ("a pull request in a state gh did not report before",
+             FakeRunner(view=answers(view_answer(state="LOCKED"))),
+             ["view"], ["is locked, not open, so it cannot be marked ready for review.",
+                        "If you meant this one: tell the user, in one sentence, that gh reports "
+                        "its state as 'locked';"]),
+            ("a checkout on another branch than the pull request's",
+             FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                        branch=answers("some-other-branch\n")),
+             ["view", "rev-parse", "branch"],
              [f"this checkout's HEAD, {'b' * 12}, is not #77 ({URL})'s pushed nc-head-commit, "
-              f"{'a' * 12}", "If this checkout has commits the pull request lacks: push them, "
-              "then run this again.", "If the pull request has commits this checkout lacks: run "
-              "git pull --ff-only, then run this again.", "If each has commits the other lacks: "
-              "run git pull --no-rebase, which merges the pull request's commits into this "
-              "checkout, then push, then run this again."]),
+              f"{'a' * 12}", f"This checkout is on branch some-other-branch, not the pull "
+              f"request's branch {BRANCH}: run this again from the checkout that has {BRANCH} "
+              "checked out."]),
+            ("a checkout on a detached HEAD",
+             FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"), branch=answers("\n")),
+             ["view", "rev-parse", "branch"],
+             [f"This checkout is on a detached HEAD, not the pull request's branch {BRANCH}"]),
+            ("a checkout that has not fetched the pushed head",
+             FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                        cat_file=exits(128, "fatal: Not a valid object name")),
+             ["view", "rev-parse", "branch", "cat-file"],
+             [f"This checkout does not have the pushed commit yet: run git fetch origin {BRANCH}, "
+              "then run this again, and it names what to do next."]),
+            ("a checkout with commits the pull request lacks",
+             FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                        ancestor=ancestors((HEAD, OTHER))),
+             ["view", "rev-parse", "branch", "cat-file", "ancestor"],
+             [f"This checkout has commits the pull request lacks: push them with git push origin "
+              f"HEAD:{BRANCH}, then run this again."]),
+            ("a checkout behind the pull request",
+             FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                        ancestor=ancestors((OTHER, HEAD))),
+             ["view", "rev-parse", "branch", "cat-file", "ancestor", "ancestor"],
+             [f"The pull request has commits this checkout lacks: run git pull --ff-only origin "
+              f"{BRANCH}, then run this again."]),
+            ("a checkout and pull request that each have commits the other lacks",
+             FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n")),
+             ["view", "rev-parse", "branch", "cat-file", "ancestor", "ancestor"],
+             [f"This checkout and the pull request each have commits the other lacks: run git "
+              f"pull --no-rebase origin {BRANCH}, which merges the pull request's commits into "
+              f"this checkout, then git push origin HEAD:{BRANCH}, then run this again.",
+              "If git reports a merge conflict: stop, run git merge --abort, and tell the user, "
+              "or the agent that dispatched you, which files conflict."]),
+            ("a checkout with an uncommitted change to a tracked file",
+             FakeRunner(status=answers(" M scripts/example.py\n")),
+             ["view", "rev-parse", "status"],
+             ["this checkout has 1 uncommitted change(s), so the test suites would test files "
+              f"that are not in #77 ({URL})'s pushed commits.",
+              "The changes, as git status --porcelain lists them:\n  M scripts/example.py\n",
+              "If the changes belong in the pull request: commit and push them, then run this "
+              "again.",
+              "If they do not: set them aside with git stash push -u -m <a name of your own>, "
+              "then run this again. Afterwards bring them back: find your entry's commit, the "
+              "first word of the line that ends with your name, with git stash list "
+              "--format='%H %gs', and run git stash apply <that commit>.",
+              "If the apply reports a conflict: keep the stash entry, and tell the user, or the "
+              "agent that dispatched you, which files conflict.",
+              "If the apply succeeds: find the entry's current stash@{<n>} on the line that "
+              "ends with your name, with git stash list, and drop it with git stash drop "
+              "stash@{<n>}."]),
+            ("a checkout with untracked files that are not ignored",
+             FakeRunner(status=answers("?? notes.txt\n?? more.txt\n")),
+             ["view", "rev-parse", "status"],
+             ["this checkout has 2 uncommitted change(s)",
+              "lists them:\n  ?? notes.txt\n  ?? more.txt\n"]),
             ("a placeholder description with no defect line",
              FakeRunner(view=answers(view_answer(body="Work in progress.\n"))),
-             ["view", "rev-parse"],
+             ["view", "rev-parse", "status"],
              ["description has no line beginning \"#root_cause\"",
-              "Save the current description in a file with gh pr view 77 --json body -q .body > "
-              "<file>",
-              "#follow_up <full https://github.com/ link to the issue or pull request that will "
-              "fix it>",
-              "save the file with gh pr edit 77 --body-file <file>, which replaces the whole "
-              "description"]),
+              "Write the current description to a file outside this repository, such as a file "
+              "in your scratchpad, with gh pr view 77 --json body -q .body > <file>.",
+              "or, when the cause stays or was not found, \"#root_cause_not_fixed <the cause "
+              "that stays, or that it was not found, and why> #follow_up <full https://github.com/ "
+              "link to the issue or pull request that will fix it or look for it>\"; when "
+              "neither exists yet, file an issue with the /ghi-write skill first.",
+              "Put each such line on a line of its own, anywhere in the description, such as "
+              "at its end. Replace any placeholder text with what the pull request changes,",
+              "Then upload the file with gh pr edit 77 --body-file <file>, which replaces the "
+              "whole description"]),
             ("an empty description", FakeRunner(view=answers(view_answer(body=None))),
-             ["view", "rev-parse"], ["description has no line beginning \"#root_cause\""]),
-            ("a failing test suite", FakeRunner(suites=exits(1)), ["view", "rev-parse", "suites"],
+             ["view", "rev-parse", "status"],
+             ["description has no line beginning \"#root_cause\""]),
+            ("a failing test suite", FakeRunner(suites=exits(1)),
+             ["view", "rev-parse", "status", "suites"],
              ["the test suites exited with status 1, so #77",
               "The failing suites are named above.",
-              "Fix them, commit and push the fix, then run this again."]),
+              "Fix the cause of each suite's failure and commit the fix. Before you push it, "
+              "run the test suites and the mutation pass that CLAUDE.md asks for before a "
+              "push; then push, and run this again.",
+              "If git or a pre-push hook refuses the push: do what its message says, then run "
+              "this again; if it names nothing to do, tell the user, or the agent that "
+              "dispatched you, what it printed."]),
             ("a test suite runner that stops before judging every suite",
-             FakeRunner(suites=exits(2)), ["view", "rev-parse", "suites"],
+             FakeRunner(suites=exits(2)), ["view", "rev-parse", "status", "suites"],
              ["scripts/run-all-test-suites.py exited with status 2, before judging every suite, "
               "so #77",
               "Its error is above.", RETRY_LINE])]:
@@ -178,6 +282,19 @@ def main():
         check(f"{label} is refused before gh pr ready, saying why and what to do",
               status == program.EXIT_MARK_READY_REFUSED_OR_FAILED and runner.calls == expected_calls
               and all(line in errors for line in expected_lines), (status, runner.calls, errors))
+
+    # Only the lines for the pull request's actual state are printed.
+    _, _, errors = run(FakeRunner(view=answers(view_answer(state="MERGED"))))
+    check("a merged pull request's refusal leaves out what to do with a closed one",
+          "reopen" not in errors and "If the answer is" not in errors, errors)
+    _, _, errors = run(FakeRunner(view=answers(view_answer(state="CLOSED"))))
+    check("a closed pull request's refusal leaves out what to do with a merged one",
+          "review is over" not in errors, errors)
+    _, _, errors = run(FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                                  ancestor=ancestors((HEAD, OTHER))))
+    check("a checkout ahead of the pull request is told only how to push",
+          "git pull" not in errors and "git fetch" not in errors
+          and "not the pull request's branch" not in errors, errors)
 
     # Failures of gh, git and python3, each reported with its cause and what to do.
     for label, runner, expected_lines in [
@@ -197,15 +314,21 @@ def main():
              FakeRunner(view=raises(subprocess.TimeoutExpired(["gh"], 60))),
              ["gh pr view did not answer within 60 seconds."]),
             ("gh pr view prints what is not JSON", FakeRunner(view=answers("not json")),
-             ["gh pr view exited 0 but did not print a JSON object holding state, isDraft and "
-              "headRefOid; it printed 'not json'.", RETRY_LINE]),
+             ["gh pr view exited 0 but did not print a JSON object holding state, isDraft, "
+              "headRefOid and headRefName; it printed 'not json'.", RETRY_LINE]),
             ("gh pr view leaves out headRefOid",
-             FakeRunner(view=answers(json.dumps({"state": "OPEN", "isDraft": True}))),
-             ["did not print a JSON object holding state, isDraft and headRefOid; it printed "
-              "'{\"state\": \"OPEN\", \"isDraft\": true}'."]),
+             FakeRunner(view=answers(json.dumps({"state": "OPEN", "isDraft": True,
+                                                 "headRefName": BRANCH}))),
+             ["did not print a JSON object holding state, isDraft, headRefOid and headRefName; "
+              "it printed '{\"state\": \"OPEN\", \"isDraft\": true, \"headRefName\": "
+              f"\"{BRANCH}\"}}'."]),
+            ("gh pr view leaves out headRefName",
+             FakeRunner(view=answers(json.dumps({"state": "OPEN", "isDraft": True,
+                                                 "headRefOid": HEAD}))),
+             ["did not print a JSON object holding state, isDraft, headRefOid and headRefName"]),
             ("gh pr view prints a JSON list", FakeRunner(view=answers("[]")),
-             ["did not print a JSON object holding state, isDraft and headRefOid; it printed "
-              "'[]'."]),
+             ["did not print a JSON object holding state, isDraft, headRefOid and headRefName; "
+              "it printed '[]'."]),
             ("gh pr view prints more than the message shows",
              FakeRunner(view=answers("x" * 1000)),
              [f"it printed '{'x' * program.GH_PR_VIEW_NOT_JSON_OUTPUT_ERROR_EXCERPT_CHARACTERS}'."]),
@@ -220,6 +343,36 @@ def main():
              FakeRunner(rev_parse=answers(HEAD + "\n")),
              ["reading this checkout's HEAD failed: git rev-parse --show-toplevel HEAD printed 1 "
               "lines, not 2.", RETRY_LINE]),
+            ("git status fails",
+             FakeRunner(status=exits(128, "fatal: index file corrupt")),
+             ["reading this checkout's uncommitted changes failed: git status --porcelain "
+              "exited with status 128: fatal: index file corrupt.",
+              "If git gave any other error: Run this command again once."]),
+            ("git branch --show-current fails",
+             FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                        branch=exits(129, "error: unknown option")),
+             ["reading this checkout's branch failed: git branch --show-current exited with "
+              "status 129: error: unknown option.", "If git gave any other error: Run this "
+              "command again once."]),
+            ("git merge-base fails",
+             FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                        ancestor=exits(128, "fatal: Not a valid commit name")),
+             ["comparing this checkout's HEAD with the pushed nc-head-commit failed: git "
+              "merge-base --is-ancestor exited with status 128: fatal: Not a valid commit name.",
+              "If git gave any other error: Run this command again once."]),
+            ("git merge-base is killed by a signal",
+             FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"), ancestor=exits(-9)),
+             ["comparing this checkout's HEAD with the pushed nc-head-commit failed: git "
+              "merge-base --is-ancestor exited with status -9, printing no error."]),
+            ("git merge-base cannot be run",
+             FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                        ancestor=raises(FileNotFoundError(2, "No such file", "git"))),
+             ["comparing this checkout's HEAD with the pushed nc-head-commit failed: git could "
+              "not be run ("]),
+            ("git merge-base does not answer in time",
+             FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                        ancestor=raises(subprocess.TimeoutExpired(["git"], 30))),
+             ["git merge-base --is-ancestor did not answer within 30 seconds."]),
             ("python3 cannot run the test suites",
              FakeRunner(suites=raises(FileNotFoundError(2, "No such file", "python3"))),
              ["running the test suites failed: python3 could not be run (", RETRY_LINE]),
@@ -233,6 +386,21 @@ def main():
         check(f"when {label}, the program exits 1 and says what failed and what to do",
               status == program.EXIT_MARK_READY_REFUSED_OR_FAILED
               and all(line in errors for line in expected_lines), (status, errors))
+
+    # The uncommitted-changes command with real git: an untracked file is listed even when the
+    # clone's settings hide untracked files from git status.
+    with tempfile.TemporaryDirectory() as clone:
+        for setup in (["git", "init", "-q", clone],
+                      ["git", "-C", clone, "config", "status.showUntrackedFiles", "no"]):
+            subprocess.run(setup, check=True, timeout=60)
+        Path(clone, "notes.txt").write_text("not committed\n")
+        hidden = subprocess.run(["git", "status", "--porcelain"], cwd=clone, text=True,
+                                stdout=subprocess.PIPE, check=True, timeout=60).stdout
+        listed = subprocess.run(program.UNCOMMITTED_CHANGES_COMMAND, cwd=clone, text=True,
+                                stdout=subprocess.PIPE, check=True, timeout=60).stdout
+    check("with status.showUntrackedFiles=no, the program's git status still lists an "
+          "untracked file, which plain git status --porcelain hides",
+          hidden == "" and "?? notes.txt" in listed, (hidden, listed))
 
     # The program as a command: a bad argument exits 2, before any gh call.
     command = subprocess.run([sys.executable, str(PROGRAM_PATH), "not-a-number"],

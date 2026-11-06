@@ -38,13 +38,17 @@ _interim_recognizer_specification = importlib.util.spec_from_file_location(
 interim_recognizer = importlib.util.module_from_spec(_interim_recognizer_specification)
 _interim_recognizer_specification.loader.exec_module(interim_recognizer)
 
+_deferred_marker_file_specification = importlib.util.spec_from_file_location(
+    "handoff_deferred_marker_and_refused_commands_files_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "handoff"
+    / "handoff-deferred-marker-and-refused-commands-files-common.py")
+handoff_deferred_marker_and_refused_commands_files_common = importlib.util.module_from_spec(_deferred_marker_file_specification)
+_deferred_marker_file_specification.loader.exec_module(handoff_deferred_marker_and_refused_commands_files_common)
+
 HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
 
 # Compaction clears this shared marker because the session id survives.
 FIRED_MARKER_SUFFIX = "-handoff-asked"
-
-
-DEFERRED_MARKER_SUFFIX = "-handoff-deferred"
 
 
 def fired_marker_path(session_id: str) -> Path:
@@ -53,7 +57,8 @@ def fired_marker_path(session_id: str) -> Path:
 
 
 def deferred_marker_path(session_id: str) -> Path:
-    return HANDOFF_DIRECTORY / f"{session_id}{DEFERRED_MARKER_SUFFIX}"
+    return handoff_deferred_marker_and_refused_commands_files_common.handoff_deferred_marker_path(
+        HANDOFF_DIRECTORY, session_id)
 
 # Caller-owned reincarnation must not replace the caller's answer with a handoff.
 REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
@@ -82,6 +87,17 @@ HANDOFF_INSTRUCTION = (
     "reached the reincarnation threshold. Run the /handoff skill now."
 )
 
+# The approved ban on new work; the wait no longer counts work started after the deferral began.
+NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION = (
+    "Carry on, open approval-walks included. Short work, which usually ends "
+    "within 10 minutes, such as a cold-read-fast-read, may start; if it is "
+    "still running when the session-handoff ends this agent-session, it stops, "
+    "and the handoff writer adds it to your session-handoff for your successor, "
+    "so you need not. Do not start long "
+    "work, such as a cold-read-full-run or a pull-request review: add it to "
+    "your task list for your successor."
+)
+
 HANDOFF_DEFERRED_MARKER_NOT_DELETED = (
     "The threshold-hook could not delete this agent-session's handoff-deferral marker "
     "{path} on {host}: {error}. If this agent-session keeps working after a compaction "
@@ -102,13 +118,12 @@ HANDOFF_DEFERRED_NOTICE = (
     "handoff now would stop them.\n"
     "Do not run the /handoff skill now; carry on with your work, and a later "
     "system message will tell you when to run it. That message comes once "
-    "every subagent and workflow has finished, and every background task has either "
-    "finished or run for {wait_minutes:g} minutes since its launch, or once "
-    "this session's context reaches the {ceiling:g}% ceiling; a handoff then "
-    "stops whatever is still running.\n"
-    "Spawn no new subagents, start no new workflows (runs of the Workflow tool) and "
-    "start no new background tasks, because each one delays the handoff and is "
-    "stopped if still running at the ceiling."
+    "the work running now has finished ({awaited}), with a background task, "
+    "though not a subagent, counted as finished {wait_minutes:g} minutes after "
+    "its launch even if it still runs, or once this session's context reaches the {ceiling:g}% ceiling. "
+    "Work you start from now on does not delay that message, and when the "
+    "handoff comes, it stops whatever is still running.\n"
+    + NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION
 )
 
 HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE = (
@@ -116,13 +131,41 @@ HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE = (
     "read, so what is running is unknown, and a handoff now could stop it.\n"
     "Do not run the /handoff skill now; carry on with your work, and a later "
     "system message will tell you when to run it. That message comes once "
-    "the hook can read the whole transcript and finds nothing running, or "
-    "once this session's context reaches the {ceiling:g}% ceiling; a handoff "
-    "then stops whatever is still running.\n"
-    "Spawn no new subagents, start no new workflows (runs of the Workflow tool) and "
-    "start no new background tasks, because each one delays the handoff and is "
-    "stopped if still running at the ceiling."
+    "the hook can read the whole transcript and finds that the work started "
+    "before now has finished, with a background task, though not a subagent, "
+    "counted as finished {wait_minutes:g} minutes after its launch even if it "
+    "still runs, or once "
+    "this session's context reaches the {ceiling:g}% ceiling. Work you start "
+    "from now on does not delay that message, and when the handoff comes, it "
+    "stops whatever is still running.\n"
+    + NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION
 )
+
+# Appended when an earlier marker file could not be read; the deferral starts again from now.
+UNREADABLE_MARKER_REPLACED_LINE = (
+    "The hook could not read this session's earlier handoff-deferral record "
+    "({problem}), so the hook replaced that record with a new one: the work the "
+    "hook now waits for is the work running now. Nothing for you to do about this."
+)
+
+# Without the record, the next turn's end would defer again and repeat this notice.
+MARKER_NOT_WRITTEN_LINE = (
+    "The hook could not save the list of work it waits for ({problem}), so at "
+    "the end of your next turn it will defer again and repeat this notice. "
+    "The second time you see this line about the list, tell the user, once: "
+    "\"The handoff threshold hook cannot write {marker}, so it repeats its "
+    "deferral notice at every turn's end; the session-handoff still fires at "
+    "the context ceiling.\""
+)
+
+
+def awaited_phrase(flight: WorkInFlight) -> str:
+    """Return the ids of the work the deferral waits for, by kind."""
+    parts = [f"subagent {agent_id}" for agent_id in flight.subagent_ids]
+    parts += [f"workflow {workflow_id}" for workflow_id in flight.workflow_ids]
+    parts += [f"background task {task_id}" for task_id in flight.background_task_ids]
+    return ", ".join(parts)
+
 
 # Allow a slow cold-read cell plus one retry; the context ceiling still bounds deferral.
 DEFAULT_BACKGROUND_TASK_WAIT_MINUTES = 75.0
@@ -259,10 +302,16 @@ def used_tokens_of(usage: dict) -> int:
 class WorkInFlight:
     """An empty scan must be falsy; a tuple of empty lists would still be truthy."""
 
-    def __init__(self, subagent_ids, background_task_ids, workflow_ids=()):
+    def __init__(self, subagent_ids, background_task_ids, workflow_ids=(), launched_at_by_id=None,
+                 launching_subagent_id_by_task_id=None):
         self.subagent_ids = list(subagent_ids)
         self.background_task_ids = list(background_task_ids)
         self.workflow_ids = list(workflow_ids)
+        # None for an id whose launch record carries no readable timestamp.
+        self.launched_at_by_id = dict(launched_at_by_id or {})
+        # Claude Code's list drops a subagent while it waits on its own shell task, so the deferral
+        # waits for that task in its place.
+        self.launching_subagent_id_by_task_id = dict(launching_subagent_id_by_task_id or {})
 
     def __bool__(self):
         return bool(self.subagent_ids or self.background_task_ids or self.workflow_ids)
@@ -280,19 +329,25 @@ def running_phrase(flight: WorkInFlight) -> str:
     return " and ".join(parts)
 
 
-def record_age_seconds(record, now):
-    """Return seconds since the record timestamp, or None if unreadable."""
+def record_time(record):
+    """Return the record's timestamp as an aware datetime, or None if unreadable."""
     # Python before 3.11 requires replacing the ISO 8601 trailing Z for fromisoformat.
     stamp = record.get("timestamp") if isinstance(record, dict) else None
     if not isinstance(stamp, str):
         return None
     try:
-        launched_at = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        moment = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
     except ValueError:
         return None
-    if launched_at.tzinfo is None:
-        launched_at = launched_at.replace(tzinfo=timezone.utc)
-    return (now - launched_at).total_seconds()
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment
+
+
+def record_age_seconds(record, now):
+    """Return seconds since the record timestamp, or None if unreadable."""
+    moment = record_time(record)
+    return None if moment is None else (now - moment).total_seconds()
 
 
 def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
@@ -323,6 +378,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
     spawned_ids = []
     launched_task_ids = []
     launched_task_age = {}
+    launched_at_by_id = {}
     # The last notification for a task-id decides: an interim one leaves its subagent running.
     last_notification_is_interim = {}
     try:
@@ -346,11 +402,13 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                         agent_id = tool_result.get("agentId")
                         if agent_id and agent_id not in spawned_ids:
                             spawned_ids.append(agent_id)
+                            launched_at_by_id[agent_id] = record_time(record)
                     if is_launch_candidate:
                         task_id = tool_result.get(BACKGROUND_TASK_LAUNCH_KEY)
                         if task_id and task_id not in launched_task_age:
                             launched_task_ids.append(task_id)
                             launched_task_age[task_id] = record_age_seconds(record, now)
+                            launched_at_by_id[task_id] = record_time(record)
                 if "<task-id>" in line:
                     for notification in TASK_NOTIFICATION_PATTERN.findall(line):
                         interim = interim_recognizer.task_notification_is_interim(notification)
@@ -379,6 +437,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
         [agent_id for agent_id in spawned_ids if subagent_still_in_flight(agent_id)],
         [task_id for task_id in launched_task_ids
          if task_id not in finished_ids and still_within_wait(task_id)],
+        launched_at_by_id=launched_at_by_id,
     )
 
 
@@ -404,8 +463,8 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
         return [entry["id"] for entry in running if entry.get("type") == task_type]
 
     shell_ids = ids_of(SHELL_TASK_TYPE)
-    launch_ages, monitor_ids = shell_task_launch_ages_and_monitor_ids(
-        transcript_path, shell_ids, now)
+    launch_ages, monitor_ids, launching_subagent_id_by_task_id = (
+        shell_task_launch_ages_and_monitor_ids(transcript_path, shell_ids, now))
 
     def still_within_wait(task_id):
         age = launch_ages.get(task_id)
@@ -416,15 +475,18 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
         [task_id for task_id in shell_ids
          if task_id not in monitor_ids and still_within_wait(task_id)],
         ids_of(WORKFLOW_TASK_TYPE),
+        launching_subagent_id_by_task_id=launching_subagent_id_by_task_id,
     )
 
 
 def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list, now):
     """Return ({shell task id: seconds since its launch record, or None if undated},
-    {ids whose launch record is the Monitor tool's}) for the ids the transcripts record."""
-    launch_ages, monitor_ids = {}, set()
+    {ids whose launch record is the Monitor tool's},
+    {shell task id: id of the subagent whose transcript holds its launch record})
+    for the ids the transcripts record."""
+    launch_ages, monitor_ids, launching_subagent_id_by_task_id = {}, set(), {}
     if not shell_ids or not transcript_path:
-        return launch_ages, monitor_ids
+        return launch_ages, monitor_ids, launching_subagent_id_by_task_id
     session_path = Path(transcript_path).expanduser()
     subagent_directory = session_path.with_suffix("") / "subagents"
     # An undated subagent shell task counts as within its wait, so a subagent directory that
@@ -452,16 +514,24 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
                     if tool_result.get(BACKGROUND_TASK_LAUNCH_KEY) in shell_ids:
                         launch_ages.setdefault(tool_result[BACKGROUND_TASK_LAUNCH_KEY],
                                                record_age_seconds(record, now))
+                        if path != session_path and path.stem.startswith(SUBAGENT_TRANSCRIPT_PREFIX):
+                            launching_subagent_id_by_task_id.setdefault(
+                                tool_result[BACKGROUND_TASK_LAUNCH_KEY],
+                                path.stem[len(SUBAGENT_TRANSCRIPT_PREFIX):])
                     if MONITOR_LAUNCH_KEY in tool_result and tool_result.get("taskId") in shell_ids:
                         monitor_ids.add(tool_result["taskId"])
         except OSError as problem:
             raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
-    return launch_ages, monitor_ids
+    return launch_ages, monitor_ids, launching_subagent_id_by_task_id
+
+
+SUBAGENT_TRANSCRIPT_PREFIX = "agent-"
 
 
 def subagent_transcript_path(session_transcript_path, agent_id) -> Path:
     """Return where Claude Code writes the subagent's own transcript, beside the session's."""
-    return Path(session_transcript_path).with_suffix("") / "subagents" / f"agent-{agent_id}.jsonl"
+    return (Path(session_transcript_path).with_suffix("") / "subagents"
+            / f"{SUBAGENT_TRANSCRIPT_PREFIX}{agent_id}.jsonl")
 
 
 def subagent_own_transcript_shows_work_in_flight(subagent_path: Path,
@@ -492,6 +562,62 @@ def subagent_own_transcript_shows_work_in_flight(subagent_path: Path,
         raise TranscriptCouldNotBeFullyRead(f"{subagent_path}: {problem}") from problem
     return bool(work_in_flight(str(subagent_path), background_task_wait_seconds, now=now,
                                should_raise_on_undecodable_bytes=True).background_task_ids)
+
+
+def awaited_work_still_in_flight(marker, flight: WorkInFlight) -> bool:
+    """Return whether any work the deferral waits for is still in flight."""
+    if marker.awaited_work_is_unknown:
+        # No list was saved: wait for what was launched before the deferral began.
+        def launched_before_deferral(work_id):
+            launched_at = flight.launched_at_by_id.get(work_id)
+            return launched_at is None or launched_at <= marker.deferral_began_at
+        return any(launched_before_deferral(work_id) for work_id in
+                   flight.subagent_ids + flight.workflow_ids + flight.background_task_ids)
+    awaited_subagent_ids = set(marker.awaited_subagent_ids)
+    return bool(awaited_subagent_ids & set(flight.subagent_ids)
+                or set(marker.awaited_workflow_ids) & set(flight.workflow_ids)
+                or set(marker.awaited_background_task_ids) & set(flight.background_task_ids)
+                or any(flight.launching_subagent_id_by_task_id.get(task_id) in awaited_subagent_ids
+                       for task_id in flight.background_task_ids))
+
+
+def defer(session_id, used, share, flight, arguments, unreadable_marker_problem=None,
+          now=None) -> int:
+    """Save the work in flight as the work to wait for, and tell the agent the handoff is deferred."""
+    count_is_known = flight is not None
+    marker_record = handoff_deferred_marker_and_refused_commands_files_common.HandoffDeferredMarker(
+        used_percentage=used,
+        deferral_began_at=now or datetime.now(timezone.utc),
+        # A subagent off the list while it waits on its own shell task returns to the list when the
+        # task ends, and must still be waited for then.
+        awaited_subagent_ids=(flight.subagent_ids + [
+            flight.launching_subagent_id_by_task_id[task_id] for task_id in flight.background_task_ids
+            if flight.launching_subagent_id_by_task_id.get(task_id) not in (None, *flight.subagent_ids)]
+            if count_is_known else []),
+        awaited_background_task_ids=flight.background_task_ids if count_is_known else [],
+        awaited_work_is_unknown=not count_is_known,
+        awaited_workflow_ids=flight.workflow_ids if count_is_known else [],
+    )
+    lines = [
+        HANDOFF_DEFERRED_NOTICE.format(
+            share=share, running=running_phrase(flight), awaited=awaited_phrase(flight),
+            wait_minutes=arguments.background_task_wait_minutes,
+            ceiling=arguments.ceiling_used_percentage)
+        if count_is_known
+        else HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE.format(
+            share=share, wait_minutes=arguments.background_task_wait_minutes,
+            ceiling=arguments.ceiling_used_percentage)
+    ]
+    try:
+        handoff_deferred_marker_and_refused_commands_files_common.handoff_deferred_marker_write(HANDOFF_DIRECTORY, session_id, marker_record)
+        if unreadable_marker_problem:
+            lines.append(UNREADABLE_MARKER_REPLACED_LINE.format(problem=unreadable_marker_problem))
+    except OSError as problem:
+        lines.append(MARKER_NOT_WRITTEN_LINE.format(
+            problem=problem,
+            marker=handoff_deferred_marker_and_refused_commands_files_common.handoff_deferred_marker_path(HANDOFF_DIRECTORY, session_id)))
+    print("\n".join(lines), file=sys.stderr)
+    return 2  # exit 2 surfaces stderr to the agent as a system message
 
 
 def main(argv=None) -> int:
@@ -529,8 +655,7 @@ def main(argv=None) -> int:
     share = f"{used:.0f}%"
     # A compaction can drop the share below the threshold after a deferral; the deferred marker
     # records that the threshold was passed, so the handoff its notice promised still comes.
-    if used < arguments.threshold_used_percentage and not (
-            HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred").exists():
+    if used < arguments.threshold_used_percentage and not deferred_marker_path(session_id).exists():
         return 0
 
     fired_marker = fired_marker_path(session_id)
@@ -555,29 +680,19 @@ def main(argv=None) -> int:
             flight = None
             count_is_known = False
 
-        if not count_is_known or flight:
-            deferred_marker = deferred_marker_path(session_id)
-            if deferred_marker.exists():
-                return 0  # Repeating the refusal would drive idle sessions into a loop; completion notifications wake them.
+        try:
+            marker = handoff_deferred_marker_and_refused_commands_files_common.handoff_deferred_marker_read(HANDOFF_DIRECTORY, session_id)
+            unreadable_marker_problem = None
+        except handoff_deferred_marker_and_refused_commands_files_common.HandoffDeferredMarkerUnreadable as problem:
+            marker = None
+            unreadable_marker_problem = str(problem)
 
-            try:
-                HANDOFF_DIRECTORY.mkdir(parents=True, exist_ok=True)
-                deferred_marker.write_text(f"{used:.1f}\n", encoding="utf-8")
-            except OSError:
-                pass
-
-            notice = (
-                HANDOFF_DEFERRED_NOTICE.format(
-                    share=share, running=running_phrase(flight),
-                    wait_minutes=arguments.background_task_wait_minutes,
-                    ceiling=arguments.ceiling_used_percentage,
-                )
-                if count_is_known
-                else HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE.format(
-                    share=share, ceiling=arguments.ceiling_used_percentage)
-            )
-            print(notice, file=sys.stderr)
-            return 2  # exit 2 surfaces stderr to the agent as a system message
+        if marker is not None:
+            # Repeating the notice would drive idle sessions into a loop; completion notifications wake them.
+            if not count_is_known or awaited_work_still_in_flight(marker, flight):
+                return 0
+        elif not count_is_known or flight:
+            return defer(session_id, used, share, flight, arguments, unreadable_marker_problem)
 
     try:
         # A failed marker write would repeat the handoff request every turn.
@@ -591,10 +706,12 @@ def main(argv=None) -> int:
         file=sys.stderr,
     )
     # The deferral's promise is kept; left in place, the marker would refire the
-    # instruction below the threshold after every later compaction.
-    deferred_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred"
+    # instruction below the threshold after every later compaction. It is moved, not
+    # deleted, because the handoff writer still needs the deferral's start time.
+    deferred_marker = deferred_marker_path(session_id)
     try:
-        deferred_marker.unlink(missing_ok=True)
+        handoff_deferred_marker_and_refused_commands_files_common.handoff_deferred_marker_move_aside_at_fire(
+            HANDOFF_DIRECTORY, session_id)
     except OSError as error:
         print(HANDOFF_DEFERRED_MARKER_NOT_DELETED.format(
                   path=deferred_marker, host=socket.gethostname(), error=error),

@@ -11,8 +11,10 @@ the file's checkout is on a branch whose HEAD commit holds it, and, when the ver
 approved set, tells the agent to show the user the change and run this program with --approve
 or --restore. A version that the checkout's local origin/main holds at the same path enters the
 approved set without asking, since main's versions came through reviewed pull requests; when
-git cannot read origin/main, the run reports that failure and settles nothing. The change stays
-in place while he is asked. A version with no copy is read
+git cannot read origin/main, the run reports that failure and settles nothing. A deletion of a
+guarded file enters the approved set without asking, wherever it came from; a rename's new path
+is a new version, approved only as any other is or when the old path's content was approved
+there. The change stays in place while he is asked. A version with no copy is read
 back from git; a file outside every checkout, such as ~/.claude/CLAUDE.md, is always copied.
 
 A checkout's first run writes nothing to the store for a file that holds the version of the
@@ -21,7 +23,7 @@ blob id in the checkout's state instead. When such a file first changes, the run
 version from git and approves it first, before git's own work and the change, so the change is
 shown and restored against the newest of them; a file git stops listing and lists again
 unchanged is again left unstored. A version a run saw and the user did not approve stays
-unapproved.
+unapproved, unless origin/main holds it or it is a deletion.
 
     python3 <this file> --approve <path> <hash> [<path> <hash> ...]
     python3 <this file> --restore <path> <hash> [<path> <hash> ...]
@@ -116,6 +118,7 @@ HOW_OBVIOUS_FIX = "obvious-fix"
 HOW_PRE_APPROVED = "pre-approved"
 HOW_STOCK = "stock"
 HOW_RENAME = "rename"
+HOW_DELETION = "deletion"
 
 # An approval that is not the user's either always adds its version, or adds it only when no
 # run has seen that version: a version the log records as seen and not approved enters the set
@@ -1282,6 +1285,12 @@ def run_hook(payload):
                 store, changed, state["files"],
                 {path: blob for path, blob, _, rule in first
                  if approval_takes(store, path, blob, rule)})
+            # A deletion needs no approval, wherever it came from, an unsettled one an older state
+            # file holds included; listed after the renames so a rename's old path is logged as
+            # the rename.
+            approvals += [(path, DELETED, HOW_DELETION, APPROVE_ALWAYS)
+                          for path, key in [(path, value[2]) for path, value in changed.items()]
+                          + unsettled if key == DELETED]
             asks, reminders, settled = store_phase(store, session, owner(), checks, unsettled,
                                                    approvals, quiet)
             settled.update({path: True for path in skipped})

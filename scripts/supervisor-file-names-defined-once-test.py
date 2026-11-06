@@ -139,7 +139,7 @@ PROGRAMS_THAT_NEED_THESE_FILE_NAMES = ("handoff-supervisor.py",
 # sites this guard was extended for -- would be exempted as a helper.
 COMPOSING_HELPERS = ("supervisor_state_path", "supervisor_lock_path",
                      "supervisor_state_paths", "handoff_file_path",
-                     "handoff_file_paths")
+                     "handoff_file_paths", "leftover_prompt_listing_counts_path")
 # The three file names, as they read on disk. This is a copy, so the last
 # check below reads the same three out of handoff-supervisor.py and compares.
 # Until 2026-09-21 nothing did, and a copy nothing anchors goes stale at
@@ -149,7 +149,7 @@ COMPOSING_HELPERS = ("supervisor_state_path", "supervisor_lock_path",
 # prevent would come back invisible, and the guard would go on printing PASS
 # until the rename after that.
 SPELLED_OUT_NAMES = ("-supervisor-state.json", "-supervisor.lock",
-                     "-handoff.md")
+                     "-handoff.md", "-leftovers-prompt-listing-counts.json")
 # The names of the constants that hold them are not typed here: they are read
 # out of handoff-supervisor.py below, as SUFFIX_CONSTANTS. These three are the
 # floor that reading must reach, checked before any other case, so a reading
@@ -753,7 +753,7 @@ check("a program moved out of the places this suite reads fails with the rule an
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
       programs_not_read_failure_detail(["recover-crashed-seats.py"]))
 
-check("no production script composes any of the three file names itself",
+check("no production script composes any of these file names itself",
       not composing,
       "composed at " + ", ".join(composing) + " -- call "
       "supervisor_state_path(), supervisor_lock_path(), "

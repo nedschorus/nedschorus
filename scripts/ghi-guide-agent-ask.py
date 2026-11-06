@@ -170,6 +170,13 @@ _git_output_spec = importlib.util.spec_from_file_location(
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
+_command_line_prefix_spec = importlib.util.spec_from_file_location(
+    "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+    SCRIPT_DIRECTORY.parent / "nc-systems" / "general-tools"
+    / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
+_command_line_prefix_spec.loader.exec_module(command_line_prefix)
+
 AGENT_BOX = os.environ.get("NEDSCHORUS_AGENT_BOX", "ned")
 # AGENT_BOX is the Mac's ssh alias for the box, which the box itself cannot resolve.
 NED_BOX_HOSTNAME = "ned-box"
@@ -183,6 +190,8 @@ LOCK_FILE_NAME = ".ghi-guide-agent-state.lock"
 # "settled empirically." Starting pick for this build, not a measured
 # choice among fable/opus/sonnet.
 GHI_GUIDE_AGENT_MODEL = os.environ.get("GHI_GUIDE_AGENT_MODEL", "claude-sonnet-5")
+# ghi-guide-agent only reads: the mirror, the files open issues link to, and the log-store.
+GHI_GUIDE_AGENT_ALLOWED_TOOLS = "Read,Grep,Glob"
 # "One overall timeout (inside the hook budget)" (design § The ask path) —
 # ONE deadline for the whole ask, not one per claude call. An ask can spend
 # up to three turns (a cold start's two, plus a drift recheck), and giving
@@ -549,9 +558,9 @@ def should_recycle(state: dict, seat_dir: Path, projects_root: Path):
 
 def run_claude(prompt: str, resume_session_id, seat_dir: Path, timeout_seconds: int):
     """One `claude -p` turn. Returns (result_dict, error). No terminal exists
-    to approve tool use here (same reasoning as nedsmessenger's adapter,
-    the named precedent) — bypassPermissions is the only workable mode for
-    an unattended agent."""
+    to approve tool use here, so the run is in dontAsk mode: ghi-guide-agent
+    reads and searches the mirror, its agent-home and the log-store, and any
+    other tool call is refused rather than waiting for an answer."""
     # --setting-sources user keeps THIS PROJECT'S hooks out of the run
     # (measured 2026-09-17). ghi-guide-agent answered a reading-list question
     # correctly at 20:16:59Z and then, 13 seconds later, answered the
@@ -560,12 +569,12 @@ def run_claude(prompt: str, resume_session_id, seat_dir: Path, timeout_seconds: 
     # the housekeeping reply and the reading list was thrown away, with exit
     # 0. A cold-read cell had the same leak, and PR #417 gave it the same
     # flag. The seat's own settings.json is project settings, so nothing here
-    # needs it: permissions come from bypassPermissions above.
+    # needs it: permissions come from GHI_GUIDE_AGENT_ALLOWED_TOOLS.
     # The prompt goes on stdin: one argument may not exceed 128 KiB on
     # Linux, and a draft GHI-MD with its diff can be larger.
-    command = ["claude", "-p", "--output-format", "json",
-              "--setting-sources", "user",
-              "--permission-mode", "bypassPermissions", "--model", GHI_GUIDE_AGENT_MODEL]
+    command = [*command_line_prefix.claude_code_headless_run_command_line_prefix_build("dontAsk"),
+               "--output-format", "json", "--setting-sources", "user",
+               "--allowedTools", GHI_GUIDE_AGENT_ALLOWED_TOOLS, "--model", GHI_GUIDE_AGENT_MODEL]
     if resume_session_id:
         command += ["--resume", resume_session_id]
     # Without this the handoff hook tells the session to hand off at its

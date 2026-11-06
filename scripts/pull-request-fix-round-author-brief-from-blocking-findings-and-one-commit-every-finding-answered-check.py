@@ -138,6 +138,15 @@ MOVE_CHANGE_TO_OWN_PULL_REQUEST_INSTRUCTION = (
     f"\"{MOVED_TO_PULL_REQUEST_PREFIX}\" followed by the URL --move-change-to-own-pull-request-finish prints; the check in "
     "step 7 refuses the entry when no such pull request exists, or when its change is still on this "
     "branch.")
+GUARDED_FILE_CHANGE_CARRYING_OUT_USER_RULING_INSTRUCTION = (
+    "   When a finding asks you to change a file the instruction-file guard protects, and the fix only "
+    "makes the file do what a ruling of the user's already says, the change is a user-approved-change: "
+    "before each edit, write the ruling's words, quoted from the walk-minutes item or the agent-session "
+    "where he gave it, with its time, into the `.walk-approved` marker file at the root of your worktree, "
+    "and cite the ruling in the commit message. A change the guard's refusal lets through without a "
+    "ruling, such as an obvious-error-fix, goes as that refusal says. Leave out any other change to such "
+    "a file, go on with the other findings, and name that change in your report to the agent that "
+    "dispatched you.")
 MOVE_STATE_FILE_NAME = "fix-round-move-to-own-pull-request.json"
 # The answers file waits in the git directory while the new topic branch is checked out, so no commit
 # or check made there can pick it up.
@@ -472,7 +481,8 @@ def print_brief(number, reviewer_login):
         f"1. Before changing anything, run: python3 scripts/branch-conflict-check.py --pull-request {number}",
         "   If it reports VERDICT: CONFLICT, do what its report says.",
         "2. Check each finding against the code. Fix each one that holds, root cause included, "
-        "with a test that fails without the fix.",
+        "with a test that fails without the fix; a nit needs no test.",
+        GUARDED_FILE_CHANGE_CARRYING_OUT_USER_RULING_INSTRUCTION,
         "3. Change nothing else, apart from the tests, callers, documents and citations that "
         "keep the pull request atomic. Findings that do not block, in this review or any other, "
         "are not part of this round, apart from the nits listed above: merge-lane-2 sends them after the merge.",
@@ -490,7 +500,7 @@ def print_brief(number, reviewer_login):
         "   If a suite fails because of this round's change, fix it in the same commit; if it "
         "fails for another cause, tell merge-lane-2 with SendMessage before pushing.",
         f"7. Run the check: {check_command}",
-        "   adding --after-conflict-merge if step 1's report had you merge origin/main. If it refuses, change the "
+        "   If it refuses, change the "
         "answers file or the unpushed commit as it says (git commit --amend is allowed before the "
         "push) and run the check again.",
         f"8. When it passes with a commit not yet pushed, push once, with: git push origin HEAD:{shlex.quote(branch)}",

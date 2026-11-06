@@ -832,8 +832,9 @@ def test_supervisor_appends_the_list():
     except StopIteration:
         pass
     check(launched and launched[0].startswith(supervisor.first_prompt_from_launch_command_marked_not_typed_by_the_user("Founding prompt.")
+        + "\n\n" + supervisor.LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE
         + "\n\nLeftover work-snapshots: 1"),
-          "every launch's prompt carries the leftover list after the prompt",
+          "a launch's prompt with no next step carries the leftover list after the prompt",
           launched[:1] and launched[0][:120])
 
 

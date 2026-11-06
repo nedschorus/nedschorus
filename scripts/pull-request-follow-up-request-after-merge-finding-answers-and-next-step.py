@@ -915,7 +915,8 @@ def gh_api_pages(path):
     try:
         return [item for page in json.loads(output) for item in page]
     except (ValueError, TypeError) as error:
-        raise StepFailed(f"gh api {path} printed no list of pages: {error}") from None
+        raise StepFailed(f"gh api {path} printed output that is not the JSON list of result pages --paginate --slurp prints: "
+                         f"{error}") from None
 
 
 def print_follow_up_request_block_from_merge_lane_2_reviews(number):
@@ -940,8 +941,8 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
                          f"{type(error).__name__}: {error}") from None
     if not any(review.get("state") == "APPROVED" for review in reviews):
         raise Refused(f"{account}, merge-lane-2's GitHub account, has no approving review of pull request {number}, so "
-                      f"merge-lane-2's findings on it are not final and no {FOLLOW_UP_REQUEST_LINE_START} block was "
-                      "printed.\n"
+                      f"merge-lane-2 has not approved it yet: its review is still running or it requested changes. No "
+                      f"{FOLLOW_UP_REQUEST_LINE_START} block was printed.\n"
                       f"Once {account}'s approving review is posted, run: "
                       f"{command(number, 'print-follow-up-request-block-from-merge-lane-2-reviews')}")
     findings = []
@@ -954,10 +955,11 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
                 f"{FOLLOW_UP_REQUEST_LINE_START} block was printed; reviews posted before "
                 f"scripts/{POSTING_PROGRAM_FILE_NAME} wrote category marks have none.\n"
                 "If merge-lane-2's reviews of the pull request hold a fix-next, fix-in-maintenance or file-for-later "
-                "finding, write the block by hand at the end of the merge message instead: the line "
+                "finding, write the block by hand at the end of the message that tells the author the pull request merged: "
+                "the line "
                 f"{FOLLOW_UP_REQUEST_LINE_START} pull request {number}, then one line for each such finding, numbered "
                 "from 1, such as: 1. fix-next: <path>:<line>: <the finding on one line>\n"
-                "If they hold none, write no block.")
+                "If merge-lane-2's reviews hold no such finding, write no block.")
         category, text, _nit = marked
         finding = (category, comment["path"], " ".join(text.split()))
         if category != posting.BLOCKING_CATEGORY and finding not in [found[:3] for found in findings]:
@@ -974,7 +976,10 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
         read_back = str(error)
     if read_back != [lines]:
         raise StepFailed(f"the block built from {account}'s reviews does not read back as itself, so the hook would "
-                         f"save something else: it reads back as {read_back!r}")
+                         f"save something else: it reads back as {read_back!r}.\n"
+                         "Do not paste the block; write it by hand at the end of the message that tells the author the "
+                         "pull request merged, and report this failure to the owner of "
+                         "scripts/pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py.")
     print(block, end="")
 
 

@@ -568,7 +568,7 @@ def case_positions_not_saved_exits_nonzero(namespace):
         fixture.logs.mkdir(parents=True, exist_ok=True)
         (fixture.logs / watcher.TRANSCRIPT_READ_POSITIONS_FILE_NAME).mkdir()
         exit_code, errors = fixture.run()
-        check("read positions that cannot be saved: the run says so on stderr, for cron's log, and exits 1",
+        check("read positions that cannot be saved: the run says so on stderr, for the scheduled job's log, and exits 1",
               exit_code == 1 and "were not saved" in errors, (exit_code, errors))
     finally:
         fixture.close()
@@ -899,7 +899,7 @@ def case_run_failure(namespace):
             except ValueError as error:
                 raised.append(error)
         notices = fixture.notices()
-        check("a run that fails: the error raised, so cron's log keeps it and the exit is nonzero, and "
+        check("a run that fails: the error raised, so the scheduled job's log keeps it and the exit is nonzero, and "
               "one notice for the same error over two runs",
               len(raised) == 2 and len(notices) == 1 and len(fixture.ssh_requests()) == 1
               and "JSONDecodeError" in notices[0].read_text(encoding="utf-8"),
@@ -943,17 +943,171 @@ def case_overlapping_run(namespace):
         fixture.close()
 
 
-def case_off_ned_box_and_show_notice():
+def case_ps_listing_reading():
+    check("ps's etime reads as seconds in each of its forms",
+          [watcher.elapsed_seconds_from_ps_etime(text) for text in ("00:07", "05:07", "01:02:03", "2-01:02:03")]
+          == [7, 307, 3723, 2 * 86400 + 3723])
+    listing = (f"  {SUPERVISOR_PID}     1 01:00:00 /opt/homebrew/bin/python3 /x/handoff-supervisor.py --agent s1\n"
+               f"  {CLAUDE_PID}  {SUPERVISOR_PID}    00:42 claude --session-id {SESSION_ID}\n"
+               "  4300     1    00:01\n")
+    table = watcher.process_table_from_ps(listing)
+    check("a ps listing reads as pid, parent, argument words and age; a line with no arguments is left out",
+          table == {SUPERVISOR_PID: (1, ["/opt/homebrew/bin/python3", "/x/handoff-supervisor.py", "--agent", "s1"], 3600),
+                    CLAUDE_PID: (SUPERVISOR_PID, ["claude", "--session-id", SESSION_ID], 42)}, table)
+    check("the seat is found in a ps listing as in /proc",
+          watcher.running_agent_seats(table) == [("s1", CLAUDE_PID, 42)], watcher.running_agent_seats(table))
+    real = subprocess.run(watcher.MAC_PROCESS_LISTING_COMMAND, capture_output=True, text=True, check=False)
+    own = watcher.process_table_from_ps(real.stdout).get(os.getpid())
+    check("this machine's real ps, run with the Mac's listing command, lists this test with its parent",
+          real.returncode == 0 and own is not None and own[0] == os.getppid()
+          and Path(sys.argv[0]).name in " ".join(own[1]), (real.returncode, real.stderr, own))
+
+
+class MacStandIns:
+    """Run the program as on the Mac: ps and the Mac's own window opener replaced by stand-ins."""
+
+    def __init__(self, fixture, listing, ps_exit=0):
+        self.fixture = fixture
+        listing_file = fixture.root / "ps-listing.txt"
+        listing_file.write_text(listing, encoding="utf-8")
+        ps = fixture.root / "ps-stand-in"
+        ps.write_text(f"#!/bin/sh\ncat '{listing_file}'\nexit {ps_exit}\n", encoding="utf-8")
+        ps.chmod(0o755)
+        self.opener_log = fixture.root / "mac-opener-requests.txt"
+        opener = fixture.root / "mac-opener-stand-in"
+        opener.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{self.opener_log}'\nexit 0\n", encoding="utf-8")
+        opener.chmod(0o755)
+        self.ps, self.opener = ps, opener
+
+    def run(self):
+        saved = (watcher.sys.platform, watcher.MAC_PROCESS_LISTING_COMMAND, watcher.MAC_LOCAL_WINDOW_OPENER_PROGRAM)
+        watcher.sys.platform = "darwin"
+        watcher.MAC_PROCESS_LISTING_COMMAND = [str(self.ps)]
+        watcher.MAC_LOCAL_WINDOW_OPENER_PROGRAM = self.opener
+        try:
+            return self.fixture.run()
+        finally:
+            (watcher.sys.platform, watcher.MAC_PROCESS_LISTING_COMMAND,
+             watcher.MAC_LOCAL_WINDOW_OPENER_PROGRAM) = saved
+
+    def opener_requests(self):
+        return self.opener_log.read_text(encoding="utf-8").splitlines() if self.opener_log.is_file() else []
+
+
+def mac_listing(seat):
+    return (f"{SUPERVISOR_PID} 1 03:00 python3 /x/nc-systems/handoff/handoff-supervisor.py --agent {seat}\n"
+            f"{CLAUDE_PID} {SUPERVISOR_PID} 16:40 claude --session-id {SESSION_ID}\n")
+
+
+def case_on_the_mac(namespace):
+    fixture = lost_seat("mac-types", namespace)
+    try:
+        exit_code, errors = MacStandIns(fixture, mac_listing(fixture.seat)).run()
+        check("on the Mac: the seat is found with ps, and /remote-control <seat> is typed into its pane",
+              exit_code == 0 and f"/remote-control {fixture.seat}" in fixture.typed()
+              and fixture.decisions() == ["typed"], (exit_code, errors, fixture.entries()))
+    finally:
+        fixture.close()
+    fixture = lost_seat("mac-default-log", namespace)
+    saved_directories = (watcher.MAC_LOG_DIRECTORY, watcher.LOG_DIRECTORY)
+    mac_logs, ned_box_logs = fixture.root / "mac-own-disk-logs", fixture.root / "ned-box-logs"
+    del fixture.environment[watcher.LOG_DIRECTORY_ENVIRONMENT_VARIABLE]
+    watcher.MAC_LOG_DIRECTORY, watcher.LOG_DIRECTORY = mac_logs, ned_box_logs
+    try:
+        exit_code, errors = MacStandIns(fixture, mac_listing(fixture.seat)).run()
+        check("on the Mac, with no log directory given, as cron runs it: decisions.jsonl and run.lock "
+              "go under MAC_LOG_DIRECTORY, and nothing under LOG_DIRECTORY",
+              exit_code == 0 and (mac_logs / "decisions.jsonl").is_file() and (mac_logs / "run.lock").is_file()
+              and not ned_box_logs.exists(), (exit_code, errors))
+    finally:
+        watcher.MAC_LOG_DIRECTORY, watcher.LOG_DIRECTORY = saved_directories
+        fixture.close()
+    fixture = lost_seat("mac-cron-path", namespace)
+    saved = (os.environ["PATH"], watcher.MAC_TMUX_DIRECTORIES_CRON_PATH_LACKS)
+    path_without_tmux = fixture.root / "path-without-tmux"
+    path_without_tmux.mkdir()
+    # The ps stand-in runs cat; tmux is the only command this PATH leaves out.
+    (path_without_tmux / "cat").symlink_to(shutil.which("cat"))
+    watcher.MAC_TMUX_DIRECTORIES_CRON_PATH_LACKS = (str(Path(shutil.which("tmux")).parent),)
+    os.environ["PATH"] = str(path_without_tmux)
+    try:
+        exit_code, errors = MacStandIns(fixture, mac_listing(fixture.seat)).run()
+    finally:
+        os.environ["PATH"], watcher.MAC_TMUX_DIRECTORIES_CRON_PATH_LACKS = saved
+    try:
+        check("on the Mac, run by cron with a PATH that lacks tmux's directory: tmux is found in "
+              "MAC_TMUX_DIRECTORIES_CRON_PATH_LACKS and /remote-control <seat> is typed",
+              exit_code == 0 and f"/remote-control {fixture.seat}" in fixture.typed()
+              and fixture.decisions() == ["typed"], (exit_code, errors, fixture.entries()))
+    finally:
+        fixture.close()
+    fixture = lost_seat("mac-notice", namespace, pane=False)
+    try:
+        stand_ins = MacStandIns(fixture, mac_listing(fixture.seat))
+        exit_code, errors = stand_ins.run()
+        notices = fixture.notices()
+        requests = stand_ins.opener_requests()
+        check("on the Mac: a failure's notice says the Mac, and opens with the Mac's own window opener "
+              "running --show-notice, not over ssh",
+              exit_code == 1 and len(notices) == 1 and fixture.ssh_requests() == []
+              and "watcher on the Mac" in notices[0].read_text(encoding="utf-8")
+              and "ned-box" not in notices[0].read_text(encoding="utf-8")
+              and len(requests) == 1 and requests[0].endswith(f"--show-notice {notices[0]}"),
+              (exit_code, errors, requests, [path.read_text(encoding="utf-8") for path in notices]))
+    finally:
+        fixture.close()
+    fixture = Fixture("mac-ps-fails", namespace)
+    try:
+        stand_ins = MacStandIns(fixture, "ps: cannot list processes\n", ps_exit=1)
+        raised = None
+        try:
+            stand_ins.run()
+        except RuntimeError as error:
+            raised = error
+        notices = fixture.notices()
+        check("on the Mac: ps failing stops the run with ps's words raised, and the user gets one notice",
+              raised is not None and "exited 1: ps: cannot list processes" in str(raised)
+              and len(notices) == 1 and len(stand_ins.opener_requests()) == 1,
+              (raised, notices, stand_ins.opener_requests()))
+    finally:
+        fixture.close()
+    fixture = Fixture("mac-ps-hangs", namespace)
+    real_timeout = watcher.PROCESS_LISTING_TIMEOUT_SECONDS
+    try:
+        stand_ins = MacStandIns(fixture, "")
+        stand_ins.ps.write_text("#!/bin/sh\nexec sleep 5\n", encoding="utf-8")
+        watcher.PROCESS_LISTING_TIMEOUT_SECONDS = 0.2
+        raised = None
+        try:
+            stand_ins.run()
+        except RuntimeError as error:
+            raised = error
+        check("on the Mac: ps that does not finish in time stops the run with a RuntimeError that says so",
+              raised is not None and "timed out: it did not finish within 0.2 seconds" in str(raised), raised)
+    finally:
+        watcher.PROCESS_LISTING_TIMEOUT_SECONDS = real_timeout
+        fixture.close()
     real_platform = watcher.sys.platform
     watcher.sys.platform = "darwin"
+    try:
+        check("on the Mac the log directory is on the Mac's own disk, not under its mount of ned-box's home",
+              watcher.MAC_LOG_DIRECTORY.is_relative_to(Path.home())
+              and not str(watcher.MAC_LOG_DIRECTORY).startswith("/Volumes/"), watcher.MAC_LOG_DIRECTORY)
+    finally:
+        watcher.sys.platform = real_platform
+
+
+def case_off_ned_box_and_show_notice():
+    real_platform = watcher.sys.platform
+    watcher.sys.platform = "win32"
     errors = io.StringIO()
     try:
         with redirect_stderr(errors):
             exit_code = watcher.main([], {})
     finally:
         watcher.sys.platform = real_platform
-    check("off ned-box the program refuses with exit 2", exit_code == 2 and "refused" in errors.getvalue(),
-          errors.getvalue())
+    check("on a machine that is neither Linux nor macOS the program refuses with exit 2",
+          exit_code == 2 and "refused" in errors.getvalue(), errors.getvalue())
     directory = Path(tempfile.mkdtemp(prefix="rcw-show-"))
     try:
         notice = directory / "notice.txt"
@@ -972,7 +1126,7 @@ def main():
         print("FAIL  tmux is not installed, and every typing case needs it")
         return 1
     namespace = isolate_tmux()
-    # The program refuses off Linux; every case but the off-ned-box one runs it as on ned-box.
+    # Every case runs the program as on ned-box, except the Mac cases and the refused-machine one.
     real_platform = watcher.sys.platform
     watcher.sys.platform = "linux"
     try:
@@ -1004,6 +1158,8 @@ def main():
         case_run_failure(namespace)
         case_run_failure_notice_not_shown(namespace)
         case_overlapping_run(namespace)
+        case_ps_listing_reading()
+        case_on_the_mac(namespace)
         case_off_ned_box_and_show_notice()
     finally:
         watcher.sys.platform = real_platform

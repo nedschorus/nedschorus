@@ -605,21 +605,22 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     # The supervisor's other ignition shape composes the same instruction at a
     # second call site (`IgnitionPlanWithoutConversationTail.compose`). The
     # whole prompt is pinned, so an append anywhere in it -- inside a constant
-    # or after it -- fails here. Its next step comes first, so "take the next
-    # step" points back at it.
+    # or after it -- fails here. Its next step comes last, after the same heading as the
+    # dialog prompt's, so the leftovers can go before it.
     boot_recovery_prompt = supervisor.IgnitionPlanWithoutConversationTail(
         "finish the supervisor").compose(
             "launch-time-git-sync: fixture-branch is 3 commit(s) behind main",
             branch_state_instruction=supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION)
-    check("the boot-recovery prompt is exactly its next step, the recovery note, and the branch-state line",
+    check("the boot-recovery prompt is exactly the recovery note, the branch-state line, and its next step",
           boot_recovery_prompt == (
-              "finish the supervisor\n\n(Recovered at supervisor boot: the previous "
+              "(Recovered at supervisor boot: the previous "
               "session's conversation-tail is unavailable; this next-step and the "
               "repository are your whole context.) "
               + supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION
               + " launch-time-git-sync: fixture-branch is 3 "
               "commit(s) behind main — This branch is pushed: leave its head as it is, "
-              "and start new work on a branch from origin/main."),
+              "and start new work on a branch from origin/main."
+              + supervisor.NEXT_STEP_HEADING + "finish the supervisor"),
           repr(boot_recovery_prompt))
     check("the old two-case branch text and its pull request sentences are gone",
           "If it is pushed" not in synced_prompt and "If this seat has open pull requests" not in synced_prompt
@@ -1103,8 +1104,8 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
             del os.environ["FAIL_GIT_CALL_CONTAINING"]
         check(f"a failed `git {call}` leaves the branch-state instruction out and prints why",
               instruction == "" and what_is_printed in console.getvalue()
-              and "handoff-supervisor: if this message comes back at the next launch, fix the git error "
-              "on the why line; until then nobody needs to act on it" in console.getvalue(),
+              and "handoff-supervisor: if this console shows the same why line when the handoff-supervisor "
+              "next launches this agent-seat, fix the git error it names; if the cause was passing" in console.getvalue(),
               (instruction, console.getvalue()))
 
     # A git killed by a signal exits with a negative returncode and prints nothing.
@@ -2346,14 +2347,15 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
                 branch_state_instruction=never_pushed)
     except TypeError:
         boot_recovery_prompt = ""
-    check("the boot-recovery prompt is its next step, the recovery note, the "
-          "branch-state line and the overview-refresh-due line, exactly",
+    check("the boot-recovery prompt is the recovery note, the branch-state line, the "
+          "overview-refresh-due line and its next step, exactly",
           boot_recovery_prompt == (
-              "finish the supervisor\n\n(Recovered at supervisor boot: the previous "
+              "(Recovered at supervisor boot: the previous "
               "session's conversation-tail is unavailable; this next-step and the "
               "repository are your whole context.) "
               + supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION + " "
-              + branch_state_line + " " + line),
+              + branch_state_line + " " + line
+              + supervisor.NEXT_STEP_HEADING + "finish the supervisor"),
           repr(boot_recovery_prompt))
 
     # End to end: a supervisor starting a fresh agent-session for agent-instructions-editor, the one
@@ -2461,7 +2463,8 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     check("a successor started as a fresh agent-session of an agent-seat other than agent-instructions-editor "
           "is given no overview-refresh line",
           len(other_seat_launched_prompts) == 1
-          and other_seat_launched_prompts[0].startswith("resume the audit")
+          and other_seat_launched_prompts[0].endswith(
+              supervisor.NEXT_STEP_HEADING + "resume the audit")
           and "overview refresh due" not in other_seat_launched_prompts[0],
           f"{other_seat_launched_prompts!r}\n{console.getvalue()[-900:]}")
     check("the supervisor of an agent-seat other than agent-instructions-editor prints "
@@ -2870,7 +2873,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
         plan_prompt = "compose takes no memory review line"
     check("MEMORY REVIEW: the dialog plan hands its memory review line to the prompt it "
           "composes", plan_prompt == prompt and prompt != "", repr(plan_prompt))
-    recovery_note = ("\n\n(Recovered at supervisor boot: the previous session's "
+    recovery_note = ("(Recovered at supervisor boot: the previous session's "
                      "conversation-tail is unavailable; this next-step and the repository "
                      "are your whole context.) "
                      + supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION + " ")
@@ -2880,10 +2883,11 @@ def run_memory_review_due_prompt_cases(workspace: Path):
             branch_state_instruction=never_pushed)
     except TypeError:
         boot_recovery_prompt = ""
-    check("MEMORY REVIEW: the boot-recovery prompt is its next step, the recovery note, "
-          "the branch-state line, the overview line and the memory review line, exactly",
-          boot_recovery_prompt == ("finish the review" + recovery_note + branch_state_line
-                                   + " " + overview_line + " " + memory_line),
+    check("MEMORY REVIEW: the boot-recovery prompt is the recovery note, the branch-state "
+          "line, the overview line, the memory review line and its next step, exactly",
+          boot_recovery_prompt == (recovery_note + branch_state_line
+                                   + " " + overview_line + " " + memory_line
+                                   + supervisor.NEXT_STEP_HEADING + "finish the review"),
           repr(boot_recovery_prompt))
 
     # Through the launch site: a supervisor starting a fresh agent-session from an unconsumed handoff
@@ -2933,8 +2937,9 @@ def run_memory_review_due_prompt_cases(workspace: Path):
         supervisor.supervise_sessions(settings)
     check("MEMORY REVIEW: a successor started as a fresh agent-session's prompt carries the line after the "
           "branch-state line and the overview line, exactly",
-          launched_prompts == ["resume the audit" + recovery_note + branch_state_line
-                               + " " + overview_line + " " + launched_memory_line],
+          launched_prompts == [recovery_note + branch_state_line
+                               + " " + overview_line + " " + launched_memory_line
+                               + supervisor.NEXT_STEP_HEADING + "resume the audit"],
           f"{launched_prompts!r}\n{console.getvalue()[-900:]}")
     check("MEMORY REVIEW: the supervisor prints the line on its console",
           f"handoff-supervisor: {launched_memory_line}\n" in console.getvalue(),
@@ -3076,7 +3081,8 @@ def run_boot_ignition_without_a_conversation_tail_cases(workspace: Path):
     check("BOOT WITHOUT A CONVERSATION-TAIL: a failed extraction at boot still starts the successor "
           "from the next step, and never says it is not relaunching",
           len(diverged.launched_prompts) == 1
-          and diverged.launched_prompts[0].startswith("resume the audit")
+          and diverged.launched_prompts[0].endswith(
+              supervisor.NEXT_STEP_HEADING + "resume the audit")
           and "not relaunching" not in diverged.errors + diverged.printed,
           f"{diverged.launched_prompts!r}\n{diverged.errors[-400:]}")
     check("BOOT WITHOUT A CONVERSATION-TAIL: the handoff is consumed",
@@ -3093,7 +3099,8 @@ def run_boot_ignition_without_a_conversation_tail_cases(workspace: Path):
     check("BOOT WITHOUT A CONVERSATION-TAIL: with no earlier session recorded, the successor starts "
           "from the next step",
           len(unrecorded.launched_prompts) == 1
-          and unrecorded.launched_prompts[0].startswith("resume the audit"),
+          and unrecorded.launched_prompts[0].endswith(
+              supervisor.NEXT_STEP_HEADING + "resume the audit"),
           repr(unrecorded.launched_prompts))
 
 
@@ -3273,6 +3280,29 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     check("the roster does not disturb the verbatim block beneath it",
           supervisor.next_step_from(parsed) == "merge the queue\nand then rest",
           repr(supervisor.next_step_from(parsed)))
+
+    # The work the handoff-deferral did not wait for reaches the successor, in the writer's order.
+    deferral_fields = {"written-at": recent, "next-step": "carry on"}
+    for ordinal in (2, 1, 10):
+        deferral_fields[f"background-task-started-during-handoff-deferral-{ordinal}"] = (
+            f'blate{ordinal:04d} "job {ordinal}" command: "python3 job{ordinal}.py"')
+    deferral_fields["cold-read-full-run-command-refused-during-handoff-deferral-1"] = (
+        '"python3 nc-systems/cold-read/cold-read-grid.py --target a.md" in /work')
+    deferral_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), deferral_fields)
+    check("the successor is told the background tasks started during the deferral, in order",
+          "started 3 background Bash task(s) during its handoff-deferral" in deferral_prompt
+          and deferral_prompt.index("blate0001") < deferral_prompt.index("blate0002")
+          < deferral_prompt.index("blate0010"), deferral_prompt)
+    check("the successor is told the refused cold-read-full-run and where to run it",
+          "a hook refused 1 cold-read-full-run(s)" in deferral_prompt
+          and "cold-read-grid.py --target a.md\" in /work" in deferral_prompt, deferral_prompt)
+    check("the successor is told to run each command from the directory listed with it",
+          "Run each command from the directory listed with it" in deferral_prompt, deferral_prompt)
+    check("the deferral sentences come before the next step",
+          deferral_prompt.index("handoff-deferral") < deferral_prompt.index("Then take the next step"),
+          deferral_prompt)
+    check("a handoff with no deferral fields says nothing about a deferral",
+          "handoff-deferral" not in older_prompt, older_prompt)
 
 
 def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
