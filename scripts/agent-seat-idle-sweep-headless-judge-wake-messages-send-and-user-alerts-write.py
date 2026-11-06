@@ -81,9 +81,9 @@ user_alerts = _load("user_alerts_pending_and_claimed_files_write_claim_release_a
                     _SCRIPTS.parent / "nc-systems" / "general-tools"
                     / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
 headless_command_line = _load(
-    "claude_code_headless_print_mode_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+    "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
     _SCRIPTS.parent / "nc-systems" / "general-tools"
-    / "claude-code-headless-print-mode-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+    / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 
 LOG_FILE = (Path.home() / "nedschorus-logs" / "agent-seat-idle-sweep"
             / "agent-seat-idle-sweep-messages-sent-and-verdicts.jsonl")
@@ -364,7 +364,7 @@ def claude_binary():
 def run_headless(prompt, schema, tools, working_directory, timeout_seconds):
     """Run one headless agent-session and read its SendMessage calls and its answer."""
     outcome = HeadlessOutcome()
-    command = headless_command_line.claude_code_headless_print_mode_command_line_prefix_build(
+    command = headless_command_line.claude_code_headless_run_command_line_prefix_build(
         "dontAsk", program=claude_binary()) + [
         "--model", HEADLESS_MODEL, "--output-format", "stream-json", "--verbose",
         "--json-schema", json.dumps(schema), "--tools", tools]
