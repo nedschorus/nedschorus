@@ -1458,8 +1458,9 @@ with tempfile.TemporaryDirectory() as workspace:
               raises_list_could_not_read([list_entry("alatespawn", "subagent")], spawn_directory))
         flight = flight_of([list_entry("a1", "subagent")],
                            transcript=Path(workspace) / "no-such-transcript.jsonl")
-        check("with no shell task listed the transcript is not read at all",
-              flight.subagent_ids == ["a1"], str(flight.subagent_ids))
+        check("a missing session transcript leaves a listed subagent undated, and it is still awaited",
+              flight.subagent_ids == ["a1"] and flight.launched_at_by_id == {},
+              f"{flight.subagent_ids} {flight.launched_at_by_id}")
         check("a missing session transcript cannot date a listed shell task",
               raises_list_could_not_read([list_entry("bshellyoung", "shell")],
                                          Path(workspace) / "no-such-transcript.jsonl"))
