@@ -391,8 +391,9 @@ def suites_named(control):
 
 def run_recorded_mutant_killed_check(scratch_name, head_files, diff_text, *flags,
                                      origin_main_files=None, before_run=None,
-                                     extra_environment=None):
-    """Run --recorded-mutant-killed-check on a scratch repository holding head_files.
+                                     extra_environment=None, more_diff_texts=()):
+    """Run --recorded-mutant-killed-check on a scratch repository holding head_files, given
+    mutant.diff holding diff_text, then mutant-2.diff and on holding more_diff_texts.
 
     With origin_main_files, refs/remotes/origin/main names a commit on the base holding them.
     before_run, given the repository, runs just before the check.
@@ -413,12 +414,16 @@ def run_recorded_mutant_killed_check(scratch_name, head_files, diff_text, *flags
     diff_file = Path(scratch_name) / "mutant.diff"
     if diff_text is not None:
         diff_file.write_text(diff_text)
+    diff_files = [str(diff_file)]
+    for number, text in enumerate(more_diff_texts, start=2):
+        diff_files.append(str(Path(scratch_name) / f"mutant-{number}.diff"))
+        Path(diff_files[-1]).write_text(text)
     worktrees_before = worktrees_of(repository)
     if before_run is not None:
         before_run(repository)
     completed = run_script(repository, control,
                            survivors.RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG,
-                           str(diff_file), *flags, extra_environment=extra_environment)
+                           *diff_files, *flags, extra_environment=extra_environment)
     return completed, repository, worktrees_before, head
 
 
@@ -431,15 +436,23 @@ def run_recorded_mutant_killed_check_cases():
                     "spec.loader.exec_module(thing)\n"
                     "sys.exit(0 if thing.double(3) == 6 else 1)\n")
     killing_files = {**HEAD_FILES, "scripts/thing-test.py": killing_test}
+    killed_line = f"\n{survivors.MUTANT_KILLED_LINE_PREFIX}: "
+    survived_line = f"\n{survivors.MUTANT_SURVIVED_LINE_PREFIX}: "
+    no_longer_exists_line = f"\n{survivors.MUTANT_NO_LONGER_EXISTS_LINE_PREFIX}: "
+    could_not_be_judged_line = f"\n{survivors.MUTANT_COULD_NOT_BE_JUDGED_LINE_PREFIX}: "
 
     with tempfile.TemporaryDirectory() as scratch_name:
         completed, repository, worktrees_before, head = run_recorded_mutant_killed_check(
             scratch_name, killing_files, SURVIVOR_DIFF)
         last = completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else ""
-        check("the recorded mutant killed check exits 0 and its last line starts MUTANT KILLED "
-              "when a suite at the head fails with the mutant applied",
-              completed.returncode == 0 and last.startswith(survivors.MUTANT_KILLED_LINE_PREFIX)
-              and head[:12] in last,
+        check("the recorded mutant killed check exits 0 with a MUTANT KILLED line naming the "
+              "diff file and the head, and a last line counting 1 killed, when a suite at the "
+              "head fails with the mutant applied",
+              completed.returncode == 0
+              and f"{killed_line}{Path(scratch_name) / 'mutant.diff'}: at head {head[:12]}"
+                  in "\n" + completed.stdout
+              and last == f"RECORDED MUTANTS at head {head[:12]}: 1 killed, 0 survived, "
+                          f"0 no longer exist, 0 could not be judged",
               f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
         check("the recorded mutant killed check removes its scratch worktree, and leaves the "
               "checkout's file unmutated",
@@ -465,80 +478,178 @@ def run_recorded_mutant_killed_check_cases():
                 SURVIVOR_DIFF,
                 extra_environment=({"PYTHONPYCACHEPREFIX": str(Path(scratch_name) / "bytecode")}
                                    if with_prefix else None))
-            last = completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else ""
             check("the recorded mutant killed check removes the scratch worktree's bytecode "
                   "caches before the run with the mutant, so a cache the run without it left "
                   "cannot hide the mutant" + prefix_note,
-                  completed.returncode == 0
-                  and last.startswith(survivors.MUTANT_KILLED_LINE_PREFIX),
+                  completed.returncode == 0 and killed_line in "\n" + completed.stdout,
                   f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
+    # double(2) is 4 under x + x and x * x alike, and 0 under x - x.
+    surviving_test_files = {**HEAD_FILES, "scripts/thing-test.py":
+                            killing_test.replace("double(3) == 6", "double(2) == 4")}
     with tempfile.TemporaryDirectory() as scratch_name:
-        # double(2) is 4 under x + x and x * x alike.
         completed, _, _, _ = run_recorded_mutant_killed_check(
-            scratch_name, {**HEAD_FILES, "scripts/thing-test.py":
-                           killing_test.replace("double(3) == 6", "double(2) == 4")},
-            SURVIVOR_DIFF)
-        check("the recorded mutant killed check exits 1 with a MUTANT SURVIVED line when every "
-              "suite passes with the mutant applied",
+            scratch_name, surviving_test_files, SURVIVOR_DIFF)
+        check("the recorded mutant killed check exits 1 with a MUTANT SURVIVED line, and says to "
+              "write a test, when every suite passes with the mutant applied",
+              completed.returncode == 1 and survived_line in "\n" + completed.stdout
+              and "Write or change a test that fails with each surviving mutant"
+                  in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    subtracting_diff = SURVIVOR_DIFF.replace("x * x", "x - x")
+    with tempfile.TemporaryDirectory() as scratch_name:
+        verdicts_file = Path(scratch_name) / "verdicts.json"
+        completed, repository, worktrees_before, head = run_recorded_mutant_killed_check(
+            scratch_name, surviving_test_files, SURVIVOR_DIFF,
+            "--recorded-mutant-killed-check-verdicts-json-file-to-write", str(verdicts_file),
+            more_diff_texts=[subtracting_diff])
+        first, second = (str(Path(scratch_name) / "mutant.diff"),
+                         str(Path(scratch_name) / "mutant-2.diff"))
+        verdict_lines = [line for line in completed.stdout.splitlines()
+                         if line.startswith("MUTANT ")]
+        written = json.loads(verdicts_file.read_text()) if verdicts_file.exists() else {}
+        check("two recorded mutants in one command: a line for each in the order given, one "
+              "survived and one killed, exit 1, both counted, the verdicts written to the JSON "
+              "file, the worktree removed and the checkout's file unmutated",
               completed.returncode == 1
-              and f"\n{survivors.MUTANT_SURVIVED_LINE_PREFIX}: " in "\n" + completed.stdout,
+              and [line.split(": ")[:2] for line in verdict_lines]
+                  == [[survivors.MUTANT_SURVIVED_LINE_PREFIX, first],
+                      [survivors.MUTANT_KILLED_LINE_PREFIX, second]]
+              and "1 killed, 1 survived, 0 no longer exist, 0 could not be judged" in completed.stdout
+              and written.get("head") == head
+              and {name: verdict["verdict"] for name, verdict
+                   in written.get("verdicts", {}).items()} == {first: "survived",
+                                                               second: "killed"}
+              and written["verdicts"][second]["why"].startswith(f"at head {head[:12]}")
+              and worktrees_of(repository) == worktrees_before
+              and (repository / "scripts/thing.py").read_text() == HEAD_FILES["scripts/thing.py"],
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr} "
+              f"json={written}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        verdicts_file = Path(scratch_name) / "verdicts.json"
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, killing_files, None,
+            "--recorded-mutant-killed-check-verdicts-json-file-to-write", str(verdicts_file),
+            more_diff_texts=[SURVIVOR_DIFF])
+        written = json.loads(verdicts_file.read_text()) if verdicts_file.exists() else {}
+        check("a diff file that cannot be read beside one that can: the readable mutant is "
+              "judged killed, the other could not be judged, exit 2, and both are in the JSON file",
+              completed.returncode == 2
+              and f"{could_not_be_judged_line}{Path(scratch_name) / 'mutant.diff'}: the diff file cannot "
+                  f"be read" in "\n" + completed.stdout
+              and killed_line in "\n" + completed.stdout
+              and [verdict["verdict"] for verdict in written.get("verdicts", {}).values()]
+                  == ["could not be judged", "killed"],
+              f"rc={completed.returncode} out={completed.stdout} json={written}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        verdicts_file = Path(scratch_name) / "not-a-directory" / "verdicts.json"
+        (Path(scratch_name) / "not-a-directory").write_text("")
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, killing_files, SURVIVOR_DIFF,
+            "--recorded-mutant-killed-check-verdicts-json-file-to-write", str(verdicts_file))
+        check("a verdicts JSON file that cannot be written exits 2, saying the lines above are "
+              "the whole result",
+              completed.returncode == 2 and killed_line in "\n" + completed.stdout
+              and "the verdicts were not written to" in completed.stderr,
               f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
-        completed, repository, worktrees_before, _ = run_recorded_mutant_killed_check(
+        completed, repository, worktrees_before, head = run_recorded_mutant_killed_check(
             scratch_name, {**HEAD_FILES, "scripts/thing-test.py": "import sys\nsys.exit(1)\n"},
             SURVIVOR_DIFF)
         check("the recorded mutant killed check exits 2 when the suites fail without the "
-              "mutant, and removes its worktree",
+              "mutant, naming the head, and removes its worktree",
               completed.returncode == 2
-              and "do not pass at head" in completed.stderr
-              and "without the mutant" in completed.stderr
+              and f"do not pass at head {head[:12]} without a mutant" in completed.stderr
+              and "without a mutant" in completed.stderr
               and worktrees_of(repository) == worktrees_before,
               f"rc={completed.returncode} err={completed.stderr}")
+
+    for case_name, thing_source in [
+        ("the line ends with the pragma", "def double(x):\n    return x + x  # pragma: no mutate\n"),
+        ("the line ends with the pragma, and the same line without it is elsewhere in the file",
+         "def double(x):\n    return x + x  # pragma: no mutate, x * x differs\n\n\n"
+         "def twice(x):\n    return x + x\n"),
+    ]:
+        with tempfile.TemporaryDirectory() as scratch_name:
+            completed, _, _, _ = run_recorded_mutant_killed_check(
+                scratch_name, {**killing_files, "scripts/thing.py": thing_source}, SURVIVOR_DIFF)
+            check(f"a recorded mutant whose line at the head ends with a `# pragma: no mutate` "
+                  f"comment no longer exists, exit 0: {case_name}",
+                  completed.returncode == 0
+                  and f"{no_longer_exists_line}{Path(scratch_name) / 'mutant.diff'}: the line it changes in "
+                      f"scripts/thing.py ends with a `# pragma: no mutate` comment"
+                      in "\n" + completed.stdout,
+                  f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    # scripts/gone.py is not at the head, but its sibling suite is, so its mutant gets as far as
+    # reading the file.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**killing_files, "scripts/gone-test.py": "import sys\nsys.exit(0)\n"},
+            SURVIVOR_DIFF.replace("thing.py", "gone.py"), more_diff_texts=[SURVIVOR_DIFF])
+        check("a recorded mutant whose file cannot be read at the head could not be judged, "
+              "saying why, and the next mutant is still judged",
+              completed.returncode == 2
+              and f"{could_not_be_judged_line}{Path(scratch_name) / 'mutant.diff'}: it does not "
+                  f"apply to scripts/gone.py at head" in "\n" + completed.stdout
+              and "the file cannot be read" in completed.stdout
+              and f"{killed_line}{Path(scratch_name) / 'mutant-2.diff'}: "
+                  in "\n" + completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**killing_files,
+                           "scripts/thing.py": "def double(x):\n    # doubled\n    return x + x\n"},
+            SURVIVOR_DIFF)
+        check("a recorded mutant whose context line a later change edited is applied where its "
+              "replaced line appears once, and judged",
+              completed.returncode == 0 and killed_line in "\n" + completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
         completed, repository, worktrees_before, _ = run_recorded_mutant_killed_check(
             scratch_name, {**killing_files,
                            "scripts/thing.py": "def double(x):\n    return 2 * x\n"},
             SURVIVOR_DIFF)
-        check("the recorded mutant killed check exits 2 when the mutant's diff does not apply "
-              "at the head, and removes its worktree",
-              completed.returncode == 2 and "does not apply to scripts/thing.py" in completed.stderr
+        check("the recorded mutant killed check exits 2 with a MUTANT COULD NOT BE JUDGED line when the "
+              "mutant's diff does not apply at the head, and removes its worktree",
+              completed.returncode == 2
+              and f"{could_not_be_judged_line}{Path(scratch_name) / 'mutant.diff'}: it does not apply to "
+                  f"scripts/thing.py" in "\n" + completed.stdout
               and worktrees_of(repository) == worktrees_before,
-              f"rc={completed.returncode} err={completed.stderr}")
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
     branch_changed_files = {**killing_files, "scripts/thing.py": "def double(x):\n    return 2 * x\n"}
-    for case_name, origin_main_files, wanted in [
-        ("the lines are gone from origin/main too, so it says to mark the survivor task "
-         "completed", {"scripts/thing.py": "def double(x):\n    return 2 * x\n"},
-         "so the mutant is gone from main and there is nothing to kill: mark the survivor task "
-         "that names"),
-        ("origin/main has no such file", {"OTHER": "x\n"},
-         "so the mutant is gone from main and there is nothing to kill"),
-        ("origin/main still has the lines, so it says the branch changed them",
-         {"scripts/thing.py": HEAD_FILES["scripts/thing.py"]},
-         "origin/main still has the lines the diff replaces in scripts/thing.py, so your "
-         "branch changed them.\nIf your branch changed them on purpose"),
+    for case_name, origin_main_files, wanted_line, wanted, wanted_exit in [
+        ("the lines are gone from origin/main too, so it no longer exists, exit 0",
+         {"scripts/thing.py": "def double(x):\n    return 2 * x\n"}, no_longer_exists_line,
+         "gone from origin/main too, so there is nothing to kill; the nightly mutation pass "
+         "drops it from its task", 0),
+        ("origin/main has no such file, so it no longer exists, exit 0", {"OTHER": "x\n"}, no_longer_exists_line,
+         "gone from origin/main too, so there is nothing to kill", 0),
+        ("origin/main still has the lines, so it says the branch changed them, exit 2",
+         {"scripts/thing.py": HEAD_FILES["scripts/thing.py"]}, could_not_be_judged_line,
+         "origin/main still has the lines it replaces, so your branch changed them.\n"
+         "If your branch changed them on purpose", 2),
+        ("origin/main changed only a context line beside the replaced line, so it still has the "
+         "replaced line and the branch changed it, exit 2",
+         {"scripts/thing.py": "def double(x):\n    # doubled\n    return x + x\n"},
+         could_not_be_judged_line, "so your branch changed them", 2),
     ]:
         with tempfile.TemporaryDirectory() as scratch_name:
             completed, _, _, _ = run_recorded_mutant_killed_check(
                 scratch_name, branch_changed_files, SURVIVOR_DIFF,
                 origin_main_files=origin_main_files)
             check(f"a recorded mutant that does not apply at the head: {case_name}",
-                  completed.returncode == 2 and wanted in completed.stderr,
-                  f"rc={completed.returncode} err={completed.stderr}")
-    both_cases = "If the line the diff changes is no longer at your head"
-    with tempfile.TemporaryDirectory() as scratch_name:
-        completed, _, _, _ = run_recorded_mutant_killed_check(
-            scratch_name, branch_changed_files, SURVIVOR_DIFF, origin_main_files={
-                "scripts/thing.py": "def double(x):\n    # doubled\n    return x + x\n"})
-        check("a recorded mutant that does not apply at the head, where origin/main changed "
-              "only a context line beside the replaced line: it does not say the mutant is "
-              "gone, and gives both cases",
-              completed.returncode == 2 and "gone from main" not in completed.stderr
-              and both_cases in completed.stderr,
-              f"rc={completed.returncode} err={completed.stderr}")
+                  completed.returncode == wanted_exit and wanted_line in "\n" + completed.stdout
+                  and wanted in completed.stdout,
+                  f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+    cannot_tell = "whether origin/main still has the lines it replaces cannot be told"
 
     def origin_main_file_unreadable(repository):
         blob = git(repository, "rev-parse", "refs/remotes/origin/main:scripts/thing.py").strip()
@@ -550,10 +661,10 @@ def run_recorded_mutant_killed_check_cases():
                 "scripts/thing.py": "def double(x):\n    return x + x\n# on main only\n"},
             before_run=origin_main_file_unreadable)
         check("a recorded mutant that does not apply at the head, where git cannot read "
-              "origin/main's file: it does not say the mutant is gone, and gives both cases",
-              completed.returncode == 2 and "gone from main" not in completed.stderr
-              and both_cases in completed.stderr,
-              f"rc={completed.returncode} err={completed.stderr}")
+              "origin/main's file: it could not be judged, and says why",
+              completed.returncode == 2 and no_longer_exists_line not in "\n" + completed.stdout
+              and cannot_tell in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout}")
 
     def origin_main_scripts_tree_unreadable(repository):
         tree = git(repository, "rev-parse", "refs/remotes/origin/main:scripts").strip()
@@ -565,41 +676,42 @@ def run_recorded_mutant_killed_check_cases():
                 "scripts/thing.py": "def double(x):\n    return x + x\n# on main only\n"},
             before_run=origin_main_scripts_tree_unreadable)
         check("a recorded mutant that does not apply at the head, where git cannot list "
-              "origin/main's tree: it does not say the mutant is gone, and gives both cases",
-              completed.returncode == 2 and "gone from main" not in completed.stderr
-              and both_cases in completed.stderr,
-              f"rc={completed.returncode} err={completed.stderr}")
+              "origin/main's tree: it could not be judged, and says why",
+              completed.returncode == 2 and no_longer_exists_line not in "\n" + completed.stdout
+              and cannot_tell in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
         completed, _, _, _ = run_recorded_mutant_killed_check(
             scratch_name, branch_changed_files, SURVIVOR_DIFF)
-        check("a recorded mutant that does not apply at the head, with no origin/main: it gives "
-              "both cases with their conditions",
-              completed.returncode == 2 and "If the line the diff changes is no longer at your "
-              "head" in completed.stderr and "Otherwise, make sure" in completed.stderr,
-              f"rc={completed.returncode} err={completed.stderr}")
+        check("a recorded mutant that does not apply at the head, with no origin/main: it could "
+              "not be judged, and says what to do",
+              completed.returncode == 2 and cannot_tell in completed.stdout
+              and "make sure your branch's head has scripts/thing.py as origin/main has it"
+                  in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
         completed, _, _, _ = run_recorded_mutant_killed_check(scratch_name, killing_files, None)
         check("the recorded mutant killed check exits 2 when the diff file cannot be read",
-              completed.returncode == 2 and "cannot be read" in completed.stderr,
-              f"rc={completed.returncode} err={completed.stderr}")
+              completed.returncode == 2 and "cannot be read" in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
         completed, _, _, _ = run_recorded_mutant_killed_check(
             scratch_name, killing_files, "--- mutation diff ---\n@@ -1 +1 @@\n-a\n+b\n")
         check("the recorded mutant killed check exits 2 when the diff names no file",
               completed.returncode == 2 and "names no file to mutate or no change to make"
-              in completed.stderr,
-              f"rc={completed.returncode} err={completed.stderr}")
+              in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
         completed, _, _, _ = run_recorded_mutant_killed_check(
             scratch_name, {"scripts/thing.py": HEAD_FILES["scripts/thing.py"]}, SURVIVOR_DIFF)
         check("the recorded mutant killed check exits 2 when the mutated file has no suite",
               completed.returncode == 2 and "no recorded suite reads scripts/thing.py"
-              in completed.stderr,
-              f"rc={completed.returncode} err={completed.stderr}")
+              in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout}")
 
     path, hunks = survivors.recorded_mutant_module_path_and_hunks(SURVIVOR_DIFF)
     check("a recorded mutant's diff names the file it changes, and its one hunk",
@@ -615,6 +727,11 @@ def run_recorded_mutant_killed_check_cases():
           apply_mutant("import os\n\n" + source, hunks)
           == "import os\n\ndef double(x):\n    return x * x\n",
           apply_mutant("import os\n\n" + source, hunks))
+    check("a recorded mutant whose context line changed applies where its replaced line appears "
+          "once",
+          apply_mutant("def double(y):\n    return x + x\n", hunks)
+          == "def double(y):\n    return x * x\n",
+          apply_mutant("def double(y):\n    return x + x\n", hunks))
     check("a recorded mutant whose lines appear twice away from its own line does not apply",
           apply_mutant("import os\n" + source + "\n" + source, hunks) is None)
     check("a recorded mutant whose lines are gone does not apply",
