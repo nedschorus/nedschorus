@@ -70,9 +70,6 @@ The handoff file the agent writes (simple `key: value` lines):
                         similar agents. Subagents that completed, failed, or
                         were stopped are not recorded at all (user-ruled
                         2026-08-29)
-  background-task-started-during-handoff-deferral-<n>: optional, one per
-                        background Bash task launched after the handoff-deferral
-                        began and still running when the handoff was written
   cold-read-full-run-command-refused-during-handoff-deferral-<n>: optional, one
                         per cold-read-full-run the deferral's hook refused and
                         saved for the successor
@@ -369,8 +366,6 @@ SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD = session_handoff_field_names.SESSION_HAND
 LEGACY_RESTART_COUNTER_FIELD = session_handoff_field_names.LEGACY_RESTART_COUNTER_FIELD
 ASK_USER_BEFORE_RESTART_FIELD = session_handoff_field_names.ASK_USER_BEFORE_RESTART_FIELD
 LEGACY_DONT_RESTART_FIELD = session_handoff_field_names.LEGACY_DONT_RESTART_FIELD
-BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
-    "background-task-started-during-handoff-deferral-")
 COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
     "cold-read-full-run-command-refused-during-handoff-deferral-")
 WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
@@ -560,12 +555,6 @@ ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE = (
 BACKGROUND_TASKS_STOPPED_AT_SESSION_HANDOFF_SUCCESSOR_RESTART_SENTENCE_TEMPLATE = (
     "The session you are replacing had {task_count} background task(s) still running when it "
     "ended: {joined_tasks}. Restart any you still need."
-)
-
-BACKGROUND_TASKS_STARTED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
-    "The session you are replacing started {task_count} background Bash task(s) during its "
-    "handoff-deferral that were still running when it ended, so they were stopped: "
-    "{joined_tasks}. Run again any whose result you still need."
 )
 
 COLD_READ_FULL_RUN_COMMANDS_REFUSED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
@@ -1162,11 +1151,6 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     if still_running_tasks:
         lines.append(BACKGROUND_TASKS_STOPPED_AT_SESSION_HANDOFF_SUCCESSOR_RESTART_SENTENCE_TEMPLATE.format(
             task_count=len(still_running_tasks), joined_tasks="; ".join(still_running_tasks)))
-    late_tasks = numbered_field_values_from(
-        handoff_fields, BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
-    if late_tasks:
-        lines.append(BACKGROUND_TASKS_STARTED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE.format(
-            task_count=len(late_tasks), joined_tasks="; ".join(late_tasks)))
     refused_commands = numbered_field_values_from(
         handoff_fields, COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
     if refused_commands:

@@ -3281,18 +3281,22 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
           supervisor.next_step_from(parsed) == "merge the queue\nand then rest",
           repr(supervisor.next_step_from(parsed)))
 
-    # The work the handoff-deferral did not wait for reaches the successor, in the writer's order.
+    # The refused commands reach the successor. The retired late-task fields are what a
+    # session-handoff written before their retirement carries; they must be read without failing.
     deferral_fields = {"written-at": recent, "next-step": "carry on"}
     for ordinal in (2, 1, 10):
         deferral_fields[f"background-task-started-during-handoff-deferral-{ordinal}"] = (
             f'blate{ordinal:04d} "job {ordinal}" command: "python3 job{ordinal}.py"')
     deferral_fields["cold-read-full-run-command-refused-during-handoff-deferral-1"] = (
         '"python3 nc-systems/cold-read/cold-read-grid.py --target a.md" in /work')
-    deferral_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), deferral_fields)
-    check("the successor is told the background tasks started during the deferral, in order",
-          "started 3 background Bash task(s) during its handoff-deferral" in deferral_prompt
-          and deferral_prompt.index("blate0001") < deferral_prompt.index("blate0002")
-          < deferral_prompt.index("blate0010"), deferral_prompt)
+    handoff_path.write_text("".join(f"{key}: {value}\n" for key, value in deferral_fields.items()),
+                            encoding="utf-8")
+    deferral_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"),
+                                                       supervisor.parse_handoff_file(handoff_path))
+    check("an old session-handoff's retired background-task-started-during-handoff-deferral fields "
+          "add nothing to the successor's prompt",
+          "blate" not in deferral_prompt and "background task(s)" not in deferral_prompt,
+          deferral_prompt)
     check("the successor is told the refused cold-read-full-run and where to run it",
           "a hook refused 1 cold-read-full-run(s)" in deferral_prompt
           and "cold-read-grid.py --target a.md\" in /work" in deferral_prompt, deferral_prompt)

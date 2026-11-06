@@ -18,8 +18,8 @@ ASK_USER_BEFORE_RESTART_FIELD = "ask-user-before-restart"
 LEGACY_DONT_RESTART_FIELD = "dont-restart"
 # Numbered by the writer, because the reader keeps only a key's first occurrence.
 SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
-# Numbered for the same reason. A reader must take only digits after it: the handoff-supervisor's
-# BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX starts with these words too.
+# Numbered for the same reason. A reader must take only digits after it: a session-handoff written
+# before the field was retired can carry background-task-started-during-handoff-deferral-<n>.
 BACKGROUND_TASK_FIELD_PREFIX = "background-task-"
 NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
 NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
