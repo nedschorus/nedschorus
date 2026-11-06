@@ -813,7 +813,7 @@ def start_attempt(command: list, report_path: pathlib.Path, attempt: int,
             process = subprocess.Popen(  # pylint: disable=consider-using-with
                 command, stdout=err, stderr=err, stdin=subprocess.DEVNULL,
                 start_new_session=True,
-                pass_fds=record_shipper.record_directory_being_written_lock_descriptors_for_child_writers(
+                pass_fds=record_names.record_directory_being_written_lock_pass_fds_for_child_writers(
                     report_path.parent),
             )
         except OSError as error:

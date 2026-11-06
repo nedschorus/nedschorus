@@ -235,8 +235,11 @@ def launch_judge_runs(
         for case_argument in case_arguments:
             command += ["--case", *case_argument]
         err = open(stderr_path, "w", encoding="utf-8")  # pylint: disable=consider-using-with
+        # Each judge cell holds the record's being-written lock too, so an interrupted runner whose
+        # judges keep writing leaves the record unshipped until they exit.
         process = subprocess.Popen(  # pylint: disable=consider-using-with
             command, stdout=err, stderr=err, stdin=subprocess.DEVNULL,
+            pass_fds=record_names.record_directory_being_written_lock_pass_fds_for_child_writers(record_dir),
         )
         err.close()
         running[run_number] = (process, report_path, stderr_path)

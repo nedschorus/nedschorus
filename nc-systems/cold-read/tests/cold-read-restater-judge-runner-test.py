@@ -234,6 +234,19 @@ if "dump_prompt" in step:
 if "report" in step:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(step["report"], encoding="utf-8")
+if "dump_record_directory_descriptor_count" in step:
+    # How many of the stub's descriptors are open on the record directory: one when the runner's
+    # being-written lock reached it through the judge cell, none when either closed it.
+    record_directory = os.stat(report_path.parent)
+    count = 0
+    for name in os.listdir("/dev/fd"):
+        try:
+            opened = os.fstat(int(name))
+        except OSError:
+            continue
+        count += (opened.st_dev, opened.st_ino) == (record_directory.st_dev, record_directory.st_ino)
+    pathlib.Path(step["dump_record_directory_descriptor_count"] + run_token).write_text(
+        str(count), encoding="utf-8")
 if "stdout" in step:
     sys.stdout.write(step["stdout"])
 if step.get("kill_cell"):
@@ -372,6 +385,27 @@ with tempfile.TemporaryDirectory() as scratch:
           and "the sentence about queues" in combined, repr(combined))
     check("the composite's rule is stated beside the numbers",
           "composite = 0.8 × caught − 0.2 × stupid" in combined, repr(combined[:4000]))
+
+    # --- The runner's being-written lock reaches every judge -----------------
+    # Each judge cell, and the reviewer program it runs, holds the record's lock too, so an
+    # interrupted runner whose judges keep writing leaves the record unshipped until they exit.
+    repository = build_scratch_repository(scratch)
+    descriptor_count_prefix = str(scratch / "judge-record-directory-descriptor-count-")
+    result = run_runner(
+        repository, stubs,
+        {"run1": {"*": {"report": RUN_REPORT_BASE,
+                        "dump_record_directory_descriptor_count": descriptor_count_prefix}},
+         "run2": {"*": {"report": RUN_REPORT_AGREEING,
+                        "dump_record_directory_descriptor_count": descriptor_count_prefix}}},
+    )
+    judge_descriptor_counts = [
+        Path(descriptor_count_prefix + run_token).read_text(encoding="utf-8")
+        if Path(descriptor_count_prefix + run_token).exists() else "not written"
+        for run_token in ("run1", "run2")]
+    check("the reviewer program of each judge run holds the runner's being-written lock",
+          judge_descriptor_counts == ["1", "1"],
+          f"descriptors on the record directory: {judge_descriptor_counts}; exit {result.returncode}; "
+          f"stderr={result.stderr[-2000:]!r}")
 
     # --- Two runs that disagree: both shown, and the difference named -----
     repository = build_scratch_repository(scratch)
