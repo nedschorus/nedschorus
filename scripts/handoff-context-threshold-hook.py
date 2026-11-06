@@ -48,12 +48,12 @@ _deferred_marker_file_specification.loader.exec_module(handoff_deferred_marker_a
 HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
 
 # Compaction clears this shared marker because the session id survives.
-FIRED_MARKER_SUFFIX = "-handoff-asked"
+HANDOFF_ASKED_MARKER_SUFFIX = "-handoff-asked"
 
 
-def fired_marker_path(session_id: str) -> Path:
+def handoff_asked_marker_path(session_id: str) -> Path:
     # Read HANDOFF_DIRECTORY at call time so tests can redirect marker writes.
-    return HANDOFF_DIRECTORY / f"{session_id}{FIRED_MARKER_SUFFIX}"
+    return HANDOFF_DIRECTORY / f"{session_id}{HANDOFF_ASKED_MARKER_SUFFIX}"
 
 
 def deferred_marker_path(session_id: str) -> Path:
@@ -658,7 +658,7 @@ def main(argv=None) -> int:
     if used < arguments.threshold_used_percentage and not deferred_marker_path(session_id).exists():
         return 0
 
-    fired_marker = fired_marker_path(session_id)
+    fired_marker = handoff_asked_marker_path(session_id)
     if fired_marker.exists():
         return 0
 
