@@ -1,0 +1,39 @@
+# Rules of the terminology answer that the schema cannot enforce
+
+Claude's structured outputs enforce `type`, `enum`, `required`, `additionalProperties: false` and `minItems` of 0 or 1; the Structured Outputs page (https://platform.claude.com/docs/en/build-with-claude/structured-outputs.md, section "JSON Schema limitations", read 2026-11-05) lists as not supported numerical constraints such as `minimum`, string constraints `minLength` and `maxLength`, array constraints beyond `minItems` of 0 or 1, and `uniqueItems` is not on its supported list. A raw schema that carries an unsupported keyword gets a 400, so `terminology-answer-schema.json` holds none, and has no `minItems: 1` either: a flag for a term defined twice may fail no test, and then carries no fix, so neither `tests_failed` nor `fixes` may require an entry. Every property is required, with `""` or `[]` for none, because optional properties move to the end of the output and each adds to the grammar the API compiles. Conditional rules, which JSON Schema writes as `if`/`then`, are not on the supported list either.
+
+Before parsing, the runner confirms that the answer is there: `claude -p --output-format json` leaves out `structured_output` after a refusal or a `max_tokens` stop, so the runner reads `structured_output` only when it is present and `is_error` is false, and otherwise treats the answer as failed, naming `subtype` and `stop_reason`. The runner does not require `stop_reason` to be `end_turn`: Claude Code returns the answer through a tool call, and a valid answer on 2026-11-05 came with `stop_reason` `tool_use`. The runner compares enum values exactly, with no change of case. On 2026-11-05 a `claude -p --model haiku --json-schema` run with this schema, prompted to write `SAME` and `B`, first called Claude Code's `StructuredOutput` tool with `"meaning_compared":"SAME"` and `"fix":"B"`; Claude Code rejected that call as an error, and the model called the tool again with `same` and `b`, which became `structured_output`. Claude Code validates the answer against the schema and has the model retry, so a wrongly capitalised enum value does not reach the runner.
+
+The runner then validates the whole parsed object against `terminology-answer-schema.json` with a JSON Schema validator, because Claude Code's `--json-schema` and Codex's `--output-schema` each enforce the schema by their own rules. Then it validates each rule below, and treats an answer that breaks one as it treats an answer that fails the schema.
+
+| Rule the prompt or a schema description states | Validation the runner runs after parsing |
+|---|---|
+| `meaning_compared` is filled only for test (1) | For each flag: `meaning_compared` is not `""` exactly when `tests_failed` contains 1. |
+| A term failing test (3) gets one fix per meaning, each naming its uses; any other term gets one fix | For each flag: when `tests_failed` contains 3, `fixes` has at least two entries and each entry's `uses` is non-empty; when `tests_failed` is empty, `fixes` is empty; otherwise `fixes` has exactly one entry and its `uses` is empty. |
+| Every use of a term failing test (3) takes exactly one fix | For each flag whose `tests_failed` contains 3: each occurrence of `term` in the frozen copy lies inside an entry of exactly one fix's `uses`; an occurrence inside no fix's `uses`, or inside two fixes' `uses`, fails. |
+| A term failing test (1) or (2) clashes with a named term | For each flag: when `tests_failed` contains 1 or 2, `clashes_with` is not empty; when `clashes_with` is empty, `clashes_with_location` is `""`. |
+| The reviewer gives `standard_vocabulary` only for a term no list holds; the runner fills in `glossary` or `document` | For each flag whose `clashes_with` is not empty: when the project glossary or a system glossary lists `clashes_with`, the runner sets `clashes_with_location` to `glossary`; otherwise, when `clashes_with` occurs in the frozen copy, the runner sets it to `document`; otherwise `clashes_with_location` is `standard_vocabulary`. |
+| A flag fails a test or quotes a second definition | For each flag: `tests_failed` is not empty, or `second_definition` is not empty. |
+| A term defined twice is a glossary term | For each flag whose `second_definition` is not empty: `term` is a term the project glossary or a system glossary lists. When such a flag's `tests_failed` is also empty, its `fixes` is empty, and the runner adds the fix. |
+| Strings carry content (`minLength` is not supported) | `document_kind`, and each flag's `term`, `passage`, `restatement` and each fix's `words`, and each `project_term` and `definition`, are non-empty after stripping whitespace; so is every entry of `key_terms`, `terms_kept` and `uses`. |
+| `document_kind` is one line | `document_kind` contains no line break. |
+| A test number appears once per flag (`uniqueItems` is not supported) | For each flag: `tests_failed` has no repeated number. |
+| Every proposed project-term comes from a fix (d), and every fix (d) is proposed | The set of `words` of fixes whose `fix` is `d` equals the set of `proposed_definitions[].project_term`. |
+| A term is either flagged or kept | No `flags[].term` appears in `terms_kept`. |
+| Key-terms are the document's words | Each entry of `key_terms` occurs in the frozen copy. The runner looks up each entry in the project glossary and the system glossaries, and reports each that none lists as a key-term missing from the glossary, a candidate for the user; no flag is needed for it. Of test (5), a glossary term the document writes differently, the model keeps only misspellings and synonyms; the runner finds a difference of case, hyphen or plural. |
+| A restatement avoids the term and six words | For each flag: `restatement` contains neither `term` nor any of the words kind, type, category, sort, class or form, as whole words in any case. |
+| Strings avoid flagged terms outside quotation marks | With the spans inside quotation marks removed, none of `document_kind`, each flag's `restatement`, each `question` fix's `words` and each `definition` contains any `flags[].term`. The fields that name or quote terms, such as `term`, `passage`, `uses` and `second_definition`, are exempt. |
+| A fix (a) names a glossary term; a fix (d) proposes a new hyphenated one | Each fix (a)'s `words` is a term the project glossary or a system glossary lists; each fix (d)'s `words` contains a hyphen and is listed in no glossary. |
+| `passage` uses the term | For each flag: `passage` contains `term`. |
+| `passage`, `uses` and `second_definition` are quotations | Each `passage`, each entry of each `uses`, and each non-empty `second_definition` is found word for word in the frozen copy of the document under review. |
+
+## What the runner adds after validation
+
+The runner, not the model, does each of these lookups, because none needs judgement:
+
+- It adds `glossary_entry` to each flag with a non-empty `second_definition`: the glossary's entry for `term`, copied word for word. The reviewer's schema has no `glossary_entry`, because a quotation the runner can copy exactly is one the model could only misquote.
+- It lists the key-terms no glossary has.
+- It records where in the frozen copy each flag's `term` first occurs, and sorts the flags in that order. The model's `passage` stays, because a flag is often about one particular use of a term, not its first.
+- It fills in `clashes_with_location` as `glossary` or `document`, as the table says.
+- To each flag with a non-empty `second_definition` and an empty `tests_failed`, it adds the one fix `a`, whose `words` is `term` as the glossary writes it and whose `uses` is empty.
+- It finds each glossary term that the frozen copy writes with a different case, hyphen or plural, such as "agent seat" for agent-seat, and reports it as failing test (5), with fix `a`, the term as the glossary writes it.
