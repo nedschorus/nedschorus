@@ -498,6 +498,15 @@ def print_brief(number, reviewer_login):
         f"6. Run the affected nc-test-suites: {PRE_PUSH_TEST_COMMAND}",
         "   If a suite fails because of this round's change, fix it in the same commit; if it "
         "fails for another cause, tell merge-lane-2 with SendMessage before pushing.",
+        "   If a finding is a test that main added after the branch was cut and that fails "
+        "with this branch, the fix is this round's one commit. Test that commit on a merge "
+        "with main made only on this machine and never pushed: git worktree add --detach "
+        "<temporary folder> HEAD, then in that folder git merge --no-edit origin/main and the "
+        "test command above, then git worktree remove --force <temporary folder>. If one commit "
+        "cannot fix it, the pull request is replaced: cut a new nc-topic-branch from current "
+        "origin/main, carry this branch's work and the fix onto it, test it, open a new pull "
+        "request whose description has the line #replaces followed by this pull request's URL, "
+        "and close this one with a comment naming the new one. This round ends with that.",
         f"7. Run the check: {check_command}",
         "   If it refuses, change the "
         "answers file or the unpushed commit as it says (git commit --amend is allowed before the "

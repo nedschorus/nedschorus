@@ -243,6 +243,15 @@ def brief_cases(root, repository, base, frozen_head):
           "If it reports VERDICT: CONFLICT, do what its report says." in out
           and "merge origin/main as its report says" not in out and "merge nothing" not in out
           and "had you merge origin/main" not in out and "--after-conflict-merge" not in out, out)
+    check("brief: a test main added later that fails is fixed by the round's one commit, tested "
+          "on a local merge with main that is never pushed",
+          "If a finding is a test that main added after the branch was cut and that fails "
+          "with this branch, the fix is this round's one commit." in out
+          and "git worktree add --detach <temporary folder> HEAD" in out
+          and "git merge --no-edit origin/main" in out
+          and "never pushed" in out
+          and "If one commit cannot fix it, the pull request is replaced" in out
+          and "#replaces" in out, out)
     check("brief: says what to do when a suite fails and when the push itself fails",
           "fix it in the same commit; if it fails for another cause, tell merge-lane-2 with "
           "SendMessage before pushing" in out
