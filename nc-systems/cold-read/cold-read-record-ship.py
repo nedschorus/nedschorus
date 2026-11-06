@@ -457,14 +457,6 @@ def record_directory_being_written_lock_release(record_dir: pathlib.Path) -> Non
         os.close(descriptor)
 
 
-def record_directory_being_written_lock_descriptors_for_child_writers(record_dir: pathlib.Path) -> tuple:
-    """The pass_fds for subprocess.Popen of a child that writes into record_dir: the child then holds the
-    being-written lock too, so the lock stays held until this process and every such child have exited.
-    Empty when this process holds no lock on record_dir."""
-    descriptor = _RECORD_DIRECTORY_BEING_WRITTEN_LOCK_DESCRIPTORS.get(pathlib.Path(record_dir).resolve())
-    return () if descriptor is None else (descriptor,)
-
-
 def record_directory_being_written_lock_is_held_by_any_process(record_dir: pathlib.Path) -> bool:
     """True while any process holds record_dir's being-written lock, this one included."""
     descriptor = os.open(record_dir, os.O_RDONLY)

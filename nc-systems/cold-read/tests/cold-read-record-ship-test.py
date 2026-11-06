@@ -852,7 +852,7 @@ record = pathlib.Path(sys.argv[2])
 shipper.record_directory_being_written_lock_take(record)
 subprocess.Popen([sys.executable, "-c", "import sys; print('cell', flush=True); sys.stdin.read()"],
                  start_new_session=True,
-                 pass_fds=shipper.record_directory_being_written_lock_descriptors_for_child_writers(record))
+                 pass_fds=shipper.record_names.record_directory_being_written_lock_pass_fds_for_child_writers(record))
 """, str(scratch_ship), str(orphaned)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     try:
