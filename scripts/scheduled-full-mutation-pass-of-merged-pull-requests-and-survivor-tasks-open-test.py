@@ -534,6 +534,51 @@ def run_cases():
               and fixture.state_json()["tasks_opened"] == {},
               (completed.returncode, completed.stderr, fixture.state_json()))
 
+    # A mutant whose task file is gone, as after a fold of its task into another and the
+    # handoff prune of the completed task, follows the one open task that names its diff file;
+    # with two such tasks it is reported lost.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        merge = fixture.commit("scripts/thing.py",
+                               "def double(x):\n    return x + x\nVALUE = 1\n", author="alpha")
+        completed = fixture.run({merge: {"json": verdict(
+            survived=[survivor(), survivor(1, "core/ReplaceBinaryOperator_Add_Sub"),
+                      survivor(3, "core/ReplaceBinaryOperator_Add_Div")])}})
+        keys = {given["task_id"]: key
+                for key, given in fixture.state_json()["tasks_opened"].items()}
+        folded = json.loads((alpha_list / "2.json").read_text())
+        folded["description"] += f"\n{keys[1]}.diff"
+        (alpha_list / "2.json").write_text(json.dumps(folded))
+        (alpha_list / "1.json").unlink()
+        completed = fixture.run()
+        record = fixture.records()[-1].read_text()
+        check("a mutant whose task file is gone moves to the one open task naming its diff "
+              "file, is not reported lost, and the run exits 0",
+              completed.returncode == 0 and "TASK LOST" not in record
+              and f"TASK MOVED: the surviving mutant "
+                  f"{job.mutant_diff_file_path(fixture.log_store, keys[1])} is now held by task "
+                  f"#2 on alpha's task list, not task #1" in record
+              and fixture.state_json()["tasks_opened"].get(keys[1])
+              == {"agent_seat": "alpha", "task_id": 2},
+              (completed.returncode, record, fixture.state_json()))
+        for task_id in (2, 3):
+            other = json.loads((alpha_list / f"{task_id}.json").read_text())
+            other["description"] = f"{keys[1]}.diff {keys[task_id]}.diff"
+            (alpha_list / f"{task_id}.json").write_text(json.dumps(other))
+        (alpha_list / "2.json").unlink()
+        (alpha_list / "4.json").write_text(json.dumps({"description": f"{keys[1]}.diff"}))
+        completed = fixture.run()
+        record = fixture.records()[-1].read_text()
+        check("a mutant whose task file is gone and whose diff file two open tasks name is "
+              "reported lost, and the run exits 7",
+              completed.returncode == job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR
+              and "TASK LOST: task #2 on alpha's task list" in record
+              and "TASK MOVED" not in record
+              and keys[1] not in fixture.state_json()["tasks_opened"],
+              (completed.returncode, record, fixture.state_json()))
+
     # A task file holding JSON that is not an object is a task that no longer holds its mutant.
     with tempfile.TemporaryDirectory() as scratch:
         fixture = Fixture(scratch)
