@@ -40,12 +40,13 @@ A pull request whose description has a #replaces line, read by REPLACES_READER_F
 the pull requests it replaces, through replacements of replacements. The round's number adds each
 replaced pull request's round count, counted as above. The blocking findings and nits of a replaced
 pull request's latest round are carried, after this pull request's own and marked with that round's
-review, only when the round was never answered: the replaced pull request's head is still that
-round's frozen-head and no round record names it. A round that was answered has its fix commit
-carried onto the replacing branch, and merge-lane-2's review of the replacement, which the brief
-still needs, grades it. A #replaces line the reader cannot follow is refused. Not handled: a round
-record posted on the replacing pull request names only its own reviews, so a carried finding declined
-without a commit is carried again into the replacement's next round.
+review, only into this pull request's first round, and only when the replaced round was never answered:
+the replaced pull request's head is still that round's frozen-head and no round record names it. A
+round that was answered has its fix commit carried onto the replacing branch, and merge-lane-2's review
+of the replacement, which the brief still needs, grades it. Once this pull request's first round is
+answered, by a fix commit or a round record, that answer covers the carried findings, so its later
+rounds carry none. A carried finding or nit with the same path, line and body as one of this pull
+request's own counts once. A #replaces line the reader cannot follow is refused.
 
 Without --check, run in the author's checkout: refuse when the pull request's head has moved past
 the frozen-head, else print the brief: the frozen-head, ADVISOR_FIX_ROUND_INSTRUCTION when the
@@ -495,7 +496,7 @@ def finding_place(comment):
 
 def round_facts(number, reviewer_login):
     url, head, branch, description = pull_request(number)
-    anchor, reviews, recorded, fix_round_number = round_reviews(number, reviewer_login)
+    anchor, reviews, recorded, own_round_number = round_reviews(number, reviewer_login)
     frozen_head = anchor.get("commit_id")
     if not frozen_head:
         raise StepFailed(f"merge-lane-2's review {anchor.get('html_url')} carries no commit_id")
@@ -503,11 +504,14 @@ def round_facts(number, reviewer_login):
     findings = blocking_findings(number, anchor, reviews, reviewer_login)
     nits = nit_findings_of_merge_lane_2_reviews_in_round(number, reviews, reviewer_login)
     replaced = replaced_pull_requests(number, url, description)
-    fix_round_number += sum(changes_requested_round_count(replaced_number, reviewer_login)
-                            for replaced_number, _head in replaced)
-    carried_blocking, carried_nits = unanswered_round_findings_of_replaced_pull_requests(replaced, reviewer_login)
-    findings += carried_blocking
-    nits += carried_nits
+    fix_round_number = own_round_number + sum(changes_requested_round_count(replaced_number, reviewer_login)
+                                              for replaced_number, _head in replaced)
+    # The answer to this pull request's first round, a fix commit or a round record, answers the carried
+    # findings too, so a later round carries none.
+    if own_round_number == 1:
+        carried_blocking, carried_nits = unanswered_round_findings_of_replaced_pull_requests(replaced, reviewer_login)
+        findings = without_reposts(findings + carried_blocking)
+        nits = without_reposts(nits + carried_nits)
     return (url, head, branch, review_links(latest_first(anchor, reviews)), anchor.get("id"), frozen_head,
             findings, nits, fix_round_number,
             None if recorded else [review.get("id") for review in reviews])

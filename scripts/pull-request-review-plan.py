@@ -17,7 +17,7 @@ commits need, and the merge-lane, not this program, runs again on the new head
 each check whose result made the earlier round request changes. The round
 number is one more than the number of distinct heads reviewed before the
 current head, so a review already posted on the current head does not start
-another round, plus, for each pull request this one replaces, by its
+another round. To it is added, for each pull request this one replaces, by its
 description's #replaces lines followed through replacements of replacements as
 scripts/pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py
 reads them, the number of distinct heads reviewed on that pull request. A
@@ -94,7 +94,7 @@ no-reviewer-tier because prose outside code is outside the review scope.
 
 Reads the pull request, reviews, inline comments and live base tip through
 four read-only gh calls, and each replaced pull request and its reviews through
-two more, commits, refs and diffs from the local repository,
+two more. Reads commits, refs and diffs from the local repository,
 and, under rule 4, the claim-check reports.
 Never fetches, pushes or writes refs. git merge-tree --write-tree may write
 tree objects. Writes no file except the cold-read-fast-read target files and
