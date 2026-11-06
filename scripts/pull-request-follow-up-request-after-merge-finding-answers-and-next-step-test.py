@@ -1339,15 +1339,21 @@ def test_waiting_for_user_ruling():
 PRINT_BLOCK = "print-follow-up-request-block-from-merge-lane-2-reviews"
 
 
-def print_block(reviews, comments, gh_failure=None, read_back=None):
+def print_block(reviews, comments, gh_failure=None, read_back=None, description="", replaced=None):
     """Run PRINT_BLOCK in process, gh answering with reviews and comments as one page each, or raising
-    gh_failure; read_back replaces the block parser. Return (exit code, stdout, stderr)."""
+    gh_failure; read_back replaces the block parser. `replaced` maps a replaced pull request's number to its
+    (description, reviews, comments). Return (exit code, stdout, stderr)."""
+    pull_requests = {NUMBER: (description, reviews, comments), **(replaced or {})}
+
     def fake_gh(arguments, timeout_seconds=None):
         if arguments[:2] == ["pr", "view"]:
-            return TITLE + "\n"
+            return (pull_requests[int(arguments[2])][0] if "body" in arguments else TITLE) + "\n"
         if gh_failure:
             raise gh_failure
-        page = reviews if any(argument.endswith("/reviews?per_page=100") for argument in arguments) else comments
+        _description, pull_request_reviews, pull_request_comments = pull_requests[
+            int(next(argument for argument in arguments if "/pulls/" in argument).split("/pulls/")[1].split("/")[0])]
+        page = (pull_request_reviews if any(argument.endswith("/reviews?per_page=100") for argument in arguments)
+                else pull_request_comments)
         return page if isinstance(page, str) else json.dumps([page])
     saved_gh, saved_parser = program.gh, program.parse_follow_up_request_blocks_from_message_text
     program.gh = fake_gh
@@ -1426,7 +1432,33 @@ def test_print_block():
           code == 2 and out == "" and "it reads back as 'unreadable'" in err, err)
 
 
-for test in (test_help, test_block_parsing, test_print_block, test_brief_text, test_no_saved_block, test_start,
+def test_print_block_with_replaced_pull_requests():
+    link = "https://github.com/nedschorus/nedschorus/pull/"
+    replaced = {1900: (f"#replaces {link}1800", [merge_lane_review(5, state="CHANGES_REQUESTED")],
+                       [merge_lane_comment(50, 5, "**Blocks** Fix it."),
+                        merge_lane_comment(51, 5, "**fix-next** Old finding.", line=7),
+                        merge_lane_comment(52, 5, "**fix-next** Rename it.")]),
+                1800: ("", [merge_lane_review(4, state="COMMENTED")],
+                       [merge_lane_comment(40, 4, "**file-for-later** Oldest finding.", line=2)])}
+    code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "**fix-next** Rename it.")],
+                                 description=f"Text.\n#replaces {link}1900\n", replaced=replaced)
+    check(f"{PRINT_BLOCK} puts the replaced pull requests' findings first, oldest first, leaves out their blocking "
+          "findings, and prints a restated finding once",
+          code == 0 and err == "" and out == (f"#follow_up_request pull request {NUMBER}\n"
+                                               "1. file-for-later: `scripts/thing.py:2`: Oldest finding.\n"
+                                               "2. fix-next: `scripts/thing.py:7`: Old finding.\n"
+                                               "3. fix-next: `scripts/thing.py:3`: Rename it.\n"), out + err)
+    replaced[1800] = ("", [merge_lane_review(4, state="COMMENTED")], [merge_lane_comment(40, 4, "Unmarked.")])
+    code, out, err = print_block([merge_lane_review(1)], [], description=f"#replaces {link}1900", replaced=replaced)
+    check(f"{PRINT_BLOCK} refuses an unmarked comment of a replaced pull request, naming that pull request",
+          code == 1 and out == "" and "comment on scripts/thing.py:3 of pull request 1800 does not open" in err, err)
+    code, out, err = print_block([merge_lane_review(1)], [], description="#replaces the old one")
+    check(f"{PRINT_BLOCK} refuses a #replaces line with no link, printing no block",
+          code == 1 and out == "" and "has the line `#replaces the old one`" in err
+          and err.rstrip().endswith("No #follow_up_request block was printed."), err)
+
+
+for test in (test_help, test_block_parsing, test_print_block, test_print_block_with_replaced_pull_requests, test_brief_text, test_no_saved_block, test_start,
              test_open_refusals, test_open, test_open_pushes_the_checked_out_recorded_branch_not_the_last,
              test_open_failures, test_open_passes_on_what_a_push_that_succeeds_prints,
              test_open_gh_pr_create_second_try_and_gh_pr_list,
