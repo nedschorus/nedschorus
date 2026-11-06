@@ -194,16 +194,6 @@
         ]
       },
       {
-        "matcher": "Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/claude-code-agent-tool-subagent-scratch-folder-make-and-prompt-write-scratch-only-here-line-add-hook.py",
-            "timeout": 30
-          }
-        ]
-      },
-      {
         "matcher": "Artifact",
         "hooks": [
           {
@@ -215,16 +205,6 @@
       }
     ],
     "PostToolUse": [
-      {
-        "matcher": "Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/claude-code-agent-tool-subagent-scratch-folder-path-to-launching-agent-hook.py",
-            "timeout": 30
-          }
-        ]
-      },
       {
         "matcher": "Edit|Write",
         "hooks": [
