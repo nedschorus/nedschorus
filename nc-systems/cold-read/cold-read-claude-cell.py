@@ -39,7 +39,6 @@ it up with no change here.
 """
 
 import importlib.util
-import json
 import pathlib
 import re
 import sys
@@ -50,9 +49,9 @@ _common_spec = importlib.util.spec_from_file_location(
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
 _command_line_prefix_spec = importlib.util.spec_from_file_location(
-    "claude_code_headless_print_mode_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+    "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
     pathlib.Path(__file__).resolve().parent.parent / "general-tools"
-    / "claude-code-headless-print-mode-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+    / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
 _command_line_prefix_spec.loader.exec_module(command_line_prefix)
 
@@ -88,8 +87,7 @@ CREDENTIAL_READ_DENY_RULES = (
     + [f"Read(//**/{pattern})" for pattern in common.CREDENTIAL_FILE_NAME_PATTERNS]
     + [f"Read(/{path})" for path in common.reviewer_program_login_files()]
 )
-SETTINGS = json.dumps({"disableAllHooks": True,
-                       "permissions": {"deny": CREDENTIAL_READ_DENY_RULES}})
+SETTINGS = {"disableAllHooks": True, "permissions": {"deny": CREDENTIAL_READ_DENY_RULES}}
 
 
 def invocation_builder(effort: str):
@@ -98,13 +96,13 @@ def invocation_builder(effort: str):
     def build_invocation(model: str, prompt: str):
         # dontAsk: a tool call ALLOWED_TOOLS does not allow is refused, with no one to ask.
         command = [
-            *command_line_prefix.claude_code_headless_print_mode_command_line_prefix_build("dontAsk"),
+            *command_line_prefix.claude_code_headless_run_command_line_prefix_build(
+                "dontAsk", own_settings=SETTINGS),
             "--model", model,
             "--effort", effort,
             "--output-format", "text",
             "--allowedTools", ALLOWED_TOOLS,
             "--disallowedTools", DISALLOWED_TOOLS,
-            "--settings", SETTINGS,
         ]
         return command, prompt
     return build_invocation

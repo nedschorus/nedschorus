@@ -500,7 +500,7 @@ def print_brief(number, reviewer_login):
         "   If a suite fails because of this round's change, fix it in the same commit; if it "
         "fails for another cause, tell merge-lane-2 with SendMessage before pushing.",
         f"7. Run the check: {check_command}",
-        "   adding --after-conflict-merge if step 1's report had you merge origin/main. If it refuses, change the "
+        "   If it refuses, change the "
         "answers file or the unpushed commit as it says (git commit --amend is allowed before the "
         "push) and run the check again.",
         f"8. When it passes with a commit not yet pushed, push once, with: git push origin HEAD:{shlex.quote(branch)}",

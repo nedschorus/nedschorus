@@ -446,13 +446,14 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("and told its next topic starts from origin/main",
           "git checkout -b <name> origin/main" in pushed_warning, pushed_warning)
     # A conflict with main is the one case a commit on top cannot clear; the
-    # advice sends it to the hand-merge that the VERDICT: CONFLICT report of
-    # scripts/branch-conflict-check.py describes. The whole advice is pinned.
-    check("the pushed advice is word for word, the hand-merge for a conflict included",
+    # advice sends it to scripts/branch-conflict-check.py's report. The whole
+    # advice is pinned.
+    check("the pushed advice is word for word, scripts/branch-conflict-check.py's report "
+          "for a conflict included",
           "This branch is pushed, so its review may be running: do not rebase or amend "
           "it. A fix for this topic is a new commit on top. If it conflicts with main, "
-          "clear the conflict with the hand-merge that scripts/branch-conflict-check.py "
-          "describes. Your next topic starts with `git checkout -b <name> origin/main`."
+          "do what scripts/branch-conflict-check.py reports. Your next topic starts with "
+          "`git checkout -b <name> origin/main`."
           in pushed_warning, pushed_warning)
     check("the pushed warning is also one line",
           pushed_warning != "" and "\n" not in pushed_warning, repr(pushed_warning))
@@ -480,8 +481,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "This branch's commits are already on GitHub under another branch name, so the "
           "branch is treated as pushed and is not rebased: a pushed head may be under "
           "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
-          "fix is a new commit on top. If it conflicts with main, clear the conflict with "
-          "the hand-merge that scripts/branch-conflict-check.py describes."
+          "fix is a new commit on top. If it conflicts with main, do what "
+          "scripts/branch-conflict-check.py reports."
           in history_warning, history_warning)
     check("the pushed-history warning is one line", history_warning != ""
           and "\n" not in history_warning, repr(history_warning))

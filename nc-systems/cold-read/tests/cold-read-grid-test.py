@@ -267,6 +267,10 @@ def reviews_saved_lines(result):
 # whose report name contains COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT,
 # which does not wait. One fast cell that edits the target while six slow
 # ones read is how a case moves the target mid-run.
+# COLD_READ_GRID_TEST_STUB_SHIP_RECORD_FIRST_LINE_FILE, when set, is a file outside
+# the scratch repository: the fast cell runs the real shipper on its record
+# before writing its report, as the pre-remove hook does when an agent-seat
+# removes a worktree mid-run, and saves the shipper's stdout there.
 # COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS, when set, is how long the
 # stub hangs after writing its report: a reviewer that wrote and never exited.
 # The fast cell does not hang either, so it can still edit the target.
@@ -348,6 +352,13 @@ sleep_seconds = float(os.environ.get("COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS") o
 fast_fragment = os.environ.get("COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT")
 if sleep_seconds and not (fast_fragment and fast_fragment in given.name):
     time.sleep(sleep_seconds)
+ship_line_file = os.environ.get("COLD_READ_GRID_TEST_STUB_SHIP_RECORD_FIRST_LINE_FILE")
+if ship_line_file and fast_fragment and fast_fragment in given.name:
+    import subprocess
+    shipped = subprocess.run(
+        [sys.executable, str(given.parent.parent.parent / "nc-systems" / "cold-read" / "cold-read-record-ship.py"),
+         str(given.parent)], capture_output=True, text=True, check=False)
+    pathlib.Path(ship_line_file).write_text(shipped.stdout, encoding="utf-8")
 near_miss_character = os.environ.get("COLD_READ_GRID_TEST_STUB_NEAR_MISS_CHARACTER")
 if near_miss_character:
     given = (given.parent.parent / (given.parent.name[:-1] + near_miss_character)
@@ -1571,6 +1582,25 @@ with tempfile.TemporaryDirectory() as scratch:
             grid_module.cell_common.stop_process_tree(attempt.process, grace_seconds=0.1)
     check("stopping a cell reaps its launcher", attempt.process.returncode is not None)
 
+    # An interrupted grid exits while its cells keep writing the record: each cell holds the record's
+    # being-written lock too, so the record is not shipped until the last cell has exited.
+    lock_record = scratch / "cell-holds-lock-record"
+    lock_record.mkdir()
+    grid_module.record_shipper.record_directory_being_written_lock_take(lock_record)
+    attempt = grid_module.start_attempt(
+        [sys.executable, "-c", "import time; time.sleep(120)"],
+        lock_record / "report.md", 1, lock_record / "cell.stderr.log")
+    try:
+        grid_module.record_shipper.record_directory_being_written_lock_release(lock_record)
+        check("a cell still running holds its record's being-written lock after the grid releases it",
+              attempt.process is not None
+              and grid_module.record_shipper.record_directory_being_written_lock_is_held_by_any_process(lock_record))
+    finally:
+        if attempt.process is not None:
+            grid_module.cell_common.stop_process_tree(attempt.process, grace_seconds=0.1)
+    check("once the cell has exited, the record is no longer being written",
+          not grid_module.record_shipper.record_directory_being_written_lock_is_held_by_any_process(lock_record))
+
     for result in (0, subprocess.TimeoutExpired("cell", 5.0)):
         with mock.patch.object(grid_module.cell_common.os, "killpg") as killed:
             process = mock.Mock(pid=12345)
@@ -2005,6 +2035,36 @@ with tempfile.TemporaryDirectory() as scratch:
           len(record_lines) == 1 and record_lines[0].startswith("record: REFUSED:")
           and result.returncode == 1 and "All seven reports landed" in result.stdout,
           f"exit {result.returncode}; {record_lines!r}; stderr={result.stderr[-400:]!r}")
+
+    # --- A shipment made while the run is still writing its record ----------
+    # The pre-remove hook ships every worktree's records whenever any
+    # agent-seat runs `git worktree remove`. A shipment made mid-run holds
+    # files the run then rewrites or deletes, such as a cell's .stderr.log,
+    # so the run's own shipment, and every later one, was refused. The run
+    # holds its record's being-written lock, so that shipment copies nothing.
+    repository = build_scratch_repository(scratch, "checkout-shipped-mid-run")
+    mid_run_ship_line_file = repository.parent / "checkout-shipped-mid-run-ship-line"
+    result = run_grid(repository, stubs, {
+        "COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT": "claude-hunt-deep.md",
+        "COLD_READ_GRID_TEST_STUB_SHIP_RECORD_FIRST_LINE_FILE": str(mid_run_ship_line_file)})
+    mid_run_ship_line = (mid_run_ship_line_file.read_text(encoding="utf-8")
+                         if mid_run_ship_line_file.is_file() else "")
+    record_directory = record_directory_of(repository)
+    record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
+    check("a shipment made while the run writes its record is FAILED as still being written",
+          mid_run_ship_line.startswith("FAILED:") and "still being written" in mid_run_ship_line,
+          repr(mid_run_ship_line))
+    check("the run's own shipment, after a shipment tried mid-run, says shipped and exits 0",
+          len(record_lines) == 1 and record_lines[0].startswith("record: shipped:")
+          and result.returncode == 0,
+          f"exit {result.returncode}; {record_lines!r}; stderr={result.stderr[-400:]!r}")
+    store_copy = repository / SCRATCH_LOG_STORE_RELATIVE / record_directory.name
+    check("the store's copy of a record shipment was tried on mid-run is the finished record",
+          store_copy.is_dir()
+          and {path.relative_to(store_copy): path.read_bytes() for path in store_copy.rglob("*") if path.is_file()}
+          == {path.relative_to(record_directory): path.read_bytes()
+              for path in record_directory.rglob("*") if path.is_file()},
+          f"store={sorted(str(p) for p in store_copy.rglob('*'))}")
 
     # --- A changed target is still shipped: it is evidence -------------------
     repository = build_scratch_repository(scratch, "checkout-changed-still-shipped")

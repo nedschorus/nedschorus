@@ -13,7 +13,9 @@ SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD = "session-handoff-sequence-number"
 LEGACY_RESTART_COUNTER_FIELD = "restart-counter"
 WRITTEN_IN_FIELD = "written-in"
 WRITTEN_BY_SESSION_FIELD = "written-by-session"
-DONT_RESTART_FIELD = "dont-restart"
+ASK_USER_BEFORE_RESTART_FIELD = "ask-user-before-restart"
+# Session-handoffs written before the rename carry only this name, and the writer still writes it beside the new one for handoff-supervisors running pre-rename code; readers accept it until none is left on either machine.
+LEGACY_DONT_RESTART_FIELD = "dont-restart"
 # Numbered by the writer, because the reader keeps only a key's first occurrence.
 SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
 NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
