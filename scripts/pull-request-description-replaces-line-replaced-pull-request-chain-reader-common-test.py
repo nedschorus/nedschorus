@@ -63,9 +63,32 @@ check("a chain is followed through replacements of replacements, oldest first",
 check("a pull request with no #replaces line replaces none",
       reader.replaced_pull_request_chain_numbers_oldest_first(20, REPOSITORY, descriptions.__getitem__) == [])
 looping = {3: f"#replaces {LINK}2", 2: f"#replaces {LINK}1", 1: f"#replaces {LINK}3"}
+looping_reads = []
+
+
+class ReadPastTheLoop(Exception):
+    """A reader without its loop check would read the loop's descriptions forever."""
+
+
+def read_looping_description(number):
+    looping_reads.append(number)
+    if len(looping_reads) > 10:
+        raise ReadPastTheLoop(looping_reads)
+    return looping[number]
+
+
+def loop_refusal():
+    try:
+        return refusal(lambda: reader.replaced_pull_request_chain_numbers_oldest_first(
+            3, REPOSITORY, read_looping_description))
+    except ReadPastTheLoop as reads:
+        return f"read on past the loop: {reads}"
+
+
+loop_text = loop_refusal()
 check("a loop is refused, naming each pull request in it",
-      "pull request 3 replaces pull request 2 replaces pull request 1 replaces pull request 3"
-      in (refusal(lambda: reader.replaced_pull_request_chain_numbers_oldest_first(3, REPOSITORY, looping.__getitem__)) or ""))
+      "pull request 3 replaces pull request 2 replaces pull request 1 replaces pull request 3" in (loop_text or ""),
+      loop_text)
 shared = {4: f"#replaces {LINK}2\n#replaces {LINK}3", 3: f"#replaces {LINK}2", 2: ""}
 check("an old pull request two lines reach is listed once",
       reader.replaced_pull_request_chain_numbers_oldest_first(4, REPOSITORY, shared.__getitem__) == [2, 3])
