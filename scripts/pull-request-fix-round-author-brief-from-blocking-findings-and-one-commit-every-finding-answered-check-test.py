@@ -241,7 +241,8 @@ def brief_cases(root, repository, base, frozen_head):
           and out.index("2. Check each finding") < out.index(CARRYING_OUT_USER_RULING_PARAGRAPH), out)
     check("brief: a conflict defers to the conflict check's report, and asks for no merge itself",
           "If it reports VERDICT: CONFLICT, do what its report says." in out
-          and "merge origin/main as its report says" not in out and "merge nothing" not in out, out)
+          and "merge origin/main as its report says" not in out and "merge nothing" not in out
+          and "had you merge origin/main" not in out and "--after-conflict-merge" not in out, out)
     check("brief: says what to do when a suite fails and when the push itself fails",
           "fix it in the same commit; if it fails for another cause, tell merge-lane-2 with "
           "SendMessage before pushing" in out
@@ -1599,6 +1600,8 @@ def nit_cases(root, repository, base, frozen_head):
           "Not merge-lane-2's" not in out, out)
     check("nits: step 3 makes the listed nits part of the round",
           "are not part of this round, apart from the nits listed above" in out, out)
+    check("nits: step 2 says a nit needs no test",
+          "with a test that fails without the fix; a nit needs no test." in out, out)
 
     code, out, err = run(root, repository, routes_for(frozen_head, [review(commit_id=frozen_head)]))
     check("nits: a round with no nit prints no nit heading", code == 0 and "Nits to fix" not in out, err + out)

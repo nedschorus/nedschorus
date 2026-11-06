@@ -805,8 +805,10 @@ try:
         # The handoff hook reads this variable in the claude it launches and
         # stays silent, so a handoff notice never comes back as the answer.
         recorded_keyword_arguments = []
+        recorded_commands = []
 
         def recording_run(command, **kwargs):
+            recorded_commands.append(command)
             recorded_keyword_arguments.append(kwargs)
             return FakeCompletedProcess(0, json.dumps({"session_id": "s", "result": "read #1"}))
         ghi_ask.subprocess.run = recording_run
@@ -818,6 +820,12 @@ try:
               launched_environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
               and launched_environment.get("PATH") == os.environ.get("PATH"),
               recorded_keyword_arguments)
+        launched_command = recorded_commands[0] if recorded_commands else []
+        check("run_claude: claude is allowed only Read,Grep,Glob, so in dontAsk mode every "
+              "other tool call is refused",
+              "--allowedTools" in launched_command
+              and launched_command[launched_command.index("--allowedTools") + 1:][:1]
+              == ["Read,Grep,Glob"], launched_command)
 finally:
     ghi_ask.subprocess.run = subprocess_run_orig
 

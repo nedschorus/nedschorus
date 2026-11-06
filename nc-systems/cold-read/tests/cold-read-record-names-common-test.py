@@ -634,6 +634,25 @@ with tempfile.TemporaryDirectory() as scratch:
         else:
             os.environ[names.MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE] = saved_override
 
+# A child writer is passed every descriptor open on the record directory, found by listing /dev/fd.
+# The descriptor the listing itself uses is listed but closed by the time it is checked; here it gets
+# a lower number than the record's, so a check that stopped at it would miss the record's.
+with tempfile.TemporaryDirectory() as scratch:
+    record_directory = pathlib.Path(scratch) / "record"
+    record_directory.mkdir()
+    freed_below = os.open(scratch, os.O_RDONLY)
+    record_descriptor = os.open(record_directory, os.O_RDONLY)
+    os.close(freed_below)
+    try:
+        passed = names.record_directory_being_written_lock_pass_fds_for_child_writers(record_directory)
+    finally:
+        os.close(record_descriptor)
+    check("a child writer is passed the descriptor open on the record directory, past a closed one listed before it",
+          passed == (record_descriptor,), f"passed {passed}, record's descriptor {record_descriptor}")
+    check("no descriptor is passed for a record directory nothing has open",
+          names.record_directory_being_written_lock_pass_fds_for_child_writers(record_directory) == (),
+          "")
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed")

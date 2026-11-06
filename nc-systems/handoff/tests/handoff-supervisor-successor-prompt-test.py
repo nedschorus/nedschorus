@@ -1104,8 +1104,8 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
             del os.environ["FAIL_GIT_CALL_CONTAINING"]
         check(f"a failed `git {call}` leaves the branch-state instruction out and prints why",
               instruction == "" and what_is_printed in console.getvalue()
-              and "handoff-supervisor: if this message comes back at the next launch, fix the git error "
-              "on the why line; until then nobody needs to act on it" in console.getvalue(),
+              and "handoff-supervisor: if this console shows the same why line when the handoff-supervisor "
+              "next launches this agent-seat, fix the git error it names; if the cause was passing" in console.getvalue(),
               (instruction, console.getvalue()))
 
     # A git killed by a signal exits with a negative returncode and prints nothing.
@@ -3280,6 +3280,29 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     check("the roster does not disturb the verbatim block beneath it",
           supervisor.next_step_from(parsed) == "merge the queue\nand then rest",
           repr(supervisor.next_step_from(parsed)))
+
+    # The work the handoff-deferral did not wait for reaches the successor, in the writer's order.
+    deferral_fields = {"written-at": recent, "next-step": "carry on"}
+    for ordinal in (2, 1, 10):
+        deferral_fields[f"background-task-started-during-handoff-deferral-{ordinal}"] = (
+            f'blate{ordinal:04d} "job {ordinal}" command: "python3 job{ordinal}.py"')
+    deferral_fields["cold-read-full-run-command-refused-during-handoff-deferral-1"] = (
+        '"python3 nc-systems/cold-read/cold-read-grid.py --target a.md" in /work')
+    deferral_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), deferral_fields)
+    check("the successor is told the background tasks started during the deferral, in order",
+          "started 3 background Bash task(s) during its handoff-deferral" in deferral_prompt
+          and deferral_prompt.index("blate0001") < deferral_prompt.index("blate0002")
+          < deferral_prompt.index("blate0010"), deferral_prompt)
+    check("the successor is told the refused cold-read-full-run and where to run it",
+          "a hook refused 1 cold-read-full-run(s)" in deferral_prompt
+          and "cold-read-grid.py --target a.md\" in /work" in deferral_prompt, deferral_prompt)
+    check("the successor is told to run each command from the directory listed with it",
+          "Run each command from the directory listed with it" in deferral_prompt, deferral_prompt)
+    check("the deferral sentences come before the next step",
+          deferral_prompt.index("handoff-deferral") < deferral_prompt.index("Then take the next step"),
+          deferral_prompt)
+    check("a handoff with no deferral fields says nothing about a deferral",
+          "handoff-deferral" not in older_prompt, older_prompt)
 
 
 def run_recycle_prompt_composition_cases(workspace: Path, recent: str):

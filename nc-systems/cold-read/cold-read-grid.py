@@ -506,9 +506,11 @@ def earlier_full_runs_of(target: pathlib.Path) -> tuple:
 
 def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Path:
     """Create and return the first record directory for this document and day
-    unused both here and in the log-store."""
+    unused both here and in the log-store, holding its being-written lock
+    until ship_record."""
     record_dir, store_unlisted = record_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
         RECORDS_DIR / record_directory_name_for_target(target, now))
+    record_shipper.record_directory_being_written_lock_take(record_dir)
     if store_unlisted is not None:
         print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(
             "cold-read-grid", record_dir, store_unlisted), file=sys.stderr)
@@ -608,7 +610,9 @@ def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> str:
 
 
 def ship_record(record_dir: pathlib.Path) -> str:
-    """Return the shipper's status line, reporting failures without raising."""
+    """Release the record's being-written lock and return the shipper's status
+    line, reporting failures without raising."""
+    record_shipper.record_directory_being_written_lock_release(record_dir)
     try:
         completed = subprocess.run(
             [sys.executable, str(RECORD_SHIPPER), str(record_dir)],
@@ -804,9 +808,13 @@ def start_attempt(command: list, report_path: pathlib.Path, attempt: int,
     started_at = time.monotonic()
     with open(stderr_path, "w", encoding="utf-8") as err:
         try:
+            # The cell holds the record's being-written lock too, so an interrupted grid whose
+            # cells keep writing leaves the lock held, and the record unshipped, until they exit.
             process = subprocess.Popen(  # pylint: disable=consider-using-with
                 command, stdout=err, stderr=err, stdin=subprocess.DEVNULL,
                 start_new_session=True,
+                pass_fds=record_names.record_directory_being_written_lock_pass_fds_for_child_writers(
+                    report_path.parent),
             )
         except OSError as error:
             err.write(f"cold-read-grid: could not start {command[0]}: {error}\n")
