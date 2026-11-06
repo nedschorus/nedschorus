@@ -1,33 +1,52 @@
 ---
 issue: "[The test runner `scripts/run-all-test-suites.py` reruns suites whose recorded inputs did not change, because it keeps one recording per suite for every branch and selects every suite that runs a content-reading git command on the checkout](https://github.com/nedschorus/nedschorus/issues/2569)"
-kind: design
 ---
 
 # The test runner `scripts/run-all-test-suites.py` reruns suites whose recorded inputs did not change, because it keeps one recording per suite for every branch and selects every suite that runs a content-reading git command on the checkout
 
 ## What this GHI asks for
 
-The test runner, `scripts/run-all-test-suites.py`, given `--only-suites-whose-recorded-inputs-changed-since COMMIT`, runs only the nc-test-suites whose recorded inputs changed. Two of its selection reasons pick nc-test-suites whose inputs did not change. This GHI-MD is the design that stops both; the build follows in the pull requests named under Next action.
+A design, then a build, that stops the test runner, `scripts/run-all-test-suites.py`, from running a suite in a selective test run when nothing the suite reads has changed. Two of the runner's selection reasons pick suites that way today, and together they took 39% of the run-seconds of merge-lane-2's head test runs from 2026-11-01 to 2026-11-04.
 
-### Reason 1: one recording per nc-test-suite, shared by every branch
+### Reason 1: one recording per suite, shared by every branch
 
-The runner records the files each nc-test-suite reads while it runs, and keeps that recording under `--recorded-inputs-directory`, then a directory named after the repository's root commit, one file per nc-test-suite, shared by every clone and worktree on the machine (the runner's docstring, section RECORDED INPUTS, and `recordings_directory_for`). Every test run replaces the recordings of the nc-test-suites it ran. So when a test run on branch X records an nc-test-suite, a test run on branch Y finds a recording made with X's copies of the files. The runner then cannot tell what the nc-test-suite reads on Y, and selects it with a reason such as "its recording read another copy of <file> than the checkout holds, so what it reads here is unknown", or "its recording was made on another set of files" (`selection_reason`).
+The runner records the files each suite reads while it runs, with two recorders, a Python audit hook and, on ned-box, strace, and keeps that recording under `--recorded-inputs-directory`, keyed by the repository's root commit, one file per suite, shared by every clone and worktree on the machine (the runner's docstring, section RECORDED INPUTS, and `recordings_directory_for`). Every run replaces the recordings of the suites it ran. So when a run on branch X records a suite, a run on branch Y finds a recording whose file contents are X's. The runner then cannot tell what the suite reads on Y, and selects it with the reason "its recording read another copy of <file> than the checkout holds, so what it reads here is unknown" (`selection_reason`).
 
-Example: merge-lane-2 runs the selected nc-test-suites of each pull request merged into main, through `scripts/merge-lane-pull-request-head-test-run-on-merged-worktree.py`, which gives every pull request the same store, `hr/store`. A test run of one pull request records `nc-systems/skills/explain/tests/explain-reply-cold-read-fast-read-test.py` while that pull request's copy of a cold-read file differs from main. The next pull request's test run, which touches nothing that nc-test-suite reads, selects it anyway. That nc-test-suite was selected this way 77 times from 2026-11-01 to 2026-11-04.
+Example: merge-lane-2's head test run of one pull request records `nc-systems/skills/explain/tests/explain-reply-cold-read-fast-read-test.py` while that pull request's copy of a cold-read file differs from main. The next head test run, of a pull request that touches nothing that suite reads, selects it anyway. That suite was selected this way 77 times in the three days.
 
-Measured: from 2026-11-01 to 2026-11-04 this reason selected 24% of the run-seconds of merge-lane-2's pull-request test runs. In the latest test run of each of the 21 pull requests merge-lane-2 test-ran from 2026-11-05 to 2026-11-06T07:01Z, leaving out the test runs that ran every nc-test-suite, it selected 37% of the run-seconds.
+Measured: this reason selected 24% of head-run seconds, up to 119,000 suite-seconds over 2026-11-01 to 2026-11-04.
 
-### Reason 2: an nc-test-suite that runs a content-reading git command on the checkout is selected by every change
+The change to design: keep several recordings per suite, each a file of its own, check them one by one, and do not select a suite when any one of its recordings matches the checkout in everything it saw (the files it read, the paths it looked for and the directories it listed) and none of that changed since COMMIT, the commit the selective test run compares against (`--only-suites-whose-recorded-inputs-changed-since`).
 
-When an nc-test-suite runs a git command on the checkout that reads file contents, such as `git diff`, `git grep` or `git clone` of the checkout, the runner selects it whenever any file differs, because git reads committed content from the object store, where no recorder sees a working file (`selection_reason`, the reason "it runs git … on the checkout, which reads files no recorder here saw").
+### Reason 2: a suite that runs a content-reading git command on the checkout is selected by every change
 
-Measured: 15% of the run-seconds of merge-lane-2's pull-request test runs from 2026-11-01 to 2026-11-04, most of it `nc-systems/general-tools/tests/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check-test.py`, whose median run is 430 seconds. Since then that nc-test-suite runs its git commands on a test fixture repository it builds from the checkout's files (`make_test_repository` in that file), and merge-lane-2's test runs of pull requests 2686 and 2687 on 2026-11-06 did not select it. In the 21 test runs of 2026-11-05 to 2026-11-06 counted above, this reason selected 4.3% of the run-seconds, in the four nc-test-suites of the table under Part 2.
+When a suite runs a git command on the checkout that reads file contents, such as `git status`, `git diff` or `git clone` of the checkout, the runner selects it whenever any file differs, because git reads committed content from the object store, where neither recorder sees a working file (`selection_reason`, the reason "it runs git … on the checkout, which reads files no recorder here saw").
+
+Measured: 749 suite-runs and 75,745 suite-seconds, 15% of head-run seconds, over the same three days. Most came from seven suites, among them `nc-systems/general-tools/tests/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check-test.py`, whose median run is 430 seconds; it ran in all 230 head test runs and used 17.5% of all suite CPU.
+
+The options to weigh in the design, which can be combined:
+1. Each such suite runs git on a fixture repository it builds, instead of on the checkout, so it no longer runs git on the checkout and the runner selects it by its recorded files alone. This helps only the suites rewritten, and only where the fixture still holds what the test checks; a suite that needs the real checkout stays selected by every change.
+2. The recorder learns which paths a git command can read from its arguments, such as `git show <ref>:<path>` or a pathspec after `--`, and treats a whole-tree command such as `git status` as reading every tracked file, so a suite running `git status` stays selected by every change; it does not help a suite that clones the checkout, such as the bash-guards suite above, which needs option 1.
 
 ## Why
 
-The user decided on 2026-09-30 that an nc-test-suite is rerun only when a file it reads has changed: test result caching keyed on inputs recorded while the nc-test-suite runs (approval-walk open-questions-concerns-and-recommendations-2026-09-30, item 5, "y both", quoted in the runner's docstring, section RECORDED INPUTS). Both reasons above rerun nc-test-suites whose files did not change. On 2026-11-04 the user asked "Build what we need to test faster" (approval-walk reboot-test-worktree-review-direction-2026-11-03, item 4.1). An nc-test-suite in a pull-request test run waits 19 times its own run time to start, because about seven test runs run at once on ned-box and the runner starts an nc-test-suite only while CPU is under 90%; every needless nc-test-suite run adds to that wait.
+The user ruled on 2026-09-30 that a suite is rerun only when a file it reads has changed: test result caching keyed on inputs recorded while the suite runs (approval-walk open-questions-concerns-and-recommendations-2026-09-30, item 5, "y both", quoted in the runner's docstring, section RECORDED INPUTS). Both reasons above rerun suites whose files did not change. On 2026-11-04 the user asked "Build what we need to test faster" (approval-walk reboot-test-worktree-review-direction-2026-11-03, item 4.1). A head test run's suites wait 19 times their own run time to start, because about seven test runs run at once on ned-box and the runner starts a suite only while CPU is under 90%; every needless suite-run adds to that wait.
 
-## Design
+## What needs judgment and what is code
+
+Code, once the design sets the rules: matching recordings to the checkout, storing several recordings per suite and dropping old ones, and option 2's mapping from git commands to paths. Judgment, in the design: how many recordings to keep and which to drop first, and which options to build. Judgment, per suite: for option 1, whether a fixture repository keeps the suite's assertions meaningful, decided by the agent that rewrites it.
+
+## Proposed design, awaiting the user's ruling
+
+This section proposes a design for the two reasons above. The user has not ruled on it; the build waits for his ruling, which comes to him as an item of an approval-walk of agent-seat reboot-test. Until then, the sections above stand as filed, and the line `kind: design` is not added.
+
+### What changed since filing
+
+Reason 1, measured again: in the latest test run of each of the 21 pull requests merge-lane-2 test-ran from 2026-11-05 to 2026-11-06T07:01Z, leaving out the test runs that ran every nc-test-suite, the reason selected 37% of the run-seconds, against 24% from 2026-11-01 to 2026-11-04.
+
+Reason 2: `nc-systems/general-tools/tests/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check-test.py` now runs its git commands on a test fixture repository it builds from the checkout's files (`make_test_repository` in that file), and merge-lane-2's test runs of pull requests 2686 and 2687 on 2026-11-06 did not select it. In the same 21 test runs, the reason selected 4.3% of the run-seconds, in the four nc-test-suites of the table under Part 2.
+
+Measured from the PASS and FAIL lines of nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/hr/pr*/stderr, the latest test run of each pull request, leaving out test runs where a file under `EVERY_SUITE_RUNS_WHEN_THESE_CHANGE` differed. Pull request 2544 was replaced by [pull request 2684](https://github.com/nedschorus/nedschorus/pull/2684), which merged on 2026-11-06 as a4cf4060b; it changed `selective_test_run_selection_without_no_sandbox_suites`, which runs after `suites_selected_since` and is untouched by this proposal.
 
 ### Part 1: several recordings per nc-test-suite
 
@@ -87,7 +106,7 @@ The GHI-MD as filed weighed two options, which can be combined: option 1, an nc-
 
 Option 2 is not built. Of the four calls, a clone reads the whole checkout whatever its arguments, the `git diff` covers every file the branch changed, the `git grep` names no path to map, and `ls-remote` reads no file; so mapping arguments to paths would deselect none of them.
 
-### What needs judgment and what is code
+### What needs judgment and what is code in this proposal
 
 Code: both tests of a recording, the store, the selection order, saving, superseding, eviction, the readers' choice of recording, and `ls-remote` in `GIT_COMMANDS_THAT_ONLY_LIST`. Judgment, decided in this design: the number of recordings kept, 32, and which is dropped first, the oldest; which option each nc-test-suite of Part 2 gets. The guarded-file hook nc-test-suite's fixture takes its files from the hook's own list of guarded files, so no agent chooses them; the case's assertion is about work done, not time, so a fixture holding every guarded file of the checkout keeps it meaningful. Judgment, after the build: whether the count of evictions calls for a number other than 32.
 
@@ -95,14 +114,18 @@ Code: both tests of a recording, the store, the selection order, saving, superse
 
 [GHI 2259](https://github.com/nedschorus/nedschorus/issues/2259) is a placeholder with no design yet (2026-11-06). Its mapping from each test case to the code it covers belongs in a record of its own; if it is ever joined to these recordings, the join key is a recording's file name, defined under The store. [GHI 2384](https://github.com/nedschorus/nedschorus/issues/2384) reuses a passing test run of a whole tree; this design decides per nc-test-suite. Neither design depends on the other.
 
+### Build, once the user rules
+
+Each in its own pull request, from main, after the user approves this proposal and this GHI-MD records his ruling: (1) Part 1, in `scripts/run-all-test-suites.py`, its test and `scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py` with its test, and the runner's docstring sections RECORDED INPUTS and "SELECTION, with --only-suites-whose-recorded-inputs-changed-since COMMIT." rewritten to match; (2) `ls-remote` in `GIT_COMMANDS_THAT_ONLY_LIST`, with a test in `scripts/run-all-test-suites-test.py`; (3) the guarded-file hook nc-test-suite's case on a test fixture repository. After pull request (1) has run for a week, count the "none of its 32 recordings matches the checkout" lines, as Why 32 says, and record the count and the outcome in this GHI-MD.
+
 ## Evidence
 
-The measurement of 2026-11-01 to 2026-11-04, its scripts and the per-reason totals: nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/reboot-test/test-speed-2026-11-04/findings.md and nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/reboot-test/test-speed-2026-11-04/head-run-selection-reasons.txt. The count of 2026-11-05 to 2026-11-06 summed each SELECTED nc-test-suite's seconds from the PASS and FAIL lines of nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/hr/pr*/stderr, the latest test run of each pull request, leaving out test runs where a file under `EVERY_SUITE_RUNS_WHEN_THESE_CHANGE` differed.
+The measurement, its scripts and the per-reason totals: nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/reboot-test/test-speed-2026-11-04/findings.md and nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/reboot-test/test-speed-2026-11-04/head-run-selection-reasons.txt.
 
 ## Related
 
-On 2026-11-06, `scripts/ghi-guide-agent-ask.py --include-closed`, asked for a GHI on either reason, found none besides this one; it named GHI 2259 and GHI 2384, placed above. [Pull request 2684](https://github.com/nedschorus/nedschorus/pull/2684), which replaced pull request 2544 and merged on 2026-11-06 as a4cf4060b, takes the nc-test-suites that run without an nc-test-sandbox out of selective test runs; it changed `selective_test_run_selection_without_no_sandbox_suites`, which runs after `suites_selected_since` and is untouched by this design.
+On 2026-11-04, `scripts/ghi-guide-agent-ask.py --include-closed`, asked for an issue on either reason, found none. Two open GHIs are near: [The test runner `scripts/run-all-test-suites.py` records which code each test case covers, using coverage.py's per-test contexts](https://github.com/nedschorus/nedschorus/issues/2259), a different mechanism, which this design should check before changing the recording format; and [Each round of a pull request runs its test suites once, and a push reuses a passing test run of the same tree](https://github.com/nedschorus/nedschorus/issues/2384), which skips whole runs rather than single suites. Open [pull request 2544](https://github.com/nedschorus/nedschorus/pull/2544) also changes `scripts/run-all-test-suites.py`, taking the ten suites that run without a sandbox out of per-change test runs.
 
 ## Next action
 
-Build, each in its own pull request, from main after this GHI-MD merges: (1) Part 1, in `scripts/run-all-test-suites.py`, its test and `scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py` with its test, and the runner's docstring sections RECORDED INPUTS and "SELECTION, with --only-suites-whose-recorded-inputs-changed-since COMMIT." rewritten to match; (2) `ls-remote` in `GIT_COMMANDS_THAT_ONLY_LIST`, with a test in `scripts/run-all-test-suites-test.py`; (3) the guarded-file hook nc-test-suite's case on a test fixture repository. After pull request (1) has run for a week, count the "none of its 32 recordings matches the checkout" lines, as Why 32 says, and record the count and the outcome in this GHI-MD.
+Write the design in this GHI-MD: the recording store's new shape, how many recordings it keeps per suite and which it drops first, how runs that save one suite at once stay safe (today a short lock per suite), the matching rule, how it fits the per-test coverage records of GHI 2259 if both land, and which options to build for reason 2. Then add the line `kind: design` to this GHI-MD's front matter, the block between `---` lines at its top that create-GHI writes, and build it in its own pull request after pull request 2544 merges, because both change the runner's selection code.
