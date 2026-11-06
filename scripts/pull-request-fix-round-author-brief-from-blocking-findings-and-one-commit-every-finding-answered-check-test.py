@@ -636,37 +636,17 @@ def check_cases(root, repository, base, frozen_head):
     merge = git(repository, "rev-parse", "HEAD")
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers)
-    check("check: a merge without --after-conflict-merge refuses", code == 1
-          and "one non-merge commit" in err, err)
-    code, out, err = run(root, repository, routes_for(merge, reviews),
-                         "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a merge of origin/main alone passes with --after-conflict-merge",
-          code == 0 and f"New head {merge}" in out, out + err)
+    check("check: a merge of origin/main refuses, and says to drop it", code == 1
+          and "one non-merge commit" in err and "drop any merge of main" in err
+          and "(2 parents)" in err, err)
     after_merge = commit_file(repository, "hook.py", "four\n", "fix after merge")
-    code, out, err = run(root, repository, routes_for(after_merge, reviews),
-                         "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a merge of origin/main and one commit pass with --after-conflict-merge, "
-          "and main's files are not listed", code == 0 and "main.txt" not in out, out + err)
-    commit_file(repository, "hook.py", "five\n", "a third commit")
+    code, out, err = run(root, repository, routes_for(after_merge, reviews), "--check", "--answers", answers)
+    check("check: a merge of origin/main and one commit refuse", code == 1
+          and "has 2 commits" in err, err)
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a merge and two commits refuse", code == 1 and "has 3 commits" in err, err)
-
-    git(repository, "reset", "-q", "--hard", frozen_head)
-    git(repository, "checkout", "-q", "-b", "elsewhere", base)
-    stray = commit_file(repository, "stray.txt", "s\n", "not on main")
-    git(repository, "checkout", "-q", "topic")
-    git(repository, "merge", "-q", "--no-edit", stray)
-    code, out, err = run(root, repository, routes_for(frozen_head, reviews),
-                         "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a merge of a commit not on origin/main refuses", code == 1
-          and "not on origin/main" in err, err)
-
-    git(repository, "update-ref", "-d", "refs/remotes/origin/main")
-    code, out, err = run(root, repository, routes_for(frozen_head, reviews),
-                         "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a missing origin/main fails with exit 2", code == 2
-          and "merge-base --is-ancestor" in err, err)
+    check("check: --after-conflict-merge is no longer accepted", code == 2
+          and "--after-conflict-merge" in err, err)
 
     git(repository, "reset", "-q", "--hard", base)
     rewritten = commit_file(repository, "hook.py", "rewritten\n", "rewritten")
@@ -767,30 +747,11 @@ def check_cases(root, repository, base, frozen_head):
     check("check: the same fix without the answers file passes", code == 0 and "Not pushed yet" in out,
           out + err)
     git(repository, "reset", "-q", "--hard", unignored_head)
-    git(repository, "update-ref", "refs/remotes/origin/main", "main-line")
-    git(repository, "merge", "-q", "--no-edit", "origin/main")
     (repository / "other-answers").mkdir()
     commit_file(repository, "other-answers/fix-round-answers-pull-request-1901.md", "1. x\n", "fix")
-    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews),
-                         "--check", "--after-conflict-merge")
-    check("check: after a conflict merge, any pull request's answers file in a subdirectory refuses",
+    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews), "--check")
+    check("check: any pull request's answers file in a subdirectory refuses",
           code == 1 and "other-answers/fix-round-answers-pull-request-1901.md" in err, out + err)
-
-    git(repository, "reset", "-q", "--hard", unignored_head)
-    git(repository, "merge", "-q", "--no-ff", "--no-commit", "origin/main")
-    (repository / "other-answers").mkdir(exist_ok=True)
-    (repository / "other-answers/fix-round-answers-pull-request-1899.md").write_text("1. x\n")
-    git(repository, "add", "other-answers/fix-round-answers-pull-request-1899.md")
-    git(repository, "commit", "-q", "--no-edit")
-    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews),
-                         "--check", "--after-conflict-merge")
-    check("check: an answers file added in the conflict merge's own commit refuses",
-          code == 1 and "other-answers/fix-round-answers-pull-request-1899.md" in err, out + err)
-    commit_file(repository, "hook.py", "fixed after merge\n", "fix after the merge")
-    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews),
-                         "--check", "--after-conflict-merge")
-    check("check: an answers file the conflict merge adds refuses when a fix commit sits on top",
-          code == 1 and "other-answers/fix-round-answers-pull-request-1899.md" in err, out + err)
 
     git(repository, "reset", "-q", "--hard", unignored_head)
     held = commit_file(repository, "fix-round-answers-pull-request-1900.md", "1. x\n",
