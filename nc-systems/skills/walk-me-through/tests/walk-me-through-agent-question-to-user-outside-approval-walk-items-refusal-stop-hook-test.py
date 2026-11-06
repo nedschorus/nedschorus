@@ -406,7 +406,7 @@ def test_a_question_like_line_goes_to_the_model():
     argv = calls[0]["argv"] if calls else []
     check("the model is called once, as Haiku, with every hook disabled and no session file",
           len(calls) == 1 and argv[argv.index("--model") + 1] == hook.MODEL == "claude-haiku-5-5"
-          and json.loads(argv[argv.index("--settings") + 1]) == {"disableAllHooks": True}
+          and json.loads(argv[argv.index("--settings") + 1]) == {"disableAllHooks": True, "advisorModel": ""}
           and "--no-session-persistence" in argv, calls)
     check("the model is given the question-like line, numbered, and the walk's total and waiting item",
           calls and "1. The fix has a second part, and I recommend building it next." in calls[0]["stdin"]

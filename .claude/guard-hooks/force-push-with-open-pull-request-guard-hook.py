@@ -30,6 +30,13 @@ shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
 _shell_reader_spec.loader.exec_module(shell_reader)
 is_program = shell_reader.is_program
 
+_rebase_or_replace_spec = importlib.util.spec_from_file_location(
+    "pull_request_conflict_with_main_rebase_or_replace_answer_common",
+    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+    / "pull-request-conflict-with-main-rebase-or-replace-answer-common.py")
+rebase_or_replace = importlib.util.module_from_spec(_rebase_or_replace_spec)
+_rebase_or_replace_spec.loader.exec_module(rebase_or_replace)
+
 # Stay below the hook timeout: overrunning it fails open silently.
 # Cap individual probes so one slow answer cannot consume the whole budget.
 PROBE_BUDGET_SECONDS = 20.0
@@ -67,8 +74,8 @@ DENY_REASON_TEMPLATE = (
     "(ListAgents lists its address).\n"
     "Otherwise, put your change in a new commit on top of the pushed branch, "
     "and push without --force.\n"
-    "If the branch conflicts with main, clear the conflict with the hand-merge "
-    "that scripts/branch-conflict-check.py describes, and push without --force.\n"
+    "If the branch conflicts with main, do what scripts/branch-conflict-check.py "
+    "reports.\n"
     "If you already rebased or amended it locally, keep that work on another "
     "branch (git branch {branch}-rewritten), go back to the pushed head (git "
     "switch -C {branch} origin/{branch}), and redo your change as a new "
@@ -384,7 +391,10 @@ def analyze_push(invocation, effective_directory, directory_is_unresolved, guard
 
     for branch in branches:
         pull_request, detail = open_pull_request_for_branch(branch, directory, guard)
-        if pull_request:
+        # This guard reads no ready history, so every open pull request gets the replace answer.
+        if pull_request and (
+                rebase_or_replace.pull_request_conflict_with_main_rebase_or_replace_answer(True)
+                == rebase_or_replace.REPLACE_WITH_NEW_PULL_REQUEST):
             return "deny", DENY_REASON_TEMPLATE.format(
                 branch=branch, title=pull_request.get("title") or branch,
                 url=pull_request.get("url"), escape=ESCAPE_HATCH_ASSIGNMENT)

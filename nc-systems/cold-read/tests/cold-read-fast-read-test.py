@@ -1464,6 +1464,8 @@ with tempfile.TemporaryDirectory() as scratch:
     # during a read's Question 4, must not hold a report the finished read
     # then rewrites: the read's own shipment would be refused, and so would
     # every later `git worktree remove`, the hook shipping the record again each time.
+    # The read holds the record's being-written lock, so that shipment is
+    # FAILED as still being written and copies nothing.
     mid_read_document_relative = "docs/drafts/a-design-shipped-mid-read.md"
     (repository / mid_read_document_relative).write_text(
         "# A design\n\nShipped while read.\n", encoding="utf-8")
@@ -1484,9 +1486,10 @@ with tempfile.TemporaryDirectory() as scratch:
     mid_read_shipment_line = (mid_read_shipment_line_file.read_text(encoding="utf-8")
                               if mid_read_shipment_line_file.is_file() else "")
     mid_read_record_lines = [line for line in result.stderr.splitlines() if "record: " in line]
-    check("a record shipped while its read is still running ships again, whole, when the read "
-          "finishes, and the read exits 0",
-          mid_read_shipment_line.startswith("shipped:") and result.returncode == 0
+    check("a shipment tried while the read is still running is FAILED as still being written, and the "
+          "record ships whole when the read finishes, and the read exits 0",
+          mid_read_shipment_line.startswith("FAILED:") and "still being written" in mid_read_shipment_line
+          and result.returncode == 0
           and len(mid_read_record_lines) == 1 and "record: shipped:" in mid_read_record_lines[0],
           f"mid-read shipment {mid_read_shipment_line!r}; exit {result.returncode}; "
           f"{mid_read_record_lines!r}")

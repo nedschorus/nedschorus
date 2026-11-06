@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Tests that scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py
-refuses a forced rewrite of an open pull request's head branch only when the pull request is
-ready for review or once was, and lets one through for a draft that was never ready.
+refuses a forced rewrite of every open pull request's head branch while the shared
+rebase-or-replace answer is replace for every open pull request, and, once that module turns
+on the rebase answer for a draft never marked ready, refuses one only when the pull request
+is ready for review or once was, and lets one through for a draft that was never ready.
 
 Run: python3 scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal-ready-or-once-ready-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -40,6 +42,8 @@ PULL_REQUEST_URL = "https://github.com/example/example/pull/4242"
 REWRITE_REFS = f"refs/heads/clean {'1' * 40} refs/heads/clean {'2' * 40}\n"
 DELETION_REFS = f"(delete) {'0' * 40} refs/heads/clean {'2' * 40}\n"
 FAST_FORWARD_REFS = REWRITE_REFS
+SAVED_NOTE = (f"pre-push: the commit this push replaces on branch clean, {'2' * 40}, is saved "
+              f"under refs/force-pushed-old-heads/clean/{'2' * 40}.\n")
 
 
 def pull_request(**fields):
@@ -74,6 +78,8 @@ class FakeRunner:
             return completed(command, 0, options["input"].strip() + " commit 200\n")
         if command[:3] == ["git", "merge-base", "--is-ancestor"]:
             return completed(command, 0 if self.fast_forward else 1)
+        if command[:2] == ["git", "update-ref"]:
+            return completed(command, 0)
         self.gh_calls.append(command)
         if command[:3] == ["gh", "pr", "list"]:
             listed = self.listed
@@ -101,13 +107,31 @@ def graphql_calls(runner):
 
 
 def main():
+    rebase_or_replace = check_module.rebase_or_replace
+    gate = "REBASE_ONTO_MAIN_FOR_PULL_REQUESTS_NEVER_MARKED_READY_FOR_REVIEW_TURNED_ON"
+
+    # While the shared answer is replace for every open pull request, a never-ready draft's
+    # head is not rewritten either, and the timeline is not asked.
+    setattr(rebase_or_replace, gate, False)
+    runner = FakeRunner([pull_request(isDraft=True)])
+    status, printed = run(REWRITE_REFS, runner)
+    check("while the rebase answer is off, a forced rewrite of a never-ready draft is refused "
+          "without asking the timeline, saying a draft's head is not rewritten either",
+          status == check_module.EXIT_REFUSE_PUSH and graphql_calls(runner) == []
+          and f"#4242 ({PULL_REQUEST_URL}), which is a draft: no open pull request's head is "
+          "rewritten, and one that conflicts with main is replaced by a new pull request."
+          in printed, (status, printed))
+
+    # Every case below is the rebase answer turned on for a draft never marked ready.
+    setattr(rebase_or_replace, gate, True)
+
     # A draft that was never ready may be rewritten; the timeline is asked about its node id.
     runner = FakeRunner([pull_request(isDraft=True)], lambda command: completed(
         command, 0, graphql_answer(0)))
     status, printed = run(REWRITE_REFS, runner)
     calls = graphql_calls(runner)
     check("a forced rewrite of a draft pull request that was never ready goes through",
-          status == check_module.EXIT_ALLOW_PUSH and printed == "", (status, printed))
+          status == check_module.EXIT_ALLOW_PUSH and printed == SAVED_NOTE, (status, printed))
     check("the timeline lookup names the pull request's node id and asks for ready and "
           "convert-to-draft events",
           len(calls) == 1 and "id=PR_node_4242" in calls[0]
@@ -124,7 +148,7 @@ def main():
     calls = graphql_calls(runner)
     check("a never-ready draft whose timeline holds other items, totalCount 2 and filteredCount "
           "0, may be rewritten, and the lookup asks for filteredCount",
-          status == check_module.EXIT_ALLOW_PUSH and printed == ""
+          status == check_module.EXIT_ALLOW_PUSH and printed == SAVED_NOTE
           and len(calls) == 1 and any("filteredCount" in word for word in calls[0]),
           (status, printed, calls))
 

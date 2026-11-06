@@ -516,7 +516,7 @@ def print_brief(number, reviewer_login):
         "the branch's .gitignore may not leave it out, and the check in step 6 refuses a commit "
         "that holds it.",
         f"6. Run the check: {check_command}",
-        "   adding --after-conflict-merge if step 1's report had you merge origin/main. If it refuses, change the "
+        "   If it refuses, change the "
         "answers file or the unpushed commit as it says (git commit --amend is allowed before the "
         "push) and run the check again. Before the push, the check runs the nc-test-suites, which can "
         "take many minutes, and refuses when one fails because of the round's change.",

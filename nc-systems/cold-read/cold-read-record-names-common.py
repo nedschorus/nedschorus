@@ -216,6 +216,24 @@ MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE = (
     "COLD_READ_MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE")
 
 
+def record_directory_being_written_lock_pass_fds_for_child_writers(record_dir: pathlib.Path) -> tuple:
+    """The pass_fds for subprocess.Popen of a child that writes into record_dir: every descriptor this
+    process has open on record_dir, the lock it took or the one it was passed by the writer that started
+    it. The child then holds the being-written lock too, so the lock stays held until every writer down
+    the chain has exited. Empty when this process has no descriptor open on record_dir."""
+    record = os.stat(record_dir)
+    descriptors = []
+    # /dev/fd lists this process's open descriptors on Linux and on macOS alike.
+    for name in os.listdir("/dev/fd"):
+        try:
+            opened = os.fstat(int(name))
+        except OSError:
+            continue  # the descriptor listdir itself used, closed by now
+        if (opened.st_dev, opened.st_ino) == (record.st_dev, record.st_ino):
+            descriptors.append(int(name))
+    return tuple(sorted(descriptors))
+
+
 def text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(text: str) -> str:
     """Return text with each file:///Volumes/nedhome/ link prefix replaced by /home/nedlern/.
 

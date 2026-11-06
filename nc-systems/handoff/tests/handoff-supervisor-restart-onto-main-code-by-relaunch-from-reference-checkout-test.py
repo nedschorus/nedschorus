@@ -539,12 +539,12 @@ def second_half_cases():
     control("resupervise-exit-codes", "0")
     control("recover-exit-codes", "0")
     supervisor_id, claude_id, state_path = fresh_state()
-    write_session_handoff("dont-restart: the user asked to be consulted before a relaunch\n")
+    write_session_handoff("ask-user-before-restart: the user asked to be consulted before a relaunch\n")
     opened = []
     status, half, output = second_half(state_path, opened)
     time.sleep(0.2)
-    check("second half: a session-handoff written with --dont-restart unfreezes the old handoff-supervisor and ends nothing",
-          status == 1 and opened and "--dont-restart" in output and running(supervisor_id)
+    check("second half: a session-handoff written with --ask-user-before-restart unfreezes the old handoff-supervisor and ends nothing",
+          status == 1 and opened and "--ask-user-before-restart" in output and running(supervisor_id)
           and not program.process_is_stopped(supervisor_id) and running(claude_id)
           and not calls("resupervise-calls"), output)
     stop_fake(claude_id)
