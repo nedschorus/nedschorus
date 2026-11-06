@@ -285,9 +285,11 @@ def brief_cases(root, repository, base, frozen_head):
           f"6. Run the check: python3 scripts/{PROGRAM.name} {NUMBER} --check\n" in out
           and "--answers" not in out, out)
     check("brief: names the conflict check and then the check command, and no test run of its own, since "
-          "the check runs the suites",
+          "the check runs the suites; the one suite run it names is on the local merge with main",
           out.index(f"branch-conflict-check.py --pull-request {NUMBER}") < out.index(f"{NUMBER} --check")
-          and "run-all-test-suites" not in out and "Run the affected nc-test-suites" not in out
+          and out.count("run-all-test-suites") == 1
+          and out.index("git merge --no-edit origin/main") < out.index("run-all-test-suites")
+          and "Run the affected nc-test-suites" not in out
           and "Before the push, the check runs the nc-test-suites" in out, out)
     check("brief: says what to do when the check refuses and when a step fails after the push",
           "git commit --amend is allowed before the push" in out
@@ -314,6 +316,21 @@ def brief_cases(root, repository, base, frozen_head):
           "If it reports VERDICT: CONFLICT with any other answer, do what its report says." in out
           and "merge origin/main as its report says" not in out and "merge nothing" not in out
           and "had you merge origin/main" not in out and "--after-conflict-merge" not in out, out)
+    check("brief: a test main added later that fails is fixed in the round's one commit, tested "
+          "on a local merge with main that is never pushed",
+          "If a finding is a test that main added after the branch was cut and that fails "
+          "with this branch, put its fix in this commit too." in out
+          and "git worktree add --detach <temporary folder> HEAD" in out
+          and "git merge --no-edit origin/main" in out
+          and "--only-suites-named <the failing suite's path in the repository>" in out
+          and "whatever the run printed, git worktree remove --force <temporary folder>" in out
+          and "never pushed" in out
+          and "If no one commit makes that test pass on the merge, push nothing and stop: tell the agent "
+          "that dispatched you" in out
+          and "That agent replaces the pull request" in out
+          and "#replaces" in out
+          and out.index("4. Put every change") < out.index("If a finding is a test that main added")
+          < out.index("5. Write the answers file"), out)
     check("brief: says what to do when the push itself fails, and numbers the steps after the check on",
           "7. When it passes with a commit not yet pushed" in out and "8. If anything fails after the push" in out
           and "9. " not in out and "step 7" not in out

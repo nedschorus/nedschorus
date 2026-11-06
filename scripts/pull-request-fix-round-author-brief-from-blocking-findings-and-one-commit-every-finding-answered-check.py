@@ -715,6 +715,18 @@ def print_brief(number, reviewer_login):
                                                            local_branch=local_branch),
         "4. Put every change in one commit on top of the branch as step 1 left it. "
         "If no finding holds, make no commit.",
+        "   If a finding is a test that main added after the branch was cut and that fails "
+        "with this branch, put its fix in this commit too. The check in step 6 runs the suites on this "
+        "commit without main, so also run that test on a merge with main made only on this machine and "
+        "never pushed: git worktree add --detach <temporary folder> HEAD, then in that folder "
+        "git merge --no-edit origin/main and python3 scripts/run-all-test-suites.py --only-suites-named "
+        "<the failing suite's path in the repository>, then, whatever the run printed, "
+        "git worktree remove --force <temporary folder>. If no one commit makes that test pass on the "
+        "merge, push nothing and stop: tell the agent that dispatched you which test fails on the merge. "
+        "That agent replaces the pull request: it cuts a new nc-topic-branch from current origin/main, "
+        "carries this branch's work and the fix onto it, tests it, opens a new pull request whose "
+        "description has the line #replaces followed by this pull request's URL, closes this one with a "
+        "comment naming the new one, and tells merge-lane-2 with SendMessage, naming the new pull request.",
         f"5. Write the answers file {answers_name} at the root of your worktree, one entry per "
         "finding above, each starting \"<n>. \" on its own line, with any further lines of the "
         "entry after it: what you fixed, why the finding does not hold, or, for a change moved as "
