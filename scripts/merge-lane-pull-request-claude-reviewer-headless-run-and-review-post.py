@@ -90,9 +90,6 @@ from pathlib import Path
 
 SCHEMA_FILE_NAME = "merge-lane-pull-request-claude-reviewer-review-schema.json"
 POST_SCRIPT_NAME = "merge-lane-pull-request-reviewer-review-post-and-read-back.py"
-CHECKED_SCHEMA_KEYWORDS = {"description", "type", "enum", "minLength", "minimum", "required",
-                           "additionalProperties", "properties", "items"}
-JSON_TYPES = {"object": dict, "array": list, "string": str, "integer": int}
 DEFAULT_TIME_LIMIT_SECONDS = 5400
 ALLOWED_TOOLS = ("Read", "Grep", "Glob", "Bash", "WebFetch", "WebSearch")
 REMOVED_ENVIRONMENT_VARIABLES = ("GH_TOKEN", "GITHUB_TOKEN")
@@ -112,6 +109,15 @@ _command_line_prefix_spec = importlib.util.spec_from_file_location(
     / "claude-code-headless-print-mode-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
 _command_line_prefix_spec.loader.exec_module(command_line_prefix)
+JSON_SCHEMA_CHECK_MODULE = (Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
+                            / "json-schema-keyword-subset-answer-check-common.py")
+_json_schema_check_spec = importlib.util.spec_from_file_location(
+    "json_schema_keyword_subset_answer_check_common", JSON_SCHEMA_CHECK_MODULE)
+json_schema_check = importlib.util.module_from_spec(_json_schema_check_spec)
+_json_schema_check_spec.loader.exec_module(json_schema_check)
+answer_problems = json_schema_check.answer_problems
+review_schema_keywords_and_types_the_answer_check_does_not_enforce = (
+    json_schema_check.schema_keywords_and_types_the_answer_check_does_not_enforce)
 run_all_test_suites = common.run_all_test_suites
 
 REFUSED = ("PR {number}: Claude review not run: {reason}.\n"
@@ -163,49 +169,6 @@ def read_text(path):
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
         raise Refused(f"could not read {path}: {error}")
-
-
-def review_schema_keywords_and_types_the_answer_check_does_not_enforce(schema, where="the schema"):
-    """Return each keyword or type in schema that answer_problems does not check."""
-    found = [f"{where}: {keyword}" for keyword in schema if keyword not in CHECKED_SCHEMA_KEYWORDS]
-    if "type" in schema and schema["type"] not in JSON_TYPES:
-        found.append(f"{where}: type {schema['type']}")
-    nested = [(property_schema, f"{where}.{name}")
-              for name, property_schema in schema.get("properties", {}).items()]
-    if "items" in schema:
-        nested.append((schema["items"], f"{where}[]"))
-    for nested_schema, nested_where in nested:
-        found += review_schema_keywords_and_types_the_answer_check_does_not_enforce(
-            nested_schema, nested_where)
-    return found
-
-
-def answer_problems(value, schema, where="the answer"):
-    """Return what makes value not one the schema accepts; empty when the schema accepts it."""
-    expected = schema.get("type")
-    if expected and (not isinstance(value, JSON_TYPES[expected]) or isinstance(value, bool)):
-        return [f"{where} is {type(value).__name__}, not {expected}"]
-    problems = []
-    if "enum" in schema and value not in schema["enum"]:
-        problems.append(f"{where} {value!r} is not one of {', '.join(schema['enum'])}")
-    if "minLength" in schema and len(value) < schema["minLength"]:
-        problems.append(f"{where} is shorter than {schema['minLength']} characters")
-    if "minimum" in schema and value < schema["minimum"]:
-        problems.append(f"{where} {value} is below the minimum {schema['minimum']}")
-    if isinstance(value, dict):
-        properties = schema.get("properties", {})
-        problems += [f"{where} has no {key}" for key in schema.get("required", [])
-                     if key not in value]
-        if schema.get("additionalProperties") is False:
-            problems += [f"{where} has {key}, which the schema does not allow"
-                         for key in sorted(set(value) - set(properties))]
-        for key, property_schema in properties.items():
-            if key in value:
-                problems += answer_problems(value[key], property_schema, f"{where}'s {key}")
-    if isinstance(value, list) and "items" in schema:
-        for index, item in enumerate(value):
-            problems += answer_problems(item, schema["items"], f"{where}[{index}]")
-    return problems
 
 
 def hand_over_note(note, record, number):
@@ -329,7 +292,7 @@ def main(argv=None):
                 f"unnoticed: {'; '.join(not_enforced)}. Remove each from the schema, unless "
                 f"the reviewer's answer must keep to it; to keep one, add a keyword to "
                 f"CHECKED_SCHEMA_KEYWORDS, or a type to JSON_TYPES, and enforce it in "
-                f"answer_problems, both in {Path(__file__).resolve()}")
+                f"answer_problems, both in {JSON_SCHEMA_CHECK_MODULE}")
         if not (here / POST_SCRIPT_NAME).is_file():
             raise Refused(f"the posting script {here / POST_SCRIPT_NAME} is missing")
         at = git(head_worktree, "rev-parse", "HEAD")
