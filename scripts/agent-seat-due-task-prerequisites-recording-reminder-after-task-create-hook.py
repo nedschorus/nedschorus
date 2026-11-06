@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """After each TaskCreate, tell the agent how to record what the new task waits
 on, so scripts/agent-seat-due-task-raise-hook.py can raise the task when that
-work is done.
+work is done, and the branches and worktrees it holds, so
+nc-systems/handoff/agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py
+leaves them out of the first prompt's list while the task is open.
 
 Wired as a PostToolUse hook with matcher TaskCreate in .claude/settings.json.
 The task has already been added; the hook never blocks or changes it.
@@ -11,7 +13,8 @@ OUTPUT: one JSON object on stdout, exit 0,
 which Claude Code hands the agent beside the tool result. The text names the
 task's id when the payload's tool_response.task.id holds one, and otherwise is
 the same text without the id. The prerequisites format it gives is the one the
-due-task hook's docstring defines.
+due-task hook's docstring defines, and the branches format the one the list
+program's docstring defines.
 
 A payload that is not a JSON object: one line on stderr naming the hook and
 the fault, nothing on stdout, exit 1, which Claude Code records as a
@@ -39,14 +42,19 @@ PREREQUISITES_RECORD_INSTRUCTION_TEMPLATE = (
     '{{"issue_closed": <number>}}].\n'
     "If it waits on another task on your own task list, record that task with TaskUpdate's addBlockedBy.\n"
     "The due-task hook then raises this task when all of them are done.\n"
-    "Record no other kind of dependency: one that is not a pull request, GHI or task is noise."
+    "Record no other kind of dependency: one that is not a pull request, GHI or task is noise.\n"
+    'If this task holds a branch or a worktree, now or once you make one, record each with TaskUpdate '
+    'in the task\'s metadata, as "branches": ["<branch name>", "<worktree path>"]; the first prompt\'s '
+    "list of this agent-seat's worktrees and branches then leaves them out while the task is open."
 )
 TASK_ID_CLAUSE_TEMPLATE = " (id {task_id})"
 FAULT_LINE_TEMPLATE = ("{program}: the task was added, but this hook could not read it from the payload "
                        "Claude Code sent, which is not a JSON object ({error}); you did nothing wrong. If the task waits on a pull request or a GHI, "
                        "record each one with TaskUpdate in the task's metadata, as "
                        "\"prerequisites\": [{{\"pr_merged\": <number>}}, {{\"issue_closed\": <number>}}]; "
-                       "if it waits on another task, record that task with TaskUpdate's addBlockedBy.")
+                       "if it waits on another task, record that task with TaskUpdate's addBlockedBy; "
+                       "if it holds a branch or a worktree, record each with TaskUpdate in the task's "
+                       "metadata, as \"branches\": [\"<branch name>\", \"<worktree path>\"].")
 
 
 def created_task_id(payload):
