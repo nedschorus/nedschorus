@@ -280,7 +280,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
             "timeout": 30
           }
         ]
@@ -292,7 +292,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
             "timeout": 30
           }
         ]
