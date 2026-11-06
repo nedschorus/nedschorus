@@ -1,6 +1,11 @@
 #!/bin/bash
 # Gate a merge. Exits 0 only if every check passes; any problem exits non-zero
 # with a reason on stderr. It GATES -- it does not print a count and continue.
+# One exception, which never changes the exit code: before the checks it prints
+# on stderr the notice of scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py
+# --print-merge-gate-notice-of-last-failed-or-stopped-run, when the no-sandbox test suites last failed or
+# stopped on main. Refusing instead would stop every merge
+# for one suite's failure on main, which a change being merged did not cause.
 #
 #   scripts/merge-gate.sh <pr-number> <expected-head-sha> <reviewed-since-iso8601>
 #
@@ -152,6 +157,11 @@ fi
 [ $# -eq 3 ] || cannot "merge-gate.sh takes exactly three arguments and was given $#." \
   "Call it as: scripts/merge-gate.sh <pull request number> <the nc-head-commit, all 40 characters> <reviewed-since: the submitted_at of your latest review as the merge account, or of the pin if that is later>"
 PR=$1; EXPECTED=$2; SINCE=$3
+
+NO_SANDBOX_SUITES_PROGRAM="$(dirname "${BASH_SOURCE[0]}")/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py"
+if ! python3 "$NO_SANDBOX_SUITES_PROGRAM" --print-merge-gate-notice-of-last-failed-or-stopped-run --clone "$(dirname "${BASH_SOURCE[0]}")/.." >&2; then
+  printf 'NO-SANDBOX TEST SUITES ON MAIN: %s --print-merge-gate-notice-of-last-failed-or-stopped-run failed; its error is just above this line. The gate goes on; tell reboot-test, which owns that program.\n' "$NO_SANDBOX_SUITES_PROGRAM" >&2
+fi
 
 command -v jq >/dev/null 2>&1 || cannot "jq is not on PATH. Put jq on PATH, then rerun the gate." \
   "If jq is not installed on this machine, tell the user this message."

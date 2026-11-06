@@ -428,6 +428,7 @@ def main():
         check("claude runs headless with no claude.ai connectors, dontAsk, the schema, JSON output "
               "and the six tools, and no prompt argument after them",
               lambda: call.get("argv") == ["-p", "--strict-mcp-config", "--permission-mode", "dontAsk",
+                                           "--settings", '{"advisorModel": ""}',
                                            "--json-schema", SCHEMA.read_text(),
                                            "--output-format", "json", "--allowedTools", "Read", "Grep",
                                            "Glob", "Bash", "WebFetch", "WebSearch"],
@@ -461,7 +462,8 @@ def main():
               == f"session-77\n{case.head_worktree}\n", case.detail)
         check("the follow-up command is printed whole, with where to run it",
               lambda: f"run from {case.head_worktree}" in case.stdout
-              and "claude -p --strict-mcp-config --permission-mode dontAsk --resume session-77 "
+              and "claude -p --strict-mcp-config --permission-mode dontAsk "
+                  "--settings '{\"advisorModel\": \"\"}' --resume session-77 "
                   "--allowedTools Read Grep Glob Bash WebFetch WebSearch" in case.stdout, case.detail)
         check("each refused tool call is printed",
               lambda: "the reviewer was refused a Bash call it asked for: rm -rf /tmp/x"

@@ -119,9 +119,10 @@ class CheckResult:
         self.reason = reason
 
 
-def run_conflict_check(check_path, local_object_id, seconds_left):
+def run_conflict_check(check_path, local_object_id, seconds_left, branch):
+    # --branch lets the check say whether the branch is rebased or its pull request replaced.
     return run_check(check_path, local_object_id, seconds_left, CHECK_EXIT_CONFLICT,
-                     CONFLICT_VERDICT_PREFIX, "conflict")
+                     CONFLICT_VERDICT_PREFIX, "conflict", ["--branch", branch])
 
 
 def run_revert_check(check_path, local_object_id, seconds_left):
@@ -130,10 +131,10 @@ def run_revert_check(check_path, local_object_id, seconds_left):
 
 
 def run_check(check_path, local_object_id, seconds_left, found_status, verdict_prefix,
-              found_kind):
+              found_kind, extra_arguments=()):
     try:
         process = subprocess.Popen(
-            [sys.executable, check_path, "--head", local_object_id],
+            [sys.executable, check_path, "--head", local_object_id, *extra_arguments],
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding="utf-8",
             errors="replace", start_new_session=True)
@@ -271,7 +272,7 @@ def main(argv, pushed_refs_text, stderr, environment):
             say(stderr, hand_check_line(branch, local_object_id))
             say_revert_check_not_run(stderr, branch, local_object_id)
             continue
-        result = run_conflict_check(check_path, local_object_id, remaining)
+        result = run_conflict_check(check_path, local_object_id, remaining, branch)
         if result.kind == "conflict":
             conflicts.append((branch, result))
         elif result.kind == "clean":
@@ -316,7 +317,7 @@ def main(argv, pushed_refs_text, stderr, environment):
         for line in result.lines:
             say(stderr, line)
     if conflicts:
-        say(stderr, "Once the merge is committed, push again.")
+        say(stderr, "Do what scripts/branch-conflict-check.py reports above.")
     for branch, result in reverts:
         say(stderr, MESSAGE_PREFIX + "branch %s sets a file back to a version that %s has "
             "replaced; this push is refused." % (branch, BASE_NAME_FOR_MESSAGES))

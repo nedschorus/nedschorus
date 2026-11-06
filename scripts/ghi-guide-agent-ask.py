@@ -171,9 +171,9 @@ git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 _command_line_prefix_spec = importlib.util.spec_from_file_location(
-    "claude_code_headless_print_mode_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+    "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
     SCRIPT_DIRECTORY.parent / "nc-systems" / "general-tools"
-    / "claude-code-headless-print-mode-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+    / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
 _command_line_prefix_spec.loader.exec_module(command_line_prefix)
 
@@ -572,7 +572,7 @@ def run_claude(prompt: str, resume_session_id, seat_dir: Path, timeout_seconds: 
     # needs it: permissions come from GHI_GUIDE_AGENT_ALLOWED_TOOLS.
     # The prompt goes on stdin: one argument may not exceed 128 KiB on
     # Linux, and a draft GHI-MD with its diff can be larger.
-    command = [*command_line_prefix.claude_code_headless_print_mode_command_line_prefix_build("dontAsk"),
+    command = [*command_line_prefix.claude_code_headless_run_command_line_prefix_build("dontAsk"),
                "--output-format", "json", "--setting-sources", "user",
                "--allowedTools", GHI_GUIDE_AGENT_ALLOWED_TOOLS, "--model", GHI_GUIDE_AGENT_MODEL]
     if resume_session_id:
