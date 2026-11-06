@@ -48,6 +48,22 @@ def decoded(output):
     return json.loads(output)["hookSpecificOutput"] if output else None
 
 
+def main_with_failing_read_state(hook_payload):
+    """Run the hook's main() on hook_payload while reading the stop state raises; return its exit and stdout."""
+    original = hook.common.read_state
+    hook.common.read_state = lambda f: (_ for _ in ()).throw(RuntimeError("boom"))
+    out = io.StringIO()
+    sys_stdin = sys.stdin
+    sys.stdin = io.StringIO(json.dumps(hook_payload))
+    try:
+        with contextlib.redirect_stdout(out):
+            status = hook.main()
+    finally:
+        sys.stdin = sys_stdin
+        hook.common.read_state = original
+    return status, out.getvalue()
+
+
 def main():
     pushes = ["git push", "git -C /x push origin b", "cd x && git push -u origin b", "gh pr merge 12 --squash",
               "FOO=1 git push", "/usr/bin/git push", "bash -c 'git push origin b'", "sudo git push"]
@@ -134,23 +150,20 @@ def main():
         check("unreadable note record: note shown again, not lost", hook.shown_before(record, "unknown") is False)
         record.unlink()
 
+        not_a_folder = root / "a-file"
+        not_a_folder.write_text("")
+        check("note record cannot be written: note shown, no error",
+              hook.shown_before(not_a_folder / "session.json", "unknown") is False)
+
         broken = {**environment, "NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(folder)}
-        original = hook.common.read_state
-        hook.common.read_state = lambda f: (_ for _ in ()).throw(RuntimeError("boom"))
-        out = io.StringIO()
-        try:
-            sys_stdin = sys.stdin
-            sys.stdin = io.StringIO(json.dumps(payload()))
-            try:
-                with contextlib.redirect_stdout(out):
-                    status = hook.main()
-            finally:
-                sys.stdin = sys_stdin
-        finally:
-            hook.common.read_state = original
-        shown = decoded(out.getvalue())
+        status, out = main_with_failing_read_state(payload())
+        shown = decoded(out)
         check("hook failure: says so in context, exit 0",
-              status == 0 and shown and "hook failed" in shown["additionalContext"], out.getvalue())
+              status == 0 and shown and "hook failed" in shown["additionalContext"], out)
+        status, out = main_with_failing_read_state(payload("PreToolUse", "ls"))
+        shown = decoded(out)
+        check("hook failure at PreToolUse: the note names that event",
+              status == 0 and shown and shown["hookEventName"] == "PreToolUse", out)
 
         stop.write_text("# Emergency stop\ncoordinating agent-seat: reboot-test\n")
         result = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload("PreToolUse", "git push")),
