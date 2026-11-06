@@ -155,4 +155,4 @@ Unless named otherwise, files are in `~/.claude/handoffs/` on the agent-seat's m
 - GHI [A post-checkout git hook in `scripts/git-client-side-hooks/` writes the owner file of each new worktree an agent makes](https://github.com/nedschorus/nedschorus/issues/2547)
 - GHI [Agent-seats run on a last known good commit of main, while main's newest commit is tested as the release candidate up to four times a day](https://github.com/nedschorus/nedschorus/issues/2636)
 
-**Checked against:** commit [4b782987bbd5769434ba46a22b0496a103791262](https://github.com/nedschorus/nedschorus/commit/4b782987bbd5769434ba46a22b0496a103791262)
+**Checked against:** commit [e0f608a0a433a189da0c362861753d098c48a959](https://github.com/nedschorus/nedschorus/commit/e0f608a0a433a189da0c362861753d098c48a959)
