@@ -285,18 +285,21 @@ def run_runner_with_time_limit(command, worktree):
 
 
 def failing_suites_and_logs(stdout, fail_prefix, log_mark):
-    """[(suite, log path)] from the runner's FAIL lines that carry a log.
+    """[(suite, log path)] from the runner's FAIL lines, one entry per suite.
 
-    The runner prints each failing suite twice: a progress line without a log, then one in
-    its closing list with the log; only the second is read."""
-    found = []
+    The runner prints a failing suite's progress line, without a log, then a line with the
+    log in its closing list; a run stopped before the closing list prints only the first.
+    Each suite is kept once, with its log when any line gives one, or else with ""."""
+    found = {}
     for line in stdout.splitlines():
-        if not line.startswith(fail_prefix) or log_mark not in line:
+        if not line.startswith(fail_prefix):
             continue
         rest = line[len(fail_prefix):]
         suite = rest.split(" ", 1)[0]
-        found.append((suite, rest.split(log_mark, 1)[1].strip()))
-    return found
+        log = rest.split(log_mark, 1)[1].strip() if log_mark in rest else ""
+        if log or suite not in found:
+            found[suite] = log
+    return list(found.items())
 
 
 def record_paths(log_store_root, started):
@@ -312,6 +315,10 @@ def write_record(log_store_root, started, last_run, stdout_tail, failing):
     copied = []
     for suite, log in failing:
         target = directory / f"{record.stem}-{suite.replace('/', '__')}.log"
+        if not log:
+            copied.append({"suite": suite, "log": "none: the runner stopped before its "
+                                                  "closing list, which names each log"})
+            continue
         try:
             shutil.copyfile(log, target)
             copied.append({"suite": suite, "log": str(target)})

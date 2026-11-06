@@ -72,6 +72,9 @@ if mode == "fail-with-missing-log":
     print("FAIL outside-a-test.py exit 1 — log /no/such/log.txt")
     print("SUMMARY: 1 passed, 1 failed, 2 total")
     sys.exit(1)
+if mode == "fail-before-closing-list":
+    print("FAIL outside-a-test.py exit 1 (1.0s)")
+    sys.exit(1)
 if mode == "fail":
     log = os.path.join(log_dir, "outside-a-test.py.log")
     with open(log, "w") as written:
@@ -320,6 +323,15 @@ with tempfile.TemporaryDirectory() as directory:
           "still recorded as failed",
           code == 0 and s.state()["last_run"]["result"] == "failed"
           and failing[0]["log"].startswith("not copied from /no/such/log.txt"), (code, failing))
+    s.merge_on_origin(45)
+    code, printed, calls = s.run("fail-before-closing-list")
+    failing = s.state()["last_run"]["failing_suites"]
+    check("a runner that exits 1 before its closing list still has its failing suite "
+          "recorded, once, with no log, and the notice names it",
+          code == 0 and s.state()["last_run"]["result"] == "failed"
+          and [entry["suite"] for entry in failing] == ["outside-a-test.py"]
+          and failing[0]["log"].startswith("none:") and "outside-a-test.py" in s.notice(),
+          (code, failing))
     state = s.state()
     state["last_run"]["ended"] = "not a time"
     s.state_file.write_text(json.dumps(state))
