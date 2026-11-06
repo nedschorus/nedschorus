@@ -505,17 +505,21 @@ SQUASHED_PULL_REQUEST_SUBJECT = re.compile(r"\(#(\d+)\)$")
 
 def merging_pull_request(commit_hash, base_hash, runner=run):
     """Return the number of the pull request whose merge brought commit_hash
-    onto the base, or None when no merge subject names one."""
+    onto the base, or the number a squashed commit's subject ends with when the
+    commit is on the base's first-parent line itself; None when neither names one."""
     status, subject = runner(["git", "log", "-1", "--format=%s", commit_hash])
     squashed = SQUASHED_PULL_REQUEST_SUBJECT.search(subject) if status == 0 else None
-    # The oldest first-parent merge that descends from the commit is the one
-    # that brought it onto the base.
-    status, out = runner(["git", "log", "--first-parent", "--merges", "--ancestry-path",
-                          "--reverse", "--format=%s", "%s..%s" % (commit_hash, base_hash)])
-    merged = (MERGED_PULL_REQUEST_SUBJECT.match(out.splitlines()[0])
-              if status == 0 and out else None)
-    if merged:
-        return merged.group(1)
+    # The oldest first-parent commit that descends from the commit is the merge
+    # that brought it onto the base, unless its first parent is the commit
+    # itself: then the commit is on the first-parent line, and every later
+    # merge only descends from it.
+    status, out = runner(["git", "log", "--first-parent", "--ancestry-path", "--reverse",
+                          "--format=%P%x1f%s", "%s..%s" % (commit_hash, base_hash)])
+    if status == 0 and out:
+        parents, _, oldest_subject = out.splitlines()[0].partition("\x1f")
+        merged = MERGED_PULL_REQUEST_SUBJECT.match(oldest_subject)
+        if merged and parents.split()[:1] != [commit_hash]:
+            return merged.group(1)
     return squashed.group(1) if squashed else None
 
 

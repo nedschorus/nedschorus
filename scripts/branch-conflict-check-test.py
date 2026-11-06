@@ -1907,6 +1907,29 @@ def real_repository_cases(root):
              "%s, written by agent-seat MD-skills, merged by pull request #77."
              % side_label in lines)
 
+    # main's side came in as a squashed pull request on main's first-parent
+    # line, and a later pull request's merge descends from it.
+    (origin / "shared-by-squash.txt").write_text("main's side\n")
+    git_in(origin, "add", "shared-by-squash.txt")
+    git_in(origin, "commit", "-q", "--author", "MD-skills <md@example.invalid>", "-m",
+           "Squashed side work (#88)")
+    squash_label = real_label(git_in(origin, "rev-parse", "HEAD"), "Squashed side work (#88)")
+    git_in(origin, "checkout", "-q", "-b", "later-work", "main")
+    commit_in(origin, "later.txt", "later\n", "later work")
+    git_in(origin, "checkout", "-q", "main")
+    git_in(origin, "merge", "-q", "--no-ff", "-m",
+           "Merge pull request #79 from nedschorus/later-work", "later-work")
+    git_in(work, "checkout", "-q", "-b", "squash-file-topic", deleting_head)
+    commit_in(work, "shared-by-squash.txt", "the branch's side\n", "squash-file topic")
+    git_in(work, "checkout", "-q", "main")
+    status, lines, _ = run_here("--head", "squash-file-topic")
+    case("real: a squashed commit on main's first-parent line is named by its own "
+         "pull request, not by the next merge after it",
+         status == CHECK.EXIT_CONFLICT
+         and "MAIN'S SIDE: shared-by-squash.txt -- changed on origin/main by "
+             "%s, written by agent-seat %s, merged by pull request #88."
+             % (squash_label, "MD-skills") in lines)
+
 
 with tempfile.TemporaryDirectory(prefix="branch-conflict-check-test-") as scratch:
     try:
@@ -1932,8 +1955,9 @@ log = []
 status, lines = run_branch(fake_runner(
     merge_tree_status=1, merge_tree_output=ONE_CONFLICT, log=log,
     main_side_logs={"x": (0, MAIN_COMMIT + "\x1fMD-skills")},
-    merges_log=(0, "Merge pull request #77 from nedschorus/side\n"
-                   "Merge pull request #78 from nedschorus/later")))
+    merges_log=(0, "%s %s\x1fMerge pull request #77 from nedschorus/side\n"
+                   "%s %s\x1fMerge pull request #78 from nedschorus/later"
+                % ("a" * 40, MAIN_COMMIT[:39] + "d", "e" * 40, "f" * 40))))
 case("a conflicting file's MAIN'S SIDE line names main's commit, its agent-seat "
      "and the pull request whose merge brought it in",
      "MAIN'S SIDE: x -- changed on origin/main by commit %s, written by agent-seat "
@@ -1941,9 +1965,9 @@ case("a conflicting file's MAIN'S SIDE line names main's commit, its agent-seat 
 case("main's commits on a file are listed only among those the branch lacks",
      ["git", "log", "--no-merges", "--format=%H%x1f%an",
       "%s..%s" % (RESOLVED_HEAD, RESOLVED_BASE), "--", "x"] in log)
-case("the merging pull request is the oldest first-parent merge after the commit",
-     ["git", "log", "--first-parent", "--merges", "--ancestry-path", "--reverse",
-      "--format=%s", "%s..%s" % (MAIN_COMMIT, RESOLVED_BASE)] in log)
+case("the merging pull request is the oldest first-parent commit after the commit",
+     ["git", "log", "--first-parent", "--ancestry-path", "--reverse",
+      "--format=%P%x1f%s", "%s..%s" % (MAIN_COMMIT, RESOLVED_BASE)] in log)
 
 status, lines = run_branch(fake_runner(
     merge_tree_status=1, merge_tree_output=ONE_CONFLICT,
@@ -1955,7 +1979,7 @@ case("a squashed commit with no merge after it is named by the number in its sub
 status, lines = run_branch(fake_runner(
     merge_tree_status=1, merge_tree_output=ONE_CONFLICT,
     main_side_logs={"x": (0, MAIN_COMMIT + "\x1fCase")},
-    merges_log=(0, "Merge branch 'side'")))
+    merges_log=(0, "%s %s\x1fMerge branch 'side'" % ("a" * 40, "b" * 40))))
 case("a commit no pull request merged says so",
      "MAIN'S SIDE: x -- changed on origin/main by commit %s, written by agent-seat "
      "Case, in no pull request this run could find." % MAIN_COMMIT[:12] in lines)

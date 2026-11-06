@@ -44,7 +44,8 @@ TERMINATE_GRACE_SECONDS = 3.0
 
 MESSAGE_PREFIX = "pre-push: "
 SHORT_COMMIT_LENGTH = 12
-HAND_CHECK_COMMAND = "python3 scripts/%s --head %%s" % CONFLICT_CHECK_FILE_NAME
+# --branch lets the hand check say whether the branch is rebased or its pull request replaced.
+HAND_CHECK_COMMAND = "python3 scripts/%s --head %%s --branch %%s" % CONFLICT_CHECK_FILE_NAME
 TELL_USER_LINE = ("Tell the user this whole message, including any error printed just "
                   "above it: the next push on this machine may go unchecked the same way.")
 REVERT_AFTER_HAND_CONFLICT_CHECK_LINE = ("Once the hand conflict check of %s prints VERDICT: "
@@ -183,7 +184,7 @@ def branch_list(branches):
 
 def hand_check_line(branch, object_id):
     return "Check %s by hand from your worktree: %s" % (
-        branch, HAND_CHECK_COMMAND % short_commit(object_id))
+        branch, HAND_CHECK_COMMAND % (short_commit(object_id), branch))
 
 
 def revert_after_hand_conflict_check_line(branch, object_id):
@@ -231,7 +232,7 @@ def say_error_before_branches_read(stream, error_text):
         "reading which branches this push sends, so none of them was checked for "
         "conflicts with %s." % (error_text, BASE_NAME_FOR_MESSAGES))
     say(stream, "For each branch this push sends to %s, other than main, run from your "
-        "worktree: %s" % (CHECKED_REMOTE_NAME, HAND_CHECK_COMMAND % "<branch name>"))
+        "worktree: %s" % (CHECKED_REMOTE_NAME, HAND_CHECK_COMMAND % ("<branch name>", "<branch name>")))
     say(stream, "Nor was any branch checked for files set back to a version that %s has "
         "replaced. For each branch this push sends to %s, other than main, once that conflict "
         "check prints VERDICT: CLEAN, also run: %s"
@@ -284,7 +285,7 @@ def main(argv, pushed_refs_text, stderr, environment):
             for line in result.lines:
                 say(stderr, line)
             say(stderr, "Follow the report, then check %s again by hand from your "
-                "worktree: %s" % (branch, HAND_CHECK_COMMAND % short_commit(local_object_id)))
+                "worktree: %s" % (branch, HAND_CHECK_COMMAND % (short_commit(local_object_id), branch)))
             say_revert_check_not_run(stderr, branch, local_object_id)
             say(stderr, RERUN_VERDICT_LINE)
         elif result.kind == "timed out":
