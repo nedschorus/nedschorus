@@ -44,7 +44,8 @@ WHAT ONE RUN DOES, in order.
      is not completed and no longer lists it, because the task's file is
      gone, cannot be read or no longer names the diff file, is moved to the
      task on the same list when exactly one other task not marked completed
-     names its diff file, as a fold of tasks leaves it; otherwise it is
+     names its diff file, as when an agent moves the mutants of several
+     survivor tasks into one and marks the others completed; otherwise it is
      reported once:
      the record naming it is written at once, and only then does the state
      stop naming it, so a run killed later has still reported it; standard
