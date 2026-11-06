@@ -147,6 +147,11 @@
           },
           {
             "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/pkill-killall-and-process-name-pattern-kill-refusal-hook.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py",
             "timeout": 30
           },
