@@ -138,6 +138,8 @@ from pathlib import Path
 GATE = Path(__file__).with_name("merge-gate.sh")
 DESCRIPTION_DEFECT_LINE_READER = Path(__file__).with_name(
     "pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
+NO_SANDBOX_SUITES_PROGRAM = Path(__file__).with_name("no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py")
+GIT_REDIRECTING_ENVIRONMENT_COMMON = Path("nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py")
 FIXTURES = Path(__file__).with_name("merge-gate-test-captured-github-responses")
 BASH = shutil.which("bash")
 TEST_TOKEN = "merge-gate-test-token-not-a-credential"
@@ -321,8 +323,16 @@ exec "$MERGE_GATE_TEST_REAL_PYTHON3" "$@"
 def gate_copy(text):
     """A copy of the gate holding `text`, in a directory of its own beside a copy
     of the description reader, which the gate runs from its own directory."""
-    directory = Path(tempfile.mkdtemp(dir=scratch))
+    # Laid out as in the repository, since the no-sandbox suites' program loads a module by
+    # its path from the repository's top.
+    top = Path(tempfile.mkdtemp(dir=scratch))
+    directory = top / "scripts"
+    directory.mkdir()
     shutil.copyfile(DESCRIPTION_DEFECT_LINE_READER, directory / DESCRIPTION_DEFECT_LINE_READER.name)
+    shutil.copyfile(NO_SANDBOX_SUITES_PROGRAM, directory / NO_SANDBOX_SUITES_PROGRAM.name)
+    (top / GIT_REDIRECTING_ENVIRONMENT_COMMON).parent.mkdir(parents=True)
+    shutil.copyfile(Path(__file__).resolve().parent.parent / GIT_REDIRECTING_ENVIRONMENT_COMMON,
+                    top / GIT_REDIRECTING_ENVIRONMENT_COMMON)
     copy = directory / "merge-gate.sh"
     copy.write_text(text)
     return copy
@@ -330,9 +340,15 @@ def gate_copy(text):
 
 def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=None,
              wrapper=None, arguments=None, jq_failing_filter=None, description_reader_fails=False,
-             cwd=None):
+             cwd=None, no_sandbox_suites_state=None):
     case_dir = Path(tempfile.mkdtemp(dir=scratch))
     home = case_dir / "home"
+    if no_sandbox_suites_state is not None:
+        state_file = (home / ".local" / "state" / "nedschorus"
+                      / "no-sandbox-test-suites-run-on-main-in-a-quiet-gap.json")
+        state_file.parent.mkdir(parents=True)
+        state_file.write_text(no_sandbox_suites_state if isinstance(no_sandbox_suites_state, str)
+                              else json.dumps(no_sandbox_suites_state))
     token_dir = home / ".config" / "nedschorus"
     token_dir.mkdir(parents=True)
     if token is not None:
@@ -463,6 +479,86 @@ def case_a1_pass_control(gate):
                   "ned-review-merge.\n")
     return (passed_pinned_to(run, BASE_PR, sha) and merge_lines + token_line in run.stdout,
             run.summary())
+
+
+# --- The no-sandbox test suites' notice ------------------------------------------
+NO_SANDBOX_NOTICE_HEADING = "NO-SANDBOX TEST SUITES ON MAIN"
+NO_SANDBOX_FAILED_RUN = {
+    "passing_commit": "a" * 40,
+    "last_run": {"commit": "b" * 40, "compared_with": "a" * 40, "started": "2026-11-03T23:00:00Z",
+                 "ended": "2026-11-03T23:05:00Z", "result": "failed", "reason": None,
+                 "failing_suites": [{"suite": "nc-systems/cold-read/tests/cold-read-grid-test.py",
+                                     "log": "/home/nedlern/nedschorus-logs/x.log"}],
+                 "record": "/home/nedlern/nedschorus-logs/x.txt", "follow_up_request_sent": None}}
+
+
+def no_sandbox_state(**last_run_fields):
+    state = json.loads(json.dumps(NO_SANDBOX_FAILED_RUN))
+    state["last_run"].update(last_run_fields)
+    return state
+
+
+def case_no_sandbox_notice_for_a_failed_run_and_the_gate_still_passes(gate):
+    run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(),
+                   no_sandbox_suites_state=NO_SANDBOX_FAILED_RUN)
+    return (passed_pinned_to(run, BASE_PR, BASE_APPROVAL["commit_id"])
+            and NO_SANDBOX_NOTICE_HEADING in run.stderr
+            and "cold-read-grid-test.py" in run.stderr
+            and "--record-follow-up-request-sent" in run.stderr), run.summary()
+
+
+def case_no_sandbox_notice_leaves_a_refusal_a_refusal(gate):
+    other = captured_value("nedschorus-nedschorus-636-pr-view-state.json", "headRefOid")
+    run = run_gate(gate, BASE_PR, other, BASE_APPROVAL["submitted_at"], base_routes(),
+                   no_sandbox_suites_state=NO_SANDBOX_FAILED_RUN)
+    return (refused_with(run, BASE_PR, "head moved") and NO_SANDBOX_NOTICE_HEADING in run.stderr,
+            run.summary())
+
+
+def case_no_sandbox_notice_for_a_stopped_run(gate):
+    run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(),
+                   no_sandbox_suites_state=no_sandbox_state(
+                       result="stopped", reason="git fetch origin failed: no network",
+                       failing_suites=[]))
+    return (passed_pinned_to(run, BASE_PR, BASE_APPROVAL["commit_id"])
+            and "stopped: git fetch origin failed: no network" in run.stderr), run.summary()
+
+
+def case_no_sandbox_notice_for_an_unreadable_state_file(gate):
+    run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(),
+                   no_sandbox_suites_state="{not json")
+    return (passed_pinned_to(run, BASE_PR, BASE_APPROVAL["commit_id"])
+            and "the state file cannot be read" in run.stderr), run.summary()
+
+
+def case_no_sandbox_notice_shrinks_to_one_line_after_the_follow_up(gate):
+    run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(),
+                   no_sandbox_suites_state=no_sandbox_state(
+                       follow_up_request_sent="2026-11-03T23:30:00Z"))
+    notice = [line for line in run.stderr.splitlines() if NO_SANDBOX_NOTICE_HEADING in line]
+    return (passed_pinned_to(run, BASE_PR, BASE_APPROVAL["commit_id"])
+            and len(notice) == 1 and "2026-11-03T23:30:00Z" in notice[0]
+            and "cold-read-grid-test.py" not in run.stderr), run.summary()
+
+
+def case_no_sandbox_notice_absent_after_a_passing_run_or_without_a_state_file(gate):
+    passed_run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(),
+                          no_sandbox_suites_state=no_sandbox_state(result="passed",
+                                                                   failing_suites=[]))
+    no_file = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes())
+    return (passed_pinned_to(passed_run, BASE_PR, BASE_APPROVAL["commit_id"])
+            and passed_pinned_to(no_file, BASE_PR, BASE_APPROVAL["commit_id"])
+            and "NO-SANDBOX" not in passed_run.stderr + no_file.stderr,
+            passed_run.summary() + " / " + no_file.summary())
+
+
+def case_no_sandbox_notice_program_failing_is_said_and_the_gate_goes_on(gate):
+    """The program beside the gate is replaced by one that fails."""
+    copy = gate_copy(gate.read_text())
+    (copy.parent / NO_SANDBOX_SUITES_PROGRAM.name).write_text("raise SystemExit(3)\n")
+    run = run_gate(copy, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes())
+    return (passed_pinned_to(run, BASE_PR, BASE_APPROVAL["commit_id"])
+            and "--print-merge-gate-notice-of-last-failed-or-stopped-run failed" in run.stderr), run.summary()
 
 
 def case_live_chain_merge_account_only_approval(gate):
@@ -1479,6 +1575,20 @@ def case_description_unparsable(gate):
 
 CASES = [
     ("A1 everything in order passes, pinned to the approval's commit", case_a1_pass_control),
+    ("NO-SANDBOX a failed run on main is noticed on stderr, and the gate still passes",
+     case_no_sandbox_notice_for_a_failed_run_and_the_gate_still_passes),
+    ("NO-SANDBOX the notice leaves a refusal a refusal, exit 1",
+     case_no_sandbox_notice_leaves_a_refusal_a_refusal),
+    ("NO-SANDBOX a stopped run is noticed with its reason",
+     case_no_sandbox_notice_for_a_stopped_run),
+    ("NO-SANDBOX an unreadable state file is noticed",
+     case_no_sandbox_notice_for_an_unreadable_state_file),
+    ("NO-SANDBOX after a follow-up request the notice is one line",
+     case_no_sandbox_notice_shrinks_to_one_line_after_the_follow_up),
+    ("NO-SANDBOX nothing is printed after a passing run, or without a state file",
+     case_no_sandbox_notice_absent_after_a_passing_run_or_without_a_state_file),
+    ("NO-SANDBOX a notice program that fails is said, and the gate goes on",
+     case_no_sandbox_notice_program_failing_is_said_and_the_gate_goes_on),
     ("LIVE CHAIN: PR 665 as the chain gates it, approved only by ned-review-merge, passes",
      case_live_chain_merge_account_only_approval),
     ("LIVE CHAIN: PR 667 as the chain gates it, since = ned-review-merge's later approval, passes",
@@ -1790,6 +1900,13 @@ MUTATIONS = [
      [('not_fixed_count=$(jq length <<<"$not_fixed")                    || cannot',
        'not_fixed_count=$(jq length <<<"$not_fixed")                    || true || cannot')],
      [case_not_fixed_line_read_fails]),
+    ("without the no-sandbox notice",
+     [('if ! python3 "$NO_SANDBOX_SUITES_PROGRAM" --print-merge-gate-notice-of-last-failed-or-stopped-run',
+       'if false && python3 "$NO_SANDBOX_SUITES_PROGRAM" --print-merge-gate-notice-of-last-failed-or-stopped-run')],
+     [case_no_sandbox_notice_for_a_failed_run_and_the_gate_still_passes]),
+    ("the no-sandbox notice program's failure not said",
+     [("--print-merge-gate-notice-of-last-failed-or-stopped-run failed; its error", "--print-merge-gate-notice-of-last-failed-or-stopped-run x; its error")],
+     [case_no_sandbox_notice_program_failing_is_said_and_the_gate_goes_on]),
     ("without the description parse check",
      [('<<<"$body_read")\n[ $? -eq 0 ] || cannot "$DESCRIPTION_UNPARSABLE"',
        '<<<"$body_read")\n: || cannot "$DESCRIPTION_UNPARSABLE"')],
