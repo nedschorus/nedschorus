@@ -1441,6 +1441,19 @@ with tempfile.TemporaryDirectory() as scratch:
         check(f"{case_slug}: the failed attempt is labelled report-missing-required-heading",
               "claude-fable-5-1(report-missing-required-heading)" in result.stderr, repr(result.stderr))
 
+    # An exit-0 attempt that wrote no report is classified from its stderr too:
+    # a limit message there names the limit, not a bare no-report.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "exit-0-limit-on-stderr", "claude")
+    result = run_claude_cell(
+        repository, stubs,
+        {"*": {"stderr": "You've hit your session limit · resets 8:50pm\n"}}, report)
+    check("an exit-0 attempt with no report and a limit message on stderr is caused account-limit",
+          result.returncode == 1
+          and "cold-read-claude-cell: cause: account-limit — resets 8:50pm" in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+
     # Every heading present passes, with trailing spaces on a heading line,
     # and a cell with no required headings is not held to fast-clarify's.
     for case_slug, cell, report_text in (
