@@ -16,7 +16,7 @@ operation and there will be none: what would have been a comment goes into
 the GHI-MD, through `edit` (user-ruled 2026-09-24, item 4 of the meta-walk
 reboot-test-meta-walk-2026-09-23: "But I don't want comments as agents
 forget to read them. Better to update the ghi-Md"). The PreToolUse hook
-.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py refuses a hand-typed
+.claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py refuses a hand-typed
 `gh issue comment`, `gh issue create` or body edit on this repository and
 sends the author here.
 
@@ -397,14 +397,11 @@ def _load_sibling_script(module_name, file_name):
     return module
 
 
-# The pre-push hook runs these two before git sends anything, so a push must
-# be given at least their time; see push_time_limit_seconds.
+# The pre-push hook runs this before git sends anything, so a push must be
+# given at least its time; see push_time_limit_seconds.
 pre_push_conflict_check = _load_sibling_script(
     "git_client_side_hooks_pre_push_conflict_check",
     "git-client-side-hooks-pre-push-conflict-check.py")
-pre_push_selective_test_run = _load_sibling_script(
-    "git_client_side_hooks_pre_push_selective_test_run",
-    "git-client-side-hooks-pre-push-selective-test-run.py")
 
 DEFAULT_REPO = "nedschorus/nedschorus"
 GHI_MD_DIRECTORY = "docs/issues"
@@ -419,11 +416,13 @@ RECONSIDERED_MARKER_NAME = ".ghi-issue-write-reconsidered"
 # What gh's stderr carries when the number names no issue, lowercased for
 # the comparison. Measured 2026-09-21; see `read_issue`.
 GH_NO_SUCH_ISSUE_STDERR_FRAGMENT = "could not resolve to an issue"
-SLUG_WORD_LIMIT = 8
+# A file name may be 255 bytes. The longest name built on a slug is the
+# log-store's `<number>-<slug>-proposed-improvements-or-changes-ghi-guide-agent-
+# <YYYY-MM-DD>-<n>.md`, whose other parts take up to 73 characters.
+GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT = 180
 GH_TIMEOUT_SECONDS = 120
-# Beyond the pre-push hook's own limit: the hook's mutation-testing-worktree
-# check, the selective run's search for leftover processes after its budget,
-# and git sending the branch.
+# Beyond the pre-push conflict check's own limit: the hook's other checks and
+# git sending the branch.
 PUSH_TIME_MARGIN_SECONDS = 120
 ADJUDICATION_TIMEOUT_SECONDS = 420
 # scripts/ghi-guide-agent-ask.py's EXIT_NOT_ABOUT_ISSUES and EXIT_RULING_QUESTION:
@@ -630,15 +629,12 @@ def remove_landing_worktree(worktree: Path, worktree_parent: Path,
 
 
 def push_time_limit_seconds(environment):
-    """How long a push may take: the pre-push hook's conflict check and
-    selective test run, each with its budget as the hook reads it from the
-    same environment and its grace period counted twice, since each one's
-    stop_process_group waits it after SIGTERM and again after SIGKILL, and a
-    margin that also covers the selective run's listing of descendants."""
+    """How long a push may take: the pre-push hook's conflict check, with
+    its budget as the hook reads it from the same environment and its grace
+    period counted twice, since its stop_process_group waits it after SIGTERM
+    and again after SIGKILL, and a margin."""
     return (pre_push_conflict_check.time_budget_seconds(environment)
             + 2 * pre_push_conflict_check.TERMINATE_GRACE_SECONDS
-            + pre_push_selective_test_run.time_budget_seconds(environment)
-            + 2 * pre_push_selective_test_run.TERMINATE_GRACE_SECONDS
             + PUSH_TIME_MARGIN_SECONDS)
 
 
@@ -665,12 +661,16 @@ def push_branch(worktree, branch, runner, environment=None):
             "with this message.", 1) from None
 
 
+def ghi_md_text_sha256_prefix(file_text: str) -> str:
+    """The first 16 hex digits of the SHA-256 of a GHI-MD's text."""
+    return hashlib.sha256(file_text.encode("utf-8")).hexdigest()[:16]
+
+
 def pairing_key(file_text: str) -> str:
     """This file's identity, and the only thing tying a half-finished run to
     the issue it already created. Content rather than path, because step 4
     moves the file."""
-    digest = hashlib.sha256(file_text.encode("utf-8")).hexdigest()[:16]
-    return f"{PAIRING_KEY_PREFIX}{digest}"
+    return f"{PAIRING_KEY_PREFIX}{ghi_md_text_sha256_prefix(file_text)}"
 
 
 def first_heading(file_text: str) -> str:
@@ -733,8 +733,22 @@ def refuse_heading_with_date(heading: str):
             "Then rerun the same command.", 64)
 
 def slug(title: str) -> str:
-    words = re.sub(r"[^a-z0-9]+", " ", title.lower()).split()
-    return "-".join(words[:SLUG_WORD_LIMIT]) or "issue"
+    """The title's words, lowercased and joined by hyphens, with every 's
+    at a word's end dropped, a contraction's as well as a possessive's, any
+    other apostrophe closed up and a Markdown link reduced to its text, so
+    "collector's" gives "collector", "Let's" gives "let", "don't" gives
+    "dont" and "[GHI 5](https://...)" gives "ghi-5". Every word is
+    kept up to GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT characters; a longer
+    slug is cut at the last hyphen before the limit."""
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", title.lower())
+    text = re.sub(r"['\u2019]s\b", "", text)
+    text = re.sub(r"['\u2019]", "", text)
+    joined = "-".join(re.sub(r"[^a-z0-9]+", " ", text).split())
+    if len(joined) > GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT:
+        head = joined[:GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT + 1]
+        joined = (head.rsplit("-", 1)[0] if "-" in head
+                  else joined[:GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT])
+    return joined or "issue"
 
 
 def placeholder_body(key: str) -> str:
@@ -2460,8 +2474,10 @@ def edit_landing_branch_name(number: int, staged: str) -> str:
     """The branch this edit lands on. Named for the content and not for the
     issue alone, so a rerun of the same edit names the same branch — which
     is what lets `edit_landing_state` recognise this tool's own earlier
-    push — and an edit that changed since names another."""
-    return f"ghi-{number}-edit-{pairing_key(staged)}"
+    push — and an edit that changed since names another. The
+    `ghi-<number>-edit-` prefix is what `refuse_on_an_earlier_edit_still_open`
+    lists an issue's edit branches by."""
+    return f"ghi-{number}-edit-ghi-md-sha256-{ghi_md_text_sha256_prefix(staged)}"
 
 
 def edit_landing_state(number: int, staged: str, on_main,

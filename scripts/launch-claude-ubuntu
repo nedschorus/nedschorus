@@ -468,6 +468,13 @@ if [ "$ATTACH" = yes ]; then
         [ "$RECONNECT_WAIT_SECONDS" -ge 30 ] || RECONNECT_WAIT_SECONDS=$((RECONNECT_WAIT_SECONDS * 2))
     done
 fi
+# A detached pane closes when the supervisor exits, so a refusal it prints
+# there is never seen and the launch would still exit 0. The supervisor's own
+# GitHub token check runs first, outside the pane, so a missing or unreadable
+# token file stops this launch with the supervisor's refusal and its exit 5.
+# It runs after PREPARE_COMMAND, whose fast-forward gives an old box checkout
+# the flag.
+GITHUB_TOKEN_CHECK_COMMAND="python3 \$HOME/Projects/nedschorus/nc-systems/handoff/handoff-supervisor.py --agent '$AGENT_NAME' --agent-seat-github-token-file-readable-check-only"
 # The trailing `exit $?` stops the pane's shell from exec'ing into the
 # supervisor: with tmux as its direct parent, tmux wakes it at once after a
 # `kill -STOP`. Its `$` is escaped twice, so the pane shell, not P1, expands it.
@@ -476,5 +483,5 @@ fi
 # as "already exists"; like the attach path, a live seat is not re-prepared.
 exec ssh "$AGENT_BOX" \
     "if $SEAT_EXISTS_COMMAND; then echo 'launch-claude-ubuntu: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-ubuntu $AGENT_NAME)'; \
-else $PREPARE_COMMAND && $SEAT_SOCKET_SELECTION_COMMAND && tmux -L \"\$SEAT_TMUX_SOCKET\" new-session -d -s '$AGENT_NAME' -c \"$AGENT_DIRECTORY_REMOTE\" \"$SUPERVISOR_COMMAND; exit \\\$?\" $SEAT_TMUX_OPTIONS_CHAIN \
+else $PREPARE_COMMAND && $GITHUB_TOKEN_CHECK_COMMAND && $SEAT_SOCKET_SELECTION_COMMAND && tmux -L \"\$SEAT_TMUX_SOCKET\" new-session -d -s '$AGENT_NAME' -c \"$AGENT_DIRECTORY_REMOTE\" \"$SUPERVISOR_COMMAND; exit \\\$?\" $SEAT_TMUX_OPTIONS_CHAIN \
 || { LAUNCH_STATUS=\$?; echo \"launch-claude-ubuntu: preparing or starting $AGENT_NAME on the box failed (exit \$LAUNCH_STATUS); the failing step's own message is above\" >&2; exit \$LAUNCH_STATUS; }; fi"

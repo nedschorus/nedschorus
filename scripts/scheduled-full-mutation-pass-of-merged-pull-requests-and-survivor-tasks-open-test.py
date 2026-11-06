@@ -1,0 +1,828 @@
+#!/usr/bin/env python3
+"""Tests for scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py.
+
+Run: python3 scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open-test.py
+Prints one line per case and exits non-zero if any case fails.
+
+No case runs cosmic-ray or the real mutation testing program. Each case builds an
+origin repository and a clone of it, and passes --mutation-testing-program a fake
+that records its arguments and, for each head it is given, writes the JSON file
+and exits as the case's plan says.
+"""
+
+import fcntl
+import importlib.util
+import json
+import os
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from pathlib import Path
+
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    str(Path(__file__).resolve().with_name(
+        "git-redirecting-environment-removal-test-fixture.py")))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
+SCRIPT = Path(__file__).with_name(
+    "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py")
+PLAN_VARIABLE = "SCHEDULED_FULL_MUTATION_PASS_TEST_PLAN_FILE"
+
+
+def load_script_module():
+    spec = importlib.util.spec_from_file_location(
+        "scheduled_full_mutation_pass_of_merged_pull_requests_and_survivor_tasks_open",
+        str(SCRIPT))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+job = load_script_module()
+
+FAKE_MUTATION_TESTING_PROGRAM = f'''#!/usr/bin/env python3
+import json, os, pathlib, signal, sys, time
+plan_file = pathlib.Path(os.environ["{PLAN_VARIABLE}"])
+plan = json.loads(plan_file.read_text())
+arguments = sys.argv[1:]
+with (plan_file.parent / "calls.log").open("a") as log:
+    log.write(json.dumps(arguments) + "\\n")
+head = arguments[arguments.index("--head") + 1]
+step = plan.get(head, {{}})
+def stopped(number, frame):
+    (plan_file.parent / "stopped-by-sigterm").write_text(head)
+    sys.exit(143)
+signal.signal(signal.SIGTERM, stopped)
+time.sleep(step.get("sleep", 0))
+if "json" in step:
+    pathlib.Path(arguments[arguments.index("--survived-and-errored-mutants-json-file") + 1]
+                 ).write_text(json.dumps(step["json"]))
+print("SUMMARY: " + step.get("summary", "0 mutants"))
+print(step.get("stderr", ""), file=sys.stderr)
+sys.exit(step.get("exit", 0))
+'''
+
+failures = []
+
+
+def check(case_name, condition, detail=""):
+    if condition:
+        print(f"PASS  {case_name}")
+    else:
+        print(f"FAIL  {case_name}: {detail}")
+        failures.append(case_name)
+
+
+def git(repository, *arguments, author="tester"):
+    # The author variables, which an agent-seat's environment sets, outrank user.name.
+    return subprocess.run(
+        ["git", "-C", str(repository), *arguments],
+        env={**os.environ, "GIT_AUTHOR_NAME": author, "GIT_AUTHOR_EMAIL": "t@example.invalid",
+             "GIT_COMMITTER_NAME": author, "GIT_COMMITTER_EMAIL": "t@example.invalid"},
+        capture_output=True, text=True, check=True).stdout.strip()
+
+
+class Fixture:
+    """An origin, a working repository that pushes to it, the clone the job tests, and its
+    state, task lists, agent-seat checkouts, cosmic-ray venv and log-store."""
+
+    def __init__(self, directory):
+        self.root = Path(directory)
+        self.origin = self.root / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)],
+                       check=True)
+        self.work = self.root / "work"
+        subprocess.run(["git", "clone", "-q", str(self.origin), str(self.work)], check=True,
+                       capture_output=True)
+        self.commit("README", "base\n")
+        self.clone = self.root / "clone"
+        subprocess.run(["git", "clone", "-q", str(self.origin), str(self.clone)], check=True)
+        self.state = self.root / "state"
+        self.tasks = self.root / "tasks"
+        self.agents = self.root / "agents"
+        self.venv = self.root / "venv"
+        (self.venv / "bin").mkdir(parents=True)
+        (self.venv / "bin" / "cosmic-ray").write_text("")
+        self.log_store = self.root / "log-store"
+        self.program = self.root / "fake-mutation-testing.py"
+        self.program.write_text(FAKE_MUTATION_TESTING_PROGRAM)
+        self.plan_file = self.root / "plan.json"
+        self.plan_file.write_text("{}")
+
+    def commit(self, path, text, author="tester"):
+        (self.work / path).parent.mkdir(parents=True, exist_ok=True)
+        (self.work / path).write_text(text)
+        git(self.work, "add", "-A", author=author)
+        git(self.work, "commit", "-q", "-m", f"change {path}", author=author)
+        git(self.work, "push", "-q", "origin", "HEAD:main")
+        return git(self.work, "rev-parse", "HEAD")
+
+    def seat(self, name, with_checkout=True):
+        (self.tasks / f"nedschorus-{name}-tasks").mkdir(parents=True, exist_ok=True)
+        if with_checkout:
+            (self.agents / name).mkdir(parents=True, exist_ok=True)
+        return self.tasks / f"nedschorus-{name}-tasks"
+
+    def run(self, plan=None, *flags, timeout_seconds=None):
+        if plan is not None:
+            self.plan_file.write_text(json.dumps(plan))
+        command = [sys.executable, str(SCRIPT), "--clone", str(self.clone),
+                   "--log-store-root", str(self.log_store),
+                   "--state-directory", str(self.state),
+                   "--task-lists-directory", str(self.tasks),
+                   "--agent-seats-directory", str(self.agents),
+                   "--cosmic-ray-venv", str(self.venv),
+                   "--mutation-testing-program", str(self.program)]
+        if timeout_seconds is not None:
+            command += ["--merge-timeout-seconds", str(timeout_seconds)]
+        return subprocess.run([*command, *flags], capture_output=True, text=True, check=False,
+                              env={**os.environ, PLAN_VARIABLE: str(self.plan_file)},
+                              timeout=300)
+
+    def state_json(self):
+        return json.loads((self.state / job.STATE_FILE_NAME).read_text())
+
+    def set_last(self, commit):
+        state = self.state_json() if (self.state / job.STATE_FILE_NAME).exists() else {
+            "tasks_opened": {}}
+        state["last_tested_main_commit"] = commit
+        self.state.mkdir(parents=True, exist_ok=True)
+        (self.state / job.STATE_FILE_NAME).write_text(json.dumps(state))
+
+    def records(self):
+        directory = self.log_store / job.RECORDS_DIRECTORY_NAME
+        # The surviving mutants' diffs are kept in a directory beside the records.
+        return sorted(path for path in directory.iterdir() if path.is_file()) \
+            if directory.exists() else []
+
+    def calls(self):
+        log = self.root / "calls.log"
+        return [json.loads(line) for line in log.read_text().splitlines()] \
+            if log.exists() else []
+
+
+SURVIVOR_DIFF = "--- a/scripts/thing.py\n+++ b/scripts/thing.py\n-    return x + x\n+    return x * x\n"
+
+
+def survivor(line=2, operator="core/ReplaceBinaryOperator_Add_Mul"):
+    return {"module_path": "scripts/thing.py", "line": line, "operator": operator,
+            "diff": SURVIVOR_DIFF, "reason": ""}
+
+
+def verdict(survived=(), errored=(), no_suite=()):
+    return {"head": "h", "merge_base": "b", "survived": list(survived),
+            "errored": list(errored), "files_with_no_suite": list(no_suite)}
+
+
+def task_files(list_directory):
+    return sorted(path.name for path in list_directory.glob("*.json"))
+
+
+def run_cases():
+    # The first run writes the state file and tests nothing.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        main_commit = git(fixture.work, "rev-parse", "HEAD")
+        completed = fixture.run()
+        check("first run: exit 0", completed.returncode == 0,
+              f"rc={completed.returncode} err={completed.stderr}")
+        check("first run: the state file names origin/main and no task",
+              fixture.state_json() == {"last_tested_main_commit": main_commit,
+                                       "tasks_opened": {}}, fixture.state_json())
+        check("first run: no merge is mutation-tested", fixture.calls() == [], fixture.calls())
+        records = fixture.records()
+        check("first run: the record says it is the first run, and the citation is printed",
+              len(records) == 1 and "first run: no state file" in records[0].read_text()
+              and f"nedlern@ned-box:{records[0]}" in completed.stdout,
+              (records, completed.stdout))
+
+    # Merges after the state's commit: each tested once, oldest first; a survivor's task on its
+    # author's list, numbered after the list's highest id and high-water mark.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        first = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                               author="alpha")
+        second = fixture.commit("scripts/other.py", "VALUE = 1\n", author="beta")
+        alpha_list = fixture.seat("alpha")
+        (alpha_list / "3.json").write_text("{}")
+        (alpha_list / ".highwatermark").write_text("5")
+        (alpha_list / ".lock").write_text("")
+        completed = fixture.run({
+            first: {"json": verdict(
+                survived=[survivor()],
+                errored=[dict(survivor(1, "core/NumberReplacer"), reason="timeout: slow")],
+                no_suite=["scripts/untested.py"]),
+                "summary": "3 mutants", "exit": 1},
+            second: {"json": verdict(), "summary": "0 mutants"}})
+        calls = fixture.calls()
+        check("merges: exit 0", completed.returncode == 0,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+        check("merges: each merge since the state's commit is tested once, oldest first, by "
+              "the full mutation pass against its first parent, with the venv and a JSON file",
+              [call[call.index("--head") + 1] for call in calls] == [first, second]
+              and all(call[0] == "--full-mutation-pass" for call in calls)
+              and calls[0][calls[0].index("--base") + 1] == start
+              and calls[1][calls[1].index("--base") + 1] == first
+              and all(call[call.index("--cosmic-ray-venv") + 1] == str(fixture.venv)
+                      and "--survived-and-errored-mutants-json-file" in call for call in calls),
+              calls)
+        task = json.loads((alpha_list / "6.json").read_text()) \
+            if (alpha_list / "6.json").exists() else {}
+        check("merges: the survivor's task is on its author's list, numbered one past the "
+              "higher of the highest id and the high-water mark, which is raised to it",
+              task_files(alpha_list) == ["3.json", "6.json"]
+              and (alpha_list / ".highwatermark").read_text() == "6" and task.get("id") == "6",
+              (task_files(alpha_list), task))
+        check("merges: the task is pending, names the line and asks for a test or the pragma",
+              task.get("status") == "pending" and task.get("blocks") == []
+              and task.get("blockedBy") == []
+              and "scripts/thing.py:2" in task.get("subject", "")
+              and "+    return x * x" in task.get("description", "")
+              and "`# pragma: no mutate`" in task.get("description", "")
+              and "You wrote the line." in task.get("description", ""), task)
+        diff_file = (fixture.log_store / job.RECORDS_DIRECTORY_NAME
+                     / job.SURVIVING_MUTANT_DIFFS_DIRECTORY_NAME
+                     / f"{job.mutant_key(survivor())}.diff")
+        description = task.get("description", "")
+        check("merges: the survivor's diff is written beside the records, for the recorded "
+              "mutant killed check",
+              diff_file.is_file() and diff_file.read_text() == SURVIVOR_DIFF, diff_file)
+        check("merges: the task names the recorded mutant killed check with the mutant's diff "
+              "file, and says when to open the pull request",
+              "If a test can tell a mutant from the code: write that test, run each mutant's "
+              "command this task names on your branch, and open a new pull request with the "
+              "test once the commands report the mutants killed; put each command's last line "
+              "in the pull request's description.\n" in description
+              and f"python3 scripts/{job.MUTATION_TESTING_PROGRAM.name} "
+                  f"--recorded-mutant-killed-check {diff_file}\n" in description
+              and "by hand" not in description, description)
+        check("merges: the task says to mark it completed once its pull request is opened, just "
+              "before the line citing the run's record",
+              "\nOnce you have opened a pull request for this task, mark this task completed.\n"
+              "The run's record: " in description, description)
+        record = fixture.records()[0].read_text()
+        check("merges: the record has each merge's SUMMARY, the task, the ERRORED mutant and the "
+              "file with no suite",
+              f"merge {first[:12]} change scripts/thing.py: SUMMARY: 3 mutants" in record
+              and "SURVIVED scripts/thing.py:2 core/ReplaceBinaryOperator_Add_Mul: task #6 "
+                  "opened on alpha's task list" in record
+              and "ERRORED scripts/thing.py:1 core/NumberReplacer (timeout: slow): no task"
+                  in record
+              and "NO SUITE scripts/untested.py" in record
+              and f"merge {second[:12]} change scripts/other.py: SUMMARY: 0 mutants" in record
+              and "merges tested: 2" in record, record)
+        check("merges: the state names the last merge and the task given",
+              fixture.state_json()["last_tested_main_commit"] == second
+              and list(fixture.state_json()["tasks_opened"].values())
+              == [{"agent_seat": "alpha", "task_id": 6}], fixture.state_json())
+
+        # The same survivor found again gets no second task.
+        third = fixture.commit("scripts/third.py", "VALUE = 3\n", author="alpha")
+        completed = fixture.run({third: {"json": verdict(survived=[survivor()])}})
+        check("a survivor already given a task gets no second one, and the record says which",
+              completed.returncode == 0 and task_files(alpha_list) == ["3.json", "6.json"]
+              and "already given task #6 on alpha's task list"
+              in fixture.records()[-1].read_text(),
+              (completed.returncode, task_files(alpha_list), completed.stderr))
+
+    # An author with no checkout, or no task list, has the task put on merge-lane-2's list.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                               author="retired")
+        fixture.seat("retired", with_checkout=False)
+        merge_lane = fixture.seat(job.SURVIVOR_TASK_AGENT_SEAT_WHEN_LINE_AUTHOR_IS_RETIRED_OR_UNKNOWN)
+        completed = fixture.run({merge: {"json": verdict(survived=[survivor()])}})
+        task = json.loads((merge_lane / "1.json").read_text()) \
+            if (merge_lane / "1.json").exists() else {}
+        check("a retired author's survivor goes on merge-lane-2's list, saying whose line it is",
+              completed.returncode == 0
+              and "Agent-seat retired wrote the line" in task.get("description", "")
+              and "has no task list or no checkout on ned-box" in task.get("description", "")
+              and task_files(fixture.tasks / "nedschorus-retired-tasks") == [],
+              (completed.returncode, completed.stderr, task))
+
+    # Failures: the run stops at the merge, records why, exits 4 and leaves the state there.
+    for case_name, step, timeout_seconds, wanted in [
+        ("the mutation testing program exits 2",
+         {"exit": 2, "stderr": "mutation-testing: not run — cosmic-ray is missing"}, None,
+         "exited 2 without saying whether each mutant was killed: mutation-testing: not run — "
+         "cosmic-ray is missing"),
+        ("the mutation testing program runs past the limit",
+         {"sleep": 30, "json": verdict()}, 1, "ran past the limit of 1 s and was stopped"),
+        ("a merge that runs past the limit says how to skip it",
+         {"sleep": 30, "json": verdict()}, 1, "stop it and skip this merge: in the JSON file "),
+        ("the mutation testing program writes no JSON file",
+         {"exit": 0}, None, "but its JSON file"),
+        ("the JSON file lacks a key",
+         {"json": {"survived": []}}, None, "KeyError"),
+    ]:
+        with tempfile.TemporaryDirectory() as scratch:
+            fixture = Fixture(scratch)
+            start = git(fixture.work, "rev-parse", "HEAD")
+            fixture.set_last(start)
+            merge = fixture.commit("scripts/thing.py", "VALUE = 1\n")
+            completed = fixture.run({merge: step}, timeout_seconds=timeout_seconds)
+            record = fixture.records()[0].read_text() if fixture.records() else ""
+            check(f"{case_name}: exit 4, the record and stderr say why, and the state is not "
+                  f"advanced, so the next run tries the merge again",
+                  completed.returncode == job.EXIT_STEP_FAILED
+                  and wanted in record and wanted in completed.stderr
+                  and f"merge {merge[:12]} (change scripts/thing.py): " in record
+                  and "The next run tries this merge again" in record
+                  and fixture.state_json()["last_tested_main_commit"] == start,
+                  f"rc={completed.returncode} record={record} err={completed.stderr}")
+            if timeout_seconds is not None:
+                check(f"{case_name}: the program is stopped with SIGTERM, so it can remove its "
+                      f"worktree", (fixture.root / "stopped-by-sigterm").exists())
+
+    # No task list for the survivor at all: the merge is not recorded as tested.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                               author="nobody")
+        completed = fixture.run({merge: {"json": verdict(survived=[survivor()])}})
+        check("a task that cannot be opened stops the run at that merge, exit 4, naming the list",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and f"merge {merge[:12]}: no task could be opened on merge-lane-2's task list"
+              in completed.stderr
+              and "nedschorus-merge-lane-2-tasks does not exist" in completed.stderr
+              and fixture.state_json()["last_tested_main_commit"] == start,
+              f"rc={completed.returncode} err={completed.stderr}")
+
+    # The survivor's diff cannot be written: no task is opened and the merge is not recorded as
+    # tested.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                               author="alpha")
+        (fixture.log_store / job.RECORDS_DIRECTORY_NAME).mkdir(parents=True)
+        (fixture.log_store / job.RECORDS_DIRECTORY_NAME
+         / job.SURVIVING_MUTANT_DIFFS_DIRECTORY_NAME).write_text("a file, not a directory")
+        completed = fixture.run({merge: {"json": verdict(
+            survived=[survivor(), survivor(2, "core/ReplaceBinaryOperator_Add_Sub")])}})
+        check("a survivor's diff that cannot be written stops the run at that merge, exit 4, "
+              "naming the first of the line's diff files, with no task opened",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and f"merge {merge[:12]}: no task could be opened on alpha's task list"
+              in completed.stderr
+              and f"{job.mutant_key(survivor())}.diff, that cannot be written" in completed.stderr
+              and task_files(alpha_list) == []
+              and fixture.state_json()["last_tested_main_commit"] == start,
+              f"rc={completed.returncode} err={completed.stderr} tasks={task_files(alpha_list)}")
+
+    # A run stopped after one survivor's task is opened keeps that task in the state, so the
+    # next run, which tries the merge again, opens no second task for it.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n", author="alpha")
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        merge = fixture.commit("scripts/thing.py",
+                               "def double(x):\n    return x + x\nVALUE = 1\n", author="nobody")
+        alpha_list = fixture.seat("alpha")
+        plan = {merge: {"json": verdict(survived=[survivor(), survivor(3, "core/NumberReplacer")])}}
+        completed = fixture.run(plan)
+        check("a run stopped at the second survivor's task records the first task in the state",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and task_files(alpha_list) == ["1.json"]
+              and list(fixture.state_json()["tasks_opened"].values())
+              == [{"agent_seat": "alpha", "task_id": 1}]
+              and fixture.state_json()["last_tested_main_commit"] == start,
+              (completed.returncode, task_files(alpha_list), fixture.state_json()))
+        fixture.seat(job.SURVIVOR_TASK_AGENT_SEAT_WHEN_LINE_AUTHOR_IS_RETIRED_OR_UNKNOWN)
+        completed = fixture.run(plan)
+        check("the next run opens no second task for the first survivor",
+              completed.returncode == 0 and task_files(alpha_list) == ["1.json"],
+              (completed.returncode, task_files(alpha_list), completed.stderr))
+
+    # A task linked into place before the .highwatermark write failed is not in the state; the
+    # next run finds it on the list by the mutant's diff file and opens no second task.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                               author="alpha")
+        (alpha_list / (job.TASK_HIGH_WATER_MARK_FILE_NAME + ".partial")).mkdir()
+        plan = {merge: {"json": verdict(survived=[survivor()])}}
+        completed = fixture.run(plan)
+        check("a .highwatermark that cannot be written after the task is linked stops the run, "
+              "exit 4, with the task on the list and not in the state",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and task_files(alpha_list) == ["1.json"]
+              and fixture.state_json()["tasks_opened"] == {}
+              and fixture.state_json()["last_tested_main_commit"] == start,
+              (completed.returncode, task_files(alpha_list), fixture.state_json(),
+               completed.stderr))
+        (alpha_list / (job.TASK_HIGH_WATER_MARK_FILE_NAME + ".partial")).rmdir()
+        completed = fixture.run(plan)
+        key = job.mutant_key(survivor())
+        check("the next run finds that task by the mutant's diff file, opens no second one, "
+              "and records it in the state",
+              completed.returncode == 0 and task_files(alpha_list) == ["1.json"]
+              and fixture.state_json()["tasks_opened"].get(key)
+              == {"agent_seat": "alpha", "task_id": 1}
+              and "already given task #1 on alpha's task list"
+              in fixture.records()[-1].read_text(),
+              (completed.returncode, task_files(alpha_list), fixture.state_json(),
+               completed.stderr))
+
+        # Each run checks that the tasks it opened still hold their survivors, and reports, once,
+        # each that does not and is not completed; it opens no task in its place.
+        (alpha_list / "1.json").write_text(json.dumps({"id": "1", "description": "rewritten"}))
+        diff_file = job.mutant_diff_file_path(fixture.log_store, key)
+        completed = fixture.run()
+        check("a task rewritten so it no longer names its mutant is reported in the record and "
+              "on stderr, no task is opened, the state stops naming it, and the run exits 7",
+              completed.returncode == job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR
+              and task_files(alpha_list) == ["1.json"]
+              and fixture.state_json()["tasks_opened"] == {}
+              and f"TASK LOST: task #1 on alpha's task list ({alpha_list / '1.json'}) no "
+                  f"longer holds the surviving mutant {diff_file}: its description no longer "
+                  f"names the mutant's diff file" in fixture.records()[-1].read_text()
+              and "1 task(s) that an earlier run opened" in completed.stderr
+              and "later runs do not report them again" in completed.stderr,
+              (completed.returncode, task_files(alpha_list), completed.stderr))
+        completed = fixture.run()
+        check("a lost task already reported is not reported again, and the run exits 0",
+              completed.returncode == 0 and "TASK LOST" not in fixture.records()[-1].read_text()
+              and task_files(alpha_list) == ["1.json"],
+              (completed.returncode, completed.stderr))
+
+    # A task whose file is gone is reported once; a completed task is dropped from the state
+    # without a report, and a pending one that holds its mutant is kept.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        merge = fixture.commit("scripts/thing.py",
+                               "def double(x):\n    return x + x\nVALUE = 1\n", author="alpha")
+        second_survivor = survivor(1, "core/ReplaceBinaryOperator_Add_Sub")
+        third_survivor = survivor(3, "core/ReplaceBinaryOperator_Add_Div")
+        completed = fixture.run(
+            {merge: {"json": verdict(survived=[survivor(), second_survivor, third_survivor])}})
+        check("three survivors on three lines get tasks 1, 2 and 3",
+              completed.returncode == 0
+              and task_files(alpha_list) == ["1.json", "2.json", "3.json"],
+              (completed.returncode, task_files(alpha_list), completed.stderr))
+        keys = {given["task_id"]: key
+                for key, given in fixture.state_json()["tasks_opened"].items()}
+        (alpha_list / "1.json").unlink()
+        finished = json.loads((alpha_list / "2.json").read_text())
+        finished["status"] = "completed"
+        (alpha_list / "2.json").write_text(json.dumps(finished))
+        completed = fixture.run()
+        record = fixture.records()[-1].read_text()
+        check("a missing task file is reported, a completed task is not, and the state keeps "
+              "only the pending task that holds its mutant",
+              completed.returncode == job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR
+              and "TASK LOST: task #1 on alpha's task list" in record
+              and "the task file cannot be read (FileNotFoundError" in record
+              and "task #2" not in record
+              and task_files(alpha_list) == ["2.json", "3.json"]
+              and fixture.state_json()["tasks_opened"]
+              == {keys[3]: {"agent_seat": "alpha", "task_id": 3}},
+              (completed.returncode, record, fixture.state_json()))
+        (alpha_list / "2.json").unlink()
+        completed = fixture.run()
+        check("a completed task deleted later, as a session-handoff does, is not reported",
+              completed.returncode == 0 and "TASK LOST" not in fixture.records()[-1].read_text(),
+              (completed.returncode, completed.stderr))
+        (alpha_list / "3.json").write_text(
+            json.dumps({"id": "3", "status": "completed", "description": "rewritten"}))
+        completed = fixture.run()
+        check("a completed task whose description no longer names its mutant is dropped from "
+              "the state without a report, and the run exits 0",
+              completed.returncode == 0 and "TASK LOST" not in fixture.records()[-1].read_text()
+              and fixture.state_json()["tasks_opened"] == {},
+              (completed.returncode, completed.stderr, fixture.state_json()))
+
+    # A task file holding JSON that is not an object is a task that no longer holds its mutant.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                               author="alpha")
+        completed = fixture.run({merge: {"json": verdict(survived=[survivor()])}})
+        (alpha_list / "1.json").write_text("[]")
+        completed = fixture.run()
+        check("a task file holding a JSON list is reported as lost, and the run exits 7",
+              completed.returncode == job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR
+              and "TASK LOST: task #1 on alpha's task list" in fixture.records()[-1].read_text()
+              and fixture.state_json()["tasks_opened"] == {},
+              (completed.returncode, completed.stderr))
+
+    # A run killed while mutation testing has already reported its lost task in a record; and
+    # a record that cannot be written leaves the lost task in the state for the next run.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                               author="alpha")
+        completed = fixture.run({merge: {"json": verdict(survived=[survivor()])}})
+        key = job.mutant_key(survivor())
+        check("a survivor gets task 1", completed.returncode == 0
+              and task_files(alpha_list) == ["1.json"], (completed.returncode, completed.stderr))
+        (alpha_list / "1.json").unlink()
+        records_directory = fixture.log_store / job.RECORDS_DIRECTORY_NAME
+        held_aside = fixture.root / "records-held-aside"
+        records_directory.rename(held_aside)
+        records_directory.parent.joinpath(job.RECORDS_DIRECTORY_NAME).write_text("not a directory")
+        completed = fixture.run()
+        check("a record that cannot be written before the state forgets a lost task stops the "
+              "run, exit 5, with the state still naming the task",
+              completed.returncode == job.EXIT_RECORD_NOT_WRITTEN
+              and "TASK LOST: task #1" in completed.stdout
+              and "next run reports them again" in completed.stdout
+              and key in fixture.state_json()["tasks_opened"]
+              and "later runs do not report them again" not in completed.stderr,
+              (completed.returncode, completed.stdout, completed.stderr, fixture.state_json()))
+        (fixture.log_store / job.RECORDS_DIRECTORY_NAME).unlink()
+        held_aside.rename(records_directory)
+        check("no record names the lost task before the next run",
+              not any("TASK LOST" in path.read_text() for path in fixture.records()),
+              [path.read_text() for path in fixture.records()])
+        later = fixture.commit("scripts/other.py", "VALUE = 1\n", author="alpha")
+        fixture.plan_file.write_text(json.dumps({later: {"sleep": 60}}))
+        calls_before = len(fixture.calls())
+        process = subprocess.Popen(
+            [sys.executable, str(SCRIPT), "--clone", str(fixture.clone),
+             "--log-store-root", str(fixture.log_store), "--state-directory", str(fixture.state),
+             "--task-lists-directory", str(fixture.tasks),
+             "--agent-seats-directory", str(fixture.agents),
+             "--cosmic-ray-venv", str(fixture.venv),
+             "--mutation-testing-program", str(fixture.program)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env={**os.environ, PLAN_VARIABLE: str(fixture.plan_file)}, start_new_session=True)
+        deadline = time.monotonic() + 120
+        while len(fixture.calls()) == calls_before and time.monotonic() < deadline \
+                and process.poll() is None:
+            time.sleep(0.1)
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        # Runs started in the same second share a record file, so look for the line, not a file.
+        recorded = [path.read_text() for path in fixture.records()]
+        check("a run killed while mutation testing, after the state stopped naming the lost "
+              "task, has already written a record naming it",
+              any("TASK LOST: task #1" in text for text in recorded)
+              and fixture.state_json()["tasks_opened"] == {},
+              (recorded, fixture.state_json()))
+
+    # The survivors of a line get one task between them, and a line with a task not marked
+    # completed, in the subject an earlier version wrote or in this one, gets no second task.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        merge = fixture.commit("scripts/thing.py",
+                               "def double(x):\n    return x + x\nVALUE = 1\n", author="alpha")
+        for task_id, line, status in [(6, 1, "pending"), (7, 21, "pending"), (8, 3, "completed")]:
+            (alpha_list / f"{task_id}.json").write_text(json.dumps({
+                "id": str(task_id), "status": status, "description": "an earlier version's",
+                "subject": f"Surviving mutant in scripts/thing.py:{line}: add a test that kills "
+                           f"it, or record why no test can"}))
+        same_operator = dict(survivor(), diff=SURVIVOR_DIFF.replace("x * x", "x * 1"))
+        line_two = [survivor(), survivor(2, "core/ReplaceBinaryOperator_Add_Sub"), same_operator]
+        completed = fixture.run({merge: {"json": verdict(
+            survived=[*line_two, survivor(1, "core/NumberReplacer"),
+                      survivor(3, "core/ReplaceUnaryOperator_Delete_Not")])}})
+        task = json.loads((alpha_list / "9.json").read_text()) \
+            if (alpha_list / "9.json").exists() else {}
+        description = task.get("description", "")
+        diff_files = [job.mutant_diff_file_path(fixture.log_store, job.mutant_key(mutant))
+                      for mutant in line_two]
+        check("the three survivors of one line get one task, naming how many survived and "
+              "each operator with its count, and each mutant's diff file in its own command",
+              completed.returncode == 0
+              and task_files(alpha_list) == ["10.json", "6.json", "7.json", "8.json", "9.json"]
+              and task.get("subject", "").startswith("Surviving mutants in scripts/thing.py:2: 3;")
+              and "core/ReplaceBinaryOperator_Add_Mul (2), core/ReplaceBinaryOperator_Add_Sub (1)"
+                  in description
+              and "+    return x * 1" in description
+              and all(f"--recorded-mutant-killed-check {path}\n" in description
+                      and path.is_file() for path in diff_files)
+              and all(fixture.state_json()["tasks_opened"].get(job.mutant_key(mutant))
+                      == {"agent_seat": "alpha", "task_id": 9} for mutant in line_two),
+              (completed.returncode, completed.stderr, task_files(alpha_list), task,
+               fixture.state_json()))
+        record = fixture.records()[-1].read_text()
+        line_one = survivor(1, "core/NumberReplacer")
+        line_one_diff_file = job.mutant_diff_file_path(fixture.log_store, job.mutant_key(line_one))
+        task_six = json.loads((alpha_list / "6.json").read_text())
+        check("a line with a pending task in an earlier version's subject gets no second task: "
+              "its survivor is added to that task, with its diff file's command, and the state "
+              "names the task for it; a completed task, and a pending one for line 21, do not "
+              "stop the task for line 3",
+              "SURVIVED scripts/thing.py:1 core/NumberReplacer: added to task #6, open for this "
+              "line, on alpha's task list" in record
+              and task_six["description"].startswith("an earlier version's\n\nAdded by a later run: 1 more")
+              and f"--recorded-mutant-killed-check {line_one_diff_file}\n" in task_six["description"]
+              and line_one_diff_file.is_file() and task_six["status"] == "pending"
+              and "SURVIVED scripts/thing.py:3 core/ReplaceUnaryOperator_Delete_Not: task #10 opened" in record
+              and fixture.state_json()["tasks_opened"].get(job.mutant_key(line_one))
+              == {"agent_seat": "alpha", "task_id": 6},
+              (record, task_six, fixture.state_json()))
+        later = fixture.commit("scripts/other.py", "VALUE = 2\n", author="alpha")
+        new_on_line_two = survivor(2, "core/ReplaceComparisonOperator")
+        completed = fixture.run({later: {"json": verdict(survived=[survivor(), new_on_line_two])}})
+        record = fixture.records()[-1].read_text()
+        task_nine = json.loads((alpha_list / "9.json").read_text())
+        new_diff_file = job.mutant_diff_file_path(fixture.log_store, job.mutant_key(new_on_line_two))
+        check("a later merge's survivors on a line whose task is still open get no second task: "
+              "one the state names is already given it, and a new one is added to it and named "
+              "in the state, so it stays reported",
+              completed.returncode == 0
+              and task_files(alpha_list) == ["10.json", "6.json", "7.json", "8.json", "9.json"]
+              and "SURVIVED scripts/thing.py:2 core/ReplaceBinaryOperator_Add_Mul: already given "
+                  "task #9 on alpha's task list" in record
+              and "SURVIVED scripts/thing.py:2 core/ReplaceComparisonOperator: added to task #9"
+                  in record
+              and task_nine["description"].startswith(description)
+              and f"--recorded-mutant-killed-check {new_diff_file}\n" in task_nine["description"]
+              and fixture.state_json()["tasks_opened"].get(job.mutant_key(new_on_line_two))
+              == {"agent_seat": "alpha", "task_id": 9},
+              (completed.returncode, completed.stderr, task_files(alpha_list), record, task_nine))
+        completed = fixture.run({})
+        check("a run after the addition finds task #9 still holding the added survivor",
+              completed.returncode == 0 and "TASK LOST" not in fixture.records()[-1].read_text(),
+              (completed.returncode, completed.stderr))
+        task = task_nine
+        task["status"] = "completed"
+        (alpha_list / "9.json").write_text(json.dumps(task))
+        last = fixture.commit("scripts/other.py", "VALUE = 3\n", author="alpha")
+        completed = fixture.run({last: {"json": verdict(survived=[new_on_line_two])}})
+        check("once the line's task is completed, a survivor on the line gets a new task",
+              completed.returncode == 0 and "11.json" in task_files(alpha_list)
+              and fixture.state_json()["tasks_opened"].get(job.mutant_key(new_on_line_two))
+              == {"agent_seat": "alpha", "task_id": 11},
+              (completed.returncode, completed.stderr, task_files(alpha_list)))
+
+    # A state file that cannot be read, or names a commit not on origin/main.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.state.mkdir()
+        (fixture.state / job.STATE_FILE_NAME).write_text("{not json")
+        completed = fixture.run()
+        check("a state file that is not JSON: exit 4, nothing tested, and the file is kept",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and "cannot be read" in completed.stderr and fixture.calls() == []
+              and (fixture.state / job.STATE_FILE_NAME).read_text() == "{not json",
+              f"rc={completed.returncode} err={completed.stderr}")
+        (fixture.state / job.STATE_FILE_NAME).write_text(
+            json.dumps({"last_tested_main_commit": 7, "tasks_opened": {}}))
+        completed = fixture.run()
+        check("a state file whose commit is not a string: exit 4",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and "a key holds the wrong type" in completed.stderr, completed.stderr)
+        fixture.set_last("0" * 40)
+        completed = fixture.run()
+        check("a state file naming a commit not on origin/main: exit 4, saying how to fix it",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and "is not an ancestor of origin/main" in completed.stderr
+              and "Set last_tested_main_commit" in completed.stderr
+              and "the next run tests the merges after it" in completed.stderr, completed.stderr)
+
+    # No cosmic-ray venv, with merges to test.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        fixture.commit("scripts/thing.py", "VALUE = 1\n")
+        (fixture.venv / "bin" / "cosmic-ray").unlink()
+        completed = fixture.run()
+        check("no cosmic-ray in the venv: exit 4, nothing tested, and the install command named",
+              completed.returncode == job.EXIT_STEP_FAILED and fixture.calls() == []
+              and f"bin/pip install cosmic-ray=={job.COSMIC_RAY_VERSION}" in completed.stderr,
+              f"rc={completed.returncode} err={completed.stderr}")
+
+    # A fetch that fails.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        git(fixture.clone, "remote", "set-url", "origin", str(fixture.root / "missing.git"))
+        completed = fixture.run()
+        check("a failed fetch: exit 4, and the record names the git command",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and "git fetch --quiet origin main failed" in fixture.records()[0].read_text()
+              and "does not appear to be a git repository" in fixture.records()[0].read_text()
+              and "Could not read from remote repository" in fixture.records()[0].read_text(),
+              f"rc={completed.returncode} err={completed.stderr}")
+
+    # Another run holds the lock.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.state.mkdir()
+        with open(fixture.state / job.LOCK_FILE_NAME, "a") as holder:
+            fcntl.flock(holder, fcntl.LOCK_EX)
+            completed = fixture.run()
+        check("another run holds the lock: exit 6, nothing done, no record",
+              completed.returncode == job.EXIT_ANOTHER_RUN_HOLDS_THE_LOCK
+              and "another run holds" in completed.stderr and fixture.records() == []
+              and not (fixture.state / job.STATE_FILE_NAME).exists(),
+              f"rc={completed.returncode} err={completed.stderr}")
+
+    # A record that cannot be written is printed instead.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.log_store.mkdir()
+        (fixture.log_store / job.RECORDS_DIRECTORY_NAME).write_text("a file, not a directory")
+        completed = fixture.run()
+        check("a record that cannot be written: exit 5, the record on stdout",
+              completed.returncode == job.EXIT_RECORD_NOT_WRITTEN
+              and "first run: no state file" in completed.stdout
+              and "was not written to" in completed.stderr,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    # A state file that cannot be opened at all.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        (fixture.state / job.STATE_FILE_NAME).mkdir(parents=True)
+        completed = fixture.run()
+        check("a state file that cannot be opened: exit 4, and the record names the error",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and "FAILED: [Errno 21] Is a directory" in fixture.records()[0].read_text(),
+              f"rc={completed.returncode} err={completed.stderr}")
+
+    # A mutation testing program that ignores SIGTERM at the limit is killed. It would sleep
+    # an hour, so without the kill run_mutation_testing() would not return within the bound; the
+    # program writes its pid so the test can kill it itself then, instead of hanging.
+    with tempfile.TemporaryDirectory() as scratch:
+        program = Path(scratch) / "ignores-sigterm.py"
+        pid_file = Path(scratch) / "pid"
+        program.write_text("import os, signal, sys, time\n"
+                           "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                           f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+                           "print('still going', flush=True)\ntime.sleep(3600)\n")
+        arguments = job.parse_arguments(["--mutation-testing-program", str(program),
+                                         "--merge-timeout-seconds", "1"])
+        cleanup_seconds = job.SECONDS_FOR_MUTATION_TESTING_PROGRAM_TO_CLEAN_UP_AFTER_SIGTERM
+        job.SECONDS_FOR_MUTATION_TESTING_PROGRAM_TO_CLEAN_UP_AFTER_SIGTERM = 1
+        result = []
+        runner = threading.Thread(target=lambda: result.append(job.run_mutation_testing(
+            arguments, "a" * 40, "b" * 40, Path(scratch) / "out.json")), daemon=True)
+        try:
+            runner.start()
+            runner.join(timeout=60)
+        finally:
+            job.SECONDS_FOR_MUTATION_TESTING_PROGRAM_TO_CLEAN_UP_AFTER_SIGTERM = cleanup_seconds
+        returned_within_bound = not runner.is_alive()
+        if not returned_within_bound and pid_file.exists():
+            os.kill(int(pid_file.read_text()), signal.SIGKILL)
+            runner.join(timeout=30)
+        exit_code, stdout, _ = result[0] if result else ("no result", "", "")
+        check("a mutation testing program still running after SIGTERM and the time to clean up "
+              "is killed, and reported as past the limit with its output kept",
+              returned_within_bound and exit_code is None and "still going" in stdout,
+              (returned_within_bound, exit_code, stdout))
+
+    # agent_seat_task_list_new_pending_task_write: a task file Claude Code wrote under the chosen id at the same moment is kept.
+    with tempfile.TemporaryDirectory() as scratch:
+        list_directory = Path(scratch)
+        (list_directory / ".highwatermark").write_text("not a number")
+        (list_directory / "2.json").write_text("{}")
+        real_link = job.os.link
+
+        def link_racing_claude_code(source, target):
+            if Path(target).name == "3.json" and not Path(target).exists():
+                Path(target).write_text('{"id": "3", "by": "claude code"}')
+            return real_link(source, target)
+
+        job.os.link = link_racing_claude_code
+        try:
+            task_id = job.agent_seat_task_list_new_pending_task_write(list_directory, "subject", "description")
+        finally:
+            job.os.link = real_link
+        check("agent_seat_task_list_new_pending_task_write: an id taken at the same moment is skipped, its file kept, a "
+              "high-water mark that is not a number ignored, and no partial file left",
+              task_id == 4 and json.loads((list_directory / "3.json").read_text())["by"]
+              == "claude code"
+              and json.loads((list_directory / "4.json").read_text())["subject"] == "subject"
+              and (list_directory / ".highwatermark").read_text() == "4"
+              and not list(list_directory.glob("*.partial")),
+              (task_id, sorted(p.name for p in list_directory.iterdir())))
+
+
+if __name__ == "__main__":
+    run_cases()
+    print()
+    if failures:
+        print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
+        sys.exit(1)
+    print("all cases passed")

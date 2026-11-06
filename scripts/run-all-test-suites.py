@@ -7,6 +7,8 @@ Usage:
                                  [--wait-for-lock-seconds N]
                                  [--only-suites-whose-recorded-inputs-changed-since COMMIT]
                                  [--recorded-inputs-directory DIR]
+                                 [--record-inputs-with-strace]
+                                 [--suite-files-only-strace-saw-lists-directory DIR]
                                  [--leave-recorded-inputs-and-failure-history-unchanged]
                                  [--stop-at-first-failing-suite]
                                  [--only-suites-named SUITE [SUITE ...]]
@@ -35,10 +37,23 @@ Usage:
   --only-suites-whose-recorded-inputs-changed-since COMMIT
                 run only the suites whose recorded inputs differ between
                 COMMIT and the checkout's files; see RECORDED INPUTS below.
-                Without it every suite runs.
+                Without it every suite runs. Without --only-suites-named,
+                and where suites run in nc-test-sandboxes, it leaves out
+                every suite in SUITES_RUN_WITHOUT_ANY_SANDBOX; see SUITES
+                LEFT OUT OF A SELECTIVE RUN below
   --recorded-inputs-directory
                 where each suite's recorded inputs are kept; default
                 ~/.cache/nedschorus-test-suite-recorded-inputs
+  --record-inputs-with-strace
+                on Linux, record with strace as well as the audit hook; see
+                RECORDED INPUTS below. scripts/daily-full-test-run-of-main.py
+                passes it; without it the audit hook records alone
+  --suite-files-only-strace-saw-lists-directory
+                where a run given --record-inputs-with-strace keeps, for each
+                suite, the files only strace saw it read, and where every
+                selective run reads them; default
+                ~/.cache/nedschorus-test-suite-recorded-inputs, where the daily
+                full run keeps them
   --leave-recorded-inputs-and-failure-history-unchanged
                 record no suite's inputs, save no recording and add nothing
                 to test-case-failure-history.jsonl, so a run on code that is
@@ -301,7 +316,7 @@ from, so there a run still cleans up after the lock's last holder.
 ADMISSION, on Linux in nc-test-sandboxes.
 Every run on the machine shares one admission, kept in the directory beside
 --lock-file. A suite starts only while the machine's CPU use averaged over the
-last 5 s is under 55% and its available memory is above 10 GB, read with
+last 5 s is under 90% and its available memory is above 10 GB, read with
 psutil; at most 4 suites start per second and at most 64 run at once on the
 machine, each holding an flock on one of 64 slot files, so the kernel frees
 the slot of a killed run. A suite run without any sandbox first takes the
@@ -311,7 +326,17 @@ reports what its suites wait for. A failure to decide, such as a machine
 reading that fails or a slot file that cannot be opened, stops the run with
 exit 2. Every suite runs at nice 10, in a cgroup scope of its own
 (`systemd-run --user --scope`), whose counters give the suite's CPU seconds
-and peak memory, every process it starts included.
+and peak memory, every process it starts included. Every scope is in one
+slice of the user's systemd, TEST_SUITE_CGROUP_SLICE, at CPU weight 10, a
+sibling of app.slice and of the tmux-spawn scopes tmux puts agent-seats in,
+whose weight is 100: while an agent-seat in such a scope wants the CPU, the
+suites together get a tenth of its share. Nice orders a process only against
+processes in the same cgroup, here the suite's own scope, so nice 10 gives an
+agent-seat no priority over any suite: only the slice's weight does. That
+weight counts only within user@1000.service, so an agent-seat whose tmux
+server runs in system.slice, such as one cron started, competes with the
+suites at the weight of user.slice against system.slice, which only root can
+change.
 
 MEMORY CEILING, where suites run in cgroup scopes. A suite's scope may hold
 TEST_SUITE_MEMORY_CEILING_BYTES, 4 GB, or what
@@ -440,8 +465,9 @@ suite depends on. Two recorders, whose findings are added together:
   the one it shadows after installing itself. A process started with -I,
   -E or -S, or with an environment that drops PYTHONPATH, is not recorded.
 
-  strace, on Linux, when it is installed and this program is not itself
-  being traced: `strace -f -ff --seccomp-bpf -z -y -e trace=%file` around
+  strace, on Linux, only in a run given --record-inputs-with-strace, which
+  scripts/daily-full-test-run-of-main.py gives, when strace is installed and
+  this program is not itself being traced: `strace -f -ff --seccomp-bpf -z -y -e trace=%file` around
   each suite, which sees every path any process opens, stats or executes,
   git and shells included. --seccomp-bpf stops a traced process only at the
   calls traced, and -z writes only calls that succeeded; the trace is
@@ -452,13 +478,33 @@ suite depends on. Two recorders, whose findings are added together:
   full run that runs this program's own test) a second strace cannot
   attach, so the audit hook works alone there.
 
+  strace adds to the suites' summed seconds, as measured below, and on
+  ned-box its processes held the machine's CPU at the level where admission
+  stops starting suites, so every other run records with the audit hook
+  alone. A strace run also keeps, apart from the recording, each suite's
+  files only strace saw it read: those a git command or a shell script
+  read. A run that records with the audit hook alone replaces the
+  recording, and a run given its own --recorded-inputs-directory, such as
+  merge-lane-2's head runs, never sees the daily run's recordings, so
+  selection reads these lists from
+  --suite-files-only-strace-saw-lists-directory, whose default is where the
+  daily full run keeps its recordings: a suite also runs when a file on its
+  list differs. A run with the audit hook alone records the files on the
+  list among the files read, with their blob hashes in its checkout. A
+  strace run in which the suite failed or skipped cases leaves the last list
+  as it is. A selective run on Linux names how many suites have no list
+  from a strace run in the last
+  FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE hours, which a
+  missed daily run causes.
+
 A recording keeps, per suite: its exit code and seconds; each file read,
 with its git blob hash; each path it opened or checked for, and whether the
 path was there; each directory it listed, with the entries the directory
 held; the git calls run from the checkout, with their arguments, starting
 directory, GIT_DIR, GIT_WORK_TREE and what each call reads; the command
 names of only the calls that read the checkout, with a fingerprint of the
-checkout's list of files; and which recorders made it. A starting directory
+checkout's list of files; which recorders made it; and, in a strace run,
+the files only strace saw. A starting directory
 inside the checkout is kept relative to its top directory, with '.' for the
 top itself; one outside is kept absolute. A recording made in an older
 format than this program writes selects its suite once, so the suite is
@@ -532,7 +578,7 @@ which calls see no file and which commands run on another repository.
 The files that differ are `git diff --no-renames COMMIT` against the
 checkout's files, plus untracked files git does not ignore, as added. Every
 suite runs when one of them is this program (it holds the recorder), under
-.claude/hooks/, or .claude/settings.json. Otherwise a suite runs when: it
+.claude/hooks/ or .claude/guard-hooks/, or .claude/settings.json. Otherwise a suite runs when: it
 has no recording on this machine, or one made by an older version of this
 program; its recorded run did not exit 0, since a run that failed or was
 killed recorded only what it read before it stopped; its recorded run
@@ -579,14 +625,28 @@ suite running `git status` or `git grep` on the checkout that the machine
 did not already choose; both now run on any change. Full runs at -j 4: the
 Mac 278 s, ned-box 305 s; a store of 79 recordings is about 500 KB.
 
+SUITES LEFT OUT OF A SELECTIVE RUN. A run given
+--only-suites-whose-recorded-inputs-changed-since without --only-suites-named,
+where suites run in nc-test-sandboxes (Linux with bwrap), leaves out every
+suite in SUITES_RUN_WITHOUT_ANY_SANDBOX, whatever changed, its own file
+included, because those suites share one machine-wide lock and a run for one
+change would otherwise wait for it. Such a suite the selection would have
+picked gets a line opening NO-SANDBOX SUITE LEFT OUT OF SELECTIVE TEST RUN, in place of its
+SELECTED line, with the command that runs it by hand; it counts as neither
+failed nor not run, and the SUMMARY line counts it.
+scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py runs those
+suites on main instead. A run with --only-suites-named, or with no
+selection, runs them as before.
+
 WHAT A RECORDING CANNOT SEE: a path a program other than Python checks for
 or fails to open, on either machine, because strace's -z drops failed calls
 (a suite that runs git on the checkout is selected whenever any file is
 added or deleted, so git's own lookups are covered); a path Python checks
 with os.stat or os.access directly; a directory a program other than Python
 lists (strace's view of a directory opened is left out, because the import
-system opens every directory on the path); on the Mac, what a shell script
-a suite runs reads or sources; an ignored file; anything outside the checkout (a
+system opens every directory on the path); outside a strace run, what a
+shell script or a git command a suite runs reads, unless the last strace
+run saw it; an ignored file; anything outside the checkout (a
 tool upgrade, leftover machine state). The daily full run covers all of
 these.
 
@@ -775,14 +835,12 @@ SIGNAL_SANDBOX_MACOS_TRIAL_SOURCE = (
 SIGNAL_NUMBER_LIMIT = 64
 # Suites that cannot work inside the sandbox run outside it, each named in the report.
 SUITES_RUN_WITHOUT_ANY_SANDBOX = {
-    "nc-systems/cold-read/tests/cold-read-agy-cell-test.py":
-        "it starts the agy cell's own bwrap, which cannot start inside bwrap",
-    "nc-systems/cold-read/tests/cold-read-fast-read-test.py":
-        "it starts the agy cell's own bwrap, which cannot start inside bwrap",
-    "nc-systems/skills/explain/tests/explain-reply-cold-read-fast-read-test.py":
-        "its real fast read starts the agy cell's own bwrap, which cannot start inside bwrap",
-    "nc-systems/skills/walk-me-through/tests/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close-test.py":
-        "its real fast read starts the agy cell's own bwrap, which cannot start inside bwrap",
+    "nc-systems/cold-read/tests/cold-read-agy-cell-real-sandbox-test.py":
+        "it checks that the agy cell's real bwrap keeps credential files out, "
+        "and bwrap cannot start inside bwrap",
+    "nc-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-real-sandbox-test.py":
+        "it checks that the program's real bwrap empties the home, "
+        "and bwrap cannot start inside bwrap",
     "scripts/run-all-test-suites-cleanup-after-killed-runs-real-process-test.py":
         "it starts this program, whose suites run in bwrap, which cannot start inside bwrap",
     "scripts/run-all-test-suites-test-sandbox-escape-test.py":
@@ -820,7 +878,7 @@ SUITE_SANDBOX_LISTS_OF_THIS_PROGRAM = {
 # Admission, shared by every run on this machine: a suite starts only while the
 # machine has room for it. The run records the machine's readings every second
 # (MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME), so these thresholds can be moved from evidence.
-TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 55
+TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 90
 TEST_SUITE_ADMISSION_CPU_AVERAGE_SECONDS = 5
 TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE = 10 * 10**9
 TEST_SUITE_ADMISSION_STARTS_PER_SECOND = 4
@@ -844,6 +902,7 @@ ADMISSION_WAITED_LINE_PREFIX = "seconds suites waited for admission: "
 # Readers of the runner's output pick its lines apart by these.
 FAILED_SUITE_LINE_PREFIX = "FAIL "
 NOT_RUN_SUITE_LINE_PREFIX = "NOT RUN "
+NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX = "NO-SANDBOX SUITE LEFT OUT OF SELECTIVE TEST RUN "
 SUITE_LINE_LOG_MARK = " — log "
 SUMMARY_LINE_PREFIX = "SUMMARY:"
 FIRST_REPORT_LINE_LOG_DIRECTORY_MARK = "; logs in "
@@ -876,6 +935,12 @@ TEST_SUITE_CGROUP_STATISTICS_WRAPPER = (
 # Each well above the largest peak memory its suites' scopes record, and no higher, since
 # a runaway holds the machine's memory until it reaches its ceiling.
 TEST_SUITE_MEMORY_CEILING_BYTES = 4 * 10**9
+# Directly under user@1000.service, beside the agent-seats' tmux-spawn scopes, since a
+# weight competes only with its siblings. A dash in a slice's name makes a parent slice of
+# each prefix, so the dashes are escaped. A weight, not idle, so busy agent-seats slow the
+# suites without stalling them into their timeouts.
+TEST_SUITE_CGROUP_SLICE = r"nc\x2dtest\x2dsuites.slice"
+TEST_SUITE_CGROUP_SLICE_CPU_WEIGHT = 10
 TEST_SUITE_MEMORY_CEILING_BYTES_OF_SUITES_THAT_NEED_MORE = {
     "scripts/daily-full-test-run-of-main-test.py": 24 * 10**9,
 }
@@ -892,6 +957,7 @@ def test_suite_cgroup_scope_command(memory_ceiling_bytes=TEST_SUITE_MEMORY_CEILI
     OOMPolicy=continue, because systemd's default stops the whole scope at the first kill,
     the counting shell included, so the suite's counters and the reason it failed are lost."""
     return ("systemd-run", "--user", "--scope", "--quiet", "--expand-environment=no",
+            f"--slice={TEST_SUITE_CGROUP_SLICE}",
             "-p", f"MemoryMax={memory_ceiling_bytes}", "-p", "MemorySwapMax=0",
             "-p", "OOMPolicy=continue", "--")
 
@@ -918,9 +984,13 @@ RECORDED_INPUTS_CHECKOUT_VARIABLE = "RUN_ALL_TEST_SUITES_RECORDED_INPUTS_CHECKOU
 PYTHON_INPUT_RECORDER_MARKER_FILE_NAME = "run-all-test-suites-python-input-recorder"
 PYTHON_INPUT_RECORDER_METHOD = "python-audit-hook"
 STRACE_INPUT_RECORDER_METHOD = "strace"
+FILES_ONLY_STRACE_SAW_FILE_SUFFIX = ".files-only-strace-saw.json"
+# The daily full run records them once a day; the 12 hours over cover its hour of waiting
+# for the machine's lock and its own length, so one missed daily run is reported.
+FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE = 36
 # The runner, hooks and settings can affect every suite or session a suite starts.
 EVERY_SUITE_RUNS_WHEN_THESE_CHANGE = (
-    "scripts/run-all-test-suites.py", ".claude/hooks/", ".claude/settings.json")
+    "scripts/run-all-test-suites.py", ".claude/hooks/", ".claude/guard-hooks/", ".claude/settings.json")
 # Object-store content reads evade recorders; only metadata-only commands belong here.
 # status is excluded because stale timestamps can make it read working files.
 GIT_COMMANDS_THAT_ONLY_LIST = frozenset((
@@ -2049,10 +2119,23 @@ def psutil_imported_or_why_not():
 
 def why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(which=shutil.which,
                                                                         runner=subprocess.run):
-    """None when each suite can run in a cgroup scope of its own, or why it cannot."""
-    for program in ("systemd-run", "setpriv", "bash"):
+    """None when each suite can run in a cgroup scope of its own, or why it cannot.
+
+    It first sets TEST_SUITE_CGROUP_SLICE's CPU weight, which lasts until the user's
+    systemd restarts, so every run sets it again."""
+    for program in ("systemd-run", "systemctl", "setpriv", "bash"):
         if which(program) is None:
             return f"{program} is not on PATH"
+    weight_command = ("systemctl", "--user", "set-property", "--runtime", TEST_SUITE_CGROUP_SLICE,
+                      f"CPUWeight={TEST_SUITE_CGROUP_SLICE_CPU_WEIGHT}")
+    try:
+        weight = runner(list(weight_command), stdin=subprocess.DEVNULL, capture_output=True,
+                        text=True, timeout=SIGNAL_SANDBOX_START_TIMEOUT_SECONDS, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return f"{' '.join(weight_command)}: {error}"
+    if weight.returncode != 0:
+        return (f"{' '.join(weight_command)} exited {weight.returncode}: "
+                f"{(weight.stderr or weight.stdout).strip()}")
     trial_line = " ".join((*test_suite_cgroup_scope_command(),
                            *TEST_SUITE_COUNTER_SHELL_DIES_WITH_THIS_PROGRAM))
     try:
@@ -3127,8 +3210,13 @@ def file_list_fingerprint(files):
         "utf-8", "surrogateescape")).hexdigest()
 
 
-def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
-    """Return the suite's recorded files, path checks, directory listings and git calls."""
+def recording_of(top, suite, result, recording_dir, files, commit, strace_used,
+                 files_only_strace_saw=None):
+    """Return the suite's recorded files, path checks, directory listings and git calls.
+
+    In a run without strace, files_only_strace_saw, the suite's kept list from its last strace
+    run, joins the files read, so the recording holds their blob hashes as this checkout has
+    them and selection compares those hashes when the recording is used in another checkout."""
     hook_log, strace_dir = recording_paths_for(recording_dir, suite)
     touched, probed, listed, git_commands = {suite}, set(), set(), set()
     git_calls = {}
@@ -3170,6 +3258,9 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
             probed.add(relative)
         elif kind == "list":
             listed.add("" if relative == "." else relative)
+    seen_by_hook = set(touched)
+    if not strace_used and files_only_strace_saw is not None:
+        touched.update(files_only_strace_saw["files_only_strace_saw"])
     if strace_used:
         for path in paths_strace_saw(strace_dir):
             relative = relative_inside(top, path)
@@ -3186,7 +3277,7 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
         elif (not inside_git_directory(path) and "__pycache__" not in path.split("/")
               and not os.path.lexists(top / path)):
             looked_for[path] = False
-    return {
+    recording = {
         "format": RECORDED_INPUTS_FORMAT_VERSION,
         "suite": suite,
         "recorded_at": datetime.datetime.now(datetime.timezone.utc).strftime(
@@ -3206,6 +3297,9 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
         "git_calls_run_from_the_checkout": [git_calls[key] for key in sorted(git_calls)],
         "files_fingerprint": file_list_fingerprint(files),
     }
+    if strace_used:
+        recording["files_only_strace_saw"] = sorted((touched - seen_by_hook) & files)
+    return recording
 
 
 def recordings_directory_for(given, top):
@@ -3276,6 +3370,91 @@ def load_recording_and_identity(recordings_dir, suite):
 
 def load_recording(recordings_dir, suite):
     return load_recording_and_identity(recordings_dir, suite)[0]
+
+
+def files_only_strace_saw_file_for(directory, suite):
+    return directory / (suite.replace("/", "__") + FILES_ONLY_STRACE_SAW_FILE_SUFFIX)
+
+
+def recorded_run_passed_and_skipped_only_cases_this_machine_cannot_run(recording):
+    """True when the recorded run passed and skipped only cases marked as ones this machine
+    cannot run, so it reached every file the suite reads."""
+    skipped = recording.get("skipped_cases")
+    marked = recording.get("skipped_cases_this_machine_cannot_run")
+    return (recording.get("exit") == 0
+            and isinstance(skipped, int) and not isinstance(skipped, bool)
+            and isinstance(marked, int) and not isinstance(marked, bool) and skipped == marked)
+
+
+def save_files_only_strace_saw(directory, recording):
+    """Keep, apart from the recording, the files only strace saw, so runs that record with the
+    audit hook alone, which replace the recording, and runs that keep their recordings in
+    another directory, still select the suite when one of them changes.
+
+    A run that failed or skipped cases saw only part of what the suite reads, so it leaves the
+    last kept list as it is; that list ages, and the stale-list notice names it."""
+    if not recorded_run_passed_and_skipped_only_cases_this_machine_cannot_run(recording):
+        return
+    directory.mkdir(parents=True, exist_ok=True)
+    target = files_only_strace_saw_file_for(directory, recording["suite"])
+    kept = {key: recording[key] for key in ("suite", "recorded_at", "commit",
+                                            "files_only_strace_saw")}
+    # Renamed into place, so a selective run reading it meanwhile never sees half a list.
+    descriptor, temporary = tempfile.mkstemp(dir=directory, prefix=target.name + ".",
+                                             suffix=".tmp")
+    with os.fdopen(descriptor, "w") as written:
+        written.write(json.dumps(kept, indent=1, sort_keys=True) + "\n")
+    os.replace(temporary, target)
+
+
+def load_files_only_strace_saw(directory, suite):
+    """The suite's last strace run's files only strace saw, or None when there is none to use."""
+    try:
+        kept = json.loads(files_only_strace_saw_file_for(directory, suite).read_bytes())
+    except (OSError, ValueError):
+        return None
+    if not (isinstance(kept, dict) and isinstance(kept.get("files_only_strace_saw"), list)
+            and all(isinstance(path, str) for path in kept["files_only_strace_saw"])
+            and recorded_at_time_or_none(kept.get("recorded_at")) is not None):
+        return None
+    return kept
+
+
+def recorded_at_time_or_none(text):
+    try:
+        return datetime.datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=datetime.timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+# Agent-facing: docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md
+def suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+        suites, kept_by_suite, directory, now):
+    """A line saying how many suites' files only strace saw are missing or too old to trust."""
+    limit = datetime.timedelta(hours=FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE)
+    recorded = [suite for suite in suites if not is_shell_test_suite(suite)]
+    times = {suite: recorded_at_time_or_none((kept_by_suite.get(suite) or {}).get("recorded_at"))
+             for suite in recorded}
+    stale = [suite for suite in recorded if times[suite] is None or now - times[suite] > limit]
+    if not stale:
+        return None
+    known = [times[suite] for suite in stale if times[suite] is not None]
+    since = (f"since {min(known).strftime('%Y-%m-%dT%H:%M:%SZ')}" if known else "at all")
+    return (f"{PROGRAM}: {len(stale)} of {len(recorded)} suites have no list of the files only "
+            f"strace saw them read from the last "
+            f"{FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE} hours in {directory}, "
+            f"so this selective run does not select such a suite when the "
+            f"change edits a file the suite reads only through git or a shell script. "
+            f"scripts/daily-full-test-run-of-main.py makes those lists once a day on ned-box, so "
+            f"it has not recorded every suite {since}. The verdicts of the suites this run ran "
+            f"stand; carry on with your work.\n"
+            f"If you have not yet told the user in this agent-session that the daily full test "
+            f"run's lists are stale: tell him \"The daily full test run on ned-box has not "
+            f"recorded every suite {since}, so selective test runs there can miss a suite whose "
+            f"git or shell reads changed. The daily run's records are in "
+            f"nedlern@ned-box:/home/nedlern/nedschorus-logs/daily-full-test-runs/ned-box/.\" "
+            f"A subagent passes that sentence to the agent that dispatched it instead.")
 
 
 def remove_recording_if_unchanged(recordings_dir, suite, identity_read):
@@ -3385,7 +3564,7 @@ def added_or_deleted_name(before, after):
     return name, "added" if name in after else "deleted"
 
 
-def selection_reason(suite, recording, checkout, commit):
+def selection_reason(suite, recording, checkout, commit, files_only_strace_saw=None):
     """Return (selected, reason) for one suite."""
     # Recordings are shared across branches; compare both against COMMIT and the recording.
     short, differ = commit[:12], checkout.differ
@@ -3422,6 +3601,13 @@ def selection_reason(suite, recording, checkout, commit):
     if changed_reads:
         more = f" and {len(changed_reads) - 1} more" if len(changed_reads) > 1 else ""
         return True, f"it reads {changed_reads[0]}, which differs{more}"
+    if files_only_strace_saw is not None:
+        changed = [path for path in files_only_strace_saw["files_only_strace_saw"]
+                   if path in differ]
+        if changed:
+            more = f" and {len(changed) - 1} more" if len(changed) > 1 else ""
+            return True, (f"it reads {changed[0]}, which differs{more}, as only the strace run "
+                          f"of {files_only_strace_saw['recorded_at']} saw")
     for path in looked_for:
         if checkout.there_then(path) != checkout.there_now(path):
             verb = "added" if checkout.there_now(path) else "deleted"
@@ -3486,7 +3672,7 @@ def selection_reason(suite, recording, checkout, commit):
     return False, reason
 
 
-def suites_selected_since(top, suites, recordings, commit):
+def suites_selected_since(top, suites, recordings, commit, files_only_strace_saw_by_suite):
     """[(suite, selected, why)] for every suite, in order."""
     differ = files_that_differ_since(top, commit)
     everything = [path for path in sorted(differ)
@@ -3497,8 +3683,23 @@ def suites_selected_since(top, suites, recordings, commit):
                 for suite in suites]
     recorded = [recordings.get(suite) for suite in suites]
     checkout = CheckoutComparedWithCommit(top, commit, differ, recorded)
-    return [(suite, *selection_reason(suite, recordings.get(suite), checkout, commit))
+    return [(suite, *selection_reason(suite, recordings.get(suite), checkout, commit,
+                                      files_only_strace_saw_by_suite.get(suite)))
             for suite in suites]
+
+
+def selective_test_run_selection_without_no_sandbox_suites(selection, applies):
+    """(the selection with every selected no-sandbox suite taken out, [(suite, why) left out]).
+
+    The one place a run for one change leaves those suites out, so an exception,
+    such as running a suite whose own file changed, goes here."""
+    if not applies:
+        return selection, []
+    left_out = [(suite, why) for suite, selected, why in selection
+                if selected and suite in SUITES_RUN_WITHOUT_ANY_SANDBOX]
+    kept = [(suite, selected, why) for suite, selected, why in selection
+            if not (selected and suite in SUITES_RUN_WITHOUT_ANY_SANDBOX)]
+    return kept, left_out
 
 
 def describe_exit(code):
@@ -3648,6 +3849,9 @@ def parse_arguments(argv):
                         dest="changed_since", metavar="COMMIT")
     parser.add_argument("--recorded-inputs-directory",
                         default=str(DEFAULT_RECORDED_INPUTS_DIRECTORY))
+    parser.add_argument("--record-inputs-with-strace", action="store_true")
+    parser.add_argument("--suite-files-only-strace-saw-lists-directory",
+                        default=str(DEFAULT_RECORDED_INPUTS_DIRECTORY))
     parser.add_argument("--leave-recorded-inputs-and-failure-history-unchanged",
                         dest="leave_records_unchanged", action="store_true")
     parser.add_argument("--stop-at-first-failing-suite", action="store_true")
@@ -3757,19 +3961,24 @@ def main(argv=None, platform=None):
         commit, state = commit_and_state(top)
         try:
             recordings_dir = recordings_directory_for(arguments.recorded_inputs_directory, top)
+            files_only_strace_saw_dir = recordings_directory_for(
+                arguments.suite_files_only_strace_saw_lists_directory, top)
         except CouldNotRun as refusal:
             print(refusal, file=sys.stderr)
             return EXIT_COULD_NOT_RUN
         # Each recording is read once, so selection and starting order see the same one
         # even while runs in other checkouts save it.
-        recordings, identities_read = {}, {}
+        recordings, identities_read, files_only_strace_saw_by_suite = {}, {}, {}
         for suite in suites:
             recordings[suite], identities_read[suite] = load_recording_and_identity(
                 recordings_dir, suite)
+            files_only_strace_saw_by_suite[suite] = load_files_only_strace_saw(
+                files_only_strace_saw_dir, suite)
         try:
             files = checkout_files(top)
             if changed_since is not None:
-                selection = suites_selected_since(top, suites, recordings, changed_since)
+                selection = suites_selected_since(top, suites, recordings, changed_since,
+                                                  files_only_strace_saw_by_suite)
             else:
                 selection = [(suite, True, "every suite runs without "
                               "--only-suites-whose-recorded-inputs-changed-since")
@@ -3777,6 +3986,9 @@ def main(argv=None, platform=None):
         except CouldNotRun as refusal:
             print(refusal, file=sys.stderr)
             return EXIT_COULD_NOT_RUN
+        selection, left_out = selective_test_run_selection_without_no_sandbox_suites(
+            selection, applies=(changed_since is not None and arguments.only_suites_named is None
+                                and in_test_sandboxes))
         chosen = suites_longest_recorded_first(
             [suite for suite, selected, _ in selection if selected], recordings)
         jobs = suites_run_at_once(arguments.jobs, len(chosen), os.cpu_count(),
@@ -3784,7 +3996,7 @@ def main(argv=None, platform=None):
         if arguments.leave_records_unchanged:
             strace = recorder = None
         else:
-            strace = strace_usable()
+            strace = strace_usable() if arguments.record_inputs_with_strace else None
             recording_dir = log_dir / "recorded-inputs"
             recording_dir.mkdir(parents=True, exist_ok=True)
             recorder = (install_python_input_recorder(log_dir), recording_dir, strace)
@@ -3803,6 +4015,13 @@ def main(argv=None, platform=None):
             report.line(f"inputs recorded by {PYTHON_INPUT_RECORDER_METHOD}"
                         + (f" and {STRACE_INPUT_RECORDER_METHOD} ({strace})" if strace else "")
                         + f", kept in {recordings_dir}")
+        # Only Linux has strace; the Mac selects without these lists.
+        if changed_since is not None and platform.startswith("linux"):
+            notice = suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+                suites, files_only_strace_saw_by_suite, files_only_strace_saw_dir,
+                datetime.datetime.now(datetime.timezone.utc))
+            if notice is not None:
+                report.line(notice)
         report.line(signal_sandbox_line(sandbox_prefix, unconfined_because))
         report.line(f"{SUITE_SANDBOX_LISTS_SOURCE_LINE_PREFIX}{sandbox_lists_source}")
         if lock_handle is not None and arguments.wait_for_lock_seconds > 0:
@@ -3838,7 +4057,8 @@ def main(argv=None, platform=None):
                 f"{TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE / 10**9:g} GB, at most "
                 f"{TEST_SUITE_ADMISSION_STARTS_PER_SECOND} starts a second and "
                 f"{TEST_SUITE_ADMISSION_SUITES_RUNNING_AT_ONCE_CEILING} suites at once on this "
-                f"machine, at nice {TEST_SUITE_NICE_INCREMENT}; readings every "
+                f"machine, at nice {TEST_SUITE_NICE_INCREMENT} in {TEST_SUITE_CGROUP_SLICE} at CPU "
+                f"weight {TEST_SUITE_CGROUP_SLICE_CPU_WEIGHT}; readings every "
                 f"{MACHINE_READINGS_INTERVAL_SECONDS} s in "
                 f"{log_dir / MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME}")
             cgroup_unavailable_because = why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none()
@@ -3851,6 +4071,12 @@ def main(argv=None, platform=None):
         if changed_since is not None:
             for suite, selected, why in selection:
                 report.line(f"{'SELECTED' if selected else 'NOT SELECTED'} {suite}: {why}")
+            for suite, why in left_out:
+                report.line(f"{NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX}{suite}: {why}; it runs "
+                            f"without a sandbox, so a run for one change leaves it out and "
+                            f"scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py runs "
+                            f"it on main. To run it now: python3 scripts/run-all-test-suites.py "
+                            f"--only-suites-named {suite}")
 
         run_stop_signals = []
         # What stopped the run: a stop signal's name, or, with --stop-at-first-failing-suite,
@@ -3892,8 +4118,12 @@ def main(argv=None, platform=None):
                 return run_admitted(suite)
             result = run_admitted(suite, recorder=recorder)
             try:
-                save_recording(recordings_dir, recording_of(
-                    top, suite, result, recording_dir, files, commit, strace is not None))
+                recording = recording_of(
+                    top, suite, result, recording_dir, files, commit, strace is not None,
+                    files_only_strace_saw_by_suite.get(suite))
+                if strace is not None:
+                    save_files_only_strace_saw(files_only_strace_saw_dir, recording)
+                save_recording(recordings_dir, recording)
             except OSError as error:
                 # A failed save must not leave the previous run's recording usable; one
                 # another run saved meanwhile records that run's own inputs, so it stays.
@@ -4075,16 +4305,17 @@ def main(argv=None, platform=None):
             else:
                 report.line(f"case times, suite resources and JUnit XML in {log_dir}")
         skip_count = sum(len(result["skips"]) for result in results)
-        not_selected = (f"; {len(suites) - len(chosen)} suites not selected, their recorded "
-                        f"inputs unchanged since {changed_since[:12]}"
+        not_selected = (f"; {len(suites) - len(chosen) - len(left_out)} suites not selected, "
+                        f"their recorded inputs unchanged since {changed_since[:12]}"
                         if changed_since is not None else "")
+        left_out_note = (f"; {len(left_out)} no-sandbox suites left out" if left_out else "")
         stopped_note = f", {len(stopped)} stopped" if run_stops else ""
         not_run_note = f", {len(not_run)} not run" if not_run else ""
         report.line(f"{SUMMARY_LINE_PREFIX} "
                     f"{len(results) - len(failed) - len(stopped) - len(not_run)} passed, "
                     f"{len(failed)} failed{not_run_note}{stopped_note}, "
                     f"{len(results)} total; {skip_count} cases skipped in {len(skipping)} "
-                    f"suites; {top.name} at {commit[:12]}; {version}{not_selected}")
+                    f"suites; {top.name} at {commit[:12]}; {version}{not_selected}{left_out_note}")
         report.close()
         if run_record is not None:
             run_record.finish()

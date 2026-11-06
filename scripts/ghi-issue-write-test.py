@@ -92,6 +92,7 @@ hash and exiting 0.
 """
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -463,9 +464,46 @@ def run_cases(scratch: Path):
           repr(tool.first_heading("---\nstatus: draft\n\n# Still found\n")))
     check("a file with no heading yields none, and is refused later",
           tool.first_heading("no heading here\n") == "")
-    check("the slug is bounded and hyphenated",
+    check("the slug is lowercased and hyphenated",
           tool.slug("A statusline that drops its branch name")
           == "a-statusline-that-drops-its-branch-name")
+    symtable_title = ("Base the agent-facing string collector's scope rules "
+                      "on Python's symtable module instead of hand-written "
+                      "rules")
+    symtable_slug = tool.slug(symtable_title)
+    check("the slug keeps every word of a title past eight words, so the "
+          "title's point is in the file name",
+          symtable_slug == "base-the-agent-facing-string-collector-scope-"
+                           "rules-on-python-symtable-module-instead-of-hand-"
+                           "written-rules", repr(symtable_slug))
+    curly_slug = tool.slug("The walker\u2019s marker")
+    check("an 's at a word's end, straight or curly, is dropped, not made a word",
+          "-s-" not in symtable_slug and curly_slug == "the-walker-marker",
+          repr(curly_slug))
+    check("a contraction's 's is dropped too, as the docstring says",
+          tool.slug("Let's file it") == "let-file-it",
+          repr(tool.slug("Let's file it")))
+    check("any other apostrophe is closed up, not made a hyphen",
+          tool.slug("Hooks that don't exit") == "hooks-that-dont-exit",
+          repr(tool.slug("Hooks that don't exit")))
+    linked_slug = tool.slug("Notes from issue [Build draft-md]"
+                            "(https://github.com/nedschorus/nedschorus/issues/142)")
+    check("a Markdown link in the title gives its text, not its address",
+          linked_slug == "notes-from-issue-build-draft-md", repr(linked_slug))
+    long_title = " ".join(["word"] * 60)
+    long_slug = tool.slug(long_title)
+    check("a slug over the character limit is cut at a hyphen, inside it",
+          len(long_slug) <= tool.GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT
+          and long_title.replace(" ", "-").startswith(long_slug + "-"),
+          repr(long_slug))
+    check("a single word over the character limit is cut at the limit",
+          tool.slug("x" * 300) == "x" * tool.GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT)
+    log_store_name = (f"99999-{long_slug}"
+                      f"{tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX}"
+                      f"{tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_GUIDE_AGENT}"
+                      "-2026-11-02-99.md")
+    check("the longest log-store name built on a slug fits a file name",
+          len(log_store_name.encode("utf-8")) <= 255, len(log_store_name))
     check("the pairing key follows the content, not the name",
           tool.pairing_key(FILE_TEXT) == tool.pairing_key(FILE_TEXT)
           and tool.pairing_key(FILE_TEXT) != tool.pairing_key(FILE_TEXT + "x"))
@@ -1986,9 +2024,16 @@ ISSUE_TITLE_ON_GITHUB = "Statusline: branch name lost after a rebase"
 # A second edit of the same file, landed while the first is still open.
 # The branch is named for the content, so the revision gets a branch of
 # its own; the name below stands for the first one's.
-EARLIER_EDIT_BRANCH = "ghi-570-edit-ghipair0123456789ab"
+EARLIER_EDIT_BRANCH = "ghi-570-edit-ghi-md-sha256-0123456789abcdef"
 EARLIER_EDIT_TITLE = f"GHI-MD edit for issue 570: {EDIT_TITLE}"
 EARLIER_EDIT_URL = "https://github.com/nedschorus/nedschorus/pull/21"
+
+
+def expected_edit_branch(number: int, staged: str) -> str:
+    """Written out here rather than asked of the tool, so a change to the
+    tool's form fails the checks that use it."""
+    digest = hashlib.sha256(staged.encode("utf-8")).hexdigest()[:16]
+    return f"ghi-{number}-edit-ghi-md-sha256-{digest}"
 
 
 WORKTREE_REMOVAL_STDERR = "fatal: cannot remove a locked working tree"
@@ -2843,8 +2888,14 @@ def run_edit_cases(scratch: Path):
           not landing.ran("gh issue create"), str(landing.commands()))
     check("the branch is named for this edit's content, not for the issue "
           "alone",
-          ran_with(landing, "gh pr create", f"ghi-570-edit-{tool.pairing_key(staged)}"),
+          ran_with(landing, "gh pr create", expected_edit_branch(570, staged)),
           str(landing.commands()))
+    check("the branch name spells out the GHI-MD's SHA-256 and carries no "
+          "pairing key, whose abbreviation no glossary lists",
+          tool.edit_landing_branch_name(570, staged)
+          == expected_edit_branch(570, staged)
+          and "ghipair" not in tool.edit_landing_branch_name(570, staged),
+          tool.edit_landing_branch_name(570, staged))
     check("the worktree is detached, so the run makes no branch to leave",
           landing.ran("git worktree add --quiet --detach")
           and not any("-b" in call for call in landing.calls
@@ -2852,7 +2903,7 @@ def run_edit_cases(scratch: Path):
           str(landing.calls))
     check("and the push names the branch as a refspec instead",
           landing.ran("git push --quiet origin HEAD:refs/heads/"
-                      f"ghi-570-edit-{tool.pairing_key(staged)}"),
+                      f"{expected_edit_branch(570, staged)}"),
           str(landing.commands()))
     check("an edit's push is given the pre-push hook's time and a margin",
           landing.timeout_of("git push") == tool.push_time_limit_seconds(os.environ),
@@ -4773,15 +4824,10 @@ def run_edit_landing_real_git_cases(scratch: Path):
 
 def run_push_time_limit_cases(scratch: Path):
     conflict = tool.pre_push_conflict_check
-    selective = tool.pre_push_selective_test_run
-    # The longest the hook can take: each stop_process_group waits its grace
-    # twice, and the selective run first lists descendants with `ps`, which
-    # descendant_process_ids gives 30 seconds.
+    # The longest the hook can take: its stop_process_group waits its grace
+    # twice.
     hook_seconds = (conflict.DEFAULT_TIME_BUDGET_SECONDS
-                    + 2 * conflict.TERMINATE_GRACE_SECONDS
-                    + 30
-                    + selective.DEFAULT_TIME_BUDGET_SECONDS
-                    + 2 * selective.TERMINATE_GRACE_SECONDS)
+                    + 2 * conflict.TERMINATE_GRACE_SECONDS)
     check("a push is given more time than the pre-push hook can take",
           tool.push_time_limit_seconds({}) > hook_seconds,
           f"{tool.push_time_limit_seconds({})} against {hook_seconds}")
@@ -4789,18 +4835,15 @@ def run_push_time_limit_cases(scratch: Path):
           "grace twice, once after SIGTERM and once after SIGKILL",
           tool.push_time_limit_seconds({}) - tool.PUSH_TIME_MARGIN_SECONDS
           == conflict.DEFAULT_TIME_BUDGET_SECONDS
-          + 2 * conflict.TERMINATE_GRACE_SECONDS
-          + selective.DEFAULT_TIME_BUDGET_SECONDS
-          + 2 * selective.TERMINATE_GRACE_SECONDS,
+          + 2 * conflict.TERMINATE_GRACE_SECONDS,
           str(tool.push_time_limit_seconds({})))
-    for module in (conflict, selective):
-        longer = {module.TIME_BUDGET_ENVIRONMENT_VARIABLE: "1000"}
-        check(f"a longer budget in {module.TIME_BUDGET_ENVIRONMENT_VARIABLE} "
-              "lengthens the push's time by as much",
-              tool.push_time_limit_seconds(longer)
-              == tool.push_time_limit_seconds({})
-              - module.DEFAULT_TIME_BUDGET_SECONDS + 1000,
-              str(tool.push_time_limit_seconds(longer)))
+    longer = {conflict.TIME_BUDGET_ENVIRONMENT_VARIABLE: "1000"}
+    check(f"a longer budget in {conflict.TIME_BUDGET_ENVIRONMENT_VARIABLE} "
+          "lengthens the push's time by as much",
+          tool.push_time_limit_seconds(longer)
+          == tool.push_time_limit_seconds({})
+          - conflict.DEFAULT_TIME_BUDGET_SECONDS + 1000,
+          str(tool.push_time_limit_seconds(longer)))
 
     stopped = subprocess.TimeoutExpired(["git", "push"], 1)
     case_name = ("a stopped push says how long it ran, that a rerun is safe "
@@ -4832,19 +4875,16 @@ def run_push_time_limit_cases(scratch: Path):
     check("a push that finishes asks origin nothing more",
           quick.ran("git push") and not quick.ran("git ls-remote"),
           str(quick.commands()))
-    longer = {selective.TIME_BUDGET_ENVIRONMENT_VARIABLE: "1000"}
     configured = Recorder()
     tool.push_branch(scratch, "b", configured, environment=longer)
     check("the push is given the time the hook reads from the same environment",
           configured.timeout_of("git push") == tool.push_time_limit_seconds(longer),
           str(configured.timeout_of("git push")))
-    # Both budget variables are set here, so one the outer process carries
+    # The budget variable is set here, so one the outer process carries
     # cannot change what this case compares.
-    variables = (conflict.TIME_BUDGET_ENVIRONMENT_VARIABLE,
-                 selective.TIME_BUDGET_ENVIRONMENT_VARIABLE)
+    variables = (conflict.TIME_BUDGET_ENVIRONMENT_VARIABLE,)
     saved = {name: os.environ.get(name) for name in variables}
-    os.environ.pop(conflict.TIME_BUDGET_ENVIRONMENT_VARIABLE, None)
-    os.environ[selective.TIME_BUDGET_ENVIRONMENT_VARIABLE] = "1000"
+    os.environ[conflict.TIME_BUDGET_ENVIRONMENT_VARIABLE] = "1000"
     try:
         from_process = Recorder()
         tool.push_branch(scratch, "b", from_process)

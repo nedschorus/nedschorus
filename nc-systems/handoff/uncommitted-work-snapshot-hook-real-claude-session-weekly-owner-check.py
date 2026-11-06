@@ -75,6 +75,7 @@ SYSTEM_DIRECTORY = Path(__file__).resolve().parent
 REPOSITORY_ROOT = SYSTEM_DIRECTORY.parent.parent
 MODULE_RELATIVE = Path("nc-systems/handoff/uncommitted-work-snapshots.py")
 HOOK_RELATIVE = Path("scripts/uncommitted-work-snapshot-hook.py")
+OWNER_FILE_MODULE_RELATIVE = Path("scripts/worktree-owner-file-read-and-write.py")
 GIT_OUTPUT_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 LIVE_CHECK_FILE_NAME = "live-check.txt"
@@ -102,6 +103,10 @@ runner = module_loaded_by_path("run_all_test_suites",
                                REPOSITORY_ROOT / "scripts" / "run-all-test-suites.py")
 snapshots = module_loaded_by_path("uncommitted_work_snapshots",
                                   REPOSITORY_ROOT / MODULE_RELATIVE)
+command_line_prefix = module_loaded_by_path(
+    "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 
 
 def git(directory, *arguments):
@@ -122,7 +127,8 @@ def default_claude_program():
 
 def make_scratch_clone(clone):
     git(clone.parent, "init", "-q", str(clone))
-    for relative in (MODULE_RELATIVE, HOOK_RELATIVE, GIT_OUTPUT_MODULE_RELATIVE):
+    for relative in (MODULE_RELATIVE, HOOK_RELATIVE, GIT_OUTPUT_MODULE_RELATIVE,
+                     OWNER_FILE_MODULE_RELATIVE):
         (clone / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPOSITORY_ROOT / relative, clone / relative)
     (clone / ".gitignore").write_text("__pycache__/\n")
@@ -130,10 +136,10 @@ def make_scratch_clone(clone):
     git(clone, "commit", "-q", "-m", "scratch clone for the owner check")
 
 
-def hook_settings_json(clone):
+def hook_settings(clone):
     command = f"{shlex.quote(sys.executable)} {shlex.quote(str(clone / HOOK_RELATIVE))}"
-    return json.dumps({"hooks": {"PostToolUse": [
-        {"matcher": "Bash", "hooks": [{"type": "command", "command": command}]}]}})
+    return {"hooks": {"PostToolUse": [
+        {"matcher": "Bash", "hooks": [{"type": "command", "command": command}]}]}}
 
 
 def process_id_in_owner_key(owner_key):
@@ -142,14 +148,15 @@ def process_id_in_owner_key(owner_key):
     return parts[1] if len(parts) == 3 else parts[0]
 
 
-def start_claude(claude_program, clone, settings_path):
+def start_claude(claude_program, clone):
     """Start claude in a session of its own; raise OSError if it cannot start."""
     environment = runner.environment_without_git_redirecting_variables()
     environment[snapshots.AGENT_SEAT_ENVIRONMENT_VARIABLE] = LIVE_CHECK_AGENT_SEAT
     return subprocess.Popen(
-        [claude_program, "-p", LIVE_CHECK_PROMPT, "--model", LIVE_CHECK_MODEL,
-         "--allowedTools", "Bash", "--output-format", "json", "--no-session-persistence",
-         "--settings", str(settings_path)],
+        [*command_line_prefix.claude_code_headless_run_command_line_prefix_build(
+            "dontAsk", claude_program, own_settings=hook_settings(clone)),
+         LIVE_CHECK_PROMPT, "--model", LIVE_CHECK_MODEL,
+         "--allowedTools", "Bash", "--output-format", "json", "--no-session-persistence"],
         cwd=clone, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, env=environment, start_new_session=True)
 
@@ -245,12 +252,10 @@ def owner_check_result_lines(arguments, scratch):
     clone = scratch / "clone"
     try:
         make_scratch_clone(clone)
-        settings_path = scratch / "settings.json"
-        settings_path.write_text(hook_settings_json(clone))
     except Exception as error:
         return [f"FAIL the scratch clone could not be made: {type(error).__name__}: {error}"]
     try:
-        process = start_claude(arguments.claude_program, clone, settings_path)
+        process = start_claude(arguments.claude_program, clone)
     except OSError as error:
         return [f"FAIL {arguments.claude_program} could not be started: "
                 f"{type(error).__name__}: {error}"]

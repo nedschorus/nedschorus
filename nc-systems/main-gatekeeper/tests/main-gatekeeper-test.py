@@ -1230,63 +1230,37 @@ with tempfile.TemporaryDirectory() as workspace_name:
           and completed.returncode == 1, audit_payload)
 
     # --- slice 5: the repo git-config pins ----------------------------------
-    # A clone arrives with no identity of its own, and this is the only place
-    # that tells anyone -- the requirement is otherwise in design prose and in
-    # git configs nothing distributes (README.md § Working in a fresh clone
-    # names it too, added 2026-09-21). So the detail names the value found AND
-    # all three commands that fix it, in the checkout it is missing from,
-    # whichever of the three cases failed.
+    # Each clone's own config holds the identity unconfigured-agent, which the
+    # pre-commit hook refuses, so an agent-session started without its
+    # launcher cannot commit; launched agent-seats commit under the
+    # GIT_AUTHOR_* and GIT_COMMITTER_* their launcher sets, which outrank any
+    # git config. This checks the exact values, not merely that some identity
+    # is set: a clone whose identity an agent replaced passes a presence check.
     #
-    # The local user.name and user.email are what keep a commit off the user's
-    # own name: being local, they override his global identity.
-    # user.useConfigOnly does not -- `git help config` says it instructs git to
-    # "avoid trying to guess defaults for user.email and user.name, and instead
-    # retrieve the values only from the configuration", and a global config is
-    # configuration. It turns a MISSING identity into a loud failure and blocks
-    # nothing ~/.gitconfig already answers. Measured 2026-09-21 on this Mac, in
-    # a fresh clone whose only local setting was user.useConfigOnly=true: `git
-    # var GIT_AUTHOR_IDENT` answered the user's own global identity, and a
-    # commit made there was authored as him. The first revision of these
-    # messages and of the README said the setting refused the global config --
-    # the same wrong rationale main-gatekeeper-design.md had already corrected
-    # on 2026-08-14, in its rewrite-policy classification; a reader who
-    # followed that revision passed this suite and still authored every commit
-    # as the user.
+    # Read with plain `git config <key>`, not `--local`: the test runner treats
+    # a one-key read as seeing no file, and any other git config call as
+    # reading the whole checkout. The merged value equals the local one
+    # whenever the clone's config holds the key, since the local file
+    # outranks ~/.gitconfig, and a global identity cannot pass by itself,
+    # because no global config holds unconfigured-agent.
     #
-    # These cases read git's merged configuration, not the local file, so a
-    # machine with a global identity passes the name and email cases on that
-    # alone, and no assertion here can show who would author a commit. That is
-    # what the GIT_AUTHOR_IDENT line in the detail is for: it is the reader's
-    # proof, and a green suite is not.
-    #
-    # Asked of git rather than counted in `..`s: this was SCRIPT_PATH.parent
-    # .parent, which was the repository root while the program lived in
-    # scripts/ and became <root>/nc-systems when it moved into
-    # nc-systems/main-gatekeeper/. The checks still read the same local config
-    # from a subdirectory, so nothing failed -- but the path they now print for
-    # the reader to paste was not the root, and the next move would shift it
-    # again.
+    # Asked of git rather than counted in `..`s, so the path printed for the
+    # reader stays the repository root wherever this test lives.
     enclosing = Path(git(["rev-parse", "--show-toplevel"],
                          Path(__file__).resolve().parent).stdout.strip())
-    fresh_clone_identity_fix_instructions = (
-        f"Set all three, in that checkout, before you commit:\n"
-        f"  git -C {enclosing} config user.name <the agent-seat or host doing "
-        f"the work, never the user>\n"
-        f"  git -C {enclosing} config user.email <that name>@nedschorus.invalid\n"
-        f"  git -C {enclosing} config user.useConfigOnly true\n"
-        f"Then run: git -C {enclosing} var GIT_AUTHOR_IDENT -- if it answers "
-        f"the user's own name or address, the local identity is not set."
-    )
-    for key in ("user.name", "user.email"):
+    for key, expected in (("user.name", "unconfigured-agent"),
+                          ("user.email", "unconfigured-agent@nedschorus.invalid")):
         pinned = git(["config", key], enclosing, check_result=False).stdout.strip()
-        check(f"slice 5 pins {key} in the enclosing repository", bool(pinned),
-              f"{key} is unset in {enclosing}.\n"
-              f"{fresh_clone_identity_fix_instructions}")
-    use_config_only = git(["config", "user.useConfigOnly"], enclosing,
-                          check_result=False).stdout.strip()
-    check("slice 5 pins user.useConfigOnly=true", use_config_only == "true",
-          f"user.useConfigOnly is {use_config_only or '(unset)'} in {enclosing}.\n"
-          f"{fresh_clone_identity_fix_instructions}")
+        check(f"slice 5 pins {key}={expected} in the enclosing repository",
+              pinned == expected,
+              f"{key} is {pinned or '(unset)'} in {enclosing}, not {expected}.\n"
+              f"Do not change it yourself: the clone's identity is the user's to set.\n"
+              f"If it holds another value, the next commit made in a Claude session "
+              f"writes {expected} back; tell the user which value you found.\n"
+              f"If it is unset, tell the user, and ask him to run:\n"
+              f"  git -C {enclosing} config user.name unconfigured-agent\n"
+              f"  git -C {enclosing} config user.email unconfigured-agent@nedschorus.invalid\n"
+              f"Then run this test again.")
 
     # --import takes 'none' or nothing; any other value is a malformed field,
     # not a slice boundary, now that the entry checkpoint is built.

@@ -47,7 +47,7 @@ What it does, per seat:
      correct there — the supervisor's boot-ignition consumes it (that path
      landed with PR #106) — so this script hands over to the launcher
      rather than duplicating that logic. Unless that handoff asks to be
-     consulted before a relaunch (dont-restart): then nothing is launched,
+     consulted before a relaunch (ask-user-before-restart): then nothing is launched,
      and the seat is reported NOT RELAUNCHED, AT ITS OWN REQUEST, which
      counts as not recovered — unless an operator says yes to the
      leftover-shell question in 1a, which relaunches it plain (ruled
@@ -135,6 +135,17 @@ file a launch needs is missing from the durable checkout — launch-claude-mac
 on the Mac, the supervisor elsewhere — the seat is refused and nothing is
 launched, never launched from this tool's own checkout instead.
 
+CPU priority: off macOS the seat's tmux server is started inside a transient
+scope of the user's systemd manager (`systemd-run --user --scope`), so the seat
+and the test suites' low-CPU-weight slice, also under that manager, are
+siblings and the suites yield CPU to the seat. Cron, which runs the crash
+watcher that calls this tool, gives no XDG_RUNTIME_DIR, so it is set to
+/run/user/<uid> when missing. When the manager cannot be reached, the seat is
+still started, outside it, and a line holding
+`STARTED OUTSIDE THE USER'S SYSTEMD MANAGER` (the constant
+AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER) is printed to
+stderr with the reason; the crash watcher shows the user a notice for it.
+
 Usage:
   recover-crashed-seats.py <seat-name>... [--dry-run] [--fresh-session-from-conversation-tail]
                            [--open-iterm-window-per-seat] [--checkout DIR]
@@ -187,12 +198,12 @@ _records_reader_spec = importlib.util.spec_from_file_location(
 records_reader = importlib.util.module_from_spec(_records_reader_spec)
 _records_reader_spec.loader.exec_module(records_reader)
 
-_project_directory_spec = importlib.util.spec_from_file_location(
-    "claude_code_session_transcript_project_directory_for_agent_seat_common",
-    Path(__file__).with_name("claude-code-session-transcript-project-directory-for-agent-seat-common.py")
+_claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_lookup_and_text_search_common",
+    Path(__file__).with_name("claude-code-session-transcript-lookup-and-text-search-common.py")
 )
-project_directory_module = importlib.util.module_from_spec(_project_directory_spec)
-_project_directory_spec.loader.exec_module(project_directory_module)
+claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_spec)
+_claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(claude_code_session_transcript_lookup_and_text_search_common)
 
 # Reuse retirement rules so every socket holding the seat’s name is cleared consistently.
 _resupervise_spec = importlib.util.spec_from_file_location(
@@ -232,6 +243,7 @@ REINCARNATION_OPENER_PATTERN = re.compile(
     r"Read .+? — (?:it is )?" + re.escape(REINCARNATION_OPENER_MARKER))
 # An ignition without a conversation-tail, at boot or at a handoff, also consumes the handoff and retires the parent.
 IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER = "the previous session's conversation-tail is unavailable"
+FRESH_SESSION_FROM_CONVERSATION_TAIL_PROMPT_PHRASE = "it is the dialog from this seat's last recorded session"
 
 
 def default_agents_root() -> Path:
@@ -247,11 +259,14 @@ def default_handoff_directory() -> Path:
 
 def harness_project_directory(seat_directory: Path, projects_root: Path) -> Path:
     # The harness replaces every non-ASCII-alphanumeric character, including underscores.
-    return project_directory_module.project_directory_for_seat(seat_directory, projects_root)
+    return claude_code_session_transcript_lookup_and_text_search_common.project_directory_for_seat(seat_directory, projects_root)
 
 
-def run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
-    """Return the tmux result, or None when tmux cannot answer."""
+def run_tmux(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
+    """Return the tmux result, or None when tmux cannot answer.
+
+    command_prefix is put before tmux, such as the systemd-run words that start it in a scope.
+    """
     if shutil.which("tmux") is None:
         return None
     socket_arguments = [] if socket_name is None else ["-L", socket_name]
@@ -259,12 +274,41 @@ def run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
         # A server this call starts keeps this cwd (new-session -c sets only the pane's), and the
         # occupancy check counts a server rooted in the caller's agent-home against that seat.
         return subprocess.run(
-            ["tmux", *socket_arguments, *arguments_after_tmux],
+            [*command_prefix, "tmux", *socket_arguments, *arguments_after_tmux],
             capture_output=True, text=True, timeout=30, check=False, env=environment,
             cwd=os.path.expanduser("~"),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
+
+
+# The crash watcher finds this text in recovery's output and shows the user a notice.
+AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER = "STARTED OUTSIDE THE USER'S SYSTEMD MANAGER"
+
+
+def agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason(
+        name: str, environment: dict):
+    """Return (prefix, failure): the systemd-run words that start the seat's tmux server in a
+    transient scope of the user's systemd manager, or ([], why the manager cannot be reached).
+
+    Probes the manager with a scope that runs `true` first, because systemd-run and tmux both
+    exit 1, so a failed wrapped launch could not say which of them failed.
+    """
+    if shutil.which("systemd-run") is None:
+        return [], "systemd-run is not installed"
+    probe = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "true"]
+    try:
+        completed = subprocess.run(probe, capture_output=True, text=True, timeout=30,
+                                   check=False, env=environment)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return [], f"`{' '.join(probe)}` could not run: {error}"
+    if completed.returncode != 0:
+        said = completed.stderr.strip() or completed.stdout.strip() or "(it printed nothing)"
+        return [], f"`{' '.join(probe)}` exited {completed.returncode}: {said}"
+    # No --unit: a scope an old after-exit shell keeps alive would make a fixed unit name collide.
+    # The pane command carries literal $HOME and $PATH for the pane's shell, not for systemd-run.
+    return ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--expand-environment=no",
+            f"--description=agent-seat {name} tmux server", "--"], None
 
 
 def tmux_has_session(name: str, socket_name: str):
@@ -506,7 +550,9 @@ def ask_operator_yes_or_no(question: str) -> bool:
 
 
 def is_unreplied_reincarnation_successor(transcript_path: Path) -> bool:
-    """Return whether a handoff successor has no substantive turns."""
+    """Return whether a handoff successor has no substantive turns.
+
+    Raise OSError when the transcript cannot be read."""
     first_turn = first_user_turn_text(transcript_path)
     return ((REINCARNATION_OPENER_PATTERN.match(first_turn) is not None
              or IGNITION_WITHOUT_CONVERSATION_TAIL_MARKER in first_turn)
@@ -525,7 +571,7 @@ def write_resume_prompt(handoff_directory: Path, name: str,
     prompt_path = resume_prompt_path(handoff_directory, name)
     if unreplied_successor:
         prompt = (
-            "This session was resumed by crash recovery (nedschorus#120). You "
+            f"{supervisor.CRASH_RECOVERY_RESUME_PROMPT_OPENING}. You "
             "are the successor your predecessor's handoff started, and your "
             "first reply never happened: the session ended before you did any "
             "work (if the harness recorded why, its notice is above). The "
@@ -536,7 +582,7 @@ def write_resume_prompt(handoff_directory: Path, name: str,
         )
     else:
         prompt = (
-            "This session was resumed by crash recovery (nedschorus#120): your "
+            f"{supervisor.CRASH_RECOVERY_RESUME_PROMPT_OPENING}: your "
             "previous session ended without writing a handoff, and your transcript "
             "was resumed under a fresh supervisor. "
             "Re-verify any in-flight state before trusting it (files you were "
@@ -575,6 +621,16 @@ def write_first_prompt_after_recorded_exit(handoff_directory: Path, name: str,
                   "work on.")
     prompt_path.write_text(prompt, encoding="utf-8")
     return prompt_path
+
+
+def fresh_session_from_conversation_tail_prompt(conversation_tail) -> str:
+    return (
+        f"Read {conversation_tail} — {FRESH_SESSION_FROM_CONVERSATION_TAIL_PROMPT_PHRASE}; "
+        "the session that followed it ended without writing a handoff "
+        "(crash recovery, nedschorus#120). Continue from where that dialog ends, "
+        "checking the repository's current state before trusting any of the "
+        "dialog's in-flight assumptions."
+    )
 
 
 def find_newest_conversation_tail_file(handoff_directory: Path, name: str):
@@ -767,12 +823,39 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
     )
     if first_prompt_file is not None:
         supervisor_command += f" --first-prompt-file {shlex.quote(str(first_prompt_file))}"
+    # Cron gives no XDG_RUNTIME_DIR, without which systemd-run --user cannot find the manager.
+    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    command_prefix, scope_failure = (
+        agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason(
+            name, environment))
+    if scope_failure is not None:
+        # A seat that does not start is worse than one at equal CPU priority with the test suites.
+        print(f"recover-crashed-seats: {name}: "
+              f"{AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER}"
+              f": the agent-seat's tmux server could not be put in a scope of nedlern's systemd "
+              f"user manager on ned-box, because {scope_failure}\n"
+              f"The agent-seat is being started anyway, outside the user manager. The test suites "
+              f"run inside the user manager at low CPU weight, and that weight reaches only "
+              f"processes inside it, so the suites compete with {name} for CPU at equal priority.\n"
+              f"To find why the user manager cannot be reached, run on ned-box: "
+              f"XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user status\n"
+              f"If that command fails, also run on ned-box: loginctl show-user nedlern -p Linger\n"
+              f"If that says Linger=no, the user manager stops whenever nedlern has no login "
+              f"session; ask the user to run on ned-box: loginctl enable-linger nedlern\n"
+              f"If it says Linger=yes, tell the user that the user manager on ned-box does not "
+              f"answer, quoting both commands' output.\n"
+              f"Do not restart {name} for this alone, since a restart interrupts its work. Once "
+              f"the systemctl command above succeeds, {name}'s next start, at its next crash "
+              f"recovery or launch, puts the agent-seat inside the user manager; a "
+              f"session-handoff does not, because the tmux server outlives it.",
+              file=sys.stderr)
     # A pane command that ends with the supervisor call lets the pane's shell exec into it;
     # tmux, then its parent, wakes it at once after a `kill -STOP`. The pane still closes
     # with the supervisor's exit status.
     completed = run_tmux(
         "new-session", "-d", "-s", name, "-c", str(seat_directory),
         f"{supervisor_command}; exit $?", socket_name=name, environment=environment,
+        command_prefix=command_prefix,
     )
     return 1 if completed is None else completed.returncode
 
@@ -911,8 +994,14 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     if waiting_handoff is not None:
         return waiting_handoff
 
-    session_id, found = newest_real_transcript(
-        harness_project_directory(seat_directory, projects_root))
+    project_directory = harness_project_directory(seat_directory, projects_root)
+    try:
+        session_id, found = newest_real_transcript(project_directory)
+    except OSError as error:
+        # Refused even with a recorded exit, whose restart offer names the transcript to resume.
+        return "refuse", (
+            f"the transcript crash recovery would resume could not be chosen from "
+            f"{project_directory}: {error.filename}: {error.strerror}")
 
     # A waiting handoff takes precedence; otherwise a recorded exit requires an operator restart.
     exit_record = supervisor.agent_exit_record_from_supervisor_state(
@@ -1141,7 +1230,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     if verdict == "seat-asked-to-be-consulted":
         counter, reason = detail
         if restart_at_the_operators_word:
-            # A plain launch preserves dont-restart for the supervisor’s own question, even when detached.
+            # A plain launch preserves ask-user-before-restart for the supervisor’s own question, even when detached.
             # Do not offer the --fresh-session-from-conversation-tail fallback: it would bypass that request.
             launch_exit_code = launch(name, seat_directory, handoff_directory, "")
             if launch_exit_code != 0:
@@ -1237,7 +1326,12 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     if verdict == "resume" and not fresh_session_from_conversation_tail:
         session_id, transcript = detail
         size_kb = transcript.stat().st_size // 1024
-        unreplied_successor = is_unreplied_reincarnation_successor(transcript)
+        try:
+            unreplied_successor = is_unreplied_reincarnation_successor(transcript)
+        except OSError as error:
+            # The resume prompt depends on this answer, and the agent-binary could not resume an unreadable transcript.
+            return (f"{name}: REFUSED — the transcript crash recovery would resume could not be "
+                    f"read: {error.filename}: {error.strerror}")
         unreplied_note = ("; it is the successor its handoff started, which "
                           "never replied" if unreplied_successor else "")
         resume_arguments = f"--resume-session-id {shlex.quote(session_id)}"
@@ -1270,13 +1364,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             return did_not_come_up
         return (f"{name}: relaunched fresh{in_window} (nothing to resume, no conversation-tail to read)"
                 f"{reach_clause_for_a_running_seat(name)}")
-    prompt = (
-        f"Read {conversation_tail} — it is the dialog from this seat's last recorded "
-        "session; the session that followed it ended without writing a handoff "
-        "(crash recovery, nedschorus#120). Continue from where that dialog ends, "
-        "checking the repository's current state before trusting any of the "
-        "dialog's in-flight assumptions."
-    )
+    prompt = fresh_session_from_conversation_tail_prompt(conversation_tail)
     prompt_path = handoff_directory / f"{name}-recovery-ignition-prompt.md"
     if dry_run:
         return (f"{name}: would launch and start a fresh agent-session from the conversation-tail {conversation_tail.name}"

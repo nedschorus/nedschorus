@@ -359,6 +359,29 @@ if linux_only_cases_run_here("the report's sandbox lines"):
             "[ -n \"$status_fd\" ] && eval \"echo '{\\\"child-pid\\\": $$}' >&$status_fd\"\n"
             "exec \"$@\"\n")
         (fake_bin / "bwrap").chmod(0o755)
+
+        # The runner hands bwrap the status pipe at whatever descriptor number is free,
+        # which reaches 10 or more only on a busy run, so the case forces both widths.
+        for status_fd in (9, 12):
+            read_end, write_end = os.pipe()
+            os.dup2(write_end, status_fd)
+            os.close(write_end)
+            try:
+                started = subprocess.run(
+                    [str(fake_bin / "bwrap"), "--unshare-pid", "--json-status-fd", str(status_fd),
+                     "sh", "-c", "echo started"],
+                    pass_fds=(status_fd,), capture_output=True, text=True,
+                    stdin=subprocess.DEVNULL, timeout=60, check=False)
+            finally:
+                os.close(status_fd)
+            with os.fdopen(read_end) as status_reader:
+                status = status_reader.read()
+            check(f"the stand-in bwrap, given status descriptor {status_fd}, writes the "
+                  "child-pid line to it and starts the command",
+                  started.returncode == 0 and started.stdout == "started\n"
+                  and '"child-pid"' in status,
+                  (started.returncode, started.stdout, started.stderr, status))
+
         repository = scratch_checkout(scratch, ["a-test.py", OUTSIDE_SUITE])
         completed, report = run_runner(
             scratch, repository, f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
@@ -587,6 +610,23 @@ with tempfile.TemporaryDirectory() as scratch_name:
 for suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX:
     check(f"the suite listed to run outside the sandbox exists: {suite}",
           (SCRIPTS_DIR.parent / suite).is_file())
+
+# Each of these starts the real bwrap, which cannot start inside bwrap.
+for suite in ("nc-systems/cold-read/tests/cold-read-agy-cell-real-sandbox-test.py",
+              "nc-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-real-sandbox-test.py"):
+    check(f"a suite that starts the real bwrap runs outside the sandbox: {suite}",
+          suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX)
+# Each of these starts a program's bwrap through the cold-read fixture's
+# pass-through stand-in, so it runs inside the sandbox like any other suite.
+for suite in ("nc-systems/cold-read/tests/cold-read-agy-cell-test.py",
+              "nc-systems/cold-read/tests/cold-read-fast-read-test.py",
+              "nc-systems/cold-read/tests/cold-read-grid-test.py",
+              "nc-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-test.py",
+              "nc-systems/skills/explain/tests/explain-reply-cold-read-fast-read-test.py",
+              "nc-systems/skills/walk-me-through/tests/"
+              "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close-test.py"):
+    check(f"a suite whose bwrap is the stand-in runs inside the sandbox: {suite}",
+          suite not in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX)
 
 
 # --- Covers over listening sockets that vanish or cannot be reached -----------

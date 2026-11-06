@@ -218,11 +218,19 @@ for request in ["open-agent-seat-window", "open-agent-seat-window a b", "open-ag
 def launcher_accepts_seat_name(name, bash_options=(), locale_environment=None, bash="bash"):
     """Run the real launch-claude-ubuntu up to its seat-name check, and no further."""
     # A set account override makes the launcher stop at the refusal right after the seat-name
-    # check, before it reaches ssh, so a name it accepts launches nothing.
-    environment = dict(os.environ, NEDSCHORUS_SEAT_GITHUB_ACCOUNT="any-account",
-                       **(locale_environment or {}))
-    result = subprocess.run([bash, *bash_options, str(PROGRAM_PATH.with_name("launch-claude-ubuntu")), name],
-                            capture_output=True, text=True, env=environment, timeout=30)
+    # check, before it reaches ssh, so a name it accepts launches nothing. A launcher without that
+    # refusal reaches the stub ssh first on PATH, which exits 1 at once, so it never reaches a seat.
+    with tempfile.TemporaryDirectory(prefix="launcher-seat-name-check-") as scratch:
+        stub_directory = Path(scratch) / "bin"
+        stub_directory.mkdir()
+        stub_ssh = stub_directory / "ssh"
+        stub_ssh.write_text("#!/bin/sh\necho 'stub ssh reached' >&2\nexit 1\n", encoding="utf-8")
+        stub_ssh.chmod(0o755)
+        environment = dict(os.environ, NEDSCHORUS_SEAT_GITHUB_ACCOUNT="any-account", HOME=scratch,
+                           PATH=f"{stub_directory}{os.pathsep}{os.environ.get('PATH', '')}",
+                           **(locale_environment or {}))
+        result = subprocess.run([bash, *bash_options, str(PROGRAM_PATH.with_name("launch-claude-ubuntu")), name],
+                                capture_output=True, text=True, env=environment, timeout=30)
     if "NEDSCHORUS_SEAT_GITHUB_ACCOUNT" in result.stderr:
         return True
     if "agent names are" in result.stderr or "cannot start with -" in result.stderr:

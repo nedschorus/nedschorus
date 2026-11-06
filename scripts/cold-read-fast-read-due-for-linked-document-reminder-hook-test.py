@@ -144,6 +144,29 @@ def run_hook(hook_script, stdin_text, environment_extra=None):
                           capture_output=True, text=True, env=environment, timeout=60)
 
 
+def file_writing_tool_call_records(paths, tool_name="Write", refused=False):
+    """A tool call writing each path and its result, shaped as Claude Code records them."""
+    records = [{"type": "user", "message": {"role": "user", "content": "write the documents"}}]
+    for number, path in enumerate(paths):
+        call = f"toolu_{tool_name}_{number}"
+        records.append({"type": "assistant", "message": {
+            "id": f"msg_write_{number}", "role": "assistant",
+            "content": [{"type": "tool_use", "id": call, "name": tool_name,
+                         "input": {"file_path": str(path), "content": "x"}}]}})
+        records.append({"type": "user", "message": {"role": "user", "content": [
+            {"tool_use_id": call, "type": "tool_result",
+             "content": "PreToolUse:Write hook error: refused" if refused else "written",
+             "is_error": refused}]}})
+    return records
+
+
+def write_transcript(path, records):
+    """Without spaces after separators, as Claude Code writes its transcripts."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(record, separators=(",", ":")) + "\n"
+                            for record in records))
+
+
 class Case:
     """One case's own checkout, cold-read-records directory and transcript."""
 
@@ -160,12 +183,16 @@ class Case:
         self.store = self.log_store / "cold-read-records"
         self.store.mkdir(parents=True)
         self.transcript = self.root / "transcript.jsonl"
+        self.written = []
 
     def document(self, relative, text="# A document\n", modified=1_000_000):
+        """Write the document, and count it as written by the agent-session unless a case says otherwise."""
         path = self.checkout / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
         os.utime(path, (modified, modified))
+        if path not in self.written:
+            self.written.append(path)
         return path
 
     def record(self, name, modified, frozen_relative=None, frozen_text=None, local=False,
@@ -183,13 +210,20 @@ class Case:
             os.utime(frozen, (modified, modified))
         return directory
 
-    def run(self, reply, payload_extra=None, stdin_text=None, environment_extra=None):
-        records = [
+    def run(self, reply, payload_extra=None, stdin_text=None, environment_extra=None,
+            written=None, tool_name="Write", refused=False):
+        """Run the hook on a transcript whose earlier turn wrote the written paths, by default every case.document.
+
+        refused records each of those calls as ended in an error, as a hook's refusal is.
+        """
+        records = file_writing_tool_call_records(
+            self.written if written is None else written, tool_name, refused)
+        records += [
             {"type": "user", "message": {"role": "user", "content": "please write it"}},
             {"type": "assistant", "message": {"id": "msg_1", "role": "assistant",
                                               "content": [{"type": "text", "text": reply}]}},
         ]
-        self.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
+        write_transcript(self.transcript, records)
         return self.run_on_written_transcript(payload_extra, stdin_text, environment_extra)
 
     def run_on_written_transcript(self, payload_extra=None, stdin_text=None, environment_extra=None):
@@ -222,6 +256,26 @@ def main():
     expect("a linked document with no record is reported",
            case.run("I wrote docs/plan-of-record.md for you."), [document])
 
+    # A seat-brief is a CLAUDE.local.md at the top of a checkout, which git ignores, so it always differs from main.
+    case = Case()
+    (case.checkout / ".gitignore").write_text("CLAUDE.local.md\n")
+    seat_brief = case.document("CLAUDE.local.md")
+    reply = f"Your rule goes in merge-lane-2's seat-brief, file://{seat_brief}."
+    expect("a git-ignored document the reply only cites, which the agent-session never wrote, is silent",
+           case.run(reply, written=[]), None)
+    expect("the same git-ignored document is reported once the agent-session wrote it",
+           case.run(reply), [seat_brief])
+    expect("a document written with the Edit tool is reported",
+           case.run(reply, tool_name="Edit"), [seat_brief])
+    expect("a document whose only write was refused, as the instruction-file guard refuses one, is silent",
+           case.run(reply, refused=True), None)
+    expect("a document whose path no write named is silent, though another document was written",
+           case.run(reply, written=[case.checkout / "docs" / "other.md"]), None)
+    write_transcript(case.transcript.with_suffix("") / "subagents" / "agent-a1.jsonl",
+                     file_writing_tool_call_records([seat_brief]))
+    expect("a document a subagent of the agent-session wrote is reported",
+           case.run(reply, written=[]), [seat_brief])
+
     case = Case()
     document = case.document("docs/plan-of-record.md", modified=1_000_000)
     case.record("plan-of-record-2026-10-08", 2_000_000, "docs/plan-of-record.md", "older text\n")
@@ -239,6 +293,14 @@ def main():
     document = case.document("docs/plan-of-record.md", text="same\n", modified=3_000_000)
     case.record("plan-of-record-2026-10-08", 2_000_000, "docs/plan-of-record.md", "same\n")
     expect("a record whose frozen copy matches the document is silent despite file times",
+           case.run("Updated docs/plan-of-record.md."), None)
+
+    case = Case()
+    document = case.document("docs/plan-of-record.md", modified=3_000_000,
+                             text="See file:///Volumes/nedhome/agents/x/log.md.\n")
+    case.record("plan-of-record-2026-10-08", 2_000_000, "docs/plan-of-record.md",
+                "See /home/nedlern/agents/x/log.md.\n")
+    expect("a frozen copy whose Mac links a cold read on ned-box rewrote matches its document despite file times",
            case.run("Updated docs/plan-of-record.md."), None)
 
     case = Case()
@@ -277,9 +339,9 @@ def main():
     draft = case.document("docs/walk/naming-rules-draft.md", modified=2_000_000)
     expect("a walk-document without a suggestions file is reported",
            case.run("The walk-document is docs/walk/naming-rules-draft.md."), [draft])
-    case.document("docs/walk/naming-rules-suggestions.md", modified=3_000_000)
+    case.document("docs/walk/naming-rules-cold-read-fast-read.md", modified=3_000_000)
     expect("a walk-document with a newer suggestions file is silent, and the suggestions file is skipped",
-           case.run("See docs/walk/naming-rules-draft.md and docs/walk/naming-rules-suggestions.md."),
+           case.run("See docs/walk/naming-rules-draft.md and docs/walk/naming-rules-cold-read-fast-read.md."),
            None)
 
     case = Case()
@@ -457,7 +519,7 @@ def main():
 
     case = Case()
     draft = case.document("docs/walk/naming-rules-draft.md", modified=5_000_000)
-    suggestions = case.document("docs/walk/naming-rules-suggestions.md", modified=4_000_000)
+    suggestions = case.document("docs/walk/naming-rules-cold-read-fast-read.md", modified=4_000_000)
     expect("a walk-document changed after another agent-session's read is raised",
            case.run("The walk-document is docs/walk/naming-rules-draft.md."), [draft])
     name_agent_session(suggestions, "s1", draft)
@@ -466,7 +528,7 @@ def main():
 
     case = Case()
     draft = case.document("docs/walk/naming-rules-draft.md", modified=4_000_000)
-    suggestions = case.document("docs/walk/naming-rules-suggestions.md", modified=5_000_000)
+    suggestions = case.document("docs/walk/naming-rules-cold-read-fast-read.md", modified=5_000_000)
     malformed = suggestions.parent / (suggestions.name + ".agent-session.json")
     malformed.write_text("not json\n")
     completed = case.run("The walk-document is docs/walk/naming-rules-draft.md.")
@@ -529,6 +591,7 @@ def main():
     elsewhere = other / "docs" / "design.md"
     elsewhere.parent.mkdir(parents=True)
     elsewhere.write_text("on main\n")
+    case.written.append(elsewhere)
     commit_to_main(other, "docs/design.md")
     expect("a document in another checkout, the same as that checkout's main, is silent",
            case.run(f"See file://{elsewhere}."), None)
@@ -546,6 +609,7 @@ def main():
     changed_elsewhere = other / "docs" / "design.md"
     changed_elsewhere.parent.mkdir(parents=True)
     changed_elsewhere.write_text("new there\n")
+    case.written.append(changed_elsewhere)
     expect_unchecked("a document that cannot be checked does not stop the check of another",
                      case.run(f"See file://{no_main} and file://{changed_elsewhere}."),
                      no_main, "git merge-base", [changed_elsewhere])
@@ -563,6 +627,7 @@ def main():
     changed_elsewhere = other / "docs" / "design.md"
     changed_elsewhere.parent.mkdir(parents=True)
     changed_elsewhere.write_text("new there\n")
+    case.written.append(changed_elsewhere)
     expect_unchecked("a document that cannot be checked and is not due leaves the other "
                      "documents' fast read asked for",
                      case.run(f"See file://{read} and file://{changed_elsewhere}."),
@@ -642,7 +707,7 @@ def main():
     loose.write_text("x\n")
     case = Case()
     expect("a document in no git checkout is judged by its records alone",
-           case.run(f"See file://{loose}."), [loose])
+           case.run(f"See file://{loose}.", written=[loose]), [loose])
 
     # The Mac mount maps to ned-box's /home/nedlern; point that prefix at a scratch directory.
     specification = importlib.util.spec_from_file_location("hook_under_test", HOOK_SCRIPT)

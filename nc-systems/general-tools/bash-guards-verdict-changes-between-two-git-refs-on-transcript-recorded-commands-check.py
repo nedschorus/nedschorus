@@ -27,8 +27,10 @@ Steps:
      mode, unless --new-process-pairs is none: each pool worker keeps one shell reader child
      process running and sends it one command at a time, through the same JSON conversion a
      hook's new process uses.
-  4. Compare the two refs row by row and print each difference, then, for each guard the head
-     adds, every recorded command it refuses.
+  4. Compare the two refs row by row and print each difference, then the recorded commands the
+     guards the head adds refuse, in refusal groups: one guard and one refusal message each, with
+     a few of its commands; every group in full is in added-guard-refusal-groups.json, and every group's
+     "refusal right" answer line, ready to copy, is in added-guard-refusal-right-lines.txt.
 
 Exit status: 0 when no verdict differs and no added guard refuses a recorded command; 1 when a
 verdict differs or an added guard refuses a recorded command; 2 when the replay itself
@@ -46,7 +48,9 @@ raised for any other reason is not read again. A message that differs while its 
 
 Files: the run log directory holds the files a reader needs to see why a run exited 1 or 2, each step's log
 and each mode's differences-<mode>.json. By default it is a new directory under --log-store-runs-directory, in
-the log-store on ned-box, removed after an exit 0 and kept after an exit 1 or 2. Everything else, the
+the log-store on ned-box, removed after an exit 0 and kept after an exit 1 or 2. It also holds
+added-guard-refusal-groups.json and added-guard-refusal-right-lines.txt when an added guard refuses a recorded
+command. Everything else, the
 checkouts and the pairs and verdicts files, goes in a scratch directory, by default a temporary directory that
 is removed whenever the replay exits, on an exception, SIGTERM or SIGHUP too, unless its checkouts could not be
 removed. --scratch-directory names a scratch directory that is kept, and that holds the run log files too.
@@ -55,9 +59,11 @@ removed. --scratch-directory names a scratch directory that is kept, and that ho
 import argparse
 import collections
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
+import multiprocessing.util
 import os
 import re
 import shutil
@@ -76,6 +82,11 @@ _transcript_mirror_spec = importlib.util.spec_from_file_location(
     Path(__file__).resolve().parents[2] / "scripts" / "transcript-mirror-to-log-store.py")
 _transcript_mirror = importlib.util.module_from_spec(_transcript_mirror_spec)
 _transcript_mirror_spec.loader.exec_module(_transcript_mirror)
+_claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_lookup_and_text_search_common",
+    Path(__file__).resolve().parents[2] / "scripts" / "claude-code-session-transcript-lookup-and-text-search-common.py")
+_claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_spec)
+_claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(_claude_code_session_transcript_lookup_and_text_search_common)
 _, _AGENT_SESSION_FILES = _transcript_mirror.split_destination(
     _transcript_mirror.LOG_STORE_AGENT_SESSION_FILES_DESTINATION)
 
@@ -93,6 +104,12 @@ PAIRS_PER_TASK = 200
 STEP_DEADLINE_MARGIN_SECONDS = 600
 GIT_TIMEOUT_SECONDS = 600
 PRINTED_TEXT_LENGTH = 300
+# Bounds the printed refusal groups to about 25,000 characters however many commands are refused, so the
+# report fits in a GitHub review body, which holds at most 65,536 characters.
+REFUSAL_GROUPS_PRINTED = 10
+REFUSED_COMMANDS_PRINTED_PER_GROUP = 3
+REFUSAL_GROUPS_FILE_NAME = "added-guard-refusal-groups.json"
+REFUSAL_RIGHT_LINES_FILE_NAME = "added-guard-refusal-right-lines.txt"
 SCRATCH_OR_RUN_LOG_DIRECTORY_NOT_REMOVED_MESSAGE = (
     "REPLAY FAILED: the paths listed below could not be removed, so this Bash guards replay exits 2; any verdicts "
     "it printed above stand. Each path is in the replay's scratch directory, made under TMPDIR, or, after a replay that "
@@ -127,36 +144,44 @@ VERDICT_CHANGED_MESSAGE = (
     "the fix-round's head; answers in a review of an earlier head do not count, so the review of the fix-round's head repeats them.\n"
     "merge-lane-2 holds the merge until every difference that this check, run on the nc-head-commit being merged, "
     "finds has its \"verdict change intended\" line. When no NEW GUARD REFUSES block follows, merge-lane-2 then "
-    "merges despite the exit 1; when one follows, its refused commands need their \"refusal right\" lines too, "
+    "merges despite the exit 1; when one follows, its refusal groups need their \"refusal right\" lines too, "
     "as that block says. A difference answered with a finding holds the merge until the author's fix makes this "
     "check no longer find it.")
 NEW_GUARD_REFUSES_MESSAGE = (
-    "NEW GUARD REFUSES RECORDED COMMANDS: a guard the head adds refuses each numbered command listed above "
-    "under a \"new guard ... would refuse\" line, so this check exits 1. Agents ran each of those commands, "
-    "and a guard that refuses a command agents need stops their work.\n"
-    "The pull request's reviewer answers each refused command in the body of the review the reviewer posts. "
-    "A refused command is one guard, "
-    "one working directory and one command, and gets one answer. The modes are the ways this check reads a "
-    "command, in-process, search-file main() and new-process, and each labels its own lines above. Every mode "
-    "names an added guard by its file path, so a command two modes refuse in the same working directory is one "
-    "refused command.\n"
-    "Where the refusal is right, the answer is a line of its own:\n"
-    "  refusal right: <guard file> | <working directory> | <command>\n"
-    "copying the guard file's path from its \"new guard\" line and the working directory and the command from "
-    "the numbered entry, the command last, in the quotes the numbered entry prints around it, so a | inside it is part of the command; for "
-    "example, with a made-up guard path: refusal right: scripts/example-guard-hook.py | /tmp | 'tmux kill-server'.\n"
-    "Where the refusal is wrong, the answer is a finding instead, and the author then narrows the guard so that "
-    "it lets that command through. The other refused commands still each get their \"refusal right\" line.\n"
+    "NEW GUARD REFUSES RECORDED COMMANDS: a guard the head adds refuses the recorded commands of each refusal "
+    "group listed above, so this check exits 1. Agents ran each of those commands, and a guard that refuses a "
+    "command agents need stops their work.\n"
+    "A refusal group is one added guard and one refusal message, with every recorded command, one command "
+    "and one working directory, that the guard refuses with that message, in any mode. The modes are the ways "
+    "this check reads a command: in-process, search-file main() and new-process. Each group has an id, "
+    "refusal-group-<8 or more hex digits>, made from the guard's path and the message, so the same group has the "
+    "same id in every run of this check that finds the same groups.\n"
+    "The pull request's reviewer answers each refusal group in the body of the review the reviewer posts, "
+    "every group in the file {groups_file}, including the groups and commands the list above leaves out. "
+    "That file is a JSON list with "
+    "one object per group: \"group\" is its id, \"guard\" the guard's path, \"reason\" the refusal message, "
+    "\"modes\" the modes that refused, and \"refused commands\" a list of [command, working directory].\n"
+    "Where every command in a group is rightly refused, the answer is a line of its own:\n"
+    "  refusal right: <guard file> | <group id>\n"
+    "for example, with a made-up guard path: refusal right: scripts/example-guard-hook.py | refusal-group-0a1b2c3d. "
+    "Each group listed above prints its own line in that form, ready to copy, and the file "
+    "{refusal_right_lines_file} holds that line for every group, the ones the list leaves out included.\n"
+    "On the next line, write in one line why the guard is right to refuse that group's commands.\n"
+    "Where a command in a group is wrongly refused, the group gets no \"refusal right\" line: the answer is a "
+    "finding that names each wrongly refused command and its working directory, and the author then narrows the "
+    "guard so that it lets that command through. Each other group still gets its own answer. A group whose "
+    "guard and message the narrowing leaves unchanged keeps its id, and while the guard still refuses any of its "
+    "commands, such a group needs its one \"refusal right\" line in the review of the fix-round's head.\n"
     "The answers go in the review of the nc-head-commit being merged; after a fix-round, that is the review of "
     "the fix-round's head; answers in a review of an earlier head do not count, so the review of the fix-round's head repeats them.\n")
 NEW_GUARD_REFUSES_ONLY_ENDING = (
-    "merge-lane-2 holds the merge until every refused command that this check, run on the nc-head-commit being "
-    "merged, lists has its \"refusal right\" line, and then merges despite the exit 1. A refusal answered with a "
-    "finding holds the merge until the author's narrowed guard no longer refuses that command, so the check "
-    "no longer lists it.")
+    "merge-lane-2 holds the merge until every refusal group that this check, run on the nc-head-commit being "
+    "merged, finds has its \"refusal right\" line, and then merges despite the exit 1. A group answered with a "
+    "finding holds the merge until the author's narrowed guard no longer refuses the commands the finding names, "
+    "so the check no longer lists them.")
 NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING = (
     "The VERDICT CHANGED block above holds the merge on its own: \"refusal right\" lines do not clear it. "
-    "merge-lane-2 merges despite the exit 1 only once every refused command has its \"refusal right\" line "
+    "merge-lane-2 merges despite the exit 1 only once every refusal group has its \"refusal right\" line "
     "and every difference has its \"verdict change intended\" line.")
 
 # Copied from the parent, never inherited: a git variable would point the checkouts' git at
@@ -258,6 +283,11 @@ def stop_deferred():
     STOP_STATE["deferred"] += 1
     try:
         yield
+    except ReplayFailed as error:
+        # The SystemExit(2) below replaces this exception, so main() would never print it.
+        if STOP_STATE["stop_requested"] and STOP_STATE["deferred"] == 1:
+            print(f"REPLAY FAILED: {error}", file=sys.stderr, flush=True)
+        raise
     finally:
         STOP_STATE["deferred"] -= 1
         if STOP_STATE["stop_requested"] and not STOP_STATE["deferred"]:
@@ -267,10 +297,6 @@ def stop_deferred():
 
 # ---------------------------------------------------------------- step 1: the pairs
 
-def raise_walk_failed(error):
-    raise ReplayFailed(f"reading the transcripts failed: {error}")
-
-
 def recorded_command_pairs(transcript_directories):
     """Return (the distinct [command, working directory] pairs of the Bash tool calls in first-seen order,
     the number of transcript lines that are not JSON)."""
@@ -279,36 +305,37 @@ def recorded_command_pairs(transcript_directories):
     for directory in transcript_directories:
         if not os.path.isdir(directory):
             raise ReplayFailed(f"transcript directory {directory} does not exist")
-        for parent, _, names in os.walk(directory, onerror=raise_walk_failed):
-            for name in sorted(names):
-                if not name.endswith(".jsonl"):
+    # ripgrep leaves out the transcripts with no Bash call faster than Python reads them.
+    paths, problems = _claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcripts_matching_any_pattern_ignoring_case(
+        transcript_directories, ['"Bash"'], include_subagents=True)
+    if problems:
+        raise ReplayFailed("reading the transcripts failed: " + "; ".join(problems))
+    for path in paths:
+        try:
+            handle = open(path, "rb")
+        except FileNotFoundError:
+            continue  # Removed after the search listed it.
+        except OSError as error:
+            raise ReplayFailed(f"transcript {path} cannot be read: {error}") from error
+        with handle:
+            for line in handle:
+                if b'"Bash"' not in line:
                     continue
-                path = os.path.join(parent, name)
                 try:
-                    handle = open(path, "rb")
-                except FileNotFoundError:
-                    continue  # Removed after the walk listed it.
-                except OSError as error:
-                    raise ReplayFailed(f"transcript {path} cannot be read: {error}") from error
-                with handle:
-                    for line in handle:
-                        if b'"Bash"' not in line:
-                            continue
-                        try:
-                            record = json.loads(line)
-                        except ValueError:
-                            lines_not_json += 1  # Most often the last line of a transcript still being written.
-                            continue
-                        message = record.get("message")
-                        content = message.get("content") if isinstance(message, dict) else None
-                        if not isinstance(content, list):
-                            continue
-                        for item in content:
-                            if (isinstance(item, dict) and item.get("type") == "tool_use"
-                                    and item.get("name") == "Bash"):
-                                command = (item.get("input") or {}).get("command")
-                                if isinstance(command, str):
-                                    seen.setdefault((command, record.get("cwd") or "/"), None)
+                    record = json.loads(line)
+                except ValueError:
+                    lines_not_json += 1  # Most often the last line of a transcript still being written.
+                    continue
+                message = record.get("message")
+                content = message.get("content") if isinstance(message, dict) else None
+                if not isinstance(content, list):
+                    continue
+                for item in content:
+                    if (isinstance(item, dict) and item.get("type") == "tool_use"
+                            and item.get("name") == "Bash"):
+                        command = (item.get("input") or {}).get("command")
+                        if isinstance(command, str):
+                            seen.setdefault((command, record.get("cwd") or "/"), None)
     return [list(pair) for pair in seen], lines_not_json
 
 
@@ -341,7 +368,9 @@ def check_guards_match_settings(hooks, replayed, label):
             "command through it.\n"
             "When the pull request renames a guard's file: change its path in GUARDS, and add the line "
             "\"<former path>\": \"<new path>\", to the BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH map in this script, "
-            "so the base's hook at the former path is read as the same guard.\n"
+            "so the base's hook at the former path is read as the same guard. End the former path's line with the "
+            "comment \"# in git history only\", or scripts/branch-leaves-no-citations-of-removed-paths-test.py "
+            "fails on it.\n"
             "Make the change in the pull request that adds or renames the hook, and run this check from that pull "
             "request's copy of this script, because only that copy has the change.")
 
@@ -506,6 +535,25 @@ def read_codex_exec(guard, command, working_directory, search_file_directory):
     return "refused" if reason else "passed", reason
 
 
+def read_ghi_md_whole_file_replacement(guard, command, working_directory, search_file_directory):
+    # The marker file is never read here: replaying a command must not consume an agent's reason.
+    replaced = guard.ghi_md_replaced_by_command(command, working_directory)
+    return ("refused", f"replaces {replaced}") if replaced else ("passed", None)
+
+
+def read_handoff_deferral_cold_read_full_run_launch(guard, command, working_directory, search_file_directory):
+    # Read as if a handoff-deferral were on: the marker file is per agent-session and absent here.
+    runs_grid = guard.command_runs_cold_read_grid_script(command)
+    return ("refused", guard.COLD_READ_FULL_RUN_REFUSED_AND_SAVED_REASON) if runs_grid else ("passed", None)
+
+
+def read_git_worktree_remove_records_ship_first(guard, command, working_directory, search_file_directory):
+    # Only whether the command removes a worktree is read: running the shippers would copy real records during a replay.
+    if guard.command_runs_git_worktree_remove(command):
+        return "ships every worktree's records first", None
+    return "passed", None
+
+
 class MarkdownChangingCheckoutProbeRunner(StubbedProbeRunner):
     """Answers the Markdown push reminder's git as a checkout whose every ref changes one Markdown file.
 
@@ -538,24 +586,45 @@ def read_markdown_push_reminder(guard, command, working_directory, search_file_d
 # A renamed guard's former file path, which a base ref's settings.json may still run, to its path in GUARDS.
 # The line does nothing once main's settings.json no longer runs the former path, and may then be removed.
 BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {
-    ".claude/hooks/ghi-issue-write-redirect.py": ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
-    "scripts/hand-typed-codex-exec-redirect-hook.py": "scripts/hand-typed-codex-exec-command-refusal-hook.py",
+    ".claude/hooks/ghi-issue-write-redirect.py":  # in git history only
+        ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
+    "scripts/hand-typed-codex-exec-redirect-hook.py":  # in git history only
+        ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py",
+    "scripts/synthetic-keystroke-guard-hook.py":  # in git history only
+        ".claude/guard-hooks/synthetic-keystroke-guard-hook.py",
+    "scripts/force-push-with-open-pull-request-guard-hook.py":  # in git history only
+        ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py",
+    ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py":  # in git history only
+        ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
+    "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py":  # in git history only
+        ".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py",
+    "scripts/search-file-argument-read-as-option-guard-hook.py":  # in git history only
+        ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py",
+    "scripts/hand-typed-codex-exec-command-refusal-hook.py":  # in git history only
+        ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py",
+    ".claude/hooks/ghi-md-whole-file-replacement-soft-block.py":  # in git history only
+        ".claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py",
 }
 
 # Every Bash PreToolUse hook in .claude/settings.json, by the file it runs, with the function
 # that reads one command through it. check_guards_match_settings() names each hook missing here,
 # so a new guard is one line: its file and a reading function like the ones above.
 GUARDS = {
-    "scripts/synthetic-keystroke-guard-hook.py": read_synthetic_keystroke,
-    "scripts/force-push-with-open-pull-request-guard-hook.py": read_force_push,
-    ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py": read_issue_write,
-    "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py": read_tmux_kill,
-    "scripts/search-file-argument-read-as-option-guard-hook.py": read_search_file,
-    "scripts/hand-typed-codex-exec-command-refusal-hook.py": read_codex_exec,
+    ".claude/guard-hooks/synthetic-keystroke-guard-hook.py": read_synthetic_keystroke,
+    ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py": read_force_push,
+    ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py": read_issue_write,
+    ".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py": read_tmux_kill,
+    ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py": read_search_file,
+    ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py": read_codex_exec,
     "nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py":
         read_markdown_push_reminder,
+    ".claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py": read_ghi_md_whole_file_replacement,
+    ".claude/guard-hooks/handoff-deferral-cold-read-full-run-launch-refusal-hook.py":
+        read_handoff_deferral_cold_read_full_run_launch,
+    ".claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py":
+        read_git_worktree_remove_records_ship_first,
 }
-SEARCH_FILE_GUARD = "scripts/search-file-argument-read-as-option-guard-hook.py"
+SEARCH_FILE_GUARD = ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py"
 
 
 def guard_readings(guards, command, working_directory, search_file_directory):
@@ -588,12 +657,19 @@ def worker_start(checkout, new_process, search_file_directory, timeout,
     WORKER["search_file_directory"] = search_file_directory
 
 
+def rows_as_json_data(rows):
+    # A reading can hold a value of a class from a checkout's guard or shell reader, such as the reader's str
+    # subclass for a word that starts with ~. Those modules are loaded by file path, so pickle cannot name the
+    # class and a worker could not return the rows; the step writes them as JSON in any case.
+    return json.loads(json.dumps(rows))
+
+
 def worker_guard_rows(pairs):
     rows = []
     for command, working_directory in pairs:
         rows.append({key: list(value) for key, value in guard_readings(
             WORKER["guards"], command, working_directory, WORKER["search_file_directory"]).items()})
-    return rows, WORKER["switched"]
+    return rows_as_json_data(rows), WORKER["switched"]
 
 
 def search_file_main_outcome(guard, command, working_directory):
@@ -629,7 +705,7 @@ def worker_search_file_main_rows(pairs):
             # A failed reading; is_failed_reading() makes the run exit 2.
             row = list(failed_reading(error))
         rows.append(row)
-    return rows, WORKER["switched"]
+    return rows_as_json_data(rows), WORKER["switched"]
 
 
 def smoke_check(checkout, new_process, search_file_directory, timeout,
@@ -793,8 +869,33 @@ def step_deadline_seconds(pair_count, jobs, timeout):
     return (-(-pair_count // jobs) + pair_count) * readings_per_pair * timeout + STEP_DEADLINE_MARGIN_SECONDS
 
 
-def run_step_in_child(arguments, log_path, deadline_seconds):
-    """Run one ref's step in a fresh interpreter, so each ref's modules load from that ref alone."""
+def remove_recorded_multiprocessing_directory(record_path):
+    """Remove the multiprocessing directory a step recorded, the only directory a record may name.
+
+    A record that names anything but an absolute path whose last part starts with pymp- removes nothing and
+    raises ReplayFailed, as a failed removal does, with the directory's path."""
+    if not record_path.exists():
+        return
+    recorded = record_path.read_text()
+    directory = Path(recorded)
+    if not directory.is_absolute() or not directory.name.startswith("pymp-"):
+        raise ReplayFailed(f"the multiprocessing directory record {record_path} holds {recorded!r}, not an absolute "
+                           f"path to a pymp- directory, so nothing was removed")
+    if not directory.is_dir():
+        return
+    try:
+        shutil.rmtree(directory)
+    except OSError as error:
+        raise ReplayFailed(f"the step's multiprocessing directory {directory} could not be removed: "
+                           f"{type(error).__name__}: {error}") from error
+
+
+def run_step_in_child(arguments, log_path, deadline_seconds, multiprocessing_directory_record_path=None):
+    """Run one ref's step in a fresh interpreter, so each ref's modules load from that ref alone.
+
+    The step writes the path of its multiprocessing temporary directory, the pool's forkserver socket, to
+    multiprocessing_directory_record_path. multiprocessing removes that directory only at a normal exit, so after a
+    step killed here it is removed here."""
     # In its own process group, so a step that ends, fails or is stopped takes its workers with it;
     # they would otherwise go on reading checkouts the replay is removing.
     with stop_deferred(), open(log_path, "w") as log:
@@ -813,6 +914,8 @@ def run_step_in_child(arguments, log_path, deadline_seconds):
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(step.pid, signal.SIGKILL)
             step.wait()
+            if multiprocessing_directory_record_path is not None:
+                remove_recorded_multiprocessing_directory(Path(multiprocessing_directory_record_path))
     if returncode is None:
         raise ReplayFailed(f"the step {arguments[1]} ran past its deadline of {deadline_seconds} s and was stopped; "
                            f"log {log_path}")
@@ -861,6 +964,68 @@ def print_rows(title, items, limit):
             continue
         for name, reading in zip(("base", "head") if len(readings) == 2 else ("at",), readings):
             print(f"    {name}: {shortened(reading)}")
+
+
+def refusal_group_digest_compute_from_bash_guard_path_and_message(guard, reason):
+    return hashlib.sha256(json.dumps([guard, reason]).encode()).hexdigest()
+
+
+def refusal_group_ids_assign_to_bash_guard_path_and_message_pairs_by_shortest_unique_digest_prefix(pairs):
+    """Return {(guard, reason): id} for the distinct pairs: each id is "refusal-group-" and the shortest prefix,
+    eight hex digits or more, of the pair's digest that no other pair's digest shares."""
+    digests = {pair: refusal_group_digest_compute_from_bash_guard_path_and_message(*pair) for pair in pairs}
+    length = 8
+    while len({digest[:length] for digest in digests.values()}) < len(digests):
+        length += 1
+    return {pair: "refusal-group-" + digest[:length] for pair, digest in digests.items()}
+
+
+def added_guard_refusal_groups(refusals_by_mode):
+    """Return the refusal groups of [(mode, added_guard_refusals() of that mode)], the largest group first.
+
+    A group is one guard and one refusal message; a command two modes refuse in the same working directory, with
+    the same message, is one refused command of the group."""
+    groups = {}
+    for mode, refusals in refusals_by_mode:
+        for (command, working_directory), guard, reading in refusals:
+            group = groups.setdefault((guard, reading[1]), {"guard": guard, "reason": reading[1], "modes": {},
+                                                            "refused commands": {}})
+            group["modes"][mode] = None
+            group["refused commands"][(command, working_directory)] = None
+    ids = refusal_group_ids_assign_to_bash_guard_path_and_message_pairs_by_shortest_unique_digest_prefix(groups)
+    listed = [{"group": ids[pair], "guard": group["guard"], "reason": group["reason"], "modes": list(group["modes"]),
+               "refused commands": [list(command) for command in group["refused commands"]]}
+              for pair, group in groups.items()]
+    return sorted(listed, key=lambda group: (-len(group["refused commands"]), group["guard"], group["group"]))
+
+
+def refusal_right_line(group):
+    return f"refusal right: {group['guard']} | {group['group']}"
+
+
+def print_added_guard_refusal_groups(groups, groups_file):
+    """Print the first REFUSAL_GROUPS_PRINTED groups, each with its first REFUSED_COMMANDS_PRINTED_PER_GROUP
+    commands, every text cut by shortened(), and the count of what is left out."""
+    refused = sum(len(group["refused commands"]) for group in groups)
+    print(f"refusal groups of the guards the head adds: {len(groups)}, holding {refused} refused recorded "
+          f"{'command' if refused == 1 else 'commands'}; every group in full is in {groups_file}")
+    for group in groups[:REFUSAL_GROUPS_PRINTED]:
+        commands = group["refused commands"]
+        print(f"  {group['group']}: {group['guard']} refuses {len(commands)} recorded "
+              f"{'command' if len(commands) == 1 else 'commands'}, in {', '.join(group['modes'])}\n"
+              f"    reason: {shortened(repr(group['reason']))}")
+        for command, working_directory in commands[:REFUSED_COMMANDS_PRINTED_PER_GROUP]:
+            print(f"    command: {shortened(repr(command))}\n      working directory: {shortened(working_directory)}")
+        if len(commands) > REFUSED_COMMANDS_PRINTED_PER_GROUP:
+            more = len(commands) - REFUSED_COMMANDS_PRINTED_PER_GROUP
+            print(f"    {more} more {'command' if more == 1 else 'commands'} of this group "
+                  f"{'is' if more == 1 else 'are'} left out here")
+        print(f"    answer if every command of this group is rightly refused: {refusal_right_line(group)}")
+    left_out = groups[REFUSAL_GROUPS_PRINTED:]
+    left_out_commands = sum(len(group["refused commands"]) for group in left_out)
+    if left_out:
+        print(f"  {len(left_out)} more refusal {'group is' if len(left_out) == 1 else 'groups are'} left out here, "
+              f"holding {left_out_commands} refused recorded {'command' if left_out_commands == 1 else 'commands'}")
 
 
 def remove_checkouts(repository, checkouts):
@@ -991,6 +1156,7 @@ def replay_with_sigterm_handled(arguments):
             modes.append(("new-process", "new-process-pairs.json", True, False))
         verdict_changed = False
         added_guard_refused = False
+        refusals_by_mode = []
         all_failed = []
         for mode, pairs_name, new_process, search_file_main in modes:
             rows, mode_failed = {}, []
@@ -1002,15 +1168,18 @@ def replay_with_sigterm_handled(arguments):
                 if main_at_head_only and label == "base":
                     continue
                 out = scratch / f"verdicts-{mode.split()[0]}-{label}.json"
+                multiprocessing_directory_record = scratch / f"multiprocessing-directory-{mode.split()[0]}-{label}"
                 started = time.monotonic()
                 run_step_in_child(["--step", "verdicts", str(checkout), str(scratch / pairs_name), str(out),
                                    str(arguments.jobs), "1" if new_process else "0",
                                    "1" if search_file_main else "0", str(search_file_directory),
                                    str(arguments.per_pair_timeout_seconds),
-                                   json.dumps(base_guard_files if label == "base" else None)],
+                                   json.dumps(base_guard_files if label == "base" else None),
+                                   str(multiprocessing_directory_record)],
                                   run_log_directory / f"verdicts-{mode.split()[0]}-{label}.log",
                                   step_deadline_seconds(len(mode_pairs), arguments.jobs,
-                                                        arguments.per_pair_timeout_seconds))
+                                                        arguments.per_pair_timeout_seconds),
+                                  multiprocessing_directory_record)
                 written = json.loads(out.read_text())
                 rows[label] = written["rows"]
                 failed = failed_readings(mode_pairs, rows[label], label)
@@ -1033,22 +1202,22 @@ def replay_with_sigterm_handled(arguments):
             print_rows(f"{mode}: rows whose message differs and verdict does not", message_differences, arguments.show)
             refusals = added_guard_refusals(mode_pairs, rows["head"], added_guards)
             for guard in added_guards:
-                guard_refusals = [item for item in refusals if item[1] == guard]
-                if guard_refusals:
-                    # Every one, not the first --show: the reviewer accepts each refusal in the review.
-                    # The command in full: the reviewer's "refusal right" line names it, and two long
-                    # commands may differ only at the end.
-                    print(f"{mode}: new guard {guard} would refuse {len(guard_refusals)} recorded "
-                          + ("command, listed with its working directory" if len(guard_refusals) == 1
-                             else "commands, each listed with its working directory"))
-                    for number, ((command, working_directory), _, reading) in enumerate(guard_refusals, 1):
-                        print(f"  {number}. command: {command!r}\n     working directory: {working_directory}\n"
-                              f"     head: {shortened(reading)}")
+                refused_by_guard = sum(item[1] == guard for item in refusals)
+                if refused_by_guard:
+                    print(f"{mode}: new guard {guard} would refuse {refused_by_guard} recorded "
+                          + ("command" if refused_by_guard == 1 else "commands"))
+            refusals_by_mode.append((mode, refusals))
             (run_log_directory / f"differences-{mode.split()[0]}.json").write_text(
                 json.dumps({"verdict": differences, "message": message_differences, "failed": mode_failed,
                             "added_guard_refusals": refusals}))
             verdict_changed = verdict_changed or bool(differences)
             added_guard_refused = added_guard_refused or bool(refusals)
+        if added_guard_refused:
+            groups = added_guard_refusal_groups(refusals_by_mode)
+            (run_log_directory / REFUSAL_GROUPS_FILE_NAME).write_text(json.dumps(groups, indent=1))
+            (run_log_directory / REFUSAL_RIGHT_LINES_FILE_NAME).write_text(
+                "".join(refusal_right_line(group) + "\n" for group in groups))
+            print_added_guard_refusal_groups(groups, run_log_directory / REFUSAL_GROUPS_FILE_NAME)
         if all_failed:
             print_rows("REPLAY FAILED: readings that raised or timed out, which have no verdict to compare",
                        [(pair, key, f"{at}: {reading}") for pair, key, at, reading in all_failed], arguments.show)
@@ -1057,8 +1226,11 @@ def replay_with_sigterm_handled(arguments):
             if verdict_changed:
                 print(VERDICT_CHANGED_MESSAGE)
             if added_guard_refused:
-                print(NEW_GUARD_REFUSES_MESSAGE + (NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING if verdict_changed
-                                                   else NEW_GUARD_REFUSES_ONLY_ENDING))
+                print(NEW_GUARD_REFUSES_MESSAGE.format(
+                    groups_file=run_log_directory / REFUSAL_GROUPS_FILE_NAME,
+                    refusal_right_lines_file=run_log_directory / REFUSAL_RIGHT_LINES_FILE_NAME)
+                      + (NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING if verdict_changed
+                         else NEW_GUARD_REFUSES_ONLY_ENDING))
             status = 1
         else:
             print("NO VERDICT CHANGED")
@@ -1091,7 +1263,8 @@ def replay_with_sigterm_handled(arguments):
 
 
 def verdicts_step(checkout, pairs_path, out_path, jobs, new_process, search_file_main, search_file_directory,
-                  timeout, bash_guard_paths_at_git_ref_by_current_path):
+                  timeout, bash_guard_paths_at_git_ref_by_current_path, multiprocessing_directory_record_path):
+    Path(multiprocessing_directory_record_path).write_text(multiprocessing.util.get_temp_dir())
     pairs = json.loads(Path(pairs_path).read_text())
     rows, switched, one_command_per_process, read_again, passed_again = ref_verdicts(
         checkout, pairs, int(jobs), new_process == "1", search_file_directory, search_file_main == "1", int(timeout),

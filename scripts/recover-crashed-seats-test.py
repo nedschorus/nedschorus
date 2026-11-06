@@ -67,12 +67,14 @@ recovery.claude_json_presets.claude_json_path = lambda: CLAUDE_JSON_SCRATCH_PATH
 # ~/.config/nedschorus/<account>.token. No case may read a real token: HOME is a
 # scratch directory holding a made-up token for each account, for this process and
 # every supervisor a case starts. The "GITHUB TOKEN:" cases empty it on purpose.
+# The accounts come from the supervisor's own table, so an account added there gets a token here.
 SCRATCH_HOME_DIRECTORY = Path(tempfile.mkdtemp(prefix="recover-crashed-seats-home-"))
 atexit.register(shutil.rmtree, SCRATCH_HOME_DIRECTORY, True)
 os.environ["HOME"] = str(SCRATCH_HOME_DIRECTORY)
 GITHUB_TOKEN_BY_ACCOUNT = {
     account: f"github_pat_{account.upper().replace('-', '_')}_TEST_ONLY_not-a-real-credential"
-    for account in ("ubuntu-claude", "mac-claude", "ned-review-merge")}
+    for account in {*recovery.supervisor.AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT.values(),
+                    "ubuntu-claude", "mac-claude"}}
 (SCRATCH_HOME_DIRECTORY / ".config" / "nedschorus").mkdir(parents=True)
 for _account, _token in GITHUB_TOKEN_BY_ACCOUNT.items():
     (SCRATCH_HOME_DIRECTORY / ".config" / "nedschorus" / f"{_account}.token").write_text(
@@ -106,6 +108,7 @@ CALLING_AGENT_SESSION_TEST_VARIABLES = {
     "TMUX": "/tmp/tmux-1000/calling-seat,1,0",
     "TMUX_PANE": "%0",
     "IS_DEMO": "1",
+    "GH_TOKEN": "decoy-inherited-token",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "calling-seat",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "/calling/seat/directory",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": "calling-supervisor-session",
@@ -269,6 +272,11 @@ real_recovery_has_an_operator_terminal = recovery.recovery_has_an_operator_termi
 real_retire_seat_tmux_session = recovery.resupervise.retire_seat_tmux_session
 real_resupervise_run_tmux = recovery.resupervise.run_tmux
 real_tmux_session_alive_anywhere = recovery.tmux_session_alive_anywhere
+# No case reaches the real user systemd manager; run_user_systemd_scope_cases tests the probe.
+real_agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason = (
+    recovery.agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason)
+patch("agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason",
+      lambda name, environment: ([], None))
 
 
 def no_leftover_idle_shell(detail="no tmux server holds a session named 'x'"):
@@ -332,7 +340,7 @@ def tmux_server_answers(panes_by_socket, tmux_cannot_be_run=False,
         def __init__(self, returncode, stdout="", stderr=""):
             self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
 
-    def fake_run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
+    def fake_run_tmux(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
         if tmux_cannot_be_run:
             return None
         if arguments_after_tmux[0] == "has-session":
@@ -625,7 +633,7 @@ def run_reach_clause_cases(root: Path):
             workspace = Workspace(root / f"reach-defer-{slug}")
             all_dead()
             (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-                "# Handoff\nrestart-counter: 9\nnext-step: go\n", encoding="utf-8")
+                "# Handoff\nsession-handoff-sequence-number: 9\nnext-step: go\n", encoding="utf-8")
             capture_launches(workspace)
             report = workspace.recover()
             check(f"REACH ({machine}): a relaunch without resuming: its line ends with the reach clause",
@@ -655,7 +663,7 @@ def run_seat_listing_cases(root: Path):
     recovery.supervisor.supervisor_state_path(handoff_directory, "had-a-supervisor").write_text(
         "{}", encoding="utf-8")
     recovery.supervisor.handoff_file_path(handoff_directory, "had-a-handoff").write_text(
-        "restart-counter: 1\n", encoding="utf-8")
+        "session-handoff-sequence-number: 1\n", encoding="utf-8")
     recovery.harness_project_directory(agents_root / "had-transcripts", projects_root).mkdir(
         parents=True)
     (agents_root / "topic-worktree" / ".git").write_text(
@@ -699,7 +707,7 @@ def run_tmux_has_session_answer_cases(root: Path):
           and detail.endswith("so seat liveness cannot be checked — refusing rather than guessing"),
           repr((alive, detail)))
     def named_socket_errs_and_default_socket_answers(default_answer):
-        def answer(*arguments, socket_name=None, environment=None):
+        def answer(*arguments, socket_name=None, environment=None, command_prefix=()):
             if socket_name == "seat-a":
                 return Answer(1, "protocol version mismatch (client 9, server 8)")
             return default_answer
@@ -763,7 +771,7 @@ def run_mac_window_cases(root: Path):
     opener_commands = []
 
     def tmux_reports_clients(client_lines, returncode=0, error_text="", cannot_answer=False):
-        def fake_run_tmux(*arguments, socket_name=None, environment=None):
+        def fake_run_tmux(*arguments, socket_name=None, environment=None, command_prefix=()):
             if arguments[:1] == ("list-clients",):
                 if cannot_answer:
                     return None
@@ -981,7 +989,7 @@ def run_claude_json_presets_cases(root: Path):
     workspace = Workspace(root / "claude-json-presets")
     tmux_calls = []
 
-    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None):
+    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
         # What the file held when tmux was asked to start the supervisor.
         tmux_calls.append(CLAUDE_JSON_SCRATCH_PATH.read_text(encoding="utf-8")
                           if CLAUDE_JSON_SCRATCH_PATH.exists() else None)
@@ -1062,6 +1070,159 @@ def run_claude_json_presets_cases(root: Path):
         CLAUDE_JSON_SCRATCH_PATH.unlink(missing_ok=True)
 
 
+def run_user_systemd_scope_cases(root: Path):
+    """Off macOS, launch_seat starts the seat's tmux server in a scope of the user's systemd
+    manager, so the test suites' low-CPU-weight slice yields to it. A stub systemd-run on PATH
+    stands in for the manager, answering or failing as each case needs; when the manager cannot
+    be reached the seat still starts, outside it, and stderr says so."""
+    real_launcher_path = recovery.launcher_path
+    real_run_tmux = recovery.run_tmux
+    real_which = recovery.shutil.which
+    directory = root / "user-systemd-scope"
+    stub_directory = directory / "bin"
+    stub_directory.mkdir(parents=True)
+    probe_record = directory / "probe-record.json"
+    stub = stub_directory / "systemd-run"
+    stub.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        f"open({str(probe_record)!r}, 'w').write(json.dumps("
+        "{'argv': sys.argv[1:], 'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR')}))\n"
+        "failure = os.environ.get('NEDSCHORUS_TEST_SYSTEMD_RUN_FAILURE')\n"
+        "if failure:\n"
+        "    sys.stderr.write(failure + '\\n')\n"
+        "    sys.exit(1)\n",
+        encoding="utf-8")
+    stub.chmod(0o755)
+    workspace = Workspace(directory / "seat", name="seat-a")
+    tmux_calls = []
+
+    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
+        tmux_calls.append((arguments_after_tmux, socket_name, list(command_prefix)))
+
+        class Done:
+            returncode = 0
+        return Done()
+
+    def launch(failure=None, runtime_directory=None, systemd_run_installed=True):
+        tmux_calls.clear()
+        probe_record.unlink(missing_ok=True)
+        for name, value in (("NEDSCHORUS_TEST_SYSTEMD_RUN_FAILURE", failure),
+                            ("XDG_RUNTIME_DIR", runtime_directory)):
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        recovery.shutil.which = (real_which if systemd_run_installed else
+                                 lambda program: None if program == "systemd-run"
+                                 else real_which(program))
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            exit_code = real_launch_seat(workspace.name, workspace.seat_directory,
+                                         workspace.handoffs, "")
+        probe = (json.loads(probe_record.read_text(encoding="utf-8"))
+                 if probe_record.is_file() else None)
+        return exit_code, stderr.getvalue(), probe
+
+    saved = {name: os.environ.get(name) for name in
+             ("PATH", "XDG_RUNTIME_DIR", "NEDSCHORUS_TEST_SYSTEMD_RUN_FAILURE")}
+    os.environ["PATH"] = f"{stub_directory}{os.pathsep}{os.environ.get('PATH', '')}"
+    patch("agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason",
+          real_agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason)
+    recovery.launcher_path = lambda: None
+    recovery.run_tmux = capture_tmux
+    marker = recovery.AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER
+    check("USER SCOPE: --help quotes the text stderr prints, not only the constant's name, "
+          "so an agent can search recovery's output for it",
+          f"`{marker}`" in " ".join((recovery.__doc__ or "").split()), recovery.__doc__)
+    try:
+        exit_code, stderr, probe = launch()
+        prefix = tmux_calls[0][2] if tmux_calls else []
+        check("USER SCOPE: with the manager answering, the seat's tmux server is started by "
+              "systemd-run in a user scope, which leaves the pane command's $HOME unexpanded",
+              exit_code == 0 and prefix[:3] == ["systemd-run", "--user", "--scope"]
+              and "--expand-environment=no" in prefix and prefix[-1] == "--"
+              and tmux_calls[0][0][:2] == ("new-session", "-d") and marker not in stderr,
+              (exit_code, tmux_calls, stderr))
+        check("USER SCOPE: the probe runs only `true`, so a failed tmux is never read as an "
+              "unreachable manager",
+              probe is not None and probe["argv"][-1] == "true", probe)
+        check("USER SCOPE: cron gives no XDG_RUNTIME_DIR, so the launch sets /run/user/<uid>",
+              probe is not None and probe["XDG_RUNTIME_DIR"] == f"/run/user/{os.getuid()}",
+              probe)
+
+        exit_code, stderr, probe = launch(runtime_directory="/run/user/elsewhere")
+        check("USER SCOPE: an XDG_RUNTIME_DIR the caller has is kept",
+              probe is not None and probe["XDG_RUNTIME_DIR"] == "/run/user/elsewhere", probe)
+
+        bus_failure = ("Failed to connect to user scope bus via local transport: "
+                       "No such file or directory")
+        exit_code, stderr, probe = launch(failure=bus_failure)
+        check("USER SCOPE: with the manager unreachable, the seat is still started, by "
+              "tmux alone",
+              exit_code == 0 and len(tmux_calls) == 1 and tmux_calls[0][2] == []
+              and tmux_calls[0][0][:2] == ("new-session", "-d"),
+              (exit_code, tmux_calls))
+        check("USER SCOPE: and stderr carries the marker the crash watcher reads, the seat's "
+              "name and systemd-run's own words",
+              f"recover-crashed-seats: seat-a: {marker}" in stderr and bus_failure in stderr,
+              stderr)
+
+        exit_code, stderr, probe = launch(systemd_run_installed=False)
+        check("USER SCOPE: with no systemd-run on the machine, the seat is still started, and "
+              "stderr says why it is outside the manager",
+              exit_code == 0 and len(tmux_calls) == 1 and tmux_calls[0][2] == []
+              and marker in stderr and "systemd-run is not installed" in stderr,
+              (exit_code, tmux_calls, stderr))
+
+        # A systemd-run that cannot be executed: PATH holds only the stub, made not executable.
+        stub.chmod(0o644)
+        os.environ["PATH"] = str(stub_directory)
+        recovery.shutil.which = lambda program: str(stub_directory / program)
+        tmux_calls.clear()
+        captured = io.StringIO()
+        with redirect_stderr(captured):
+            exit_code = real_launch_seat(workspace.name, workspace.seat_directory,
+                                         workspace.handoffs, "")
+        stderr = captured.getvalue()
+        check("USER SCOPE: a systemd-run that cannot run still lets the seat start, and stderr "
+              "says it could not run",
+              exit_code == 0 and len(tmux_calls) == 1 and tmux_calls[0][2] == []
+              and marker in stderr and "could not run" in stderr,
+              (exit_code, tmux_calls, stderr))
+        stub.chmod(0o755)
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        recovery.shutil.which = real_which
+        recovery.launcher_path = real_launcher_path
+        recovery.run_tmux = real_run_tmux
+        patch("agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason",
+              lambda name, environment: ([], None))
+
+    # run_tmux puts the prefix before tmux itself.
+    commands_run = []
+
+    def recording_subprocess_run(command, **keywords):
+        commands_run.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+    real_subprocess_run = recovery.subprocess.run
+    recovery.subprocess.run = recording_subprocess_run
+    recovery.shutil.which = lambda program: f"/usr/bin/{program}"
+    try:
+        real_run_tmux("new-session", "-d", socket_name="seat-a",
+                      command_prefix=["systemd-run", "--user", "--scope", "--"])
+    finally:
+        recovery.subprocess.run = real_subprocess_run
+        recovery.shutil.which = real_which
+    check("USER SCOPE: run_tmux runs the prefix with tmux and its words after it",
+          commands_run == [["systemd-run", "--user", "--scope", "--", "tmux", "-L", "seat-a",
+                            "new-session", "-d"]], commands_run)
+
+
 def run_github_token_cases(root: Path):
     """A seat recovery brings up, after a crash or at login, acts on GitHub as its own
     account: the supervisor its pane command starts sets GH_TOKEN for the agent-sessions,
@@ -1081,7 +1242,7 @@ def run_github_token_cases(root: Path):
     stub_agent.chmod(0o755)
     tmux_calls = []
 
-    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None):
+    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
         tmux_calls.append((arguments_after_tmux, environment))
 
         class Done:
@@ -1340,11 +1501,63 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a seat with no home directory refuses",
           verdict == "refuse" and "no seat directory" in detail, (verdict, detail))
 
+    if os.geteuid() == 0:
+        skip("a transcript folder that cannot be listed refuses", "root can list any folder")
+    else:
+        for recorded_exit in (False, True):
+            workspace = Workspace(root / f"w-transcript-folder-unreadable-{recorded_exit}")
+            all_dead()
+            capture_launches(workspace)
+            write_transcript(workspace.project_directory(), "resume-me", "real work", records=4)
+            if recorded_exit:
+                recovery.supervisor.record_agent_exit_in_supervisor_state(
+                    workspace.handoffs / f"{workspace.name}-supervisor-state.json",
+                    {"consumed_counter": None, "launched_session_id": "resume-me",
+                     "generation": 3}, 0)
+            workspace.project_directory().chmod(0o000)
+            try:
+                verdict, detail = workspace.assess()
+                report = workspace.recover()
+            finally:
+                workspace.project_directory().chmod(0o755)
+            check(f"a transcript folder that cannot be listed refuses, naming it and the error, "
+                  f"rather than starting fresh (recorded exit: {recorded_exit})",
+                  verdict == "refuse" and str(workspace.project_directory()) in detail
+                  and "Permission denied" in detail, (verdict, detail))
+            check(f"a transcript folder that cannot be listed is reported REFUSED and launches "
+                  f"nothing (recorded exit: {recorded_exit})",
+                  report.startswith(f"{workspace.name}: REFUSED — ") and not workspace.launches,
+                  (report, workspace.launches))
+
+    if os.geteuid() == 0:
+        skip("a chosen transcript that cannot be read refuses", "root can read any file")
+    else:
+        # Over the size limit, the chooser picks a transcript without opening it.
+        workspace = Workspace(root / "w-chosen-transcript-unreadable")
+        all_dead()
+        capture_launches(workspace)
+        large = write_transcript(workspace.project_directory(), "resume-me", "real work",
+                                 records=4)
+        with large.open("a", encoding="utf-8") as stream:
+            stream.write("x" * (recovery.EMPTY_SUCCESSOR_MAX_BYTES + 1) + "\n")
+        large.chmod(0o000)
+        try:
+            verdict, detail = workspace.assess()
+            report = workspace.recover()
+        finally:
+            large.chmod(0o644)
+        check("a chosen transcript that cannot be read is reported REFUSED, naming it and the "
+              "error, and launches nothing",
+              verdict == "resume" and report.startswith(f"{workspace.name}: REFUSED — ")
+              and str(large) in report and "Permission denied" in report
+              and not workspace.launches,
+              (verdict, report, workspace.launches))
+
     # --- defer to boot-ignition when a handoff genuinely waits --------------
     workspace = Workspace(root / "w3")
     all_dead()
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-        "# Handoff\nrestart-counter: 5\nnext-step: continue\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: 5\nnext-step: continue\n", encoding="utf-8")
     verdict, detail = workspace.assess()
     check("an unconsumed handoff defers to the supervisor's boot-ignition",
           verdict == "defer-to-boot-ignition" and "counter 5" in detail,
@@ -1362,8 +1575,8 @@ with tempfile.TemporaryDirectory() as temporary:
     # once, and this tool then waited out its deadline and offered the forced
     # restart the seat had declined.
     consulted_handoff_text = (
-        "# Handoff\nrestart-counter: 11\nnext-step: wait for the user\n"
-        "dont-restart: the user asked to be consulted before a relaunch\n")
+        "# Handoff\nsession-handoff-sequence-number: 11\nnext-step: wait for the user\n"
+        "ask-user-before-restart: the user asked to be consulted before a relaunch\n")
     workspace = Workspace(root / "w3-consulted", name="seat-consulted")
     all_dead()
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
@@ -1469,7 +1682,7 @@ with tempfile.TemporaryDirectory() as temporary:
     workspace = Workspace(root / "w10")
     all_dead()
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-        "# Handoff\nrestart-counter: 9\nnext-step: go\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: 9\nnext-step: go\n", encoding="utf-8")
     capture_launches(workspace)
     report = workspace.recover()
     check("the defer path relaunches without resuming (no extra supervisor arguments)",
@@ -1583,8 +1796,8 @@ with tempfile.TemporaryDirectory() as temporary:
             else:
                 os.environ[name] = value
     started = started_environments[0] if started_environments else {}
-    # IS_DEMO is the supervisor's own: launch_agent_session sets it for every agent-session.
-    seat_owned = ("TMUX", "TMUX_PANE", "IS_DEMO", "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
+    # IS_DEMO and GH_TOKEN are the supervisor's own: it sets both for every agent-session.
+    seat_owned = ("TMUX", "TMUX_PANE", "IS_DEMO", "GH_TOKEN", "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
                   "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
                   "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID")
     leaked = sorted(name for name in CALLING_AGENT_SESSION_TEST_VARIABLES
@@ -1708,10 +1921,10 @@ with tempfile.TemporaryDirectory() as temporary:
     workspace = Workspace(root / "r7")
     all_dead()
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-        "# Handoff\nrestart-counter: not-a-number\nnext-step: x\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: not-a-number\nnext-step: x\n", encoding="utf-8")
     verdict, detail = workspace.assess()
-    check("Q2: an unreadable restart-counter refuses, naming fix and delete paths",
-          verdict == "refuse" and "restart-counter" in detail
+    check("Q2: an unreadable session-handoff-sequence-number refuses, naming fix and delete paths",
+          verdict == "refuse" and "session-handoff-sequence-number" in detail
           and "delete it" in detail, (verdict, detail))
 
     # Q3: a supervisor lock held by a live supervisor stops the recovery: the
@@ -1842,7 +2055,7 @@ with tempfile.TemporaryDirectory() as temporary:
         state_seen_at_launch["resume_flag"] = resume
         raise StopLoop()
     (workspace.handoffs / "seat-a-handoff.md").write_text(
-        "# Handoff\nrestart-counter: 7\nnext-step: stale\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: 7\nnext-step: stale\n", encoding="utf-8")
     sup = supervisor_module
     original_launch = sup.launch_agent_session
     original_sync = sup.launch_time_git_sync
@@ -2038,7 +2251,7 @@ with tempfile.TemporaryDirectory() as temporary:
     workspace = Workspace(root / "r23")
     all_dead()
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-        "# Handoff\nrestart-counter: 16\nnext-step: continue\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: 16\nnext-step: continue\n", encoding="utf-8")
     (workspace.handoffs / f"{workspace.name}-supervisor-state.json").write_text(
         json.dumps({"consumed_counter": 16,
                     "launched_session_id": "successor-hit-session-limit",
@@ -2122,7 +2335,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # through the supervisor's own plan so this case cannot drift from the
     # real shape -- but it does NOT pin the wording, and the comment here
     # claimed it did until 2026-09-21. Measured that day: appending a sentence
-    # to BRANCH_STATE_INSTRUCTION at the plan's own call site left this suite
+    # to the branch-state instruction at the plan's own call site left this suite
     # at 345 passed, 0 failed. Two reasons. The case asserts only that the
     # recovery marker reaches the successor, never what the prompt says; and
     # it composes with an empty launch-time-git-sync report, so the branch-state
@@ -2313,7 +2526,7 @@ with tempfile.TemporaryDirectory() as temporary:
         workspace = Workspace(root / "window-defer")
         all_dead()
         (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-            "# Handoff\nrestart-counter: 5\nnext-step: continue\n", encoding="utf-8")
+            "# Handoff\nsession-handoff-sequence-number: 5\nnext-step: continue\n", encoding="utf-8")
         report = recovery.recover_seat(workspace.name, workspace.agents_root,
                                        workspace.handoffs, workspace.projects,
                                        False, False, open_iterm_window=True)
@@ -2565,7 +2778,7 @@ with tempfile.TemporaryDirectory() as temporary:
     workspace = Workspace(root / "r17")
     all_dead()
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-        "# Handoff\nrestart-counter: 3\nnext-step: go\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: 3\nnext-step: go\n", encoding="utf-8")
     captured_run = {}
     def capture_subprocess_run(command, env=None, check=False):
         captured_run["command"] = command
@@ -2602,7 +2815,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # supervisor command.
     workspace = Workspace(root / "r18")
     tmux_commands = []
-    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None):
+    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
         tmux_commands.append((arguments_after_tmux, socket_name))
         class Done:
             returncode = 0
@@ -2654,7 +2867,7 @@ with tempfile.TemporaryDirectory() as temporary:
     os.environ.update(CALLING_AGENT_SESSION_TEST_VARIABLES)
     os.environ["NEDSCHORUS_TEST_SEAT_KEEPS_THIS"] = "kept"
     environments_handed_on = {}
-    def capture_tmux_environment(*arguments_after_tmux, socket_name=None, environment=None):
+    def capture_tmux_environment(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
         # No environment means tmux inherits this process's own.
         environments_handed_on["box"] = dict(os.environ) if environment is None else environment
         class Done:
@@ -3089,7 +3302,7 @@ with tempfile.TemporaryDirectory() as temporary:
         all_dead()
         box_tmux_commands = []
 
-        def capture_box_tmux(*arguments_after_tmux, socket_name=None, environment=None):
+        def capture_box_tmux(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
             box_tmux_commands.append(arguments_after_tmux)
             return subprocess.CompletedProcess(arguments_after_tmux, 0)
         patch("launcher_path", lambda: None)
@@ -3212,6 +3425,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("shell_words keeps a word with an unquoted # inside it, and the words after it",
           shell_words("echo a#b c") == ["echo", "a#b", "c"], shell_words("echo a#b c"))
     run_claude_json_presets_cases(root)
+    run_user_systemd_scope_cases(root)
     run_github_token_cases(root)
     run_came_up_cases(root)
     run_reach_clause_cases(root)
@@ -3245,7 +3459,7 @@ with tempfile.TemporaryDirectory() as temporary:
         capture_launches(workspace)
         seat_comes_up(False, "no supervisor appeared within 120s")
         (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-            "# Handoff\nrestart-counter: 5\nnext-step: continue\n", encoding="utf-8")
+            "# Handoff\nsession-handoff-sequence-number: 5\nnext-step: continue\n", encoding="utf-8")
         report = workspace.recover(fresh_session_from_conversation_tail=used_the_flag)
         check("a relaunch without resuming that did not come up offers the degraded restart "
               f"only to an operator who has not just used it (--fresh-session-from-conversation-tail: {used_the_flag})",
@@ -3373,12 +3587,12 @@ with tempfile.TemporaryDirectory() as temporary:
     # Refused for a reason that still means something is wrong. This case used
     # to refuse a live tmux session, which is ALREADY RUNNING since 2026-09-16
     # when a supervisor of the seat is confirmed and REFUSED when none is (cases
-    # below); a handoff whose restart-counter nobody can read is refused still.
+    # below); a handoff whose session-handoff-sequence-number nobody can read is refused still.
     workspace = Workspace(root / "exit-refused", name="exit-refused-seat")
     all_dead()
     capture_launches(workspace)
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-        "# Handoff\nrestart-counter: not-a-number\nnext-step: x\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: not-a-number\nnext-step: x\n", encoding="utf-8")
     a_real_failure_path_does_not_exit_zero("a seat that was refused", workspace)
 
     # Left down on purpose, but down: counted, or the login restart would list
@@ -3413,7 +3627,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     def refused_for_an_unreadable_restart_counter(workspace):
         (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-            "# Handoff\nrestart-counter: not-a-number\nnext-step: x\n", encoding="utf-8")
+            "# Handoff\nsession-handoff-sequence-number: not-a-number\nnext-step: x\n", encoding="utf-8")
 
     for refusal in (refused_for_no_seat_directory, refused_for_tmux_that_cannot_be_asked,
                     refused_for_an_occupied_seat_directory, refused_for_an_unprovable_vacancy,
@@ -3908,7 +4122,8 @@ with tempfile.TemporaryDirectory() as temporary:
         resume_command, workspace)
     check("EXIT RECORD: the printed resume starts the supervisor on the deliberate-stop prompt",
           resumed is True
-          and first_turn == FIRST_PROMPT_FOR_A_BY_HAND_RESUME_AFTER_A_RECORDED_EXIT,
+          and first_turn == recovery.supervisor.first_prompt_from_launch_command_marked_not_typed_by_the_user(
+              FIRST_PROMPT_FOR_A_BY_HAND_RESUME_AFTER_A_RECORDED_EXIT),
           (first_turn, resumed))
     first_turn_without_the_file, _ = supervisor_first_turn_for_a_by_hand_command(
         resume_command.replace(f" --first-prompt-file {shlex.quote(str(by_hand_prompt_path))}",
@@ -3963,7 +4178,7 @@ with tempfile.TemporaryDirectory() as temporary:
     all_dead()
     record_an_agent_exit(workspace, 0)
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
-        "# Handoff\nrestart-counter: 5\nnext-step: continue\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: 5\nnext-step: continue\n", encoding="utf-8")
     verdict, detail = workspace.assess()
     check("EXIT RECORD: a waiting handoff still defers to boot-ignition over the record",
           verdict == "defer-to-boot-ignition", (verdict, detail))
@@ -4760,7 +4975,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     def a_seat_behind_a_leftover_shell_with_an_unreadable_handoff(directory_name):
         """Its reassessment refuses whatever happens to the window: a handoff
-        whose restart-counter no supervisor could ever read."""
+        whose session-handoff-sequence-number no supervisor could ever read."""
         workspace = a_seat_behind_a_leftover_shell(directory_name)
         handoff_path = workspace.handoffs / "seat-a-handoff.md"
         handoff_path.write_text("# Handoff\nnext-step: go\n", encoding="utf-8")
@@ -4790,7 +5005,7 @@ with tempfile.TemporaryDirectory() as temporary:
           (prompts, retired, workspace.launches, report_refused, seen))
     check("LEFTOVER SHELL: and is REFUSED with the predicted reason, the window left open",
           report_refused.startswith(f"seat-a: REFUSED — a handoff exists at {handoff_path} "
-                                    "but its restart-counter is missing or unreadable")
+                                    "but its session-handoff-sequence-number is missing or unreadable")
           and report_refused.endswith(reported_straight_away)
           and "never touches a live tmux session" not in report_refused
           and any(marker in report_refused
@@ -4807,7 +5022,7 @@ with tempfile.TemporaryDirectory() as temporary:
           and report_refused_dry.startswith(
               "seat-a: with an operator at a terminal would ask nothing, leave the window "
               "open (it is one pane at a shell) and report straight away: REFUSED — a "
-              f"handoff exists at {handoff_path} but its restart-counter is missing")
+              f"handoff exists at {handoff_path} but its session-handoff-sequence-number is missing")
           and report_refused_dry.endswith("With no terminal it refuses")
           and "would ask an operator at a terminal —" not in report_refused_dry,
           (prompts, retired, report_refused_dry))
@@ -5081,7 +5296,7 @@ with tempfile.TemporaryDirectory() as temporary:
             def __init__(self, returncode, stdout="", stderr=""):
                 self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
 
-        def fake_run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
+        def fake_run_tmux(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
             asked = "question" in events
             if asked and after_the_question == "unanswerable":
                 return None
@@ -5188,7 +5403,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # Every verdict the question is asked for, through main, byte for byte.
     def write_a_waiting_handoff(workspace):
         (workspace.handoffs / "seat-a-handoff.md").write_text(
-            "# Handoff\nrestart-counter: 5\nnext-step: continue\n", encoding="utf-8")
+            "# Handoff\nsession-handoff-sequence-number: 5\nnext-step: continue\n", encoding="utf-8")
 
     def write_a_handoff_asking_to_be_consulted(workspace):
         (workspace.handoffs / "seat-a-handoff.md").write_text(consulted_handoff_text,

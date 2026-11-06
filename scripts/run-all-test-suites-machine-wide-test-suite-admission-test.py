@@ -115,10 +115,11 @@ with tempfile.TemporaryDirectory() as scratch_name:
 
     # --- The thresholds -------------------------------------------------------
     for cpu, available, admitted_expected, label in (
-            (54.9, 10 * GB + 1, True, "CPU just under 55% and memory just above 10 GB"),
-            (55.0, 40 * GB, False, "CPU at 55%"),
-            (80.0, 40 * GB, False, "CPU above 55%"),
+            (89.9, 10 * GB + 1, True, "CPU just under 90% and memory just above 10 GB"),
+            (90.0, 40 * GB, False, "CPU at 90%"),
+            (95.0, 40 * GB, False, "CPU above 90%"),
             (10.0, 10 * GB, False, "available memory at 10 GB"),
+            (70.0, 10 * GB, False, "CPU at 70% and available memory at 10 GB"),
             (10.0, 2 * GB, False, "available memory below 10 GB")):
         directory = scratch / f"thresholds-{cpu}-{available}"
         readings = Readings(cpu, available)
@@ -136,7 +137,54 @@ with tempfile.TemporaryDirectory() as scratch_name:
               (waited == 0) == admitted_expected, (waited, said))
         if not admitted_expected:
             check(f"the run says what its suite waits for at {label}",
-                  said and ("CPU" in said[0] if cpu >= 55 else "memory" in said[0]), said)
+                  said and ("CPU" in said[0] if cpu >= runner.TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW
+                              else "memory" in said[0]), said)
+
+    # --- The thresholds, read through the machine readings from a stubbed psutil -----
+    class PsutilReadingCpuAndMemory:
+        def __init__(self, cpu, available):
+            self.cpu, self.available = cpu, available
+
+        def cpu_percent(self, interval=None):
+            return self.cpu
+
+        def virtual_memory(self):
+            class Memory:
+                pass
+            memory = Memory()
+            memory.available = self.available
+            return memory
+
+    def read_until_the_average_is_only_new_readings(sampler):
+        for _ in range(sampler.cpu.maxlen):
+            sampler.read_once()
+
+    for cpu, available, admitted_expected, label, reason_words in (
+            (89.0, 40 * GB, True, "89% CPU", ()),
+            (91.0, 40 * GB, False, "91% CPU", ("91%", "under 90%")),
+            (89.0, 10 * GB, False, "89% CPU and 10 GB available memory",
+             ("memory", "10.0 GB", "above 10 GB"))):
+        psutil_stub = PsutilReadingCpuAndMemory(cpu, available)
+        sampler = runner.TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler(psutil_stub)
+        read_until_the_average_is_only_new_readings(sampler)
+        said = []
+        admission, clock = admission_in(scratch / f"psutil-thresholds-{cpu}-{available}",
+                                        sampler, said)
+
+        def give_room(psutil_stub=psutil_stub, sampler=sampler):
+            psutil_stub.cpu, psutil_stub.available = 10.0, 40 * GB
+            read_until_the_average_is_only_new_readings(sampler)
+
+        clock.on_sleep = give_room
+        with admission.admitted("a-test.py") as waited:
+            pass
+        check(f"with psutil reading {label}, admission "
+              f"{'starts the suite at once' if admitted_expected else 'holds the suite back'}",
+              (waited == 0) == admitted_expected, (waited, said))
+        if reason_words:
+            check(f"with psutil reading {label}, the run says what its suite waits for, "
+                  f"naming {', '.join(reason_words)}",
+                  said and all(word in said[0] for word in reason_words), said)
 
     # --- The ceiling of suites at once --------------------------------------
     directory = scratch / "ceiling"
@@ -554,18 +602,61 @@ with tempfile.TemporaryDirectory() as scratch_name:
     class Failed:
         returncode, stdout, stderr = 1, "", "Failed to connect to bus: No medium found"
 
-    why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
-        which=lambda name: "/usr/bin/systemd-run", runner=lambda *a, **k: Failed())
-    check("a systemd-run that cannot start a scope gives its own error as the reason",
-          why is not None and "No medium found" in why, why)
+    class Succeeded:
+        returncode, stdout, stderr = 0, "", ""
 
-    def os_error(*arguments, **options):
+    def failing_only(program, failure):
+        def run(command, *arguments, **options):
+            if command[0] == program:
+                return failure(command)
+            return Succeeded()
+        return run
+
+    def os_error(command):
         raise OSError("Permission denied")
 
     why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
-        which=lambda name: "/usr/bin/systemd-run", runner=os_error)
+        which=lambda name: f"/usr/bin/{name}", runner=failing_only("systemd-run", lambda c: Failed()))
+    check("a systemd-run that cannot start a scope gives its own error as the reason",
+          why is not None and "No medium found" in why and "systemd-run" in why, why)
+
+    why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
+        which=lambda name: f"/usr/bin/{name}", runner=failing_only("systemd-run", os_error))
     check("a systemd-run that cannot be started at all gives the error as the reason",
-          why is not None and "Permission denied" in why, why)
+          why is not None and "Permission denied" in why and "systemd-run" in why, why)
+
+    why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
+        which=lambda name: f"/usr/bin/{name}", runner=failing_only("systemctl", lambda c: Failed()))
+    check("a systemctl that cannot set the suites' slice's CPU weight gives its own error, "
+          "naming the command, as the reason",
+          why is not None and "No medium found" in why and "set-property" in why, why)
+
+    why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
+        which=lambda name: f"/usr/bin/{name}", runner=failing_only("systemctl", os_error))
+    check("a systemctl that cannot be started at all gives the error as the reason",
+          why is not None and "Permission denied" in why and "set-property" in why, why)
+
+    why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
+        which=lambda name: None if name == "systemctl" else f"/usr/bin/{name}")
+    check("without systemctl, which sets the suites' slice's CPU weight, the reason names it",
+          why is not None and "systemctl" in why and "not on PATH" in why, why)
+
+    ran = []
+    why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
+        which=lambda name: f"/usr/bin/{name}",
+        runner=lambda command, *a, **k: ran.append(list(command)) or Succeeded())
+    check("before its trial scope, the check sets the CPU weight of the slice every suite's "
+          "scope goes in, for this boot of the user's systemd only",
+          why is None and len(ran) == 2
+          and ran[0] == ["systemctl", "--user", "set-property", "--runtime",
+                         runner.TEST_SUITE_CGROUP_SLICE,
+                         f"CPUWeight={runner.TEST_SUITE_CGROUP_SLICE_CPU_WEIGHT}"]
+          and ran[1][0] == "systemd-run", (why, ran))
+    check("the suites' slice sits directly under the user's systemd, beside the agent-seats' "
+          "tmux-spawn scopes, at a CPU weight under their 100",
+          runner.TEST_SUITE_CGROUP_SLICE.endswith(".slice")
+          and "-" not in runner.TEST_SUITE_CGROUP_SLICE
+          and 0 < runner.TEST_SUITE_CGROUP_SLICE_CPU_WEIGHT < 100, runner.TEST_SUITE_CGROUP_SLICE)
 
     check("the cgroup counters give the suite's CPU seconds and peak memory",
           runner.cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(
@@ -592,6 +683,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
               ((setting, scope.index(setting) - 1) for setting in
                ("MemoryMax=123456789", "MemorySwapMax=0", "OOMPolicy=continue")))
           and scope[-1] == "--", scope)
+    check("every suite's cgroup scope goes in the suites' one slice",
+          f"--slice={runner.TEST_SUITE_CGROUP_SLICE}" in scope, scope)
     check("the cgroup scope trial and every suite not named otherwise get the default ceiling",
           runner.test_suite_cgroup_scope_command()
           == runner.test_suite_cgroup_scope_command(runner.TEST_SUITE_MEMORY_CEILING_BYTES)
@@ -1038,6 +1131,81 @@ with tempfile.TemporaryDirectory() as scratch_name:
               "the SUMMARY still printed",
               code == runner.EXIT_COULD_NOT_RUN and "could not be written" in printed
               and "SUMMARY: 1 passed" in printed, (code, printed[-800:]))
+
+        # --- A selective run leaves the no-sandbox suites out ---------------------------
+        left_out_repository = scratch / "left-out-repository"
+        (left_out_repository / "scripts").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q"], cwd=left_out_repository, check=True)
+        for name in ("a-test.py", "outside-test.py"):
+            (left_out_repository / name).write_text("print('PASS  only case')\n")
+        (left_out_repository / "scripts" / "run-all-test-suites.py").write_text(
+            'SUITES_RUN_WITHOUT_ANY_SANDBOX = {"outside-test.py": "it starts bwrap itself"}\n'
+            "SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY = {}\n"
+            "SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK = {}\n")
+        subprocess.run(["git", "add", "."], cwd=left_out_repository, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                        "-m", "start"], cwd=left_out_repository, check=True)
+        # The suite's own file differs from the commit compared with, which alone selects it.
+        (left_out_repository / "outside-test.py").write_text("print('PASS  changed case')\n")
+        suites_started = []
+
+        def note_and_pass(top, interpreter, suite, *arguments, **options):
+            suites_started.append(suite)
+            return suite_passes(top, interpreter, suite, *arguments, **options)
+
+        def left_out_run(label, *extra, sandbox=as_if_bwrap):
+            suites_started.clear()
+            run_scratch = scratch / f"main-left-out-{label}"
+            run_scratch.mkdir()
+            printed_out = io.StringIO()
+            with replaced(run_one_suite=note_and_pass, **sandbox), \
+                    contextlib.redirect_stdout(printed_out), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                code = runner.main(["--checkout", str(left_out_repository),
+                                    "--lock-file", str(run_scratch / "run.lock"),
+                                    "--log-dir", str(run_scratch / "logs"),
+                                    "--recorded-inputs-directory", str(run_scratch / "recorded"),
+                                    *extra])
+            return code, printed_out.getvalue()
+
+        code, printed = left_out_run("selective", "--only-suites-whose-recorded-inputs-changed-since",
+                                     "HEAD")
+        left_out_lines = [line for line in printed.splitlines()
+                          if line.startswith(runner.NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX)]
+        check("a selective run in nc-test-sandboxes leaves out a no-sandbox suite whose own file "
+              "changed, prints its LEFT OUT line with the command that runs it by hand, counts "
+              "it in the SUMMARY, and exits 0 on the suites it ran",
+              code == runner.EXIT_ALL_PASSED and suites_started == ["a-test.py"]
+              and len(left_out_lines) == 1 and left_out_lines[0].startswith(
+                  f"{runner.NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX}outside-test.py: ")
+              and "--only-suites-named outside-test.py" in left_out_lines[0]
+              and "SELECTED outside-test.py" not in printed
+              and "1 no-sandbox suites left out" in printed
+              and "0 suites not selected" in printed, (code, suites_started, printed[-1500:]))
+
+        code, printed = left_out_run("named", "--only-suites-whose-recorded-inputs-changed-since",
+                                     "HEAD", "--only-suites-named", "outside-test.py")
+        check("a selective run given --only-suites-named runs a named no-sandbox suite, as before",
+              code == runner.EXIT_ALL_PASSED and suites_started == ["outside-test.py"]
+              and runner.NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX not in printed,
+              (code, suites_started, printed[-800:]))
+
+        code, printed = left_out_run(
+            "no-bwrap", "--only-suites-whose-recorded-inputs-changed-since", "HEAD",
+            sandbox={"signal_sandbox": lambda **options: ((), "bwrap is not on PATH")})
+        check("a selective run without nc-test-sandboxes, where the whole run takes the machine's "
+              "lock, still runs a selected no-sandbox suite",
+              code == runner.EXIT_ALL_PASSED
+              and sorted(suites_started) == ["a-test.py", "outside-test.py"]
+              and runner.NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX not in printed,
+              (code, suites_started, printed[-800:]))
+
+        code, printed = left_out_run("full")
+        check("a run with no selection runs the no-sandbox suites, as before",
+              code == runner.EXIT_ALL_PASSED
+              and sorted(suites_started) == ["a-test.py", "outside-test.py"]
+              and runner.NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX not in printed,
+              (code, suites_started, printed[-800:]))
 
         two_suites = scratch / "two-suites-repository"
         two_suites.mkdir()

@@ -136,6 +136,7 @@ class MacLaunchSandbox:
                    '  case "$argument" in (has-session) exit 1;; esac\n'
                    'done\n'
                    f'printf \'%s\\n\' "$@" > "{self.captures}/tmux-argv.txt"\n'
+                   f'echo "GH_TOKEN=${{GH_TOKEN-<unset>}}" > "{self.captures}/tmux-environment.txt"\n'
                    f'pwd -P > "{self.captures}/tmux-working-directory.txt"\n'
                    'pane_command=""\n'
                    'for argument in "$@"; do\n'
@@ -166,6 +167,7 @@ class MacLaunchSandbox:
                    '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}";\n'
                    '      echo "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS='
                    '${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS-<unset>}";\n'
+                   '      echo "GH_TOKEN=${GH_TOKEN-<unset>}";\n'
                    + GIT_IDENTITY_ECHO_LINES +
                    ' } '
                    f'> "{self.captures}/supervisor-environment.txt";;\n'
@@ -188,9 +190,33 @@ class MacLaunchSandbox:
                    '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}";\n'
                    '  echo "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS='
                    '${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS-<unset>}";\n'
+                   '      echo "GH_TOKEN=${GH_TOKEN-<unset>}";\n'
                    + GIT_IDENTITY_ECHO_LINES +
                    ' } '
                    f'> "{self.captures}/after-exit-environment.txt"\n')
+
+    def github_token_check_runs_the_real_supervisor(self, token_file_accounts=()):
+        """Hand the supervisor's GitHub token check to the real interpreter, so
+        the case measures the refusal the real supervisor prints for the
+        sandbox HOME. token_file_accounts names the accounts given a token file."""
+        token_directory = self.home / ".config" / "nedschorus"
+        for account in token_file_accounts:
+            token_directory.mkdir(parents=True, exist_ok=True)
+            (token_directory / f"{account}.token").write_text(
+                "stand-in-token\n", encoding="utf-8")
+        python3 = self.stubs / "python3"
+        python3.write_text(python3.read_text(encoding="utf-8").replace(
+            'case "${1:-}" in (*' + UPDATE_LOCK_HELPER_NAME + ')',
+            'case " $* " in (*" --agent-seat-github-token-file-readable-check-only "*) '
+            f'exec "{sys.executable}" "$@";; esac\n'
+            'case "${1:-}" in (*' + UPDATE_LOCK_HELPER_NAME + ')', 1),
+            encoding="utf-8")
+
+    def seat_already_running(self):
+        """Make the tmux stub answer has-session with "exists"."""
+        tmux = self.stubs / "tmux"
+        tmux.write_text(tmux.read_text(encoding="utf-8").replace(
+            '(has-session) exit 1;;', '(has-session) exit 0;;', 1), encoding="utf-8")
 
     def boot_programs_fail(self):
         """Make the python3 stub fail clean-worktrees.py and
@@ -206,7 +232,7 @@ class MacLaunchSandbox:
 
     def run(self, agents_root, seat_name="seat-t", attach=False,
             extra_arguments=None, update_timeout_seconds=None,
-            seat_github_account=None,
+            seat_github_account=None, inherited_github_token=None,
             ambient_git_identity=None, term_program=None,
             stdout_on_terminal=False):
         """Run the launcher in the sandbox. extra_arguments, when given, is
@@ -215,6 +241,8 @@ class MacLaunchSandbox:
         of ambient LAUNCH_CLAUDE_* values, so the case measures its own.
         seat_github_account rides NEDSCHORUS_SEAT_GITHUB_ACCOUNT the same
         way, after the strip of ambient NEDSCHORUS_* values.
+        inherited_github_token sets GH_TOKEN, which is otherwise stripped so
+        the suite's own token cannot decide a case.
         term_program sets TERM_PROGRAM, which is otherwise stripped so the
         terminal the suite runs in cannot decide a case.
         stdout_on_terminal gives the launcher a pseudo-terminal as stdout in
@@ -222,7 +250,7 @@ class MacLaunchSandbox:
         arguments = [seat_name] if attach else [seat_name, "--no-attach"]
         environment = {
             **{key: value for key, value in os.environ.items()
-               if key != "TERM_PROGRAM"
+               if key not in ("TERM_PROGRAM", "GH_TOKEN")
                and key not in GIT_IDENTITY_VARIABLES
                and not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_",
                                        "CLAUDE_CODE_"))},
@@ -237,6 +265,8 @@ class MacLaunchSandbox:
                 update_timeout_seconds)
         if seat_github_account is not None:
             environment["NEDSCHORUS_SEAT_GITHUB_ACCOUNT"] = seat_github_account
+        if inherited_github_token is not None:
+            environment["GH_TOKEN"] = inherited_github_token
         if ambient_git_identity is not None:
             environment.update(ambient_git_identity)
         if term_program is not None:
@@ -261,6 +291,9 @@ class MacLaunchSandbox:
     def tmux_working_directory(self):
         path = self.captures / "tmux-working-directory.txt"
         return path.read_text(encoding="utf-8").strip() if path.is_file() else ""
+
+    def tmux_environment(self):
+        return environment_lines(self.captures / "tmux-environment.txt")
 
     def supervisor_environment(self):
         return environment_lines(self.captures / "supervisor-environment.txt")
@@ -801,6 +834,53 @@ def main() -> int:
               and "GH_TOKEN" not in composed_command
               and ".config/nedschorus" not in composed_command,
               (result.returncode, composed_command[:400], result.stderr[:300]))
+
+        # --- a GH_TOKEN the launcher inherits reaches neither the seat's tmux
+        # server nor the after-exit shell, where a `gh` would act as the
+        # caller's account.
+        sandbox = MacLaunchSandbox(root / "inherited-github-token-dropped")
+        result = sandbox.run("~/agents", seat_name="seat-t2", attach=True,
+                             inherited_github_token="decoy-inherited-token")
+        check("GitHub token: an inherited GH_TOKEN does not reach the tmux server",
+              result.returncode == 0
+              and sandbox.tmux_environment().get("GH_TOKEN") == "<unset>",
+              (result.returncode, sandbox.tmux_environment(), result.stderr[:300]))
+        check("GitHub token: an inherited GH_TOKEN reaches neither the supervisor nor the after-exit shell",
+              sandbox.supervisor_environment().get("GH_TOKEN") == "<unset>"
+              and sandbox.after_exit_environment().get("GH_TOKEN") == "<unset>",
+              (sandbox.supervisor_environment(), sandbox.after_exit_environment()))
+
+        # --- a detached pane closes when the supervisor exits, so the launch
+        # itself must run the supervisor's GitHub token check before it
+        # creates the tmux session, and report its refusal and exit 5.
+        sandbox = MacLaunchSandbox(root / "no-attach-missing-github-token-file")
+        sandbox.github_token_check_runs_the_real_supervisor()
+        result = sandbox.run("~/agents", seat_name="seat-t5")
+        check("missing token file: a detached launch exits 5 with the supervisor's refusal",
+              result.returncode == 5
+              and "handoff-supervisor: the agent-seat seat-t5 was not started, because the token file"
+              in result.stderr
+              and "does not exist" in result.stderr,
+              (result.returncode, result.stderr[-600:]))
+        check("missing token file: no tmux session was created",
+              "new-session" not in sandbox.tmux_argv(), sandbox.tmux_argv()[:10])
+        sandbox = MacLaunchSandbox(root / "no-attach-github-token-file-present")
+        # Both machine accounts, because the supervisor picks one by hostname.
+        sandbox.github_token_check_runs_the_real_supervisor(
+            token_file_accounts=("ubuntu-claude", "mac-claude"))
+        result = sandbox.run("~/agents", seat_name="seat-t6")
+        check("token file present: the detached launch goes on to create the tmux session",
+              result.returncode == 0 and "new-session" in sandbox.tmux_argv()
+              and "was not started" not in result.stderr,
+              (result.returncode, result.stderr[-600:]))
+        # A running seat's launch is not a start, so it must not be refused as one.
+        sandbox = MacLaunchSandbox(root / "no-attach-running-seat-missing-github-token-file")
+        sandbox.github_token_check_runs_the_real_supervisor()
+        sandbox.seat_already_running()
+        result = sandbox.run("~/agents", seat_name="seat-t7")
+        check("missing token file, seat already running: the launch is not refused as a start",
+              result.returncode == 0 and "was not started" not in result.stderr,
+              (result.returncode, result.stderr[-600:]))
 
         # --- the account override is refused, not ignored: the launcher does
         # not choose an account, so a value there could only mislead the
