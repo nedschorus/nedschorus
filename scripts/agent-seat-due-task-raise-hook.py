@@ -102,8 +102,11 @@ holds; otherwise it says nothing about it:
     hook's own reader and its DEFAULT_THRESHOLD_USED_PERCENTAGE: Claude Code
     runs the hooks of one Stop group in parallel, so at the stop that first
     reaches the threshold the asked marker may not be written yet;
-  - the handoff hook's work_in_flight finds no subagent or background task
-    running; a transcript it cannot fully read counts as work running;
+  - the payload's background_tasks list, read with the handoff hook's
+    work_in_flight_from_background_tasks, holds no running subagent,
+    workflow or background task; a payload without the list counts as no
+    work running, and a transcript the reader cannot fully read counts as
+    work running;
   - the session has run a tool since this hook last handed it the prompt.
     The state file's `next_action_prompt` entry holds the session id and the
     id of the newest tool call the transcript held when the prompt was
@@ -711,9 +714,11 @@ def next_action_prompt_lines(payload: dict, tasks: dict, directory: Path, state:
     used_percentage = handoff.context_used_percentage_from_transcript(str(transcript))
     if used_percentage is not None and used_percentage >= handoff.DEFAULT_THRESHOLD_USED_PERCENTAGE:
         return None
+    background_tasks = payload.get(handoff.BACKGROUND_TASKS_PAYLOAD_KEY)
     try:
-        if handoff.work_in_flight(str(transcript),
-                                  handoff.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60, now=now):
+        if isinstance(background_tasks, list) and handoff.work_in_flight_from_background_tasks(
+                background_tasks, str(transcript),
+                handoff.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60, now=now):
             return None
     except handoff.TranscriptCouldNotBeFullyRead:
         return None  # running work that cannot be counted is not idleness
