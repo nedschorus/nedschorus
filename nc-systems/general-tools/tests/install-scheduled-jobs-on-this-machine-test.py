@@ -88,6 +88,11 @@ NED_BOX_CRASH_RESTART_WATCHER_LINE = (
     "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
     "handoff-agent-crash-watcher.py >> "
     "/home/nedlern/.claude/handoff-agent-crash-watcher.log 2>&1")
+NED_BOX_IDLE_SWEEP_LINE = (
+    "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.py >> "
+    "/home/nedlern/.claude/agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-"
+    "write.log 2>&1")
 NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE = (
     "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
     "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> "
@@ -289,12 +294,14 @@ check("the Mac's worktree cleanup is a launchd job at 06:30, so a run missed whi
       clean["on"]["mac"]["scheduler"] == "launchd" and mac_clean_plist == MAC_CLEAN_PLIST
       and list(mac_clean_plist) == list(MAC_CLEAN_PLIST), mac_clean_plist)
 check("the table's jobs are the two typed by hand before this program, the worktree "
-      "cleanup, ned-box's crash restart watcher, ned-box's Remote Control reconnect watcher, the "
+      "cleanup, ned-box's crash restart watcher, ned-box's agent-seat idle sweep, ned-box's Remote Control reconnect watcher, the "
       "weekly owner check of the work-snapshot hook, the session dialogs refresh, the "
       "guarded-file store's prune, the nc-shared-database's backup and its copy to the "
       "Mac, the deletion of exited agent-sessions' temp folders, the scheduled full "
       "mutation pass, the no-sandbox test suites' run on main, and no other",
-      sorted(real_jobs) == ["claude-code-temp-folders-of-exited-agent-sessions-delete",
+      sorted(real_jobs) == ["agent-seat-idle-sweep-headless-judge-wake-messages-send-and-"
+                            "user-alerts-write",
+                            "claude-code-temp-folders-of-exited-agent-sessions-delete",
                             "clean-worktrees", "daily-full-test-run-of-main",
                             "guarded-file-versions-and-approvals-store-removed-checkout-"
                             "copies-prune",
@@ -412,6 +419,8 @@ check("--print as ned-box prints ned-box's cron lines from the real table and ru
           "clean-worktrees — cron line:", NED_BOX_CLEAN_LINE,
           "handoff-agent-crash-watcher — cron line:",
           NED_BOX_CRASH_RESTART_WATCHER_LINE,
+          "agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write — cron "
+          "line:", NED_BOX_IDLE_SWEEP_LINE,
           "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher — "
           "cron line:", NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE,
           "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — cron line:",

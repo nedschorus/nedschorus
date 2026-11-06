@@ -166,6 +166,21 @@ check("announced action: session id, transcript path, last activity and its sour
       and alpha.get("last_activity") == {"time": LONG_AGO, "source": str(transcript)}, alpha)
 check("announced action: rules 3 to 5 also decided, for when the judge finds it backed",
       alpha.get("if_every_sentence_backed") == {"rule": 4, "decision": "no_wake"}, alpha)
+check("announced action: the last message, for the judge",
+      (alpha.get("last_turn_ending_message") or {}).get("text") == ANNOUNCED
+      and alpha["last_turn_ending_message"]["time"] == LONG_AGO, alpha.get("last_turn_ending_message"))
+machine = Machine()
+machine.seat("alpha", [user("a", at="2026-11-02T11:20:00Z"),
+                       assistant(tool=("Edit", {"file_path": "old.py"}), at="2026-11-02T11:21:00Z"),
+                       turn_end(at="2026-11-02T11:22:00Z"), user("go", at="2026-11-02T11:40:00Z"),
+                       assistant(ANNOUNCED, at="2026-11-02T11:41:00Z"),
+                       assistant(tool=("Bash", {"command": "x" * 5000}), at="2026-11-02T11:42:00Z"),
+                       turn_end(at="2026-11-02T11:43:00Z")])
+_, verdicts, _ = machine.run()
+calls = verdicts["alpha"].get("tool_calls_since_start_of_earliest_turn_with_sentence_to_judge")
+check("the judge is handed the tool calls from the judged sentence's turn on, inputs cut short",
+      calls is not None and [call["name"] for call in calls] == ["Bash"]
+      and len(calls[0]["input"]) == fields.TOOL_CALL_INPUT_CHARACTERS_KEPT, calls)
 
 # --- rule 2: a promise after an event, unbacked, then backed by a task with prerequisites ---
 PROMISE = "I'll report when PR 927 merges."
@@ -199,9 +214,31 @@ machine.seat("alpha", [user("a", at="2026-11-02T11:30:00Z"),
                            {"pr_merged": 927}]}}), at="2026-11-02T11:35:00Z"),
                        turn_end(at="2026-11-02T11:36:00Z"), user("go", at="2026-11-02T11:40:00Z"),
                        assistant(PROMISE), turn_end()])
+machine.task("alpha", "1", metadata={"prerequisites": [{"pr_merged": 927}]})
+machine.gh_responses.write_text(json.dumps({"pr:927": {"state": "OPEN"}}))
 _, verdicts, _ = machine.run()
-check("a task created in an earlier turn does not back the promise",
-      verdicts["alpha"]["sentences"][0]["code_reading"] == "unbacked", verdicts["alpha"])
+check("an open task created in an earlier turn, with prerequisites: the judge decides",
+      verdicts["alpha"]["sentences"][0]["code_reading"] == "judge"
+      and verdicts["alpha"].get("decision") == "judge"
+      and verdicts["alpha"].get("open_tasks_with_prerequisites_or_blocked_by")
+      == [{"id": "1", "subject": "task 1", "prerequisites": [{"pr_merged": 927}],
+           "blockedBy": []}], verdicts["alpha"])
+for case, status, metadata, blocked_by in (
+        ("completed", "completed", {"prerequisites": [{"pr_merged": 927}]}, ()),
+        ("open with neither prerequisites nor blockedBy", "pending", None, ())):
+    machine = Machine()
+    machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+    machine.task("alpha", "1", status=status, metadata=metadata, blocked_by=blocked_by)
+    _, verdicts, _ = machine.run()
+    check(f"an older task {case} does not back the promise: code finds it unbacked",
+          verdicts["alpha"]["sentences"][0]["code_reading"] == "unbacked", verdicts["alpha"])
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant("I'll hold."), turn_end()])
+machine.task("alpha", "1")
+machine.task("alpha", "2", blocked_by=["1"])
+_, verdicts, _ = machine.run()
+check("a hold with an older open task held by blockedBy: the judge decides",
+      verdicts["alpha"]["sentences"][0]["code_reading"] == "judge", verdicts["alpha"])
 machine = Machine()
 machine.seat("alpha", [user("go", at="2026-11-02T11:49:00Z"),
                        assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
@@ -369,6 +406,10 @@ check("usage limit: rule 1, with the reset time passed and the account logged in
       verdicts["alpha"].get("rule") == 1 and verdicts["alpha"].get("decision") == "session_limit"
       and limit.get("reset_time_passed") is True and limit.get("account_now_logged_in")
       == "account-1" and limit.get("record_uuid") == "limit-record", verdicts["alpha"])
+code, verdicts, _ = machine.run("--usage-limit-record-uuid-to-ignore", "limit-record")
+check("a usage-limit record rule 1 no longer applies to: rules 2 to 5 decide",
+      code == 0 and verdicts["alpha"].get("rule") in (2, 3, 4, 5)
+      and "usage_limit" not in verdicts["alpha"], verdicts["alpha"])
 machine.seat("alpha", [user("go"), usage_limit(1793620800 + 3600)])
 _, verdicts, _ = machine.run()
 check("usage limit not yet reset", verdicts["alpha"]["usage_limit"]["reset_time_passed"] is False,
@@ -590,19 +631,26 @@ check("one agent-seat's gh failure is not reported for the next agent-seat",
       code == 1 and "pr_merged 51" in verdicts["alpha"]["errors"][0]
       and verdicts["beta"]["errors"] == [] and verdicts["beta"]["rule"] == 5, verdicts)
 
-# --- rule 2 settled by code reads no task list ---------------------------------------------
+# --- rule 2 settled by code asks GitHub nothing ----------------------------------------------
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.task("alpha", "1")
+code, verdicts, _ = machine.run()
+check("an unbacked promise is sent without asking GitHub about any task",
+      code == 0 and verdicts["alpha"]["decision"] == "send_unbacked"
+      and "if_every_sentence_backed" not in verdicts["alpha"], (code, verdicts["alpha"]))
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
 machine.task("alpha", "1", metadata={"prerequisites": [{"pr_merged": 51}]})
 code, verdicts, _ = machine.run()
-check("an unbacked promise is sent although a task's gh query would fail",
-      code == 0 and verdicts["alpha"]["decision"] == "send_unbacked"
-      and "if_every_sentence_backed" not in verdicts["alpha"], (code, verdicts["alpha"]))
+check("a promise an older task may back, whose gh query fails: an error, rule null",
+      code == 1 and verdicts["alpha"]["rule"] is None
+      and "pr_merged 51" in verdicts["alpha"]["errors"][0], (code, verdicts["alpha"]))
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant(PROMISE + " " + ANNOUNCED), turn_end()])
-machine.task("alpha", "1", metadata={"prerequisites": [{"pr_merged": 51}]})
+machine.task("alpha", "1")
 code, verdicts, _ = machine.run()
-check("an unbacked promise beside a sentence for the judge: rule 2, no task list read",
+check("an unbacked promise beside a sentence for the judge: rule 2, rules 3 to 5 not read",
       code == 0 and verdicts["alpha"]["rule"] == 2 and verdicts["alpha"]["decision"] == "judge"
       and "if_every_sentence_backed" not in verdicts["alpha"], (code, verdicts["alpha"]))
 machine = Machine()

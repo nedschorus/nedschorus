@@ -90,6 +90,15 @@
       }
     },
     {
+      "name": "agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write",
+      "program": "scripts/agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.py",
+      "arguments": [],
+      "output": ".claude/agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "* * * * *"}
+      }
+    },
+    {
       "name": "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher",
       "program": "nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py",
       "arguments": [],
