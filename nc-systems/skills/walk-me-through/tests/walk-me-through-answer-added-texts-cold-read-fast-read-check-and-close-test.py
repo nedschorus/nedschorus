@@ -116,6 +116,9 @@ if sys.argv[1:3] == ["pr", "list"]:
         sys.exit(1)
     if mode == "list-fails-silently":
         sys.exit(1)
+    if mode == "list-killed":
+        import signal
+        os.kill(os.getpid(), signal.SIGTERM)
     if mode == "list-hangs":
         time.sleep(5)
     print("not json" if mode == "list-not-json" else os.environ.get("GH_STAND_IN_PULL_REQUESTS", "[]"))
@@ -3725,7 +3728,8 @@ def test_a_lookup_that_prints_json_of_another_shape_or_fails_silently_is_reporte
     for pull_requests, mode, error in (
             ('{"number": 1}', "", "printed what is not a list of pull requests with their reviews: TypeError("),
             ('[{"number": 1}]', "", "printed what is not a list of pull requests with their reviews: KeyError("),
-            ("[]", "list-fails-silently", "exited 1: it printed nothing on stderr.")):
+            ("[]", "list-fails-silently", "exited 1: it printed nothing on stderr."),
+            ("[]", "list-killed", "exited -15: it printed nothing on stderr.")):
         case = Case(next_to_present="item 4 of 9")
         case.run("check")
         closed = case.run("close", environment=gh_environment(pull_requests, mode=mode))
