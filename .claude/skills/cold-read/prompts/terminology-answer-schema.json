@@ -1,0 +1,163 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "document_kind",
+    "key_terms",
+    "flags",
+    "proposed_definitions",
+    "terms_kept"
+  ],
+  "properties": {
+    "document_kind": {
+      "type": "string",
+      "description": "One line saying what kind of document the document under review is, for example instructions to an agent, a design, or a memo asking a person to decide."
+    },
+    "key_terms": {
+      "type": "array",
+      "description": "Every key-term you listed, each written as the document writes it, those the glossary does not list included.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "flags": {
+      "type": "array",
+      "description": "One entry per flagged term, in any order: the flags are sorted after you answer by where each term first appears in the document. An empty list when you flag nothing.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "term",
+          "passage",
+          "clashes_with",
+          "clashes_with_location",
+          "second_definition",
+          "meaning_compared",
+          "restatement",
+          "tests_failed",
+          "fixes"
+        ],
+        "properties": {
+          "term": {
+            "type": "string",
+            "description": "The flagged term, written as the document writes it."
+          },
+          "passage": {
+            "type": "string",
+            "description": "The passage of the document that uses the term in the way the flag is about, quoted word for word. It need not be the term's first use."
+          },
+          "clashes_with": {
+            "type": "string",
+            "description": "The term this term clashes with, quoted, or an empty string when no term clashes, as for a term defined twice that fails no test, or a term whose meaning you ask about."
+          },
+          "clashes_with_location": {
+            "type": "string",
+            "enum": [
+              "standard_vocabulary",
+              ""
+            ],
+            "description": "\"standard_vocabulary\" when the term in clashes_with comes from everyday software English, such as \"increment\", which no list holds; otherwise an empty string. When the document or a glossary holds the term in clashes_with, which of them holds it is filled in after you answer."
+          },
+          "second_definition": {
+            "type": "string",
+            "description": "When the document defines a term that the project glossary or a system glossary also defines: the document's sentence that defines the term, quoted word for word. Otherwise an empty string. When the term fails none of the tests, leave fixes empty: its one fix, the term as the glossary writes it, is added after you answer."
+          },
+          "meaning_compared": {
+            "type": "string",
+            "enum": [
+              "same",
+              "narrower",
+              "wider",
+              ""
+            ],
+            "description": "Only when the term fails test (1): whether the document's term means the same as the standard term in clashes_with, something narrower, or something wider. An empty string when the term does not fail test (1)."
+          },
+          "restatement": {
+            "type": "string",
+            "description": "What the term names, restated in your own words, without the term itself and without the words kind, type, category, sort, class or form."
+          },
+          "tests_failed": {
+            "type": "array",
+            "description": "The numbers of the prompt's tests (1) to (5) that the term fails. An empty list only when second_definition is not empty, for a term defined twice that fails none of the tests.",
+            "items": {
+              "type": "integer",
+              "enum": [
+                1,
+                2,
+                3,
+                4,
+                5
+              ]
+            }
+          },
+          "fixes": {
+            "type": "array",
+            "description": "The fixes for the term: one for each meaning when the term fails test (3), whatever other tests it fails; otherwise exactly one. An empty list only when tests_failed is empty, for a term defined twice, whose fix is added after you answer.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "fix",
+                "words",
+                "uses"
+              ],
+              "properties": {
+                "fix": {
+                  "type": "string",
+                  "enum": [
+                    "a",
+                    "b",
+                    "c",
+                    "d",
+                    "question"
+                  ],
+                  "description": "The letter of the fix, from the prompt's fixes (a) to (d), or \"question\" when you cannot tell what the author meant and ask instead."
+                },
+                "words": {
+                  "type": "string",
+                  "description": "The exact words of the fix: the name to use, or for \"question\" the question for the author."
+                },
+                "uses": {
+                  "type": "array",
+                  "description": "When the term fails test (3), the uses in the document that take this fix, each quoted with enough of its sentence to find it. Otherwise an empty list, because every use of the term takes the one fix.",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "proposed_definitions": {
+      "type": "array",
+      "description": "Every project-term you propose under fix (d), each a candidate for the user. An empty list when you propose none.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "project_term",
+          "definition"
+        ],
+        "properties": {
+          "project_term": {
+            "type": "string",
+            "description": "The proposed project-term, exactly as the fix's words give it."
+          },
+          "definition": {
+            "type": "string",
+            "description": "Its one-sentence definition, for the author to include where the name is first used in the document."
+          }
+        }
+      }
+    },
+    "terms_kept": {
+      "type": "array",
+      "description": "Every term you checked and did not flag, established ones included.",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
