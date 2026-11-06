@@ -96,7 +96,7 @@ def invocation_builder(effort: str):
         # dontAsk: a tool call ALLOWED_TOOLS does not allow is refused, with no one to ask.
         command = [
             *command_line_prefix.claude_code_headless_run_command_line_prefix_build(
-                "dontAsk", own_settings=SETTINGS),
+                "dontAsk", caller_claude_code_session_settings=SETTINGS),
             "--model", model,
             "--effort", effort,
             "--output-format", "text",
