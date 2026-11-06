@@ -5,8 +5,9 @@ The handoff system's writer (specification:
 nc-systems/handoff/handoff-design.md). The retiring agent writes one
 thing — the prompt telling its successor what to do first — and this script
 does everything else a machine can do: it stamps the timestamp, derives the
-restart counter, derives the roster of subagents still working — the ones the
-reincarnation is about to kill mid-job — formats and writes the file, then checks
+restart counter, derives the roster of subagents still working and the list of
+background Bash tasks still running — the ones the reincarnation is about to
+kill mid-job — formats and writes the file, then checks
 whether a supervisor is actually watching and tells the agent what that means
 for it.
 
@@ -138,9 +139,8 @@ DEFAULT_AGENT_NAME_RULE_TEXT = (
 )
 
 SPAWNED_SUBAGENT_FIELD_PREFIX = field_names.SPAWNED_SUBAGENT_FIELD_PREFIX
+BACKGROUND_TASK_FIELD_PREFIX = field_names.BACKGROUND_TASK_FIELD_PREFIX
 
-BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
-    supervisor.BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
 COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
     supervisor.COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
 
@@ -413,31 +413,58 @@ def background_task_launches_by_id(transcript_path: Path, task_ids) -> dict:
     return launches
 
 
-def background_tasks_started_during_handoff_deferral_still_running(transcript_path: Path,
-                                                                   deferral_began_at) -> list:
-    """Return [(task id, description, command)] for background Bash tasks launched at or after
-    deferral_began_at with no completion notification, in launch order.
+def background_task_launches_still_running_in_transcript(transcript_path: Path) -> list:
+    """Return [(task id, description, command, launch time)] for the background Bash tasks the
+    transcript launched with no completion notification, in launch order.
 
-    A task whose launch record has no readable time counts as launched during the deferral.
-    Raises threshold_hook.TranscriptCouldNotBeFullyRead when a launch record cannot be read.
+    A Monitor is not one: its launch record carries no backgroundTaskId. Raises
+    threshold_hook.TranscriptCouldNotBeFullyRead when a launch record cannot be read.
     """
     # No wait limit: a task past the threshold hook's wait still dies at the session-handoff.
     flight = threshold_hook.work_in_flight(str(transcript_path), float("inf"),
                                            should_read_subagent_own_transcripts=False)
-    late = [task_id for task_id in flight.background_task_ids
-            if flight.launched_at_by_id.get(task_id) is None
-            or flight.launched_at_by_id[task_id] >= deferral_began_at]
-    launches = background_task_launches_by_id(transcript_path, late)
-    return [(task_id, *launches[task_id]) for task_id in late]
+    launches = background_task_launches_by_id(transcript_path, flight.background_task_ids)
+    return [(task_id, *launches[task_id], flight.launched_at_by_id.get(task_id))
+            for task_id in flight.background_task_ids]
 
 
-def handoff_deferral_field_lines(late_tasks, refused_commands) -> list:
-    """Render the deferral's late background tasks and refused commands as numbered fields."""
+def background_task_field_lines(tasks) -> list:
+    """Render the still-running background tasks as numbered handoff fields."""
     lines = []
-    for ordinal, (task_id, description, command) in enumerate(late_tasks, start=1):
+    for ordinal, (task_id, description, command, launched_at) in enumerate(tasks, start=1):
         described = f' "{description}"' if description else ""
-        lines.append(f"{BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX}{ordinal}: "
-                     f"{task_id}{described} command: {json.dumps(command)}")
+        started = (launched_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if launched_at is not None
+                   else "an unrecorded time")
+        lines.append(f"{BACKGROUND_TASK_FIELD_PREFIX}{ordinal}: {task_id}{described} "
+                     f"started at {started} command: {json.dumps(command)}")
+    return lines
+
+
+def background_task_fields_for_this_session(working_directory: Path):
+    """Return (field lines, console status), reporting failures without blocking handoff."""
+    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not session_id:
+        return [], ("background tasks: not listed — CLAUDE_CODE_SESSION_ID is unset, so this "
+                    "script cannot find the transcript. Name in the next step, with its command, "
+                    "any background task still running that your successor must restart.")
+    try:
+        transcript_path = find_session_transcript(session_id, working_directory)
+        if transcript_path is None:
+            return [], (f"background tasks: not listed — no single transcript found for session "
+                        f"{session_id} under {PROJECTS_ROOT}. Name in the next step, with its "
+                        "command, any background task still running that your successor must restart.")
+        tasks = background_task_launches_still_running_in_transcript(transcript_path)
+    except Exception as error:  # noqa: BLE001 - the list never blocks a handoff
+        return [], (f"background tasks: not listed — {type(error).__name__}: {error}. Name in the "
+                    "next step, with its command, any background task still running that your "
+                    "successor must restart.")
+    return (background_task_field_lines(tasks),
+            f"background tasks: {len(tasks)} still running, recorded for the successor")
+
+
+def handoff_deferral_field_lines(refused_commands) -> list:
+    """Render the cold-read-full-run commands the handoff-deferral's hook refused as numbered fields."""
+    lines = []
     for ordinal, entry in enumerate(refused_commands, start=1):
         directory = entry.get("working_directory") or "a directory not recorded"
         lines.append(f"{COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX}"
@@ -445,63 +472,36 @@ def handoff_deferral_field_lines(late_tasks, refused_commands) -> list:
     return lines
 
 
-def handoff_deferral_fields_for_this_session(handoff_directory: Path, working_directory: Path):
-    """Return (field lines, console status) for the work the handoff-deferral did not wait for.
+def handoff_deferral_fields_for_this_session(handoff_directory: Path):
+    """Return (field lines, console status) for the cold-read-full-run commands the
+    handoff-deferral's hook refused.
 
-    Never raises: what cannot be read is named in the status, which tells the agent to add it to
-    the next step by hand.
+    Never raises: a file that cannot be read is named in the status, which tells the agent to add
+    the commands to the next step by hand.
     """
     session_id = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     if not session_id:
         return [], ("handoff-deferral: not read, because CLAUDE_CODE_SESSION_ID is unset and this "
-                    "script cannot find the marker files without it. If a system message told you "
-                    "this session's handoff was deferred, name in the next step any background task "
-                    "you started since and any cold-read-full-run a hook refused, and run this "
-                    "script again.")
-    parts, failures = [], []
-    try:
-        marker = deferred_marker_files.handoff_deferral_record_read_from_marker_or_moved_at_fire(
-            handoff_directory, session_id)
-    except deferred_marker_files.HandoffDeferredMarkerUnreadable as error:
-        marker = None
-        failures.append(f"the background tasks started during the deferral are not listed, because "
-                        f"the handoff-deferred marker file could not be read ({error})")
-    late_tasks = []
-    if marker is not None:
-        try:
-            transcript_path = find_session_transcript(session_id, working_directory)
-            if transcript_path is None:
-                raise LookupError(f"no single transcript found for session {session_id} under "
-                                  f"{PROJECTS_ROOT}")
-            late_tasks = background_tasks_started_during_handoff_deferral_still_running(
-                transcript_path, marker.deferral_began_at)
-            parts.append(f"{len(late_tasks)} background task(s) started during the "
-                         "handoff-deferral and still running, recorded")
-        except Exception as error:  # noqa: BLE001 - the deferral fields never block a handoff
-            failures.append(f"the background tasks started during the deferral are not listed "
-                            f"({type(error).__name__}: {error})")
+                    "script cannot find the file of refused commands without it. If a hook refused "
+                    "a cold-read-full-run since this session's handoff was deferred, name it in the "
+                    "next step, and run this script again.")
     try:
         refused_commands = deferred_marker_files.cold_read_full_run_commands_refused_during_handoff_deferral_read(
             handoff_directory, session_id)
-        if refused_commands:
-            parts.append(f"{len(refused_commands)} refused cold-read-full-run command(s) recorded")
     except deferred_marker_files.ColdReadFullRunCommandsRefusedDuringHandoffDeferralUnreadable as error:
-        refused_commands = []
-        failures.append(f"the refused cold-read-full-run commands are not listed ({error})")
-    lines = handoff_deferral_field_lines(late_tasks, refused_commands)
-    if failures:
-        return lines, ("handoff-deferral: " + "; ".join(parts + failures) + ". Find the work left "
-                       "out in this session's dialog, and run this script again with a next step "
-                       "that names it.")
-    if marker is None and not refused_commands:
-        return lines, "handoff-deferral: this session's handoff was not deferred"
-    return lines, "handoff-deferral: " + ("; ".join(parts) or "nothing to record")
+        return [], (f"handoff-deferral: the refused cold-read-full-run commands are not listed "
+                    f"({error}). Find them in this session's dialog, and run this script again "
+                    "with a next step that names them.")
+    if not refused_commands:
+        return [], "handoff-deferral: no refused cold-read-full-run command to record"
+    return (handoff_deferral_field_lines(refused_commands),
+            f"handoff-deferral: {len(refused_commands)} refused cold-read-full-run command(s) recorded")
 
 
 def write_handoff_file(handoff_path: Path, next_step: str, counter: int,
                        ask_user_before_restart: bool,
                        seat_directory: Path, spawned_subagent_lines=(), verbatim_lines=(),
-                       handoff_deferral_lines=()) -> None:
+                       handoff_deferral_lines=(), background_task_lines=()) -> None:
     """Write the handoff atomically so readers cannot see a partial file."""
     lines = [
         f"{field_names.WRITTEN_AT_FIELD}: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
@@ -520,6 +520,7 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int,
         lines.append(f"{field_names.LEGACY_DONT_RESTART_FIELD}: {reason}")
 
     lines.extend(spawned_subagent_lines)
+    lines.extend(background_task_lines)
     lines.extend(handoff_deferral_lines)
 
     # Write the block last so field-like content cannot shadow actual fields.
@@ -894,16 +895,20 @@ def main(argv=None) -> int:
 
     counter = next_restart_counter(handoff_path, state_path)
     spawned_subagent_lines, roster_report = spawned_subagent_roster_for_this_session(seat_directory)
+    background_task_lines, background_task_report = background_task_fields_for_this_session(
+        seat_directory)
     handoff_deferral_lines, handoff_deferral_report = handoff_deferral_fields_for_this_session(
-        handoff_directory, seat_directory)
+        handoff_directory)
     prune_report = prune_completed_tasks(next_step_text)
     write_handoff_file(handoff_path, next_step, counter, arguments.ask_user_before_restart, seat_directory,
                        spawned_subagent_lines=spawned_subagent_lines,
                        verbatim_lines=verbatim_lines,
-                       handoff_deferral_lines=handoff_deferral_lines)
+                       handoff_deferral_lines=handoff_deferral_lines,
+                       background_task_lines=background_task_lines)
     # Flushed at once: the supervisor may end this session soon after the handoff file appears.
     print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (session-handoff-sequence-number {counter})", flush=True)
     print(f"handoff-write-and-check-supervisor: {roster_report}", flush=True)
+    print(f"handoff-write-and-check-supervisor: {background_task_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {handoff_deferral_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {prune_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {run_branch_protection_audit()}")
