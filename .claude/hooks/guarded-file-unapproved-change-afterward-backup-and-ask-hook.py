@@ -509,7 +509,8 @@ def head_commit(checkout):
     BranchUnreadable, carrying git's stderr, when git fails otherwise."""
     # git rev-parse -q --verify exits 1, with nothing on stderr, when HEAD names no commit yet.
     result = subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify",
-                             "HEAD^{commit}"], capture_output=True, timeout=60, check=False)
+                             "HEAD^{commit}"], capture_output=True, check=False,
+                            timeout=60)  # pragma: no mutate, a limit a second longer or shorter behaves the same
     if result.returncode == 1:
         return None
     if result.returncode != 0:
@@ -913,7 +914,8 @@ class Check:
 def approval_takes(store, path, key, rule):
     """Whether store_phase records an approval of key under rule: UNLESS_SEEN gives way to a
     run that saw the version and did not approve it."""
-    return rule == APPROVE_ALWAYS or not seen_lines(store.log(path), key)
+    return (rule == APPROVE_ALWAYS  # pragma: no mutate, rule is one of the two constants and UNLESS_SEEN sorts after, so <= and is act as ==
+            or not seen_lines(store.log(path), key))
 
 
 def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, quiet):
