@@ -23,7 +23,9 @@ of the frozen-copy and the entries of every glossary. It:
 Matching a term in text treats a hyphen as part of a word, so "agent seat"
 is not found inside "agent-seat-model", and ignores case and runs of
 whitespace. A glossary lookup also ignores the difference between a hyphen
-and a space, and a plural "s" or "es" on the last word. The document's code
+and a space, and a plural "s" or "es" on the last word; a fix (a)'s lookup
+also ignores a leading "the", "a" or "an". A passage the runner quotes for a
+flag it adds is cut at whitespace, never inside a word. The document's code
 spans, fenced code blocks, URLs and link targets are not scanned for
 glossary terms written differently; skills (`/name`) and filename suffixes
 (`-name`) are never looked for. A quotation in the answer must be in the
@@ -59,6 +61,8 @@ TESTS = (1, 2, 3, 4, 5)
 WORDS_A_RESTATEMENT_AVOIDS = ("kind", "type", "category", "sort", "class", "form")
 QUOTED_SPAN_PATTERN = re.compile(r'"[^"]*"|“[^”]*”')
 SURROUNDING_QUOTES = "\"'`“”‘’"
+# A fix (a) written in a sentence, as "the cold-read-target", still names a glossary term.
+LEADING_ARTICLE_PATTERN = re.compile(r"^(?:the|an|a)\s+", re.I)
 LOCATION_GLOSSARY = "glossary"
 LOCATION_DOCUMENT = "document"
 LOCATION_STANDARD_VOCABULARY = "standard_vocabulary"
@@ -297,7 +301,8 @@ def fix_a_is_listed_and_fix_d_is_new(answer, document, glossary):
     for index, flag in enumerate(answer["flags"], 1):
         for fix in flag["fixes"]:
             listed = glossary.entry_for(fix["words"]) is not None
-            if fix["fix"] == FIX_GLOSSARY_NAME and not listed:
+            if fix["fix"] == FIX_GLOSSARY_NAME and not listed and glossary.entry_for(
+                    LEADING_ARTICLE_PATTERN.sub("", unquoted(fix["words"]))) is None:
                 problems.append(f"flag {index} {flag['term']!r}: fix (a) {fix['words']!r} "
                                 f"is in no glossary")
             if fix["fix"] == FIX_NEW_PROJECT_TERM and ("-" not in fix["words"] or listed):
@@ -424,7 +429,12 @@ def line_around(document, offset):
     if len(line) <= PASSAGE_CONTEXT_CHARACTERS:
         return line.strip()
     left = max(0, offset - start - PASSAGE_CONTEXT_CHARACTERS // 2)
-    return line[left:left + PASSAGE_CONTEXT_CHARACTERS].strip()
+    right = left + PASSAGE_CONTEXT_CHARACTERS
+    while left > 0 and not line[left - 1].isspace():
+        left -= 1
+    while right < len(line) and not line[right].isspace():
+        right += 1
+    return line[left:right].strip()
 
 
 def glossary_fix(entry):
