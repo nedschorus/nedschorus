@@ -636,6 +636,20 @@ def main():
               and "selecting since the head commit" not in output,
               f"exit {exit_code}\n{output}\n{json.dumps(calls)}")
 
+        name = "since-merged-past-an-unreadable-test-log"
+        exit_code, output, _, _, _ = run_case(
+            scratch, name, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            head_test_run_test_logs=[(f"{'0' * 40}.txt", None),
+                                     ("MERGED.txt", head_test_run_record("MERGED", 0))])
+        merged = merged_commit(scratch, name)
+        calls = runner_calls(scratch, name)
+        check("a test log that cannot be read is passed over, and a passing record in a "
+              "test log read after it is still used",
+              exit_code == 0 and len(calls) == 1 and calls[0]["argv"][:2] == [
+                  "--only-suites-whose-recorded-inputs-changed-since", merged]
+              and "could not be read, so it is not used" in output,
+              f"exit {exit_code}\n{output}\n{json.dumps(calls)}")
+
         for name, test_logs, notice in (
                 ("since-head-when-last-record-failed",
                  [("MERGED.txt", head_test_run_record("MERGED", 0)
