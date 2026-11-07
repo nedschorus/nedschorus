@@ -88,6 +88,12 @@ def pull_request_merged_worktree(arguments, number):
     return arguments.merge_lane_review_worktrees_directory / f"pr{number}-merged"
 
 
+def pull_request_head_test_run_log_store(arguments, number):
+    """The --log-store-root the head test run of pull request number is given."""
+    return (arguments.merge_lane_worktrees_and_outputs_directory / "hr" / f"pr{number}"
+            / "log-store")
+
+
 def review_tool_missing_message(arguments, relative_path):
     """Return None when the review tools worktree holds relative_path; else what to do."""
     worktree = arguments.review_tools_worktree_at_main
