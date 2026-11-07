@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Give one document the cold-read-fast-read: one fast-clarify cold-read-cell
-on the fast cold-read-tier, then one cold-read-cell on Opus for Question 4.
+on the fast cold-read-tier and, at the same time, one cold-read-cell on Opus
+for Question 4.
 
 Usage:
   nc-systems/cold-read/cold-read-fast-read.py --target docs/walk/foo-draft.md
@@ -183,21 +184,25 @@ line after it tells the agent that ran the read to copy that line into its
 next message to the user, so the user hears that Ultra ran out.
 
 QUESTION 4, WHAT SHOULD BE CODE. The fast-clarify cell answers Questions 1
-to 3. Once it, or the Sonnet backup, has written the report, a second cell
-asks Question 4 of the cold-read-target itself, not the marked copy, through
+to 3. A second cell, started just before it, runs beside it, its retry and the
+Sonnet backup, and asks Question 4 of the cold-read-target itself, not the
+marked copy, through
 the claude launcher on claude-opus-5-5 at high effort, with
 COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE below, whose reading rules are cut from
 FAST_CLARIFY_PROMPT_TEMPLATE. Its answer, under its own provenance stamp,
 becomes the report's `## Question 4: What should be code` section, placed
-before the sentence coverage section, so the report has four sections. It
-runs after the fast-clarify cell, not beside it: the claude launcher reports
-as a stray write any file in the checkout that changes while it runs, and on
-the walk route the fast-clarify cell writes its report there; run afterwards,
-that report already exists when the launcher starts. When the cell fails, or gives no answer within
-COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS, after which
-its process group is killed, the section and a line on stderr say so and
-why, and the read still delivers Questions 1 to 3 with the exit it would
-have had. When Questions 1 to 3 fail, Question 4 is not asked.
+before the sentence coverage section, so the report has four sections. The
+two cells can run at once because neither writes in the checkout while the
+other runs: each writes its report into this program's temporary directory,
+and the claude launcher reports as a stray write any file in the checkout
+that changes while it runs. When the cell fails, or gives no answer within
+COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS of its
+start, after which its process group is killed, the section and a line on
+stderr say so and why, and the read still delivers Questions 1 to 3 with the
+exit it would have had. When Questions 1 to 3 fail, or the read ends any
+other way without a report, the Question 4 cell's process group is killed if
+it is still running, its answer is dropped, and a line on stderr says
+Question 4 was abandoned.
 """
 
 from __future__ import annotations
@@ -213,6 +218,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import typing
 
 # This file sits in nc-systems/cold-read/, two directories below the root.
@@ -1310,11 +1316,18 @@ def cold_read_cell_reviewer_launcher_failure_cause_line(
     return f"exit {exit_code}: {detail}"
 
 
-def what_should_be_code_section(target: pathlib.Path, scratch: pathlib.Path) -> str:
-    """Ask the Question 4 cell about `target`, re-emit its launcher's output on
-    stderr, and return the report section: the heading, then the cell's
-    provenance stamp and answer, or, when the cell failed, a paragraph saying
-    so and why, also printed on stderr. A failed cell never fails the read."""
+class WhatShouldBeCodeQuestionCell(typing.NamedTuple):
+    """A Question 4 cell started by what_should_be_code_cell_start."""
+    process: subprocess.Popen
+    answer: pathlib.Path
+    launcher_output: pathlib.Path
+    target: pathlib.Path
+    deadline: float
+
+
+def what_should_be_code_cell_start(target: pathlib.Path, scratch: pathlib.Path) -> WhatShouldBeCodeQuestionCell:
+    """Start the Question 4 cell about `target` in a process group of its own
+    and return it without waiting; its time limit runs from now."""
     prompt_file = scratch / WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_SCRATCH_FILE_NAME
     prompt_file.write_text(COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_TEMPLATE, encoding="utf-8")
     answer_directory = scratch / WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_DIRECTORY_NAME
@@ -1330,10 +1343,11 @@ def what_should_be_code_section(target: pathlib.Path, scratch: pathlib.Path) -> 
         "--target", str(target), "--report", str(answer),
         "--prompt-file", str(prompt_file),
     ]
-    print(f"{PROGRAM}: Questions 1 to 3 are answered; asking Question 4, What should "
-          f"be code, about {target}, of {WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID} at "
+    print(f"{PROGRAM}: asking Question 4, What should be code, about {target}, of "
+          f"{WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID} at "
           f"{WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_EFFORT} effort, for up to "
-          f"{COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS / 60:g} minutes. "
+          f"{COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS / 60:g} minutes, "
+          f"while the fast-clarify cell answers Questions 1 to 3. "
           f"If the Question 4 cell fails or runs past that time, the report still holds "
           f"Questions 1 to 3, and its Question 4 section says why Question 4 was not answered.",
           file=sys.stderr)
@@ -1342,17 +1356,37 @@ def what_should_be_code_section(target: pathlib.Path, scratch: pathlib.Path) -> 
         process = subprocess.Popen(
             command, stdout=output, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
             cwd=REPO_ROOT, start_new_session=True)
-        try:
-            exit_code = process.wait(
-                timeout=COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
-            exit_code = None
-            cell_common.stop_process_tree(process)
-    output_text = launcher_output.read_text(encoding="utf-8")
+    return WhatShouldBeCodeQuestionCell(
+        process, answer, launcher_output, target,
+        time.monotonic() + COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS)
+
+
+def what_should_be_code_cell_abandon(cell: WhatShouldBeCodeQuestionCell) -> None:
+    """Stop the Question 4 cell's process group, whether or not it is still
+    running, re-emit its launcher's output on stderr, and say on stderr that
+    its answer is not used."""
+    cell_common.stop_process_tree(cell.process)
+    print(cell.launcher_output.read_text(encoding="utf-8"), file=sys.stderr, end="")
+    print(f"{PROGRAM}: Question 4 was abandoned: the read ended with no report to hold "
+          f"its answer; its cell was stopped if it was still running.", file=sys.stderr)
+
+
+def what_should_be_code_section(cell: WhatShouldBeCodeQuestionCell) -> str:
+    """Wait for the Question 4 cell until its time limit, stopping it there,
+    re-emit its launcher's output on stderr, and return the report section:
+    the heading, then the cell's provenance stamp and answer, or, when the
+    cell failed, a paragraph saying so and why, also printed on stderr. A
+    failed cell never fails the read."""
+    try:
+        exit_code = cell.process.wait(timeout=max(0.0, cell.deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        exit_code = None
+        cell_common.stop_process_tree(cell.process)
+    output_text = cell.launcher_output.read_text(encoding="utf-8")
     print(output_text, file=sys.stderr, end="")
     if exit_code == 0:
         return (f"\n{WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING}\n\n"
-                f"{answer.read_text(encoding='utf-8').strip()}\n")
+                f"{cell.answer.read_text(encoding='utf-8').strip()}\n")
     if exit_code is None:
         cause = (f"no answer within "
                  f"{COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS / 60:g} "
@@ -1361,7 +1395,7 @@ def what_should_be_code_section(target: pathlib.Path, scratch: pathlib.Path) -> 
         cause = cold_read_cell_reviewer_launcher_failure_cause_line(
             CLAUDE_CELL_LAUNCHER, exit_code, output_text)
     rerun = shlex.join(["python3", str(pathlib.Path(__file__).resolve()),
-                        "--target", str(target)])
+                        "--target", str(cell.target)])
     failure = (f"Question 4 was not answered: the "
                f"{WHAT_SHOULD_BE_CODE_QUESTION_COLD_READ_CELL_LABEL} cell, which "
                f"asks Question 4 of {WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID}, failed ({cause}). "
@@ -1379,17 +1413,16 @@ def what_should_be_code_section(target: pathlib.Path, scratch: pathlib.Path) -> 
 def fast_read_report_finish_and_print_path(
     *, report: pathlib.Path, cell_report: pathlib.Path, target: pathlib.Path, sentences: dict,
     marked_copy_kept, full_run_class_name, bare_references, launch_sha256: str,
-    on_records_route: bool, backup_line: str, scratch: pathlib.Path,
-    quota_line: str = "",
+    on_records_route: bool, backup_line: str,
+    question_4_cell: WhatShouldBeCodeQuestionCell, quota_line: str = "",
 ) -> int:
     """Turn the cell's report, cell_report, into the read's, written once at
-    report: ask Question 4 and add its section, attach the sentences, the
+    report: wait for the Question 4 cell and add its section, attach the sentences, the
     coverage and the bare numbers, name an edit made during the read and the
     Sonnet backup, ship the record, print the path. Returns 0, or 1 when
     the record did not reach the log-store, whether or not Question 4 was
     answered."""
-    # Asked only once Questions 1 to 3 have a report to hold the answer.
-    question_4_section = what_should_be_code_section(target, scratch)
+    question_4_section = what_should_be_code_section(question_4_cell)
     # Before anything reads or ships it: put each original sentence under
     # the restatement claiming its id, and say which sentences no
     # restatement claimed.
@@ -1491,53 +1524,61 @@ def main() -> int:
         cell_report = (pathlib.Path(scratch) / FAST_CLARIFY_CELL_REPORT_SCRATCH_DIRECTORY_NAME
                        / report.name)
         report.unlink(missing_ok=True)
+        # Started after every write this program makes in the checkout before
+        # its report, so the claude launcher's stray-write check sees none of them.
+        question_4_cell = what_should_be_code_cell_start(target, pathlib.Path(scratch))
         finish = dict(
             report=report, cell_report=cell_report, target=target, sentences=sentences,
             marked_copy_kept=marked_copy if on_records_route else None,
             full_run_class_name=full_run_class_name, bare_references=bare_references,
             launch_sha256=launch_sha256, on_records_route=on_records_route,
-            scratch=pathlib.Path(scratch))
-        quota_error_line = ""
-        for attempt in range(1, FAST_READ_ATTEMPTS + 1):
+            question_4_cell=question_4_cell)
+        try:
+            quota_error_line = ""
+            for attempt in range(1, FAST_READ_ATTEMPTS + 1):
+                exit_code, output = run_one_fast_clarify_cell(
+                    AGY_CELL_LAUNCHER, marked_copy, cell_report, prompt_file)
+                if exit_code == 0:
+                    return fast_read_report_finish_and_print_path(**finish, backup_line="")
+                gemini_cause = cold_read_cell_reviewer_launcher_failure_cause_line(
+                    AGY_CELL_LAUNCHER, exit_code, output)
+                if exit_code == EXIT_BAD_INVOCATION:
+                    print(f"{PROGRAM}: the cell launcher refused the invocation "
+                          f"(exit {EXIT_BAD_INVOCATION}); not retried, because the "
+                          "same invocation would be refused the same way.",
+                          file=sys.stderr)
+                    break
+                if gemini_monthly_spending_cap_reached(AGY_CELL_LAUNCHER, output):
+                    print(f"{PROGRAM}: Gemini's monthly spending cap is reached; not "
+                          "retried, because a retry cannot pass a monthly cap.",
+                          file=sys.stderr)
+                    break
+                quota_error_line = gemini_ultra_quota_error_line(AGY_CELL_LAUNCHER, output)
+                if quota_error_line:
+                    print(f"{PROGRAM}: {gemini_quota_not_retried_message(quota_error_line)}",
+                          file=sys.stderr)
+                    break
+                if attempt < FAST_READ_ATTEMPTS:
+                    print(f"{PROGRAM}: attempt {attempt} of {FAST_READ_ATTEMPTS} failed "
+                          f"(exit {exit_code}); retrying once.", file=sys.stderr)
+            print(f"{PROGRAM}: the Gemini fast-clarify cell failed ({gemini_cause}); "
+                  f"running the same cell once on {SONNET_BACKUP_MODEL}, the Sonnet "
+                  "backup, through the claude cell launcher.", file=sys.stderr)
             exit_code, output = run_one_fast_clarify_cell(
-                AGY_CELL_LAUNCHER, marked_copy, cell_report, prompt_file)
+                CLAUDE_CELL_LAUNCHER, marked_copy, cell_report, prompt_file)
             if exit_code == 0:
-                return fast_read_report_finish_and_print_path(**finish, backup_line="")
-            gemini_cause = cold_read_cell_reviewer_launcher_failure_cause_line(
-                AGY_CELL_LAUNCHER, exit_code, output)
-            if exit_code == EXIT_BAD_INVOCATION:
-                print(f"{PROGRAM}: the cell launcher refused the invocation "
-                      f"(exit {EXIT_BAD_INVOCATION}); not retried, because the "
-                      "same invocation would be refused the same way.",
-                      file=sys.stderr)
-                break
-            if gemini_monthly_spending_cap_reached(AGY_CELL_LAUNCHER, output):
-                print(f"{PROGRAM}: Gemini's monthly spending cap is reached; not "
-                      "retried, because a retry cannot pass a monthly cap.",
-                      file=sys.stderr)
-                break
-            quota_error_line = gemini_ultra_quota_error_line(AGY_CELL_LAUNCHER, output)
-            if quota_error_line:
-                print(f"{PROGRAM}: {gemini_quota_not_retried_message(quota_error_line)}",
-                      file=sys.stderr)
-                break
-            if attempt < FAST_READ_ATTEMPTS:
-                print(f"{PROGRAM}: attempt {attempt} of {FAST_READ_ATTEMPTS} failed "
-                      f"(exit {exit_code}); retrying once.", file=sys.stderr)
-        print(f"{PROGRAM}: the Gemini fast-clarify cell failed ({gemini_cause}); "
-              f"running the same cell once on {SONNET_BACKUP_MODEL}, the Sonnet "
-              "backup, through the claude cell launcher.", file=sys.stderr)
-        exit_code, output = run_one_fast_clarify_cell(
-            CLAUDE_CELL_LAUNCHER, marked_copy, cell_report, prompt_file)
-        if exit_code == 0:
-            return fast_read_report_finish_and_print_path(
-                **finish,
-                backup_line=(f"{SONNET_BACKUP_HASHTAG} The Gemini fast-clarify cell "
-                             f"failed ({gemini_cause}), so {SONNET_BACKUP_MODEL} read "
-                             "this document instead, as the provenance stamp says."),
-                quota_line=ultra_quota_line(quota_error_line) if quota_error_line else "")
-        sonnet_cause = cold_read_cell_reviewer_launcher_failure_cause_line(
-            CLAUDE_CELL_LAUNCHER, exit_code, output)
+                return fast_read_report_finish_and_print_path(
+                    **finish,
+                    backup_line=(f"{SONNET_BACKUP_HASHTAG} The Gemini fast-clarify cell "
+                                 f"failed ({gemini_cause}), so {SONNET_BACKUP_MODEL} read "
+                                 "this document instead, as the provenance stamp says."),
+                    quota_line=ultra_quota_line(quota_error_line) if quota_error_line else "")
+            sonnet_cause = cold_read_cell_reviewer_launcher_failure_cause_line(
+                CLAUDE_CELL_LAUNCHER, exit_code, output)
+        finally:
+            # Inside the temporary directory: the cell writes there until it stops.
+            if question_4_cell.process.returncode is None:
+                what_should_be_code_cell_abandon(question_4_cell)
     if bare_references:
         print(f"{PROGRAM}: bare issue, pull request or task numbers in this walk "
               f"draft: {len(bare_references)}. The read failed, so no suggestions "
