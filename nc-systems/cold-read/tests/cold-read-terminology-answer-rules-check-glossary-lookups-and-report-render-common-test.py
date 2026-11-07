@@ -230,6 +230,18 @@ answer = base_answer()
 answer["flags"][0]["fixes"] = [{"fix": "a", "words": "Agent seats", "uses": []}]
 check("a fix (a) is a glossary term whatever its case, hyphen or plural",
       problems_of(answer) == [], problems_of(answer))
+for words in ("the agent-seat", "An agent-seat", '"a cold-read-cell"', "`the cold-read-cell`"):
+    answer = base_answer()
+    answer["flags"][0]["fixes"] = [{"fix": "a", "words": words, "uses": []}]
+    check(f"a fix (a) written {words!r} is a glossary term", problems_of(answer) == [],
+          problems_of(answer))
+rejects("a fix (a) of two glossary terms joined by 'or' is in no glossary",
+        lambda a: flag(a, 0).update(fixes=[{"fix": "a", "words": "agent-seat or cold-read-cell",
+                                            "uses": []}]),
+        "is in no glossary")
+rejects("a leading article does not excuse a fix (a) naming no glossary term",
+        lambda a: flag(a, 0).update(fixes=[{"fix": "a", "words": "the incrementer", "uses": []}]),
+        "fix (a) 'the incrementer' is in no glossary")
 
 unchecked_schema = copy.deepcopy(SCHEMA)
 unchecked_schema["properties"]["document_kind"]["pattern"] = "."
@@ -313,6 +325,16 @@ check("Part 5 adds a test (5) flag with fix (a) for a term the model did not fla
       and added[0]["fixes"] == [{"fix": "a", "words": "cold-read-cell", "uses": []}]
       and added[0]["clashes_with_location"] == "glossary"
       and "Cold-Read-Cell" in added[0]["passage"], added)
+
+long_line = ("word " * 60) + "the agent seat runs " + ("tail " * 60)
+cut = terminology.line_around(long_line, long_line.index("agent seat"))
+check("a passage the runner quotes from a long line is cut at whitespace, not inside a word",
+      "agent seat" in cut and set(cut.split()) <= {"word", "the", "agent", "seat", "runs", "tail"}
+      and long_line.find(cut) != -1, cut)
+odd_line = ("x" * 7 + " ") * 40 + "the agent seat runs" + (" y" + "y" * 6) * 40
+cut = terminology.line_around(odd_line, odd_line.index("agent seat"))
+check("a passage cut at whitespace keeps whole words at both ends",
+      cut.split()[0] == "x" * 7 and cut.split()[-1] == "y" * 7, cut)
 
 # --- The report ---------------------------------------------------------------
 report = terminology.terminology_report_from_answer(base_answer(), SCHEMA, DOCUMENT, ENTRIES)
