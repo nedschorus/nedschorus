@@ -7,7 +7,9 @@ ssh session is opened. Cases: every step runs in order and passes; the Mac's
 token reaches only the accepted-tokens step, on standard input; a failing step
 stops the run and reports the step, its output and its advice; ssh's exit 255
 gets the reach-ned-box advice; a service answer other than the one a check needs
-fails; a machine other than the Mac is refused; --print runs nothing. Two cases
+fails; a machine other than the Mac is refused; --print runs nothing; the
+firewall step runs `sudo -n`, its advice names --skip-firewall-step-rule-added-by-hand,
+and that option skips the step and runs the rest. Two cases
 run the token and accepted-tokens commands in a real shell under a temporary
 HOME: a token is made once and kept, and the accepted-tokens file holds both,
 and is left as it was when ned-box's token file cannot be read. One case calls
@@ -115,6 +117,22 @@ with tempfile.TemporaryDirectory() as directory:
           shlex.split(sudo_line) == ["ssh", "-t", "nedlern@ned-box",
                                      runner.calls[6][1].replace("sudo -n ", "sudo ", 1)]
           and "sudo -n" not in shlex.split(sudo_line)[3], sudo_line)
+    check("the firewall step runs sudo with -n, so a sudo that wants a password fails at once "
+          "instead of waiting for one",
+          runner.calls[6][1].startswith("sudo -n ufw allow "), runner.calls[6][1])
+    check("the sudo advice says to run the install again with the option that skips the "
+          "firewall step, since sudo would stop it there again",
+          f"`{installer.INSTALL_RERUN_COMMAND} --skip-firewall-step-rule-added-by-hand`" in err, err)
+
+    runner = FakeRunner()
+    code, out, err = run_main(runner, ["--skip-firewall-step-rule-added-by-hand"])
+    check("with --skip-firewall-step-rule-added-by-hand the firewall step is skipped and reported, and "
+          "every other step runs, the checks from the Mac included",
+          code == 0 and len(runner.calls) == step_count - 1
+          and not any("ufw" in c[1] for c in runner.calls)
+          and "step 7 skipped: ned-box's firewall opens the service's port" in out
+          and "step 7 passed" not in out and "step 10 passed: from the mac" in out
+          and "is installed" in out, (code, runner.calls, out, err))
 
     runner = FakeRunner({2: (255, "", "ssh: connect to host ned-box port 22: No route to host")})
     code, out, err = run_main(runner)

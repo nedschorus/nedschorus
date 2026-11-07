@@ -309,6 +309,18 @@ if "dump_argv" in step:
     # Bash are one pair, and a joined string could not tell that from a
     # single argument that happens to contain both.
     pathlib.Path(step["dump_argv"]).write_text(json.dumps(argv), encoding="utf-8")
+if "dump_record_directory_descriptor_count" in step:
+    # How many of the stub's descriptors are open on the record directory: one when the cell passed
+    # its being-written lock on to the reviewer program, none when the cell closed it.
+    record_directory = os.stat(report_path.parent)
+    count = 0
+    for name in os.listdir("/dev/fd"):
+        try:
+            opened = os.fstat(int(name))
+        except OSError:
+            continue
+        count += (opened.st_dev, opened.st_ino) == (record_directory.st_dev, record_directory.st_ino)
+    pathlib.Path(step["dump_record_directory_descriptor_count"]).write_text(str(count), encoding="utf-8")
 if "stderr" in step:
     sys.stderr.write(step["stderr"])
 if "stdout" in step:
@@ -382,7 +394,7 @@ def dirty_the_target(repository):
 
 
 def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
-                      runtime="claude", environment_overrides=None, cell="defect-hunt"):
+                      runtime="claude", environment_overrides=None, cell="defect-hunt", pass_fds=()):
     """One cell launcher, run against a stub standing in for its runtime.
 
     The stub is installed under the runtime's own name, because that is how
@@ -412,14 +424,15 @@ def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
          "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
          *arguments],
         capture_output=True, text=True, check=False, env=environment, cwd=repository,
+        pass_fds=pass_fds,
     )
 
 
 def run_claude_cell(repository, stub_directory, plan, report_path, *arguments,
-                    environment_overrides=None, cell="defect-hunt"):
+                    environment_overrides=None, cell="defect-hunt", pass_fds=()):
     return run_cell_launcher(repository, stub_directory, plan, report_path,
                              *arguments, runtime="claude",
-                             environment_overrides=environment_overrides, cell=cell)
+                             environment_overrides=environment_overrides, cell=cell, pass_fds=pass_fds)
 
 
 def run_codex_cell(repository, stub_directory, plan, report_path, *arguments,
@@ -523,6 +536,34 @@ with tempfile.TemporaryDirectory() as scratch:
     )
     check("a file the reviewer newly creates is reported as a stray write",
           created_relative_path in stray_write_warning(result.stderr), repr(result.stderr))
+
+    # A cell started by a grid holding the record's being-written lock passes the lock on to the
+    # reviewer program it runs, so a cell killed while its reviewer still writes the report leaves the
+    # record unshipped until the reviewer exits too.
+    shipper_spec = importlib.util.spec_from_file_location(
+        "cold_read_record_ship_under_test", SYSTEM_DIRECTORY / "cold-read-record-ship.py")
+    shipper_module = importlib.util.module_from_spec(shipper_spec)
+    shipper_spec.loader.exec_module(shipper_module)
+    report = repository / "cold-read-records" / "run-lock" / "claude-defect-hunt-second-strongest-model.md"
+    report.parent.mkdir(parents=True)
+    descriptor_count_file = scratch / "reviewer-record-directory-descriptor-count"
+    shipper_module.record_directory_being_written_lock_take(report.parent)
+    try:
+        result = run_claude_cell(
+            repository, stubs,
+            {"*": {"report": "STUB REVIEW: one finding\n",
+                   "dump_record_directory_descriptor_count": str(descriptor_count_file)}},
+            report,
+            pass_fds=shipper_module.record_names.record_directory_being_written_lock_pass_fds_for_child_writers(report.parent),
+        )
+    finally:
+        shipper_module.record_directory_being_written_lock_release(report.parent)
+    reviewer_descriptor_count = (descriptor_count_file.read_text(encoding="utf-8")
+                                 if descriptor_count_file.exists() else "not written")
+    check("the reviewer program a cell runs holds the record's being-written lock the cell was passed",
+          reviewer_descriptor_count == "1",
+          f"descriptors on the record directory: {reviewer_descriptor_count}; exit {result.returncode}; "
+          f"stderr={result.stderr[-2000:]!r}")
 
     # --- And it does not cry wolf ------------------------------------------
     # The tree is dirty and the reviewer touched nothing but its report. A

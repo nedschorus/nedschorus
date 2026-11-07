@@ -154,6 +154,16 @@ if "read_paths" in step:
 if "dump_key" in step:
     pathlib.Path(step["dump_key"]).write_text(
         json.dumps(os.environ.get("GEMINI_API_KEY")), encoding="utf-8")
+if "dump_record_directory_descriptor_count" in step:
+    record_directory = os.stat(report_path.parent)
+    count = 0
+    for name in os.listdir("/dev/fd"):
+        try:
+            opened = os.fstat(int(name))
+        except OSError:
+            continue
+        count += (opened.st_dev, opened.st_ino) == (record_directory.st_dev, record_directory.st_ino)
+    pathlib.Path(step["dump_record_directory_descriptor_count"]).write_text(str(count), encoding="utf-8")
 if "stdout" in step:
     sys.stdout.write(step["stdout"])
 if "stderr" in step:
@@ -252,7 +262,7 @@ def scratch_home_for(stub_directory):
 
 
 def run_agy_cell(repository, stub_directory, plan, report_path, *arguments,
-                 tier="fast", path_override=None, gemini_api_key=None):
+                 tier="fast", path_override=None, gemini_api_key=None, pass_fds=()):
     install_stub_agy(stub_directory)
     environment = dict(os.environ)
     environment.pop("GEMINI_API_KEY", None)
@@ -269,6 +279,7 @@ def run_agy_cell(repository, stub_directory, plan, report_path, *arguments,
          "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
          *arguments],
         capture_output=True, text=True, check=False, env=environment, cwd=repository,
+        pass_fds=pass_fds,
     )
 
 
@@ -724,6 +735,37 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a cell stopped after agy exited exits 128 plus SIGTERM's number",
           launcher.returncode == 128 + signal.SIGTERM, repr(launcher.returncode))
     kill_left_over_processes(child_pids)
+
+    # --- The being-written lock reaches agy on the timeout path ------------
+    # The agy cell always runs its reviewer under a per-model timeout, a launch path apart from
+    # the one the other cells take, so a cell killed while agy still writes the report leaves the
+    # record unshipped only if agy holds the lock the cell was passed.
+    shipper_spec = importlib.util.spec_from_file_location(
+        "cold_read_record_ship_under_test", SYSTEM_DIRECTORY / "cold-read-record-ship.py")
+    shipper_module = importlib.util.module_from_spec(shipper_spec)
+    shipper_spec.loader.exec_module(shipper_module)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "being-written-lock")
+    report.parent.mkdir(parents=True)
+    descriptor_count_file = scratch / "agy-record-directory-descriptor-count"
+    shipper_module.record_directory_being_written_lock_take(report.parent)
+    try:
+        result = run_agy_cell(
+            repository, stubs,
+            {"*": {"report": "STUB AGY REVIEW\n",
+                   "dump_record_directory_descriptor_count": str(descriptor_count_file)}},
+            report,
+            pass_fds=shipper_module.record_names.record_directory_being_written_lock_pass_fds_for_child_writers(
+                report.parent),
+        )
+    finally:
+        shipper_module.record_directory_being_written_lock_release(report.parent)
+    agy_descriptor_count = (descriptor_count_file.read_text(encoding="utf-8")
+                            if descriptor_count_file.exists() else "not written")
+    check("agy, run under the per-model timeout, holds the record's being-written lock the cell was passed",
+          agy_descriptor_count == "1",
+          f"descriptors on the record directory: {agy_descriptor_count}; exit {result.returncode}; "
+          f"stderr={result.stderr[-2000:]!r}")
 
     # --- No sandbox program on PATH: refused, agy never started ------------
     repository = build_scratch_repository(scratch)

@@ -70,7 +70,7 @@ NED_BOX_HOME_MODULE = (
 # cold-read-claude-cell.py starts its claude command line from this module.
 CLAUDE_CODE_COMMAND_LINE_PREFIX_MODULE = (
     SYSTEM_DIRECTORY.parent / "general-tools"
-    / "claude-code-headless-print-mode-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+    / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 # cold-read-cell-common.py checks a JSON answer and looks its terms up in the
 # glossaries through these two modules.
 JSON_SCHEMA_CHECK_MODULE = (

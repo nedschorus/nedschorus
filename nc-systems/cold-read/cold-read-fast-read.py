@@ -89,10 +89,18 @@ not reach the log-store.
 The cold-read-cell writes its report into this program's temporary
 directory, and the finished report is written to the path above once, after
 Question 4 is answered and the sentences are attached. A record is shipped
-add-only, and another program, such as the hook that ships every worktree's
-records before a `git worktree remove`, may ship it while the read is still
-running; a report rewritten after such a shipment would make the read's own
-shipment, and every later one, refuse the record. Before the cell launches,
+add-only, and a report rewritten after a shipment would make the read's own
+shipment, and every later one, refuse the record. This program holds the
+record's being-written lock, a flock on the record directory taken with
+cold-read-record-ship.py's record_directory_being_written_lock_take, from
+the record's creation until it ships the record. While it is held,
+cold-read-record-ship.py prints FAILED for the record and copies nothing,
+and the hook that ships every worktree's records before a
+`git worktree remove` skips it. A shipper that does not test the lock, such
+as an older checkout's, may still ship it mid-read; that shipment holds at
+most target/ and the marked copy, and a shipment only adds files, so the
+read's own shipment adds the rest. Before
+the cell launches,
 this program removes the report path, so a suggestions file left by an
 earlier read is replaced, never appended to, and a failed read leaves none.
 
@@ -756,6 +764,7 @@ def fast_read_report_path_for_target(
         return suggestions
     record_dir, store_unlisted = record_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
         RECORDS_DIR / record_directory_name_for_target(target, now))
+    record_shipper.record_directory_being_written_lock_take(record_dir)
     if store_unlisted is not None:
         print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(PROGRAM, record_dir, store_unlisted),
               file=sys.stderr)
@@ -1182,9 +1191,11 @@ def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> None:
 
 
 def ship_record(record_dir: pathlib.Path) -> str:
-    """The shipper's one line, or a FAILED line of this program's own when
-    it could not run. The caller prints it on stderr, and exits 1 when it is
-    not `shipped:`, after the report path is printed."""
+    """Release the record's being-written lock, and return the shipper's one
+    line, or a FAILED line of this program's own when it could not run. The
+    caller prints it on stderr, and exits 1 when it is not `shipped:`, after
+    the report path is printed."""
+    record_shipper.record_directory_being_written_lock_release(record_dir)
     try:
         completed = subprocess.run(
             [sys.executable, str(RECORD_SHIPPER), str(record_dir)],

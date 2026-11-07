@@ -3411,17 +3411,6 @@ with tempfile.TemporaryDirectory() as temporary:
               in after_already_running[len(after_refusal):],
           (exit_code, after_already_running))
 
-    import subprocess as real_subprocess
-    completed = real_subprocess.run(
-        [sys.executable, str(SUPERVISOR_SCRIPT),
-         "--agent", "x", "--resume-session-id", "a", "--adopt-session-id", "b",
-         "--adopt-process-id", "1"],
-        capture_output=True, text=True, timeout=60, stdin=real_subprocess.DEVNULL,
-        env={**os.environ, "CLAUDE_CODE_TASK_LIST_ID": "nedschorus-x-tasks"})
-    check("supervisor refuses --resume-session-id together with adoption",
-          completed.returncode != 0 and "different recoveries" in completed.stderr,
-          completed.stderr)
-
     check("shell_words keeps a word with an unquoted # inside it, and the words after it",
           shell_words("echo a#b c") == ["echo", "a#b", "c"], shell_words("echo a#b c"))
     run_claude_json_presets_cases(root)
