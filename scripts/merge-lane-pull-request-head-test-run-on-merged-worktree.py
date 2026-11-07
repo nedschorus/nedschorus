@@ -76,7 +76,7 @@ def main(argv=None):
 
     first_failure = 0
     for number in arguments.pull_requests:
-        log_store = common.pull_request_head_test_run_log_store(arguments, number)
+        log_store = common.pull_request_head_test_run_log_store_root_directory(arguments, number)
         outputs = log_store.parent
         log_store.mkdir(parents=True, exist_ok=True)
         (outputs / "tmp").mkdir(parents=True, exist_ok=True)

@@ -243,19 +243,24 @@ def review_worktrees_remove(arguments):
 def head_test_run_passed_merged_commit(arguments):
     """Return (the pr<n>-merged commit of the newest passing head test run record, None),
     or (None, why no record gave one)."""
-    kind = (common.pull_request_head_test_run_log_store(arguments, arguments.pull_request)
+    kind = (common.pull_request_head_test_run_log_store_root_directory(arguments, arguments.pull_request)
             / head_test_run.PULL_REQUEST_HEAD_TEST_RUNS_KIND_DIRECTORY_NAME)
     newest = None
     for test_log in sorted(kind.glob("*/*.txt")):
         commit = test_log.stem
         try:
-            started, record = head_test_run.head_test_run_records_of_a_test_log(
-                test_log.read_text(encoding="utf-8"))[-1]
-        except (OSError, UnicodeDecodeError, head_test_run.HeadTestRunTestLogUnreadable) as error:
+            started, record = (
+                head_test_run.pull_request_head_test_run_test_log_split_into_records(
+                    test_log.read_text(encoding="utf-8"))[-1])
+        except (OSError, UnicodeDecodeError,
+                head_test_run.PullRequestHeadTestRunTestLogNotWholeRecordsError) as error:
             print(f"the head test run record {test_log} could not be read, so it is not "
-                  f"used: {error}", flush=True)
+                  f"used: {error}\n"
+                  f"Nothing to do: without it the test run selects more suites, never fewer.",
+                  flush=True)
             continue
-        if not head_test_run.head_test_run_record_passed_on(record, commit):
+        if not head_test_run.pull_request_head_test_run_record_passed_on_commit_check(
+                record, commit):
             continue
         if newest is None or started > newest[0]:
             newest = (started, commit)
@@ -271,7 +276,9 @@ def after_merge_test_run(arguments, merge_commit):
     if since is None:
         since = arguments.head_commit
         print(f"selecting since the head commit {since[:12]}, which runs more suites than "
-              f"the merge changed: {why_not}", flush=True)
+              f"the merge changed: {why_not}.\n"
+              f"Nothing to do: this run still tests every suite the merge could have changed.",
+              flush=True)
     else:
         print(f"selecting since {since[:12]}, the pr{arguments.pull_request}-merged commit "
               f"the head test run passed on", flush=True)
