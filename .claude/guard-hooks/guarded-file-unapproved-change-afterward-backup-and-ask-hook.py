@@ -738,7 +738,7 @@ def could_be_guarded(relative: str):
     """A cheap test that keeps every path the guard can protect; the guard's own functions
     then decide."""
     if "__pycache__/" in relative:
-        # Python's byte-code caches under .claude/hooks/ change on every run of a hook and
+        # Python's byte-code caches under .claude/guard-hooks/ change on every run of a hook and
         # instruct no one.
         return False
     name = relative.rsplit("/", 1)[-1]

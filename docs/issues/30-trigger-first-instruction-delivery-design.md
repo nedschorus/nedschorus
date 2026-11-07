@@ -88,7 +88,7 @@ The row for the user's words and approved notes is the one exception to the `anc
 
 Map load applies a **regex-cost lint**: rows with catastrophic-backtracking shapes (nested quantifiers over overlapping classes) are rejected at load with a log line, not evaluated.
 
-Ownership classification (open question for ops+vp): injector script in `.claude/hooks/` (hard, ops/vp); map + payloads proposed **free-logged** — they only add instructions, never block, and wiki-lane agents must be able to PR payload wording.
+Ownership classification (open question for ops+vp): injector script in `.claude/hooks/`, a directory now in git history only (hard, ops/vp); map + payloads proposed **free-logged** — they only add instructions, never block, and wiki-lane agents must be able to PR payload wording.
 
 ### Spacing state — NEW code (d-review F-SPACING; supersedes revision 1's "reference implementation" claim)
 

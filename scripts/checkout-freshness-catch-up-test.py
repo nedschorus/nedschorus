@@ -1241,7 +1241,7 @@ with tempfile.TemporaryDirectory() as naming_scratch:
           named())
     check("hooks and their wiring share one category, having one reason",
           "hooks and wiring that run on your work (2)"
-          in named((".claude/hooks/a-guard.py", "a hook"),
+          in named((".claude/guard-hooks/a-hook.py", "a hook"),
                    (".claude/settings.json", "wiring")), named())
     guard_listing = named((".claude/guard-hooks/a-guard.py", "a guard hook"))
     check("a guard under .claude/guard-hooks/ is named with the hooks",

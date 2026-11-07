@@ -61,7 +61,7 @@ Line numbers are at origin/main commit `1846c5282`, and each cites the line that
 
 These two say the agent need not act, so an agent that never reads them loses nothing. They are listed so that step 2 of the next action decides their channel too: leave them at exit 1, or move them with the rest.
 
-How the list was made: for every program registered in `.claude/settings.json` at `1846c5282`, `grep -n 'return 1$\|exit(1)\|EXIT_.*= *1'` and `grep -n 'file=sys.stderr'`, then reading each match. `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py` has `EXIT_REFUSED = 1`, but only on its `--approve` and `--restore` command-line paths; run as a hook, it reports in `additionalContext` and exits 0. A hook that exits 1 through a value computed elsewhere would not show in this search.
+How the list was made: for every program registered in `.claude/settings.json` at `1846c5282`, `grep -n 'return 1$\|exit(1)\|EXIT_.*= *1'` and `grep -n 'file=sys.stderr'`, then reading each match. `.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py` has `EXIT_REFUSED = 1`, but only on its `--approve` and `--restore` command-line paths; run as a hook, it reports in `additionalContext` and exits 0. A hook that exits 1 through a value computed elsewhere would not show in this search.
 
 ## Related, and not the same work
 
