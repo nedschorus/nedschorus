@@ -525,6 +525,11 @@ def read_tmux_kill(guard, command, working_directory, search_file_directory):
     return "refused" if reason else "passed", reason
 
 
+def read_pkill_pattern_kill(guard, command, working_directory, search_file_directory):
+    reason = guard.refusal_for(command)
+    return "refused" if reason else "passed", reason
+
+
 def read_search_file(guard, command, working_directory, search_file_directory):
     reason = guard.analyze_command_text(command, search_file_directory, time.monotonic)
     return "refused" if reason else "passed", reason
@@ -614,6 +619,7 @@ GUARDS = {
     ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py": read_force_push,
     ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py": read_issue_write,
     ".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py": read_tmux_kill,
+    ".claude/guard-hooks/pkill-killall-and-process-name-pattern-kill-refusal-hook.py": read_pkill_pattern_kill,
     ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py": read_search_file,
     ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py": read_codex_exec,
     "nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py":
