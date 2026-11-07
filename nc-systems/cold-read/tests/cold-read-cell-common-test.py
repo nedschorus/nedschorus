@@ -2238,6 +2238,8 @@ _chain_common = importlib.util.module_from_spec(_chain_common_spec)
 _chain_common_spec.loader.exec_module(_chain_common)
 with tempfile.TemporaryDirectory() as scratch:
     chain_report = Path(scratch) / "records" / "chain-report.md"
+    # run_model_chain's caller makes the record directory first; the record lock stats it.
+    chain_report.parent.mkdir()
     answered_models = []
 
     def answer_from_the_second_model_only(completed):
