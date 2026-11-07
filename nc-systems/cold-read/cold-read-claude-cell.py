@@ -39,6 +39,7 @@ it up with no change here.
 """
 
 import importlib.util
+import json
 import pathlib
 import sys
 
@@ -119,14 +120,14 @@ def structured_answer_invocation_builder(effort: str, schema_path: pathlib.Path,
 
     def build_invocation(model: str, prompt: str):
         command = [
-            *command_line_prefix.claude_code_headless_run_command_line_prefix_build("dontAsk"),
+            *command_line_prefix.claude_code_headless_run_command_line_prefix_build(
+                "dontAsk", own_settings=SETTINGS),
             "--model", model,
             "--effort", effort,
             "--output-format", "json",
             "--json-schema", schema_text,
             "--allowedTools", STRUCTURED_ANSWER_ALLOWED_TOOLS,
             "--disallowedTools", DISALLOWED_TOOLS,
-            "--settings", SETTINGS,
         ]
         return command, prompt
     return build_invocation
