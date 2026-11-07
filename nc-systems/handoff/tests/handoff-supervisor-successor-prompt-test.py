@@ -542,23 +542,21 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
             Path("/tmp/dialog-0002.md"),
             {"written-at": "2026-08-30T17:20:00Z", "next-step": "finish the supervisor"},
             launch_time_git_sync_report="launch-time-git-sync: fixture-branch is 3 commit(s) behind main",
-            branch_state_instruction=supervisor.BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION,
+            branch_state_instruction=supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION,
         )
     except TypeError:
         synced_prompt = ""
     check("ignition carries the launch-time-git-sync's own one-line result",
           "launch-time-git-sync: fixture-branch is 3 commit(s) behind main" in synced_prompt,
           synced_prompt[:900])
-    # The two instructions word for word. A seat acts at once on the sentence
+    # The instruction word for word. A seat acts at once on the sentence
     # about its own branch: the wording before 2026-09-16 had a seat merge main
     # into a branch under review thirty seconds after reading it, against the
     # ruling that working branches never take merges from main. Drift here is
     # unruled instruction.
-    check("the never-pushed branch-state instruction is word for word what the user approved",
-          supervisor.BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION == (
-              "This branch has never been pushed: rebase it onto origin/main before your "
-              "first substantive action and rerun the tests for what you touched."),
-          repr(supervisor.BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION))
+    check("the never-pushed branch-state instruction is gone, since the checkout-freshness hook rebases such a branch",
+          not hasattr(supervisor, "BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION"),
+          repr(getattr(supervisor, "BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION", None)))
     check("the pushed branch-state instruction is word for word what the user approved",
           supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION == (
               "This branch is pushed: leave its head as it is, and start new work on a "
@@ -575,11 +573,11 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               synced_prompt,
               "to a background subagent or Codex. "
               "launch-time-git-sync: fixture-branch is 3 commit(s) behind main — This "
-              "branch has never been pushed: rebase it onto origin/main before your "
-              "first substantive action and rerun the tests for what you touched.",
+              "branch is pushed: leave its head as it is, and start new work on a "
+              "branch from origin/main.",
               expected_rest_after_the_branch_state_line),
           "rest after the pinned line: "
-          + repr(synced_prompt.split("what you touched.", 1)[-1])
+          + repr(synced_prompt.split("branch from origin/main.", 1)[-1])
           + "; expected: " + repr(expected_rest_after_the_branch_state_line))
     pushed_prompt = supervisor.build_ignition_prompt(
         Path("/tmp/dialog-0002.md"),
@@ -959,12 +957,14 @@ def run_launch_time_git_sync_cases(workspace: Path):
     check("the diverged-branch initial agent instructions never say to merge main",
           "git merge" not in diverged_prompt and "merge when ready" not in diverged_prompt,
           diverged_prompt)
-    check("a never-pushed diverged branch's initial agent instructions carry the rebase sentence",
-          "launch-time-git-sync: agent-branch is 1 ahead of main and 1 behind — This "
-          "branch has never been pushed: rebase it onto origin/main before your "
-          "first substantive action and rerun the tests for what you touched." in diverged_prompt
+    check("a never-pushed diverged branch's initial agent instructions carry no branch-state instruction",
+          report + "\n\nThen take the next step:\nfinish the review fix" in diverged_prompt
+          and "never been pushed" not in diverged_prompt
           and supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION not in diverged_prompt,
           diverged_prompt)
+    check("a never-pushed branch gets no branch-state instruction",
+          supervisor.choose_branch_state_instruction_from_working_directory_push_state(home) == "",
+          supervisor.choose_branch_state_instruction_from_working_directory_push_state(home))
 
     # Once the branch is on origin, the pushed sentence applies instead.
     git_in(["push", "--quiet", "origin", "agent-branch"], home)
@@ -1071,14 +1071,14 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
     check("a launch-time-git-sync git failure ends with the next steps, naming the git command to rerun",
           report.endswith(launch_time_git_sync_next_steps(f"`git -C {home} rev-parse --show-toplevel`")), report)
     plan = supervisor.DialogIgnitionPlan(root / "extract.md", {})
-    never_pushed = supervisor.BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION
+    pushed = supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION
     for shape, prompt in (
-            ("dialog", plan.compose(report, branch_state_instruction=never_pushed)),
+            ("dialog", plan.compose(report, branch_state_instruction=pushed)),
             ("boot-recovery", supervisor.IgnitionPlanWithoutConversationTail("next").compose(
-                report, branch_state_instruction=never_pushed))):
+                report, branch_state_instruction=pushed))):
         check(f"after a launch-time-git-sync git failure, the {shape} prompt gives the next steps and "
-              "no rebase instruction, which would contradict their stop",
-              report in prompt and never_pushed not in prompt, prompt)
+              "no branch-state instruction, which would contradict their stop",
+              report in prompt and pushed not in prompt, prompt)
         check(f"in the {shape} prompt, the git failure's report stands as its own paragraph",
               f"\n\n{report}\n\n" in prompt, prompt)
 
@@ -2314,15 +2314,15 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     line = expected_widget_overview_refresh_due_line("1111111", "2222222", 3, "2222222")
     branch_state_line = (
         "launch-time-git-sync: fixture-branch is 3 commit(s) behind main — This "
-        "branch has never been pushed: rebase it onto origin/main before your "
-        "first substantive action and rerun the tests for what you touched.")
-    never_pushed = supervisor.BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION
+        "branch is pushed: leave its head as it is, and start new work on a "
+        "branch from origin/main.")
+    pushed_instruction = supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION
     fields = {"written-at": "2026-09-28T17:20:00Z", "next-step": "finish the supervisor"}
     try:
         prompt = supervisor.build_ignition_prompt(
             Path("/tmp/dialog-0002.md"), fields,
             launch_time_git_sync_report="launch-time-git-sync: fixture-branch is 3 commit(s) behind main",
-            overview_refresh_due=(line,), branch_state_instruction=never_pushed)
+            overview_refresh_due=(line,), branch_state_instruction=pushed_instruction)
     except TypeError:
         prompt = ""
     expected_rest = " " + line + "\n\nThen take the next step:\nfinish the supervisor"
@@ -2335,7 +2335,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     try:
         plan_prompt = supervisor.DialogIgnitionPlan(Path("/tmp/dialog-0002.md"), fields).compose(
             "launch-time-git-sync: fixture-branch is 3 commit(s) behind main", (line,),
-            branch_state_instruction=never_pushed)
+            branch_state_instruction=pushed_instruction)
     except TypeError:
         plan_prompt = "compose takes no overview lines"
     check("the dialog plan hands its overview lines to the prompt it composes",
@@ -2344,7 +2344,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
         boot_recovery_prompt = supervisor.IgnitionPlanWithoutConversationTail(
             "finish the supervisor").compose(
                 "launch-time-git-sync: fixture-branch is 3 commit(s) behind main", (line,),
-                branch_state_instruction=never_pushed)
+                branch_state_instruction=pushed_instruction)
     except TypeError:
         boot_recovery_prompt = ""
     check("the boot-recovery prompt is the recovery note, the branch-state line, the "
@@ -2362,7 +2362,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     # agent-seat given overview-refresh lines, in a checkout with a system due
     # hands the successor the line, after the branch-state instruction, and
     # prints it on its console. The checkout is on a branch origin does not
-    # have, so the launch site chooses the never-pushed instruction.
+    # have, so the launch site chooses no branch-state instruction.
     seat = workspace / "overview-refresh-due-seat"
     seat.mkdir()
     git_in(["init", "--quiet", "--initial-branch=main"], seat)
@@ -2414,12 +2414,11 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
         env={**os.environ,
              "PATH": f"{no_open_pull_requests}{os.pathsep}{os.environ.get('PATH', '')}"})
     launched = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
-    check("a successor started as a fresh agent-session of agent-instructions-editor is given the "
-          "overview-refresh-due line after the branch-state instruction",
+    check("a successor started as a fresh agent-session of agent-instructions-editor on a never-pushed "
+          "branch is given the overview-refresh-due line right after the launch-time-git-sync's result",
           expected in launched
           and "launch-time-git-sync: seat-branch is current with main (fetch failed, comparing "
-          "against what is on disk) — "
-          + supervisor.BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION + " " + expected in launched,
+          "against what is on disk) " + expected in launched,
           f"{result.returncode} {launched[:2500]!r} {result.stdout[-600:]}")
     check("the supervisor prints the overview-refresh-due line on its console",
           f"handoff-supervisor: {expected}" in result.stdout, result.stdout[-900:])
@@ -2846,15 +2845,15 @@ def run_memory_review_due_prompt_cases(workspace: Path):
     launch_time_git_sync_report = "launch-time-git-sync: fixture-branch is 3 commit(s) behind main"
     branch_state_line = (
         launch_time_git_sync_report + " — This "
-        "branch has never been pushed: rebase it onto origin/main before your "
-        "first substantive action and rerun the tests for what you touched.")
-    never_pushed = supervisor.BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION
+        "branch is pushed: leave its head as it is, and start new work on a "
+        "branch from origin/main.")
+    pushed_instruction = supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION
     fields = {"written-at": "2026-09-30T19:20:00Z", "next-step": "finish the review"}
     try:
         prompt = supervisor.build_ignition_prompt(
             Path("/tmp/dialog-0002.md"), fields, launch_time_git_sync_report=launch_time_git_sync_report,
             overview_refresh_due=(overview_line,), memory_review_due=(memory_line,),
-            branch_state_instruction=never_pushed)
+            branch_state_instruction=pushed_instruction)
     except TypeError:
         prompt = ""
     expected_rest = (" " + overview_line + " " + memory_line
@@ -2868,7 +2867,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
     try:
         plan_prompt = supervisor.DialogIgnitionPlan(Path("/tmp/dialog-0002.md"), fields).compose(
             launch_time_git_sync_report, (overview_line,), (memory_line,),
-            branch_state_instruction=never_pushed)
+            branch_state_instruction=pushed_instruction)
     except TypeError:
         plan_prompt = "compose takes no memory review line"
     check("MEMORY REVIEW: the dialog plan hands its memory review line to the prompt it "
@@ -2880,7 +2879,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
     try:
         boot_recovery_prompt = supervisor.IgnitionPlanWithoutConversationTail("finish the review").compose(
             launch_time_git_sync_report, (overview_line,), (memory_line,),
-            branch_state_instruction=never_pushed)
+            branch_state_instruction=pushed_instruction)
     except TypeError:
         boot_recovery_prompt = ""
     check("MEMORY REVIEW: the boot-recovery prompt is the recovery note, the branch-state "
@@ -2930,7 +2929,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
     with fixture.in_place(), supervisor_names_replaced(
             launch_agent_session=launch_recording,
             launch_time_git_sync=lambda working_directory: launch_time_git_sync_report,
-            choose_branch_state_instruction_from_working_directory_push_state=lambda working_directory: never_pushed,
+            choose_branch_state_instruction_from_working_directory_push_state=lambda working_directory: pushed_instruction,
             overview_refresh_due_lines=lambda working_directory: (overview_line,),
             memory_review_due_lines=at_noon,
             stdin_isatty=False), contextlib.redirect_stdout(console):
@@ -3010,8 +3009,7 @@ def run_boot_ignition_case(workspace: Path):
           "launch-time-git-sync:" in launched, launched[:400])
     # The workspace is no git checkout, so no branch-state instruction applies.
     check("the boot-recovery initial agent instructions outside a checkout carry no branch-state instruction",
-          launched and supervisor.BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION not in launched
-          and supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION not in launched,
+          launched and supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION not in launched,
           launched[:700])
     state = supervisor.read_supervisor_state(handoff_directory / "bootignite-supervisor-state.json")
     check("boot-ignition consumes the handoff counter", state.get("consumed_counter") == 5, str(state))
@@ -3364,7 +3362,7 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
     # report string to the clock helper, which raises on it.
     try:
         prompt = plan.compose("launch-time-git-sync: composer-branch is 2 commit(s) behind main",
-                              branch_state_instruction=supervisor.BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION)
+                              branch_state_instruction=supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION)
     except (TypeError, AttributeError):
         prompt = ""
     check("the reincarnation prompt carries no queue status",
@@ -3378,8 +3376,7 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
           and "Calculate from `date` how long ago that was" in prompt, prompt)
     check("the reincarnation prompt carries the branch-state line the plan was composed with",
           "launch-time-git-sync: composer-branch is 2 commit(s) behind main — This "
-          "branch has never been pushed: rebase it onto origin/main before your "
-          "first substantive action"
+          "branch is pushed: leave its head as it is"
           in prompt, prompt)
     check("the reincarnation prompt points at the predecessor's subagent transcripts",
           f"{plan.predecessor_session_directory}/subagents/agent-<id>.jsonl" in prompt, prompt)

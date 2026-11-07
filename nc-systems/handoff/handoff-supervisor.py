@@ -411,11 +411,6 @@ def launch_time_git_sync_report_in_prompt(launch_time_git_sync_report: str,
     return f"\n\n{text}\n\n" if "\n" in launch_time_git_sync_report else text
 
 
-BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION = (
-    "This branch has never been pushed: rebase it onto origin/main before your "
-    "first substantive action and rerun the tests for what you touched."
-)
-
 BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION = (
     "This branch is pushed: leave its head as it is, and start new work on a "
     "branch from origin/main."
@@ -425,10 +420,10 @@ BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION = (
 # Printed to the handoff-supervisor's console, which the agent-session never reads.
 BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE = (
     "handoff-supervisor: could not tell whether the branch checked out in the agent-home is pushed, "
-    "so the new agent-session's initial-agent-instructions tell it neither to rebase that branch onto "
-    "origin/main nor to leave the branch's head as it is.\n"
+    "so the new agent-session's initial-agent-instructions do not tell it to leave the branch's head "
+    "as it is.\n"
     "handoff-supervisor: why: {cause}\n"
-    "handoff-supervisor: this launch goes ahead without either instruction.\n"
+    "handoff-supervisor: this launch goes ahead without that instruction.\n"
     "handoff-supervisor: if this console shows the same why line when the handoff-supervisor next "
     "launches this agent-seat, fix the git error it names; if the cause was passing, such as a remote "
     "that could not be reached, nobody needs to act."
@@ -436,9 +431,10 @@ BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE = (
 
 
 def choose_branch_state_instruction_from_working_directory_push_state(working_directory: Path) -> str:
-    """The one branch-state instruction that applies to the checkout's branch, or "" on
-    main, on a detached HEAD, or when git cannot tell, which it prints. Call it after
-    launch_time_git_sync, whose fetch brings origin's branches up to date."""
+    """The pushed-branch instruction when any of the branch's own commits is on origin, or
+    "" on main, on a never-pushed branch, on a detached HEAD, or when git cannot tell,
+    which it prints. Call it after launch_time_git_sync, whose fetch brings origin's
+    branches up to date."""
     branch = run_git_here(["rev-parse", "--abbrev-ref", "HEAD"], working_directory, timeout=15)
     if branch.returncode != 0:
         command = shlex.join(["git", "-C", str(working_directory), "rev-parse", "--abbrev-ref", "HEAD"])
@@ -450,11 +446,9 @@ def choose_branch_state_instruction_from_working_directory_push_state(working_di
     # head_state reads main as pushed, since origin/main equals it.
     if name == "main":
         return ""
-    # The Stop hook rebases only what head_state calls unpushed, so the successor is told the same.
     key, text = checkout_freshness_catch_up.head_state(working_directory, name)
-    if key == "unpushed":
-        return BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION
-    if key == "detached":
+    # The checkout-freshness Stop hook rebases what head_state calls unpushed at each turn's end.
+    if key in ("unpushed", "detached"):
         return ""
     if key == "unknown":
         print(BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE.format(
