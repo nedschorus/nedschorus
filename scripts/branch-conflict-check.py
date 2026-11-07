@@ -612,15 +612,18 @@ def clearing_lines(pull_request, branch, head, base, runner=run):
         ]
     return [
         "ANSWER: rebase -- the branch has no open pull request, so it is rebased "
-        "onto %s, even if it is already on origin." % base,
+        "onto %s if it is not on origin yet; if it is, %s is merged into it, "
+        "because GitHub refuses every force-push to this repository." % (base, base),
     ] + understand + [
-        "Run git rebase %s, resolving each conflict so that both changes work." % base,
-        "If the branch is built on another branch, run git rebase --onto %s "
-        "<the other branch's head> instead." % base,
+        "If the branch is not on origin, run git rebase %s, resolving each conflict "
+        "so that both changes work." % base,
+        "If the branch is not on origin and is built on another branch, run git "
+        "rebase --onto %s <the other branch's head> instead." % base,
+        "If the branch is already on origin, run git merge %s, resolving each "
+        "conflict so that both changes work." % base,
         "Run python3 scripts/run-all-test-suites.py "
         "--only-suites-whose-recorded-inputs-changed-since %s." % base,
-        "If the branch is already on origin, push it with git push --force-with-lease; "
-        "the pre-push hook saves the commit it replaces.",
+        "If the branch is already on origin, push it with git push, without --force.",
     ]
 
 
