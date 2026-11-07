@@ -143,6 +143,11 @@ NED_BOX_NO_SANDBOX_SUITES_LINE = (
     "*/10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
     "no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py >> "
     "/home/nedlern/.claude/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.log 2>&1")
+# The GHI-MD edit pull requests' check, approval and merge, on ned-box alone.
+NED_BOX_GHI_MD_EDIT_PULL_REQUESTS_MERGE_LINE = (
+    "*/5 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.py >> "
+    "/home/nedlern/.claude/merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.log 2>&1")
 # The scheduled full mutation pass of merged pull requests, on ned-box alone.
 NED_BOX_SCHEDULED_FULL_MUTATION_PASS_LINE = (
     "30 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
@@ -293,7 +298,8 @@ check("the table's jobs are the two typed by hand before this program, the workt
       "weekly owner check of the work-snapshot hook, the session dialogs refresh, the "
       "guarded-file store's prune, the nc-shared-database's backup and its copy to the "
       "Mac, the deletion of exited agent-sessions' temp folders, the scheduled full "
-      "mutation pass, the no-sandbox test suites' run on main, and no other",
+      "mutation pass, the no-sandbox test suites' run on main, the GHI-MD edit pull "
+      "requests' check, approval and merge, and no other",
       sorted(real_jobs) == ["claude-code-temp-folders-of-exited-agent-sessions-delete",
                             "clean-worktrees", "daily-full-test-run-of-main",
                             "guarded-file-versions-and-approvals-store-removed-checkout-"
@@ -302,6 +308,7 @@ check("the table's jobs are the two typed by hand before this program, the workt
                             "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-"
                             "tmux-typing-watcher",
                             "log-store-session-dialogs-refresh",
+                            "merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge",
                             "nc-shared-database-newest-backup-copy-to-mac",
                             "nc-shared-database-nightly-backup-with-integrity-check",
                             "no-sandbox-test-suites-run-on-main-in-a-quiet-gap",
@@ -366,6 +373,19 @@ check("the no-sandbox test suites' run on main runs on ned-box alone, every 10 m
       and "nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py"
       in (REPOSITORY_ROOT / no_sandbox_suites["program"]).read_text(encoding="utf-8"),
       installer.cron_line(ned_box, no_sandbox_suites, no_sandbox_suites["on"]["ned-box"]))
+ghi_md_edit_pull_requests_merge = real_jobs["merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge"]
+check("the GHI-MD edit pull requests' check, approval and merge runs on ned-box alone, every 5 "
+      "minutes, and its program documents the table's line and names this installer",
+      list(ghi_md_edit_pull_requests_merge["on"]) == ["ned-box"]
+      and installer.cron_line(ned_box, ghi_md_edit_pull_requests_merge,
+                              ghi_md_edit_pull_requests_merge["on"]["ned-box"])
+      == NED_BOX_GHI_MD_EDIT_PULL_REQUESTS_MERGE_LINE
+      and f"    {NED_BOX_GHI_MD_EDIT_PULL_REQUESTS_MERGE_LINE}\n"
+      in (REPOSITORY_ROOT / ghi_md_edit_pull_requests_merge["program"]).read_text(encoding="utf-8")
+      and "nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py"
+      in (REPOSITORY_ROOT / ghi_md_edit_pull_requests_merge["program"]).read_text(encoding="utf-8"),
+      installer.cron_line(ned_box, ghi_md_edit_pull_requests_merge,
+                          ghi_md_edit_pull_requests_merge["on"]["ned-box"]))
 weekly_live_check_documentation = (
     REPOSITORY_ROOT / real_jobs["weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"]
     ["program"]).read_text(encoding="utf-8")
@@ -421,7 +441,9 @@ check("--print as ned-box prints ned-box's cron lines from the real table and ru
           "nc-shared-database-nightly-backup-with-integrity-check — cron line:",
           NED_BOX_NC_SHARED_DATABASE_BACKUP_LINE,
           "claude-code-temp-folders-of-exited-agent-sessions-delete — cron line:",
-          NED_BOX_TEMP_FOLDERS_DELETE_LINE],
+          NED_BOX_TEMP_FOLDERS_DELETE_LINE,
+          "merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-"
+          "merge — cron line:", NED_BOX_GHI_MD_EDIT_PULL_REQUESTS_MERGE_LINE],
       (exit_code, printed.getvalue(), errors.getvalue()))
 printed, errors = io.StringIO(), io.StringIO()
 with redirect_stdout(printed), redirect_stderr(errors):
