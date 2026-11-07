@@ -129,6 +129,10 @@ ALLOWED = [
     ("pkill -f -P, -f giving no pattern", "pkill -f -P 3989343 2>/dev/null"),
     ("pkill -P with --full and -n", "pkill --full -n -P 4321"),
     ("pkill -P inside an ssh remote command", "ssh nedlern@ned-box 'pkill -TERM -P 3718698 2>/dev/null; kill 3718698'"),
+    ("command -v pkill, which runs nothing", "command -v pkill"),
+    ("command -V killall, which runs nothing", "command -V killall"),
+    ("command -v pkill inside an ssh remote command, a recorded case",
+        "ssh -o BatchMode=yes nedlern@ned-box 'command -v pkill'"),
 ]
 
 for name, command in ALLOWED:
