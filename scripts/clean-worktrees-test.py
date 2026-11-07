@@ -76,6 +76,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Before anything runs git: a run started with GIT_DIR set, or with another
@@ -2336,14 +2337,29 @@ with tempfile.TemporaryDirectory() as scratch:
     elsewhere = scratch / "elsewhere"
     elsewhere.mkdir()
     outside_checkout = review_checkout("pr16-head", elsewhere)
+    # The merge program's after-merge window: merged an hour ago, its main test checkout still there.
+    recently_merged_checkout = review_checkout("pr17-merge-commit-on-main-worktree")
+    no_closing_time_checkout = review_checkout("pr18-head")
+    long_ago = "2026-01-01T00:00:00Z"
+    an_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     review_pull_requests = [
-        {"number": 10, "state": "MERGED", "headRefName": "a", "headRefOid": "1" * 40},
-        {"number": 11, "state": "CLOSED", "headRefName": "b", "headRefOid": "2" * 40},
-        {"number": 12, "state": "OPEN", "headRefName": "c", "headRefOid": "3" * 40},
-        {"number": 13, "state": "MERGED", "headRefName": "d", "headRefOid": "4" * 40},
-        {"number": 14, "state": "MERGED", "headRefName": "e", "headRefOid": "5" * 40},
-        {"number": 15, "state": "MERGED", "headRefName": "f", "headRefOid": "6" * 40},
-        {"number": 16, "state": "MERGED", "headRefName": "g", "headRefOid": "7" * 40},
+        {"number": 10, "state": "MERGED", "headRefName": "a", "headRefOid": "1" * 40,
+         "closedAt": long_ago},
+        {"number": 11, "state": "CLOSED", "headRefName": "b", "headRefOid": "2" * 40,
+         "closedAt": long_ago},
+        {"number": 12, "state": "OPEN", "headRefName": "c", "headRefOid": "3" * 40,
+         "closedAt": None},
+        {"number": 13, "state": "MERGED", "headRefName": "d", "headRefOid": "4" * 40,
+         "closedAt": long_ago},
+        {"number": 14, "state": "MERGED", "headRefName": "e", "headRefOid": "5" * 40,
+         "closedAt": long_ago},
+        {"number": 15, "state": "MERGED", "headRefName": "f", "headRefOid": "6" * 40,
+         "closedAt": long_ago},
+        {"number": 16, "state": "MERGED", "headRefName": "g", "headRefOid": "7" * 40,
+         "closedAt": long_ago},
+        {"number": 17, "state": "MERGED", "headRefName": "h", "headRefOid": "8" * 40,
+         "closedAt": an_hour_ago},
+        {"number": 18, "state": "MERGED", "headRefName": "i", "headRefOid": "9" * 40},
     ]
     review_log = scratch / "removals-log.txt"
 
@@ -2361,7 +2377,8 @@ with tempfile.TemporaryDirectory() as scratch:
 
     every_checkout = (merged_checkout, closed_checkout, open_checkout, main_checkout,
                       main_green_checkout, unlisted_checkout, two_numbers_checkout, locked_checkout,
-                      occupied_checkout, outside_checkout)
+                      occupied_checkout, outside_checkout, recently_merged_checkout,
+                      no_closing_time_checkout)
     # Stands in for a process working in a review checkout; lives until its stdin closes.
     review_occupant = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"],
                                        stdin=subprocess.PIPE, cwd=occupied_checkout)
@@ -2428,6 +2445,17 @@ with tempfile.TemporaryDirectory() as scratch:
               outside_checkout.exists()
               and "it has no owner file, and the cleaner removes only a worktree holding one"
               in review_line(removal.stdout, "pr16-head"), removal.stdout)
+        check("a merge-lane review checkout of a pull request merged an hour ago is kept, while "
+              "merge-lane-2's merge program may still be testing main in it",
+              recently_merged_checkout.exists()
+              and review_line(removal.stdout, "pr17-merge-commit-on-main-worktree")
+              == "pr17-merge-commit-on-main-worktree: kept — it is a merge-lane review checkout of "
+                 "pull request #17 (merged), finished less than 24 hours ago, while merge-lane-2's "
+                 "merge program may still use it", removal.stdout)
+        check("a merge-lane review checkout whose pull request gh gives no closing time for is kept",
+              no_closing_time_checkout.exists()
+              and "whose closing time gh did not give in a form this program reads: KeyError"
+              in review_line(removal.stdout, "pr18-head"), removal.stdout)
         check("--remove exits 0 when it only removed and kept merge-lane review checkouts",
               removal.returncode == 0, removal.stdout + removal.stderr)
     finally:

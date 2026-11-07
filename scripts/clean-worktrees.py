@@ -52,10 +52,13 @@ request its directory name holds: the one part of the name, split at each
 hyphen, that is digits, optionally after `pr`, optionally followed by `r`
 and digits, then optionally by one letter, as in pr2700-head,
 tools-main-2700r2, tools-main-2343b or verdict-2587r1. It is removed when that
-pull request is merged or closed, once the lock, prune, in-progress operation
-and vacancy checks above pass. It is kept, with the reason, when its name
-holds no such part or more than one, as main and main-green-<commit> do, when
-the pull request is open or missing from gh's listing, or when gh fails. Its
+pull request was merged or closed at least 24 hours ago, once the lock,
+prune, in-progress operation and vacancy checks above pass. It is kept, with
+the reason, when its name holds no such part or more than one, as main and
+main-green-<commit> do, when the pull request is open, finished less than 24
+hours ago, while merge-lane-2's merge program may still be removing its
+checkouts or testing main in pr<n>-merge-commit-on-main-worktree, or missing
+from gh's listing, or when gh fails or gives no closing time it can read. Its
 uncommitted, untracked and ignored files are named and discarded with it,
 with no work-snapshot, since no agent-seat owns them and the pull request is
 finished; commits on its detached HEAD get no branch, since a review
@@ -263,6 +266,10 @@ _mark_spec.loader.exec_module(mark)
 # copied, not loaded: that module loads run-all-test-suites.py, which tests that run a copy of this
 # program in a scratch clone do not copy. clean-worktrees-test.py checks the two agree.
 MERGE_LANE_REVIEW_WORKTREES_DIRECTORY_UNDER_HOME = Path(".cache") / "merge-lane-review-worktrees"
+# After a merge, merge-lane-2's merge program removes pr<n>-head and pr<n>-merged and runs main's tests
+# in pr<n>-merge-commit-on-main-worktree; between its steps no process has a working directory
+# there, so the vacancy check alone could let a removal race it.
+MERGE_LANE_REVIEW_CHECKOUT_KEPT_AFTER_ITS_PULL_REQUEST_FINISHED_HOURS = 24
 
 # One hyphen-separated part of a merge-lane review checkout's name: pr2700, 2700, 2700r2, 2420m.
 MERGE_LANE_REVIEW_CHECKOUT_NAME_PULL_REQUEST_NUMBER_PART = re.compile(r"(?:pr)?(\d+)(?:r\d*)?[a-z]?")
@@ -684,11 +691,11 @@ class PullRequestsByHeadBranchLazyCache:
 
 def list_all_pull_requests_grouped_by_head_branch(repo,
                                                   timeout_seconds=PULL_REQUEST_LISTING_TIMEOUT_SECONDS):
-    """Return {head branch name: [{number, state, headRefName, headRefOid}]} for every pull request
+    """Return {head branch name: [{number, state, headRefName, headRefOid, closedAt}]} for every pull request
     of the repository's GitHub remote; raise PullRequestListingFailed when gh cannot list them, or
     does not finish within timeout_seconds."""
     command = ["gh", "pr", "list", "--state", "all", "--limit", str(PULL_REQUEST_LISTING_LIMIT),
-               "--json", "number,state,headRefName,headRefOid"]
+               "--json", "number,state,headRefName,headRefOid,closedAt"]
     try:
         listing = subprocess.run(command, cwd=repo, capture_output=True, text=True, check=False,
                                  timeout=timeout_seconds)
@@ -896,6 +903,20 @@ def merge_lane_review_checkout_verdict(worktree, pull_requests):
     if pull_request["state"] not in ("MERGED", "CLOSED"):
         return Verdict(False, f"it is a merge-lane review checkout of "
                               f"{pull_request_text(pull_request)}", KEPT_OPEN_PULL_REQUEST)
+    try:
+        finished = datetime.fromisoformat(pull_request["closedAt"])
+        hours_since_finished = (datetime.now(timezone.utc) - finished).total_seconds() / 3600
+    except (KeyError, TypeError, ValueError) as error:
+        return Verdict(False, f"it is a merge-lane review checkout of "
+                              f"{pull_request_text(pull_request)}, whose closing time gh did not "
+                              f"give in a form this program reads: {type(error).__name__}: {error}",
+                       KEPT_NOT_CHECKABLE)
+    if hours_since_finished < MERGE_LANE_REVIEW_CHECKOUT_KEPT_AFTER_ITS_PULL_REQUEST_FINISHED_HOURS:
+        return Verdict(False, f"it is a merge-lane review checkout of "
+                              f"{pull_request_text(pull_request)}, finished less than "
+                              f"{MERGE_LANE_REVIEW_CHECKOUT_KEPT_AFTER_ITS_PULL_REQUEST_FINISHED_HOURS} "
+                              f"hours ago, while merge-lane-2's merge program may still use it",
+                       KEPT_IN_USE)
     keep_reason = worktree_vacancy_keep_reason(worktree)
     if keep_reason is not None:
         return Verdict(False, keep_reason, KEPT_IN_USE)
