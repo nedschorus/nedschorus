@@ -204,13 +204,13 @@ def put_reference_checkout_back_on_main(checkout: Path, today: date):
     return main, pushed
 
 
-def reference_checkout_back_on_main_success_line(checkout: Path, main: str, pushed: list) -> str:
+def reference_checkout_back_on_main_success_line_build(checkout: Path, main: str, pushed: list) -> str:
     saved = (f"its leftovers are saved on {', '.join(pushed)}, pushed to origin" if pushed
              else "it had no leftovers")
     return f"{PROGRAM}: the reference-checkout {checkout} is on main at origin/main {main}; {saved}."
 
 
-def reference_checkout_back_on_main_failure_text(checkout: Path, error: StepFailed) -> str:
+def reference_checkout_back_on_main_failure_text_build(checkout: Path, error: StepFailed) -> str:
     return f"{PROGRAM}: a step failed, for the reference-checkout {checkout}: {error}"
 
 
@@ -222,9 +222,9 @@ def main(argv=None, today=None) -> int:
     try:
         main_commit, pushed = put_reference_checkout_back_on_main(checkout, today or date.today())
     except StepFailed as error:
-        print(reference_checkout_back_on_main_failure_text(checkout, error), file=sys.stderr)
+        print(reference_checkout_back_on_main_failure_text_build(checkout, error), file=sys.stderr)
         return 1
-    print(reference_checkout_back_on_main_success_line(checkout, main_commit, pushed))
+    print(reference_checkout_back_on_main_success_line_build(checkout, main_commit, pushed))
     return 0
 
 

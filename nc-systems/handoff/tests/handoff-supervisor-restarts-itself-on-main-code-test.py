@@ -192,17 +192,22 @@ def back_on_main_program_failed_ending(command: str, output: str) -> str:
     return ("That checkout would not fast-forward to main, so the handoff-supervisor ran the "
             "program that saves the checkout's leftovers to a pushed branch and puts it back on "
             f"main, and that program failed, printing: \"{output}\". Work out the cause from what "
-            f"it printed, fix the cause, and run {command} again; when the cause is not one you "
-            "can fix, tell the user what the program printed. Once the checkout is on main, the "
-            "handoff-supervisor restarts itself at the next session-handoff at which it starts "
-            "the successor without stopping to ask the user.")
+            f"it printed, fix the cause, and run the program again as {command}, the form that "
+            "works from this agent-session; when the cause is not one you can fix, tell the user "
+            "what the program printed. The handoff-supervisor does not run the program again once "
+            "the checkout is on main, which it can be even after a failed push, so a leftovers "
+            "branch the program could not push stays only in that checkout until you run the "
+            "program again. Once the checkout is on main, the handoff-supervisor restarts itself "
+            "at the next session-handoff at which it starts the successor without stopping to ask "
+            "the user.")
 
 
 def leftovers_pushed_notice(branches: str, reference_checkout=None) -> str:
     reference_checkout = reference_checkout or supervisor.REFERENCE_CHECKOUT
     return (f"At this session-handoff the reference-checkout {reference_checkout} would "
             "not fast-forward to main, so the handoff-supervisor saved what was left over in it "
-            f"to {branches}, pushed to origin, and put the checkout back on main. Name {branches} "
+            f"to the git branch {branches}, pushed to origin, and put the checkout back on main. "
+            f"Name {branches} "
             "to the user: what it holds was left in that checkout, where no agent works, and may "
             "be someone's lost work.")
 
@@ -264,10 +269,10 @@ def supervise_one_handoff_from_the_reference_checkout(workspace: Path, case: str
 
     stub_program = SimpleNamespace(
         put_reference_checkout_back_on_main=put_back_on_main, StepFailed=program.StepFailed,
-        reference_checkout_back_on_main_failure_text=(
-            program.reference_checkout_back_on_main_failure_text),
-        reference_checkout_back_on_main_success_line=(
-            program.reference_checkout_back_on_main_success_line))
+        reference_checkout_back_on_main_failure_text_build=(
+            program.reference_checkout_back_on_main_failure_text_build),
+        reference_checkout_back_on_main_success_line_build=(
+            program.reference_checkout_back_on_main_success_line_build))
     reports = iter(["launch-time-git-sync: main left as is — 2 uncommitted tracked change(s)",
                     "launch-time-git-sync: main is current with main"])
     with supervisor_names_replaced(REFERENCE_CHECKOUT=supervisor.REPOSITORY_ROOT,
@@ -285,7 +290,7 @@ def run_reference_checkout_back_on_main_program_cases(workspace: Path):
         raise program.StepFailed("git push refused by the test")
 
     run = supervise_one_handoff_from_the_reference_checkout(workspace, "backonmainfails", fails)
-    output = program.reference_checkout_back_on_main_failure_text(
+    output = program.reference_checkout_back_on_main_failure_text_build(
         supervisor.REPOSITORY_ROOT, program.StepFailed("git push refused by the test"))
     on_the_mac = sys.platform == "darwin"
     command = (f"`{BACK_ON_MAIN_COMMAND}`" if on_the_mac
@@ -833,7 +838,7 @@ def run_real_exec_cases(workspace: Path):
         "    agent='realexec', working_directory=Path(sys.argv[1]),\n"
         "    handoff_directory=Path(sys.argv[1]), agent_command='claude', first_prompt='')\n"
         "print('NOT RESTARTED ' + supervisor."
-        "handoff_supervisor_restart_itself_on_main_code_or_return_successor_notice(settings))\n",
+        "handoff_supervisor_restart_itself_on_main_code_after_putting_reference_checkout_back_on_main_or_return_successor_notice(settings))\n",
         encoding="utf-8")
 
     checkout, tip = a_checkout_behind_origin_main(root)
