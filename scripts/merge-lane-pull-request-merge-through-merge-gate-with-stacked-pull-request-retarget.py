@@ -256,8 +256,7 @@ def head_test_run_passed_merged_commit(arguments):
                 head_test_run.PullRequestHeadTestRunTestLogNotWholeRecordsError) as error:
             print(f"the head test run record {test_log} could not be read, so it is not "
                   f"used: {error}\n"
-                  f"Nothing to do: without it the test run selects more suites, never fewer.",
-                  flush=True)
+                  f"Nothing to do: without it the test run selects more suites, never fewer.")
             continue
         if not head_test_run.pull_request_head_test_run_record_passed_on_commit_check(
                 record, commit):
