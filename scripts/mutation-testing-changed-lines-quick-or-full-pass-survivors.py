@@ -735,33 +735,55 @@ def recorded_mutant_module_path_and_hunks(diff_text):
     return path, hunks
 
 
-def places_of_lines(lines, wanted):
+def lines_equal(line, wanted):
+    return line == wanted
+
+
+def line_equal_or_with_pragma_no_mutate_after(line, wanted):
+    return line == wanted or (line.startswith(wanted)
+                              and PRAGMA_NO_MUTATE_COMMENT.fullmatch(line[len(wanted):]))
+
+
+def places_of_lines(lines, wanted, same=lines_equal):
     return [place for place in range(len(lines) - len(wanted) + 1)
-            if lines[place:place + len(wanted)] == wanted]
+            if all(same(line, want) for line, want in zip(lines[place:place + len(wanted)], wanted))]
+
+
+def recorded_mutant_hunk_place(lines, old_start, old, new, same=lines_equal):
+    """(where the hunk applies, its old lines, its new lines), the lines cut to the replaced
+    lines when only those were found, or None when the hunk is not found once.
+
+    A hunk is looked for at its own line first, then anywhere, since the branch may have moved
+    the line; then, since a later change may have edited a context line, its replaced lines
+    alone are looked for anywhere. same(line, wanted) says whether a source line matches a
+    hunk's line."""
+    at = old_start - 1 if old else old_start
+    if len(lines[at:at + len(old)]) == len(old) and all(
+            same(line, want) for line, want in zip(lines[at:at + len(old)], old)):
+        return at, old, new
+    places = places_of_lines(lines, old, same)
+    if len(places) == 1:
+        return places[0], old, new
+    start, end = hunk_shared_context_line_counts(old, new)
+    replaced = old[start:len(old) - end]
+    places = places_of_lines(lines, replaced, same) if replaced else []
+    if len(places) != 1:
+        return None
+    return places[0], replaced, new[start:len(new) - end]
 
 
 def source_with_recorded_mutant_applied(source, hunks):
     """The source with the hunks applied, or None when a hunk is not found once.
 
     The source is split on "\\n", as cosmic-ray splits it to make the diff, so a file ending in
-    a newline has the empty last line the diff's last context line stands for. A hunk is looked
-    for at its own line first, then anywhere, since the branch may have moved the line; then,
-    since a later change may have edited a context line, its replaced lines alone are looked
-    for anywhere."""
+    a newline has the empty last line the diff's last context line stands for. Each hunk is
+    found as recorded_mutant_hunk_place finds it."""
     lines = source.split("\n")
     for old_start, old, new in sorted(hunks, reverse=True):
-        at = old_start - 1 if old else old_start
-        if lines[at:at + len(old)] != old:
-            places = places_of_lines(lines, old)
-            if len(places) == 1:
-                at = places[0]
-            else:
-                start, end = hunk_shared_context_line_counts(old, new)
-                replaced = old[start:len(old) - end]
-                places = places_of_lines(lines, replaced) if replaced else []
-                if len(places) != 1:
-                    return None
-                old, new, at = replaced, new[start:len(new) - end], places[0]
+        place = recorded_mutant_hunk_place(lines, old_start, old, new)
+        if place is None:
+            return None
+        at, old, new = place
         lines[at:at + len(old)] = new
     return "\n".join(lines)
 
@@ -830,13 +852,20 @@ def recorded_mutant_run_verdict(exit_code, output, runner):
 
 
 def recorded_mutant_line_ends_with_pragma(source, hunks):
-    """True when the last line some hunk replaces is in the source with a `# pragma: no mutate`
-    comment after it, so no mutation pass makes the mutant any more."""
+    """True when, at the place some hunk applies, the last line it replaces has a
+    `# pragma: no mutate` comment after it, so no mutation pass makes the mutant any more. The
+    place is found as recorded_mutant_hunk_place finds it, reading a line with the comment as
+    the line without it, so the same line elsewhere in the file, with or without the comment,
+    does not decide."""
     lines = source.split("\n")
-    for _, old, new in hunks:
-        replaced = hunk_replaced_lines(old, new)
-        if replaced and any(line.startswith(replaced[-1]) and PRAGMA_NO_MUTATE_COMMENT.fullmatch(
-                line[len(replaced[-1]):]) for line in lines):
+    for old_start, old, new in hunks:
+        place = recorded_mutant_hunk_place(lines, old_start, old, new,
+                                           line_equal_or_with_pragma_no_mutate_after)
+        if place is None:
+            continue
+        at, old, new = place
+        start, end = hunk_shared_context_line_counts(old, new)
+        if len(old) - end > start and lines[at + len(old) - end - 1] != old[len(old) - end - 1]:
             return True
     return False
 

@@ -585,6 +585,18 @@ def run_recorded_mutant_killed_check_cases():
                       in "\n" + completed.stdout,
                   f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**HEAD_FILES, "scripts/thing.py":
+                           "def double(x):\n    return x + x\n\n\n"
+                           "def twice(x):\n    return x + x  # pragma: no mutate\n"},
+            SURVIVOR_DIFF)
+        check("a recorded mutant whose own line has no `# pragma: no mutate` comment is still "
+              "judged when the same line elsewhere in the file has one: it survives, exit 1",
+              completed.returncode == 1 and survived_line in "\n" + completed.stdout
+              and no_longer_exists_line not in "\n" + completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
     # scripts/gone.py is not at the head, but its sibling suite is, so its mutant gets as far as
     # reading the file.
     with tempfile.TemporaryDirectory() as scratch_name:

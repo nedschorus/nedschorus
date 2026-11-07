@@ -371,26 +371,30 @@ def lost_tasks_reported(state, arguments, record):
     and re-point a mutant to the one other open task on its owner's list that names it.
 
     Return one line per task that no longer holds its mutant, is not completed, and has no
-    single open task on the list naming the mutant; the caller writes the state. Raises
-    OSError when another task file on the list cannot be read."""
+    single open task on the list naming the mutant, and per completed task whose mutant more
+    than one open task names; the caller writes the state. Raises OSError when another task
+    file on the list cannot be read."""
     lost = []
     for key, given in list(state["tasks_opened"].items()):
         list_directory = arguments.task_lists_directory / f"nedschorus-{given['agent_seat']}-tasks"
         task_file = list_directory / f"{given['task_id']}.json"
+        completed = False
         try:
             task = task_file_read(task_file)
         except OSError as error:
             why = f"the task file cannot be read ({type(error).__name__}: {error})"
         else:
-            if task is not None and task.get("status") == "completed":
-                del state["tasks_opened"][key]
+            completed = task is not None and task.get("status") == "completed"
+            if not completed and task_names_mutant(task, key):
                 continue
-            if task_names_mutant(task, key):
-                continue
-            why = "its description no longer names the mutant's diff file"
-        # A task fold moves mutants into another task; the handoff prune later deletes the
-        # completed task they left.
+            why = ("it is marked completed" if completed
+                   else "its description no longer names the mutant's diff file")
+        # A task fold moves mutants into another task and marks the task they left completed;
+        # the handoff prune later deletes that task, so a run may find it either way.
         naming = task_ids_on_list_open_naming_mutant(list_directory, key)
+        if completed and not naming:
+            del state["tasks_opened"][key]
+            continue
         if len(naming) == 1:
             record.append(f"TASK MOVED: the surviving mutant "
                           f"{mutant_diff_file_path(arguments.log_store_root, key)} is now held by "

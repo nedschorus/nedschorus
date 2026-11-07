@@ -579,6 +579,37 @@ def run_cases():
               and keys[1] not in fixture.state_json()["tasks_opened"],
               (completed.returncode, record, fixture.state_json()))
 
+    # A fold seen before the handoff prune: the task the mutant left is still on the list,
+    # marked completed, and the one open task it moved to names its diff file.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        merge = fixture.commit("scripts/thing.py",
+                               "def double(x):\n    return x + x\nVALUE = 1\n", author="alpha")
+        completed = fixture.run({merge: {"json": verdict(
+            survived=[survivor(), survivor(1, "core/ReplaceBinaryOperator_Add_Sub"),
+                      survivor(3, "core/ReplaceBinaryOperator_Add_Div")])}})
+        keys = {given["task_id"]: key
+                for key, given in fixture.state_json()["tasks_opened"].items()}
+        folded = json.loads((alpha_list / "2.json").read_text())
+        folded["description"] += f"\n{keys[1]}.diff"
+        (alpha_list / "2.json").write_text(json.dumps(folded))
+        left = json.loads((alpha_list / "1.json").read_text())
+        left["status"] = "completed"
+        (alpha_list / "1.json").write_text(json.dumps(left))
+        completed = fixture.run()
+        record = fixture.records()[-1].read_text()
+        check("a mutant whose task is marked completed, while the one open task naming its diff "
+              "file holds it, moves to that task, and the run exits 0",
+              completed.returncode == 0 and "TASK LOST" not in record
+              and f"TASK MOVED: the surviving mutant "
+                  f"{job.mutant_diff_file_path(fixture.log_store, keys[1])} is now held by task "
+                  f"#2 on alpha's task list, not task #1 (it is marked completed)" in record
+              and fixture.state_json()["tasks_opened"].get(keys[1])
+              == {"agent_seat": "alpha", "task_id": 2},
+              (completed.returncode, record, fixture.state_json()))
+
     # A task file holding JSON that is not an object is a task that no longer holds its mutant.
     with tempfile.TemporaryDirectory() as scratch:
         fixture = Fixture(scratch)
