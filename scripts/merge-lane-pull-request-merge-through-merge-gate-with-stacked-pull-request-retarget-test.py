@@ -589,6 +589,19 @@ def main():
               and RUNNER_COULD_NOT_RUN.strip() in output and "exited 2" in output,
               f"exit {exit_code}\n{output}")
 
+        exit_code, output, _, _, _ = run_case(
+            scratch, "after-merge-exit-0-no-summary", [(GATE_PASSED, 0)],
+            default_routes(STACKED_AND_NOT), runner_answer=("PASS scripts/some-test.py (1s)\n", 0))
+        merge_commit_worktree = (scratch / "after-merge-exit-0-no-summary" / "review-worktrees"
+                                 / "pr10-merge-commit-on-main-worktree")
+        check("an after-merge test run that exits 0 with no SUMMARY line exits 3, says main's "
+              "test run gave no verdict, and still removes its worktree",
+              exit_code == 3 and "printed no SUMMARY: line" in output
+              and "STOP: merged, but the test run of main at" in output
+              and "gave no verdict" in output
+              and "--only-suites-whose-recorded-inputs-changed-since" in output
+              and not merge_commit_worktree.exists(), f"exit {exit_code}\n{output}")
+
         routes = default_routes(STACKED_AND_NOT)
         routes["view-state"] = {"exit": 1, "stderr": "HTTP 502\n"}
         exit_code, output, _, _, _ = run_case(

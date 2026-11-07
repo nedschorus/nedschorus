@@ -286,6 +286,13 @@ def after_merge_test_run(arguments, merge_commit):
               f"listed above, each with its log.\n"
               f"Tell the pull request's author, and the user, this message.")
         exit_code = EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
+    elif not summaries:
+        print(f"STOP: merged, but the test run of main at {merge_commit} exited 0 and printed "
+              f"no {runner.SUMMARY_LINE_PREFIX} line, so it gave no verdict on main.\n"
+              f"In a detached worktree at {merge_commit}, run: {by_hand}\n"
+              f"If that run also prints no {runner.SUMMARY_LINE_PREFIX} line, tell the user "
+              f"this message.")
+        exit_code = EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
 
     removal = git("worktree", "remove", "--force", str(worktree))
     if removal.returncode != 0:
