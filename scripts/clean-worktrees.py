@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Report or remove the worktrees whose work is done, judged by each worktree's owner file.
+"""Report or remove the worktrees whose work is done, judged by each worktree's owner file, or for
+a merge-lane review checkout by its pull request.
 
 WHICH WORKTREES. Every worktree of the clone except its main checkout, the
 reference-checkout, wherever the worktree is. Only a worktree holding an owner
-file can be removed: scripts/worktree-owner-file-read-and-write.py says where
+file, or a merge-lane review checkout, as MERGE-LANE REVIEW CHECKOUTS below
+says, can be removed: scripts/worktree-owner-file-read-and-write.py says where
 the file is, what it holds, and when its owner, an agent-seat or an
 agent-session, counts as running. A worktree is KEPT, with the reason, when:
 
+  - its owner file cannot be read;
   - it has no owner file, as agent-homes and worktrees made by hand have,
-    unless it is a merge-lane review checkout, or its owner file cannot be
-    read;
+    and is not a merge-lane review checkout;
   - it is locked with `git worktree lock`, as Claude Code locks a subagent's
     worktree while the subagent runs;
   - git would prune it, its directory being gone;
@@ -45,10 +47,11 @@ worktree whose verdict needs a pull request is kept.
 
 MERGE-LANE REVIEW CHECKOUTS. A worktree with no owner file directly inside
 ~/.cache/merge-lane-review-worktrees, where merge-lane-2 checks out each pull
-request it reviews, is a merge-lane review checkout, judged by the pull request its
-directory name holds: the one part of the name, split at each hyphen, that is
-digits, optionally after `pr` and before an `r` with digits or one letter, as
-in pr2700-head, tools-main-2700r2 or verdict-2587r1. It is removed when that
+request it reviews, is a merge-lane review checkout, judged by the pull
+request its directory name holds: the one part of the name, split at each
+hyphen, that is digits, optionally after `pr`, optionally followed by `r`
+and digits, then optionally by one letter, as in pr2700-head,
+tools-main-2700r2, tools-main-2343b or verdict-2587r1. It is removed when that
 pull request is merged or closed, once the lock, prune, in-progress operation
 and vacancy checks above pass. It is kept, with the reason, when its name
 holds no such part or more than one, as main and main-green-<commit> do, when
@@ -256,11 +259,10 @@ _mark_spec = importlib.util.spec_from_file_location(
 mark = importlib.util.module_from_spec(_mark_spec)
 _mark_spec.loader.exec_module(mark)
 
-_merge_lane_common_spec = importlib.util.spec_from_file_location(
-    "merge_lane_pull_request_helpers_common_options_paths_and_token",
-    REPO_ROOT / "scripts" / "merge-lane-pull-request-helpers-common-options-paths-and-token.py")
-merge_lane_common = importlib.util.module_from_spec(_merge_lane_common_spec)
-_merge_lane_common_spec.loader.exec_module(merge_lane_common)
+# REVIEW_WORKTREES_DIRECTORY_UNDER_HOME of merge-lane-pull-request-helpers-common-options-paths-and-token.py,
+# copied, not loaded: that module loads run-all-test-suites.py, which tests that run a copy of this
+# program in a scratch clone do not copy. clean-worktrees-test.py checks the two agree.
+MERGE_LANE_REVIEW_WORKTREES_DIRECTORY_UNDER_HOME = Path(".cache") / "merge-lane-review-worktrees"
 
 # One hyphen-separated part of a merge-lane review checkout's name: pr2700, 2700, 2700r2, 2420m.
 MERGE_LANE_REVIEW_CHECKOUT_NAME_PULL_REQUEST_NUMBER_PART = re.compile(r"(?:pr)?(\d+)(?:r\d*)?[a-z]?")
@@ -862,7 +864,7 @@ def removal_records_and_discarded_files_text(worktree, discarded):
 
 def is_merge_lane_review_checkout(worktree):
     # HOME is read at call time: the tests point it at a scratch directory.
-    directory = Path.home() / merge_lane_common.REVIEW_WORKTREES_DIRECTORY_UNDER_HOME
+    directory = Path.home() / MERGE_LANE_REVIEW_WORKTREES_DIRECTORY_UNDER_HOME
     return worktree.resolve().parent == directory.resolve()
 
 
