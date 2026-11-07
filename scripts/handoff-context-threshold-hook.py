@@ -63,7 +63,7 @@ def deferred_marker_path(session_id: str) -> Path:
 # Caller-owned reincarnation must not replace the caller's answer with a handoff.
 REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
 
-# Unknown models use the default; a wrong window silently scales the threshold.
+# Unknown models use the default, and the handoff instruction names the model id so the table gets updated.
 CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX = {
     "claude-fable-5": 1_000_000,
     "claude-mythos-5": 1_000_000,
@@ -85,6 +85,11 @@ FIRST_TAIL_READ_BYTES = 256 * 1024
 HANDOFF_INSTRUCTION = (
     "This session has used {share} of its context window, which has "
     "reached the reincarnation threshold. Run the /handoff skill now."
+)
+
+MODEL_ID_NOT_IN_CONTEXT_WINDOW_TABLE_LINE = (
+    "The model id {model} is not in the threshold hook's context-window table, so the share "
+    "above assumes a {default_window_thousands}K window; tell the user, so the table can be updated."
 )
 
 # The approved ban on new work; the wait no longer counts work started after the deferral began.
@@ -216,6 +221,10 @@ def context_window_for(model: str) -> int:
     return DEFAULT_CONTEXT_WINDOW_TOKENS
 
 
+def model_id_is_in_context_window_table(model: str) -> bool:
+    return any(model.startswith(prefix) for prefix in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX)
+
+
 def newest_assistant_message(path: Path):
     """Return the newest assistant message with usage."""
     # Read backwards to avoid parsing the whole session at every turn boundary.
@@ -250,8 +259,8 @@ def newest_assistant_message(path: Path):
         window *= 2
 
 
-def context_used_tokens_and_window_from_transcript(transcript_path: str):
-    """Return (used context tokens, context window tokens), or None when unavailable."""
+def context_used_tokens_window_and_model_from_transcript(transcript_path: str):
+    """Return (used context tokens, context window tokens, model id), or None when unavailable."""
     if not transcript_path:
         return None
     path = Path(transcript_path).expanduser()
@@ -265,15 +274,16 @@ def context_used_tokens_and_window_from_transcript(transcript_path: str):
     if message is None:
         return None
 
-    return used_tokens_of(message["usage"]), context_window_for(message.get("model", ""))
+    model = message.get("model", "")
+    return used_tokens_of(message["usage"]), context_window_for(model), model
 
 
 def context_used_percentage_from_transcript(transcript_path: str):
     """Return used context as a percentage, or None when unavailable."""
-    reading = context_used_tokens_and_window_from_transcript(transcript_path)
+    reading = context_used_tokens_window_and_model_from_transcript(transcript_path)
     if reading is None:
         return None
-    used_tokens, window = reading
+    used_tokens, window, _model = reading
     return 100.0 * used_tokens / window
 
 
@@ -647,10 +657,10 @@ def main(argv=None) -> int:
         return 0
 
     transcript_path = payload.get("transcript_path", "")
-    reading = context_used_tokens_and_window_from_transcript(transcript_path)
+    reading = context_used_tokens_window_and_model_from_transcript(transcript_path)
     if reading is None:
         return 0
-    used_tokens, window = reading
+    used_tokens, window, model = reading
     used = 100.0 * used_tokens / window
     share = f"{used:.0f}%"
     # A compaction can drop the share below the threshold after a deferral; the deferred marker
@@ -715,6 +725,11 @@ def main(argv=None) -> int:
     except OSError as error:
         print(HANDOFF_DEFERRED_MARKER_NOT_DELETED.format(
                   path=deferred_marker, host=socket.gethostname(), error=error),
+              file=sys.stderr)
+    # Printed last: the marker message above refers to the instruction just before it.
+    if not model_id_is_in_context_window_table(model):
+        print(MODEL_ID_NOT_IN_CONTEXT_WINDOW_TABLE_LINE.format(
+                  model=model, default_window_thousands=DEFAULT_CONTEXT_WINDOW_TOKENS // 1000),
               file=sys.stderr)
     return 2
 
