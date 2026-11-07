@@ -399,13 +399,13 @@ with tempfile.TemporaryDirectory() as workspace:
 
     # --- The window table -------------------------------------------------
     check("window lookup knows the million-token models",
-          hook.context_window_for("claude-fable-5") == 1_000_000
-          and hook.context_window_for("claude-opus-5") == 1_000_000
-          and hook.context_window_for("claude-sonnet-5") == 1_000_000)
-    check("window lookup knows the 200k model",
-          hook.context_window_for("claude-haiku-4-5-20251001") == 200_000)
-    check("an unknown model falls back to the default window",
-          hook.context_window_for("claude-something-unreleased") == 200_000)
+          hook.context_window_tokens_from_table_or_none("claude-fable-5") == 1_000_000
+          and hook.context_window_tokens_from_table_or_none("claude-opus-5") == 1_000_000
+          and hook.context_window_tokens_from_table_or_none("claude-sonnet-5") == 1_000_000)
+    check("window lookup knows the 200k model by a table prefix",
+          hook.context_window_tokens_from_table_or_none("claude-haiku-4-5-20251001") == 200_000)
+    check("window lookup finds no window for a model id not in the table",
+          hook.context_window_tokens_from_table_or_none("claude-something-unreleased") is None)
 
     # --- Reading the used share from a transcript -------------------------
     transcript = Path(workspace) / "probe-transcript.jsonl"
@@ -826,13 +826,12 @@ with tempfile.TemporaryDirectory() as workspace:
               result.returncode == 2 and len(message_lines) == 2
               and HANDOFF_INSTRUCTION_PATTERN.fullmatch(message_lines[0]) is not None
               and message_lines[1] == (
-                  "The model id claude-something-unreleased is not in the threshold hook's "
-                  "context-window table, so the share above assumes a 200K window; tell the "
-                  "user, so the table can be updated."),
+                  "The model id claude-something-unreleased is not in "
+                  "CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the threshold-hook's context-window "
+                  "table in scripts/handoff-context-threshold-hook.py, so the 35% of its context "
+                  "window this session has used assumes a 200K window; tell the user, so the "
+                  "table can be updated."),
               f"code {result.returncode}, stderr {result.stderr!r}")
-        check("a model id matching a table prefix is in the table, and an unlisted one is not",
-              hook.model_id_is_in_context_window_table("claude-haiku-4-5-20251001")
-              and not hook.model_id_is_in_context_window_table("claude-something-unreleased"))
 
         marker_file.unlink(missing_ok=True)
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(loud)},

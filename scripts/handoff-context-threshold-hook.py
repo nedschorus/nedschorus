@@ -88,8 +88,10 @@ HANDOFF_INSTRUCTION = (
 )
 
 MODEL_ID_NOT_IN_CONTEXT_WINDOW_TABLE_LINE = (
-    "The model id {model} is not in the threshold hook's context-window table, so the share "
-    "above assumes a {default_window_thousands}K window; tell the user, so the table can be updated."
+    "The model id {model} is not in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the threshold-hook's "
+    "context-window table in scripts/handoff-context-threshold-hook.py, so the {share} of its "
+    "context window this session has used assumes a {default_window_thousands}K window; tell the "
+    "user, so the table can be updated."
 )
 
 # The approved ban on new work; the wait no longer counts work started after the deferral began.
@@ -213,16 +215,12 @@ def hook_payload_from_stdin() -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def context_window_for(model: str) -> int:
-    """Return the model's context window in tokens."""
+def context_window_tokens_from_table_or_none(model: str):
+    """Return the model's context window in tokens from the table, or None when no prefix matches."""
     for prefix, window in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX.items():
         if model.startswith(prefix):
             return window
-    return DEFAULT_CONTEXT_WINDOW_TOKENS
-
-
-def model_id_is_in_context_window_table(model: str) -> bool:
-    return any(model.startswith(prefix) for prefix in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX)
+    return None
 
 
 def newest_assistant_message(path: Path):
@@ -275,7 +273,10 @@ def context_used_tokens_window_and_model_from_transcript(transcript_path: str):
         return None
 
     model = message.get("model", "")
-    return used_tokens_of(message["usage"]), context_window_for(model), model
+    window = context_window_tokens_from_table_or_none(model)
+    if window is None:
+        window = DEFAULT_CONTEXT_WINDOW_TOKENS
+    return used_tokens_of(message["usage"]), window, model
 
 
 def context_used_percentage_from_transcript(transcript_path: str):
@@ -727,9 +728,10 @@ def main(argv=None) -> int:
                   path=deferred_marker, host=socket.gethostname(), error=error),
               file=sys.stderr)
     # Printed last: the marker message above refers to the instruction just before it.
-    if not model_id_is_in_context_window_table(model):
+    if context_window_tokens_from_table_or_none(model) is None:
         print(MODEL_ID_NOT_IN_CONTEXT_WINDOW_TABLE_LINE.format(
-                  model=model, default_window_thousands=DEFAULT_CONTEXT_WINDOW_TOKENS // 1000),
+                  model=model, share=share,
+                  default_window_thousands=DEFAULT_CONTEXT_WINDOW_TOKENS // 1000),
               file=sys.stderr)
     return 2
 
