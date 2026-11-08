@@ -376,6 +376,18 @@ costs at most the wait for one more read, and never lets the item be shown
 unread. A read the step runs itself that fails prints its FAILED line, says not
 to present the item yet and how to run the step again, and exits 1.
 
+The step, in both forms, reads no item and does not say to present it when
+the waiting item is one item that asks a decision, a line holding
+"Recommendation:", and its first `#case_against` line rates the case against
+none, since the walk-me-through skill settles such an item without showing
+it: the step prints that the item is not to be shown and the `check
+--not-asked none` command that settles it, and exits 0. It reads and presents
+the item as usual when the item's `#not_asked_touches` line names a file the
+instruction-file guard protects, which `check --not-asked none` refuses, and
+when the minutes' last answer line, not yet closed, already settles the item
+as `not asked, case against none`, since the agent then shows it only because
+the advisor objected or the advisor call failed.
+
 With --after-fixes-reread-only-when-facts-change, which the agent gives after
 applying a read's findings to the item, a text with no read of its own is
 compared with the text of the item's latest read that wrote its report. When
@@ -1059,6 +1071,17 @@ EARLIER_TEXT_COPY_MISSING = (
     "If {target} is gone too, do not present {item} yet: ask the user whether to go on without that text, and on "
     "his yes delete {outcome} and run `{command}` again; a subagent puts that question to the agent that "
     "dispatched it.")
+RATED_NONE_NOT_SHOWN_LINES = (
+    "{item} is not to be shown to the user: it asks a decision and its `#case_against` line rates the case against "
+    "none, and the walk-me-through skill settles such an item without asking him, so no cold-read-fast-read was "
+    "run.",
+    "If {item} has no `#not_asked_touches` line, add one to it in {document} listing every file its change edits or "
+    "deletes, separated by spaces, or with nothing after the marker for a change that touches no file, such as "
+    "closing a GitHub issue.",
+    "Then run `{command}` and do what it prints.",
+    "If the case against is in fact more than none, change the rating on its `#case_against` line, then run "
+    "`{read_command}` again.",
+)
 ITEM_READ_FAILED_LINES = (
     "{item} has had no cold-read-fast-read of its text as it stands, so do not present it yet: the user is shown an "
     "item only after its cold-read-fast-read.",
@@ -2318,6 +2341,29 @@ def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minut
                 if level in sub_steps)
 
 
+def rated_none_item_not_to_be_shown(walk_finder, top, minutes, value, numbers, total, parser, named):
+    """Return the waiting item's walk-document path when the item is one the walk-me-through skill settles
+    without showing it, as the step's docstring says, or None. named is the item as check names it."""
+    if numbers[1:]:
+        return None
+    document, lines = item_lines(walk_finder, minutes, value, numbers, total, parser)
+    ratings = [CASE_AGAINST_RATING.match(match[1]) for match in map(CASE_AGAINST_LINE.match, lines) if match]
+    if not (ratings and ratings[0] and ratings[0][1].lower() == NOT_ASKED_RATED_NONE
+            and any(FACT_LABELS[0] in line for line in lines)):
+        return None
+    if guarded_paths(top, words(evidence(lines)[TOUCHES])):
+        return None
+    minutes_lines = walk_finder.prose_lines(minutes.read_text(encoding="utf-8"), parser)
+    for index in range(len(minutes_lines) - 1, -1, -1):
+        match = ANSWER_LINE.match(minutes_lines[index])
+        if match:
+            if (match["item"].lower() == named.lower() and match["answered"] == f"not asked, {not_asked_label(NOT_ASKED_RATED_NONE)}"
+                    and not any(line.startswith(match["item"] + ": ") for line in minutes_lines[index + 1:])):
+                return None
+            break
+    return document
+
+
 def waiting_item_read(arguments, sub_step_of=None):
     """Give the item the `#next_to_present` line names its cold-read-fast-read, as its text stands.
 
@@ -2330,7 +2376,7 @@ def waiting_item_read(arguments, sub_step_of=None):
     top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
     if sub_step_of:
         value = sub_step_of[0]
-    _, numbers, total = waiting_items(walk_finder, value, minutes)
+    named, numbers, total = waiting_items(walk_finder, value, minutes)
     program = Path(__file__).resolve()
     reads = item_reads_directory(walk_finder, minutes)
     rerun = READ_STEP_COMMAND.format(
@@ -2367,6 +2413,13 @@ def waiting_item_read(arguments, sub_step_of=None):
                                                  arguments.fast_read_program)
     if not_started:
         print(not_started)
+    not_shown = rated_none_item_not_to_be_shown(walk_finder, top, minutes, value, numbers, total, parser, named)
+    if not_shown is not None:
+        settle = f"python3 {program} check --not-asked {NOT_ASKED_RATED_NONE} --cwd {shlex.quote(str(top))}"
+        print("\n".join(line.format(item=item, document=not_shown, command=settle,
+                                    read_command=command.replace(" " + AFTER_FIXES_FLAG, ""))
+                        for line in RATED_NONE_NOT_SHOWN_LINES))
+        return 0
     key = text_key(text)
     while read_outcome(reads, key) is None and worker_alive(reads, key):
         time.sleep(READ_POLL_SECONDS)

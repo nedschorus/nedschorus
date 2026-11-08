@@ -189,17 +189,18 @@ Item 7 of 9 drops a sentence.
 
 
 # Every answer but O2, O3 and --moved-on-no-decision needs the item's `#case_against` line. Cases about something else use documents
-# written without one; rated() gives each item opening in such a document a `#case_against none.` line.
+# written without one; rated() gives each item opening in such a document a `#case_against none.` line, or a line
+# with the rating given.
 # The walk-document holds five of the walk's items, numbered 3 to 7 under `of 9`; close counts M from the items it
 # holds, so the `#next_to_present` lines close writes say `of 5`.
 WALK_DOCUMENT_COUNTED_M = "5"
 ITEM_OPENING = re.compile(r"^(?:#+\s*)?\**Items? [\d.]+(?: (?:and|to) [\d.]+)* of \d+\b.*$", re.M)
 
 
-def rated(document):
+def rated(document, rating="none."):
     if "#case_against" in document:
         return document
-    return ITEM_OPENING.sub(lambda opening: opening[0] + "\n\n#case_against none.\n", document)
+    return ITEM_OPENING.sub(lambda opening: opening[0] + f"\n\n#case_against {rating}\n", document)
 
 
 def check(case_name, condition, detail=""):
@@ -215,7 +216,8 @@ class Case:
 
     counter = 0
 
-    def __init__(self, next_to_present="item 3 of 9", document=WALK_DOCUMENT, temporary_directory_name="tmp"):
+    def __init__(self, next_to_present="item 3 of 9", document=WALK_DOCUMENT, temporary_directory_name="tmp",
+                 rating="none."):
         Case.counter += 1
         self.root = SUITE_ROOT / f"case-{Case.counter}"
         self.checkout = self.root / "checkout"
@@ -223,7 +225,7 @@ class Case:
         subprocess.run(["git", "init", "-q", str(self.checkout)], check=True)
         walk = self.checkout / "docs" / "walk"
         walk.mkdir(parents=True)
-        (walk / f"{WALK_NAME}.md").write_text(rated(document))
+        (walk / f"{WALK_NAME}.md").write_text(rated(document, rating))
         self.minutes = walk / f"{WALK_NAME}-minutes.md"
         self.minutes.write_text(f"# Minutes\n\nItem 2 of 9: the user: y. <accepted>\n#next_to_present {next_to_present}\n")
         self.records = self.root / "log-store-cold-read-records"
@@ -2340,8 +2342,8 @@ The walk in short.
 """
 
 
-def summary_case(next_to_present="item 2 of 5", recorded=""):
-    case = Case(next_to_present=next_to_present, document=SUMMARY_DOCUMENT)
+def summary_case(next_to_present="item 2 of 5", recorded="", rating="none."):
+    case = Case(next_to_present=next_to_present, document=SUMMARY_DOCUMENT, rating=rating)
     case.minutes.write_text(f"# Minutes\n\n{recorded}#next_to_present {next_to_present}\n")
     return case
 
@@ -4652,13 +4654,85 @@ def test_a_reply_given_with_already_decided_or_moved_on_is_refused_writing_nothi
               and f"--user-reply-as-typed was given with {flag}" in result.stderr, described(result))
 
 
+# Item 22 of walk-me-through-skill-refactor-approval-walk-2026-11-02 as it stood when the agent showed it to the user:
+# revision had lowered its case against to none, and it has no `#not_asked_touches` line.
+CLOSE_THE_ISSUE_ITEM = """## Item 22 of 26: GitHub issue "overview-write skill" has everything it asked for on main: close it
+
+The issue still holds one provisional-addition, and the page on main now covers all three of its gaps.
+
+{touches}#case_against none: the provisional-addition is already met on main.
+
+The alternative: keep the issue open.
+
+Recommendation: close the issue.
+"""
+
+
+def close_the_issue_case(touches="", recorded=""):
+    document = ("# A walk\n\n" + CLOSE_THE_ISSUE_ITEM.format(touches=touches)
+                + "\n## Item 23 of 26: a later item\n\n#case_against weak: a line more.\n\nRecommendation: add it.\n")
+    case = Case(next_to_present="item 22 of 26", document=document)
+    case.minutes.write_text(f"# Minutes\n\n{recorded}#next_to_present item 22 of 26\n")
+    return case
+
+
+def settle_command(case):
+    return f"python3 {PROGRAM} check --not-asked none --cwd {shlex.quote(str(case.checkout.resolve()))}"
+
+
+def test_the_read_step_says_an_item_rated_none_that_asks_a_decision_is_not_shown_and_how_to_settle_it():
+    for flags in ((), (AFTER_FIXES,)):
+        case = close_the_issue_case()
+        result = case.run(WAITING_ITEM_READ, *flags)
+        named = " ".join((WAITING_ITEM_READ,) + flags)
+        check(f"{named} on item 22, rated none after revision, does not say to present it and prints the command "
+              "that settles it", result.returncode == 0
+              and result.stdout.startswith("item 22 of 26 is not to be shown to the user: it asks a decision and its "
+                                           "`#case_against` line rates the case against none")
+              and f"Then run `{settle_command(case)}` and do what it prints." in result.stdout
+              and "Present" not in result.stdout and "present item 22" not in result.stdout
+              and "#not_asked_touches" in result.stdout and times_read(case, "## Item 22 of 26") == 0,
+              described(result) + case.calls.read_text())
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(document.read_text().replace("#case_against none:", "#not_asked_touches\n\n#case_against none:"))
+    printed = re.search(r"Then run `([^`]+)` and do what it prints\.", result.stdout)
+    settled = subprocess.run(shlex.split(printed[1] if printed else "false") + case_paths(case)[2:],
+                             capture_output=True, text=True, cwd=case.checkout)
+    check("the command the read step prints settles item 22 once it has an empty `#not_asked_touches` line",
+          settled.returncode == 0
+          and "item 22 of 26 is recorded as settled without asking the user, case against none;" in settled.stdout,
+          described(settled))
+
+
+def test_the_read_step_presents_an_item_rated_none_that_is_shown_all_the_same():
+    cases = (
+        ("whose touches line names a file the instruction-file guard protects",
+         close_the_issue_case(touches="#not_asked_touches CLAUDE.md\n\n")),
+        ("that `check --not-asked none` settled but close has not closed, as when the advisor objected",
+         close_the_issue_case(recorded="item 22 of 26: settled without asking the user, not asked, case against none "
+                                       "#case_against_none (2026-11-07 16:20), which makes its change. Fast reads:\n")),
+    )
+    for described_case, case in cases:
+        result = case.run(WAITING_ITEM_READ)
+        check(f"the read step reads and presents an item rated none {described_case}",
+              result.returncode == 0 and result.stdout.rstrip("\n").endswith("Then present item 22 of 26.")
+              and times_read(case, "## Item 22 of 26") == 1, described(result))
+    case = rated_none_case(next_to_present="item 3 of 3")
+    result = case.run(WAITING_ITEM_READ)
+    check("the read step presents an item rated none that asks no decision, such as a summary item",
+          result.returncode == 0 and result.stdout.rstrip("\n").endswith("Then present item 3 of 3."),
+          described(result))
+
+
 WAITING_ITEM_READ = "approval-walk-waiting-item-cold-read-fast-read"
 AFTER_FIXES = "--after-fixes-reread-only-when-facts-change"
 
 
 def item_read_case(next_to_present="item 2 of 5", recorded=""):
-    """A summary walk whose item 1 is decided, so close of item 2 names item 3 and reads item 4 ahead."""
-    return summary_case(next_to_present=next_to_present, recorded=recorded or approved_line("item 1 of 5"))
+    """A summary walk whose item 1 is decided, so close of item 2 names item 3 and reads item 4 ahead. Its items
+    are rated weak, since the read step does not read an item rated none that asks a decision."""
+    return summary_case(next_to_present=next_to_present, recorded=recorded or approved_line("item 1 of 5"),
+                        rating="weak.")
 
 
 def times_read(case, heading):
@@ -4709,7 +4783,8 @@ def test_close_reads_the_item_after_the_next_one_ahead_and_the_read_step_uses_it
 
 
 def test_an_unnumbered_item_is_read_ahead_as_close_will_number_it():
-    case = Case(next_to_present="item 1 of 4", document=UNNUMBERED_ITEMS_DOCUMENT)
+    case = Case(next_to_present="item 1 of 4", document=UNNUMBERED_ITEMS_DOCUMENT.replace(
+        "#case_against none.\n\nRecommendation", "#case_against weak.\n\nRecommendation"))
     closed = answered_and_closed(case)
     check("close reads the unnumbered item after the next one ahead, its heading as close will number it",
           closed.returncode == 0 and times_read(case, "## Item 3 of 4: three") == 1
@@ -4927,13 +5002,13 @@ def test_a_fix_that_touches_a_fact_is_read_again():
             ("a file name by its extension", ITEM_3_HEADING, added.format("It edits poems.yaml."), "poems.yaml."),
             ("a link", ITEM_3_HEADING, added.format("See [the page](../poems)."),
              "[the page](../poems)"),
-            ("the recommendation", "#case_against none.\n\n\nRecommendation: leave it.\n\n## Item 4",
-             "#case_against none.\n\n\nRecommendation: drop it.\n\n## Item 4", '"Recommendation: drop it."'),
-            ("the alternative", "#case_against none.\n\n\nRecommendation: leave it.\n\n## Item 4",
-             "#case_against none.\n\n\nThe alternative: drop it. Recommendation: leave it.\n\n## Item 4",
+            ("the recommendation", "#case_against weak.\n\n\nRecommendation: leave it.\n\n## Item 4",
+             "#case_against weak.\n\n\nRecommendation: drop it.\n\n## Item 4", '"Recommendation: drop it."'),
+            ("the alternative", "#case_against weak.\n\n\nRecommendation: leave it.\n\n## Item 4",
+             "#case_against weak.\n\n\nThe alternative: drop it. Recommendation: leave it.\n\n## Item 4",
              '"The alternative: drop it. Recommendation'),
-            ("the case against", ITEM_3_HEADING + "\n#case_against none.", ITEM_3_HEADING + "\n#case_against weak.",
-             '"#case_against weak."')):
+            ("the case against", ITEM_3_HEADING + "\n#case_against weak.", ITEM_3_HEADING + "\n#case_against medium.",
+             '"#case_against medium."')):
         case, result = after_fixes_case(old, new)
         first = without_kept_lines(result.stdout).split("\n")[0]
         check(f"{AFTER_FIXES} after a fix that changes {name} reads the item again and names the fact",
