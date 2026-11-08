@@ -905,15 +905,17 @@ def recorded_mutant_verdict_without_a_suite_run(checkout, path, hunks, head, sou
     if ends_with_pragma is None:
         return ("could not be judged", (
             f"in {path} at head {head[:12]}, the lines this diff file replaces appear more than "
-            f"once when a trailing `# pragma: no mutate` comment is left out of the comparison: "
-            f"some copies end with that comment and some do not, so which copy is the mutant's "
-            f"own line cannot be told, and no suite was run. The diff's `@@` line gives the "
-            f"line number the mutant had when it was recorded.\n"
-            f"If the mutant's own line ends with the comment: no mutation pass makes the mutant "
-            f"any more; mark the survivor task that names this diff file completed, saying why "
-            f"in its description.\n"
+            f"once when each line's trailing `# pragma: no mutate` comment is stripped before "
+            f"comparing: some copies end with that comment and some do not, so which copy is "
+            f"the mutant's own line cannot be told, and no suite was run. The diff's `@@` line "
+            f"gives the line number the mutant had when it was recorded; read the copies "
+            f"around that number to tell which is the mutant's.\n"
+            f"If the mutant's own line ends with the comment on origin/main: no mutation pass "
+            f"makes the mutant any more; mark the survivor task that names this diff file "
+            f"completed, saying why in the task's description.\n"
             f"Otherwise: write a test that fails when the diff's change is made on the mutant's "
-            f"own line, check by hand that it does, say so in your pull request, and mark the "
+            f"own line; check that by making the change by hand, running the test, and putting "
+            f"the line back before you commit; say so in your pull request; and mark the "
             f"survivor task completed once that pull request merges, since every rerun of this "
             f"command gives this same verdict.")), None
     return None, mutated_source
@@ -1059,23 +1061,28 @@ def recorded_mutants_judged_in_one_worktree(to_run, head, arguments, checkout, e
                 stderr=subprocess.STDOUT, check=False)
             if unmutated.returncode == runner.EXIT_LOCKED:
                 raise CouldNotRun(
-                    f"{PROGRAM}: not run — the suite runner, run at head {head[:12]} without a "
-                    f"mutant, exited {runner.EXIT_LOCKED}, which means it ran no suite: another "
-                    f"test run holds the lock it takes (the machine's lock, or its log "
-                    f"directory's), so no mutant can be judged. Its refusal:\n"
+                    f"{PROGRAM}: not run — the suite runner scripts/run-all-test-suites.py, run "
+                    f"at head {head[:12]} without a mutant, exited {runner.EXIT_LOCKED}, which "
+                    f"means it ran no suite: another test run holds a lock the runner takes (the "
+                    f"machine's lock, or the lock on the runner's log directory), so no mutant "
+                    f"can be judged. The runner's refusal, which names the lock and the process "
+                    f"holding it:\n"
                     f"{unmutated.stdout.strip()}\n"
-                    f"Run this command again, with the same options, once that other test run "
-                    f"has finished; the refusal names the process holding the lock.")
+                    f"Run scripts/{PROGRAM}.py again, with the same options, once that process "
+                    f"has ended.")
             if unmutated.returncode != 0 and not runner.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(
                     unmutated.stdout):
                 raise CouldNotRun(
-                    f"{PROGRAM}: not run — the suite runner, run at head {head[:12]} without a "
-                    f"mutant, exited {unmutated.returncode} without reporting any suite as "
-                    f"failed, so no mutant can be judged; its output "
-                    f"{runner_output_described(unmutated.stdout, runner)}\n"
+                    f"{PROGRAM}: not run — the suite runner scripts/run-all-test-suites.py, run "
+                    f"at head {head[:12]} without a mutant, exited {unmutated.returncode} "
+                    f"without reporting any suite as failed, so no mutant can be judged; the "
+                    f"runner's output {runner_output_described(unmutated.stdout, runner)}\n"
                     f"{unmutated.stdout.strip()}\n"
-                    f"Fix what that output names, then run this command again with the same "
-                    f"options.")
+                    f"If that output names a cause, fix it, then run scripts/{PROGRAM}.py again "
+                    f"with the same options.\n"
+                    f"If it names none, as when it is empty, run scripts/{PROGRAM}.py once more "
+                    f"with the same options; if that run fails the same way, put both outputs in "
+                    f"the description of the pull request you are checking.")
             if unmutated.returncode != 0:
                 raise CouldNotRun(
                     f"{PROGRAM}: not run — the suites for the mutated files do not pass at head "

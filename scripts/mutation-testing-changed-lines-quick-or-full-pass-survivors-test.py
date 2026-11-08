@@ -648,8 +648,9 @@ def run_recorded_mutant_killed_check_cases():
               "mutant, is refused the machine's lock: it says the runner judged no suite and "
               "prints the refusal, not that the suites fail, and removes its worktree",
               completed.returncode == 2
-              and f"the suite runner, run at head {head[:12]} without a mutant, exited "
-                  f"{runner.EXIT_LOCKED}, which means it ran no suite" in completed.stderr
+              and f"the suite runner scripts/run-all-test-suites.py, run at head {head[:12]} "
+                  f"without a mutant, exited {runner.EXIT_LOCKED}, which means it ran no suite"
+                  in completed.stderr
               and "pid 7, the holder in this test" in completed.stderr
               and "do not pass" not in completed.stderr
               and "MUTANT " not in completed.stdout
@@ -664,8 +665,8 @@ def run_recorded_mutant_killed_check_cases():
               "mutant, ends nonzero without reporting a suite as failed: it says so and prints "
               "the runner's output, not that the suites fail",
               completed.returncode == 2
-              and f"the suite runner, run at head {head[:12]} without a mutant, exited "
-                  in completed.stderr
+              and f"the suite runner scripts/run-all-test-suites.py, run at head {head[:12]} "
+                  f"without a mutant, exited " in completed.stderr
               and "without reporting any suite as failed" in completed.stderr
               and "do not pass" not in completed.stderr
               and worktrees_of(repository) == worktrees_before,
