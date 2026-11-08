@@ -718,11 +718,11 @@ def rebase_lines(branch="topic", base="origin/main"):
     ]
 
 
-def merge_lines(branch="topic", base="origin/main"):
+def merge_lines(branch="topic", base="origin/main", remote="origin"):
     return [
-        "ANSWER: merge -- branch %s has no open pull request and origin already has "
+        "ANSWER: merge -- branch %s has no open pull request and %s already has "
         "it, so %s is merged into it, because GitHub refuses every force-push "
-        "to this repository." % (branch, base),
+        "to this repository." % (branch, remote, base),
     ] + understand_lines(base) + [
         "Run git merge %s, resolving each conflict so that both changes work."
         % base,
@@ -2068,6 +2068,22 @@ case("--branch: no open pull request and origin has the branch: main is merged i
      "and pushed without --force",
      status == CHECK.EXIT_CONFLICT and lines[1:] == merge_lines()
      and ["git", "ls-remote", "--heads", "origin", "refs/heads/topic"] in log)
+
+def ls_remote_only_upstream_has_topic(command):
+    if command[:2] == ["git", "ls-remote"]:
+        return (0, RESOLVED_HEAD + "\trefs/heads/topic") if "upstream" in command \
+            else (0, "")
+    return fake_runner(merge_tree_status=1)(command)
+
+
+status, lines = CHECK.check("HEAD", "upstream/main", None,
+                            runner=ls_remote_only_upstream_has_topic,
+                            sleep=lambda _s: None, reads=1, sleep_seconds=0,
+                            remote="upstream", branch="topic")
+case("--fetch-remote upstream: the branch is looked up on upstream, not origin, so a "
+     "branch only upstream has gets the merge steps",
+     status == CHECK.EXIT_CONFLICT
+     and lines[1:] == merge_lines(base="upstream/main", remote="upstream"))
 
 status, lines = run_branch(fake_runner(merge_tree_status=1, ls_remote=(128, "")),
                            branch="topic")
