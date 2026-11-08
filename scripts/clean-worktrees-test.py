@@ -20,8 +20,8 @@ Those cases guard the reaper's central promise — ambiguity keeps, never
 reaps — which a worktree holding someone's uncommitted work depends on.
 
 The cleaner lists pull requests with gh. Every run here finds this suite's
-own gh first on PATH, which prints the JSON in FAKE_GH_PULL_REQUESTS, or an
-empty list, or fails with exit FAKE_GH_EXIT_CODE, and never reaches GitHub.
+own gh first on PATH, which prints the JSON in FAKE_GH_PULL_REQUESTS, keeping
+only the fields named after --json, or an empty list, or fails with exit FAKE_GH_EXIT_CODE, and never reaches GitHub.
 
 The classification cases run against the machine's REAL lsof, and that is the
 one way this suite can fail for a reason that is not a defect. If lsof does not
@@ -106,15 +106,22 @@ atexit.register(shutil.rmtree, _removals_log_for_every_run, ignore_errors=True)
 os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(Path(_removals_log_for_every_run) / "log.txt")
 
 # Every run finds this gh first: it prints FAKE_GH_PULL_REQUESTS, an empty list by default, or fails
-# with exit FAKE_GH_EXIT_CODE, so no run reaches GitHub.
+# with exit FAKE_GH_EXIT_CODE, so no run reaches GitHub. Like the real gh, it prints only the fields
+# named after --json, so a field the cleaner forgets to ask for is missing from what it reads.
 _fake_gh_directory = tempfile.mkdtemp(prefix="clean-worktrees-test-fake-gh-")
 atexit.register(shutil.rmtree, _fake_gh_directory, ignore_errors=True)
 FAKE_GH = Path(_fake_gh_directory) / "gh"
 FAKE_GH.write_text(
-    "#!/bin/sh\n"
-    'if [ -n "$FAKE_GH_EXIT_CODE" ]; then echo "gh: stand-in listing failure" >&2; '
-    'exit "$FAKE_GH_EXIT_CODE"; fi\n'
-    'printf "%s\\n" "${FAKE_GH_PULL_REQUESTS:-[]}"\n', encoding="utf-8")
+    f"#!{sys.executable}\n"
+    "import json, os, sys\n"
+    "if os.environ.get('FAKE_GH_EXIT_CODE'):\n"
+    "    print('gh: stand-in listing failure', file=sys.stderr)\n"
+    "    sys.exit(int(os.environ['FAKE_GH_EXIT_CODE']))\n"
+    "pull_requests = json.loads(os.environ.get('FAKE_GH_PULL_REQUESTS') or '[]')\n"
+    "if '--json' in sys.argv:\n"
+    "    fields = sys.argv[sys.argv.index('--json') + 1].split(',')\n"
+    "    pull_requests = [{f: p[f] for f in fields if f in p} for p in pull_requests]\n"
+    "print(json.dumps(pull_requests))\n", encoding="utf-8")
 FAKE_GH.chmod(0o755)
 os.environ["PATH"] = f"{_fake_gh_directory}{os.pathsep}{os.environ.get('PATH', '')}"
 os.environ.pop("FAKE_GH_PULL_REQUESTS", None)
