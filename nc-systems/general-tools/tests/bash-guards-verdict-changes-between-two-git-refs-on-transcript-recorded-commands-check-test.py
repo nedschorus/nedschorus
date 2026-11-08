@@ -901,7 +901,7 @@ try:
     check("a head that does not merge cleanly with the base: exit 2, naming the conflicted file and the head's "
           "author as the agent-seat to tell",
           status == 2 and "does not merge cleanly with the base" in err and f"in: ['{TMUX_KILL_GUARD}']" in err
-          and "send the author, the agent-seat replay test that the head's commit names" in err
+          and "the head's commit names replay test as its author." in err
           and "VERDICT" not in out, f"status {status}\n{out}\n{err}")
 
     unrelated_head = git("-c", "user.name=replay test", "-c", "user.email=replay@test.invalid", "commit-tree",

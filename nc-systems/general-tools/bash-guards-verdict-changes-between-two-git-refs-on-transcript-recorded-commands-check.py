@@ -894,18 +894,19 @@ def head_merged_with_base_commit_make_or_raise_on_conflict(repository, base_comm
             f"this check, {this_check}, from the repository's top directory again with the same options, but with "
             "--head-ref set to the head of the pull request that report's steps leave open: this pull request's "
             "new head, or, when the report had you replace this pull request, the head of the new one.\n"
-            f"When you are not the author, such as merge-lane-2: send the author, the agent-seat {head_author} that "
-            "the head's commit names as its author, with SendMessage, the head, the "
-            "base and the conflicted files above, and ask the author to run python3 scripts/branch-conflict-check.py "
-            "in the pull request's checkout and do what its report says; the pull request cannot merge while its "
-            "head conflicts with the base.")
+            f"When you are not the author, such as merge-lane-2: the head's commit names {head_author} as its author. "
+            f"Send {head_author} the head, the base and the conflicted files above with SendMessage, and ask it to run "
+            "python3 scripts/branch-conflict-check.py in the pull request's checkout and do what its report says. "
+            f"When ListAgents does not list {head_author}, give the same to the user instead. The pull request cannot "
+            "merge while its head conflicts with the base.")
     if completed.returncode:
         reason = completed.stderr.strip() or "git printed no reason"
         if "refusing to merge unrelated histories" in reason:
             next_step = (
-                f"Run this check, {this_check}, from the repository's top directory again, keeping every other "
-                "option you gave it, with --base-ref and --head-ref naming commits that share history, such as origin/main and the pull request's head "
-                "commit. Two commits share history when git merge-base, given the two, prints a commit.")
+                f"Run this check, {this_check}, from the repository's top directory again, with --base-ref and "
+                "--head-ref naming commits that share history, such as --base-ref origin/main and --head-ref the pull "
+                "request's head commit, and your other options unchanged. Two commits share history when git "
+                "merge-base, given both commits in either order, prints a commit.")
         else:
             next_step = (
                 f"Run this check, {this_check}, from the repository's top directory again once, with every option "
