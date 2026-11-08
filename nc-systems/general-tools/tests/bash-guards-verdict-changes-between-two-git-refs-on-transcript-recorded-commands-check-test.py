@@ -905,10 +905,28 @@ try:
     unrelated_head = git("-c", "user.name=replay test", "-c", "user.email=replay@test.invalid", "commit-tree",
                          "--no-gpg-sign", "HEAD^{tree}", "-m", "replay test: a head with no history in common")
     status, out, err = run_replay(unrelated_head, scratch, head_cut_from_base=False)
-    check("a head that shares no history with the base: exit 2, passing on git merge-tree's reason",
+    check("a head that shares no history with the base: exit 2, passing on git merge-tree's reason and only "
+          "the step for unrelated histories",
           status == 2 and "git merge-tree of the base" in err
-          and "no guard was replayed: fatal: refusing to merge unrelated histories.\n" in err,
+          and "no guard was replayed: fatal: refusing to merge unrelated histories.\n" in err
+          and "naming commits that share history" in err and "with every option you gave it" not in err,
           f"status {status}\n{out}\n{err}")
+
+    # Injected: no real pair of commits makes git merge-tree fail for any reason but unrelated histories.
+    real_run_git = replay.run_git_returning_completed_process_without_exit_code_check
+    replay.run_git_returning_completed_process_without_exit_code_check = (
+        lambda *_: subprocess.CompletedProcess([], 128, "", "fatal: unable to read tree 1234\n"))
+    try:
+        replay.head_merged_with_base_commit_make_or_raise_on_conflict(Path("."), "base1", "head1")
+        raised = ""
+    except replay.ReplayFailed as error:
+        raised = str(error)
+    finally:
+        replay.run_git_returning_completed_process_without_exit_code_check = real_run_git
+    check("git merge-tree failing for another reason: the message gives only the run-once-more step",
+          "no guard was replayed: fatal: unable to read tree 1234.\n" in raised
+          and "with every option you gave it this time unchanged" in raised
+          and "naming commits that share history" not in raised, raised)
 
     uncallable = commit_with_guard_changed(ISSUE_WRITE_GUARD, "del analyze_command_text", scratch)
     status, out, err = run_replay(uncallable, scratch)
