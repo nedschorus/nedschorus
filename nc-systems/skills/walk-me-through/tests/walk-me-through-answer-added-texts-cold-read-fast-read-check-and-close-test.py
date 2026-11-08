@@ -492,7 +492,7 @@ def test_a_mark_whose_text_would_not_be_read_whole_is_refused_by_check_writing_n
 
 
 def test_a_mark_whose_text_would_not_be_read_whole_is_refused_for_every_answer_that_adds_texts():
-    for flags in (("--disapproved",), ("--already-decided", "ruling of 2026-10-01"), ("--not-asked", "5")):
+    for flags in (("--disapproved",), ("--already-decided", "ruling of 2026-10-01"), ("--not-asked", "12")):
         case = Case(document=marks_document("#new_if_d\n"))
         before = case.minutes.read_text()
         result = case.run("check", *flags)
@@ -1176,7 +1176,12 @@ def test_only_a_line_the_program_writes_records_a_decision_or_a_deferral():
             ("item 3 of 9: not asked, kind 6; every text the change adds has had a fast read. <accepted>\n",
              ({"3"}, {}), "the line close writes for an item settled as kind 6 decides it"),
             ("item 3 of 9: not asked, kind 7; every text the change adds has had a fast read. <accepted>\n",
-             (set(), {}), "close's took-effect form with a kind --not-asked never accepts records nothing"),
+             (set(), {}), "close's took-effect form with a kind the walk-minutes never held records nothing"),
+            ("item 3 of 9: not asked, exception 14; every text the change adds has had a fast read. <accepted>\n",
+             ({"3"}, {}), "the line close writes for an item settled as an approval page exception decides it"),
+            ("item 3 of 9: not asked, exception 13; every text the change adds has had a fast read. <accepted>\n",
+             (set(), {}), "close's took-effect form with exception 13, which --not-asked never accepts, records "
+                          "nothing"),
             ("item 3 of 9: part 1 approved <rejected>; every text the change adds has had a fast read.\n",
              (set(), {}), "close's parts form pairing a part's answer with the other answer's outcome records "
                           "nothing"),
@@ -2346,7 +2351,7 @@ def test_the_rating_is_written_beside_every_answer_and_close_still_reads_it():
           "<rejected>\n" in case.minutes.read_text(), described(closed))
 
 
-# Items written as an agent drafts one to settle without the user: each kind with the evidence lines it needs.
+# Items written as an agent drafts one to settle without the user: each exception with the evidence lines it needs.
 NOT_ASKED_DOCUMENT = """# A walk
 
 ## Item 1 of 7: the page's path, caught up with the merged code
@@ -2431,27 +2436,33 @@ def not_asked_case(next_to_present, files=None):
     return case
 
 
-def test_each_kind_with_its_evidence_settles_without_the_user_and_close_records_it_accepted():
-    for kind in (1, 2, 3, 4, 5):
-        case = not_asked_case(f"item {kind} of 7")
-        result = case.run("check", "--not-asked", str(kind))
+# The fixture's items 1 to 5, each with the approval page's exception its evidence fits.
+FIXTURE_ITEM_EXCEPTIONS = {1: 14, 2: 15, 3: 16, 4: 7, 5: 12}
+
+
+def test_each_exception_with_its_evidence_settles_without_the_user_and_close_records_it_accepted():
+    for item, exception in FIXTURE_ITEM_EXCEPTIONS.items():
+        case = not_asked_case(f"item {item} of 7")
+        result = case.run("check", "--not-asked", str(exception))
         minutes = case.minutes.read_text()
-        check(f"kind {kind} with its evidence is settled: the minutes say not asked, its kind and its rating",
+        check(f"exception {exception} with its evidence is settled: the minutes say not asked, its number and its "
+              f"rating",
               result.returncode == 0
-              and re.search(rf"\nitem {kind} of 7: settled without asking the user, not asked, kind {kind} "
+              and re.search(rf"\nitem {item} of 7: settled without asking the user, not asked, exception {exception} "
                             rf"#case_against_(?:none|weak) \(\d{{4}}-\d\d-\d\d \d\d:\d\d\), which makes its change\. "
                             r"Fast reads:\n", minutes) is not None
               and f"Before you run close, ask the advisor whether a later ruling or another open item overtakes item "
-                  f"{kind} of 7" in result.stdout, described(result) + minutes)
+                  f"{item} of 7" in result.stdout, described(result) + minutes)
         closed = case.run("close")
-        check(f"close records the settled kind {kind} item as accepted, with not asked and its kind, and moves on",
+        check(f"close records the item settled as exception {exception} as accepted, with not asked and its number, "
+              f"and moves on",
               closed.returncode == 0
-              and f"\nitem {kind} of 7: not asked, kind {kind}; every text the change adds has had a fast read. "
-                  f"<accepted>\n" in case.minutes.read_text()
-              and int(re.search(r"#next_to_present item (\d+) of 7$", case.minutes.read_text().rstrip())[1]) > kind,
+              and f"\nitem {item} of 7: not asked, exception {exception}; every text the change adds has had a fast "
+                  f"read. <accepted>\n" in case.minutes.read_text()
+              and int(re.search(r"#next_to_present item (\d+) of 7$", case.minutes.read_text().rstrip())[1]) > item,
               described(closed))
     case = not_asked_case("item 1 of 7")
-    case.run("check", "--not-asked", "1")
+    case.run("check", "--not-asked", "14")
     check("a settled item's `#new` texts get their fast read as an approval's do",
           case.calls.read_text() == "The poems are in docs/poems/.\n", repr(case.calls.read_text()))
 
@@ -2459,7 +2470,7 @@ def test_each_kind_with_its_evidence_settles_without_the_user_and_close_records_
 def refused(case, kind, *problems):
     before = case.minutes.read_text()
     result = case.run("check", "--not-asked", str(kind))
-    return (result.returncode == 1 and f"cannot be settled without asking the user as kind {kind}, because:"
+    return (result.returncode == 1 and f"cannot be settled without asking the user as exception {kind}, because:"
             in result.stderr and all(problem in result.stderr for problem in problems)
             and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))
 
@@ -2536,8 +2547,9 @@ def refused_as_rated_none(case, *problems):
 
 def test_an_item_of_no_kind_settles_only_when_rated_none_and_touching_no_guarded_file():
     check("an item of no kind rated weak is refused",
-          *refused_as_rated_none(rated_none_case("item 2 of 3"), "rates the case against weak; an item of none of "
-                                 "the kinds settles without the user only when its case against is rated none"))
+          *refused_as_rated_none(rated_none_case("item 2 of 3"), "rates the case against weak; an item that is "
+                                 "none of the exceptions settles without the user only when its case against is "
+                                 "rated none"))
     check("an item of no kind with no touches line is refused",
           *refused_as_rated_none(rated_none_case(touches=""), "it has no `#not_asked_touches` line"))
     for word in ("CLAUDE.md:12", "tools/counter.py.", "tools/missing.py"):
@@ -2560,95 +2572,143 @@ def test_an_item_of_no_kind_with_an_empty_touches_line_settles_as_a_change_that_
           described(result))
 
 
-def test_a_not_asked_value_other_than_a_kind_or_none_is_refused_as_usage():
-    for value in ("7", "0", "weak"):
+def test_a_not_asked_value_other_than_an_exception_number_or_none_is_refused_as_usage():
+    for value in ("17", "0", "weak"):
         case = rated_none_case()
         result = case.run("check", "--not-asked", value)
         check(f"`--not-asked {value}` is refused as usage, writing nothing",
-              result.returncode == 2 and f"`{value}` is not a kind: give 1, 2, 3, 4, 5, 6 or none" in result.stderr
+              result.returncode == 2
+              and f"`{value}` is not the number of an exception on {APPROVAL_PAGE_PATH}, and --not-asked takes "
+                  f"only those numbers, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, or `none`." in result.stderr
               and case.minutes.read_text().rstrip().endswith("#next_to_present item 1 of 3"), described(result))
+    case = rated_none_case()
+    result = case.run("check", "--not-asked", "13")
+    check("`--not-asked 13`, the exception settling an item carries out, is refused as usage, writing nothing",
+          result.returncode == 2 and f"exception 13 on {APPROVAL_PAGE_PATH} is the one for an item an approval-walk "
+                                     "settles" in result.stderr
+          and "which is what --not-asked records, not a kind of change" in result.stderr
+          and case.minutes.read_text().rstrip().endswith("#next_to_present item 1 of 3"), described(result))
+
+
+APPROVAL_PAGE_PATH = "docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md"
+APPROVAL_PAGE_EXCEPTION_LINE = re.compile(r"^(\d+)\. (.*)$")
+
+
+def test_the_programs_exception_numbers_match_the_approval_pages_numbered_exceptions():
+    """--not-asked takes the page's numbers, so an exception added to the page in the middle of its list, renumbered
+    or reworded at its start makes the program settle items under the wrong exception."""
+    program = load_program()
+    page = (Path(__file__).resolve().parents[4] / APPROVAL_PAGE_PATH).read_text()
+    section = page.split("\n## Exceptions: changes that need no approval", 1)[1].split("\n## ", 1)[0]
+    on_page = {int(match[1]): match[2] for match in map(APPROVAL_PAGE_EXCEPTION_LINE.match, section.split("\n"))
+               if match}
+    check("the approval page's exceptions are numbered 1, 2, 3 and on, with no gap",
+          sorted(on_page) == list(range(1, len(on_page) + 1)), repr(sorted(on_page)))
+    check("the program lists exactly the approval page's exception numbers",
+          program.APPROVAL_PAGE_PATH == APPROVAL_PAGE_PATH and sorted(program.NO_APPROVAL_NEEDED_EXCEPTION_OPENING_WORDS_BY_NUMBER) == sorted(on_page),
+          repr((sorted(program.NO_APPROVAL_NEEDED_EXCEPTION_OPENING_WORDS_BY_NUMBER), sorted(on_page))))
+    for number, opening in program.NO_APPROVAL_NEEDED_EXCEPTION_OPENING_WORDS_BY_NUMBER.items():
+        check(f"exception {number} on the approval page opens with the words the program gives it, {opening!r}",
+              on_page.get(number, "").startswith(opening), repr(on_page.get(number)))
 
 
 def test_a_case_against_rated_above_weak_is_never_settled():
-    check("an item rated strong is refused, whatever its kind",
-          *refused(not_asked_case("item 6 of 7"), 1, "rates the case against strong",
+    check("an item rated strong is refused, whatever its exception",
+          *refused(not_asked_case("item 6 of 7"), 14, "rates the case against strong",
                    "it has no `#not_asked_touches` line", "it has no `#not_asked_source` line"))
 
 
-def test_each_kind_refuses_without_the_evidence_code_can_check():
-    check("kind 2 is refused when the item names no test",
-          *refused(not_asked_case("item 1 of 7"), 2, "it has no `#not_asked_test` line"))
-    check("kind 4 is refused when the item gives no rename",
-          *refused(not_asked_case("item 1 of 7"), 4, "it has no `#not_asked_rename` line"))
-    check("kind 1 is refused when the item has no `#new` text",
-          *refused(not_asked_case("item 5 of 7"), 1, "it has no `#new` line"))
+def test_each_exception_refuses_without_the_evidence_code_can_check():
+    check("exception 15 is refused when the item names no test",
+          *refused(not_asked_case("item 1 of 7"), 15, "it has no `#not_asked_test` line"))
+    check("exception 7 is refused when the item gives no rename",
+          *refused(not_asked_case("item 1 of 7"), 7, "it has no `#not_asked_rename` line"))
+    check("exception 14 is refused when the item has no `#new` text",
+          *refused(not_asked_case("item 5 of 7"), 14, "it has no `#new` line"))
+    check("exception 16 is refused when the item names nothing removed",
+          *refused(not_asked_case("item 1 of 7"), 16, "it has no `#not_asked_unused` line"))
     check("a touched file that is not in the checkout is refused",
-          *refused(not_asked_case("item 1 of 7", {"docs/poems/index.md": None}), 1,
+          *refused(not_asked_case("item 1 of 7", {"docs/poems/index.md": None}), 14,
                    "`#not_asked_touches` names docs/poems/index.md, which is not in the checkout"))
-    check("kind 2 is refused when it touches a new file that is not its test",
-          *refused(not_asked_case("item 2 of 7", {"tools/counter.py": None}), 2,
+    for exception in (3, 4):
+        check(f"exception {exception}, with no check of its own, is refused when it touches a file not in the "
+              f"checkout",
+              *refused(not_asked_case("item 1 of 7", {"docs/poems/index.md": None}), exception,
+                       "`#not_asked_touches` names docs/poems/index.md, which is not in the checkout"))
+        check(f"exception {exception}, with no check of its own, is refused when the item lists no file it touches",
+              *refused(not_asked_case("item 5 of 7"), exception, "it has no `#not_asked_touches` line"))
+        case = not_asked_case("item 1 of 7")
+        result = case.run("check", "--not-asked", str(exception))
+        check(f"exception {exception}, with no check of its own, settles with a touches line naming a file in the "
+              f"checkout", result.returncode == 0
+              and f"not asked, exception {exception} #case_against_none (" in case.minutes.read_text(),
+              described(result))
+    check("exception 15 is refused when it touches a new file that is not its test",
+          *refused(not_asked_case("item 2 of 7", {"tools/counter.py": None}), 15,
                    "names tools/counter.py, which is not in the checkout",
                    "adds no file but a test"))
     case = not_asked_case("item 2 of 7", {"tools/counter-test.py": None})
-    result = case.run("check", "--not-asked", "2")
-    check("kind 2 may add the test that shows its fix", result.returncode == 0, described(result))
+    result = case.run("check", "--not-asked", "15")
+    check("exception 15 may add the test that shows its fix", result.returncode == 0, described(result))
     case = not_asked_case("item 5 of 7")
     (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").write_text(NOT_ASKED_DOCUMENT.replace(
         '#not_asked_source the user, 2026-10-20: "make a GHI for the counter."',
         '#not_asked_source the user, 2026-10-20: "make a GHI for the counter."\n\n'
         '#not_asked_touches docs/issues/counter.md'))
-    result = case.run("check", "--not-asked", "5")
-    check("kind 5 may touch a file the ruling it carries out creates", result.returncode == 0, described(result))
+    result = case.run("check", "--not-asked", "12")
+    check("exception 12 may touch a file the ruling it carries out creates", result.returncode == 0,
+          described(result))
     document = NOT_ASKED_DOCUMENT.replace("#not_asked_test tools/counter-test.py", "#not_asked_test tools/counter.py")
     case = not_asked_case("item 2 of 7")
     (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").write_text(document)
-    check("kind 2 is refused when its named test is not a test file",
-          *refused(case, 2, "`#not_asked_test` names tools/counter.py, which is not a test file"))
+    check("exception 15 is refused when its named test is not a test file",
+          *refused(case, 15, "`#not_asked_test` names tools/counter.py, which is not a test file"))
 
 
 def test_a_removal_is_refused_while_an_untouched_file_still_names_what_it_removes():
-    check("kind 3 is refused when a file the item does not touch still names the removed thing",
-          *refused(not_asked_case("item 3 of 7", {"tools/other.py": "old_reader()\n"}), 3,
+    check("exception 16 is refused when a file the item does not touch still names the removed thing",
+          *refused(not_asked_case("item 3 of 7", {"tools/other.py": "old_reader()\n"}), 16,
                    "`old_reader`, named on its `#not_asked_unused` line, is still named in tools/other.py"))
-    check("kind 3 is refused when an untouched file names the removed thing in another spelling",
-          *refused(not_asked_case("item 3 of 7", {"docs/tools.md": "Run `old-reader.py`.\n"}), 3,
+    check("exception 16 is refused when an untouched file names the removed thing in another spelling",
+          *refused(not_asked_case("item 3 of 7", {"docs/tools.md": "Run `old-reader.py`.\n"}), 16,
                    "`old_reader`, named on its `#not_asked_unused` line, is still named in docs/tools.md"))
     for spelling in ("OLD_READER_PATH = 1", "use_old_reader_cache()", "Old_Reader()"):
-        check(f"kind 3 is refused when an untouched file holds the removed name in another case or inside a longer "
+        check(f"exception 16 is refused when an untouched file holds the removed name in another case or inside a "
+              f"longer "
               f"name: {spelling}",
-              *refused(not_asked_case("item 3 of 7", {"tools/other.py": f"{spelling}\n"}), 3,
+              *refused(not_asked_case("item 3 of 7", {"tools/other.py": f"{spelling}\n"}), 16,
                        "`old_reader`, named on its `#not_asked_unused` line, is still named in tools/other.py"))
-    check("kind 3 with no unused line is refused when it touches a file that is not Markdown",
-          *refused(not_asked_case("item 2 of 7"), 3, "it has no `#not_asked_unused` line, and `#not_asked_touches` "
-                                                     "names tools/counter.py, tools/counter-test.py"))
+    check("exception 10 is refused when it touches a file that is not Markdown",
+          *refused(not_asked_case("item 2 of 7"), 10, "`#not_asked_touches` names tools/counter.py, "
+                                                      "tools/counter-test.py, which are not Markdown standing "
+                                                      "instructions"))
     case = not_asked_case("item 1 of 7")
-    result = case.run("check", "--not-asked", "3")
-    check("kind 3 with no unused line settles history removed from Markdown", result.returncode == 0,
-          described(result))
+    result = case.run("check", "--not-asked", "10")
+    check("exception 10 settles history removed from Markdown", result.returncode == 0, described(result))
 
 
 def test_a_rename_is_refused_unless_a_glossary_lists_the_new_name_and_no_untouched_file_keeps_the_old():
-    check("kind 4 is refused when no glossary file lists the new name",
-          *refused(not_asked_case("item 4 of 7", {"docs/poems-glossary.md": "- **other** — something else.\n"}), 4,
+    check("exception 7 is refused when no glossary file lists the new name",
+          *refused(not_asked_case("item 4 of 7", {"docs/poems-glossary.md": "- **other** — something else.\n"}), 7,
                    "the new name `poem-index` is the term of no entry"))
-    check("kind 4 is refused when a glossary only mentions the new name, as in an example, outside an entry's term",
-          *refused(not_asked_case("item 4 of 7", {"docs/poems-glossary.md": "- **other** — not poem-index.\n"}), 4,
+    check("exception 7 is refused when a glossary only mentions the new name, as in an example, outside an entry's term",
+          *refused(not_asked_case("item 4 of 7", {"docs/poems-glossary.md": "- **other** — not poem-index.\n"}), 7,
                    "the new name `poem-index` is the term of no entry"))
-    check("kind 4 is refused when the entry is in a file whose name only holds the word glossary, not a glossary",
+    check("exception 7 is refused when the entry is in a file whose name only holds the word glossary, not a glossary",
           *refused(not_asked_case("item 4 of 7", {"docs/poems-glossary.md": None,
                                                   "docs/how-to-name-glossary-terms.md": "- **poem-index** — bad.\n"}),
-                   4, "the new name `poem-index` is the term of no entry"))
-    check("kind 4 is refused when a file the item does not touch still holds the old name",
-          *refused(not_asked_case("item 4 of 7", {"docs/about.md": "See poem-list.\n"}), 4,
+                   7, "the new name `poem-index` is the term of no entry"))
+    check("exception 7 is refused when a file the item does not touch still holds the old name",
+          *refused(not_asked_case("item 4 of 7", {"docs/about.md": "See poem-list.\n"}), 7,
                    "`poem-list`, named on its `#not_asked_rename` line, is still named in docs/about.md"))
     for spelling in ("POEM_LIST = 1", "poem_list_path = 1", "class PoemList: pass", "poemList = 1"):
-        check(f"kind 4 is refused when an untouched file holds the old name spelled as code spells it: {spelling}",
-              *refused(not_asked_case("item 4 of 7", {"tools/poems.py": f"{spelling}\n"}), 4,
+        check(f"exception 7 is refused when an untouched file holds the old name spelled as code spells it: {spelling}",
+              *refused(not_asked_case("item 4 of 7", {"tools/poems.py": f"{spelling}\n"}), 7,
                        "`poem-list`, named on its `#not_asked_rename` line, is still named in tools/poems.py"))
     case = not_asked_case("item 4 of 7")
     document = NOT_ASKED_DOCUMENT.replace("#not_asked_rename poem-list poem-index", "#not_asked_rename poem-list")
     (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").write_text(document)
-    check("kind 4 is refused when its rename line gives one name", *refused(case, 4, "does not give the old name, then "
+    check("exception 7 is refused when its rename line gives one name", *refused(case, 7, "does not give the old name, then "
                                                                                       "the new name"))
 
 
@@ -2666,25 +2726,25 @@ def test_a_name_holding_a_digit_or_of_one_word_is_found_in_any_case_and_inside_a
                            ("reader", "Reader()"), ("reader", "reader_path = 1")):
         case = not_asked_case_with_line("item 3 of 7", "#not_asked_unused old_reader", f"#not_asked_unused {name}",
                                         {"tools/other.py": f"{spelling}\n"})
-        check(f"kind 3 is refused when an untouched file holds the removed name {name} as {spelling}",
-              *refused(case, 3, f"`{name}`, named on its `#not_asked_unused` line, is still named in tools/other.py"))
+        check(f"exception 16 is refused when an untouched file holds the removed name {name} as {spelling}",
+              *refused(case, 16, f"`{name}`, named on its `#not_asked_unused` line, is still named in tools/other.py"))
     case = not_asked_case_with_line("item 3 of 7", "#not_asked_unused old_reader", "#not_asked_unused utf8_locale")
-    result = case.run("check", "--not-asked", "3")
-    check("kind 3 settles a removed name holding a digit that no untouched file holds", result.returncode == 0,
+    result = case.run("check", "--not-asked", "16")
+    check("exception 16 settles a removed name holding a digit that no untouched file holds", result.returncode == 0,
           described(result))
 
 
 def test_underscore_emphasis_around_a_marker_is_read():
     case = not_asked_case_with_line("item 2 of 7", "#not_asked_test tools/counter-test.py\n\n#case_against weak:",
                                     "__#not_asked_test__ tools/counter-test.py\n\n__#case_against__ weak:")
-    result = case.run("check", "--not-asked", "2")
+    result = case.run("check", "--not-asked", "15")
     check("`__#case_against__ weak:` and `__#not_asked_test__` are read as their markers",
-          result.returncode == 0 and "kind 2 #case_against_weak (" in case.minutes.read_text(), described(result))
+          result.returncode == 0 and "exception 15 #case_against_weak (" in case.minutes.read_text(), described(result))
     case = not_asked_case_with_line("item 2 of 7", "#case_against weak:", "_#case_against_ weak:")
-    result = case.run("check", "--not-asked", "2")
+    result = case.run("check", "--not-asked", "15")
     check("`_#case_against_ weak:` is read as the marker", result.returncode == 0, described(result))
     case = not_asked_case_with_line("item 2 of 7", "#case_against weak:", "#case_against_weak:")
-    result = case.run("check", "--not-asked", "2")
+    result = case.run("check", "--not-asked", "15")
     check("`#case_against_weak:`, a hashtag the minutes write, is not read as the marker",
           result.returncode == 1 and "has no `#case_against` line" in result.stderr, described(result))
 
@@ -2693,30 +2753,30 @@ def test_a_rename_to_a_name_with_spaces_or_to_a_glossary_term_with_an_alias_sett
     case = not_asked_case_with_line("item 4 of 7", "#not_asked_rename poem-list poem-index",
                                     "#not_asked_rename `poem-list` `poem index page`",
                                     {"docs/poems-glossary.md": "- **poem index page** — the page that lists poems.\n"})
-    result = case.run("check", "--not-asked", "4")
-    check("kind 4 settles a rename to a name of two or more words, each name in backquotes", result.returncode == 0,
+    result = case.run("check", "--not-asked", "7")
+    check("exception 7 settles a rename to a name of two or more words, each name in backquotes", result.returncode == 0,
           described(result))
     case = not_asked_case_with_line("item 4 of 7", "#not_asked_rename poem-list poem-index",
                                     "#not_asked_rename `poem list` poem-index", {"docs/about.md": "See PoemList.\n"})
-    check("kind 4 is refused when an untouched file holds an old name of two words in another spelling",
-          *refused(case, 4, "`poem list`, named on its `#not_asked_rename` line, is still named in docs/about.md"))
+    check("exception 7 is refused when an untouched file holds an old name of two words in another spelling",
+          *refused(case, 7, "`poem list`, named on its `#not_asked_rename` line, is still named in docs/about.md"))
     case = not_asked_case("item 4 of 7", {"docs/poems-glossary.md": "- **poem-index (aka PI)** — the poems page.\n"})
-    result = case.run("check", "--not-asked", "4")
-    check("kind 4 settles when the new name's glossary entry gives an alias after it", result.returncode == 0,
+    result = case.run("check", "--not-asked", "7")
+    check("exception 7 settles when the new name's glossary entry gives an alias after it", result.returncode == 0,
           described(result))
-    check("kind 4 is refused when the glossary's term only starts with the new name",
-          *refused(not_asked_case("item 4 of 7", {"docs/poems-glossary.md": "- **poem-index-two** — another.\n"}), 4,
+    check("exception 7 is refused when the glossary's term only starts with the new name",
+          *refused(not_asked_case("item 4 of 7", {"docs/poems-glossary.md": "- **poem-index-two** — another.\n"}), 7,
                    "the new name `poem-index` is the term of no entry"))
-    check("kind 4 is refused when the glossary's term gives the new name with a parenthetical that is not an alias",
-          *refused(not_asked_case("item 4 of 7", {"docs/poems-glossary.md": "- **poem-index (v2)** — another.\n"}), 4,
+    check("exception 7 is refused when the glossary's term gives the new name with a parenthetical that is not an alias",
+          *refused(not_asked_case("item 4 of 7", {"docs/poems-glossary.md": "- **poem-index (v2)** — another.\n"}), 7,
                    "the new name `poem-index` is the term of no entry"))
 
 
 RENAME_LINE = "#not_asked_rename poem-list poem-index"
 
 
-def kind_6_case(evidence, files=None, touches=None):
-    """Item 4 of the fixture made a kind 6 item: its rename line replaced by the evidence lines given."""
+def term_or_marker_case(evidence, files=None, touches=None):
+    """Item 4 of the fixture made an item of exception 8 or 9: its rename line replaced by the evidence lines given."""
     case = not_asked_case_with_line("item 4 of 7", RENAME_LINE, evidence, files)
     if touches is not None:
         document = (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").read_text()
@@ -2725,7 +2785,7 @@ def kind_6_case(evidence, files=None, touches=None):
     return case
 
 
-def test_a_glossary_term_put_in_or_a_marker_no_program_reads_settles_as_kind_6_and_close_records_it():
+def test_a_glossary_term_put_in_or_a_marker_no_program_reads_settles_as_exception_8_or_9_and_close_records_it():
     for evidence, files in (("#not_asked_glossary_term poem-index", None),
                             ("#not_asked_glossary_term `poem index page`",
                              {"docs/poems-glossary.md": "- **poem index page** — the page that lists poems.\n"}),
@@ -2733,59 +2793,65 @@ def test_a_glossary_term_put_in_or_a_marker_no_program_reads_settles_as_kind_6_a
                             ("#not_asked_hashtag_marker #poem_date", {"tools/poems.py": "TAG = '#poem_date_old'\n"}),
                             ("#not_asked_hashtag_marker #poem_date-note", {"tools/poems.py": "TAG = '#poem_date-old'\n"}),
                             ("#not_asked_glossary_term poem-index\n\n#not_asked_hashtag_marker #poem_date", None)):
-        case = kind_6_case(evidence, files)
-        result = case.run("check", "--not-asked", "6")
-        check(f"kind 6 settles with {evidence!r} and files {files}",
-              result.returncode == 0 and "settled without asking the user, not asked, kind 6 " in case.minutes.read_text(),
+        exception = 8 if evidence.startswith("#not_asked_glossary_term") else 9
+        case = term_or_marker_case(evidence, files)
+        result = case.run("check", "--not-asked", str(exception))
+        check(f"exception {exception} settles with {evidence!r} and files {files}",
+              result.returncode == 0
+              and f"settled without asking the user, not asked, exception {exception} " in case.minutes.read_text(),
               described(result))
-    case = kind_6_case("#not_asked_glossary_term poem-index")
-    case.run("check", "--not-asked", "6")
+    case = term_or_marker_case("#not_asked_glossary_term poem-index")
+    case.run("check", "--not-asked", "8")
     closed = case.run("close")
-    check("close records a settled kind 6 item as accepted",
-          closed.returncode == 0 and "\nitem 4 of 7: not asked, kind 6; every text the change adds has had a fast read. "
-                                     "<accepted>\n" in case.minutes.read_text(), described(closed))
+    check("close records a settled exception 8 item as accepted",
+          closed.returncode == 0 and "\nitem 4 of 7: not asked, exception 8; every text the change adds has had a fast "
+                                     "read. <accepted>\n" in case.minutes.read_text(), described(closed))
 
 
-def test_kind_6_is_refused_unless_markdown_prose_outside_a_glossary_gets_a_listed_term_or_an_unread_marker():
-    check("kind 6 is refused when the item names neither a term nor a marker",
-          *refused(kind_6_case(""), 6, "it has neither a `#not_asked_glossary_term` line nor a `#not_asked_hashtag_marker` line"))
-    check("kind 6 is refused when the item lists no file it touches",
-          *refused(kind_6_case("#not_asked_glossary_term poem-index", touches=""), 6, "it has no `#not_asked_touches` line"))
-    check("kind 6 is refused when it touches a file that is not Markdown",
-          *refused(kind_6_case("#not_asked_glossary_term poem-index", touches="tools/main.py"), 6,
+def test_exceptions_8_and_9_are_refused_unless_markdown_prose_outside_a_glossary_gets_a_listed_term_or_an_unread_marker():
+    check("exception 8 is refused when the item names no term",
+          *refused(term_or_marker_case("#not_asked_hashtag_marker #poem_date"), 8,
+                   "it has no `#not_asked_glossary_term` line"))
+    check("exception 9 is refused when the item names no marker",
+          *refused(term_or_marker_case("#not_asked_glossary_term poem-index"), 9,
+                   "it has no `#not_asked_hashtag_marker` line"))
+    check("the exception is refused when the item lists no file it touches",
+          *refused(term_or_marker_case("#not_asked_glossary_term poem-index", touches=""), 8, "it has no `#not_asked_touches` line"))
+    check("the exception is refused when it touches a file that is not Markdown",
+          *refused(term_or_marker_case("#not_asked_glossary_term poem-index", touches="tools/main.py"), 8,
                    "`#not_asked_touches` names tools/main.py, which is not Markdown prose outside a glossary"))
-    check("kind 6 is refused when it touches a glossary",
-          *refused(kind_6_case("#not_asked_glossary_term poem-index", touches="docs/poems-glossary.md"), 6,
+    check("the exception is refused when it touches a glossary",
+          *refused(term_or_marker_case("#not_asked_glossary_term poem-index", touches="docs/poems-glossary.md"), 8,
                    "`#not_asked_touches` names docs/poems-glossary.md, which is not Markdown prose outside a glossary"))
-    check("kind 6 is refused when it touches a file not in the checkout",
-          *refused(kind_6_case("#not_asked_glossary_term poem-index", touches="docs/missing.md"), 6,
+    check("the exception is refused when it touches a file not in the checkout",
+          *refused(term_or_marker_case("#not_asked_glossary_term poem-index", touches="docs/missing.md"), 8,
                    "`#not_asked_touches` names docs/missing.md, which is not in the checkout"))
-    check("kind 6 is refused when no glossary lists its term as an entry's term",
-          *refused(kind_6_case("#not_asked_glossary_term poem-index",
-                               {"docs/poems-glossary.md": "- **other** — not poem-index.\n"}), 6,
+    check("the exception is refused when no glossary lists its term as an entry's term",
+          *refused(term_or_marker_case("#not_asked_glossary_term poem-index",
+                               {"docs/poems-glossary.md": "- **other** — not poem-index.\n"}), 8,
                    "the term `poem-index` is the term of no entry"))
     for reader in ("tools/poems.py", ".claude/settings.json", "tools/poems-test.py"):
-        check(f"kind 6 is refused when the marker is in {reader}, which a program runs or reads",
-              *refused(kind_6_case("#not_asked_hashtag_marker #poem_date", {reader: 'if "#poem_date" in line: pass\n'}), 6,
+        check(f"exception 9 is refused when the marker is in {reader}, which a program runs or reads",
+              *refused(term_or_marker_case("#not_asked_hashtag_marker #poem_date", {reader: 'if "#poem_date" in line: pass\n'}), 9,
                        f"the marker `#poem_date` is in {reader}, which are not Markdown"))
     for marker, code, why in (
             ("#POEM_DATE", 'if "#poem_date" in line: pass\n', "in another letter case"),
             ("#poem_date-note", 'PAUSE = re.compile(r"#poem_date\\b")\n', "through a pattern that ends at its `-`"),
             ("#case_poem_strong", 'RATING = re.compile(r"#case_poem_[a-z_]+")\n', "through a pattern for a family of markers")):
-        check(f"kind 6 is refused when a program reads the marker {why}",
-              *refused(kind_6_case(f"#not_asked_hashtag_marker {marker}", {"tools/poems.py": code}), 6,
+        check(f"exception 9 is refused when a program reads the marker {why}",
+              *refused(term_or_marker_case(f"#not_asked_hashtag_marker {marker}", {"tools/poems.py": code}), 9,
                        f"the marker `{marker}` is in tools/poems.py, which are not Markdown"))
-    check("kind 6 refuses a marker holding a character other than letters, digits, `_` and `-`, searching nothing",
-          *refused(kind_6_case("#not_asked_hashtag_marker #poem(date"), 6,
+    check("exception 9 refuses a marker holding a character other than letters, digits, `_` and `-`, searching nothing",
+          *refused(term_or_marker_case("#not_asked_hashtag_marker #poem(date"), 9,
                    "`#poem(date` on its `#not_asked_hashtag_marker` line is not a hashtag marker"))
-    check("kind 6 is refused when its marker line holds no hashtag marker",
-          *refused(kind_6_case("#not_asked_hashtag_marker poem_date"), 6,
+    check("the exception is refused when its marker line holds no hashtag marker",
+          *refused(term_or_marker_case("#not_asked_hashtag_marker poem_date"), 9,
                    "`poem_date` on its `#not_asked_hashtag_marker` line is not a hashtag marker"))
-    check("kind 6 refuses a marker line holding a regular expression's brackets as no hashtag marker, searching nothing",
-          *refused(kind_6_case("#not_asked_hashtag_marker (poem"), 6,
+    check("exception 9 refuses a marker line holding a regular expression's brackets as no hashtag marker, searching nothing",
+          *refused(term_or_marker_case("#not_asked_hashtag_marker (poem"), 9,
                    "`(poem` on its `#not_asked_hashtag_marker` line is not a hashtag marker"))
-    check("kind 6 is refused when its case against is rated above weak",
-          *refused(kind_6_case("#not_asked_glossary_term poem-index\n\n#case_against medium: misread meaning."), 6,
+    check("the exception is refused when its case against is rated above weak",
+          *refused(term_or_marker_case("#not_asked_glossary_term poem-index\n\n#case_against medium: misread meaning."), 8,
                    "rates the case against medium"))
 
 
@@ -2800,7 +2866,7 @@ def test_a_git_grep_that_fails_is_reported_and_writes_nothing():
     before = case.minutes.read_text()
     environment = dict(os.environ, PATH=f"{stub}:{os.environ['PATH']}", STAND_IN_CALLS=str(case.calls),
                        STAND_IN_RECORDS=str(case.records))
-    result = subprocess.run([sys.executable, str(PROGRAM), "check", "--not-asked", "3", "--cwd", str(case.checkout),
+    result = subprocess.run([sys.executable, str(PROGRAM), "check", "--not-asked", "16", "--cwd", str(case.checkout),
                              "--cold-read-records", str(case.records), "--fast-read-program", str(case.stand_in),
                              "--counts-log", str(case.counts_log)],
                             capture_output=True, text=True, env=environment, cwd=case.checkout)
@@ -3061,7 +3127,7 @@ def test_the_rerun_command_a_refusal_prints_keeps_the_answer_flag():
 def test_a_reply_given_with_not_asked_is_refused_writing_nothing():
     case = Case(next_to_present="item 4 of 9")
     before = case.minutes.read_text()
-    result = case.run("check", "--not-asked", "5", "--user-reply-as-typed", "a")
+    result = case.run("check", "--not-asked", "12", "--user-reply-as-typed", "a")
     check("check --not-asked with --user-reply-as-typed is refused, writing nothing",
           result.returncode == 1 and case.minutes.read_text() == before
           and "--user-reply-as-typed was given with --not-asked" in result.stderr, described(result))
