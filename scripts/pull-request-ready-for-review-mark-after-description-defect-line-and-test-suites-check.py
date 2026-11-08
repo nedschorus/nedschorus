@@ -120,10 +120,13 @@ def read_pull_request(number, runner):
 
 def git_answers_yes(argv, runner, what, instructions,
                     no_codes=(GIT_MERGE_BASE_IS_ANCESTOR_NO,)):
-    """Run a git command that answers yes by exiting 0 and no by exiting with one of no_codes;
-    raise StepFailed when it exits otherwise or cannot run."""
+    """Run a git command that answers yes by exiting 0 and no by exiting silently with one of
+    no_codes; raise StepFailed when it exits otherwise, prints an error, or cannot run."""
     completed, cause = run_or_failure_cause(argv, runner, GIT_TIMEOUT_SECONDS,
                                             (0, *no_codes))
+    if not cause and completed.returncode in no_codes and first_stderr_line(completed):
+        cause = (f"{' '.join(argv[:3])} exited with status {completed.returncode}: "
+                 f"{first_stderr_line(completed)}")
     if cause:
         raise StepFailed(f"{what} failed: {cause}.\n{instructions}")
     return completed.returncode == 0
@@ -141,9 +144,10 @@ def head_mismatch_next_steps(pull_request, head, runner, git_failed):
         on = f"branch {current}" if current else "a detached HEAD"
         return (f"This checkout is on {on}, not the pull request's branch {branch}: run this "
                 f"again from the checkout that has {branch} checked out; git worktree list "
-                f"names each checkout of this clone with its branch.")
-    # rev-parse --verify --quiet exits 1, silently, only for a commit this clone lacks; an object
-    # that is there but unreadable exits 128 with an error, which is a failure, not "not fetched".
+                f"names each checkout of this clone with its branch. If no checkout has it, make "
+                f"one with git worktree add <a new directory> {quoted} and run this again there.")
+    # rev-parse --verify --quiet exits 1 silently only for a commit this clone lacks; an object
+    # that is there but unreadable prints an error, with exit 128 or, for a hash mismatch, 1.
     pushed_is_here = git_answers_yes(
         ["git", "rev-parse", "--verify", "--quiet", pushed + "^{commit}"], runner,
         "looking for the pushed nc-head-commit in this checkout", git_failed)
@@ -223,9 +227,10 @@ def check_and_mark_ready(number, runner, output):
             + "If the changes belong in the pull request: commit them, run the test suites and "
             "the mutation pass that CLAUDE.md asks for before a push, push with git push origin "
             f"HEAD:{shlex.quote(pull_request['headRefName'])}, then run this again.\n"
-            "If they do not: set them aside with git stash push -u -m <a name of your own>, then "
-            "run this again. Once this command has marked the pull request ready, bring them "
-            "back: find your entry's commit, the first "
+            "If they do not: set them aside with git stash push -u -m <a name no entry in git "
+            "stash list has>, then run this again. Keep them stashed until this command has "
+            "marked the pull request ready, even if it refuses again for another reason; then "
+            "bring them back: find your entry's commit, the first "
             "word of the line that ends with the name you gave with -m, with git stash list --format='%H %gs', "
             "and run git stash apply <that commit>.\n"
             "If the apply reports a conflict: keep the stash entry, and tell the user, or the "
