@@ -13,7 +13,8 @@ agent-session, counts as running. A worktree is KEPT, with the reason, when:
   - it has no owner file, as agent-homes and worktrees made by hand have,
     and is not a merge-lane review checkout;
   - it is locked with `git worktree lock`, as Claude Code locks a subagent's
-    worktree while the subagent runs;
+    worktree while the subagent runs, apart from the lock CLAUDE CODE'S LOCK
+    below unlocks;
   - git would prune it, its directory being gone;
   - a rebase, merge, cherry-pick or revert is in progress in it, or git
     cannot locate the files that show one;
@@ -44,6 +45,18 @@ worktree whose verdict needs a pull request is kept.
   this invocation's own process and carrying the owner file's agent-seat, so
   the agent-seat's next agent-session is told of it once this invocation has
   ended. The branch keeps its commits.
+
+CLAUDE CODE'S LOCK. A lock in the form Claude Code writes on a subagent's
+worktree, "claude agent agent-<id> (pid N start T)", once no process N that
+started at T runs, as /proc says on Linux, is not kept for: --remove unlocks
+the worktree, first writing it an owner file when it has none, naming that
+ended agent-session and the agent-seat whose Claude Code transcripts name
+subagent agent-<id> (scripts/worktree-owner-file-read-and-write.py says which
+transcripts those are), then judges it like any other. When no agent-seat's
+transcripts name the subagent, or more than one's do, the worktree is kept,
+locked, and named on a line of its own for the user to keep or delete. The
+report modes say what --remove would do and change nothing. Off Linux, where
+the start is not read, the lock keeps the worktree.
 
 MERGE-LANE REVIEW CHECKOUTS. A worktree with no owner file directly inside
 ~/.cache/merge-lane-review-worktrees, where merge-lane-2 checks out each pull
@@ -131,7 +144,8 @@ THE COUNT LINE. The report and --remove end their worktree lines with one
 line of counts: worktrees kept, by reason; worktrees with no owner file;
 local branches other than main with no pull request; and work-snapshots
 still present. A second line names the kept worktrees owned by an agent-seat
-whose handoff-supervisor is not running, when there are any.
+whose handoff-supervisor is not running, when there are any, and a third the
+worktrees CLAUDE CODE'S LOCK keeps for the user to keep or delete.
 
 Separately from the worktrees themselves, the report ends with one line
 naming dead registrations — the ones `git worktree prune` would remove,
@@ -213,7 +227,8 @@ Usage:
   scripts/clean-worktrees.py --force-delete-branch NAME [--repo PATH]
 
 Exit codes: 0 ok, 1 a removal, a record's shipment, a branch or work-snapshot
-made before a removal, a ref deletion, a line of the log of removals, or a
+made before a removal, an owner file written or an unlock before a judgment,
+a ref deletion, a line of the log of removals, or a
 work-snapshot listing or deletion failed, or the one named worktree or
 branch was kept for a reason other than an open pull request, 2 bad
 invocation, or git could not list the worktrees or the branches, which stops
@@ -744,6 +759,9 @@ class Verdict:
     # keeps the worktree when either has changed since.
     judged_head: str | None = None
     judged_branch: str | None = None
+    # Kept locked by Claude Code's lock of an ended agent-session that no agent-seat's
+    # transcripts name: the count lines name it for the user.
+    for_the_user_to_keep_or_delete: bool = False
 
 
 def owner_text(owner):
@@ -756,16 +774,105 @@ def pull_request_text(pull_request):
     return f"pull request #{pull_request['number']} ({pull_request['state'].lower()})"
 
 
+@dataclass
+class EndedClaudeCodeSubagentLock:
+    """Claude Code's lock on a worktree, naming a `claude` process that has ended, which
+    --remove unlocks, first writing owner_to_write as the worktree's owner file when it is set."""
+    lock: object
+    explanation: str
+    owner_to_write: dict | None
+
+
+def claude_code_subagent_lock_verdict_or_ended_lock(worktree, record):
+    """For a locked worktree, return (the Verdict that keeps it, None), or (None, the
+    EndedClaudeCodeSubagentLock that --remove unlocks), as CLAUDE CODE'S LOCK says."""
+    lock = owner_file.claude_code_subagent_worktree_lock_reason_parse(record.locked_reason)
+    locked = f"locked with git worktree lock ({record.locked_reason or 'no reason given'})"
+    if lock is None:
+        return Verdict(False, locked, KEPT_LOCKED), None
+    state, explanation = owner_file.claude_code_subagent_worktree_lock_dispatching_process_running_state(lock)
+    if state != owner_file.STOPPED:
+        return Verdict(False, f"{locked}: {explanation}", KEPT_LOCKED), None
+    try:
+        owner = owner_file.worktree_owner_file_read(worktree)
+    except owner_file.WorktreeOwnerFileError as error:
+        return Verdict(False, f"{locked}, whose claude process has ended, and its owner file "
+                              f"could not be read: {error}", KEPT_NOT_CHECKABLE), None
+    if owner is not None:
+        return None, EndedClaudeCodeSubagentLock(lock, explanation, None)
+    try:
+        seats = owner_file.agent_seats_whose_claude_code_transcripts_name_subagent(lock.agent_id)
+        owner_key = owner_file.claude_code_subagent_worktree_lock_ended_agent_session_owner_key(lock)
+    except Exception as error:
+        return Verdict(False, f"{locked}, whose claude process has ended, and the agent-seat whose "
+                              f"Claude Code transcripts name subagent agent-{lock.agent_id} could "
+                              f"not be read: {type(error).__name__}: {error}",
+                       KEPT_NOT_CHECKABLE), None
+    if len(seats) != 1:
+        whose = ("no agent-seat's Claude Code transcripts name" if not seats
+                 else f"the Claude Code transcripts of {len(seats)} agent-seats, "
+                      f"{', '.join(seats)}, name")
+        return Verdict(False, f"{locked}, whose claude process has ended, it has no owner file, "
+                              f"and {whose} subagent agent-{lock.agent_id}, so no agent-seat "
+                              f"owns it; the user keeps or deletes it", KEPT_LOCKED,
+                       for_the_user_to_keep_or_delete=True), None
+    return None, EndedClaudeCodeSubagentLock(lock, explanation, {
+        "owner_kind": owner_file.OWNER_AGENT_SESSION, "agent_seat": seats[0],
+        "owner_key": owner_key})
+
+
+def ended_claude_code_subagent_lock_unlock(worktree, repo, ended):
+    """Write the owner file ended names, then unlock the worktree; print and return False when
+    either fails, leaving the worktree locked or unlocked as git left it."""
+    if ended.owner_to_write is not None:
+        try:
+            owner_file.worktree_owner_file_write(
+                worktree, ended.owner_to_write["owner_kind"], ended.owner_to_write["agent_seat"],
+                ended.owner_to_write["owner_key"])
+        except owner_file.WorktreeOwnerFileError as error:
+            print(f"{worktree.name}: owner file FAILED, worktree kept locked — {error}")
+            print(WORKTREE_KEPT_AFTER_FAILURE_NEXT_REMOVE_RUN_RETRIES_LINE_TEMPLATE.format(
+                name=worktree.name))
+            return False
+        print(f"{worktree.name}: owner file written, naming {owner_text(ended.owner_to_write)}, "
+              f"whose subagent agent-{ended.lock.agent_id} its Claude Code transcripts name")
+    unlocked = run_git(repo, "worktree", "unlock", str(worktree))
+    if unlocked.returncode != 0:
+        print(f"{worktree.name}: unlock FAILED, worktree kept — git worktree unlock exited "
+              f"{unlocked.returncode}: {unlocked.stderr.strip()[:160] or 'no error text'}")
+        print(WORKTREE_KEPT_AFTER_FAILURE_NEXT_REMOVE_RUN_RETRIES_LINE_TEMPLATE.format(
+            name=worktree.name))
+        return False
+    print(f"{worktree.name}: unlocked, since {ended.explanation}")
+    return True
+
+
 def classify(worktree, branch, record, pull_requests):
     """Return the Verdict for a worktree: whether its work is done, and why."""
+    ended_lock = None
     if record.locked_reason is not None:
-        return Verdict(False, f"locked with git worktree lock "
-                              f"({record.locked_reason or 'no reason given'})", KEPT_LOCKED)
+        verdict, ended_lock = claude_code_subagent_lock_verdict_or_ended_lock(worktree, record)
+        if verdict is not None:
+            return verdict
+    verdict = classify_unlocked(worktree, branch, record, pull_requests,
+                                None if ended_lock is None else ended_lock.owner_to_write)
+    if ended_lock is not None:
+        writes = ("" if ended_lock.owner_to_write is None
+                  else f", writing first its owner file naming "
+                       f"{owner_text(ended_lock.owner_to_write)}")
+        verdict.reason = (f"{ended_lock.explanation}, so --remove unlocks it{writes}, then judges "
+                          f"it: {verdict.reason}")
+    return verdict
+
+
+def classify_unlocked(worktree, branch, record, pull_requests, owner_to_write=None):
+    """Return the Verdict for an unlocked worktree, or one --remove will have unlocked and given
+    owner_to_write as its owner file."""
     if record.prunable_reason is not None:
         return Verdict(False, f"git would prune its registration ({record.prunable_reason}); "
                               f"the dead registration line below names it", KEPT_NOT_CHECKABLE)
     try:
-        owner = owner_file.worktree_owner_file_read(worktree)
+        owner = owner_to_write or owner_file.worktree_owner_file_read(worktree)
     except owner_file.WorktreeOwnerFileError as error:
         return Verdict(False, f"its owner file could not be read: {error}", KEPT_NOT_CHECKABLE)
     if owner is None:
@@ -1150,6 +1257,12 @@ def print_count_lines(repo, kept_verdicts, pull_requests):
     if stopped_seats:
         print("worktrees kept whose agent-seat's handoff-supervisor is not running: "
               + ", ".join(f"{worktree} ({seat})" for worktree, seat in stopped_seats))
+    for_the_user = [worktree for worktree, verdict in kept_verdicts
+                    if verdict.for_the_user_to_keep_or_delete]
+    if for_the_user:
+        print("worktrees for the user to keep or delete, locked by Claude Code for a subagent "
+              "whose claude process has ended and which no one agent-seat's Claude Code "
+              "transcripts name: " + ", ".join(str(worktree) for worktree in for_the_user))
 
 
 def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
@@ -1159,7 +1272,18 @@ def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
     pull_requests = PullRequestsByHeadBranchLazyCache(repo)
     kept_verdicts = []
     for worktree, branch, record in list_worktrees(repo, main_checkout):
-        verdict = classify(worktree, branch, record, pull_requests)
+        verdict = None
+        if remove and record.locked_reason is not None:
+            verdict, ended_lock = claude_code_subagent_lock_verdict_or_ended_lock(worktree, record)
+            if ended_lock is not None:
+                if not ended_claude_code_subagent_lock_unlock(worktree, repo, ended_lock):
+                    failures += 1
+                    kept_verdicts.append((worktree, Verdict(
+                        False, "its owner file or its unlock failed", KEPT_NOT_CHECKABLE)))
+                    continue
+                record = record._replace(locked_reason=None)
+        if verdict is None:
+            verdict = classify(worktree, branch, record, pull_requests)
         if not verdict.done:
             kept_verdicts.append((worktree, verdict))
         if remove:
