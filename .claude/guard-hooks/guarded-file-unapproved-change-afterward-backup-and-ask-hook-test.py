@@ -13,6 +13,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import resource
 import shutil
 import subprocess
@@ -33,6 +34,7 @@ HOOK = Path(os.environ.get(
     "GUARDED_FILE_HOOK_PATH",
     Path(__file__).resolve().parent / "guarded-file-unapproved-change-afterward-backup-and-ask-hook.py"))
 OBVIOUS_FIX = "Obvious fix under CLAUDE.md's standing approval: a typo in CLAUDE.md"
+SETTINGS = Path(__file__).resolve().parents[2] / ".claude" / "settings.json"
 
 failures = 0
 
@@ -170,6 +172,24 @@ class World:
         return marker
 
 
+def bash_allow_rule_matches(rule, command):
+    """Whether a permissions.allow entry lets Claude Code run command without a prompt: an exact
+    Bash(command), Bash(prefix:*) for a command that starts with prefix, or a Bash(...) pattern
+    whose each * stands for any run of characters."""
+    match = re.fullmatch(r"Bash\((.*)\)", rule, re.DOTALL)
+    if not match:
+        return False
+    pattern = match.group(1)
+    if pattern.endswith(":*"):
+        return command.startswith(pattern[:-2])
+    return re.fullmatch(".*".join(map(re.escape, pattern.split("*"))), command,
+                        re.DOTALL) is not None
+
+
+def approve_commands(message):
+    return re.findall(r"python3 \S+ --approve \S+ [0-9a-f]+", message)
+
+
 def fresh(scratch_root, name, machine="ned-box"):
     directory = Path(scratch_root) / name
     directory.mkdir()
@@ -208,6 +228,21 @@ def cases(scratch):
     check("the message gives the --approve and --restore commands with the hook's full path",
           f"{HOOK} --approve {claude} {key}" in message
           and f"{HOOK} --restore {claude} {key}" in message, message)
+
+    # The allow rule and the printed command are two copies; a rule left on an old path or
+    # spelling makes every --approve the hook asks for wait on a permission prompt.
+    commands = approve_commands(message)
+    allow = json.loads(SETTINGS.read_text()).get("permissions", {}).get("allow", [])
+    check("each --approve command the message gives is let through by a permissions.allow rule "
+          "in .claude/settings.json",
+          commands and all(any(bash_allow_rule_matches(rule, command) for rule in allow)
+                           for command in commands), (commands, allow))
+    old_rule = ("Bash(python3 */.claude/hooks/guarded-file-unapproved-change-afterward-backup-"
+                "and-ask-hook.py --approve *)")
+    check("a permissions.allow rule naming the hook's old .claude/hooks/ path lets no --approve "
+          "command through",
+          commands and not any(bash_allow_rule_matches(old_rule, command) for command in commands),
+          commands)
 
     # -- reminders repeat in the asking session, once in another, and stop once settled
     reminder = world.run()
