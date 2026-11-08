@@ -2,7 +2,8 @@
 """Replay recorded real Bash commands through the Bash guards at two git refs, and compare the verdicts.
 
 Every pull request that changes a Bash guard or the shell command reader runs this at the base
-and at the pull request's head. A verdict that differs blocks the merge. A guard the pull request
+and at the pull request's head merged with the base, which is what the pull request's merge puts on the
+base, so a guard the base gained after the head was cut is in both. A verdict that differs blocks the merge. A guard the pull request
 adds, a Bash hook in the head's .claude/settings.json but not the base's, is read at the head only,
 and each recorded command it refuses blocks the merge until the reviewer accepts the refusal.
 
@@ -14,7 +15,9 @@ Steps:
   1. Collect the distinct (command, working directory) pairs of every Bash tool call in the
      transcripts of both machines (--transcript-directory, repeatable), or read them from
      --pairs-file.
-  2. Check out each ref as a detached worktree in the scratch directory, and check that the
+  2. Check out the base, and a commit holding the head merged with the base, each as a detached worktree
+     in the scratch directory; a merge that conflicts fails the replay. From here on, the head is that
+     merged commit. Check that the
      guards this replay reads are exactly the Bash PreToolUse hooks in the head checkout's
      .claude/settings.json, and, less the guards the head adds, in the base checkout's. A base hook
      at a former path, a key of this script's BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH map, is the
@@ -853,16 +856,57 @@ def child_environment():
     return environment
 
 
-def run_git(repository, *arguments):
+def run_git_returning_completed_process_without_exit_code_check(repository, *arguments):
     try:
         with stop_deferred():
-            completed = subprocess.run(["git", "-C", repository, *arguments], capture_output=True, text=True,
-                                       env=child_environment(), timeout=GIT_TIMEOUT_SECONDS)
+            return subprocess.run(["git", "-C", repository, *arguments], capture_output=True, text=True,
+                                  env=child_environment(), timeout=GIT_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as error:
         raise ReplayFailed(f"git {' '.join(arguments)} did not finish in {GIT_TIMEOUT_SECONDS} s") from error
+
+
+def run_git(repository, *arguments):
+    completed = run_git_returning_completed_process_without_exit_code_check(repository, *arguments)
     if completed.returncode != 0:
         raise ReplayFailed(f"git {' '.join(arguments)} exited {completed.returncode}: {completed.stderr.strip()}")
     return completed.stdout.strip()
+
+
+def head_merged_with_base_commit_make_or_raise_on_conflict(repository, base_commit, head_commit):
+    """Return a commit whose tree is head_commit merged with base_commit: what the pull request's merge puts on
+    the base, which, for a head cut before the base gained a guard, has that guard where the bare head does not."""
+    completed = run_git_returning_completed_process_without_exit_code_check(
+        repository, "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", base_commit, head_commit)
+    this_file = Path(__file__).resolve()
+    this_check = f"python3 {this_file.relative_to(this_file.parents[2])}"
+    if completed.returncode == 1:
+        conflicted = [name for name in completed.stdout.split("\0")[1:] if name]
+        raise ReplayFailed(
+            f"the head {head_commit} does not merge cleanly with the base {base_commit}, so no guard was replayed: "
+            f"this check replays the head merged with the base, which is what the pull request's merge puts on the "
+            f"base, and git's merge of the two stops on conflicts in: "
+            f"{conflicted or 'no file; git named none, as for a conflict between directory renames'}.\n"
+            "When you are the pull request's author: run python3 scripts/branch-conflict-check.py in the pull "
+            "request's checkout and do what its report says, which may be to replace the pull request; then run "
+            f"this check, {this_check}, from the repository's top directory again with the same options and "
+            "--head-ref set to the commit that report's steps leave as the pull request's head.\n"
+            "When you are not the author, such as merge-lane-2: send the author, with SendMessage, the head, the "
+            "base and the conflicted files above, and ask the author to run python3 scripts/branch-conflict-check.py "
+            "in the pull request's checkout and do what its report says; the pull request cannot merge while its "
+            "head conflicts with the base.")
+    if completed.returncode:
+        raise ReplayFailed(
+            f"git merge-tree of the base {base_commit} and the head {head_commit} exited {completed.returncode}, so "
+            f"no guard was replayed: {completed.stderr.strip() or 'git printed no reason'}.\n"
+            "When git's reason contains \"refusing to merge unrelated histories\": run this check, "
+            f"{this_check}, from the repository's top directory again with --base-ref and --head-ref naming commits "
+            "that share history, such as origin/main and the pull request's head.\n"
+            "Otherwise: run this check again once with the same options; if git's reason is the same again, give "
+            "that reason to the agent or the user who asked for the check.")
+    tree = completed.stdout.split("\0")[0]
+    return run_git(repository, "-c", "user.name=bash guards replay", "-c", "user.email=bash-guards-replay@invalid",
+                   "commit-tree", "--no-gpg-sign", tree, "-p", base_commit, "-p", head_commit,
+                   "-m", "bash guards replay: the head merged with the base")
 
 
 STOP_CHECK_INTERVAL_SECONDS = 0.2  # How soon a stop signal received during a step's wait takes effect.
@@ -1147,12 +1191,16 @@ def replay_with_sigterm_handled(arguments):
         (search_file_directory / "a.txt").touch()
 
         repository = run_git(arguments.repository, "rev-parse", "--show-toplevel")
+        commits = {}
         for label, ref in (("base", arguments.base_ref), ("head", arguments.head_ref)):
-            commit = run_git(repository, "rev-parse", "--verify", ref + "^{commit}")
+            commits[label] = commit = run_git(repository, "rev-parse", "--verify", ref + "^{commit}")
+            checked_out = commit if label == "base" else \
+                head_merged_with_base_commit_make_or_raise_on_conflict(repository, commits["base"], commit)
             checkout = scratch / f"checkout-{label}"
             checkouts[label] = checkout  # Before the add, so a stop in the middle of the add is cleaned up too.
-            run_git(repository, "worktree", "add", "--detach", str(checkout), commit)
-            print(f"{label}: {ref} at {commit}")
+            run_git(repository, "worktree", "add", "--detach", str(checkout), checked_out)
+            print(f"{label}: {ref} at {commit}" if label == "base" else
+                  f"{label}: {ref} at {commit}, replayed as its merge with the base, {checked_out}")
         added_guards, base_guard_files = guards_added_at_head(checkouts)
         print(f"guards the head adds, read at the head only: {added_guards or 'none'}")
 
