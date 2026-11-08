@@ -598,8 +598,9 @@ def main():
         check("with no head test run record, after the merge the runner in a worktree at the "
               "merge commit runs the suites whose recorded inputs changed since the reviewed "
               "head, its logs in the outputs directory, and says it fell back to the head",
-              f"selecting since the head commit {HEAD[:12]}, which runs more suites than the "
-              f"merge changed: no readable head test run record under" in output
+              f"selecting the nc-test-suites whose recorded inputs changed since the head "
+              f"commit {HEAD[:12]}, which selects more suites than the merge changed: no "
+              f"readable head test run record under" in output
               and len(calls) == 1 and calls[0]["cwd"] == str(merge_commit_worktree)
               and calls[0]["argv"] == ["--only-suites-whose-recorded-inputs-changed-since", HEAD,
                                        "--log-dir", str(log_dir)], json.dumps(calls))
@@ -630,11 +631,12 @@ def main():
                   "--only-suites-whose-recorded-inputs-changed-since", merged]
               and tree_of(scratch, name, merged)
               == tree_of(scratch, name, origin_commit(scratch, name))
-              and f"selecting since {merged[:12]}, the commit the head test run passed on: "
+              and f"selecting the nc-test-suites whose recorded inputs changed since "
+                  f"{merged[:12]}, the commit the head test run passed on: "
                   f"pull request 10's head merged with main as main was when that run started"
                   in output
               and f"changed since {merged[:12]}" in output
-              and "selecting since the head commit" not in output,
+              and "since the head commit" not in output,
               f"exit {exit_code}\n{output}\n{json.dumps(calls)}")
 
         name = "since-merged-past-an-unreadable-test-log"
@@ -675,7 +677,7 @@ def main():
                   exit_code == 0 and len(calls) == 1 and calls[0]["argv"][:2] == [
                       "--only-suites-whose-recorded-inputs-changed-since", HEAD]
                   and notice in output
-                  and f"selecting since the head commit {HEAD[:12]}, which runs more suites "
+                  and f"changed since the head commit {HEAD[:12]}, which selects more suites "
                       f"than the merge changed" in output,
                   f"exit {exit_code}\n{output}\n{json.dumps(calls)}")
 
