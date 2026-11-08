@@ -25,21 +25,40 @@ Each worktree of the clone with no owner file is handled as follows:
   - Given no owner file, and named on a line of its own but not listed for the user to keep or
     delete: a Claude Code subagent's worktree, directly inside .claude/worktrees/ of the
     reference-checkout and named agent-a followed by 16 lowercase hex digits, Claude Code's name
-    for it. While the `git worktree lock` that
-    Claude Code puts on such a worktree is there, scripts/clean-worktrees.py --remove gives the
-    worktree an owner file once the lock's claude process has ended. Without the lock, the
-    owner file would have to name the agent-session that dispatched the subagent, by the owner
-    key of that agent-session's ended `claude` process, as
-    scripts/worktree-owner-file-read-and-write.py defines it, and no record kept on the
-    machine holds that process's id and start, so this program cannot write it.
+    for it, while it is locked with `git worktree lock`, whether or not the lock's claude process
+    runs. scripts/clean-worktrees.py --remove gives such a worktree an owner file once the claude
+    process that Claude Code's lock names has ended.
+  - Given an owner file naming an agent-seat: an unlocked Claude Code subagent's worktree, when
+    the Claude Code transcripts of exactly one agent-seat name its subagent, agent-<id> for the
+    directory agent-<id>, as agent_seats_whose_claude_code_transcripts_name_subagent in
+    scripts/worktree-owner-file-read-and-write.py says which transcripts those are; that
+    agent-seat is the owner.
   - Given an owner file naming an agent-seat: a worktree nested beneath an agent-home, or one
     that is, or lies beneath, a directory directly under the agents root named as an agent-seat's
     name followed by a hyphen and more. When several agent-seats' names fit, the
     owner is the agent-seat with the longest name. Examples: prime-intellect for
     ~/agents/prime-intellect-worktrees/<name>, reboot-test for ~/agents/reboot-test-d2m-wording.
   - Given no owner file, and listed for the user to keep or delete: every worktree the bullets
-    above leave out, such as restored-<name> inside the reference-checkout's .claude/worktrees/,
-    or <agents root>/<name> when no agent-seat's name fits <name>.
+    above leave out, such as an unlocked Claude Code subagent's worktree whose subagent no
+    agent-seat's transcripts name, or several agent-seats' do, restored-<name> inside the
+    reference-checkout's .claude/worktrees/, or <agents root>/<name> when no agent-seat's name
+    fits <name>.
+
+FOR THE USER. Each worktree listed for the user is named on a line of its own with the facts that
+decide whether to keep or delete it: how many uncommitted or untracked files it holds, how many
+commits its HEAD has that its branch's upstream lacks, or origin/main when the branch has no
+upstream or the worktree is on a detached HEAD, and whether its branch is merged into origin/main,
+as git reads origin/main without fetching, or that it is on a detached HEAD and has no branch. A
+fact git cannot read is printed as unknown, with git's error. After the list come the two commands
+that delete one such worktree, and its branch when it has one:
+
+  scripts/worktree-owner-file-read-and-write.py write --agent-seat <agent-seat> --worktree <worktree>
+  scripts/clean-worktrees.py --repo <repo> --remove-worktree-and-force-delete-its-branch <worktree>
+
+The second command keeps a worktree with no owner file, so the first gives it one. <agent-seat> is
+any agent-seat the user chooses: the second command copies the worktree's uncommitted and
+untracked files to a work-snapshot before removing it, and that agent-seat's next agent-session is
+told of the work-snapshot.
 
 A worktree whose owner file cannot be read, or cannot be written, is named on a FAILED line,
 and the program exits 1 once it has handled every other worktree.
@@ -52,6 +71,7 @@ git could not list the worktrees.
 """
 
 import importlib.util
+import shlex
 import sys
 from pathlib import Path
 
@@ -78,14 +98,28 @@ def agent_seat_whose_name_begins(directory_name, agent_seats):
     return max(matching, key=len) if matching else None
 
 
-def backfill_action(worktree, main_checkout, agents_root, agent_seats, review_worktrees_directory):
-    """Return (action, agent-seat or None, why) for a worktree with no owner file; action is
-    "skip", "write", "subagent" or "for the user"."""
+def backfill_action(worktree, locked_reason, main_checkout, agents_root, agent_seats,
+                    review_worktrees_directory):
+    """Return (action, agent-seat or None, why) for a worktree with no owner file, whose
+    `git worktree lock` reason is locked_reason, None when unlocked; action is "skip", "write",
+    "subagent" or "for the user"."""
     worktree = worktree.resolve()
     if worktree.parent == review_worktrees_directory.resolve():
         return "skip", None, "a merge-lane review checkout"
     if owner_file.worktree_is_claude_code_subagent_worktree_by_location_and_directory_name(worktree, main_checkout):
-        return "subagent", None, "a Claude Code subagent's worktree"
+        if locked_reason is not None:
+            return "subagent", None, "a locked Claude Code subagent's worktree"
+        agent_id = worktree.name.removeprefix("agent-")
+        seats = owner_file.agent_seats_whose_claude_code_transcripts_name_subagent(agent_id,
+                                                                                   agents_root)
+        if len(seats) == 1:
+            return "write", seats[0], (f"{seats[0]}'s Claude Code transcripts name its subagent "
+                                       f"agent-{agent_id}")
+        whose = ("no agent-seat's Claude Code transcripts name" if not seats
+                 else f"the Claude Code transcripts of {len(seats)} agent-seats, "
+                      f"{', '.join(seats)}, name")
+        return "for the user", None, (f"it is an unlocked Claude Code subagent's worktree and "
+                                      f"{whose} its subagent agent-{agent_id}")
     agents_root = agents_root.resolve()
     if worktree.parent == agents_root and worktree.name in agent_seats:
         return "skip", None, "an agent-home"
@@ -97,6 +131,29 @@ def backfill_action(worktree, main_checkout, agents_root, agent_seats, review_wo
     if seat is None:
         return "for the user", None, f"no agent-seat's name begins {top}"
     return "write", seat, f"{seat}'s name begins {top}"
+
+
+def keep_or_delete_facts_text(repo, worktree, branch):
+    """The facts FOR THE USER names beside a worktree listed for the user."""
+    uncommitted, listing_error = cleaner.uncommitted_or_untracked_files(worktree)
+    changes = (f"uncommitted or untracked files unknown ({listing_error})" if uncommitted is None
+               else f"{len(uncommitted)} uncommitted or untracked file(s)")
+    base = "origin/main"
+    if branch is not None:
+        upstream = cleaner.run_git(worktree, "rev-parse", "--abbrev-ref", "--symbolic-full-name",
+                                   "HEAD@{upstream}")
+        if upstream.returncode == 0:
+            base = upstream.stdout.strip()
+    ahead = cleaner.run_git(worktree, "rev-list", "--count", f"{base}..HEAD")
+    commits = (f"{ahead.stdout.strip()} commit(s) {base} lacks" if ahead.returncode == 0
+               else f"commits {base} lacks unknown ({' '.join(ahead.stderr.split())})")
+    if branch is None:
+        merged = "on a detached HEAD, so no branch to merge"
+    elif cleaner.fully_on_origin_main(repo, branch):
+        merged = f"its branch {branch} is merged into origin/main"
+    else:
+        merged = f"its branch {branch} is not merged into origin/main"
+    return f"{changes}; {commits}; {merged}"
 
 
 def main(argv=None):
@@ -133,7 +190,7 @@ def main(argv=None):
                                   / cleaner.merge_lane_common.REVIEW_WORKTREES_DIRECTORY_UNDER_HOME)
     failed = []
     for_the_user = []
-    for worktree, _, _ in worktrees:
+    for worktree, branch, record in worktrees:
         try:
             if owner_file.worktree_owner_file_read(worktree) is not None:
                 continue
@@ -141,18 +198,17 @@ def main(argv=None):
             print(f"{worktree}: FAILED, its owner file could not be read: {error}")
             failed.append(worktree)
             continue
-        action, seat, why = backfill_action(worktree, main_checkout, agents_root, agent_seats,
-                                            review_worktrees_directory)
+        action, seat, why = backfill_action(worktree, record.locked_reason, main_checkout,
+                                            agents_root, agent_seats, review_worktrees_directory)
         if action == "skip":
             continue
         if action == "subagent":
             print(f"{worktree}: given no owner file, as {why}: scripts/clean-worktrees.py --remove "
-                  f"gives it one while Claude Code's lock is on it, once the lock's claude process "
-                  f"has ended; without the lock no record holds the ended agent-session's claude "
-                  f"process, which the owner file would name")
+                  f"gives it one once the claude process Claude Code's lock names has ended")
             continue
         if action == "for the user":
-            print(f"{worktree}: given no owner file, since {why}; for the user to keep or delete")
+            print(f"{worktree}: given no owner file, since {why}; for the user to keep or delete: "
+                  f"{keep_or_delete_facts_text(repo, worktree, branch)}")
             for_the_user.append(worktree)
             continue
         if not write:
@@ -167,8 +223,16 @@ def main(argv=None):
             continue
         print(f"{worktree}: owner file written, naming the agent-seat {seat}, since {why}")
     if for_the_user:
-        print(f"{len(for_the_user)} worktree(s) for the user to keep or delete, matching no "
-              f"agent-seat: " + ", ".join(str(worktree) for worktree in for_the_user))
+        print(f"{len(for_the_user)} worktree(s) for the user to keep or delete, owned by no "
+              f"agent-seat this program can tell: "
+              + ", ".join(str(worktree) for worktree in for_the_user))
+        print("To delete one with its branch, give it an owner file naming the agent-seat to be "
+              "told of the work-snapshot that keeps its uncommitted files, since "
+              "scripts/clean-worktrees.py removes only a worktree holding one, then remove it:\n"
+              f"  scripts/worktree-owner-file-read-and-write.py write --agent-seat <agent-seat> "
+              f"--worktree <worktree>\n"
+              f"  scripts/clean-worktrees.py --repo {shlex.quote(str(repo))} "
+              f"{cleaner.REMOVE_WORKTREE_AND_FORCE_DELETE_ITS_BRANCH_COMMAND_LINE_FLAG} <worktree>")
     if failed:
         print(f"FAILED: the owner files of {len(failed)} worktree(s) could not be read or "
               f"written, as their lines above say: " + ", ".join(str(path) for path in failed))
