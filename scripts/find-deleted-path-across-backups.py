@@ -238,7 +238,7 @@ line changes the surface's status.
 for the Mac's ssh, and the second still leaves Timeshift out.
 
 A GIT BLOB ID. The guarded-file hook,
-.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py,
+.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py,
 names each version of a guarded file by its git blob id, logs a line for each
 version it sees, with that id and the time, and keeps a copy only of a version
 git does not hold. So a query of exactly 40 lowercase hexadecimal characters is

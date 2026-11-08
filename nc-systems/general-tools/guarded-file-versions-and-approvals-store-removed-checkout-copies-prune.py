@@ -2,7 +2,7 @@
 """Delete the guarded-file hook's copies of versions a commit now holds, and its approved copies
 of files in checkouts that no longer exist.
 
-The hook, .claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py, keeps
+The hook, .claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py, keeps
 this machine's directory of the log-store kind guarded-file-versions-and-approvals/. For every
 guarded file it has seen, the directory mirrors the file's absolute path and holds `approved`,
 `log` and one copy per version git did not hold when the hook saw it, named by the version's
@@ -94,7 +94,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOOK_PATH = (Path(__file__).resolve().parents[2] / ".claude" / "hooks"
+HOOK_PATH = (Path(__file__).resolve().parents[2] / ".claude" / "guard-hooks"
              / "guarded-file-unapproved-change-afterward-backup-and-ask-hook.py")
 _specification = importlib.util.spec_from_file_location(
     "guarded_file_unapproved_change_afterward_backup_and_ask_hook", HOOK_PATH)
