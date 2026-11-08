@@ -37,6 +37,7 @@ claim_check = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(claim_check)
 
 OVERVIEW = "docs/nedschorus-wiki/nedschorus-example-architecture-overview.md"
+PROPOSALS = "nc-systems/example/docs/example-architecture-overview-proposed-improvements-or-changes-entries.md"
 CONTROL_VARIABLE = "OVERVIEW_CLAIM_CHECK_TEST_CONTROL_DIRECTORY"
 TIMEOUT_SECONDS = 120
 RECHECK_SLEEP_SECONDS = 3
@@ -48,7 +49,9 @@ control = pathlib.Path(os.environ[{CONTROL_VARIABLE!r}])
 prompt = sys.stdin.read()
 with (control / "claude-calls.jsonl").open("a", encoding="utf-8") as log:
     log.write(json.dumps({{"argv": sys.argv[1:], "stdin": prompt, "cwd": os.getcwd(), "started": __import__("time").time(),
-                          "overview_there": pathlib.Path({OVERVIEW!r}).read_text(encoding="utf-8")}}) + "\\n")
+                          "overview_there": pathlib.Path({OVERVIEW!r}).read_text(encoding="utf-8"),
+                          "proposals_there": pathlib.Path({PROPOSALS!r}).read_text(encoding="utf-8")
+                          if pathlib.Path({PROPOSALS!r}).exists() else None}}) + "\\n")
 answer = json.loads((control / "claude.json").read_text(encoding="utf-8"))
 for assertion, recheck in answer.get("rechecks", {{}}).items():
     if f"The assertion: {{assertion}}\\n" in prompt:
@@ -234,6 +237,13 @@ def run_unit_cases():
     check("a proposed-improvements file beside an overview is not an overview path",
           claim_check.nc_architecture_overview_described_system_name_from_page_path(
               "docs/nedschorus-wiki/nedschorus-handoff-architecture-overview-proposed-improvements-or-changes-x.md") is None)
+    check("an overview's one proposed-improvements-or-changes-file is in its system's docs/, outside the wiki folder",
+          claim_check.architecture_overview_proposed_improvements_or_changes_file_path(OVERVIEW) == PROPOSALS)
+    check("the pointer line names the file and its directory in separate backtick spans, so md-drift-lint at an older "
+          "commit, where the file is missing, finds no path to check",
+          claim_check.overview_pointer_line_to_proposed_improvements_or_changes_file(OVERVIEW)
+          == "This document has proposed improvements or changes: read "
+             "`example-architecture-overview-proposed-improvements-or-changes-entries.md` in `nc-systems/example/docs/`.")
 
 
 def last_stdout_line(result):
@@ -251,9 +261,10 @@ MUST_FIX_REPORT = ("VERDICT 1 supported: the tool sets x\n  nc-systems/example/t
 
 
 def proposed_improvements_or_changes_files(fixture):
-    """Resolved, as the program prints them: the test sandbox's temporary directory is a symlink."""
-    return sorted(path.resolve() for path in (fixture.repository / Path(OVERVIEW).parent).glob(
-        Path(OVERVIEW).stem + claim_check.PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX + "*.md"))
+    """Every proposed-improvements-or-changes-file in the checkout, resolved, as the program prints them: the test
+    sandbox's temporary directory is a symlink."""
+    return sorted(path.resolve() for path in fixture.repository.rglob("*-proposed-improvements-or-changes*")
+                  if ".git" not in path.parts)
 
 
 def run_ranked_claim_cases(fixture, blob):
@@ -294,13 +305,14 @@ def run_ranked_claim_cases(fixture, blob):
           result.returncode == 0 and newest[1] == claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_NO_MUST_FIX_CLAIM_REMAINS,
           (result, newest))
     entry = written[0].read_text() if len(written) == 1 else ""
-    check("the fix-later claim is written, with its evidence and an open state, to a file named by the check and the day",
-          len(written) == 1 and written[0].name.startswith(
-              Path(OVERVIEW).stem + "-proposed-improvements-or-changes-overview-write-claim-check-by-fresh-agent-")
+    check("the fix-later claim is written, with its evidence, its report and an open state, to the overview's one "
+          "file in its system's docs/, outside the wiki folder",
+          written == [(fixture.repository / PROPOSALS).resolve()]
+          and entry.startswith(f"# Proposed improvements or changes: {Path(OVERVIEW).name}\n")
           and "## E1 — possible problem: an assertion of the overview is contradicted" in entry
           and "\nClaim: the program exists\n" in entry and ">   FIRST-EVIDENCE-LINE" in entry
-          and "State: open" in entry and str(newest[0]) in entry, (written, entry))
-    pointer_line = claim_check.overview_pointer_line_to_proposed_improvements_or_changes_files(OVERVIEW)
+          and "State: open" in entry and str(newest[0]) in entry and fixture.code_commit in entry, (written, entry))
+    pointer_line = claim_check.overview_pointer_line_to_proposed_improvements_or_changes_file(OVERVIEW)
     check("with a fix-later file written and no pointer line, the next action says to commit the file, open the "
           "follow-up, add the pointer line and run again",
           last_stdout_line(result) == next_action_line(
@@ -309,8 +321,9 @@ def run_ranked_claim_cases(fixture, blob):
               + claim_check.NEXT_ACTION_SUFFIX_WHEN_OVERVIEW_LACKS_PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE.format(line=pointer_line)), result.stdout)
 
     result = fixture.run()
-    check("a fix-later claim a file beside the overview already holds is not written again",
+    check("a fix-later claim the file already holds is not written again, and the file is left as it was",
           result.returncode == 0 and proposed_improvements_or_changes_files(fixture) == written
+          and written[0].read_text() == entry
           and last_stdout_line(result) == next_action_line(claim_check.NEXT_ACTION_WHEN_NO_MUST_FIX_CLAIM_REMAINS),
           result.stdout)
 
@@ -364,14 +377,15 @@ def run_ranked_claim_cases(fixture, blob):
           and sorted(("alpha claim" in call["stdin"], "beta claim" in call["stdin"]) for call in rechecks)
           == [(False, True), (True, False)] and newest_report()[1] == "must-fix claims remain: 1 must-fix, 1 fix-later, 0 nit",
           (result, rechecks))
-    second = [path for path in proposed_improvements_or_changes_files(fixture) if path not in written]
-    second_text = second[0].read_text() if len(second) == 1 else ""
-    check("a fix-later claim is written even when a must-fix claim remains, to a second file of the day, and the "
-          "next action names that file",
-          len(second) == 1 and second[0].name.endswith("-2.md") and "Claim: beta claim" in second_text
-          and "the program exists" not in second_text and "alpha claim" not in second_text
+    appended = written[0].read_text() if written else ""
+    check("a fix-later claim is appended to the same file as the next entry, even when a must-fix claim remains, and "
+          "the next action names that file",
+          proposed_improvements_or_changes_files(fixture) == written and appended.startswith(entry)
+          and "## E2 — possible problem: an assertion of the overview is unsupported" in appended
+          and "Claim: beta claim" in appended and appended.count("Claim: the program exists") == 1
+          and "alpha claim" not in appended
           and last_stdout_line(result).startswith(next_action_line(claim_check.NEXT_ACTION_WHEN_MUST_FIX_CLAIMS_REMAIN))
-          and str(second[0]) in last_stdout_line(result), result.stdout)
+          and str(written[0]) in last_stdout_line(result), (appended, result.stdout))
 
     for written_file in proposed_improvements_or_changes_files(fixture):
         written_file.unlink()
@@ -390,26 +404,45 @@ def run_ranked_claim_cases(fixture, blob):
           (with_pointer, result.stdout))
     for written_file in written:
         written_file.unlink()
+
     main_before = fixture.git("rev-parse", "refs/remotes/origin/main")
-    fixture.write(f"{Path(OVERVIEW).parent}/{Path(OVERVIEW).stem}-proposed-improvements-or-changes-"
-                  "overview-write-claim-check-by-fresh-agent-2026-01-01.md", "# earlier\n")
-    fixture.git("update-ref", "refs/remotes/origin/main", fixture.commit("an earlier file from the claim check on main"))
+    entries_without_claims = ("# Proposed improvements or changes: the example overview\n\n"
+                              "## E7 — improvement: an entry an overview writer recorded\n\nState: open")
+    fixture.write(PROPOSALS, entries_without_claims)
+    fixture.git("update-ref", "refs/remotes/origin/main", fixture.commit("the file on main, with no claim-check entry"))
     fixture.answer(claude_stdout="VERDICT 1 unsupported fix-later: epsilon claim\n"
                                  "COUNTS supported=0 contradicted=0 unsupported=1\n")
     result = fixture.run()
-    written = [path for path in proposed_improvements_or_changes_files(fixture) if "2026-01-01" not in path.name]
-    check("when origin/main already holds a file from the claim check, new claims ranked fix later go to regular "
-          "maintenance, not to another follow-up pull request",
-          result.returncode == 0 and len(written) == 1
-          and "Regular maintenance fixes them in the overview." in written[0].read_text()
+    appended = (fixture.repository / PROPOSALS).read_text()
+    calls = fixture.claude_calls()
+    check("when the file on origin/main holds no claim from the claim check, a follow-up pull request fixes the new "
+          "claims, appended after the highest entry number",
+          result.returncode == 0 and appended.startswith(entries_without_claims + "\n\n## E8 — possible problem:")
+          and "Claim: epsilon claim" in appended and "Fixed by: a follow-up pull request, in the overview." in appended
+          and last_stdout_line(result).startswith(next_action_line(
+              claim_check.NEXT_ACTION_WHEN_NO_MUST_FIX_CLAIM_REMAINS
+              + claim_check.NEXT_ACTION_SUFFIX_WHEN_FIX_LATER_CLAIMS_WRITTEN_TO_PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE.format(
+                  path=(fixture.repository / PROPOSALS).resolve()))), (appended, result.stdout))
+    check("the fresh-agent's worktree holds the file as the revision holds it, so the overview's pointer to it "
+          "resolves there", len(calls) == 1 and calls[0]["proposals_there"] == entries_without_claims, calls)
+
+    fixture.git("update-ref", "refs/remotes/origin/main", fixture.commit("the file on main, with a claim-check entry"))
+    fixture.answer(claude_stdout="VERDICT 1 unsupported fix-later: zeta claim\n"
+                                 "COUNTS supported=0 contradicted=0 unsupported=1\n")
+    result = fixture.run()
+    appended = (fixture.repository / PROPOSALS).read_text()
+    check("when the file on origin/main already holds a claim from the claim check, new claims ranked fix later go "
+          "to regular maintenance, not to another follow-up pull request",
+          result.returncode == 0 and "## E9 — possible problem:" in appended and "Claim: zeta claim" in appended
+          and "Fixed by: regular maintenance, in the overview." in appended
           and last_stdout_line(result) == next_action_line(
               claim_check.NEXT_ACTION_WHEN_NO_MUST_FIX_CLAIM_REMAINS
               + claim_check.NEXT_ACTION_SUFFIX_WHEN_FOLLOW_UP_PULL_REQUEST_LEAVES_FIX_LATER_CLAIMS_TO_REGULAR_MAINTENANCE.format(
-                  path=written[0] if written else None)), (written, result.stdout))
-    check("without such a file on origin/main, the file says a follow-up pull request fixes its claims",
-          "A follow-up pull request fixes them in the overview." in entry, entry)
-    for written_file in proposed_improvements_or_changes_files(fixture):
-        written_file.unlink()
+                  path=(fixture.repository / PROPOSALS).resolve())), (appended, result.stdout))
+    check("without a claim from the claim check on origin/main, the entry says a follow-up pull request fixes it",
+          "Fixed by: a follow-up pull request, in the overview." in entry, entry)
+    (fixture.repository / PROPOSALS).unlink()
+    fixture.commit("remove the file")
     fixture.git("update-ref", "refs/remotes/origin/main", main_before)
     fixture.commit_overview()
 
