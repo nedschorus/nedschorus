@@ -2530,15 +2530,18 @@ def test_a_not_asked_value_other_than_an_exception_number_or_none_is_refused_as_
         result = case.run("check", "--not-asked", value)
         check(f"`--not-asked {value}` is refused as usage, writing nothing",
               result.returncode == 2
-              and f"`{value}` is not the number of an exception on {APPROVAL_PAGE_PATH}, and --not-asked takes "
-                  f"only those numbers, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, or `none`." in result.stderr
+              and f"`{value}` is not a number --not-asked takes. It takes the number of an exception on "
+                  f"{APPROVAL_PAGE_PATH}, any but 13, or `none`." in result.stderr
+              and "\n  12: Carrying out a decision the user already made:\n  14: Changing text" in result.stderr
+              and "\n  13:" not in result.stderr
+              and "run check again with `--not-asked <its number>`" in result.stderr
               and case.minutes.read_text().rstrip().endswith("#next_to_present item 1 of 3"), described(result))
     case = rated_none_case()
     result = case.run("check", "--not-asked", "13")
     check("`--not-asked 13`, the exception settling an item carries out, is refused as usage, writing nothing",
-          result.returncode == 2 and f"exception 13 on {APPROVAL_PAGE_PATH} is the one for an item an approval-walk "
-                                     "settles" in result.stderr
-          and "which is what --not-asked records, not a kind of change" in result.stderr
+          result.returncode == 2 and f"--not-asked takes no 13. Exception 13 on {APPROVAL_PAGE_PATH} is the rule "
+                                     "that lets an approval-walk settle an item" in result.stderr
+          and "\n  14: Changing text" in result.stderr
           and case.minutes.read_text().rstrip().endswith("#next_to_present item 1 of 3"), described(result))
 
 
