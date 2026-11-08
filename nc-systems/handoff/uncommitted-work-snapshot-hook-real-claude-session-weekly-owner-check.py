@@ -154,7 +154,7 @@ def start_claude(claude_program, clone):
     environment[snapshots.AGENT_SEAT_ENVIRONMENT_VARIABLE] = LIVE_CHECK_AGENT_SEAT
     return subprocess.Popen(
         [*command_line_prefix.claude_code_headless_run_command_line_prefix_build(
-            "dontAsk", claude_program, own_settings=hook_settings(clone)),
+            "dontAsk", claude_program, caller_claude_code_session_settings=hook_settings(clone)),
          LIVE_CHECK_PROMPT, "--model", LIVE_CHECK_MODEL,
          "--allowedTools", "Bash", "--output-format", "json", "--no-session-persistence"],
         cwd=clone, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
