@@ -23,8 +23,12 @@ for O2 or O3, which approve the item's "Option N" paragraph instead of its
 recommendation. R, E and O decide nothing, so the program takes no flag for
 them. --part-answer, given once for each part of an item that holds parts, as
 in `--part-answer 1=A --part-answer 2=D`, gives that part its own answer, A, AO
-or D. Z is not taken for a part, and a part number given twice is refused,
-writing nothing. Two flags record an item the user is not shown, so that no
+or D. Z is not taken for a part. A part number given twice is refused, writing
+nothing, and so is a set of part answers that leaves out a part of the item,
+names a part the item does not hold, or is given for an item that holds no
+parts, the item's parts read as the short-answer hook reads them, from its
+lines that open with `Part N.`: an unanswered part keeps the item waiting,
+with nothing recorded for it. Two flags record an item the user is not shown, so that no
 agent writes a deciding line by hand: --already-decided for an item an earlier
 user-ruling decides as the item recommends, USER_RULING citing that ruling,
 which adds the `#new` texts as A does; and --moved-on for an item the walk
@@ -379,6 +383,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPOSITORY_TOP = HERE.parents[2]
 WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
+SHORT_ANSWER_HOOK_FILE = HERE / "walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py"
 FAST_READ_PROGRAM = REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-fast-read.py"
 RECORD_SHIPPER_FILE = REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-record-ship.py"
 RECORD_NAMES_FILE = REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-record-names-common.py"
@@ -453,6 +458,20 @@ PART_ARGUMENT_PROBLEM = ("`{value}` is not a part's answer: give the part's numb
                          "`1=A`; a part takes no Z, so a deferral is given to the whole item with --deferred")
 PART_REPEATED = ("nothing written: --part-answer gives {parts} more than one answer.\n"
                  "Run check again giving each part's number once, with the letter the user gave that part.")
+PARTS_NOT_ALL_ANSWERED = (
+    "nothing written: {item} holds parts {parts}, and --part-answer {problem}. A part left unanswered keeps the "
+    "item open, so check records no answer to any of its parts.\n"
+    "If the user has answered every part: run check again with one --part-answer for each part, with the letter "
+    "he gave it.\n"
+    "If he has not: ask him to answer each part he left unanswered, and run check once he has answered every "
+    "part.")
+PARTS_UNANSWERED = "leaves {parts} unanswered"
+PARTS_NOT_HELD = "answers {parts}, which the item does not hold"
+NO_PARTS_HELD = (
+    "nothing written: --part-answer answers parts of {item}, but {item} holds no parts: no lines of it open with "
+    "`Part 1.`, `Part 2.` and so on, up to five, as the walk-me-through skill starts each part.\n"
+    "If the user answered the whole item: run check with the flag for that answer, as `--help` lists it.\n"
+    "If the item is meant to hold parts: start each part on a line of its own with `Part N.`, and run check again.")
 
 NO_PROPOSED_TEXT = "no proposed text marked"
 STATUS_ALREADY_DONE = "`{mark}` text {number}, \"{excerpt}\": fast read already done ({record})."
@@ -1569,6 +1588,27 @@ def glossary_term_or_marker_problems(kind, found, touched, top, item):
     return problems
 
 
+def part_answer_problem(walk_finder, minutes, value, numbers, total, parser, item, answered_parts):
+    """Return why the part answers cannot be recorded for the item, or None when they answer each of its parts,
+    the parts read by the short-answer hook's part_starts and part_numbers."""
+    hook = load_module("walk_me_through_short_answer_hook", SHORT_ANSWER_HOOK_FILE)
+    _, _, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
+    starts = hook.part_starts(tokens)
+    held = sorted({number for first, end in ranges for number in hook.part_numbers(starts, first, end)})
+    if not held:
+        return NO_PARTS_HELD.format(item=item)
+
+    def named(parts):
+        return ", ".join(f"part {number}" for number in parts)
+    unanswered = [number for number in held if number not in answered_parts]
+    not_held = sorted(set(answered_parts) - set(held))
+    if not unanswered and not not_held:
+        return None
+    problems = ([PARTS_UNANSWERED.format(parts=named(unanswered))] if unanswered else []) + (
+        [PARTS_NOT_HELD.format(parts=named(not_held))] if not_held else [])
+    return PARTS_NOT_ALL_ANSWERED.format(item=item, parts=f"1 to {held[-1]}", problem=" and ".join(problems))
+
+
 def check(arguments):
     part_numbers = [number for number, _ in arguments.part_answer or []]
     repeated = sorted({number for number in part_numbers if part_numbers.count(number) > 1})
@@ -1596,6 +1636,10 @@ def check(arguments):
     document, lines, marks, unreadable = item_lines(walk_finder, minutes, value, numbers, total, parser)
     rating = case_against_rating(lines, item, document, arguments)
     rated = CASE_AGAINST_HASHTAG.format(rating=rating.replace(" ", "_")) if rating else ""
+    if part_numbers:
+        problem = part_answer_problem(walk_finder, minutes, value, numbers, total, parser, item, part_numbers)
+        if problem:
+            raise Failure(problem)
     if arguments.deferred or arguments.moved_on_no_decision or arguments.moved_on is not None:
         now = datetime.datetime.now().astimezone()
         no_change = CHECK_MOVED_ON_MINUTES if arguments.moved_on is not None else CHECK_DEFERRED_MINUTES

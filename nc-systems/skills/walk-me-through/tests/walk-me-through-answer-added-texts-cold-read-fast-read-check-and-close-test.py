@@ -149,11 +149,21 @@ If the sentence stays, a note follows it:
 A fenced line that names the `#new` mark inside a sentence.
 ```
 
+Part 1. The opening sentence changes.
+
+Part 2. The row line is added.
+
 #case_against weak: the page grows by one line.
 
 Recommendation: change the sentence.
 
 ## Item 4 of 9: no proposal here
+
+Part 1. The first part.
+
+Part 2. The second part.
+
+Part 3. The third part.
 
 #case_against none.
 
@@ -346,7 +356,7 @@ def test_each_answer_fast_reads_only_the_texts_it_adds():
     for flags, read in ((("--obvious",), NEW_TEXTS), (("--after-advisor",), NEW_TEXTS),
                         (("--option", "2"), NEW_TEXTS), (("--option", "3"), NEW_TEXTS),
                         (("--disapproved",), NEW_IF_D_TEXT),
-                        (("--part-answer", "1=AO"), NEW_TEXTS),
+                        (("--part-answer", "1=AO", "--part-answer", "2=AO"), NEW_TEXTS),
                         (("--part-answer", "1=D", "--part-answer", "2=D"), NEW_IF_D_TEXT),
                         (("--part-answer", "1=A", "--part-answer", "2=D"),
                          "The page lists one poem per job an agent does.\n" + NEW_IF_D_TEXT
@@ -2252,13 +2262,15 @@ def test_following_the_repeated_heading_refusal_clears_it_when_two_headings_shar
 
 def test_each_parts_answer_is_recorded_and_close_records_each_parts_outcome():
     for flags, answered, recorded in (
-            (("--part-answer", "2=d", "--part-answer", "1=AO"), "part 1 approved #approved_obvious, part 2 disapproved",
-             "part 1 approved <accepted>, part 2 disapproved <rejected>"),
+            (("--part-answer", "2=d", "--part-answer", "3=A", "--part-answer", "1=AO"),
+             "part 1 approved #approved_obvious, part 2 disapproved, part 3 approved",
+             "part 1 approved <accepted>, part 2 disapproved <rejected>, part 3 approved <accepted>"),
             (("--part-answer", "1=D", "--part-answer", "2=ao", "--part-answer", "3=a"),
              "part 1 disapproved, part 2 approved #approved_obvious, part 3 approved",
              "part 1 disapproved <rejected>, part 2 approved <accepted>, part 3 approved <accepted>"),
-            (("--part-answer", "1=D", "--part-answer", "2=AO"), "part 1 disapproved, part 2 approved #approved_obvious",
-             "part 1 disapproved <rejected>, part 2 approved <accepted>")):
+            (("--part-answer", "3=D", "--part-answer", "1=D", "--part-answer", "2=AO"),
+             "part 1 disapproved, part 2 approved #approved_obvious, part 3 disapproved",
+             "part 1 disapproved <rejected>, part 2 approved <accepted>, part 3 disapproved <rejected>")):
         case = Case(next_to_present="item 4 of 9")
         checked = case.run("check", *flags)
         minutes = case.minutes.read_text()
@@ -2293,6 +2305,44 @@ def test_a_part_given_more_than_one_answer_is_refused_writing_nothing():
                                     "user gave that part.\n")
               and case.minutes.read_text() == before and case.calls.read_text() == ""
               and not case.counts_log.exists(), described(result))
+
+
+def test_part_answers_that_leave_a_part_unanswered_or_name_a_part_the_item_lacks_are_refused_writing_nothing():
+    unanswered = ("nothing written: item 4 of 9 holds parts 1 to 3, and --part-answer {problem}. A part left "
+                  "unanswered keeps the item open, so check records no answer to any of its parts.\n"
+                  "If the user has answered every part: run check again with one --part-answer for each part, with "
+                  "the letter he gave it.\n"
+                  "If he has not: ask him to answer each part he left unanswered, and run check once he has answered "
+                  "every part.\n")
+    no_parts = ("nothing written: --part-answer answers parts of item 5 of 9, but item 5 of 9 holds no parts: no "
+                "lines of it open with `Part 1.`, `Part 2.` and so on, up to five, as the walk-me-through skill "
+                "starts each part.\n"
+                "If the user answered the whole item: run check with the flag for that answer, as `--help` lists "
+                "it.\n"
+                "If the item is meant to hold parts: start each part on a line of its own with `Part N.`, and run "
+                "check again.\n")
+    for next_to_present, flags, refusal in (
+            ("item 4 of 9", ("--part-answer", "1=A"), unanswered.format(problem="leaves part 2, part 3 unanswered")),
+            ("item 4 of 9", ("--part-answer", "3=D", "--part-answer", "1=A"),
+             unanswered.format(problem="leaves part 2 unanswered")),
+            ("item 4 of 9", ("--part-answer", "1=A", "--part-answer", "2=A", "--part-answer", "3=A",
+                             "--part-answer", "4=D"),
+             unanswered.format(problem="answers part 4, which the item does not hold")),
+            ("item 4 of 9", ("--part-answer", "1=A", "--part-answer", "4=D"),
+             unanswered.format(problem="leaves part 2, part 3 unanswered and answers part 4, which the item does "
+                                       "not hold")),
+            ("item 5 of 9", ("--part-answer", "1=A", "--part-answer", "2=A"), no_parts)):
+        case = Case(next_to_present=next_to_present)
+        before = case.minutes.read_text()
+        result = case.run("check", *flags)
+        check(f"check {' '.join(flags)} on {next_to_present} is refused on stderr, writing nothing and running no "
+              "fast read, so the item stays open",
+              result.returncode == 1 and result.stderr == FAILURE_PREFIX + "check: " + refusal
+              and case.minutes.read_text() == before and case.calls.read_text() == ""
+              and not case.counts_log.exists(), described(result))
+        closed = case.run("close")
+        check(f"close after the refused check {' '.join(flags)} records nothing for {next_to_present}",
+              closed.returncode == 1 and case.minutes.read_text() == before, described(closed))
 
 
 def test_a_part_answer_other_than_a_ao_or_d_or_combined_with_another_answer_flag_is_refused_as_usage():
