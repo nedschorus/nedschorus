@@ -651,28 +651,30 @@ with tempfile.TemporaryDirectory() as scratch_name:
           and len(str(made.parent)) - len(str(pathlib.Path(tempfile.gettempdir()))) <= 13,
           made)
 
-    (scratch / "leaves-an-unremovable-directory-test.py").write_text(
-        "import os, pathlib\n"
-        "locked = pathlib.Path(os.environ['TMPDIR']) / 'locked'\n"
-        "(locked / 'file').parent.mkdir()\n"
-        "(locked / 'file').write_text('x')\n"
-        "locked.chmod(0o500)\n")
-    unremovable = runner.run_one_suite(scratch, sys.executable,
-                                       "leaves-an-unremovable-directory-test.py", scratch)
-    left = [path for path in pathlib.Path(tempfile.gettempdir()).glob(
-        f"{runner.SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX}*")
-        if (path / "locked").is_dir()]
-    check("a TMPDIR the runner cannot remove is named, with the command that removes it, "
-          "in the suite's output note",
-          unremovable["exit"] == 0 and len(left) == 1
-          and f"the temporary directory the suite was given, {left[0]}, could not be removed ("
-          in (unremovable["output_note"] or "")
-          and f"`chmod -R u+rwx {shlex.quote(str(left[0]))} && rm -rf {shlex.quote(str(left[0]))}`"
-          in unremovable["output_note"],
-          (unremovable, left))
-    for path in left:
-        (path / "locked").chmod(0o700)
-        shutil.rmtree(path)
+    # Root removes a directory whatever its mode, so the runner's removal cannot be made to fail.
+    if os.geteuid() != 0:
+        given_record = scratch / "given"
+        (scratch / "leaves-an-unremovable-directory-test.py").write_text(
+            "import os, pathlib\n"
+            f"pathlib.Path({str(given_record)!r}).write_text(os.environ['TMPDIR'])\n"
+            "locked = pathlib.Path(os.environ['TMPDIR']) / 'locked'\n"
+            "(locked / 'file').parent.mkdir()\n"
+            "(locked / 'file').write_text('x')\n"
+            "locked.chmod(0o500)\n")
+        unremovable = runner.run_one_suite(scratch, sys.executable,
+                                           "leaves-an-unremovable-directory-test.py", scratch)
+        given = pathlib.Path(given_record.read_text()) if given_record.exists() else None
+        check("a TMPDIR the runner cannot remove is named, with the command that removes it, "
+              "in the suite's output note",
+              unremovable["exit"] == 0 and given is not None and (given / "locked").is_dir()
+              and f"the temporary directory the suite was given, {given}, could not be removed ("
+              in (unremovable["output_note"] or "")
+              and f"`chmod -R u+rwx {shlex.quote(str(given))} && rm -rf {shlex.quote(str(given))}`"
+              in unremovable["output_note"],
+              (unremovable, given))
+        if given is not None and (given / "locked").is_dir():
+            (given / "locked").chmod(0o700)
+            shutil.rmtree(given)
 
     (scratch / "prints-tmpdir-test.py").write_text("import os\nprint(os.environ.get('TMPDIR'))\n")
     (scratch / "bwrap").write_text('#!/bin/sh\n"$@"\n')

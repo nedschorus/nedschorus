@@ -394,7 +394,9 @@ with TMPDIR set to a directory of its own in the system temp directory, which
 the runner removes once the suite has ended, however it ended, so what a
 killed suite made through TMPDIR is not left behind; when that removal fails,
 the suite's line is followed by one naming the directory and the command that
-removes it. A runner killed with SIGKILL leaves that directory. It is reported FAIL with `TIMEOUT after
+removes it. A runner killed with SIGKILL leaves that directory; a later run
+that uses the default --lock-file removes it once nothing in it has changed for
+two days, on every platform. It is reported FAIL with `TIMEOUT after
 <n>s (limit <m>s, <k> times recorded <r>s)`, `(limit <m>s, the floor, more than
 <k> times recorded <r>s)` or `(limit <m>s from no passing recording)`; its
 cgroup counters are lost with the shell that keeps them, and the other suites
@@ -1792,7 +1794,9 @@ def remove_old_temporary_log_directories_without_run_records(
     directory a caller chose with --log-dir holds the log-directory lock file and
     is the caller's to remove, so it is never touched. A directory counts as old
     only when nothing anywhere under it changed for retention_seconds, because a
-    suite of an old run may still be appending to a trace deep inside it."""
+    suite of an old run may still be appending to a trace deep inside it. A
+    directory whose tree cannot be read is kept and returned among the failures
+    with the reason; one that vanished while it was read is skipped."""
     now = time.time() if now is None else now
     temp_dir = Path(tempfile.gettempdir() if temp_dir is None else temp_dir)
     named = set()
@@ -1807,7 +1811,11 @@ def remove_old_temporary_log_directories_without_run_records(
             continue
         try:
             newest = newest_modification_time_in_tree(log_dir)
-        except OSError:
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            failures.append((log_dir, f"could not read it to tell whether a run still "
+                                      f"uses it: {error}"))
             continue
         if now - newest >= retention_seconds:
             why = remove_tree_or_say_why(log_dir)
@@ -1818,6 +1826,42 @@ def remove_old_temporary_log_directories_without_run_records(
     return removed, failures
 
 
+def remove_old_suite_temporary_directories_left_by_killed_runners(
+        now=None, temp_dir=None, retention_seconds=FINISHED_RUN_LOG_RETENTION_SECONDS):
+    """Remove the per-suite TMPDIRs a runner killed with SIGKILL left; return (removed, failures).
+
+    Only a directory of this account whose name has mkdtemp's shape after the
+    prefix is touched, since the prefix is short enough for another program to
+    share it, and only once nothing under it changed for retention_seconds, since
+    a suite of a running run may still be writing in it. A directory whose tree
+    cannot be read is kept and returned among the failures with the reason; one
+    that vanished while it was read, as when another run removed it, is skipped."""
+    now = time.time() if now is None else now
+    temp_dir = Path(tempfile.gettempdir() if temp_dir is None else temp_dir)
+    shape = re.compile(re.escape(SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX)
+                       + r"[a-z0-9_]{8}")
+    removed, failures = [], []
+    for directory in sorted(temp_dir.glob(f"{SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX}*")):
+        try:
+            if (not shape.fullmatch(directory.name) or directory.is_symlink()
+                    or not directory.is_dir() or directory.stat().st_uid != os.getuid()):
+                continue
+            newest = newest_modification_time_in_tree(directory)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            failures.append((directory, f"could not read it to tell whether a suite still "
+                                        f"uses it: {error}"))
+            continue
+        if now - newest >= retention_seconds:
+            why = remove_tree_or_say_why(directory)
+            if why is None:
+                removed.append(directory)
+            else:
+                failures.append((directory, why))
+    return removed, failures
+
+
 def clean_up_after_earlier_runs(lock_file, previous_holder, platform=None):
     """Remove what earlier runs left, once nothing of theirs still runs; return report lines.
 
@@ -1825,12 +1869,20 @@ def clean_up_after_earlier_runs(lock_file, previous_holder, platform=None):
     other platforms there is no /proc to read start times from, so the lock's
     last holder is cleaned up after, as before."""
     platform = sys.platform if platform is None else platform
+    lines = []
+    if Path(lock_file) == DEFAULT_LOCK_FILE:
+        # A test's own --lock-file runs must not sweep the machine's shared temp directory.
+        removed, failures = remove_old_suite_temporary_directories_left_by_killed_runners()
+        lines += [f"removed the temporary directory {directory}, given to a suite by a run that "
+                  f"was killed" for directory in removed]
+        lines += [f"could not remove the temporary directory {directory}, given to a suite by a "
+                  f"run that was killed ({why})" for directory, why in failures]
     if not platform.startswith("linux"):
         left = remove_traces_the_last_lock_holder_left(previous_holder)
-        return ([f"removed {len(left)} strace directories the run before this one left "
-                 f"in {left[0].parent}"] if left else [])
+        return lines + ([f"removed {len(left)} strace directories the run before this one left "
+                         f"in {left[0].parent}"] if left else [])
     runs_dir = run_records_directory_for_lock_file(lock_file)
-    lines = remove_leftovers_of_ended_runs_named_in_run_records(runs_dir)
+    lines += remove_leftovers_of_ended_runs_named_in_run_records(runs_dir)
     if Path(lock_file) == DEFAULT_LOCK_FILE:
         # Only the machine's own runs share the system temp directory with records this old.
         removed, failures = remove_old_temporary_log_directories_without_run_records(runs_dir)
