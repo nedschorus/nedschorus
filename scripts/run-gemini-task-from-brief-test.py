@@ -31,8 +31,8 @@ mode = os.environ.get("FAKE_AGY_MODE", "report")
 with open(os.environ["FAKE_CALLS"], "a") as f:
     f.write(json.dumps([os.getcwd(), args, sys.stdin.read()]) + "\n")
 print("agy stderr", file=sys.stderr, flush=True)
-if mode == "needs-key" and not os.environ.get("GEMINI_API_KEY"):
-    print("GEMINI_API_KEY environment variable is not set", flush=True)
+if "GEMINI_API_KEY" in os.environ:
+    print("agy was given GEMINI_API_KEY", flush=True)
     sys.exit(3)
 if args == ["models"]:
     if mode == "models-fail":
@@ -158,24 +158,11 @@ class GeminiTaskTests(unittest.TestCase):
                     self.assertEqual([prefix[i + 1] for i, arg in enumerate(prefix) if arg == "--bind"],
                                      list(map(str, writable)))
 
-    def test_key_file_supplies_gemini_api_key_or_names_its_problem(self):
-        self.env.pop("GEMINI_API_KEY", None)
-        self.env["FAKE_AGY_MODE"] = "needs-key"
-        key_file = self.base / "gemini-api.key"
-        key_file.write_text("test-key\n")
-        with patch.dict(os.environ, self.env, clear=True), \
-                patch.object(runner.agy_cell, "GEMINI_API_KEY_FILE", key_file), \
-                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(runner.main(self.args), 0)
-        key_file.unlink()
-        with patch.dict(os.environ, self.env, clear=True), \
-                patch.object(runner.agy_cell, "GEMINI_API_KEY_FILE", key_file), \
-                contextlib.redirect_stderr(io.StringIO()) as stderr:
-            self.assertEqual(runner.main(self.args), 1)
-        self.assertIn("agy exited 3", stderr.getvalue())
-        self.assertIn(f"{key_file} gave no key", stderr.getvalue())
-        self.assertIn("Do not read, write or repair that file yourself", stderr.getvalue())
-        self.assertIn(f"to make {key_file} readable and holding the key", stderr.getvalue())
+    def test_inherited_gemini_api_key_is_removed_from_agy_environment(self):
+        self.env["GEMINI_API_KEY"] = "test-key-from-caller"
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("test-key-from-caller", self.log.read_text())
 
     def test_unknown_model_stops_before_task(self):
         result = self.run_cli(extra=("-m", "gemini-4-argon"))

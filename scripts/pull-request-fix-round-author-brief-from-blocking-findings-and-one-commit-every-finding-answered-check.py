@@ -36,6 +36,17 @@ NIT_MARK, a re-posted nit counted once; a nit the posting program moved into a r
 read, since the bodies' text is never parsed for findings. A round with nits but no blocking
 finding is refused as a round with no blocking finding is, so nits alone produce no brief.
 
+A pull request whose description has a #replaces line, read by REPLACES_READER_FILE_NAME, carries over
+the pull requests it replaces, through replacements of replacements. The round's number adds each
+replaced pull request's round count, counted as above. The blocking findings and nits of a replaced
+pull request's latest round are carried, after this pull request's own and marked with that round's
+review, only when the round was never answered: the replaced pull request's head is still that
+round's frozen-head and no round record names it. A round that was answered has its fix commit
+carried onto the replacing branch, and merge-lane-2's review of the replacement, which the brief
+still needs, grades it. A #replaces line the reader cannot follow is refused. Not handled: a round
+record posted on the replacing pull request names only its own reviews, so a carried finding declined
+without a commit is carried again into the replacement's next round.
+
 Without --check, run in the author's checkout: refuse when the pull request's head has moved past
 the frozen-head, else print the brief: the frozen-head, ADVISOR_FIX_ROUND_INSTRUCTION when the
 round's number is ADVISOR_FIX_ROUND_NUMBER and on no other, each blocking finding word for word, then
@@ -99,6 +110,13 @@ _git_output_spec = importlib.util.spec_from_file_location(
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
+REPLACES_READER_FILE_NAME = "pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py"
+_replaces_reader_spec = importlib.util.spec_from_file_location(
+    "pull_request_description_replaces_line_replaced_pull_request_chain_reader_common",
+    Path(__file__).resolve().with_name(REPLACES_READER_FILE_NAME))
+replaces_reader = importlib.util.module_from_spec(_replaces_reader_spec)
+_replaces_reader_spec.loader.exec_module(replaces_reader)
+
 MERGE_LANE_2_REVIEWER_LOGIN = "ned-review-merge"
 # Reviewers spell the mark several ways, such as "**Blocks.**", "**Blocks:**", "**Blocks**" or "**Blocks** (...)"; no instruction fixes one.
 BLOCKING_MARKER_PATTERN = re.compile(r"\*\*Blocks\b[^*\n]*\*\*")
@@ -138,6 +156,15 @@ MOVE_CHANGE_TO_OWN_PULL_REQUEST_INSTRUCTION = (
     f"\"{MOVED_TO_PULL_REQUEST_PREFIX}\" followed by the URL --move-change-to-own-pull-request-finish prints; the check in "
     "step 7 refuses the entry when no such pull request exists, or when its change is still on this "
     "branch.")
+GUARDED_FILE_CHANGE_CARRYING_OUT_USER_RULING_INSTRUCTION = (
+    "   When a finding asks you to change a file the instruction-file guard protects, and the fix only "
+    "makes the file do what a ruling of the user's already says, the change is a user-approved-change: "
+    "before each edit, write the ruling's words, quoted from the walk-minutes item or the agent-session "
+    "where he gave it, with its time, into the `.walk-approved` marker file at the root of your worktree, "
+    "and cite the ruling in the commit message. A change the guard's refusal lets through without a "
+    "ruling, such as an obvious-error-fix, goes as that refusal says. Leave out any other change to such "
+    "a file, go on with the other findings, and name that change in your report to the agent that "
+    "dispatched you.")
 MOVE_STATE_FILE_NAME = "fix-round-move-to-own-pull-request.json"
 # The answers file waits in the git directory while the new topic branch is checked out, so no commit
 # or check made there can pick it up.
@@ -243,7 +270,8 @@ def is_ancestor(ancestor, descendant):
 
 
 def pull_request(number):
-    arguments = ["pr", "view", str(number), "--json", ",".join(PULL_REQUEST_FIELDS)]
+    """(url, head, branch, description) of the pull request; the description may be empty."""
+    arguments = ["pr", "view", str(number), "--json", ",".join((*PULL_REQUEST_FIELDS, "body"))]
     command = "gh " + " ".join(arguments)
     rerun = (f" Run {command} yourself: if it now prints an object with all three fields filled in, "
              f"run {shlex.join(['python3', *sys.argv])} again.")
@@ -260,7 +288,7 @@ def pull_request(number):
     if missing:
         raise StepFailed(f"{command} printed JSON in which these fields are missing or empty: "
                          f"{', '.join(missing)}." + rerun)
-    return tuple(facts[field] for field in PULL_REQUEST_FIELDS)
+    return (*(facts[field] for field in PULL_REQUEST_FIELDS), facts.get("body") or "")
 
 
 def round_records(number):
@@ -319,6 +347,50 @@ def round_reviews(number, reviewer_login):
                   f"is {latest.get('state')}{on_commit}, not CHANGES_REQUESTED, so there is no fix-round to brief.\n"
                   "If that review lists follow-ups, answer them in a new pull request or tell "
                   "merge-lane-2 why not, with SendMessage.")
+
+
+def changes_requested_round_count(number, reviewer_login):
+    """The round count round_reviews gives, read also for a pull request with no open round."""
+    reviews = gh_json_lines(["api", "--paginate", f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews",
+                             "--jq", ".[]"])
+    return round_count([review for review in reviews
+                        if (review.get("user") or {}).get("login") == reviewer_login
+                        and review.get("state") == "CHANGES_REQUESTED"], round_records(number))
+
+
+def replaced_pull_requests(number, url, description):
+    """(number, head) of each pull request this one replaces, oldest first, by the #replaces lines."""
+    repository = "/".join(url.split("/")[3:5])
+    facts = {number: (url, None, None, description)}
+
+    def read_description(replaced):
+        if replaced not in facts:
+            facts[replaced] = pull_request(replaced)
+        return facts[replaced][3]
+    try:
+        chain = replaces_reader.replaced_pull_request_chain_numbers_oldest_first(number, repository, read_description)
+    except replaces_reader.ReplacedPullRequestChainUnreadable as error:
+        raise Refused(str(error)) from None
+    return [(replaced, facts[replaced][1]) for replaced in chain]
+
+
+def unanswered_round_findings_of_replaced_pull_requests(replaced, reviewer_login):
+    """The blocking findings and nits of each replaced pull request's latest round that was never answered,
+    each marked with that round's review under "carried_from"."""
+    blocking, nits = [], []
+    for replaced_number, replaced_head in replaced:
+        try:
+            anchor, reviews, recorded, _round_number = round_reviews(replaced_number, reviewer_login)
+        except Refused:
+            continue
+        if recorded or anchor.get("commit_id") != replaced_head:
+            continue
+        carried = {"carried_from": anchor.get("html_url")}
+        blocking += [{**finding, **carried}
+                     for finding in blocking_findings(replaced_number, anchor, reviews, reviewer_login)]
+        nits += [{**nit, **carried}
+                 for nit in nit_findings_of_merge_lane_2_reviews_in_round(replaced_number, reviews, reviewer_login)]
+    return blocking, nits
 
 
 def review_links(reviews):
@@ -415,11 +487,14 @@ def nit_findings_of_merge_lane_2_reviews_in_round(number, reviews, reviewer_logi
 
 def finding_place(comment):
     line = comment.get("line") or comment.get("original_line")
-    return f"{comment.get('path')}:{line}" if line else str(comment.get("path"))
+    place = f"{comment.get('path')}:{line}" if line else str(comment.get("path"))
+    if comment.get("carried_from"):
+        place += f", carried over from the replaced pull request's review {comment['carried_from']}"
+    return place
 
 
 def round_facts(number, reviewer_login):
-    url, head, branch = pull_request(number)
+    url, head, branch, description = pull_request(number)
     anchor, reviews, recorded, fix_round_number = round_reviews(number, reviewer_login)
     frozen_head = anchor.get("commit_id")
     if not frozen_head:
@@ -427,6 +502,12 @@ def round_facts(number, reviewer_login):
     # blocking_findings refuses a round with no blocking finding, so nits are read only beside one.
     findings = blocking_findings(number, anchor, reviews, reviewer_login)
     nits = nit_findings_of_merge_lane_2_reviews_in_round(number, reviews, reviewer_login)
+    replaced = replaced_pull_requests(number, url, description)
+    fix_round_number += sum(changes_requested_round_count(replaced_number, reviewer_login)
+                            for replaced_number, _head in replaced)
+    carried_blocking, carried_nits = unanswered_round_findings_of_replaced_pull_requests(replaced, reviewer_login)
+    findings += carried_blocking
+    nits += carried_nits
     return (url, head, branch, review_links(latest_first(anchor, reviews)), anchor.get("id"), frozen_head,
             findings, nits, fix_round_number,
             None if recorded else [review.get("id") for review in reviews])
@@ -472,7 +553,8 @@ def print_brief(number, reviewer_login):
         f"1. Before changing anything, run: python3 scripts/branch-conflict-check.py --pull-request {number}",
         "   If it reports VERDICT: CONFLICT, do what its report says.",
         "2. Check each finding against the code. Fix each one that holds, root cause included, "
-        "with a test that fails without the fix.",
+        "with a test that fails without the fix; a nit needs no test.",
+        GUARDED_FILE_CHANGE_CARRYING_OUT_USER_RULING_INSTRUCTION,
         "3. Change nothing else, apart from the tests, callers, documents and citations that "
         "keep the pull request atomic. Findings that do not block, in this review or any other, "
         "are not part of this round, apart from the nits listed above: merge-lane-2 sends them after the merge.",
@@ -490,7 +572,7 @@ def print_brief(number, reviewer_login):
         "   If a suite fails because of this round's change, fix it in the same commit; if it "
         "fails for another cause, tell merge-lane-2 with SendMessage before pushing.",
         f"7. Run the check: {check_command}",
-        "   adding --after-conflict-merge if step 1's report had you merge origin/main. If it refuses, change the "
+        "   If it refuses, change the "
         "answers file or the unpushed commit as it says (git commit --amend is allowed before the "
         "push) and run the check again.",
         f"8. When it passes with a commit not yet pushed, push once, with: git push origin HEAD:{shlex.quote(branch)}",

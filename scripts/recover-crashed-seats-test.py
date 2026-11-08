@@ -1576,7 +1576,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # restart the seat had declined.
     consulted_handoff_text = (
         "# Handoff\nsession-handoff-sequence-number: 11\nnext-step: wait for the user\n"
-        "dont-restart: the user asked to be consulted before a relaunch\n")
+        "ask-user-before-restart: the user asked to be consulted before a relaunch\n")
     workspace = Workspace(root / "w3-consulted", name="seat-consulted")
     all_dead()
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
@@ -3410,17 +3410,6 @@ with tempfile.TemporaryDirectory() as temporary:
           and "seat-a: ALREADY RUNNING — tmux session 'seat-a' is alive"
               in after_already_running[len(after_refusal):],
           (exit_code, after_already_running))
-
-    import subprocess as real_subprocess
-    completed = real_subprocess.run(
-        [sys.executable, str(SUPERVISOR_SCRIPT),
-         "--agent", "x", "--resume-session-id", "a", "--adopt-session-id", "b",
-         "--adopt-process-id", "1"],
-        capture_output=True, text=True, timeout=60, stdin=real_subprocess.DEVNULL,
-        env={**os.environ, "CLAUDE_CODE_TASK_LIST_ID": "nedschorus-x-tasks"})
-    check("supervisor refuses --resume-session-id together with adoption",
-          completed.returncode != 0 and "different recoveries" in completed.stderr,
-          completed.stderr)
 
     check("shell_words keeps a word with an unquoted # inside it, and the words after it",
           shell_words("echo a#b c") == ["echo", "a#b", "c"], shell_words("echo a#b c"))

@@ -10,10 +10,14 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 
 - **/cold-read** — a skill used to improve the readability of prose.
 - **/explain** — a skill that re-explains a message the user could not follow, so he can understand the message without the agent-session's context.
+- **/find-info** — the skill an agent uses to find a stored file, record, transcript or walk-minutes file, or a past discussion, decision or approval, such as an earlier user-ruling.
+- **/find-missing-file** — the skill an agent uses before it reports that a file, record, transcript or backup is missing, to search for copies of it first.
 - **/ghi-write** — a skill used before any write to a GitHub issue.
 - **/handoff** — a skill that writes the session-handoff a successor agent-session starts from, used when a system message says the agent-session has used the share of its context window set as the reincarnation threshold, or the user asks for a handoff.
+- **/overview-write** — the skill used to write, refresh or fix an nc-architecture-overview, and to run the program that checks its claims against the code.
 - **/pull-request-review-write** — a skill used before writing or revising a review on a pull request.
 - **/sanity-check** — a skill used to improve designs.
+- **/start-agent-seat** — the skill used to start a new named agent-seat on ned-box, which covers choosing its name, the seat-brief the user approves, and its launch command.
 - **/walk-me-through** — a skill that presents complex material to the user one item or step at a time.
 - **-common** — a filename suffix for a module whose functions several programs import; the module is not run on its own.
 - **-draft** — the filename suffix of a document still being written and not yet put to review, such as `docs/drafts/<subject>-draft.md`.
@@ -21,11 +25,12 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **agent-arbitrator** — a fresh-agent, used to resolve conflicts between agents.
 - **agent-binary** — the installed program a cold-read-cell or a sanity-check-cell runs its model through, `claude`, `codex` or `agy`.
 - **agent-crash-watcher** — the program on ned-box that restarts an agent-seat whose agent-session stopped without writing a session-handoff, at most once an hour, and otherwise shows the user a failed-restart-notice. The program is `nc-systems/handoff/handoff-agent-crash-watcher.py`.
-- **agent-facing-message** — text that a program in this repository writes for an agent to read and act on, such as a hook's refusal, warning or reminder, or the error a script prints. Its source is in the repository, so every agent-facing-message can be found, cold-read, tested and rewritten. Text that the agent-binary, `claude` or `codex`, adds on its own, such as Claude Code's "hook error" label, is not part of an agent-facing-message. An agent-facing-message that never reaches the agent is a defect of the program that writes it.
+- **agent-facing-message** — text that a program in this repository writes for an agent to read and act on, such as a hook's refusal, warning or reminder, or the error a script prints. Its source is in the repository, so every agent-facing-message can be found, cold-read, tested and rewritten. Text that the agent-binary, `claude`, `codex` or `agy`, adds on its own, such as Claude Code's "hook error" label, is not part of an agent-facing-message. An agent-facing-message that never reaches the agent is a defect of the program that writes it.
 - **agent-home** — the directory an agent-seat works in, `~/agents/<seat name>` on the agent-seat's machine: a git worktree on the agent-seat's seat-branch.
 - **agent-instructions** — prompts or Markdown files that instruct agents, wherever an agent reads them, such as CLAUDE.md, a skill, a seat-brief or AGENTS.md.
 - **agent-seat** — a named, long-lived agent identity with its own worktree, seat-branch and seat-brief, held by a series of agent-sessions joined by session-handoffs.
 - **agent-session** — one running conversation occupying an agent-seat. Agent-sessions end and are replaced; the agent-seat persists.
+- **AO** — the answer to an approval-walk item that approves it and records that the user found it obvious.
 - **approval-walk** — presenting material to the user one item at a time, under /walk-me-through, for a decision on each item; its outcomes are recorded in walk-minutes.
 - **approved-by-walk** — approved by the user item by item in an approval-walk, not by one yes to a bundle.
 - **build-slice** — one numbered increment of a build plan, built and merged on its own.
@@ -87,10 +92,11 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **proposed-improvements-or-changes-file** — a file beside an nc-architecture-overview, or, for ghi-guide-agent's ruling questions about a GHI-MD, in the log-store directory `nedlern@ned-box:/home/nedlern/nedschorus-logs/ghi-guide-agent-proposed-improvements-or-changes/`, named `<document name>-proposed-improvements-or-changes-<source>-<date>.md`, in which one reviewer records changes it proposes to that document or to what the document describes; GHI [Proposed improvements or changes to a GHI are handled by agents first, and reach the user only when they need him](https://github.com/nedschorus/nedschorus/issues/1132) says how its entries are settled.
 - **provisional-addition** — a line an agent adds to an issue's Markdown file under "Provisional additions (not yet vetted by the user)", which becomes a ruling only when the user reviews the issue.
 - **queue-drain** — the procedure that empties the queue directories and `docs/drafts/`, promoting, archiving or deleting each item; its issue is GHI [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, the drafts directory and the queue-drain-candidate-label issue queue](https://github.com/nedschorus/nedschorus/issues/24).
-- **ready** — of a task or an approved change: nothing is left for the user to decide before work on it starts. Neither is ready while it waits on a pull request that has not merged or on another agent-seat's work, or while it needs ned-box and ned-box cannot be reached.
+- **ready** — of a task or an approved change: nothing is left for the user to decide before work on it starts. Neither is ready while it waits on a pull request that has not merged or on another agent-seat's work, or while it needs ned-box and ned-box cannot be reached. Nor is long work ready, such as a cold-read-full-run or a pull-request review, while the handoff-deferral of the agent-session that would start it lasts.
 - **reference-checkout** — the main worktree of a machine's clone of the repository, `~/Projects/nedschorus` on the Mac and on ned-box, which stays on `main`; the git hooks of every checkout of that clone run from its `scripts/git-client-side-hooks/`, and no agent works in it.
 - **reincarnate-seat** — the handoff-supervisor replacing an agent-session with a fresh one that continues from the session-handoff, usually when the agent-session's context runs low.
 - **retire-seat** — to end an agent-seat for good so its name can be freed or reused; distinct from pausing it. The steps are in `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`.
+- **ruling-agent** — the agent-seat on ned-box that keeps the user's user-rulings and his words in one store, and checks each approval-walk item against them before the item is shown.
 - **SDLC-term** — a standard term of software engineering or of another computing field, such as operating systems, networking or databases, used with its standard meaning, as `flock` is; `docs/nedschorus-wiki/nedschorus-sdlc-terms.md` lists those this project relies on.
 - **seat-branch** — the long-lived git branch of one agent-seat, named for the agent-seat, that the handoff-supervisor's launcher creates; its agent-sessions work on nc-topic-branches cut from main.
 - **seat-brief** — the `CLAUDE.local.md` at the root of an agent-seat's checkout, which git does not track: the file an agent-seat's occupant reads to learn its job.

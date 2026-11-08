@@ -6,6 +6,10 @@ issue: "[Relaunch stopped agent-seats with open tasks daily](https://github.com/
 
 Once a day, a scheduled job finds every agent-seat whose task list still holds open tasks while no agent-session of that agent-seat is running, and relaunches each one, supervised, so the work on its list is picked up.
 
+## Outcome
+
+Not built; the issue is closed as not planned. On 2026-11-07 the user approved item 1 of approval-walk relaunch-stopped-agent-seats-decisions-memory-refusal-subagent-sentence-and-work-snapshot-restore-command-approval-walk-2026-11-07 (minutes at `nedlern@ned-box:/home/nedlern/agents/fleet-restart-at-login/docs/walk/relaunch-stopped-agent-seats-decisions-memory-refusal-subagent-sentence-and-work-snapshot-restore-command-approval-walk-2026-11-07-minutes.md`), in his words: "Agreed that we don't need another watcher." Three programs already bring back an agent-seat that went down by accident: `nc-systems/handoff/handoff-supervisor.py` resumes, on both machines, an agent-session that dies without a session-handoff (GHI [613](https://github.com/nedschorus/nedschorus/issues/613)); `nc-systems/handoff/handoff-agent-crash-watcher.py`, run every minute from ned-box's cron (its row in `nc-systems/general-tools/scheduled-jobs-on-each-machine.json`), restarts an agent-seat whose supervisor died; and `scripts/restart-live-seats-at-login.py` brings back, on both machines, the agent-seats that were running when the machine went down. A clean exit is a stop on purpose and stays down, as the user ruled for the boot restart on 2026-09-14: "It's easy to shut down an agent that isn't useful." Two gaps are left open on purpose: an agent-seat that exited cleanly with work still on its task list, and the death of a supervisor itself on the Mac, which has no crash watcher.
+
 ## Why
 
 Work handed to an agent-seat lives on that agent-seat's task list. When the agent-seat stops and nothing brings it back, the work stops with it, and no one is told. The user raised this on 2026-10-02 while ruling how a request waiting in review is followed up (walk ghi-3-main-gatekeeper-specification-cold-read-findings-2026-10-01, item 7; minutes at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/ghi-3-main-gatekeeper-specification-cold-read-findings-2026-10-01-minutes.md`): "Typically what should be done in daily maintence is to reincarnate any agents that have work to do. That could be mechanized I'd think as we do that stuff through scripts." He then approved filing it as its own issue, because it covers every task left on a stopped agent-seat, not only that one case.
@@ -32,7 +36,7 @@ Every piece the job needs is built; nothing joins them on a schedule.
 
 ## Next action
 
-Put points 1 to 5 to the user. Then build the job as one program run from the scheduled-jobs table: it selects with `scripts/seat-task-list-read-nbd.py`, relaunches an agent-seat that stopped after writing a session-handoff with its launcher and one that stopped without writing one with `scripts/recover-crashed-seats.py`, and has a dry-run option of its own that reports what it would do and launches nothing, run first on the machine point 4 chooses.
+None: the job is not built (see Outcome).
 
 ## Search receipt
 

@@ -753,6 +753,11 @@ for words, expected in [
     (["xargs", "-R", "2", "bash"], (3, False)),
     (["xargs", "-S", "255", "bash"], (3, False)),
     (["sudo", "-h", "bash"], (2, True)),
+    (["command", "-v", "pkill"], (None, True)),
+    (["command", "-V", "killall"], (None, True)),
+    (["command", "-pv", "pkill"], (None, True)),
+    (["sudo", "command", "-v", "pkill"], (None, True)),
+    (["command", "-p", "pkill"], (2, True)),
 ]:
     check(f"the program of {' '.join(words)} is word {expected[0]}, "
           f"{'receiving' if expected[1] else 'not receiving'} the standard input",

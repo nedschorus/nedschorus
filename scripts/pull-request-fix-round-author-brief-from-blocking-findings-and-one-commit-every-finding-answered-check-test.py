@@ -31,12 +31,20 @@ NUMBER = 7
 REVIEWS = f"api --paginate repos/{{owner}}/{{repo}}/pulls/{NUMBER}/reviews --jq .[]"
 ISSUE_COMMENTS = f"api --paginate repos/{{owner}}/{{repo}}/issues/{NUMBER}/comments --jq .[]"
 ROUND_RECORD_POST = f"api repos/{{owner}}/{{repo}}/issues/{NUMBER}/comments -f body="
-PR_VIEW = f"pr view {NUMBER} --json url,headRefOid,headRefName"
+PR_VIEW = f"pr view {NUMBER} --json url,headRefOid,headRefName,body"
 BRANCH = "topic-branch-of-the-pull-request"
 URL = f"https://github.com/o/r/pull/{NUMBER}"
 ADVISOR_SENTENCE = ("This is the pull request's third fix-round, its last before merge-lane-2 brings it to "
                     "the user: before you change anything, call the advisor with the blocking findings and "
                     "the fix you plan.")
+CARRYING_OUT_USER_RULING_PARAGRAPH = (
+    "When a finding asks you to change a file the instruction-file guard protects, and the fix only makes the "
+    "file do what a ruling of the user's already says, the change is a user-approved-change: before each edit, "
+    "write the ruling's words, quoted from the walk-minutes item or the agent-session where he gave it, with "
+    "its time, into the `.walk-approved` marker file at the root of your worktree, and cite the ruling in the "
+    "commit message. A change the guard's refusal lets through without a ruling, such as an obvious-error-fix, "
+    "goes as that refusal says. Leave out any other change to such a file, go on with the other findings, and "
+    "name that change in your report to the agent that dispatched you.")
 
 FAKE_GH = r'''#!/usr/bin/env python3
 import json, os, sys
@@ -228,9 +236,13 @@ def brief_cases(root, repository, base, frozen_head):
           and f"{NUMBER} --move-change-to-own-pull-request-finish --title <title> --body-file <description file>" in out
           and f"puts you back on fix-round-pull-request-{NUMBER}-review-11." in out
           and "git switch" not in out.split("3. Change nothing else")[1].split("4. Put every change")[0], out)
+    check("brief: rule 2 says a fix that carries out a user ruling in a guarded-file is a user-approved-change",
+          "\n   " + CARRYING_OUT_USER_RULING_PARAGRAPH + "\n3. Change nothing else" in out
+          and out.index("2. Check each finding") < out.index(CARRYING_OUT_USER_RULING_PARAGRAPH), out)
     check("brief: a conflict defers to the conflict check's report, and asks for no merge itself",
           "If it reports VERDICT: CONFLICT, do what its report says." in out
-          and "merge origin/main as its report says" not in out and "merge nothing" not in out, out)
+          and "merge origin/main as its report says" not in out and "merge nothing" not in out
+          and "had you merge origin/main" not in out and "--after-conflict-merge" not in out, out)
     check("brief: says what to do when a suite fails and when the push itself fails",
           "fix it in the same commit; if it fails for another cause, tell merge-lane-2 with "
           "SendMessage before pushing" in out
@@ -1588,6 +1600,8 @@ def nit_cases(root, repository, base, frozen_head):
           "Not merge-lane-2's" not in out, out)
     check("nits: step 3 makes the listed nits part of the round",
           "are not part of this round, apart from the nits listed above" in out, out)
+    check("nits: step 2 says a nit needs no test",
+          "with a test that fails without the fix; a nit needs no test." in out, out)
 
     code, out, err = run(root, repository, routes_for(frozen_head, [review(commit_id=frozen_head)]))
     check("nits: a round with no nit prints no nit heading", code == 0 and "Nits to fix" not in out, err + out)
@@ -1615,6 +1629,101 @@ def nit_cases(root, repository, base, frozen_head):
           and "3. nit.txt:20 (nit): Spelt the name right." in out, err + out)
 
 
+REPLACED_NUMBER = 5
+REPLACED_URL = f"https://github.com/o/r/pull/{REPLACED_NUMBER}"
+REPLACED_FIRST_HEAD = "1" * 40
+REPLACED_SECOND_HEAD = "2" * 40
+
+
+def replaced_routes(head, replaced_head, replaced_reviews, replaced_comments=(), replaced_records=(),
+                    description=f"Text.\n#replaces {REPLACED_URL}\n"):
+    """Routes for pull request NUMBER, whose description replaces pull request REPLACED_NUMBER."""
+    routes = routes_for(head, [review(commit_id=head)])
+    routes[PR_VIEW] = {"stdout": json.dumps({"url": URL, "headRefOid": head, "headRefName": BRANCH,
+                                             "body": description})}
+    routes[f"pr view {REPLACED_NUMBER} --json url,headRefOid,headRefName,body"] = {"stdout": json.dumps(
+        {"url": REPLACED_URL, "headRefOid": replaced_head, "headRefName": "old-branch", "body": "Old."})}
+    routes[f"api --paginate repos/{{owner}}/{{repo}}/pulls/{REPLACED_NUMBER}/reviews --jq .[]"] = {
+        "stdout": lines(replaced_reviews)}
+    routes[f"api --paginate repos/{{owner}}/{{repo}}/issues/{REPLACED_NUMBER}/comments --jq .[]"] = {
+        "stdout": lines(replaced_records)}
+    for replaced_review in replaced_reviews:
+        routes[f"api --paginate repos/{{owner}}/{{repo}}/pulls/{REPLACED_NUMBER}/reviews/{replaced_review['id']}"
+               f"/comments --jq .[]"] = {"stdout": lines(replaced_comments if replaced_review["id"] == 52 else [])}
+    return routes
+
+
+def replaced_review(review_id, commit_id, state="CHANGES_REQUESTED"):
+    return dict(review(state=state, commit_id=commit_id, review_id=review_id,
+                       body="REQUEST_CHANGES\n\n**Blocking: 1**\n\nInline."),
+                html_url=f"{REPLACED_URL}#pullrequestreview-{review_id}")
+
+
+REPLACED_TWO_ROUNDS = [replaced_review(51, REPLACED_FIRST_HEAD), replaced_review(52, REPLACED_SECOND_HEAD)]
+REPLACED_COMMENTS = [
+    dict(comment("old.py", "**Blocks.** old.py loses the record.", line=30, comment_id=60),
+         html_url=f"{REPLACED_URL}#discussion_r60"),
+    dict(comment("old.txt", "**fix-in-maintenance, nit** old.txt misspells it.", line=4, comment_id=61),
+         html_url=f"{REPLACED_URL}#discussion_r61"),
+]
+
+
+def replaces_cases(root, repository, base, frozen_head):
+    """A #replaces line carries the replaced pull request's round count, and its never-answered round's findings."""
+    code, out, err = run(root, repository, replaced_routes(
+        frozen_head, REPLACED_SECOND_HEAD, REPLACED_TWO_ROUNDS, REPLACED_COMMENTS))
+    carried = f", carried over from the replaced pull request's review {REPLACED_URL}#pullrequestreview-52"
+    check("replaces: the replaced pull request's two rounds make this first round the third, which asks "
+          "for the advisor", code == 0 and out.count(ADVISOR_SENTENCE) == 1, err + out)
+    check("replaces: the never-answered round's blocking finding follows this pull request's own, marked "
+          "with the replaced pull request's review, and its nit follows as finding 4",
+          "Blocking findings (3)" in out
+          and f"3. old.py:30{carried} ({REPLACED_URL}#discussion_r60)\n**Blocks.** old.py loses the record." in out
+          and "Nits to fix in this round too (1)" in out
+          and f"4. old.txt:4{carried} ({REPLACED_URL}#discussion_r61)" in out
+          and out.index("2. test.py (") < out.index("3. old.py:30"), err + out)
+
+    code, out, err = run(root, repository, replaced_routes(
+        frozen_head, REPLACED_SECOND_HEAD, REPLACED_TWO_ROUNDS, REPLACED_COMMENTS),
+        "--check", "--answers", answers_file(root, GOOD_ANSWERS))
+    check("replaces: --check wants an answer to each carried finding too",
+          code == 1 and "no entry for finding 3, 4" in err
+          and "the review has 3 blocking findings and 1 nit." in err, err + out)
+
+    code, out, err = run(root, repository, replaced_routes(
+        frozen_head, "3" * 40, REPLACED_TWO_ROUNDS, REPLACED_COMMENTS))
+    check("replaces: a replaced pull request whose head moved past its last round carries its rounds but "
+          "no finding", code == 0 and out.count(ADVISOR_SENTENCE) == 1 and "Blocking findings (2)" in out
+          and "old.py" not in out, err + out)
+
+    code, out, err = run(root, repository, replaced_routes(
+        frozen_head, REPLACED_SECOND_HEAD, REPLACED_TWO_ROUNDS, REPLACED_COMMENTS,
+        replaced_records=[round_record(REPLACED_SECOND_HEAD, [52])]))
+    check("replaces: a replaced round answered without a commit, as its round record says, carries no "
+          "finding", code == 0 and "Blocking findings (2)" in out and "old.py" not in out, err + out)
+
+    code, out, err = run(root, repository, replaced_routes(frozen_head, REPLACED_SECOND_HEAD, []))
+    check("replaces: a replaced pull request merge-lane-2 never reviewed adds no round and no finding",
+          code == 0 and ADVISOR_SENTENCE not in out and "Blocking findings (2)" in out, err + out)
+
+    routes = replaced_routes(frozen_head, REPLACED_SECOND_HEAD, [],
+                             description=f"#replaces {REPLACED_URL}\n#replaces https://github.com/o/r/pull/4\n")
+    other = {key.replace(f"/{REPLACED_NUMBER}/", "/4/").replace(f"pr view {REPLACED_NUMBER} ", "pr view 4 "): value
+             for key, value in replaced_routes(frozen_head, REPLACED_SECOND_HEAD, REPLACED_TWO_ROUNDS,
+                                               REPLACED_COMMENTS).items()
+             if f"/{REPLACED_NUMBER}/" in key or key.startswith(f"pr view {REPLACED_NUMBER} ")}
+    code, out, err = run(root, repository, {**routes, **other})
+    check("replaces: a replaced pull request with no open round does not stop the next one's findings from "
+          "being carried", code == 0 and "Blocking findings (3)" in out and "3. old.py:30" in out, err + out)
+
+    code, out, err = run(root, repository, replaced_routes(
+        frozen_head, REPLACED_SECOND_HEAD, REPLACED_TWO_ROUNDS, REPLACED_COMMENTS,
+        description="#replaces pull request 5\n"))
+    check("replaces: a #replaces line with no full link is refused, naming the line",
+          code == 1 and err.startswith("REFUSED: pull request 7's description has the line `#replaces pull request 5`")
+          and f"#replaces https://github.com/o/r/pull/<the old pull request's number>" in err, err + out)
+
+
 gh_timeout_case()
 case("nits", nit_cases)
 case("move", move_cases)
@@ -1628,5 +1737,6 @@ case("commissioned reviewer", commissioned_reviewer_cases)
 case("split review", split_review_cases)
 case("rounds on one head", rounds_on_one_head_cases)
 case("stated count position", stated_count_position_cases)
+case("replaces", replaces_cases)
 print(f"{'FAILED' if failures else 'PASSED'}: {len(failures)} failed")
 sys.exit(1 if failures else 0)

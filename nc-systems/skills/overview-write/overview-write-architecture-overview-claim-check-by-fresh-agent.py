@@ -119,6 +119,9 @@ ned_box_home_path_constants = _load(
     "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
     "nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 cold_read_claude_cell = _load("cold_read_claude_cell", "nc-systems/cold-read/cold-read-claude-cell.py")
+command_line_prefix = _load(
+    "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+    "nc-systems/general-tools/claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 
 LOG_STORE_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedschorus-logs"
 OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_REPORT_DIRECTORY = LOG_STORE_DIRECTORY / "overview-write-architecture-overview-claim-check-reports"
@@ -444,9 +447,10 @@ def recheck_reports_for_must_fix_claims(worktree, overview_path, commit, writer_
 
 
 def run_fresh_agent(worktree, prompt):
-    command = ["claude", "-p", "--model", FRESH_AGENT_MODEL, "--effort", FRESH_AGENT_EFFORT,
-               "--output-format", "text", "--tools", FRESH_AGENT_TOOLS, "--allowedTools", FRESH_AGENT_TOOLS,
-               "--settings", cold_read_claude_cell.SETTINGS]
+    command = [*command_line_prefix.claude_code_headless_run_command_line_prefix_build(
+                   "dontAsk", own_settings=cold_read_claude_cell.SETTINGS),
+               "--model", FRESH_AGENT_MODEL, "--effort", FRESH_AGENT_EFFORT,
+               "--output-format", "text", "--tools", FRESH_AGENT_TOOLS, "--allowedTools", FRESH_AGENT_TOOLS]
     try:
         # The prompt goes on stdin: variadic --allowedTools can swallow a trailing positional argument.
         result = subprocess.run(command, input=prompt, cwd=worktree, capture_output=True, text=True,

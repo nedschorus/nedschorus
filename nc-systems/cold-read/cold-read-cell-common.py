@@ -699,7 +699,7 @@ def exit_on_sigterm(signal_number, _frame):
 
 
 def run_reviewer_program_in_own_process_group_until_timeout(
-    command: list, stdin_text, child_environment, timeout_seconds: float,
+    command: list, stdin_text, child_environment, timeout_seconds: float, pass_fds: tuple = (),
 ) -> subprocess.CompletedProcess:
     """Run `command` in a session of its own and return its result; when it
     runs past `timeout_seconds`, kill its whole process group and return a
@@ -713,7 +713,7 @@ def run_reviewer_program_in_own_process_group_until_timeout(
         command,
         # communicate closes stdin after writing stdin_text, or at once when it is None.
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        cwd=REPO_ROOT, env=child_environment, text=True, start_new_session=True)
+        cwd=REPO_ROOT, env=child_environment, text=True, start_new_session=True, pass_fds=pass_fds)
     try:
         try:
             stdout, stderr = process.communicate(stdin_text, timeout=timeout_seconds)
@@ -753,6 +753,9 @@ def run_model_chain(
             {"input": stdin_text} if stdin_text is not None
             else {"stdin": subprocess.DEVNULL}
         )
+        # The reviewer program holds the record's being-written lock too, so a cell killed while its
+        # reviewer still writes the report leaves the record unshipped until the reviewer exits.
+        pass_fds = record_names.record_directory_being_written_lock_pass_fds_for_child_writers(report.parent)
         # Both streams carry failure diagnostics; stderr also carries the runtime's token total.
         try:
             if per_model_run_timeout_seconds is None:
@@ -764,11 +767,12 @@ def run_model_chain(
                     env=child_environment,
                     text=True,
                     check=False,
+                    pass_fds=pass_fds,
                     **stdin_arguments,
                 )
             else:
                 completed = run_reviewer_program_in_own_process_group_until_timeout(
-                    command, stdin_text, child_environment, per_model_run_timeout_seconds)
+                    command, stdin_text, child_environment, per_model_run_timeout_seconds, pass_fds)
         except OSError as error:
             failed_attempts.append(f"{model}({type(error).__name__})")
             print(f"{program}: {model} could not be run: {error}", file=sys.stderr)

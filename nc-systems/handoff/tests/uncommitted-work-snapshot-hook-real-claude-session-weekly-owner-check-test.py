@@ -71,7 +71,7 @@ if mode == "no-json":
     print("not json")
     sys.exit(0)
 clone = Path.cwd()
-settings = json.loads(Path(sys.argv[sys.argv.index("--settings") + 1]).read_text())
+settings = json.loads(sys.argv[sys.argv.index("--settings") + 1])
 Path(os.environ["FAKE_CLAUDE_ARGUMENTS_FILE"]).write_text(json.dumps({
     "arguments": sys.argv[1:], "settings": settings, "clone": str(clone)}))
 if mode == "breaks-clone":
@@ -178,11 +178,15 @@ def test_a_session_that_finds_itself_passes():
     check("record: " in completed.stdout, "the run prints the record's citation", completed.stdout)
     seen = json.loads(FAKE_CLAUDE_ARGUMENTS_FILE.read_text())
     arguments = seen["arguments"]
-    check(arguments[:2] == ["-p", weekly_owner_check.LIVE_CHECK_PROMPT]
+    check(arguments[:4] == ["-p", "--strict-mcp-config", "--permission-mode", "dontAsk"]
+          and arguments[6] == weekly_owner_check.LIVE_CHECK_PROMPT
           and arguments[arguments.index("--model") + 1] == "haiku"
           and arguments[arguments.index("--allowedTools") + 1] == "Bash"
           and "--no-session-persistence" in arguments,
-          "claude runs print mode on Haiku with Bash allowed and no saved session", arguments)
+          "claude runs print mode on Haiku, with no claude.ai connectors, in dontAsk mode, with Bash "
+          "allowed and no saved session", arguments)
+    check(arguments.count("--settings") == 1 and seen["settings"].get("advisorModel") == "",
+          "claude's one --settings turns the advisor off", arguments)
     entries = seen["settings"]["hooks"]["PostToolUse"]
     # The fake claude's cwd is resolved; on macOS the check's temporary path is not (/var is a
     # symlink to /private/var), so compare both resolved.
@@ -298,7 +302,7 @@ def test_an_interruption_after_claude_was_reaped_still_propagates():
             self.wait()
             raise KeyboardInterrupt
 
-    def start_a_claude_that_exits_at_once(program, clone, settings):
+    def start_a_claude_that_exits_at_once(program, clone):
         return ReapedThenInterrupted([sys.executable, "-c", "pass"], start_new_session=True)
 
     real = weekly_owner_check.start_claude
@@ -389,7 +393,7 @@ def test_an_error_after_claude_started_is_not_reported_as_a_failed_start():
     real = weekly_owner_check.start_claude, weekly_owner_check.wait_for_claude
     records = SCRATCH / "records-error-after-start"
     try:
-        weekly_owner_check.start_claude = lambda program, clone, settings: object()
+        weekly_owner_check.start_claude = lambda program, clone: object()
         weekly_owner_check.wait_for_claude = raise_process_lookup_error
         with contextlib.redirect_stdout(io.StringIO()):
             exit_code = weekly_owner_check.main(

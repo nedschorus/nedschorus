@@ -86,8 +86,23 @@ nc-systems/cold-read/cold-read-record-ship.py, whose one line is printed on stde
 `record:` (user-ruled 2026-09-07). When shipping fails, the report is still
 kept and its path printed, and then the read exits 1, because the record did
 not reach the log-store.
-The cold-read-cell launcher pre-clears the report path, so a suggestions file
-left by an earlier read is replaced, never appended to.
+The cold-read-cell writes its report into this program's temporary
+directory, and the finished report is written to the path above once, after
+Question 4 is answered and the sentences are attached. A record is shipped
+add-only, and a report rewritten after a shipment would make the read's own
+shipment, and every later one, refuse the record. This program holds the
+record's being-written lock, a flock on the record directory taken with
+cold-read-record-ship.py's record_directory_being_written_lock_take, from
+the record's creation until it ships the record. While it is held,
+cold-read-record-ship.py prints FAILED for the record and copies nothing,
+and the hook that ships every worktree's records before a
+`git worktree remove` skips it. A shipper that does not test the lock, such
+as an older checkout's, may still ship it mid-read; that shipment holds at
+most target/ and the marked copy, and a shipment only adds files, so the
+read's own shipment adds the rest. Before
+the cell launches,
+this program removes the report path, so a suggestions file left by an
+earlier read is replaced, never appended to, and a failed read leaves none.
 
 FROM THE MAC. A document in a ned-box worktree, opened on the Mac through
 its mount of ned-box's home, /Volumes/nedhome, cannot be placed there: the
@@ -293,6 +308,8 @@ The text explains something or tells its reader what to do. Find the gaps within
 
 Number the items in sections 2 and 3 separately, ORDERED MOST IMPORTANT FIRST — the issue most likely to stop a fresh-reader leads its section. If there are no issues, say "No issues".
 
+Lay out your report as follows, and do not look for an example report: first the list of the files you were told to examine; then `## Question 1: What it says`, with each sentence id on a line of its own and its bullets under it; then `## Question 2: Where you struggled` and `## Question 3: What it does not cover that it implies it should`, each a numbered list in which every item quotes a phrase and then says in one sentence what is wrong.
+
 Write your report to {REPORT_PATH}, once, when your analysis is complete. That file is your entire deliverable: what you say in conversation is discarded. Start your report with a list of the files you were told to examine. Note if you were unable to read any of them. {REPORT_PATH} is the only file to create; write nothing anywhere else.
 """
 
@@ -335,6 +352,9 @@ WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_FILE_NAME = "cold-read-fast-r
 # a file of the same name; directly in the scratch directory, that would be
 # the shared temporary root, where a concurrent fast read writes its own.
 WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_SCRATCH_DIRECTORY_NAME = "what-should-be-code-answer"
+# The fast-clarify cell's own report sits one directory below the scratch
+# directory, for the reason the Question 4 answer does above.
+FAST_CLARIFY_CELL_REPORT_SCRATCH_DIRECTORY_NAME = "fast-clarify-cell-report"
 WHAT_SHOULD_BE_CODE_QUESTION_LAUNCHER_OUTPUT_SCRATCH_FILE_NAME = (
     "cold-read-fast-read-what-should-be-code-launcher-output.txt")
 # Opus 5.5 defect-hunt cells at xhigh, a larger task than one question at
@@ -744,6 +764,7 @@ def fast_read_report_path_for_target(
         return suggestions
     record_dir, store_unlisted = record_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
         RECORDS_DIR / record_directory_name_for_target(target, now))
+    record_shipper.record_directory_being_written_lock_take(record_dir)
     if store_unlisted is not None:
         print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(PROGRAM, record_dir, store_unlisted),
               file=sys.stderr)
@@ -1170,9 +1191,11 @@ def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> None:
 
 
 def ship_record(record_dir: pathlib.Path) -> str:
-    """The shipper's one line, or a FAILED line of this program's own when
-    it could not run. The caller prints it on stderr, and exits 1 when it is
-    not `shipped:`, after the report path is printed."""
+    """Release the record's being-written lock, and return the shipper's one
+    line, or a FAILED line of this program's own when it could not run. The
+    caller prints it on stderr, and exits 1 when it is not `shipped:`, after
+    the report path is printed."""
+    record_shipper.record_directory_being_written_lock_release(record_dir)
     try:
         completed = subprocess.run(
             [sys.executable, str(RECORD_SHIPPER), str(record_dir)],
@@ -1354,26 +1377,24 @@ def what_should_be_code_section(target: pathlib.Path, scratch: pathlib.Path) -> 
 
 
 def fast_read_report_finish_and_print_path(
-    *, report: pathlib.Path, target: pathlib.Path, sentences: dict,
+    *, report: pathlib.Path, cell_report: pathlib.Path, target: pathlib.Path, sentences: dict,
     marked_copy_kept, full_run_class_name, bare_references, launch_sha256: str,
     on_records_route: bool, backup_line: str, scratch: pathlib.Path,
     quota_line: str = "",
 ) -> int:
-    """Turn the cell's report into the read's: ask Question 4 and add its
-    section, attach the sentences, the coverage and the bare numbers, name an
-    edit made during the read and the Sonnet backup, ship the record, print
-    the path. Returns 0, or 1 when the record did not reach the log-store,
-    whether or not Question 4 was answered."""
-    # Asked only once Questions 1 to 3 have a report to hold the answer, and
-    # not beside the fast-clarify cell: the claude launcher reports as a stray
-    # write any file in the checkout that changes while it runs, and on the
-    # walk route that cell's report is written there.
+    """Turn the cell's report, cell_report, into the read's, written once at
+    report: ask Question 4 and add its section, attach the sentences, the
+    coverage and the bare numbers, name an edit made during the read and the
+    Sonnet backup, ship the record, print the path. Returns 0, or 1 when
+    the record did not reach the log-store, whether or not Question 4 was
+    answered."""
+    # Asked only once Questions 1 to 3 have a report to hold the answer.
     question_4_section = what_should_be_code_section(target, scratch)
     # Before anything reads or ships it: put each original sentence under
     # the restatement claiming its id, and say which sentences no
     # restatement claimed.
     attached = attach_sentences_and_coverage(
-        report.read_text(encoding="utf-8"), sentences, target,
+        cell_report.read_text(encoding="utf-8"), sentences, target,
         marked_copy_kept, full_run_class_name, question_4_section)
     if bare_references is not None:
         attached += bare_references_section(bare_references)
@@ -1467,8 +1488,11 @@ def main() -> int:
         marked_copy = (report.parent if on_records_route else pathlib.Path(scratch)) / (
             f"{target.stem}{SENTENCE_ID_MARKED_COPY_SUFFIX}")
         marked_copy.write_text(marked_text, encoding="utf-8")
+        cell_report = (pathlib.Path(scratch) / FAST_CLARIFY_CELL_REPORT_SCRATCH_DIRECTORY_NAME
+                       / report.name)
+        report.unlink(missing_ok=True)
         finish = dict(
-            report=report, target=target, sentences=sentences,
+            report=report, cell_report=cell_report, target=target, sentences=sentences,
             marked_copy_kept=marked_copy if on_records_route else None,
             full_run_class_name=full_run_class_name, bare_references=bare_references,
             launch_sha256=launch_sha256, on_records_route=on_records_route,
@@ -1476,7 +1500,7 @@ def main() -> int:
         quota_error_line = ""
         for attempt in range(1, FAST_READ_ATTEMPTS + 1):
             exit_code, output = run_one_fast_clarify_cell(
-                AGY_CELL_LAUNCHER, marked_copy, report, prompt_file)
+                AGY_CELL_LAUNCHER, marked_copy, cell_report, prompt_file)
             if exit_code == 0:
                 return fast_read_report_finish_and_print_path(**finish, backup_line="")
             gemini_cause = cold_read_cell_reviewer_launcher_failure_cause_line(
@@ -1504,7 +1528,7 @@ def main() -> int:
               f"running the same cell once on {SONNET_BACKUP_MODEL}, the Sonnet "
               "backup, through the claude cell launcher.", file=sys.stderr)
         exit_code, output = run_one_fast_clarify_cell(
-            CLAUDE_CELL_LAUNCHER, marked_copy, report, prompt_file)
+            CLAUDE_CELL_LAUNCHER, marked_copy, cell_report, prompt_file)
         if exit_code == 0:
             return fast_read_report_finish_and_print_path(
                 **finish,

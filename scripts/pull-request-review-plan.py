@@ -17,7 +17,11 @@ commits need, and the merge-lane, not this program, runs again on the new head
 each check whose result made the earlier round request changes. The round
 number is one more than the number of distinct heads reviewed before the
 current head, so a review already posted on the current head does not start
-another round. The earlier reviewed head is the head of the most recently
+another round, plus, for each pull request this one replaces, by its
+description's #replaces lines followed through replacements of replacements as
+scripts/pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py
+reads them, the number of distinct heads reviewed on that pull request. A
+#replaces line that reader cannot follow is refused. The earlier reviewed head is the head of the most recently
 submitted review on a head other than the current one.
 A fix round is reviewed whole, at the pull request's tier, in three cases, and
 the plan lists every case that holds, not only the first:
@@ -89,7 +93,8 @@ so a rename is a deletion and an addition. Markdown prose anywhere is
 no-reviewer-tier because prose outside code is outside the review scope.
 
 Reads the pull request, reviews, inline comments and live base tip through
-four read-only gh calls, commits, refs and diffs from the local repository,
+four read-only gh calls, and each replaced pull request and its reviews through
+two more, commits, refs and diffs from the local repository,
 and, under rule 4, the claim-check reports.
 Never fetches, pushes or writes refs. git merge-tree --write-tree may write
 tree objects. Writes no file except the cold-read-fast-read target files and
@@ -149,6 +154,11 @@ _message_reminder_hook_spec = importlib.util.spec_from_file_location(
     / "python-edit-changed-agent-facing-message-check-reminder-hook.py")
 _message_reminder_hook = importlib.util.module_from_spec(_message_reminder_hook_spec)
 _message_reminder_hook_spec.loader.exec_module(_message_reminder_hook)
+_replaces_reader_spec = importlib.util.spec_from_file_location(
+    "pull_request_description_replaces_line_replaced_pull_request_chain_reader_common",
+    Path(__file__).resolve().with_name("pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py"))
+replaces_reader = importlib.util.module_from_spec(_replaces_reader_spec)
+_replaces_reader_spec.loader.exec_module(replaces_reader)
 fast_read_target_written = _message_reminder_hook.fast_read_target_written
 fast_read_target_file_name = _message_reminder_hook.fast_read_target_file_name
 cold_read_fast_read_review_command_line_for_target_file = _message_reminder_hook.cold_read_fast_read_review_command_line_for_target_file
@@ -167,7 +177,7 @@ overview_path_reader = importlib.util.module_from_spec(_overview_path_reader_spe
 _overview_path_reader_spec.loader.exec_module(overview_path_reader)
 
 REVIEW_TIER_ORDER = {"no-reviewer-tier": 0, "codex-review-and-head-tests-tier": 1, "claude-and-codex-review-and-head-tests-tier": 2}
-GITHUB_PULL_REQUEST_FIELDS = "number,title,url,state,author,headRefOid,baseRefName,mergeCommit"
+GITHUB_PULL_REQUEST_FIELDS = "number,title,url,state,author,headRefOid,baseRefName,mergeCommit,body"
 GIT_FULL_HASH_PATTERN = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 DIFF_HUNK_HEADER_PATTERN = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 REGISTERED_HOOK_PATH_PATTERN = re.compile(r'\$CLAUDE_PROJECT_DIR"?/([^"\s]+)')
@@ -327,6 +337,33 @@ def github_comment_has_expected_shape(comment):
     return (isinstance(comment, dict) and "pull_request_review_id" in comment
             and (comment["pull_request_review_id"] is None
                  or type(comment["pull_request_review_id"]) is int))
+
+
+def replaced_pull_requests_with_reviewed_head_counts(number, github_repository, description):
+    """{"number", "url", "reviewed_heads"} of each pull request this one replaces, oldest first."""
+    replaced_facts = {}
+
+    def read_description(replaced):
+        if replaced == number:
+            return description
+        replaced_facts[replaced] = read_github_json_or_refuse(
+            ["pr", "view", str(replaced), "--repo", github_repository, "--json", "url,body"],
+            lambda payload: isinstance(payload, dict) and is_nonempty_string(payload.get("url"))
+            and isinstance(payload.get("body"), (str, type(None))))
+        return replaced_facts[replaced]["body"]
+    try:
+        chain = replaces_reader.replaced_pull_request_chain_numbers_oldest_first(number, github_repository, read_description)
+    except replaces_reader.ReplacedPullRequestChainUnreadable as error:
+        raise ReviewPlanRefusal(str(error)) from None
+    replaced = []
+    for replaced_number in chain:
+        pages = read_github_json_or_refuse(
+            ["api", "--paginate", "--slurp", f"repos/{github_repository}/pulls/{replaced_number}/reviews"],
+            lambda payload: github_pages_have_expected_shape(payload, github_review_has_expected_shape))
+        replaced.append({"number": replaced_number, "url": replaced_facts[replaced_number]["url"],
+                         "reviewed_heads": len({review["commit_id"] for page in pages for review in page
+                                                if review["state"] != "PENDING"})})
+    return replaced
 
 
 def github_pages_have_expected_shape(payload, item_validator):
@@ -885,6 +922,8 @@ def compute_pull_request_review_plan(arguments):
     earlier_reviews = [review for review in posted_reviews if review["commit_id"] != head]
     earlier_heads = {review["commit_id"] for review in earlier_reviews}
     earlier = max(earlier_reviews, key=lambda review: (review["submitted_at"], review["id"]))["commit_id"] if earlier_reviews else None
+    replaced_pull_requests = replaced_pull_requests_with_reviewed_head_counts(
+        number, github_repository, pull_request.get("body"))
     posting_rule, posting_reason = posting_rule_and_reason_for_author(pull_request["author"]["login"])
     plan = {
         "pull_request": number, "title": pull_request["title"], "url": pull_request["url"], "state": pull_request["state"],
@@ -892,7 +931,8 @@ def compute_pull_request_review_plan(arguments):
         "merge_base": merge_base, "origin_main": origin_main, "base_branch_behind_github_warning": warning,
         "merged_tree": merged_tree_against_origin_main(repository, head), "author": pull_request["author"]["login"],
         "posting_rule": posting_rule, "posting_rule_reason": posting_reason, "tier": tier, "tier_decided_by": tier_reason,
-        "round": len(earlier_heads) + 1, "fix_round": bool(earlier_heads), "earlier_reviewed_head": earlier,
+        "round": len(earlier_heads) + 1 + sum(replaced["reviewed_heads"] for replaced in replaced_pull_requests),
+        "replaced_pull_requests": replaced_pull_requests, "fix_round": bool(earlier_heads), "earlier_reviewed_head": earlier,
         "delta_range": f"{earlier}..{head}" if earlier else None, "delta_tier": None, "delta_tier_decided_by": None,
         "delta_files_restricted_to_pull_request_files": False, "delta_only_review_applies": None,
         "delta_only_review_reasons": [], "reviews": [
@@ -954,6 +994,8 @@ def plan_fact_lines(plan):
              f"posting rule: {plan['posting_rule']}" + (f" ({plan['posting_rule_reason']})" if plan['posting_rule_reason'] else ""),
              f"tier: {plan['tier']}", f"  decided by: {plan['tier_decided_by']}",
              f"round: {plan['round']}" + (" (a fix round)" if plan['fix_round'] else "")]
+    lines.extend(f"  carried over by #replaces: {replaced['reviewed_heads']} reviewed heads of {replaced['url']}"
+                 for replaced in plan["replaced_pull_requests"])
     if plan["fix_round"]:
         lines.extend([f"  earlier reviewed head: {plan['earlier_reviewed_head']}", f"  delta range: {plan['delta_range']}"
                       + (" (files restricted to the pull request's own files)" if plan['delta_files_restricted_to_pull_request_files'] else ""),

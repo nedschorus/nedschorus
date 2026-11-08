@@ -134,7 +134,7 @@ reads the store's digests back, and removes the staging directory.
   is FAILED, and `shipped:` is printed only when every new file holds this
   shipment's bytes.
 
-  NO LOCK. The shipper takes no lock. Two shipments of one record name at one
+  NO LOCK. The shipper takes no lock on the store. Two shipments of one record name at one
   moment do not occur in real use: each record is shipped by the seat that
   made it, and repeat shipments of one record arrive one after another. If
   two ever do overlap and disagree on a file, the read-back finds that the
@@ -158,6 +158,21 @@ takes no lock, for the reason NO LOCK gives above. Before any rename it looks
 for another staging directory of the same name; if one is there, another
 shipment is running or left it behind, so the step replaces nothing and the
 shipper prints FAILED naming it.
+
+A RECORD STILL BEING WRITTEN IS NOT SHIPPED. A program that writes a
+record over minutes, such as the cold-read-grid, rewrites files it has
+already written, and a file rewritten after a shipment makes every later
+shipment of the record refuse it under rule 2. So such a program takes the
+record's being-written lock right after it creates the directory, before its
+first write, and releases the lock just before it ships the record itself.
+The lock is flock(2) on the record directory, so the kernel releases it when
+the program exits, however it ends, and it leaves nothing to reclaim. A child
+the program starts to write into the record, such as a cold-read-grid's cell,
+is passed the lock's descriptor, so the lock stays held until the program and
+every such child have exited, even when the program is interrupted first. While
+another process holds it, this program prints FAILED naming the record and
+copies nothing, so a caller that keeps a worktree on a failed shipment, such
+as scripts/clean-worktrees.py, keeps the one the program is writing in.
 
 The store's directories are created on first use, and a README.md at the
 store's root is rewritten from STORE_README in this file whenever it differs:
@@ -200,6 +215,7 @@ the invocation). A destination with no `host:` prefix is local.
 """
 
 import argparse
+import fcntl
 import hashlib
 import inspect
 import json
@@ -417,6 +433,40 @@ def cold_read_record_directory_created_atomically_free_in_checkout_and_log_store
     names, unlisted = log_store_listed_record_directory_names_or_listing_failure_reason(*destination_for_this_machine())
     return record_names.cold_read_record_directory_at_first_free_name_created_atomically(
         base, names_taken_in_log_store=names or set()), unlisted
+
+
+# Each record directory this process holds the being-written lock on, with the lock's file descriptor.
+_RECORD_DIRECTORY_BEING_WRITTEN_LOCK_DESCRIPTORS = {}
+
+
+def record_directory_being_written_lock_take(record_dir: pathlib.Path) -> None:
+    """Hold record_dir's being-written lock until
+    record_directory_being_written_lock_release, or until this process exits.
+    Called right after the directory is created, before anything is written
+    into it, so no shipment sees a file the writer may still rewrite."""
+    descriptor = os.open(record_dir, os.O_RDONLY)
+    fcntl.flock(descriptor, fcntl.LOCK_EX)
+    _RECORD_DIRECTORY_BEING_WRITTEN_LOCK_DESCRIPTORS[pathlib.Path(record_dir).resolve()] = descriptor
+
+
+def record_directory_being_written_lock_release(record_dir: pathlib.Path) -> None:
+    """Release the lock record_directory_being_written_lock_take took; a
+    directory this process holds no lock on is left as it is."""
+    descriptor = _RECORD_DIRECTORY_BEING_WRITTEN_LOCK_DESCRIPTORS.pop(pathlib.Path(record_dir).resolve(), None)
+    if descriptor is not None:
+        os.close(descriptor)
+
+
+def record_directory_being_written_lock_is_held_by_any_process(record_dir: pathlib.Path) -> bool:
+    """True while any process holds record_dir's being-written lock, this one included."""
+    descriptor = os.open(record_dir, os.O_RDONLY)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    finally:
+        os.close(descriptor)
+    return False
 
 
 def log_store_listing_failed_record_name_may_collide_warning_line(program: str, record_dir: pathlib.Path, reason: str) -> str:
@@ -1179,6 +1229,14 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     if not record_dir.is_dir() or not any(record_dir.iterdir()):
         print(f"FAILED: {name} — not a record directory with files: {record_dir}")
         return EXIT_BAD_INVOCATION
+
+    if record_directory_being_written_lock_is_held_by_any_process(record_dir):
+        print(f"FAILED: {name} — still being written: a running program, such as the "
+              f"cold-read-grid, holds a flock on the record directory and ships the record "
+              f"itself when it finishes, so this shipment copied nothing. Once no program is "
+              f"writing the record, run the same command again; it ships what the store lacks, "
+              f"or says nothing new. {rerun}")
+        return EXIT_FAILED
 
     ensured = ensure_store(host, records_path)
     if ensured.returncode != 0:

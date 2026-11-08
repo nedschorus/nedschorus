@@ -235,7 +235,7 @@ def run_session_handoff_round_trip_cases(workspace: Path):
     check("round trip: written-at, written-in and written-by-session come back",
           all(fields.get(name) for name in (names.WRITTEN_AT_FIELD, names.WRITTEN_IN_FIELD,
                                             names.WRITTEN_BY_SESSION_FIELD)), str(fields))
-    check("round trip: dont-restart comes back when asked", bool(fields.get(names.DONT_RESTART_FIELD)), str(fields))
+    check("round trip: ask-user-before-restart comes back when asked", bool(fields.get(names.ASK_USER_BEFORE_RESTART_FIELD)), str(fields))
     check("round trip: a spawned-subagent line comes back",
           fields.get(f"{names.SPAWNED_SUBAGENT_FIELD_PREFIX}1") == "a123 (still working)", str(fields))
     check("round trip: the verbatim next step comes back with its line break",
@@ -263,15 +263,17 @@ def run_invocation_cases(workspace: Path):
     check("the timestamp is UTC ISO 8601",
           fields["written-at"].endswith("Z") and fields["written-at"][4] == "-",
           fields["written-at"])
-    check("dont-restart is absent unless asked", "dont-restart" not in fields, str(fields))
+    check("ask-user-before-restart is absent unless asked", "ask-user-before-restart" not in fields, str(fields))
 
     result = run_writer(workspace, "Continue from the trial.")
     fields = writer.supervisor.parse_handoff_file(handoff_path)
     check("a second write increments the counter", fields["session-handoff-sequence-number"] == "2", result.stdout)
 
-    result = run_writer(workspace, "Stop and ask first.", "--dont-restart")
+    result = run_writer(workspace, "Stop and ask first.", "--ask-user-before-restart")
     fields = writer.supervisor.parse_handoff_file(handoff_path)
-    check("dont-restart is written when asked", "dont-restart" in fields, str(fields))
+    check("ask-user-before-restart is written when asked", "ask-user-before-restart" in fields, str(fields))
+    check("the old name dont-restart is written beside it, for a handoff-supervisor that reads "
+          "only the old name", "dont-restart" in fields, str(fields))
 
     result = run_writer(workspace, "   \n\t  ")
     check("an empty next step is refused", result.returncode == 2, result.stdout)
@@ -1670,6 +1672,296 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
           writer.log_store_task_list_copy_location_in_scp_form(None, Path("/home/nedlern/x")))
 
 
+def background_bash_launch_records(task_id: str, description: str, command: str,
+                                   launched_at: str) -> list:
+    """The Bash tool_use with run_in_background, and the tool_result that reports its launch."""
+    tool_use_id = f"toolu_bash_{task_id}"
+    return [
+        {"type": "assistant", "timestamp": launched_at, "message": {"role": "assistant", "content": [{
+            "type": "tool_use", "id": tool_use_id, "name": "Bash",
+            "input": {"command": command, "description": description, "run_in_background": True}}]}},
+        {"type": "user", "timestamp": launched_at, "message": {"role": "user", "content": [{
+            "tool_use_id": tool_use_id, "type": "tool_result",
+            "content": f"Command running in background with ID: {task_id}."}]},
+         "toolUseResult": {"stdout": "", "stderr": "", "backgroundTaskId": task_id}},
+    ]
+
+
+def background_bash_completion_record(task_id: str, finished_at: str) -> dict:
+    body = (f"<task-notification>\n<task-id>{task_id}</task-id>\n<status>completed</status>\n"
+            f'<summary>Background command "x" completed (exit code 0)</summary>\n</task-notification>')
+    return {"type": "attachment", "timestamp": finished_at,
+            "attachment": {"type": "queued_command", "prompt": body}}
+
+
+def run_handoff_deferral_fields_cases(workspace: Path):
+    """The session-handoff lists the work the handoff-deferral did not wait for: background Bash
+    tasks launched after the deferral began and still running, and the cold-read-full-run
+    commands the refusal hook saved. A file that cannot be read is reported, not hidden, and
+    never costs the handoff."""
+    from datetime import datetime, timezone
+    markers = writer.deferred_marker_files
+    home = workspace / "deferral-home"
+    projects = home / ".claude" / "projects" / "-fixture-project"
+    projects.mkdir(parents=True, exist_ok=True)
+    handoffs = workspace / "deferral-handoffs"
+    handoffs.mkdir(parents=True, exist_ok=True)
+    session_id = "00000000-0000-4000-8000-00000000def0"
+    began_at = datetime(2026, 10, 28, 20, 12, tzinfo=timezone.utc)
+    try:
+        moved = markers.handoff_deferred_marker_move_aside_at_fire(handoffs, session_id)
+    except Exception as problem:
+        check("moving an absent marker file returns None without raising", False, repr(problem))
+    else:
+        check("moving an absent marker file returns None without raising", moved is None, repr(moved))
+
+    first_line = "invalid record: " + "x" * 64 + "YZ-more text"
+    last_line = "last line must not appear"
+    markers.handoff_deferred_marker_path(handoffs, session_id).write_text(
+        first_line + "\n" + last_line + "\n", encoding="utf-8")
+    try:
+        markers.handoff_deferred_marker_read(handoffs, session_id)
+    except markers.HandoffDeferredMarkerUnreadable as problem:
+        message = str(problem)
+        check("an invalid record reports exactly the first 80 characters of its first line",
+              repr(first_line[:80]) in message
+              and repr(first_line[:79]) not in message
+              and repr(first_line[:81]) not in message
+              and last_line not in message, message)
+    else:
+        check("an invalid record reports exactly the first 80 characters of its first line", False,
+              "no HandoffDeferredMarkerUnreadable raised")
+    markers.handoff_deferred_marker_path(handoffs, session_id).unlink()
+
+    records = [
+        *background_bash_launch_records("bearly0001", "Grid started before the deferral",
+                                        "python3 early.py", "2026-10-28T20:00:00.000Z"),
+        *background_bash_launch_records("blate00001", "Fast read started during the deferral",
+                                        "python3 nc-systems/cold-read/cold-read-fast-read.py --target a.md",
+                                        "2026-10-28T21:00:00.000Z"),
+        *background_bash_launch_records("blate00002", "Finished during the deferral",
+                                        "python3 done.py", "2026-10-28T21:05:00.000Z"),
+        background_bash_completion_record("blate00002", "2026-10-28T21:06:00.000Z"),
+        # Launched at the very moment the deferral began; its launch records carry blocks of
+        # other kinds around the ones that name it, which must not replace what it ran.
+        {"type": "assistant", "timestamp": "2026-10-28T20:12:00.000Z", "message": {
+            "role": "assistant", "content": [
+                "a block that is not an object",
+                {"type": "tool_use", "id": "toolu_bash_bexact0001", "name": "Bash",
+                 "input": {"command": "python3 exact.py", "description": "Started as the deferral began",
+                           "run_in_background": True}},
+                {"type": "tool_use", "id": "toolu_bash_bexact0001", "name": "Agent",
+                 "input": {"command": "WRONG", "description": "WRONG"}},
+                {"type": "tool_use", "id": "toolu_bash_bexact0001", "name": "Read",
+                 "input": {"command": "WRONG", "description": "WRONG"}},
+                {"type": "tool_use", "id": "toolu_bash_bexact0001", "name": "Bash", "input": "WRONG"},
+                {"type": "text", "id": "toolu_bash_bexact0001", "name": "Bash",
+                 "input": {"command": "WRONG", "description": "WRONG"}},
+                {"type": "zzz", "id": "toolu_bash_bexact0001", "name": "Bash",
+                 "input": {"command": "WRONG", "description": "WRONG"}}]}},
+        {"type": "user", "timestamp": "2026-10-28T20:12:00.000Z", "message": {"role": "user", "content": [
+            {"tool_use_id": "toolu_bash_bexact0001", "type": "tool_result", "content": "launched"},
+            {"tool_use_id": "WRONG", "type": "text", "text": "Bash"},
+            {"tool_use_id": "WRONG", "type": "zzz", "text": "Bash"}]},
+         "toolUseResult": {"stdout": "", "stderr": "", "backgroundTaskId": "bexact0001"}},
+    ]
+    (projects / f"{session_id}.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records)
+        # Lines the launch search skips: one that does not parse and one that is not an object.
+        + '{"Bash" this line is cut off\n["Bash"]\n', encoding="utf-8")
+    environment = {"HOME": str(home), "CLAUDE_CODE_SESSION_ID": session_id}
+
+    def write_marker():
+        markers.handoff_deferred_marker_write(handoffs, session_id, markers.HandoffDeferredMarker(
+            used_percentage=40.0, deferral_began_at=began_at, awaited_subagent_ids=[],
+            awaited_background_task_ids=["bearly0001"], awaited_work_is_unknown=False))
+
+    def clear():
+        markers.handoff_deferred_marker_path(handoffs, session_id).unlink(missing_ok=True)
+        markers.cold_read_full_run_commands_refused_during_handoff_deferral_path(
+            handoffs, session_id).unlink(missing_ok=True)
+
+    grid_command = "python3 nc-systems/cold-read/cold-read-grid.py --target docs/x.md"
+    write_marker()
+    markers.cold_read_full_run_command_refused_during_handoff_deferral_append(
+        handoffs, session_id, grid_command, "/work/checkout")
+    written = run_writer(handoffs, "carry on\n", "--agent", "deferralcase",
+                         environment_overrides=environment)
+    body = handoff_text(handoffs, "deferralcase")
+    fields = writer.supervisor.parse_handoff_file(handoffs / "deferralcase-handoff.md")
+    check("a background task started during the deferral and still running is listed, with its "
+          "description and command",
+          fields.get("background-task-started-during-handoff-deferral-1")
+          == 'blate00001 "Fast read started during the deferral" command: '
+             + json.dumps("python3 nc-systems/cold-read/cold-read-fast-read.py --target a.md"),
+          body)
+    check("a background task started before the deferral, or one that finished, is not listed",
+          "bearly0001" not in body and "blate00002" not in body
+          and "background-task-started-during-handoff-deferral-3" not in body, body)
+    check("a background task launched at the moment the deferral began is listed, with what its "
+          "Bash call ran and nothing from other blocks",
+          fields.get("background-task-started-during-handoff-deferral-2")
+          == 'bexact0001 "Started as the deferral began" command: ' + json.dumps("python3 exact.py"),
+          body)
+    check("a refused cold-read-full-run command is copied into the session-handoff with its directory",
+          fields.get("cold-read-full-run-command-refused-during-handoff-deferral-1")
+          == f"{json.dumps(grid_command)} in /work/checkout", body)
+    check("the writer reports what it recorded from the deferral",
+          "2 background task(s) started during the handoff-deferral and still running, recorded"
+          in written.stdout and "1 refused cold-read-full-run command(s) recorded" in written.stdout,
+          written.stdout)
+    check("the successor's first prompt names the late task and the refused command",
+          "blate00001" in writer.supervisor.build_ignition_prompt(Path("/x/dialog.md"), fields)
+          and grid_command in writer.supervisor.build_ignition_prompt(Path("/x/dialog.md"), fields),
+          writer.supervisor.build_ignition_prompt(Path("/x/dialog.md"), fields)[:600])
+    clear()
+
+    plain = run_writer(handoffs, "carry on\n", "--agent", "nodeferralcase",
+                       environment_overrides=environment)
+    check("a session whose handoff was not deferred writes no deferral field and says so",
+          "during-handoff-deferral-" not in handoff_text(handoffs, "nodeferralcase")
+          and "this session's handoff was not deferred" in plain.stdout, plain.stdout)
+
+    # A refused command with no marker file left, as after a compaction, is still carried.
+    markers.cold_read_full_run_command_refused_during_handoff_deferral_append(
+        handoffs, session_id, grid_command, "/work/checkout")
+    refused_only = run_writer(handoffs, "carry on\n", "--agent", "refusedonlycase",
+                              environment_overrides=environment)
+    check("refused commands with no marker file are carried and reported",
+          "cold-read-full-run-command-refused-during-handoff-deferral-1"
+          in handoff_text(handoffs, "refusedonlycase")
+          and "1 refused cold-read-full-run command(s) recorded" in refused_only.stdout
+          and "was not deferred" not in refused_only.stdout, refused_only.stdout)
+    clear()
+
+    # A marker file without the record, such as one written before the record existed.
+    markers.handoff_deferred_marker_path(handoffs, session_id).write_text("40.0\n", encoding="utf-8")
+    markers.cold_read_full_run_command_refused_during_handoff_deferral_append(
+        handoffs, session_id, grid_command, "/work/checkout")
+    unreadable = run_writer(handoffs, "carry on\n", "--agent", "unreadablemarkercase",
+                            environment_overrides=environment)
+    unreadable_body = handoff_text(handoffs, "unreadablemarkercase")
+    check("an unreadable marker file still writes the handoff, with the refused command",
+          "next-step: carry on" in unreadable_body
+          and "cold-read-full-run-command-refused-during-handoff-deferral-1" in unreadable_body,
+          unreadable_body)
+    check("an unreadable marker file is reported, with what to do",
+          "marker file could not be read" in unreadable.stdout
+          and "run this script again" in unreadable.stdout, unreadable.stdout)
+    clear()
+
+    # A file of refused commands that cannot be read.
+    write_marker()
+    markers.cold_read_full_run_commands_refused_during_handoff_deferral_path(
+        handoffs, session_id).write_text("not json\n", encoding="utf-8")
+    bad_refused = run_writer(handoffs, "carry on\n", "--agent", "badrefusedcase",
+                             environment_overrides=environment)
+    bad_refused_body = handoff_text(handoffs, "badrefusedcase")
+    check("an unreadable file of refused commands still writes the handoff, with the late task",
+          "background-task-started-during-handoff-deferral-1: blate00001" in bad_refused_body,
+          bad_refused_body)
+    check("an unreadable file of refused commands is reported, with what to do",
+          "refused cold-read-full-run commands are not listed" in bad_refused.stdout
+          and "run this script again" in bad_refused.stdout, bad_refused.stdout)
+    clear()
+
+    # A deferral whose transcript cannot be found.
+    markers.handoff_deferred_marker_write(
+        handoffs, "00000000-0000-0000-0000-00000000dead", markers.HandoffDeferredMarker(
+            used_percentage=40.0, deferral_began_at=began_at, awaited_subagent_ids=[],
+            awaited_background_task_ids=[], awaited_work_is_unknown=False))
+    lost = run_writer(handoffs, "carry on\n", "--agent", "losttranscriptcase",
+                      environment_overrides={"HOME": str(home),
+                                             "CLAUDE_CODE_SESSION_ID": "00000000-0000-0000-0000-00000000dead"})
+    check("a deferral whose transcript cannot be found is reported and still writes the handoff",
+          (handoffs / "losttranscriptcase-handoff.md").is_file()
+          and "background tasks started during the deferral are not listed" in lost.stdout
+          and "no single transcript found" in lost.stdout, lost.stdout)
+    markers.handoff_deferred_marker_path(handoffs, "00000000-0000-0000-0000-00000000dead").unlink(
+        missing_ok=True)
+    clear()
+    run_threshold_hook_defer_then_fire_then_writer_case(workspace)
+
+
+THRESHOLD_HOOK_SCRIPT = SYSTEM_DIRECTORY.parent.parent / "scripts" / "handoff-context-threshold-hook.py"
+
+
+def run_threshold_hook_defer_then_fire_then_writer_case(workspace: Path):
+    """The ordinary order: the threshold hook defers, the awaited work finishes, the hook fires,
+    and only then does the agent run the writer. The fire must leave the deferral's start time
+    for the writer, so a task launched during the deferral still reaches the session-handoff."""
+    from datetime import datetime, timedelta, timezone
+    home = workspace / "defer-fire-home"
+    projects = home / ".claude" / "projects" / "-fixture-project"
+    projects.mkdir(parents=True, exist_ok=True)
+    handoffs = home / ".claude" / "handoffs"
+    session_id = "00000000-0000-4000-8000-00000000f1e0"
+    transcript = projects / f"{session_id}.jsonl"
+    def stamp(minutes_ago):
+        # Read the clock each time: the hook stamps the deferral's start with the real time.
+        moment = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+        return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z"
+
+    # 40% of a 1M window: past the 33% threshold, below the 65% ceiling.
+    usage = {"type": "assistant", "message": {"model": "claude-fable-5", "usage": {
+        "input_tokens": 400_000, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}}
+
+    def write_transcript(records):
+        transcript.write_text("".join(json.dumps(record) + "\n" for record in records),
+                              encoding="utf-8")
+
+    def run_hook():
+        environment = {key: value for key, value in os.environ.items()
+                       if key != "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"}
+        environment["HOME"] = str(home)
+        return subprocess.run(
+            [sys.executable, str(THRESHOLD_HOOK_SCRIPT)],
+            input=json.dumps({"session_id": session_id, "transcript_path": str(transcript)}),
+            capture_output=True, text=True, check=False, env=environment)
+
+    awaited = background_bash_launch_records("bawait0001", "Awaited test run", "python3 slow.py",
+                                             stamp(10))
+    write_transcript([*awaited, usage])
+    deferred = run_hook()
+    check("the threshold hook defers while the awaited task runs",
+          deferred.returncode == 2 and "handoff deferred" in deferred.stderr
+          and writer.deferred_marker_files.handoff_deferred_marker_path(handoffs, session_id).exists(),
+          f"code {deferred.returncode}, stderr {deferred.stderr[:300]}")
+
+    late = background_bash_launch_records("blatefire1", "Started during the deferral",
+                                          "python3 late.py", stamp(0))
+    write_transcript([*awaited, *late, background_bash_completion_record("bawait0001", stamp(0)),
+                      usage])
+    fired = run_hook()
+    check("the threshold hook fires once the awaited task has finished",
+          fired.returncode == 2 and "Run the /handoff skill now" in fired.stderr
+          and not writer.deferred_marker_files.handoff_deferred_marker_path(handoffs, session_id).exists(),
+          f"code {fired.returncode}, stderr {fired.stderr[:300]}")
+
+    written = run_writer(handoffs, "carry on\n", "--agent", "deferthenfirecase",
+                         environment_overrides={"HOME": str(home),
+                                                "CLAUDE_CODE_SESSION_ID": session_id})
+    fields = writer.supervisor.parse_handoff_file(handoffs / "deferthenfirecase-handoff.md")
+    check("after the fire, the writer still lists the task started during the deferral",
+          fields.get("background-task-started-during-handoff-deferral-1", "").startswith(
+              'blatefire1 "Started during the deferral"')
+          and "was not deferred" not in written.stdout,
+          written.stdout + handoff_text(handoffs, "deferthenfirecase"))
+
+    # Lines the launch search skips, placed before a launch, do not end the search.
+    skipped_first = workspace / "deferral-launch-after-skipped-lines.jsonl"
+    skipped_first.write_text(
+        '{"Bash" this line is cut off\n["Bash"]\n'
+        + "".join(json.dumps(record) + "\n" for record in background_bash_launch_records(
+            "bafter0001", "Launched after skipped lines", "python3 after.py",
+            "2026-10-28T21:00:00.000Z")),
+        encoding="utf-8")
+    check("a launch after a line that does not parse and a line that is not an object is still found",
+          writer.background_task_launches_by_id(skipped_first, ["bafter0001"])
+          == {"bafter0001": ("Launched after skipped lines", "python3 after.py")},
+          writer.background_task_launches_by_id(skipped_first, ["bafter0001"]))
+
+
 with tempfile.TemporaryDirectory() as temporary_directory_name:
     # Resolved, as the cwd the program reports is, where TMPDIR is reached through a link.
     temporary_directory = Path(temporary_directory_name).resolve()
@@ -1688,6 +1980,7 @@ with tempfile.TemporaryDirectory() as temporary_directory_name:
     run_seat_name_and_directory_from_the_handoff_supervisor_cases(temporary_directory)
     run_completed_task_prune_cases(temporary_directory)
     run_completed_task_prune_remote_store_cases(temporary_directory)
+    run_handoff_deferral_fields_cases(temporary_directory)
 
 print()
 if failures:

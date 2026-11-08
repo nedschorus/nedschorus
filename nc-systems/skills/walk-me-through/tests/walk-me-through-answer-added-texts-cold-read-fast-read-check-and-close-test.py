@@ -122,7 +122,7 @@ If the sentence stays, a note follows it:
 - #new “Each row names the mistake it prevents.”
 
 ```
-#new "inside a fence, not a proposed text"
+A fenced line that names the `#new` mark inside a sentence.
 ```
 
 #case_against weak: the page grows by one line.
@@ -283,7 +283,7 @@ def test_missing_fast_reads_are_run_and_reported():
           and 'Read the fast-read report of each text above whose status line says "fast read had to be run".' in lines
           and f"close --cwd {shlex.quote(str(case.checkout.resolve()))}` and do what it prints." in lines[-1],
           described(result))
-    check("a #new line inside a fence or in another item is not a proposed text",
+    check("a fenced line naming `#new` inside a sentence, or a #new line in another item, is not a proposed text",
           case.calls.read_text() == ("The page lists one poem per job an agent does.\n"
                                      "Each row names the mistake it prevents.\n"),
           repr(case.calls.read_text()))
@@ -388,6 +388,119 @@ def test_no_proposed_text():
     check("the counts of an item with no #new line are logged as zero",
           "texts=0\talready_done=0\thad_to_be_run=0" in case.counts_log.read_text(),
           case.counts_log.read_text())
+
+
+def marks_document(body):
+    """A walk-document whose item 3 holds body from its line 5 on."""
+    return f"# A walk\n\n## Item 3 of 9: the opening sentence\n\n{body}\n#case_against weak: the page grows.\n\nRecommendation: change it.\n"
+
+
+UNREADABLE_MARK_CASES = (
+    ("a mark with no text", "#new\n\nThe sentence stays.\n",
+     ["- line 5: `#new` has no text after it on its line."]),
+    ("a mark with an empty quotation", '#new ""\n',
+     ["- line 5: `#new` has no text after it on its line."]),
+    ("a `#new_if_d` mark with no text, on an A answer", "#new_if_d\n\n> A note\n> says why.\n\nThe end.\n",
+     ["- line 5: `#new_if_d` has no text after it on its line. The mark's line with its text joined onto it: "
+      "#new_if_d A note says why."]),
+    ("a mark with no text above a fenced block", "#new\n\n```\nThe page lists\none poem.\n```\n",
+     ["- line 5: `#new` has no text after it on its line. The mark's line with its text joined onto it: "
+      "#new The page lists one poem."]),
+    ("a mark with no text whose text runs on right below it", '#new\n"The page lists\none poem."\n',
+     ["- line 5: `#new` has no text after it on its line. The mark's line with its text joined onto it: "
+      '#new "The page lists one poem."']),
+    ("a mark inside fenced code", 'Before.\n\n```\n#new "The page lists\none poem."\n```\n',
+     ["- line 8: `#new` is inside fenced or indented code, where no mark's text is read. The mark's line with its text joined onto "
+      'it: #new "The page lists one poem."']),
+    ("a mark inside indented code", 'Before.\n\n    #new "The page lists one poem."\n',
+     ["- line 7: `#new` is inside fenced or indented code, where no mark's text is read. The mark's line with its text joined onto "
+      'it: #new "The page lists one poem."']),
+    ("a mark whose text runs onto the lines below it", '#new "The page lists\none poem\nper job."\n',
+     ["- line 5: the text of `#new` runs onto lines 6 to 7 right below it, where it is not read. The mark's line "
+      'with its text joined onto it: #new "The page lists one poem per job."']),
+    ("a mark in a quotation whose text runs onto the line below it", '> #new "The page lists\n> one poem."\n',
+     ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
+      'its text joined onto it: #new "The page lists one poem."']),
+    ("two marks, each listed", '#new\n\n#new "The page lists\none poem."\n',
+     ["- line 5: `#new` has no text after it on its line.",
+      "- line 7: the text of `#new` runs onto line 8 right below it, where it is not read. The mark's line with "
+      'its text joined onto it: #new "The page lists one poem."']),
+    ("a mark whose text runs onto prose, with another mark right below that",
+     '#new "The page lists\none poem."\n#new "Row two."\n',
+     ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
+      'its text joined onto it: #new "The page lists one poem."']),
+    ("a mark whose text runs onto a line that opens with a hashtag in a code span",
+     '#new "Use\n`#new` to mark proposed text."\n',
+     ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
+      'its text joined onto it: #new "Use `#new` to mark proposed text."']),
+)
+
+
+def test_a_mark_whose_text_would_not_be_read_whole_is_refused_by_check_writing_nothing():
+    for name, body, problem_lines in UNREADABLE_MARK_CASES:
+        case = Case(document=marks_document(body))
+        before = case.minutes.read_text()
+        result = case.run("check", "--obvious")
+        lines = result.stderr.rstrip("\n").split("\n")
+        check(f"check refuses {name}, listing each mark by its line, and writes nothing",
+              result.returncode == 1 and result.stdout == ""
+              and lines[0].startswith(FAILURE_PREFIX + "check: nothing written: item 3 of 9 in the walk-document ")
+              and [line for line in lines if line.startswith("- line ")] == problem_lines
+              and f"Then run `python3 {PROGRAM} check --obvious --user-reply-as-typed a` again." in lines
+              and "Fix the marks from the last listed to the first, so that the line numbers above stay right." in lines
+              and case.minutes.read_text() == before and case.calls.read_text() == ""
+              and not case.counts_log.exists(), described(result))
+
+
+def test_a_mark_whose_text_would_not_be_read_whole_is_refused_for_every_answer_that_adds_texts():
+    for flags in (("--disapproved",), ("--already-decided", "ruling of 2026-10-01"), ("--not-asked", "5")):
+        case = Case(document=marks_document("#new_if_d\n"))
+        before = case.minutes.read_text()
+        result = case.run("check", *flags)
+        check(f"check {flags[0]} refuses an item with a mark that has no text, writing nothing",
+              result.returncode == 1 and "- line 5: `#new_if_d` has no text after it on its line." in result.stderr
+              and case.minutes.read_text() == before, described(result))
+    for flags in (("--deferred",), ("--moved-on-no-decision",), ("--moved-on", "no decision needed")):
+        case = Case(document=marks_document("#new\n"))
+        result = case.run("check", *flags)
+        check(f"check {flags[0]}, which adds no text, records the answer to an item with a mark that has no text",
+              result.returncode == 0 and "item 3 of 9: " in case.minutes.read_text(), described(result))
+
+
+def test_marks_whose_texts_are_read_whole_are_not_refused():
+    body = ('- #new "Row one."\n- #new "Row two."\n\n> #new "A quoted row."\n\n'
+            '<!--\n#new\n-->\n\n```\nExample: #new "a fenced example"\n```\n\n#new "The last row."\n```\ncode right below\n```\n')
+    case = Case(document=marks_document(body))
+    result = case.run("check")
+    check("marks in list items one under another, in a quotation, in an HTML comment, not opening a fenced line, or "
+          "right above a fence "
+          "are not refused, and each text is read",
+          result.returncode == 0
+          and case.calls.read_text() == "Row one.\nRow two.\nA quoted row.\nThe last row.\n", described(result))
+    case = Case(document=marks_document('#new "Row one."\n#new_if_d "Row two."\n#new "Row three."\n'
+                                        '**#case_against none.**\n'))
+    result = case.run("check")
+    check("marks one under another with no blank line or list marker between them, and a marker line right below "
+          "the last, are not refused, and each mark's line is read on its own",
+          result.returncode == 0 and case.calls.read_text() == "Row one.\nRow three.\n", described(result))
+
+
+def test_the_waiting_item_read_step_refuses_a_mark_whose_text_would_not_be_read_whole():
+    case = Case(document=marks_document('#new "The page lists\none poem."\n'))
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    command = (f"python3 {PROGRAM} {WAITING_ITEM_READ_STEP_NAME} --after-fixes-reread-only-when-facts-change "
+               f"--cwd {shlex.quote(str(case.checkout.resolve()))}")
+    check("the waiting-item read step refuses a mark whose text runs on, before any read, and names itself to rerun",
+          result.returncode == 1
+          and "- line 5: the text of `#new` runs onto line 6 right below it, where it is not read." in result.stderr
+          and f"Then run `{command}` again." in result.stderr
+          and case.calls.read_text() == "" and not case.reads().exists(), described(result))
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(document.read_text().replace('#new "The page lists\none poem."', '#new "The page lists one poem."'))
+    again = case.run(*shlex.split(command)[2:-2])
+    check("after the mark's text is joined onto its line, the command the refusal gave reads the item",
+          again.returncode == 0 and "its cold-read-fast-read, of its text as it stands, had to be run now"
+          in again.stdout, described(again))
 
 
 def test_a_failed_fast_read_stops_the_check():
@@ -2301,6 +2414,111 @@ def refused(case, kind, *problems):
     return (result.returncode == 1 and f"cannot be settled without asking the user as kind {kind}, because:"
             in result.stderr and all(problem in result.stderr for problem in problems)
             and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))
+
+
+RATED_NONE_DOCUMENT = """# A walk
+
+## Item 1 of 3: print the poem count after the list
+
+#not_asked_touches tools/counter.py
+
+#case_against none.
+
+Recommendation: print it.
+
+## Item 2 of 3: a new option for the counter
+
+#not_asked_touches tools/counter.py
+
+#case_against weak: the option costs a few lines of code.
+
+Recommendation: add it.
+
+## Item 3 of 3: summary
+
+#case_against none.
+
+Nothing to decide.
+"""
+
+
+def rated_none_case(next_to_present="item 1 of 3", touches=None):
+    document = RATED_NONE_DOCUMENT
+    if touches is not None:
+        document = document.replace("#not_asked_touches tools/counter.py\n\n#case_against none.",
+                                    f"{touches}#case_against none.", 1)
+    case = Case(next_to_present=next_to_present, document=document)
+    (case.checkout / "tools").mkdir()
+    (case.checkout / "tools" / "counter.py").write_text("count = 0\n")
+    return case
+
+
+def test_an_item_of_no_kind_rated_none_settles_without_the_user_and_close_records_it_accepted():
+    case = rated_none_case()
+    result = case.run("check", "--not-asked", "none")
+    minutes = case.minutes.read_text()
+    check("an item of no kind rated none is settled: the minutes say not asked, case against none, and its rating",
+          result.returncode == 0
+          and re.search(r"\nitem 1 of 3: settled without asking the user, not asked, case against none "
+                        r"#case_against_none \(\d{4}-\d\d-\d\d \d\d:\d\d\), which makes its change\. Fast reads:\n",
+                        minutes) is not None
+          and "item 1 of 3 is recorded as settled without asking the user, case against none;" in result.stdout
+          and "Before you run close, ask the advisor whether a later ruling or another open item overtakes item 1 of 3"
+              in result.stdout, described(result) + minutes)
+    closed = case.run("close")
+    check("close records the item settled as rated none as accepted, and moves on",
+          closed.returncode == 0
+          and "\nitem 1 of 3: not asked, case against none; every text the change adds has had a fast read. "
+              "<accepted>\n" in case.minutes.read_text()
+          and int(re.search(r"#next_to_present item (\d+) of 3$", case.minutes.read_text().rstrip())[1]) > 1,
+          described(closed))
+    case = rated_none_case()
+    result = case.run("check", "--not-asked", "NONE")
+    check("`--not-asked` reads none in any case", result.returncode == 0, described(result))
+
+
+def refused_as_rated_none(case, *problems):
+    before = case.minutes.read_text()
+    result = case.run("check", "--not-asked", "none")
+    return (result.returncode == 1 and "cannot be settled without asking the user as case against none, because:"
+            in result.stderr and all(problem in result.stderr for problem in problems)
+            and "check --not-asked none` again" in result.stderr
+            and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))
+
+
+def test_an_item_of_no_kind_settles_only_when_rated_none_and_touching_no_guarded_file():
+    check("an item of no kind rated weak is refused",
+          *refused_as_rated_none(rated_none_case("item 2 of 3"), "rates the case against weak; an item of none of "
+                                 "the kinds settles without the user only when its case against is rated none"))
+    check("an item of no kind with no touches line is refused",
+          *refused_as_rated_none(rated_none_case(touches=""), "it has no `#not_asked_touches` line"))
+    for word in ("CLAUDE.md:12", "tools/counter.py.", "tools/missing.py"):
+        check(f"an item of no kind whose touches line names {word}, no path in the checkout, is refused",
+              *refused_as_rated_none(rated_none_case(touches=f"#not_asked_touches {word}\n\n"),
+                                     f"`#not_asked_touches` names {word}, which is not in the checkout"))
+    for path in ("CLAUDE.md", ".claude/skills/poems/SKILL.md", "docs/nedschorus-wiki/poems.md",
+                 "docs/poems-instructions.md"):
+        check(f"an item of no kind that touches {path}, which the instruction-file guard protects, is refused",
+              *refused_as_rated_none(rated_none_case(touches=f"#not_asked_touches tools/counter.py {path}\n\n"),
+                                     f"`#not_asked_touches` names {path}, which the instruction-file guard protects"))
+
+
+def test_an_item_of_no_kind_with_an_empty_touches_line_settles_as_a_change_that_touches_no_file():
+    case = rated_none_case(touches="#not_asked_touches\n\n")
+    result = case.run("check", "--not-asked", "none")
+    check("an item of no kind rated none whose touches line is empty, such as one that recommends doing nothing, "
+          "is settled", result.returncode == 0
+          and "item 1 of 3 is recorded as settled without asking the user, case against none;" in result.stdout,
+          described(result))
+
+
+def test_a_not_asked_value_other_than_a_kind_or_none_is_refused_as_usage():
+    for value in ("7", "0", "weak"):
+        case = rated_none_case()
+        result = case.run("check", "--not-asked", value)
+        check(f"`--not-asked {value}` is refused as usage, writing nothing",
+              result.returncode == 2 and f"`{value}` is not a kind: give 1, 2, 3, 4, 5, 6 or none" in result.stderr
+              and case.minutes.read_text().rstrip().endswith("#next_to_present item 1 of 3"), described(result))
 
 
 def test_a_case_against_rated_above_weak_is_never_settled():
