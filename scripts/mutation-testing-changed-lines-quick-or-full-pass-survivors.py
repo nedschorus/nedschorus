@@ -119,8 +119,10 @@ the full mutation pass would choose for the mutated files. Then, for each
 mutant in turn, it applies the diff to its file, reading the diff as
 cosmic-ray wrote it: at the diff's own line; when the branch moved the line,
 wherever the diff's lines appear exactly once; and when a later change edited
-a context line, wherever the lines the diff replaces appear exactly once. It
-runs that file's suites, stopping at the first failing suite, and puts the
+a context line, wherever the lines the diff replaces appear exactly once. Each
+search reads a line ending with a `# pragma: no mutate` comment as that line
+without it, and the mutant is applied at the place found, its context lines
+left as the file has them. It runs that file's suites, stopping at the first failing suite, and puts the
 file back. It prints one line per mutant, in the order given, starting with
 its verdict and naming its diff file: MUTANT KILLED when a suite fails with
 the mutant applied; MUTANT SURVIVED when every suite passes with it; MUTANT
@@ -131,10 +133,12 @@ MUTANT COULD NOT BE JUDGED, with what to do, when the diff file cannot be read o
 names no file, the file has no suite while the mutant still applies at the
 head, the diff does not apply at the head
 while origin/main has those lines or cannot tell, the lines it replaces appear
-more than once at the head when a `# pragma: no mutate` comment is not counted,
-some with the comment and some without, or the runner judged no
+more than once at the head when a trailing `# pragma: no mutate` comment is
+read as absent, but only once when lines are compared exactly, or the runner judged no
 suite with the mutant applied, as when a suite ran past its own time limit or
-the runner was refused. Whether a mutant still exists is decided before
+the runner was refused. When those lines appear more than once even when
+compared exactly, as when every copy ends with the comment, the mutant does not apply
+at the head, and origin/main decides between those two verdicts as above. Whether a mutant still exists is decided before
 whether its file has a suite, so the mutant of a deleted file no longer exists
 once origin/main lacks the file too. A line starting RECORDED MUTANTS counts each verdict.
 --recorded-mutant-killed-check-verdicts-json-file-to-write, when given, names a file it then writes
@@ -143,13 +147,17 @@ each DIFF_FILE, as given, to its "verdict" ("killed", "survived", "no longer exi
 or "could not be judged") and "why", the rest of its line; a file that cannot be written
 exits 2. It exits 0 when every mutant is killed or no longer exists, 1 when a
 mutant survived and every other is killed or no longer exists, and 2 when a
-mutant could not be judged, with the JSON file written. It also exits 2,
+mutant could not be judged, whatever the other verdicts, with the JSON file
+written. It also exits 2,
 printing no verdict line and writing no JSON file, when it cannot run at all:
 when a suite fails without a mutant, or when the suite runner judges no suite
 without a mutant, as when another test run holds the machine's lock, its
 refusal printed. The scratch worktree is removed whatever happens.
 
-Exit codes: 0 every mutant was killed, 1 a mutant survived, errored or was
+Exit codes, for a quick or full mutation pass (the recorded mutant killed
+check exits as its own paragraph says: 0 every mutant was killed or no longer
+exists, 1 one survived, 2 one could not be judged or the check could not run):
+0 every mutant was killed, 1 a mutant survived, errored or was
 not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
 a git step failed, the nc-head-commit is already in the base, the worktree could
 not be made, a changed file the quick mutation pass reads is not valid Python,
@@ -859,27 +867,33 @@ def recorded_mutant_run_verdict(exit_code, output, runner):
                   f"{runner_output_described(output, runner)}")
 
 
-def recorded_mutant_line_ends_with_pragma(source, hunks):
-    """True when, at the place some hunk applies, the last line it replaces has a
-    `# pragma: no mutate` comment after it, so no mutation pass makes the mutant any more; None
-    when no hunk does and some hunk's place is not found once; else False. The place is found
-    as recorded_mutant_hunk_place finds it, reading a line with the comment as the line without
-    it, so the same line elsewhere in the file, with or without the comment, does not decide.
-    None is how a place that the comment makes ambiguous shows: read as exact lines, the hunk
-    could still be found once, at a twin of the mutant's own line."""
-    found_every_place = True
-    lines = source.split("\n")
-    for old_start, old, new in hunks:
-        place = recorded_mutant_hunk_place(lines, old_start, old, new,
-                                           line_equal_or_with_pragma_no_mutate_after)
-        if place is None:
-            found_every_place = False
-            continue
-        at, old, new = place
+def recorded_mutant_places_reading_pragma_as_absent(lines, hunks):
+    """For each hunk, (where it applies, its old lines, its new lines) or None when it is not
+    found once, found as recorded_mutant_hunk_place finds it but reading a line with a
+    `# pragma: no mutate` comment as the line without it. The pragma check and the mutant's
+    application both use these places, so a twin of the hunk's lines elsewhere in the file,
+    which an exact search could find once, is never the one mutated."""
+    return [recorded_mutant_hunk_place(lines, old_start, old, new,
+                                       line_equal_or_with_pragma_no_mutate_after)
+            for old_start, old, new in hunks]
+
+
+def recorded_mutant_place_ends_with_pragma(lines, place):
+    """True when the last line the hunk at place replaces has a `# pragma: no mutate` comment
+    after it, so no mutation pass makes the mutant any more."""
+    at, old, new = place
+    start, end = hunk_shared_context_line_counts(old, new)
+    return len(old) - end > start and lines[at + len(old) - end - 1] != old[len(old) - end - 1]
+
+
+def source_with_recorded_mutant_applied_at_places(lines, places):
+    """The source with each hunk's replaced lines replaced at its place; its context lines
+    stay as the source has them, a `# pragma: no mutate` comment included."""
+    lines = list(lines)
+    for at, old, new in sorted(places, key=lambda place: place[0], reverse=True):
         start, end = hunk_shared_context_line_counts(old, new)
-        if len(old) - end > start and lines[at + len(old) - end - 1] != old[len(old) - end - 1]:
-            return True
-    return False if found_every_place else None
+        lines[at + start:at + len(old) - end] = new[start:len(new) - end]
+    return "\n".join(lines)
 
 
 def recorded_mutant_verdict_without_a_suite_run(checkout, path, hunks, head, source,
@@ -890,35 +904,37 @@ def recorded_mutant_verdict_without_a_suite_run(checkout, path, hunks, head, sou
     if source is None:
         return recorded_mutant_not_applied_verdict(
             checkout, path, hunks, head, why_source_unreadable, environment), None
-    ends_with_pragma = recorded_mutant_line_ends_with_pragma(source, hunks)
-    if ends_with_pragma:
+    lines = source.split("\n")
+    places = recorded_mutant_places_reading_pragma_as_absent(lines, hunks)
+    if any(place is not None and recorded_mutant_place_ends_with_pragma(lines, place)
+           for place in places):
         return ("no longer exists", (
             f"the line it changes in {path} ends with a `# pragma: no mutate` comment at head "
             f"{head[:12]}, so no mutation pass makes it; the nightly mutation pass drops it from "
             f"its task once that is on main.")), None
-    mutated_source = source_with_recorded_mutant_applied(source, hunks)
-    if mutated_source is None:
+    if all(place is not None for place in places):
+        return None, source_with_recorded_mutant_applied_at_places(lines, places)
+    if source_with_recorded_mutant_applied(source, hunks) is None:
         return recorded_mutant_not_applied_verdict(
             checkout, path, hunks, head,
             "the lines it replaces are missing from the file or appear in it more than once",
             environment), None
-    if ends_with_pragma is None:
-        return ("could not be judged", (
-            f"in {path} at head {head[:12]}, the lines this diff file replaces appear more than "
-            f"once when each line's trailing `# pragma: no mutate` comment is stripped before "
-            f"comparing: some copies end with that comment and some do not, so which copy is "
-            f"the mutant's own line cannot be told, and no suite was run. The diff's `@@` line "
-            f"gives the line number the mutant had when it was recorded; read the copies "
-            f"around that number to tell which is the mutant's.\n"
-            f"If the mutant's own line ends with the comment on origin/main: no mutation pass "
-            f"makes the mutant any more; mark the survivor task that names this diff file "
-            f"completed, saying why in the task's description.\n"
-            f"Otherwise: write a test that fails when the diff's change is made on the mutant's "
-            f"own line; check that by making the change by hand, running the test, and putting "
-            f"the line back before you commit; say so in your pull request; and mark the "
-            f"survivor task completed once that pull request merges, since every rerun of this "
-            f"command gives this same verdict.")), None
-    return None, mutated_source
+    # Read as exact lines the hunk is found once, but reading the comment as absent it is not.
+    return ("could not be judged", (
+        f"in {path} at head {head[:12]}, the lines this diff file replaces appear more than "
+        f"once when each line's trailing `# pragma: no mutate` comment is stripped before "
+        f"comparing: some copies end with that comment and some do not, so which copy is "
+        f"the mutant's own line cannot be told, and no suite was run. The diff's `@@` line "
+        f"gives the line number the mutant had when it was recorded; read the copies "
+        f"around that number to tell which is the mutant's.\n"
+        f"If the mutant's own line ends with the comment on origin/main: no mutation pass "
+        f"makes the mutant any more; mark the survivor task that names this diff file "
+        f"completed, saying why in the task's description.\n"
+        f"Otherwise: write a test that fails when the diff's change is made on the mutant's "
+        f"own line; check that by making the change by hand, running the test, and putting "
+        f"the line back before you commit; say so in your pull request; and mark the "
+        f"survivor task completed once that pull request merges, since every rerun of this "
+        f"command gives this same verdict.")), None
 
 
 def recorded_mutant_not_applied_verdict(checkout, path, hunks, head, why_not_applied,
