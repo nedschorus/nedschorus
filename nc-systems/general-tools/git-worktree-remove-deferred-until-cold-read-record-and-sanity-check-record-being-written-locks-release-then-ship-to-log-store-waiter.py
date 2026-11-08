@@ -68,10 +68,11 @@ GIT_TIMEOUT_SECONDS = 60
 ALERT_TITLE_TEMPLATE = "A deferred `git worktree remove` did not run: {worktree}"
 ALERT_TEXT_TEMPLATE = (
     "On {machine}, a `git worktree remove` of {worktree} was refused because a program was still writing "
-    "a record in it. The program started to remove the worktree once its records were written and shipped "
-    "to the log-store has stopped without removing it, and the worktree is still there: {failure}\n"
+    "a record in it. A second program, started to remove the worktree once its records were written and "
+    "shipped to the log-store, has stopped without removing it, so the worktree is still there. Why it "
+    "stopped: {failure}\n"
     "{records}"
-    "The log file of that program's run: {log}")
+    "The second program's log file: {log}")
 GIT_WORKTREE_REMOVE_DEFERRED_FAILED_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO = (
     "An agent on that machine can tell from the failure above whether a record is still being written or "
     "did not ship, ship it with the cold-read-record-ship.py or sanity-check-record-ship.py command for its "

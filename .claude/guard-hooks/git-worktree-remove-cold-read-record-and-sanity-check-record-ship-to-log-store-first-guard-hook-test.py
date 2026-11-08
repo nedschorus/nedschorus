@@ -880,7 +880,7 @@ check("the user-alert names the worktree, its Record line, the git command that 
       alert.get("title") == f"A deferred `git worktree remove` did not run: {refused_worktree}"
       and f"Record {refused_record} (worktree {refused_worktree})\n" in alert.get("alert_text", "")
       and f"worktree remove {refused_worktree}` exited 128: " in alert.get("alert_text", "")
-      and f"The log file of that program's run: {waiter_logs_of(refused_worktree)[0]}" in alert.get("alert_text", "")
+      and f"The second program's log file: {waiter_logs_of(refused_worktree)[0]}" in alert.get("alert_text", "")
       and alert.get("action") == waiter.GIT_WORKTREE_REMOVE_DEFERRED_FAILED_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO, alert)
 check("git refusing leaves the worktree in place, with its record shipped",
       refused_worktree.is_dir() and (STORE / "cold-read-records" / refused_record.name / "fast-read.md").is_file())
