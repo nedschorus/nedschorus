@@ -76,6 +76,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1941,6 +1942,45 @@ with tempfile.TemporaryDirectory() as scratch:
         module.subprocess.run = real_run
     check("a parent process whose command line ps cannot give is logged by its pid and unknown",
           unknown_caller == f"{os.getppid()} unknown", unknown_caller)
+
+    no_origin = scratch / "no-origin-main"
+    no_origin.mkdir()
+    git(no_origin, "init", "-b", "main")
+    git(no_origin, "-c", "user.email=test@test.invalid", "-c", "user.name=test",
+        "commit", "--allow-empty", "-m", "only commit")
+    check("a branch git cannot compare with origin/main, because there is none, never counts as "
+          "fully on origin/main, so the cleaner keeps it",
+          module.fully_on_origin_main(no_origin, "main") is False)
+
+    # The cleaner fed a real Mac lock reason, as Claude Code writes it, on macOS.
+    mac_locked = scratch / "mac-locked"
+    git(no_origin, "worktree", "add", "-b", "mac-locked", str(mac_locked))
+    owner_module = module.owner_file
+    real_running_state = owner_module.claude_code_subagent_worktree_lock_dispatching_process_running_state
+    real_owner_key = owner_module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key
+    real_seats = owner_module.agent_seats_whose_claude_code_transcripts_name_subagent
+    owner_module.claude_code_subagent_worktree_lock_dispatching_process_running_state = (
+        lambda lock: real_running_state(lock, platform="darwin", macos_start_seconds=lambda pid: None))
+    owner_module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key = (
+        lambda lock: real_owner_key(lock, platform="darwin"))
+    owner_module.agent_seats_whose_claude_code_transcripts_name_subagent = lambda agent_id: ["seat-x"]
+    try:
+        mac_verdict, mac_ended = module.claude_code_subagent_lock_verdict_or_ended_lock(
+            mac_locked, types.SimpleNamespace(locked_reason=(
+                "claude agent agent-a9e3e2fe0e79f0a2c (pid 29741 start Tue Nov  3 21:24:32 2026)")))
+    finally:
+        owner_module.claude_code_subagent_worktree_lock_dispatching_process_running_state = real_running_state
+        owner_module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key = real_owner_key
+        owner_module.agent_seats_whose_claude_code_transcripts_name_subagent = real_seats
+    mac_start_seconds = str(int(time.mktime(time.strptime("Tue Nov 3 21:24:32 2026",
+                                                          "%a %b %d %H:%M:%S %Y"))))
+    check("on macOS the cleaner unlocks a worktree whose real-form Claude Code lock names an ended "
+          "claude process, writing an owner file with the macOS owner key",
+          mac_verdict is None and mac_ended is not None
+          and mac_ended.owner_to_write == {"owner_kind": owner_module.OWNER_AGENT_SESSION,
+                                           "agent_seat": "seat-x",
+                                           "owner_key": f"29741-{mac_start_seconds}"},
+          (mac_verdict, mac_ended))
 
 # --- One named worktree or branch ---
 

@@ -17,6 +17,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 _fixture_spec = importlib.util.spec_from_file_location(
@@ -158,9 +159,18 @@ with tempfile.TemporaryDirectory() as scratch:
           == module.ClaudeCodeSubagentWorktreeLock("a59101f2afd522964", 3052879, "197651712"))
     for reason in ("", None, "test lock", "claude agent agent-x (pid 12)",
                    "claude agent agent-a1 (pid 12 start 3) and more",
-                   "claude agent agent-a1 (pid 12 start Sat Nov  7 17:22:57 2026)"):
+                   "claude agent agent-a1 (pid 12 start Nov  7 17:22:57 2026)"):
         check(f"no process is read from the lock reason {reason!r}",
               module.claude_code_subagent_worktree_lock_reason_parse(reason) is None)
+
+    mac_reason = "claude agent agent-a9e3e2fe0e79f0a2c (pid 29741 start Tue Nov  3 21:24:32 2026)"
+    mac_lock = module.claude_code_subagent_worktree_lock_reason_parse(mac_reason)
+    check("Claude Code's lock reason on the Mac, whose start is the date ps prints, names the "
+          "subagent and the dispatching process with its start",
+          mac_lock == module.ClaudeCodeSubagentWorktreeLock("a9e3e2fe0e79f0a2c", 29741,
+                                                            "Tue Nov  3 21:24:32 2026"), mac_lock)
+    mac_start_seconds = str(int(time.mktime(time.strptime("Tue Nov 3 21:24:32 2026",
+                                                          "%a %b %d %H:%M:%S %Y"))))
 
     fake_proc = scratch / "fake-proc"
     (fake_proc / "sys" / "kernel" / "random").mkdir(parents=True)
@@ -172,10 +182,9 @@ with tempfile.TemporaryDirectory() as scratch:
     (fake_proc / "42" / "stat").write_text("42 (claude) S 1\n")
     (fake_proc / "43" / "stat").mkdir(parents=True)
 
-    def lock_state(process_id, start, platform="linux", process_exists=None):
+    def lock_state(process_id, start, platform="linux"):
         return module.claude_code_subagent_worktree_lock_dispatching_process_running_state(
-            module.ClaudeCodeSubagentWorktreeLock("a1", process_id, start), fake_proc, platform,
-            process_exists)
+            module.ClaudeCodeSubagentWorktreeLock("a1", process_id, start), fake_proc, platform)
 
     state, _ = lock_state(41, "22")
     check("a lock whose process runs with the lock's start is running", state == module.RUNNING, state)
@@ -190,28 +199,48 @@ with tempfile.TemporaryDirectory() as scratch:
     state, explanation = lock_state(43, "22")
     check("a lock whose process's stat cannot be read is unknown, never ended",
           state == module.UNKNOWN and "could not be read" in explanation, explanation)
-    state, explanation = lock_state(41, "22", platform="darwin", process_exists=lambda pid: False)
-    check("a macOS lock whose process id no process has has ended",
+    def mac_lock_state(start_seconds_of_process):
+        return module.claude_code_subagent_worktree_lock_dispatching_process_running_state(
+            mac_lock, fake_proc, "darwin", start_seconds_of_process)
+
+    state, _ = mac_lock_state(lambda pid: mac_start_seconds)
+    check("a macOS lock whose process runs with the lock's start is running",
+          state == module.RUNNING, state)
+    state, explanation = mac_lock_state(lambda pid: str(int(mac_start_seconds) + 60))
+    check("a macOS lock whose process id runs with another start has ended",
           state == module.STOPPED and "has ended" in explanation, explanation)
-    state, explanation = lock_state(41, "22", platform="darwin", process_exists=lambda pid: True)
-    check("a macOS lock whose process id a process has is unknown, never running or ended",
-          state == module.UNKNOWN and "not read" in explanation, explanation)
+    state, explanation = mac_lock_state(lambda pid: None)
+    check("a macOS lock whose process is gone has ended",
+          state == module.STOPPED and "has ended" in explanation, explanation)
 
     def process_check_fails(pid):
-        raise OSError("signal check failed")
+        raise OSError("ps failed")
 
-    state, explanation = lock_state(41, "22", platform="darwin", process_exists=process_check_fails)
+    state, explanation = mac_lock_state(process_check_fails)
     check("a macOS lock whose process cannot be checked is unknown, never ended",
           state == module.UNKNOWN and "could not be read" in explanation, explanation)
-    state, explanation = lock_state(41, "22", platform="win32", process_exists=lambda pid: False)
+    state, explanation = module.claude_code_subagent_worktree_lock_dispatching_process_running_state(
+        module.ClaudeCodeSubagentWorktreeLock("a1", 41, "22"), fake_proc, "darwin", lambda pid: None)
+    check("a macOS lock whose start is not the date ps prints is unknown, never ended",
+          state == module.UNKNOWN and "not the date" in explanation, explanation)
+    state, explanation = lock_state(41, "22", platform="win32")
     check("a lock on neither Linux nor macOS is unknown",
           state == module.UNKNOWN and "only on Linux and macOS" in explanation, explanation)
     check("the ended agent-session's owner key is this boot's id, the lock's process and its start",
           module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key(
               module.ClaudeCodeSubagentWorktreeLock("a1", 7, "8"), fake_proc, "linux") == "abcd-7-8")
-    check("on macOS the ended agent-session's owner key is the lock's process and its start",
+    check("on macOS the ended agent-session's owner key is the lock's process and its start in "
+          "seconds, the form a work-snapshot's macOS owner key takes",
           module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key(
-              module.ClaudeCodeSubagentWorktreeLock("a1", 7, "8"), fake_proc, "darwin") == "7-8")
+              mac_lock, fake_proc, "darwin") == f"29741-{mac_start_seconds}")
+    try:
+        module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key(
+            module.ClaudeCodeSubagentWorktreeLock("a1", 7, "8"), fake_proc, "darwin")
+        no_key = None
+    except ValueError as error:
+        no_key = error
+    check("on macOS a lock whose start is not the date ps prints gives no owner key",
+          no_key is not None)
 
     agents_root = scratch / "agents"
     seat_handoffs = scratch / "seat-handoffs"

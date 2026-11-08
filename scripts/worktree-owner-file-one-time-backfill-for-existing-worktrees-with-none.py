@@ -168,7 +168,7 @@ def keep_or_delete_facts_text(repo, worktree, branch):
     if branch is None:
         merged = "on a detached HEAD, so no branch to merge"
     else:
-        on_main, git_error = cleaner.branch_on_origin_main_or_git_error(repo, branch)
+        on_main, git_error = cleaner.branch_fully_on_origin_main_true_false_or_none_with_git_error(repo, branch)
         merged = (f"whether its branch {branch} is merged into origin/main is unknown ({git_error})"
                   if on_main is None
                   else f"its branch {branch} is {'' if on_main else 'not '}merged into origin/main")
