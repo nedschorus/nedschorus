@@ -14,15 +14,16 @@ scripts/clean-worktrees.py reads. The owner named:
   - any other worktree, those agents make by hand inside .claude/worktrees/ included: the
     agent-seat GIT_AUTHOR_NAME names.
 
-The agents root is ~/agents, or $NEDSCHORUS_AGENTS_ROOT when set on a machine with the Mac launcher, as
-scripts/recover-crashed-seats.py's default_agents_root gives it. An agent-seat is a directory
-under the agents root whose name has a handoff-supervisor state file or a session-handoff file
-in ~/.claude/handoffs/, as scripts/recover-crashed-seats.py lists them.
+The agents root is ~/agents, or $NEDSCHORUS_AGENTS_ROOT when set on a machine with
+scripts/launch-claude-mac, as scripts/recover-crashed-seats.py's default_agents_root gives it.
+An agent-seat is a directory under the agents root whose name has a handoff-supervisor state
+file or a session-handoff file in ~/.claude/handoffs/, as scripts/recover-crashed-seats.py lists
+them.
 
 It writes no owner file, and prints nothing:
   - when GIT_AUTHOR_NAME names no agent-seat, whatever the worktree, a subagent's included,
     as for a worktree a person makes by hand;
-  - for that agent-seat's own agent-home, <agents root>/<agent-seat>;
+  - for the agent-home of the agent-seat GIT_AUTHOR_NAME names, <agents root>/<agent-seat>;
   - for a merge-lane review checkout, directly inside ~/.cache/merge-lane-review-worktrees,
     which the cleaner judges by its pull request and which an owner file would keep from that;
   - for the clone's main checkout;
