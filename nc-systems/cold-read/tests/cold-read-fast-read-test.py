@@ -113,6 +113,7 @@ import re
 import shlex
 import pathlib
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -196,7 +197,7 @@ EMBEDDED_PROMPT_COPY_AND_SOURCE_PAIRS = (
 # the plan from the environment, and a counter file that counts launches so
 # "fail_first_attempts": N fails the first N and succeeds after; "hang"
 # sleeps past any deadline a case sets; "wait_for_file" fails unless that file
-# appears within 20 s.
+# appears within 20 s; "started_file" is written first thing.
 STUB_AGY = """#!/usr/bin/env python3
 import json, os, pathlib, re, sys
 argv = sys.argv
@@ -207,6 +208,8 @@ step = plan.get(model, plan.get("*", {}))
 counter_path = pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_COUNTER_PATH"])
 launches = (int(counter_path.read_text()) if counter_path.is_file() else 0) + 1
 counter_path.write_text(str(launches))
+if "started_file" in step:
+    pathlib.Path(step["started_file"]).write_text("started", encoding="utf-8")
 if step.get("hang"):
     import time
     time.sleep(300)
@@ -249,7 +252,8 @@ sys.exit(step.get("exit", 0))
 # names; otherwise, with no plan it fails, so a case that does not plan the
 # backup sees it fail. "report" writes the report and succeeds; "fail_stderr"
 # is what a failure prints; "dump_prompt" saves the prompt; "pid_file" saves
-# the stub's process ID, first thing; "hang" sleeps past any deadline a case sets;
+# the stub's process ID, first thing; "wait_for_file" fails unless that file
+# appears within 20 s; "hang" sleeps past any deadline a case sets;
 # "concurrent_read_answer" exits 0 without writing its own report, after
 # writing that text where a concurrent fast read, in a temporary directory of
 # its own, would write its Question 4 answer; it saves that directory, then
@@ -273,6 +277,14 @@ if "pid_file" in plan:
     pathlib.Path(plan["pid_file"]).write_text(str(os.getpid()), encoding="utf-8")
 if "dump_prompt" in plan:
     pathlib.Path(plan["dump_prompt"]).write_text(prompt, encoding="utf-8")
+if "wait_for_file" in plan:
+    for _ in range(200):
+        if pathlib.Path(plan["wait_for_file"]).exists():
+            break
+        time.sleep(0.1)
+    else:
+        sys.stderr.write("stub claude: %s never appeared\\n" % plan["wait_for_file"])
+        sys.exit(1)
 if plan.get("hang"):
     time.sleep(300)
 own_report = (pathlib.Path(re.search(r"Write your report to (\\S+), once", prompt).group(1))
@@ -382,9 +394,11 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
                   counter_path, ship_destination=None,
                   record_clock=FIXED_RECORD_CLOCK_FOR_TESTS, agent_session_id=None,
                   current_directory=None, claude_plan=None, question_4_plan=None,
-                  environment_overrides=None):
+                  environment_overrides=None, sigterm_once_file_exists=None):
     """The read as a subprocess, with the stub agy first on PATH, run from
-    `current_directory`, by default `repository`.
+    `current_directory`, by default `repository`. With
+    `sigterm_once_file_exists`, the read is sent SIGTERM once that file
+    exists, or after 60 s if it never does.
 
     `expected_report` is where the stub writes -- the path the case expects
     the rule to choose. If the read chooses another, the cell finds no report
@@ -424,12 +438,21 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     if agent_session_id is not None:
         environment[AGENT_SESSION_ID_VARIABLE] = agent_session_id
     environment.update(environment_overrides or {})
-    return subprocess.run(
-        [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"),
-         "--target", str(target_argument)],
-        capture_output=True, text=True, check=False, env=environment,
-        cwd=current_directory or repository,
-    )
+    command = [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"),
+               "--target", str(target_argument)]
+    if sigterm_once_file_exists is None:
+        return subprocess.run(command, capture_output=True, text=True, check=False,
+                              env=environment, cwd=current_directory or repository)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               text=True, env=environment, cwd=current_directory or repository)
+    for _ in range(600):
+        if pathlib.Path(sigterm_once_file_exists).exists() or process.poll() is not None:
+            break
+        time.sleep(0.1)
+    if process.poll() is None:
+        process.send_signal(signal.SIGTERM)
+    stdout, stderr = process.communicate(timeout=120)
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
 def agent_session_written_beside(report):
@@ -1226,18 +1249,23 @@ with tempfile.TemporaryDirectory() as scratch:
     if concurrent_paths:
         shutil.rmtree(concurrent_paths[0], ignore_errors=True)
 
-    # The fast-clarify cell waits for the Question 4 cell's process to exist and
-    # fails if it never does, so only a read that runs the two at once succeeds.
+    # Each cell waits for the other to have started and fails if it never does,
+    # so only a read that runs the two at once, not one after the other in either
+    # order, has both answers.
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     question_4_started_pid_file = scratch / "question-4-started.pid"
     question_4_started_pid_file.unlink(missing_ok=True)
+    fast_clarify_started_file = scratch / "fast-clarify-started"
+    fast_clarify_started_file.unlink(missing_ok=True)
     result = run_fast_read(
         repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n",
+                                  "started_file": str(fast_clarify_started_file),
                                   "wait_for_file": str(question_4_started_pid_file)}},
         suggestions, walk_draft_relative, counter,
         question_4_plan={"report": QUESTION_4_STUB_ANSWER,
-                         "pid_file": str(question_4_started_pid_file)},
+                         "pid_file": str(question_4_started_pid_file),
+                         "wait_for_file": str(fast_clarify_started_file)},
     )
     report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
     check("the Question 4 cell runs while the fast-clarify cell does, not after it",
@@ -1275,6 +1303,43 @@ with tempfile.TemporaryDirectory() as scratch:
     check("when Questions 1 to 3 fail, the model the Question 4 cell started is killed",
           abandoned_stub_pid is not None and not process_is_running(abandoned_stub_pid),
           f"pid {abandoned_stub_pid}")
+
+    # A session-handoff stops a background read with SIGTERM while the
+    # fast-clarify cell runs; the Question 4 cell, in a session of its own,
+    # must not outlive it, nor must the read's temporary directory.
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    signalled_stub_pid_file = scratch / "signalled-question-4-stub.pid"
+    signalled_stub_pid_file.unlink(missing_ok=True)
+    signalled_prompt_file = scratch / "signalled-question-4-prompt.txt"
+    signalled_prompt_file.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, stubs, {"*": {"hang": True}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"hang": True, "report": QUESTION_4_STUB_ANSWER,
+                         "pid_file": str(signalled_stub_pid_file),
+                         "dump_prompt": str(signalled_prompt_file)},
+        sigterm_once_file_exists=signalled_prompt_file,
+    )
+    signalled_stub_pid = (int(signalled_stub_pid_file.read_text())
+                          if signalled_stub_pid_file.is_file() else None)
+    for _ in range(50):
+        if signalled_stub_pid is None or not process_is_running(signalled_stub_pid):
+            break
+        time.sleep(0.1)
+    signalled_prompt = (signalled_prompt_file.read_text(encoding="utf-8")
+                        if signalled_prompt_file.is_file() else "")
+    signalled_answer_path = re.search(r"Write your report to (\S+), once", signalled_prompt)
+    signalled_scratch = (next((parent for parent in pathlib.Path(signalled_answer_path.group(1)).parents
+                               if parent.name.startswith("cold-read-fast-read-")), None)
+                         if signalled_answer_path else None)
+    check("a read sent SIGTERM while the fast-clarify cell runs exits 128 plus SIGTERM, "
+          "kills the model the Question 4 cell started, and removes its temporary directory",
+          result.returncode == 128 + signal.SIGTERM
+          and signalled_stub_pid is not None and not process_is_running(signalled_stub_pid)
+          and signalled_scratch is not None and not signalled_scratch.exists(),
+          f"exit {result.returncode}; pid {signalled_stub_pid}; scratch {signalled_scratch}; "
+          f"stderr={result.stderr!r}")
 
     repository = build_scratch_repository(scratch)
     records_report = (repository / "cold-read-records" / f"a-design-{record_stamp}"

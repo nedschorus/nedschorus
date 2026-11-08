@@ -148,7 +148,10 @@ stderr; the read still exits 0 and stdout is still the one path. The report
 reviews the copy the reviewer was given, and quotes each of its sentences, so
 the agent triages against those quoted sentences, since a walk draft's copy
 is removed on exit, and carries each fix to the document as it
-now stands, as the cold-read-grid asks for the same event.
+now stands, as the cold-read-grid asks for the same event. Since the
+Question 4 cell's claude launcher runs for the whole of the fast-clarify
+cell's run, such an edit, like any change in the checkout while the read
+runs, is also printed on stderr as a stray write; it does not fail the read.
 
 ONE RETRY, AND WHY NOT MORE. The cold-read-fast-read is a walk's instrument,
 and the walk is waiting on it: a Gemini cold-read-cell that fails once -- a
@@ -202,7 +205,9 @@ stderr say so and why, and the read still delivers Questions 1 to 3 with the
 exit it would have had. When Questions 1 to 3 fail, or the read ends any
 other way without a report, the Question 4 cell's process group is killed if
 it is still running, its answer is dropped, and a line on stderr says
-Question 4 was abandoned.
+Question 4 was abandoned. A SIGTERM or SIGHUP sent to the read ends it that
+way too, with exit 128 plus the signal's number: the cell is in a session of
+its own, so a signal to the read's process group does not reach it.
 """
 
 from __future__ import annotations
@@ -215,6 +220,7 @@ import importlib.util
 import pathlib
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -1347,7 +1353,8 @@ def what_should_be_code_cell_start(target: pathlib.Path, scratch: pathlib.Path) 
           f"{WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID} at "
           f"{WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_EFFORT} effort, for up to "
           f"{COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS / 60:g} minutes, "
-          f"while the fast-clarify cell answers Questions 1 to 3. "
+          f"while the fast-clarify cell answers Questions 1 to 3; if Questions 1 to 3 "
+          f"finish first, the read waits for Question 4 up to that limit. "
           f"If the Question 4 cell fails or runs past that time, the report still holds "
           f"Questions 1 to 3, and its Question 4 section says why Question 4 was not answered.",
           file=sys.stderr)
@@ -1365,10 +1372,13 @@ def what_should_be_code_cell_abandon(cell: WhatShouldBeCodeQuestionCell) -> None
     """Stop the Question 4 cell's process group, whether or not it is still
     running, re-emit its launcher's output on stderr, and say on stderr that
     its answer is not used."""
+    was_running = cell.process.poll() is None
     cell_common.stop_process_tree(cell.process)
     print(cell.launcher_output.read_text(encoding="utf-8"), file=sys.stderr, end="")
     print(f"{PROGRAM}: Question 4 was abandoned: the read ended with no report to hold "
-          f"its answer; its cell was stopped if it was still running.", file=sys.stderr)
+          f"its answer; "
+          + ("its cell was still running, and was stopped." if was_running
+             else "its cell had already exited."), file=sys.stderr)
 
 
 def what_should_be_code_section(cell: WhatShouldBeCodeQuestionCell) -> str:
@@ -1467,6 +1477,10 @@ def main() -> int:
         "--target", required=True,
         help="document path, relative to the current directory or absolute")
     args = parser.parse_args()
+    # Raising SystemExit runs the finally below that stops the Question 4 cell,
+    # and the temporary directory's cleanup; the default action runs neither.
+    signal.signal(signal.SIGTERM, cell_common.exit_on_sigterm)
+    signal.signal(signal.SIGHUP, cell_common.exit_on_sigterm)
 
     target = pathlib.Path(args.target).resolve()
     if not target.is_file():
