@@ -150,13 +150,13 @@ def pull_request_head_test_run_test_log_split_into_records(text: str) -> list:
         count = int(first_line.group(2))
         if count == 0:
             raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
-                f"the record that begins at line {at + 1} says it has 0 lines, but its first line "
-                f"is one")
+                f"the record that begins at line {at + 1} says it has 0 lines, but that count "
+                f"includes the record's first line, so it is at least 1")
         record = lines[at:at + count]
         if len(record) != count:
             raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
                 f"the record that begins at line {at + 1} says it has {count} lines, but the test "
-                f"log ends after {len(record)}")
+                f"log ends after {len(record)} lines")
         if not record[-1].startswith(PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX):
             raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
                 f"the record that begins at line {at + 1} does not end with its "
