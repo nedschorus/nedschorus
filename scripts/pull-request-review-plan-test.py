@@ -280,6 +280,7 @@ def run_unit_cases():
         ("Run `a  b` now.", "Run `a b` now."),
         ("Run `x now.", "Run x now."),
         ("Hello {name}", "f'Hello {name}'"),
+        ("Hello", "f'Hello'"),
         ("Use {x} here.", "Use  {x}  here."),
         ("f\"Report {len('a b')}\"", "f\"Report {len('a  b')}\""),
         ("Delete every __pycache__ directory first.", "Delete every pycache directory first."),
@@ -305,6 +306,9 @@ def run_unit_cases():
           == (True, "Read " + review_plan_module.F_STRING_FIELD_STAND_IN.format(index=0) + "\nnow.", ("{path}",)))
     for before, after in reviewed_pairs_that_are_not_cosmetic:
         check(f"prompt comparison: {before!r} to {after!r} is not a cosmetic-change", compare(before, after) is False)
+    for name, before, after in [("a trailing newline added where the old text had none", "Read the file.", "Read the file.\n"),
+                                ("trailing newlines added where the old text had none", "Read the file.", "Read the file.\n\n")]:
+        check(f"prompt comparison: {name} is a cosmetic-change", compare(before, after) is True, (before, after))
     for name, prompt_after, expected in cosmetic_cases:
         before, after = prompt_before, prompt_after
         if prompt_after is None:
@@ -702,16 +706,19 @@ def run_agent_text_cases(fixture):
     check("the text plan marks the changed prompt as needing the user's approval",
           review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in text_plan, text_plan)
     skeleton_path = fixture.control_directory / "prompt-brief.md"
-    fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
+    skeleton_result = fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
     skeleton = skeleton_path.read_text() if skeleton_path.exists() else ""
     check("the brief skeleton marks the changed prompt as needing the user's approval",
-          review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in skeleton, skeleton)
+          skeleton_result.returncode == 0
+          and review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in skeleton,
+          (skeleton_result, skeleton))
     prompt_program_before = ('def compose(path):\n    prompt = f"# Task\\n\\nRead the **whole** file {path},\\nthen report.'
                              '\\n\\n```sh\\nls  -l\\n```\\n"\n    return prompt\n')
     literal_brace_prompt = 'def compose(path):\n    prompt = "Read {path}.\\n"\n    return prompt\n'
     field_in_chain_prompt = 'def compose(path):\n    prompt = "Read " + f"{path}.  \\n"\n    return prompt\n'
     literal_chain_prompt = 'def compose(path):\n    prompt = "Read " + "the file.\\n"\n    return prompt\n'
-    for name, program_before, prompt_program_after, expected_cosmetic in [
+    name_in_chain_prompt = 'def compose(path):\n    prompt = "Read " + path + ".\\n"\n    return prompt\n'
+    for case_index, (name, program_before, prompt_program_after, expected_cosmetic) in enumerate([
             ("a prompt whose only change is trailing spaces", prompt_program_before, prompt_program_before.replace(",\\nthen", ",  \\nthen"), True),
             ("a prompt whose only change is an extra blank line", prompt_program_before, prompt_program_before.replace("# Task\\n\\n", "# Task\\n\\n\\n"), True),
             ("a prompt whose only change is dropped bold marks", prompt_program_before, prompt_program_before.replace("**whole**", "whole"), False),
@@ -722,7 +729,9 @@ def run_agent_text_cases(fixture):
             ("a literal {path} that becomes a field, the flattened texts equal",
              literal_brace_prompt, field_in_chain_prompt.replace(".  \\n", ".\\n"), False),
             ("a + chain of plain literals whose only change is trailing spaces",
-             literal_chain_prompt, literal_chain_prompt.replace("file.\\n", "file.  \\n"), True)]:
+             literal_chain_prompt, literal_chain_prompt.replace("file.\\n", "file.  \\n"), True),
+            ("a literal {path} that becomes a name operand in a + chain", literal_brace_prompt, name_in_chain_prompt, False),
+            ("a name operand in a + chain that becomes a literal {path}", name_in_chain_prompt, literal_brace_prompt, False)]):
         fixture.reset_fixture_to_base()
         fixture.write_fixture_file("nc-systems/handoff/cosmetic-prompt-program.py", program_before)
         earlier = fixture.commit_fixture_changes("prompt before")
@@ -733,8 +742,8 @@ def run_agent_text_cases(fixture):
         fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
         delta = fixture.read_review_plan()["agent_facing_text_delta"]
         text_plan = fixture.run_review_plan(json_output=False).stdout
-        skeleton_path = fixture.control_directory / f"cosmetic-prompt-brief-{len(name)}-{expected_cosmetic}.md"
-        fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
+        skeleton_path = fixture.control_directory / f"cosmetic-prompt-brief-{case_index}.md"
+        skeleton_result = fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
         skeleton = skeleton_path.read_text() if skeleton_path.exists() else ""
         expected_label, other_label = (
             (review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE,
@@ -746,7 +755,8 @@ def run_agent_text_cases(fixture):
               [(entry["label"], entry["needs_user_approval"], entry["cosmetic_change_needs_no_approval"]) for entry in delta]
               == [("prompt = in compose()", not expected_cosmetic, expected_cosmetic)]
               and expected_label in text_plan and other_label not in text_plan
-              and expected_label in skeleton and other_label not in skeleton, (delta, text_plan, skeleton))
+              and skeleton_result.returncode == 0
+              and expected_label in skeleton and other_label not in skeleton, (delta, text_plan, skeleton_result, skeleton))
     fixture.reset_fixture_to_base()
     printed_before = compose_before.replace("return prompt", "print(prompt)").replace("prompt", "line")
     fixture.write_fixture_file("nc-systems/handoff/recovery-note-program.py", printed_before)
