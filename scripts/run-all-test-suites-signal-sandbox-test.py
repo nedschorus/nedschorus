@@ -19,9 +19,11 @@ import pathlib
 import signal
 import socket
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 # Before anything runs git, so the scratch repository is built where this suite says.
@@ -606,6 +608,80 @@ with tempfile.TemporaryDirectory() as scratch_name:
     check("a suite listed to run outside the sandbox runs without the prefix",
           "PREFIXED" not in outside["log"].read_text()
           and "ran" in outside["log"].read_text(), outside["log"].read_text())
+
+# --- A suite outside an nc-test-sandbox leaves nothing in the shared temp directory ---
+
+with tempfile.TemporaryDirectory() as scratch_name:
+    scratch = pathlib.Path(scratch_name)
+    subprocess.run(["git", "init", "-q"], cwd=scratch, check=True)
+    made_record = scratch / "made"
+    (scratch / "makes-a-directory-then-sleeps-test.py").write_text(
+        "import pathlib, sys, tempfile, time\n"
+        f"pathlib.Path({str(made_record)!r}).write_text(tempfile.mkdtemp(prefix='made-'))\n"
+        "time.sleep(60)\n")
+    run_stops = []
+
+    def stop_once_the_directory_is_made():
+        deadline = time.monotonic() + 30
+        while not made_record.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        run_stops.append("the test's stop")
+
+    stopper = threading.Thread(target=stop_once_the_directory_is_made, daemon=True)
+    stopper.start()
+    killed = runner.run_one_suite(scratch, sys.executable, "makes-a-directory-then-sleeps-test.py",
+                                  scratch, run_stops=run_stops)
+    stopper.join()
+    made = pathlib.Path(made_record.read_text()) if made_record.exists() else None
+    check("a suite outside an nc-test-sandbox killed with SIGKILL leaves no directory it made "
+          "through TMPDIR, nor the TMPDIR it was given, and that TMPDIR is not the shared one",
+          killed.get("stopped by") == "the test's stop" and made is not None
+          and not made.exists() and not made.parent.exists()
+          and made.parent.parent == pathlib.Path(tempfile.gettempdir())
+          and made.parent.name.startswith(
+              runner.SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX)
+          and killed["output_note"] is None,
+          (killed, made))
+    # On the Mac, restart-live-seats-at-login-test.py binds a socket at
+    # <TMPDIR>/lstXXXXXXXX/tmux-501/fleet-anchor; with the Mac's 48-character temp directory the
+    # path stays under macOS's 104-byte limit only while the runner adds at most 13 characters.
+    check("the TMPDIR given to a suite outside an nc-test-sandbox is at most 13 characters longer "
+          "than the shared temp directory",
+          made is not None
+          and len(str(made.parent)) - len(str(pathlib.Path(tempfile.gettempdir()))) <= 13,
+          made)
+
+    (scratch / "leaves-an-unremovable-directory-test.py").write_text(
+        "import os, pathlib\n"
+        "locked = pathlib.Path(os.environ['TMPDIR']) / 'locked'\n"
+        "(locked / 'file').parent.mkdir()\n"
+        "(locked / 'file').write_text('x')\n"
+        "locked.chmod(0o500)\n")
+    unremovable = runner.run_one_suite(scratch, sys.executable,
+                                       "leaves-an-unremovable-directory-test.py", scratch)
+    left = [path for path in pathlib.Path(tempfile.gettempdir()).glob(
+        f"{runner.SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX}*")
+        if (path / "locked").is_dir()]
+    check("a TMPDIR the runner cannot remove is named, with the command that removes it, "
+          "in the suite's output note",
+          unremovable["exit"] == 0 and len(left) == 1
+          and f"the temporary directory the suite was given, {left[0]}, could not be removed ("
+          in (unremovable["output_note"] or "")
+          and f"`chmod -R u+rwx {shlex.quote(str(left[0]))} && rm -rf {shlex.quote(str(left[0]))}`"
+          in unremovable["output_note"],
+          (unremovable, left))
+    for path in left:
+        (path / "locked").chmod(0o700)
+        shutil.rmtree(path)
+
+    (scratch / "prints-tmpdir-test.py").write_text("import os\nprint(os.environ.get('TMPDIR'))\n")
+    (scratch / "bwrap").write_text('#!/bin/sh\n"$@"\n')
+    (scratch / "bwrap").chmod(0o755)
+    in_sandbox = runner.run_one_suite(scratch, sys.executable, "prints-tmpdir-test.py", scratch,
+                                      sandbox_prefix=(str(scratch / "bwrap"),), platform="darwin")
+    check("a suite in an nc-test-sandbox keeps the TMPDIR the sandbox gives it",
+          in_sandbox["log"].read_text().strip() == str(os.environ.get("TMPDIR")),
+          in_sandbox["log"].read_text())
 
 for suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX:
     check(f"the suite listed to run outside the sandbox exists: {suite}",
