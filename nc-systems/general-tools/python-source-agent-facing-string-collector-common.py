@@ -28,7 +28,10 @@ alone. An empty string literal is no message either. A message built with + is o
 its literal pieces joined and each other operand shown as {source}; an f-string
 field in the chain keeps its conversion and format spec, {x!r} and {x:.1f}, as ast.unparse writes
 the field of a standalone f-string. Each entry also holds literal_text, the message's literal
-pieces alone, outside every {...} placeholder. A message held in a local name
+pieces alone, outside every {...} placeholder, and text_as_agent_reads_it_with_placeholder_stand_ins,
+the message as the agent reads it, with each placeholder shown as <its source>, or as its value
+when it names a module-level string constant, as
+render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins says. A message held in a local name
 is found when its own function's body binds the name, with =, an annotation or +=, to a
 non-empty string literal, an f-string, a + chain holding a string literal, a string literal
 % something or a string literal's join, or to a conditional expression with such a branch,
@@ -115,6 +118,11 @@ def addition_chain_operands(expression):
     return [expression]
 
 
+def is_addition_chain_holding_string_literal(expression):
+    return (isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Add)
+            and any(is_string_literal_node(operand) for operand in addition_chain_operands(expression)))
+
+
 def f_string_field_text(field):
     """The whole field, such as {x!r} or {x:.1f}, as ast.unparse writes it inside a standalone f-string."""
     unparsed = ast.unparse(ast.JoinedStr(values=[field]))
@@ -142,11 +150,9 @@ def message_text_of_addition_chain(operands, literal_only=False):
 def string_nodes_without_f_string_parts(expression):
     """Each string literal, f-string or + chain holding a string literal, as one node; a + chain
     is one message, so its literal pieces are not yielded separately."""
-    if isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Add):
-        operands = addition_chain_operands(expression)
-        if any(is_string_literal_node(operand) for operand in operands):
-            yield expression
-            return
+    if is_addition_chain_holding_string_literal(expression):
+        yield expression
+        return
     if isinstance(expression, ast.JoinedStr):
         yield expression
     elif isinstance(expression, ast.Constant) and isinstance(expression.value, str):
@@ -199,6 +205,27 @@ def placeholder_sources_of_string_node(node):
         elif not (isinstance(operand, ast.Constant) and isinstance(operand.value, str)):
             sources.append("{" + ast.unparse(operand) + "}")
     return tuple(sources)
+
+
+def render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(node, module_string_values):
+    """The text as the agent reads it, without Python's quotes and prefixes: a name that
+    module_level_string_values maps, given as a + operand or an f-string field with no conversion or
+    format spec, becomes its value, rendered the same way; any other f-string field or non-literal
+    operand becomes <its source>, as {path} becomes <path>."""
+    render = render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(part.value if isinstance(part, ast.Constant)
+                       else render(part.value, module_string_values)
+                       if part.conversion == -1 and part.format_spec is None
+                       else "<" + ast.unparse(part.value) + ">"
+                       for part in node.values)
+    if is_addition_chain_holding_string_literal(node):
+        return "".join(render(operand, module_string_values) for operand in addition_chain_operands(node))
+    if isinstance(node, ast.Name) and node.id in module_string_values:
+        return render(module_string_values[node.id], module_string_values)
+    return "<" + ast.unparse(node) + ">"
 
 
 def literal_text_of_string_node(node):
@@ -351,6 +378,8 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
             entry = {"line": node.lineno, "end_line": node.end_lineno, "label": label,
                      "text": text_of_string_node(node), "literal_text": literal_text_of_string_node(node),
                      "placeholder_value_source_code_texts": placeholder_sources_of_string_node(node),
+                     "text_as_agent_reads_it_with_placeholder_stand_ins":
+                         render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(node, self.module_string_values),
                      "kind": kind}
             self.entries_by_node_context[identity] = entry
             self.string_entries.append(entry)
@@ -739,7 +768,8 @@ def module_level_string_values(tree):
 
 
 def agent_facing_string_nodes_in_source(source):
-    """Each entry holds line and end_line, counted from 1, label, text, literal_text and kind,
+    """Each entry holds line and end_line, counted from 1, label, text, literal_text,
+    placeholder_value_source_code_texts, text_as_agent_reads_it_with_placeholder_stand_ins and kind,
     "prompt" or "message".
     Source that is None or does not parse yields no entries."""
     if source is None:

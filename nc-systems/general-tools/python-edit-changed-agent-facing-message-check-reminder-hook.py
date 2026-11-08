@@ -4,10 +4,15 @@ list the agent-facing-messages the tool call added or changed, tell the agent
 to check each against the page on writing them, and give each listed message
 its cold-read-fast-read command: the hook writes each message's text to a file
 of its own under the temporary directory, because cold-read-fast-read.py reads
-only files, and the file's name becomes the cold-read-record's name.
+only files, and the file's name becomes the cold-read-record's name. The text
+written is the message as the agent reads it, without Python's quotes, with
+each placeholder shown as <its source>, or as its value when it names a
+module-level string constant, as the collector's
+text_as_agent_reads_it_with_placeholder_stand_ins says, so the reader is not handed
+Python source.
 
 Each target file is named by the source file's repository-relative path and a
-digest of the message's text alone, in one directory under the temporary
+digest of that written text alone, in one directory under the temporary
 directory. The hook writes a target file only when it is missing, and never
 removes one, so a command reads the text its reminder listed for as long as the
 temporary directory keeps the file; a rewritten message gets a new file and a
@@ -328,8 +333,8 @@ def inspection_text(payload, relative_path: str):
     if not listed:
         return None
     try:
-        targets = {entry["text"]: fast_read_target_written(relative_path, entry["text"])
-                   for entry in listed}
+        targets = {entry["text"]: fast_read_target_written(
+                       relative_path, entry["text_as_agent_reads_it_with_placeholder_stand_ins"]) for entry in listed}
         targets_error = None
     except OSError as error:
         targets, targets_error = {}, f"{type(error).__name__}: {error}"[:REASON_CHARACTER_LIMIT]

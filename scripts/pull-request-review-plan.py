@@ -51,7 +51,11 @@ print(stopped_line(...)) does. Test files are those ending in
 -test.py or under a tests directory, and are excluded: a test's copy of an
 expected message is not handed to an agent. F-string
 placeholders survive in the listing. Beside each listed string is its
-cold-read-fast-read command, whose target file holds the string's new text. The
+cold-read-fast-read command, whose target file holds the string's new text as
+the agent reads it, with each placeholder shown as <its source>, or as its value
+when it names a module-level string constant, as the collector's
+text_as_agent_reads_it_with_placeholder_stand_ins says; --json gives that text
+as new_text_as_agent_reads_it_with_placeholder_stand_ins. The
 target file is written as
 nc-systems/general-tools/python-edit-changed-agent-facing-message-check-reminder-hook.py
 writes it: in the directory agent-facing-message-fast-read-targets under the
@@ -627,6 +631,8 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
         if changed_file["status"] == "A":
             entries.extend({"path": path, "line": node["line"], "label": node["label"],
                             "old_text": None, "new_text": node["text"],
+                            "new_text_as_agent_reads_it_with_placeholder_stand_ins":
+                                node["text_as_agent_reads_it_with_placeholder_stand_ins"],
                             **approval_fields_for_agent_text(node["kind"], None, node)} for node in new_nodes)
             continue
         old_nodes = agent_facing_string_nodes_in_source(read_revision_blob_or_none(repository, old_revision, path))
@@ -652,6 +658,8 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
                 old_text = old_match[1]["text"] if old_match else None
                 entries.append({"path": path, "line": new_node["line"], "label": new_node["label"],
                                 "old_text": old_text, "new_text": new_node["text"],
+                                "new_text_as_agent_reads_it_with_placeholder_stand_ins":
+                                    new_node["text_as_agent_reads_it_with_placeholder_stand_ins"],
                                 **approval_fields_for_agent_text(new_node["kind"], old_match[1] if old_match else None,
                                                                  new_node)})
     return sorted(entries, key=lambda entry: (entry["path"], entry["line"], entry["label"]))
@@ -659,12 +667,13 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
 
 def entries_with_fast_read_commands(entries):
     """Give each entry its target file's name and the cold-read-fast-read command
-    for its new text, written to that file the way the message reminder hook
-    writes it, or the reason the file could not be written."""
+    for its new text as the agent reads it, written to that file the way the
+    message reminder hook writes it, or the reason the file could not be written."""
     for entry in entries:
-        entry["fast_read_target_file_name"] = fast_read_target_file_name(entry["path"], entry["new_text"])
+        text = entry["new_text_as_agent_reads_it_with_placeholder_stand_ins"]
+        entry["fast_read_target_file_name"] = fast_read_target_file_name(entry["path"], text)
         try:
-            target = fast_read_target_written(entry["path"], entry["new_text"])
+            target = fast_read_target_written(entry["path"], text)
         except OSError as failure:
             entry["fast_read_command"] = None
             entry["fast_read_target_error"] = f"{type(failure).__name__}: {failure}"
@@ -728,8 +737,10 @@ def missing_fast_read_commands_message(missing, json_rerun_command=None):
             + get_json
             + "2. For each file name listed below, find an entry whose fast_read_target_file_name is that file name, "
             "in either the agent_facing_text_whole_pull_request list or the agent_facing_text_delta list. Entries "
-            "with the same file name hold the same new_text, so the first one you find will do.\n"
-            "3. Write that entry's new_text to a file of that name, in a directory outside your checkout, such as one "
+            "with the same file name hold the same new_text_as_agent_reads_it_with_placeholder_stand_ins, so the first "
+            "one you find will do.\n"
+            "3. Write that entry's new_text_as_agent_reads_it_with_placeholder_stand_ins to a file of that name, in a "
+            "directory outside your checkout, such as one "
             "made with mktemp -d. Write the decoded text, not the JSON string: read the plan with a JSON parser, such as "
             "Python's json.load, so that each escape, such as \\n or \\\", becomes the character it stands for.\n"
             "4. For each file you wrote, run " + FAST_READ_COMMAND.format(target="<that file's full path>")
