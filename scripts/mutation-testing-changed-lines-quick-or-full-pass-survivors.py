@@ -104,7 +104,8 @@ script writes after its SUMMARY line, as one JSON object: "head" and
 of mutants with "module_path", "line", "operator", "diff" and "reason", where
 "line" is the line that must end with a `# pragma: no mutate` comment to skip
 that mutant; and "files_with_no_suite", a list of paths. A file that cannot be
-written exits 2.
+written exits 2. A run that exits 2 because it could not run prints no SUMMARY
+line and writes no such file.
 
 THE RECORDED MUTANT KILLED CHECK, --recorded-mutant-killed-check DIFF_FILE
 [DIFF_FILE ...], judges mutants a full mutation pass recorded: each DIFF_FILE
@@ -127,19 +128,26 @@ NO LONGER EXISTS when there is nothing to kill, because the line it changes ends
 `# pragma: no mutate` comment at the head, or the diff does not apply at the
 head and origin/main, read without fetching, lacks the lines it replaces; and
 MUTANT COULD NOT BE JUDGED, with what to do, when the diff file cannot be read or
-names no file, the file has no suite, the diff does not apply at the head
-while origin/main has those lines or cannot tell, or the runner judged no
+names no file, the file has no suite while the mutant still applies at the
+head, the diff does not apply at the head
+while origin/main has those lines or cannot tell, the lines it replaces appear
+more than once at the head when a `# pragma: no mutate` comment is not counted,
+some with the comment and some without, or the runner judged no
 suite with the mutant applied, as when a suite ran past its own time limit or
-the runner was refused. A line starting RECORDED MUTANTS counts each verdict.
+the runner was refused. Whether a mutant still exists is decided before
+whether its file has a suite, so the mutant of a deleted file no longer exists
+once origin/main lacks the file too. A line starting RECORDED MUTANTS counts each verdict.
 --recorded-mutant-killed-check-verdicts-json-file-to-write, when given, names a file it then writes
 as one JSON object: "head", the commit judged at, and "verdicts", which maps
 each DIFF_FILE, as given, to its "verdict" ("killed", "survived", "no longer exists"
 or "could not be judged") and "why", the rest of its line; a file that cannot be written
 exits 2. It exits 0 when every mutant is killed or no longer exists, 1 when a
 mutant survived and every other is killed or no longer exists, and 2 when a
-mutant could not be judged, or when it cannot run at all, as when a suite fails without a mutant,
-and then it writes no JSON file; the scratch worktree is removed whatever
-happens.
+mutant could not be judged, with the JSON file written. It also exits 2,
+printing no verdict line and writing no JSON file, when it cannot run at all:
+when a suite fails without a mutant, or when the suite runner judges no suite
+without a mutant, as when another test run holds the machine's lock, its
+refusal printed. The scratch worktree is removed whatever happens.
 
 Exit codes: 0 every mutant was killed, 1 a mutant survived, errored or was
 not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
@@ -853,24 +861,67 @@ def recorded_mutant_run_verdict(exit_code, output, runner):
 
 def recorded_mutant_line_ends_with_pragma(source, hunks):
     """True when, at the place some hunk applies, the last line it replaces has a
-    `# pragma: no mutate` comment after it, so no mutation pass makes the mutant any more. The
-    place is found as recorded_mutant_hunk_place finds it, reading a line with the comment as
-    the line without it, so the same line elsewhere in the file, with or without the comment,
-    does not decide."""
+    `# pragma: no mutate` comment after it, so no mutation pass makes the mutant any more; None
+    when no hunk does and some hunk's place is not found once; else False. The place is found
+    as recorded_mutant_hunk_place finds it, reading a line with the comment as the line without
+    it, so the same line elsewhere in the file, with or without the comment, does not decide.
+    None is how a place that the comment makes ambiguous shows: read as exact lines, the hunk
+    could still be found once, at a twin of the mutant's own line."""
+    found_every_place = True
     lines = source.split("\n")
     for old_start, old, new in hunks:
         place = recorded_mutant_hunk_place(lines, old_start, old, new,
                                            line_equal_or_with_pragma_no_mutate_after)
         if place is None:
+            found_every_place = False
             continue
         at, old, new = place
         start, end = hunk_shared_context_line_counts(old, new)
         if len(old) - end > start and lines[at + len(old) - end - 1] != old[len(old) - end - 1]:
             return True
-    return False
+    return False if found_every_place else None
 
 
-def recorded_mutant_not_applied_verdict(checkout, path, hunks, head, diff_file, why_not_applied,
+def recorded_mutant_verdict_without_a_suite_run(checkout, path, hunks, head, source,
+                                                why_source_unreadable, environment):
+    """((verdict, why), None) when the mutant is judged without running a suite: its file
+    cannot be read at the head (source None), its line ends with a `# pragma: no mutate`
+    comment, its place is ambiguous, or it does not apply; else (None, the mutated source)."""
+    if source is None:
+        return recorded_mutant_not_applied_verdict(
+            checkout, path, hunks, head, why_source_unreadable, environment), None
+    ends_with_pragma = recorded_mutant_line_ends_with_pragma(source, hunks)
+    if ends_with_pragma:
+        return ("no longer exists", (
+            f"the line it changes in {path} ends with a `# pragma: no mutate` comment at head "
+            f"{head[:12]}, so no mutation pass makes it; the nightly mutation pass drops it from "
+            f"its task once that is on main.")), None
+    mutated_source = source_with_recorded_mutant_applied(source, hunks)
+    if mutated_source is None:
+        return recorded_mutant_not_applied_verdict(
+            checkout, path, hunks, head,
+            "the lines it replaces are missing from the file or appear in it more than once",
+            environment), None
+    if ends_with_pragma is None:
+        return ("could not be judged", (
+            f"in {path} at head {head[:12]}, the lines this diff file replaces appear more than "
+            f"once when each line's trailing `# pragma: no mutate` comment is stripped before "
+            f"comparing: some copies end with that comment and some do not, so which copy is "
+            f"the mutant's own line cannot be told, and no suite was run. The diff's `@@` line "
+            f"gives the line number the mutant had when it was recorded; read the copies "
+            f"around that number to tell which is the mutant's.\n"
+            f"If the mutant's own line ends with the comment on origin/main: no mutation pass "
+            f"makes the mutant any more; mark the survivor task that names this diff file "
+            f"completed, saying why in the task's description.\n"
+            f"Otherwise: write a test that fails when the diff's change is made on the mutant's "
+            f"own line; check that by making the change by hand, running the test, and putting "
+            f"the line back before you commit; say so in your pull request; and mark the "
+            f"survivor task completed once that pull request merges, since every rerun of this "
+            f"command gives this same verdict.")), None
+    return None, mutated_source
+
+
+def recorded_mutant_not_applied_verdict(checkout, path, hunks, head, why_not_applied,
                                         environment):
     """(verdict, why) for a recorded mutant that does not apply to its file at the head."""
     on_main = recorded_mutant_lines_on_main(checkout, path, hunks, environment)
@@ -934,6 +985,14 @@ def recorded_mutant_killed_check(arguments, checkout, environment, runner):
             continue
         suites = suites_for_file(path, suites_at, recordings_directory, runner)
         if not suites:
+            # A deleted module leaves no suite reading it, yet its mutant no longer exists.
+            shown = run(["git", "show", f"{head}:{path}"], checkout, environment)
+            verdict, _ = recorded_mutant_verdict_without_a_suite_run(
+                checkout, path, hunks, head, None if shown.returncode else shown.stdout,
+                "the file is not there, or git cannot read it", environment)
+            if verdict is not None:
+                verdicts[diff_file] = verdict
+                continue
             verdicts[diff_file] = ("could not be judged", (
                 f"at head {head[:12]} no recorded suite reads {path} and it has no sibling suite "
                 f"(a {path[:-len('.py')]}-test.py or -test.sh), so no suite can kill the mutant.\n"
@@ -1000,6 +1059,30 @@ def recorded_mutants_judged_in_one_worktree(to_run, head, arguments, checkout, e
                                           recorded_inputs_directory),
                 cwd=str(worktree), env=environment, text=True, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, check=False)
+            if unmutated.returncode == runner.EXIT_LOCKED:  # pragma: no mutate, `is` matches a small int as `==` does, and the runner exits no higher than EXIT_LOCKED but by a signal, which is negative
+                raise CouldNotRun(
+                    f"{PROGRAM}: not run — the suite runner scripts/run-all-test-suites.py, run "
+                    f"at head {head[:12]} without a mutant, exited {runner.EXIT_LOCKED}, which "
+                    f"means it ran no suite: another test run holds a lock the runner takes (the "
+                    f"machine's lock, or the lock on the runner's log directory), so no mutant "
+                    f"can be judged. The runner's refusal, which names the lock and the process "
+                    f"holding it:\n"
+                    f"{unmutated.stdout.strip()}\n"
+                    f"Run scripts/{PROGRAM}.py again, with the same options, once that process "
+                    f"has ended.")
+            if unmutated.returncode and not runner.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(
+                    unmutated.stdout):
+                raise CouldNotRun(
+                    f"{PROGRAM}: not run — the suite runner scripts/run-all-test-suites.py, run "
+                    f"at head {head[:12]} without a mutant, exited {unmutated.returncode} "
+                    f"without reporting any suite as failed, so no mutant can be judged; the "
+                    f"runner's output {runner_output_described(unmutated.stdout, runner)}\n"
+                    f"{unmutated.stdout.strip()}\n"
+                    f"If that output names a cause, fix it, then run scripts/{PROGRAM}.py again "
+                    f"with the same options.\n"
+                    f"If it names none, as when it is empty, run scripts/{PROGRAM}.py once more "
+                    f"with the same options; if that run fails the same way, put both outputs in "
+                    f"the description of the pull request you are checking.")
             if unmutated.returncode != 0:
                 raise CouldNotRun(
                     f"{PROGRAM}: not run — the suites for the mutated files do not pass at head "
@@ -1011,24 +1094,13 @@ def recorded_mutants_judged_in_one_worktree(to_run, head, arguments, checkout, e
             for diff_file, path, hunks, suites in to_run:
                 source_file = worktree / path
                 try:
-                    source = source_file.read_text(encoding="utf-8")
+                    source, why_unreadable = source_file.read_text(encoding="utf-8"), None
                 except (OSError, UnicodeDecodeError) as error:
-                    verdicts[diff_file] = recorded_mutant_not_applied_verdict(
-                        checkout, path, hunks, head, diff_file,
-                        f"the file cannot be read ({error})", environment)
-                    continue
-                if recorded_mutant_line_ends_with_pragma(source, hunks):
-                    verdicts[diff_file] = ("no longer exists", (
-                        f"the line it changes in {path} ends with a `# pragma: no mutate` "
-                        f"comment at head {head[:12]}, so no mutation pass makes it; the "
-                        f"nightly mutation pass drops it from its task once that is on main."))
-                    continue
-                mutated_source = source_with_recorded_mutant_applied(source, hunks)
-                if mutated_source is None:
-                    verdicts[diff_file] = recorded_mutant_not_applied_verdict(
-                        checkout, path, hunks, head, diff_file,
-                        "the lines it replaces are missing from the file or appear in it more "
-                        "than once", environment)
+                    source, why_unreadable = None, f"the file cannot be read ({error})"
+                verdict, mutated_source = recorded_mutant_verdict_without_a_suite_run(
+                    checkout, path, hunks, head, source, why_unreadable, environment)
+                if verdict is not None:
+                    verdicts[diff_file] = verdict
                     continue
                 source_file.write_text(mutated_source, encoding="utf-8")
                 # Python checks cached bytecode by the source's size and whole-second mtime,
