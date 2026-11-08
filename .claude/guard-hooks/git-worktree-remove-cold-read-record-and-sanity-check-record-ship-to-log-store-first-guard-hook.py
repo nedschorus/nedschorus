@@ -19,11 +19,12 @@ cold-read-full-run, is not shipped: that program rewrites files it has
 already written, so a shipment now would make its own shipment, and every
 later one, refuse the record, and the program ships the record itself when it
 finishes. Such a record refuses the removal only when the command removes
-the worktree it is in, because the removal would delete it first. The hook
-then defers that removal: for each such worktree it starts, detached, the
+the worktree it is in, because the removal would delete it first. When the
+command is that one `git worktree remove` and nothing else, so that the shell
+surely runs it, the hook defers the removal: for each such worktree it starts, detached, the
 waiter GIT_WORKTREE_REMOVE_DEFERRED_WAITER_SCRIPT, which waits until no record in the
 worktree is being written, ships the worktree's records, runs `git worktree
-remove` on it, with -f when the command gave -f or --force, and writes a
+remove` on it, with -f when that removal gave -f or --force, and writes a
 user-alert when that fails. Before starting it the hook takes an flock on the
 worktree's directory and hands the descriptor to the waiter, which holds it
 until it exits; when another process already holds that flock, a waiter
@@ -41,7 +42,11 @@ variable, a glob or a substitution, `worktree remove` is given an option
 other than -f or --force or more than one path, or the command changes
 directory before a path that depends on it, the hook refuses the removal
 while any record is being written, starts no waiter, and asks for the path
-written out in full, with -f when the command gave -f or --force.
+written out in full, with -f when the command gave -f or --force. A removal
+of a worktree in which a record is being written, in a command that does more
+than that removal, as in `git push && git worktree remove /wt`, gets the same
+refusal and starts no waiter, because the hook cannot tell whether the shell
+would run the removal.
 
 It allows the command silently when every record shipped or none needed to.
 It refuses the command, naming each record that did not ship, its worktree,
@@ -217,6 +222,8 @@ REMOVED_WORKTREE_UNRESOLVED_REFUSAL_TEMPLATE = (
     "{records}"
     "Run the removal again as `git worktree remove{force} <path>`, with the worktree's path written "
     "out in full, as an absolute path with no variable, in a command that does not change directory.")
+REMOVAL_NOT_THE_WHOLE_COMMAND_REASON = (
+    "the command does more than the removal, so this hook cannot tell whether the shell runs the removal")
 # A word the shell would still expand: a variable, a substitution or a glob.
 UNEXPANDED_WORD_PATTERN = re.compile(r"[$`*?[]|\{\}")
 DIRECTORY_CHANGING_PROGRAMS = ("cd", "pushd", "popd")
@@ -306,6 +313,23 @@ def shell_command_runs_git_worktree_remove_with_force_option(command):
             if inner is not None and shell_command_runs_git_worktree_remove_with_force_option(inner):
                 return True
     return False
+
+
+def shell_command_is_one_git_worktree_remove_and_nothing_else(command):
+    """True when the whole command is one `git worktree remove` simple command, which the shell always runs:
+    no list, condition, loop, redirection, substitution or bash -c around it or in it.
+
+    False when the parser can only run in a new process, as this needs the syntax tree itself.
+    """
+    try:
+        root = shell_reader.parser().parse(command.encode("utf-8", "surrogateescape")).root_node
+    except shell_reader.ShellParserUnavailable:
+        return False
+    statements = [node for node in root.named_children if node.type != "comment"]
+    if root.has_error or len(statements) != 1 or statements[0].type != "command":
+        return False
+    commands = list(shell_reader.simple_commands(command))
+    return len(commands) == 1 and is_git_worktree_remove(commands[0])
 
 
 def worktree_named_by_path_suffix(argument, worktrees):
@@ -668,6 +692,8 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic, start_wai
                       if unresolved is not None or worktree in removed]
         listed = "".join(RECORD_BEING_WRITTEN_LINE_TEMPLATE.format(record=record, worktree=worktree)
                          for worktree, record in in_removed)
+        if unresolved is None and in_removed and not shell_command_is_one_git_worktree_remove_and_nothing_else(command):
+            unresolved = REMOVAL_NOT_THE_WHOLE_COMMAND_REASON
         if unresolved is not None:
             refusals.append(REMOVED_WORKTREE_UNRESOLVED_REFUSAL_TEMPLATE.format(
                 reason=unresolved, records=listed,

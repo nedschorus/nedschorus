@@ -27,7 +27,10 @@ hook's checks itself, using the hook's own functions:
 5. It runs `git -C <--git-directory> worktree remove [-f] <worktree>`.
 
 One limit, TOTAL_LIMIT_SECONDS, counts from this program's start across every
-step. It writes one line per step to its standard output, which the hook sends
+step. Each check of the log-store and each shipping pass runs in a thread of its
+own, bounded by that limit in real seconds, so a call that stalls, as an ssh to
+ned-box can on the Mac, ends the wait when the limit runs out; the stalled
+thread is left to end with this program. It writes one line per step to its standard output, which the hook sends
 to this run's log file in the log-store.
 
 How it can fail: when the limit runs out, a shipment fails or git refuses, or
@@ -50,6 +53,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime, timezone
@@ -79,6 +83,9 @@ GIT_WORKTREE_REMOVE_DEFERRED_FAILED_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_
     "folder, and then run `git worktree remove` on the worktree by its absolute path.")
 WAITER_TIME_LIMIT_RAN_OUT_USER_ALERT_FAILURE_SENTENCE = "its time limit ran out while these records were still being written."
 RECORDS_NOT_SHIPPED_USER_ALERT_FAILURE_SENTENCE = "these records did not ship to the log-store."
+LOG_STORE_CALL_TIME_LIMIT_RAN_OUT_USER_ALERT_FAILURE_SENTENCE = (
+    "its time limit ran out while it was checking the log-store or shipping a record, as when an ssh to "
+    "ned-box stalls.")
 RECORDS_NOT_READ_FAILURE_TEMPLATE = "it could not read the worktree's records ({error})."
 GIT_FAILURE_TEMPLATE = "`{command}` exited {code}: {error}"
 UNEXPECTED_FAILURE_TEMPLATE = "the waiter stopped on an error: {error}"
@@ -103,6 +110,31 @@ def record_directory_being_written_lock_is_held_by_any_process(kinds, record):
         return False
 
 
+class LogStoreCallTimeLimitRanOut(Exception):
+    pass
+
+
+def finished_by(wall_deadline, function, *arguments):
+    """Return function(*arguments), run in a thread of its own; raise LogStoreCallTimeLimitRanOut when
+    time.monotonic() reaches wall_deadline first, leaving the thread to end on its own."""
+    outcome = {}
+
+    def run():
+        try:
+            outcome["result"] = function(*arguments)
+        except BaseException as error:
+            outcome["error"] = error
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(max(0.0, wall_deadline - time.monotonic()))
+    if thread.is_alive():
+        raise LogStoreCallTimeLimitRanOut()
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["result"]
+
+
 class WaiterFailed(Exception):
     def __init__(self, failure, records_text):
         super().__init__(failure)
@@ -114,8 +146,8 @@ def being_written_lines(hook, worktree, records):
                    for record in records)
 
 
-def wait_until_released_and_shipped_by_writer(hook, kinds, worktree, records, deadline, clock, sleep,
-                                              poll_seconds, grace_seconds):
+def wait_until_released_and_shipped_by_writer(hook, kinds, worktree, records, deadline, wall_deadline, clock,
+                                              sleep, poll_seconds, grace_seconds):
     """Steps 1 and 2 for these records; raises WaiterFailed when the deadline passes first."""
     while any(record_directory_being_written_lock_is_held_by_any_process(kinds, record) for record in records):
         if clock() >= deadline:
@@ -126,22 +158,31 @@ def wait_until_released_and_shipped_by_writer(hook, kinds, worktree, records, de
     grace_end = min(deadline, clock() + grace_seconds)
     waiting = [record for record in records if record.exists()]
     while waiting and clock() < grace_end:
-        waiting = [record for record in waiting
-                   if record.exists() and not hook.store_holds_every_file_of(kinds[record.parent.name], record)]
+        try:
+            waiting = [record for record in waiting
+                       if record.exists() and not finished_by(wall_deadline, hook.store_holds_every_file_of,
+                                                              kinds[record.parent.name], record)]
+        except LogStoreCallTimeLimitRanOut:
+            raise WaiterFailed(LOG_STORE_CALL_TIME_LIMIT_RAN_OUT_USER_ALERT_FAILURE_SENTENCE,
+                               being_written_lines(hook, worktree, records))
         if waiting:
             sleep(poll_seconds)
     if waiting:
         log(f"not shipped by their writers within {grace_seconds} seconds: {', '.join(map(str, waiting))}")
 
 
-def ship_until_none_is_being_written(hook, kinds, worktree, records, deadline, clock, sleep, poll_seconds,
-                                     grace_seconds, runner):
+def ship_until_none_is_being_written(hook, kinds, worktree, records, deadline, wall_deadline, clock, sleep,
+                                     poll_seconds, grace_seconds, runner):
     """Steps 1 to 4: return once every record in the worktree is shipped and none is being written."""
     while True:
-        wait_until_released_and_shipped_by_writer(hook, kinds, worktree, records, deadline, clock, sleep,
-                                                  poll_seconds, grace_seconds)
+        wait_until_released_and_shipped_by_writer(hook, kinds, worktree, records, deadline, wall_deadline, clock,
+                                                  sleep, poll_seconds, grace_seconds)
         progress = {"shipped": set(), "lines": {}, "being_written": []}
-        hook.ship_every_record([worktree], runner, clock, deadline, progress)
+        try:
+            finished_by(wall_deadline, hook.ship_every_record, [worktree], runner, clock, deadline, progress)
+        except LogStoreCallTimeLimitRanOut:
+            raise WaiterFailed(LOG_STORE_CALL_TIME_LIMIT_RAN_OUT_USER_ALERT_FAILURE_SENTENCE,
+                               being_written_lines(hook, worktree, records))
         if "error" in progress:
             raise WaiterFailed(RECORDS_NOT_READ_FAILURE_TEMPLATE.format(error=progress["error"]),
                                being_written_lines(hook, worktree, records))
@@ -207,6 +248,8 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep, runner=subprocess.ru
     parser.add_argument("--writer-own-shipment-grace-seconds", type=float, default=WRITER_OWN_SHIPMENT_GRACE_SECONDS)
     arguments = parser.parse_args(argv)
     deadline = clock() + arguments.total_limit_seconds
+    # The same limit in real seconds: an injected clock cannot bound a stalled call.
+    wall_deadline = time.monotonic() + arguments.total_limit_seconds
     records_text = ""
     log(f"waiting to remove {arguments.worktree}{' with -f' if arguments.force else ''}; records: "
         + ", ".join(map(str, arguments.record)))
@@ -214,9 +257,9 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep, runner=subprocess.ru
         hook = hook or module_at(HOOK_SCRIPT, "git_worktree_remove_records_ship_first_guard_hook")
         kinds = {kind[0]: kind for kind in hook.record_kinds()}
         records_text = being_written_lines(hook, arguments.worktree, arguments.record)
-        ship_until_none_is_being_written(hook, kinds, arguments.worktree, arguments.record, deadline, clock, sleep,
-                                         arguments.poll_seconds, arguments.writer_own_shipment_grace_seconds,
-                                         runner)
+        ship_until_none_is_being_written(hook, kinds, arguments.worktree, arguments.record, deadline, wall_deadline,
+                                         clock, sleep, arguments.poll_seconds,
+                                         arguments.writer_own_shipment_grace_seconds, runner)
         remove_worktree(arguments.worktree, arguments.git_directory, arguments.force, records_text, runner)
         return 0
     except WaiterFailed as failed:
