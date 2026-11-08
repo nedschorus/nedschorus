@@ -46,7 +46,8 @@ round that was answered has its fix commit carried onto the replacing branch, an
 of the replacement, which the brief still needs, grades it. Once this pull request's first round is
 answered, by a fix commit or a round record, that answer covers the carried findings, so its later
 rounds carry none. For the same reason, when C replaces B and B replaces A, A's findings are not carried
-into C when B's first round was answered, since they were carried into that round. A carried finding or nit with the same path, line and body as one of this pull
+into C when B's first round was answered, by a fix commit, a round record or merge-lane-2's later approval of B,
+even of the round's unchanged frozen-head, since they were carried into that round. A carried finding or nit with the same path, line and body as one of this pull
 request's own counts once. A #replaces line the reader cannot follow is refused.
 
 Without --check, run in the author's checkout: refuse when the pull request's head has moved past

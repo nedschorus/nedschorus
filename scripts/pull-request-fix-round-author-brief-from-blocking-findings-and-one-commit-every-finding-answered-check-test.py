@@ -1924,6 +1924,30 @@ def replaces_cases(root, repository, base, frozen_head):
     check("replaces: A's open round is carried into C when merge-lane-2 never reviewed B",
           code == 0 and "Blocking findings (3)" in out and "3. old.py:30" in out, err + out)
 
+    def as_pull_request(number, routes, body):
+        """The REPLACED_NUMBER routes of routes, moved to pull request number, whose description is body."""
+        moved = {key.replace(f"/{REPLACED_NUMBER}/", f"/{number}/")
+                 .replace(f"pr view {REPLACED_NUMBER} ", f"pr view {number} "): value
+                 for key, value in routes.items()
+                 if f"/{REPLACED_NUMBER}/" in key or key.startswith(f"pr view {REPLACED_NUMBER} ")}
+        view = f"pr view {number} --json url,headRefOid,headRefName,body"
+        moved[view] = {"stdout": json.dumps({**json.loads(moved[view]["stdout"]), "body": body})}
+        return moved
+
+    routes = replaced_routes(frozen_head, middle_head, [replaced_review(53, middle_head)],
+                             replaced_records=[round_record(middle_head, [53])])
+    routes[f"pr view {REPLACED_NUMBER} --json url,headRefOid,headRefName,body"] = {"stdout": json.dumps(
+        {"url": REPLACED_URL, "headRefOid": middle_head, "headRefName": "old-branch",
+         "body": "#replaces https://github.com/o/r/pull/4\n"})}
+    never_reviewed = as_pull_request(4, replaced_routes(frozen_head, REPLACED_SECOND_HEAD, []),
+                                     "#replaces https://github.com/o/r/pull/3\n")
+    oldest = as_pull_request(3, replaced_routes(frozen_head, REPLACED_SECOND_HEAD, REPLACED_TWO_ROUNDS,
+                                                REPLACED_COMMENTS), "Old.")
+    code, out, err = run(root, repository, {**routes, **never_reviewed, **oldest})
+    check("replaces: when D replaces C, C replaces B and B replaces A, A's open round is not carried into D "
+          "once C's first round was answered, though merge-lane-2 never reviewed B",
+          code == 0 and "Blocking findings (2)" in out and "old.py" not in out, err + out)
+
     code, out, err = run(root, repository, replaced_routes(
         frozen_head, REPLACED_SECOND_HEAD, REPLACED_TWO_ROUNDS, REPLACED_COMMENTS,
         description="#replaces pull request 5\n"))
