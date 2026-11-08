@@ -213,6 +213,23 @@ M the walk finder's count of the items shown and waiting, and names it with
 the same K and M. The line naming the next item gives that counted M,
 whatever M the walk-document's headings give.
 
+RULING GIVEN. Once CLOSE has written the minutes for an answer that is not
+held, it lists the open pull requests with `gh pr list`, run in the checkout,
+and, for each answered item and each item whose held answer it decides with
+it, posts on every pull request with a review holding the line
+`#held_on_ruling <walk name> item <number>` the comment `#ruling_given <word>`.
+The walk name is the walk-minutes' file name without `-minutes.md`; a
+review line matches only when, whitespace at its ends aside, it is that line
+exactly. The word is `approved` for an answer recorded `<accepted>`, an
+option, an already-decided item and an item settled without asking included;
+`disapproved` for one recorded `<rejected>`; `deferred` for a deferral, a
+second one included; `moved_on` for either move on; and `part_answers` for
+answers to parts. merge-lane-2's pull request intake reads the comment. Each gh
+call is stopped after GH_TIMEOUT_SECONDS. When the list cannot be had, or a
+comment cannot be posted, the minutes stay as written: CLOSE prints, after the
+rest, what failed and the gh command to run by hand, and exits 2. A held answer
+gets no comment, since it records no ruling yet.
+
 WALK ORDER. The unnumbered items, the summary item left out, are the items
 not yet shown, and only they are sorted; a numbered item keeps its number and
 its place. They come together, where the first of them comes on the round
@@ -774,6 +791,34 @@ CLOSE_NOT_SHOWN_LINES = (
     "List it, with its number, in one line of your next message to the user.",
 )
 CLOSE_ALREADY_DECIDED_CHANGE = "Its change may now be made; the fast reads of the texts it adds:"
+# Both line formats are agreed with merge-lane-2, whose hold command writes the first into its review and whose
+# pull request intake reads the second; change neither without changing those programs.
+HELD_ON_RULING_LINE = "#held_on_ruling {walk} item {number}"
+RULING_GIVEN_LINE = "#ruling_given {word}"
+RULING_GIVEN_WORDS = {OUTCOMES[APPROVED]: APPROVED, OUTCOMES[DISAPPROVED]: DISAPPROVED}
+RULING_GIVEN_DEFERRED, RULING_GIVEN_MOVED_ON, RULING_GIVEN_PART_ANSWERS = "deferred", "moved_on", "part_answers"
+GH_PROGRAM = "gh"
+GH_TIMEOUT_SECONDS = 60
+HELD_PULL_REQUESTS_LIST = ("pr", "list", "--state", "open", "--limit", "1000", "--json", "number,reviews")
+HELD_PULL_REQUESTS_BY_HAND_JQ = ('.[] | select(any(.reviews[].body | split("\\n")[] | gsub("^\\\\s+|\\\\s+$"; ""); '
+                                 '. == {line})) | .number')
+RULING_GIVEN_POSTED = "The ruling on item {number} is posted as `{ruling}` on pull request {pull_request}, held on it."
+RULING_GIVEN_LOOKUP_FAILED = (
+    "The minutes record the answer to item {number}, but the open pull requests merge-lane-2 holds until that item "
+    "is answered could not be looked up, so none of them carries the ruling: `gh pr list` {error}.",
+    "Run `{list_command}` once; for each pull request number it prints, run `{comment_command}` with that number in "
+    "place of <number>, because merge-lane-2 releases or answers a hold only when it reads that comment.",
+    "If that fails too, tell the user: \"merge-lane-2 was not told that item {number} of {walk} is {word}, so the "
+    "pull requests held until that ruling stay held; gh failed.\" A subagent passes this to the agent that "
+    "dispatched it.",
+)
+RULING_GIVEN_POST_FAILED = (
+    "The minutes record the answer to item {number}, but pull request {pull_request}, which merge-lane-2 holds until "
+    "that item is answered, did not get the ruling's comment: `gh pr comment` {error}.",
+    "Run `{comment_command}` once, because merge-lane-2 releases or answers the hold only when it reads that comment.",
+    "If that fails too, tell the user: \"merge-lane-2 was not told that item {number} of {walk} is {word}, so pull "
+    "request {pull_request} stays held; gh failed.\" A subagent passes this to the agent that dispatched it.",
+)
 
 WAITING_ITEM_READ_STEP = "approval-walk-waiting-item-cold-read-fast-read"
 READ_AHEAD_WORKER_STEP = "approval-walk-item-cold-read-fast-read-review-background-worker"
@@ -2208,6 +2253,70 @@ def held_items_decided_with(walk_finder, minutes, parser, answered_numbers, item
     return lines
 
 
+def gh_failure(command, top, gh_program, timeout):
+    """Run gh with command in top; return (its stdout, None), or (None, what went wrong) when it cannot be run,
+    exits nonzero or outlasts timeout."""
+    try:
+        result = subprocess.run([gh_program, *command], cwd=top, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None, f"did not end within {timeout} seconds"
+    except OSError as error:
+        return None, f"could not be run: {error}"
+    if result.returncode != 0:
+        return None, f"exited {result.returncode}: {squeezed(result.stderr.strip()) or 'it printed nothing on stderr'}"
+    return result.stdout, None
+
+
+def pull_requests_held_on(lines, top, gh_program, timeout):
+    """Return ({held line: [the open pull requests whose review holds that line on a line of its own]}, None), or
+    (None, what went wrong) when the open pull requests cannot be listed."""
+    output, error = gh_failure(HELD_PULL_REQUESTS_LIST, top, gh_program, timeout)
+    if error:
+        return None, error
+    try:
+        pull_requests = json.loads(output)
+        held = {line: [] for line in lines}
+        for pull_request in pull_requests:
+            found = {line.strip() for review in pull_request["reviews"] for line in (review["body"] or "").split("\n")}
+            for line in lines:
+                if line in found:
+                    held[line].append(pull_request["number"])
+    except (ValueError, TypeError, KeyError) as error:
+        return None, f"printed what is not a list of pull requests with their reviews: {error!r}"
+    return held, None
+
+
+def ruling_given_comments_posted(walk_name, rulings, top, gh_program, timeout):
+    """Post a `#ruling_given` comment on every open pull request held on the ruling of each item of rulings,
+    [(item number, the word)]; return the lines to print, and whether any comment
+    could not be posted."""
+    lines = {HELD_ON_RULING_LINE.format(walk=walk_name, number=number): (number, word) for number, word in rulings}
+    held, error = pull_requests_held_on(list(lines), top, gh_program, timeout)
+    in_top = f"cd {shlex.quote(str(top))} && gh "
+    output, failed = [], bool(error)
+    for line, (number, word) in lines.items():
+        body = RULING_GIVEN_LINE.format(word=word)
+        values = {"number": number, "walk": walk_name, "word": word}
+        if error:
+            list_command = (in_top + shlex.join(HELD_PULL_REQUESTS_LIST) + " --jq "
+                            + shlex.quote(HELD_PULL_REQUESTS_BY_HAND_JQ.format(line=json.dumps(line))))
+            output += [text.format(error=error, list_command=list_command, **values,
+                                   comment_command=in_top + "pr comment <number> --body " + shlex.quote(body))
+                       for text in RULING_GIVEN_LOOKUP_FAILED]
+            continue
+        for pull_request in held[line]:
+            command = ("pr", "comment", str(pull_request), "--body", body)
+            _, post_error = gh_failure(command, top, gh_program, timeout)
+            if post_error:
+                failed = True
+                output += [text.format(error=post_error, pull_request=pull_request, **values,
+                                       comment_command=in_top + shlex.join(command))
+                           for text in RULING_GIVEN_POST_FAILED]
+            else:
+                output.append(RULING_GIVEN_POSTED.format(number=number, pull_request=pull_request, ruling=body))
+    return output, failed
+
+
 def close(arguments):
     walk_finder = load_walk_finder()
     top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
@@ -2240,13 +2349,14 @@ def close(arguments):
     # they stay waiting, so the walk shows them to the user.
     held_outcome = None
     if answered == MOVED_ON:
-        recorded = CLOSE_MOVED_ON_NO_DECISION_MINUTES.format(item=item)
+        recorded, word = CLOSE_MOVED_ON_NO_DECISION_MINUTES.format(item=item), RULING_GIVEN_MOVED_ON
         output = [line.format(item=item) for line in CLOSE_MOVED_ON_LINES]
     elif answered == DEFERRED:
         _, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
         again = any(deferrals[number] for number in answered_numbers)
         recorded = (CLOSE_DEFERRED_AGAIN_MINUTES if again else CLOSE_DEFERRED_MINUTES).format(item=item)
         lines = CLOSE_DEFERRED_AGAIN_LINES if again else CLOSE_DEFERRED_LINES
+        word = RULING_GIVEN_DEFERRED
         # A walk with no summary item puts a deferred item last, where it needs no note; an item deferred again
         # leaves the walk, so the note that says where it went is taken out.
         noted = not again and summary is not None
@@ -2255,6 +2365,7 @@ def close(arguments):
                   + statuses)
     elif answered.startswith(MOVED_ON_PREFIX):
         recorded = CLOSE_MOVED_ON_MINUTES.format(item=item, reason=answered[len(MOVED_ON_PREFIX):])
+        word = RULING_GIVEN_MOVED_ON
         output = [line.format(item=item) for line in CLOSE_NOT_SHOWN_LINES]
     elif answered.startswith(ALREADY_DECIDED_PREFIX):
         held_outcome = OUTCOMES[APPROVED]
@@ -2267,6 +2378,7 @@ def close(arguments):
         if parts:
             recorded = CLOSE_PARTS_TOOK_EFFECT_MINUTES.format(item=item, parts=", ".join(
                 f"part {number} {word} {OUTCOMES[word]}" for number, word in parts))
+            word = RULING_GIVEN_PART_ANSWERS
         else:
             held_outcome = OUTCOMES[DISAPPROVED if answered == DISAPPROVED else APPROVED]
             recorded = CLOSE_TOOK_EFFECT_MINUTES.format(item=item, answered=answered, outcome=held_outcome)
@@ -2275,6 +2387,8 @@ def close(arguments):
     if answered != DEFERRED:
         deferred_item_heading_noted(walk_finder, minutes, answered_numbers, total, parser, noted=False)
     append_to_minutes(minutes, [recorded])
+    word = RULING_GIVEN_WORDS[held_outcome] if held_outcome else word
+    rulings = [(number, word) for number in answered_numbers]
     if held_outcome:
         held = held_items_decided_with(walk_finder, minutes, parser, answered_numbers, item, held_outcome)
         if held:
@@ -2283,6 +2397,8 @@ def close(arguments):
             deferred_item_heading_noted(walk_finder, minutes, walk_finder.parse_items(line.split(": ")[0])[0], total,
                                         parser, noted=False)
         output += [CLOSE_HELD_DECIDED.format(item=item, held=line.split(": ")[0]) for line in held]
+        rulings += [(number, word) for line in held
+                    for number in walk_finder.parse_items(line.split(": ")[0])[0]]
     decided, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
     numbers = next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals, placing)
     if numbers and isinstance(numbers[0], int):
@@ -2299,8 +2415,11 @@ def close(arguments):
         output += [not_started] if not_started else []
     output.append(CLOSE_READ_NEXT_ITEM.format(next_item=named, command=READ_STEP_COMMAND.format(
         program=Path(__file__).resolve(), flags="", top=shlex.quote(str(top)))) if numbers else CLOSE_NO_NEXT_ITEM)
-    print("\n".join(output))
-    return 0
+    # Last, so a gh that fails or hangs cannot keep the answer or the next item out of the minutes.
+    ruling_lines, ruling_failed = ruling_given_comments_posted(
+        minutes.name[:-len(walk_finder.MINUTES_SUFFIX)], rulings, top, arguments.gh_program, arguments.gh_timeout)
+    print("\n".join(output + ruling_lines))
+    return 2 if ruling_failed else 0
 
 
 def main(argv=None):
@@ -2345,6 +2464,8 @@ def main(argv=None):
                         help="a cold-read-records directory to search instead of the defaults; repeatable")
     parser.add_argument("--fast-read-program", type=Path, default=FAST_READ_PROGRAM)
     parser.add_argument("--counts-log", type=Path)
+    parser.add_argument("--gh-program", default=GH_PROGRAM, help=argparse.SUPPRESS)
+    parser.add_argument("--gh-timeout", type=float, default=GH_TIMEOUT_SECONDS, help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
     try:
         return {"check": check, "close": close, WAITING_ITEM_READ_STEP: waiting_item_read,
