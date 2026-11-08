@@ -262,10 +262,12 @@ _mark_spec = importlib.util.spec_from_file_location(
 mark = importlib.util.module_from_spec(_mark_spec)
 _mark_spec.loader.exec_module(mark)
 
-# REVIEW_WORKTREES_DIRECTORY_UNDER_HOME of merge-lane-pull-request-helpers-common-options-paths-and-token.py,
-# copied, not loaded: that module loads run-all-test-suites.py, which tests that run a copy of this
-# program in a scratch clone do not copy. clean-worktrees-test.py checks the two agree.
-MERGE_LANE_REVIEW_WORKTREES_DIRECTORY_UNDER_HOME = Path(".cache") / "merge-lane-review-worktrees"
+_merge_lane_common_spec = importlib.util.spec_from_file_location(
+    "merge_lane_pull_request_helpers_common_options_paths_and_token",
+    REPO_ROOT / "scripts" / "merge-lane-pull-request-helpers-common-options-paths-and-token.py")
+merge_lane_common = importlib.util.module_from_spec(_merge_lane_common_spec)
+_merge_lane_common_spec.loader.exec_module(merge_lane_common)
+
 # After a merge, merge-lane-2's merge program removes pr<n>-head and pr<n>-merged and runs main's tests
 # in pr<n>-merge-commit-on-main-worktree; between its steps no process has a working directory
 # there, so the vacancy check alone could let a removal race it.
@@ -871,7 +873,7 @@ def removal_records_and_discarded_files_text(worktree, discarded):
 
 def is_merge_lane_review_checkout(worktree):
     # HOME is read at call time: the tests point it at a scratch directory.
-    directory = Path.home() / MERGE_LANE_REVIEW_WORKTREES_DIRECTORY_UNDER_HOME
+    directory = Path.home() / merge_lane_common.REVIEW_WORKTREES_DIRECTORY_UNDER_HOME
     return worktree.resolve().parent == directory.resolve()
 
 

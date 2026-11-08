@@ -2285,16 +2285,6 @@ with tempfile.TemporaryDirectory() as scratch:
               bad.returncode == 2 and gh_wt.exists(), bad.stdout + bad.stderr)
 
 # --- Merge-lane review checkouts: judged by the pull request their name holds ---
-_merge_lane_common_spec = importlib.util.spec_from_file_location(
-    "merge_lane_pull_request_helpers_common_options_paths_and_token",
-    CLEAN_SCRIPT.with_name("merge-lane-pull-request-helpers-common-options-paths-and-token.py"))
-_merge_lane_common = importlib.util.module_from_spec(_merge_lane_common_spec)
-_merge_lane_common_spec.loader.exec_module(_merge_lane_common)
-check("the cleaner's merge-lane review checkouts directory is the one the merge-lane helpers make "
-      "them in",
-      load_clean_worktrees_module().MERGE_LANE_REVIEW_WORKTREES_DIRECTORY_UNDER_HOME
-      == _merge_lane_common.REVIEW_WORKTREES_DIRECTORY_UNDER_HOME)
-
 with tempfile.TemporaryDirectory() as scratch:
     scratch = Path(scratch).resolve()
     checkout = scratch / "checkout"
