@@ -8,8 +8,10 @@ temporary agents root, with a temporary handoff directory; nothing outside the t
 directory is read or changed.
 """
 
+import contextlib
 import datetime
 import importlib.util
+import io
 import os
 import subprocess
 import sys
@@ -133,6 +135,11 @@ def main() -> int:
         fleet.git(theta, "push", "--quiet", "origin", "HEAD:refs/heads/theta-closed-pull-request")
         fleet.git(fleet.clone, "fetch", "--quiet", "origin")
         fleet.git(fleet.origin, "update-ref", "-d", "refs/heads/theta-closed-pull-request")
+        iota = fleet.seat_home("iota", own_commits=1, recorded=True)
+        fleet.git(fleet.clone, "update-ref", "refs/remotes/backup/iota",
+                  fleet.git(iota, "rev-parse", "HEAD"))
+        kappa = fleet.seat_home("kappa", own_commits=0, recorded=True)
+        fleet.git(kappa, "bisect", "start")
         topic = fleet.agents_root / "alpha-topic-worktree"
         fleet.git(fleet.clone, "worktree", "add", "--quiet", "-b", "some-topic", str(topic),
                   "origin/main")
@@ -167,6 +174,13 @@ def main() -> int:
               "left behind, are pushed under the saved-branch name",
               f"theta-seat-branch-commits-saved-{TODAY}" in branches
               and fleet.is_moved_and_marked(theta), report)
+        check("commits held only by another remote's remote-tracking ref are pushed to origin",
+              f"iota-seat-branch-commits-saved-{TODAY}" in branches
+              and fleet.is_moved_and_marked(iota), report)
+        check("an agent-home with a git operation in progress is left with its reason",
+              not fleet.is_moved_and_marked(kappa)
+              and fleet.git(kappa, "symbolic-ref", "--short", "HEAD") == "kappa"
+              and f"{kappa}: left as it was, because a bisect is in progress" in report, report)
         check("a detached HEAD holding commits on no branch is left",
               not fleet.is_moved_and_marked(epsilon)
               and "commit(s) no branch holds" in report, report)
@@ -181,6 +195,7 @@ def main() -> int:
         fleet.git(beta, "checkout", "--quiet", "--", "base.txt")
         (hooks / "pre-receive").unlink()
         fleet.git(epsilon, "branch", "epsilon-kept-work")
+        fleet.git(kappa, "bisect", "reset")
         second = fleet.run()
         branches_after = fleet.origin_branches()
         check("a second run pushes no seat-branch twice",
@@ -190,7 +205,7 @@ def main() -> int:
         check("a second run, with nothing left in the way, moves every agent-home and exits 0",
               second.returncode == 0
               and all(fleet.is_moved_and_marked(home)
-                      for home in (alpha, beta, gamma, delta, epsilon, theta)),
+                      for home in (alpha, beta, gamma, delta, epsilon, theta, iota, kappa)),
               f"exit {second.returncode}: {second.stdout}{second.stderr}")
 
         empty_root = Path(temporary) / "no-agents"
@@ -211,10 +226,14 @@ def main() -> int:
     def listing_fails():
         raise OSError("the seat list could not be read")
     module.load_recover_crashed_seats = listing_fails
-    exit_status = module.main(["--agents-root", "/nonexistent"])
+    listing_error = io.StringIO()
+    with contextlib.redirect_stderr(listing_error):
+        exit_status = module.main(["--agents-root", "/nonexistent"])
     module.load_recover_crashed_seats = real_load_recover_crashed_seats
-    check("when the agent-homes cannot be listed, the run moves nothing and exits 2",
-          exit_status == 2, str(exit_status))
+    check("when the agent-homes cannot be listed, the run moves nothing, names the agents root "
+          "and exits 2",
+          exit_status == 2 and "the agent-homes under /nonexistent could not be listed"
+          in listing_error.getvalue(), f"{exit_status}: {listing_error.getvalue()}")
 
     with tempfile.TemporaryDirectory() as temporary:
         fleet = Fleet(Path(temporary))
@@ -233,7 +252,7 @@ def main() -> int:
             module.subprocess.run = real_run
         check("a git step that cannot run leaves the agent-home and says which step",
               not moved and "saving its seat-branch failed: git fetch --quiet --prune origin"
-              in line and "did not run" in line, line)
+              in line and "could not start or timed out" in line, line)
 
         for failure_name, failure in (
                 ("times out", lambda command: subprocess.TimeoutExpired(command, 1)),

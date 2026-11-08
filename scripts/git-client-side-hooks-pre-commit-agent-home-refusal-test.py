@@ -7,7 +7,8 @@ Run: python3 scripts/git-client-side-hooks-pre-commit-agent-home-refusal-test.py
 Prints one line per case and exits non-zero if any case fails. Every case
 commits with real git in throwaway repositories under a temporary directory,
 with core.hooksPath pointed at this checkout's copy of the hook directory,
-except the last, which runs the hook file directly with a stub git that fails.
+except the last, which runs the hook file directly, outside any session, with a
+stub git that fails.
 The session and identity variables of the agent-session running the suite are
 removed, and global and system git config are shut out.
 """
@@ -148,7 +149,8 @@ def main() -> int:
         stubs.mkdir()
         (stubs / "git").write_text("#!/bin/sh\necho 'fatal: stub git fails' >&2\nexit 128\n")
         (stubs / "git").chmod(0o755)
-        stub_environment = environment(root, SESSION)
+        # Outside a session the hook would go on to exit 0, so only its own exit 1 refuses here.
+        stub_environment = environment(root, {})
         stub_environment["PATH"] = f"{stubs}{os.pathsep}{stub_environment['PATH']}"
         failed = subprocess.run(["sh", str(HOOK_DIRECTORY / "pre-commit")], cwd=str(topic),
                                 env=stub_environment, capture_output=True, text=True,

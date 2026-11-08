@@ -996,7 +996,7 @@ def main(argv=None) -> int:
               f"printed this message again, unchanged, once. If the agent-home cannot be "
               f"created, or the second ask fails too: when you are filing or editing a GHI, "
               f"go on down the ask's fallback ladder in .claude/skills/ghi-write/SKILL.md; "
-              f"otherwise go on without ghi-guide-agent's answer, and tell the user that "
+              f"for any other ask, go on without ghi-guide-agent's answer, and tell the user that "
               f"ghi-guide-agent cannot answer until its agent-home exists on ned-box.",
               file=sys.stderr)
         return 1
