@@ -1786,7 +1786,9 @@ def remove_old_temporary_log_directories_without_run_records(
     directory a caller chose with --log-dir holds the log-directory lock file and
     is the caller's to remove, so it is never touched. A directory counts as old
     only when nothing anywhere under it changed for retention_seconds, because a
-    suite of an old run may still be appending to a trace deep inside it."""
+    suite of an old run may still be appending to a trace deep inside it. A
+    directory whose tree cannot be read is kept and returned among the failures
+    with the reason; one that vanished while it was read is skipped."""
     now = time.time() if now is None else now
     temp_dir = Path(tempfile.gettempdir() if temp_dir is None else temp_dir)
     named = set()
@@ -1801,7 +1803,11 @@ def remove_old_temporary_log_directories_without_run_records(
             continue
         try:
             newest = newest_modification_time_in_tree(log_dir)
-        except OSError:
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            failures.append((log_dir, f"could not read it to tell whether a run still "
+                                      f"uses it: {error}"))
             continue
         if now - newest >= retention_seconds:
             why = remove_tree_or_say_why(log_dir)
@@ -1819,7 +1825,9 @@ def remove_old_suite_temporary_directories_left_by_killed_runners(
     Only a directory of this account whose name has mkdtemp's shape after the
     prefix is touched, since the prefix is short enough for another program to
     share it, and only once nothing under it changed for retention_seconds, since
-    a suite of a running run may still be writing in it."""
+    a suite of a running run may still be writing in it. A directory whose tree
+    cannot be read is kept and returned among the failures with the reason; one
+    that vanished while it was read, as when another run removed it, is skipped."""
     now = time.time() if now is None else now
     temp_dir = Path(tempfile.gettempdir() if temp_dir is None else temp_dir)
     shape = re.compile(re.escape(SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX)
@@ -1831,7 +1839,11 @@ def remove_old_suite_temporary_directories_left_by_killed_runners(
                     or not directory.is_dir() or directory.stat().st_uid != os.getuid()):
                 continue
             newest = newest_modification_time_in_tree(directory)
-        except OSError:
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            failures.append((directory, f"could not read it to tell whether a suite still "
+                                        f"uses it: {error}"))
             continue
         if now - newest >= retention_seconds:
             why = remove_tree_or_say_why(directory)

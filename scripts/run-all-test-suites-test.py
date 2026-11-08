@@ -2948,6 +2948,21 @@ with tempfile.TemporaryDirectory() as scratch:
           explicit.exists())
     check("nor one with a trace deep inside it that changed recently",
           deep.exists())
+    # Root reads a directory whatever its mode, so the failure cannot be made.
+    if os.geteuid() != 0:
+        unreadable_log_dir = temp / "run-all-test-suites-unreadable"
+        (unreadable_log_dir / "closed").mkdir(parents=True)
+        (unreadable_log_dir / "closed").chmod(0o000)
+        try:
+            removed, removal_failures = (
+                module.remove_old_temporary_log_directories_without_run_records(
+                    runs, now=now, temp_dir=temp))
+        finally:
+            (unreadable_log_dir / "closed").chmod(0o700)
+        check("a log directory whose tree cannot be read is kept and reported with the reason",
+              unreadable_log_dir.exists() and removed == []
+              and [directory for directory, _ in removal_failures] == [unreadable_log_dir]
+              and "could not read it" in removal_failures[0][1], (removed, removal_failures))
 
 with tempfile.TemporaryDirectory() as scratch:
     temp = pathlib.Path(scratch)
@@ -2983,13 +2998,65 @@ with tempfile.TemporaryDirectory() as scratch:
         finally:
             (unreadable / "closed").chmod(0o700)
             (unremovable / "locked").chmod(0o700)
-        check("a per-suite TMPDIR whose tree cannot be read is kept, not reported as removed",
+        reasons = dict(removal_failures)
+        check("a per-suite TMPDIR whose tree cannot be read is kept and reported with the reason",
               unreadable.exists() and unreadable not in removed
-              and unreadable not in [directory for directory, _ in removal_failures],
+              and "could not read it" in reasons.get(unreadable, "")
+              and "Permission denied" in reasons.get(unreadable, ""),
               (removed, removal_failures))
         check("a per-suite TMPDIR that cannot be removed is reported with the reason",
-              [directory for directory, _ in removal_failures] == [unremovable]
-              and removal_failures[0][1], removal_failures)
+              sorted(reasons) == sorted([unreadable, unremovable])
+              and reasons[unremovable] and "could not read it" not in reasons[unremovable],
+              removal_failures)
+    vanished = temp / f"{prefix}gone0001"
+    old_after_vanished = temp / f"{prefix}zz_old01"
+    vanished.mkdir()
+    old_after_vanished.mkdir()
+    real_newest = module.newest_modification_time_in_tree
+
+    def removed_by_another_run(directory):
+        if directory.name.endswith(("gone0001", "-aa-vanished")):
+            raise FileNotFoundError(2, "No such file or directory", str(directory))
+        return real_newest(directory)
+    module.newest_modification_time_in_tree = removed_by_another_run
+    try:
+        removed, removal_failures = (
+            module.remove_old_suite_temporary_directories_left_by_killed_runners(
+                now=now, temp_dir=temp))
+    finally:
+        module.newest_modification_time_in_tree = real_newest
+    check("a per-suite TMPDIR that vanished while it was read is skipped without a report, "
+          "and the sweep goes on to the next one",
+          vanished not in removed
+          and vanished not in [directory for directory, _ in removal_failures]
+          and old_after_vanished in removed and not old_after_vanished.exists(),
+          (removed, removal_failures))
+
+with tempfile.TemporaryDirectory() as scratch:
+    temp = pathlib.Path(scratch)
+    runs = temp / "runs"
+    runs.mkdir()
+    vanished = temp / "run-all-test-suites-aa-vanished"
+    old_after_vanished = temp / "run-all-test-suites-zz-old"
+    vanished.mkdir()
+    old_after_vanished.mkdir()
+    now = time.time() + module.FINISHED_RUN_LOG_RETENTION_SECONDS + 60
+    real_newest = module.newest_modification_time_in_tree
+
+    def removed_by_another_run(directory):
+        if directory.name.endswith(("gone0001", "-aa-vanished")):
+            raise FileNotFoundError(2, "No such file or directory", str(directory))
+        return real_newest(directory)
+    module.newest_modification_time_in_tree = removed_by_another_run
+    try:
+        removed, removal_failures = module.remove_old_temporary_log_directories_without_run_records(
+            runs, now=now, temp_dir=temp)
+    finally:
+        module.newest_modification_time_in_tree = real_newest
+    check("a log directory that vanished while it was read is skipped without a report, "
+          "and the sweep goes on to the next one",
+          removed == [old_after_vanished] and removal_failures == [],
+          (removed, removal_failures))
 
 swept = []
 real_sweep = module.remove_old_suite_temporary_directories_left_by_killed_runners
