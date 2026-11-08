@@ -2174,7 +2174,8 @@ with tempfile.TemporaryDirectory() as scratch:
               (scratch / "json-answer-claude-argv.json").read_text(encoding="utf-8")),
           (scratch / "json-answer-claude-argv.json").read_text(encoding="utf-8"))
 
-    broken_answer = dict(flagged_answer, document_kind="two\nlines")
+    broken_answer = dict(flagged_answer, flags=[dict(flagged_answer["flags"][0],
+                                                     passage="walks a slot")])
     for runtime, plan, expected in (
         ("claude", {"claude_result": {"type": "result", "subtype": "error_max_turns",
                                       "is_error": True, "stop_reason": "max_tokens"}},
@@ -2189,7 +2190,7 @@ with tempfile.TemporaryDirectory() as scratch:
         ("codex", {"codex_last_message": "{" + "x" * 198 + "YZ"}, "x" * 198 + "Y\n"),
         ("claude", {"answer": {"document_kind": "a test document"}},
          "the answer has no key_terms"),
-        ("codex", {"answer": broken_answer}, "document_kind holds a line break"),
+        ("codex", {"answer": broken_answer}, "1 of its 1 flags break a rule, more than half"),
     ):
         report = report_path_for(repository, f"json-answer-broken-{runtime}", runtime)
         result = run_cell_launcher(repository, stubs, {"*": plan}, report,

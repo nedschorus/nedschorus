@@ -432,7 +432,7 @@ def structured_answer_to_report_function(
             return build_report(answer, schema, document, entries)
         except terminology_answer.TerminologyAnswerRejected as rejected:
             raise StructuredAnswerRejected(
-                f"the answer breaks {len(rejected.problems)} rule(s) of its schema or of "
+                f"the answer breaks its schema, or more than half its flags break a rule of "
                 f"{terminology_answer.RULES_PAGE}: " + "; ".join(rejected.problems)) from None
     return answer_to_report
 
