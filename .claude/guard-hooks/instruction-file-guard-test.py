@@ -48,10 +48,15 @@ def check(case_name, condition, detail=""):
 
 
 def run_hook(decoy_project_directory: Path, session_cwd: Path, file_path: str,
-             path_field: str = "file_path"):
+             path_field: str = "file_path", agent_id=None):
     """Invoke the guard. path_field selects which tool_input key carries the
-    target: Edit and Write use file_path, NotebookEdit uses notebook_path."""
-    payload = json.dumps({"cwd": str(session_cwd), "tool_input": {path_field: file_path}})
+    target: Edit and Write use file_path, NotebookEdit uses notebook_path.
+    agent_id, when given, goes in the payload as Claude Code puts it there for
+    a subagent's tool call."""
+    payload = {"cwd": str(session_cwd), "tool_input": {path_field: file_path}}
+    if agent_id is not None:
+        payload["agent_id"] = agent_id
+    payload = json.dumps(payload)
     environment = dict(os.environ, CLAUDE_PROJECT_DIR=str(decoy_project_directory))
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH)], input=payload,
@@ -139,6 +144,21 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "when it applies." in result.stderr
           and "If it matters only to this conversation, drop it." in result.stderr
           and "Otherwise drop it" not in result.stderr, result.stderr)
+    check("a main agent's memory refusal names no dispatching agent",
+          "the agent that dispatched you" not in result.stderr
+          and "If you are a subagent" not in result.stderr, result.stderr)
+
+    result = run_hook(decoy, workspace, str(memory_file), agent_id="a1b2c3")
+    check("a subagent's memory write is refused with the memory refusal",
+          result.returncode == 2 and "it is in a Claude Code memory directory" in result.stderr,
+          result.stderr)
+    check("a subagent's memory refusal sends the edit and the question to the agent that "
+          "dispatched it, and never to the user",
+          "propose to the agent that dispatched you the exact edit" in result.stderr
+          and "tell the agent that dispatched you in one sentence what you meant to remember, "
+              "and ask that agent where to save it" in result.stderr
+          and "If it matters only to this conversation, drop it." in result.stderr
+          and "the user" not in result.stderr and " him " not in result.stderr, result.stderr)
 
     # A marker approves instruction edits, never a memory write, and is left unspent.
     session_marker = workspace / ".walk-approved"

@@ -147,20 +147,27 @@ PRE_APPROVED_CHANGE_MARKER_WITHOUT_REASON_DENY_MESSAGE = (
     "that follows gives the steps for asking him."
 )
 
-MEMORY_WRITE_DENY_MESSAGE = (
-    "Refusing to write {path}: it is in a Claude Code memory directory, where nothing "
-    "recalls a note at the moment it applies.\n"
-    "If what you meant to save would change how agents work, propose to the user the exact "
-    "edit, with its wording, to the instruction file, skill or program where an agent would "
-    "meet it.\n"
-    "If you cannot tell where it belongs, tell the user in one sentence what you meant to "
-    "remember, and ask him where to save it so that an agent recalls it when it applies.\n"
-    "If it matters only to this conversation, drop it.\n"
-    "If you are a subagent, put the proposed edit or the question to the agent that "
-    "dispatched you instead.\n"
-    "No {marker} marker lets a write into a memory directory through, so do not write one "
-    "for this."
-)
+def memory_write_deny_message(asked: str, asked_again: str) -> str:
+    """The refusal of a memory write, sending the proposal and the question to the one named."""
+    return (
+        "Refusing to write {path}: it is in a Claude Code memory directory, where nothing "
+        "recalls a note at the moment it applies.\n"
+        "If what you meant to save would change how agents work, propose to " + asked
+        + " the exact edit, with its wording, to the instruction file, skill or program where "
+        "an agent would meet it.\n"
+        "If you cannot tell where it belongs, tell " + asked + " in one sentence what you "
+        "meant to remember, and ask " + asked_again + " where to save it so that an agent "
+        "recalls it when it applies.\n"
+        "If it matters only to this conversation, drop it.\n"
+        "No {marker} marker lets a write into a memory directory through, so do not write one "
+        "for this."
+    )
+
+
+MAIN_AGENT_MEMORY_WRITE_DENY_MESSAGE = memory_write_deny_message("the user", "him")
+
+SUBAGENT_MEMORY_WRITE_DENY_MESSAGE = memory_write_deny_message(
+    "the agent that dispatched you", "that agent")
 
 
 def is_pre_approved_change_marker(marker_words) -> bool:
@@ -329,7 +336,10 @@ def main() -> int:
         return 0
     # Checked before the marker, which approves instruction edits but never a memory write.
     if is_in_memory_directory(file_path):
-        print(MEMORY_WRITE_DENY_MESSAGE.format(path=file_path, marker=APPROVAL_MARKER_NAME),
+        # Claude Code puts agent_id in the hook input only when a subagent made the call.
+        memory_deny_message = (SUBAGENT_MEMORY_WRITE_DENY_MESSAGE if payload.get("agent_id")
+                               else MAIN_AGENT_MEMORY_WRITE_DENY_MESSAGE)
+        print(memory_deny_message.format(path=file_path, marker=APPROVAL_MARKER_NAME),
               file=sys.stderr)
         return 2
     reusable_prompt = is_reusable_prompt(file_path)
