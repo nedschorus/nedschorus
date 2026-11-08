@@ -10,7 +10,7 @@
   "permissions": {
     "allow": [
       "Bash(gh pr merge *)",
-      "Bash(python3 */.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py --approve *)"
+      "Bash(python3 */.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py --approve *)"
     ]
   },
   "hooks": {
@@ -285,7 +285,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
             "timeout": 30
           }
         ]
@@ -297,7 +297,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
             "timeout": 30
           }
         ]

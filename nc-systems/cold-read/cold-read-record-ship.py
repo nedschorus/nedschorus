@@ -348,7 +348,7 @@ in the nedschorus repository, which this machine also clones:
   version of a guarded file, with its git blob id and the time it was seen, a
   copy of each version its checkout's branch HEAD did not hold, and the record
   of which versions the user approved, written by
-  `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`
+  `.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`
 - `bash-guards-replay-changed-verdict-or-failed-run-log-directories/` -- the
   Bash guards replay's step logs and differences files, one directory per
   replay that exited 1 or 2, written by
