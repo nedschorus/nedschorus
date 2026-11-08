@@ -492,6 +492,18 @@ def run_grid(repository, stub_directory, environment_overrides=None,
     )
 
 
+def own_temporary_directory(scratch, case_name):
+    """A temporary directory for one case's cells, given as TMPDIR, so another
+    run's cold-read-answer-* directories cannot be counted in that case."""
+    directory = scratch / f"temporary-directory-{case_name}"
+    directory.mkdir()
+    return directory
+
+
+def answer_directories_left_in(directory):
+    return sorted(path.name for path in directory.glob("cold-read-answer-*"))
+
+
 def seed_log_store_record(repository, directory_name, file_names,
                           frozen_relative=TARGET_RELATIVE_PATH, written_at=None,
                           tree=SCRATCH_LOG_STORE_RELATIVE):
@@ -685,9 +697,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     repository = build_scratch_repository(scratch, "checkout-target-moves-mid-run")
     slow_stubs = scratch / "stub-bin-target-moves-mid-run"
-    # A temporary directory of the case's own, so another run's answer directories cannot be counted here.
-    cells_temporary_directory = scratch / "temporary-directory-target-moves-mid-run"
-    cells_temporary_directory.mkdir()
+    cells_temporary_directory = own_temporary_directory(scratch, "target-moves-mid-run")
     started = time.monotonic()
     result = run_grid(repository, slow_stubs, {
         "TMPDIR": str(cells_temporary_directory),
@@ -742,9 +752,9 @@ with tempfile.TemporaryDirectory() as scratch:
     check("no stopped reviewer or its launcher is left running",
           processes_mentioning(str(slow_stubs), str(repository)) == [],
           processes_mentioning(str(slow_stubs), str(repository)))
-    check("a stopped terminology cell removes its answer directory",
-          sorted(path.name for path in cells_temporary_directory.glob("cold-read-answer-*")) == [],
-          sorted(path.name for path in cells_temporary_directory.glob("cold-read-answer-*")))
+    check("a terminology cell stopped for a moved frozen copy removes its answer directory",
+          answer_directories_left_in(cells_temporary_directory) == [],
+          answer_directories_left_in(cells_temporary_directory))
     # A stopped cell never reaches its stray-write check, which runs after the
     # model exits; without a line saying so the run reads as checked and
     # clean (nedschorus#167, and PR 699's review).
@@ -1117,8 +1127,10 @@ with tempfile.TemporaryDirectory() as scratch:
     # The limit is shortened to seconds; every stub reads for longer than that.
     stub_reading_seconds = 8
     repository = build_scratch_repository(scratch, "checkout-attempts-timed-out")
+    cells_temporary_directory = own_temporary_directory(scratch, "attempts-timed-out")
     started = time.monotonic()
     result = run_grid(repository, stubs, {
+        "TMPDIR": str(cells_temporary_directory),
         "COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": str(stub_reading_seconds),
         "COLD_READ_GRID_CELL_ATTEMPT_TIMEOUT_SECONDS": "2"})
     elapsed = time.monotonic() - started
@@ -1141,12 +1153,17 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the stopped stubs never wrote their reports",
           sorted(path.name for path in record_directory.glob("*.md")) == ["cold-read-reference-check.md"],
           sorted(path.name for path in record_directory.glob("*.md")))
+    check("a terminology cell stopped past the time limit removes its answer directory",
+          answer_directories_left_in(cells_temporary_directory) == [],
+          answer_directories_left_in(cells_temporary_directory))
 
     # --- A cell that writes its report and then hangs is stopped, report deleted
     hang_seconds = 30
     repository = build_scratch_repository(scratch, "checkout-wrote-then-hung")
+    cells_temporary_directory = own_temporary_directory(scratch, "wrote-then-hung")
     started = time.monotonic()
     result = run_grid(repository, stubs, {
+        "TMPDIR": str(cells_temporary_directory),
         "COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS": str(hang_seconds),
         "COLD_READ_GRID_CELL_ATTEMPT_TIMEOUT_SECONDS": "3"})
     elapsed = time.monotonic() - started
@@ -1166,6 +1183,9 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the hung cells' unfinished reports are not left in the record",
           sorted(path.name for path in record_directory.glob("*.md")) == ["cold-read-reference-check.md"],
           sorted(path.name for path in record_directory.glob("*.md")))
+    check("a terminology cell stopped after its model wrote the answer removes its answer directory",
+          answer_directories_left_in(cells_temporary_directory) == [],
+          answer_directories_left_in(cells_temporary_directory))
 
     # --- Three Codex cells fail both attempts with exit-N ----------------------
     repository = build_scratch_repository(scratch, "checkout-codex-exits")

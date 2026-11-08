@@ -1026,36 +1026,38 @@ def run_cell(
     # report directory sits inside a fresh root rather than in the temporary
     # directory itself.
     answer_directory = answer_file = answer_to_report = None
-    if answer_to_report_from_file is not None:
-        # Outside the checkout, so the agent-binary's answer file is no stray write.
-        answer_directory = pathlib.Path(tempfile.mkdtemp(prefix="cold-read-answer-"))
-        answer_file = answer_directory / "answer.json"
-
-        def answer_to_report(completed):
-            return answer_to_report_from_file(completed, answer_file)
     staging_root = staging_directory = None
-    # The runner writes a JSON-answer cell's report itself, so that report needs no staging.
-    if (stage_report_outside_checkout and answer_to_report is None
-            and REPO_ROOT not in report.resolve().parents):
-        staging_root = pathlib.Path(tempfile.mkdtemp(prefix="cold-read-report-"))
-        staging_directory = staging_root / "report"
-        staging_directory.mkdir()
-    reviewer_report = (
-        staging_directory / report.name if staging_directory else report)
-    prompt = compose_prompt(template_path, target, reviewer_report, target_origin)
-
-    # An explicit model must not silently fall back to a different model.
-    chain = (args.model,) if args.model else tier_to_model_chain[args.tier]
-    effort = args.effort or tier_to_effort[args.tier]
-    if answer_to_report is not None:
-        build_invocation = structured_answer_support.invocation_builder(
-            effort, schema_path, answer_file)
-    elif stage_report_outside_checkout:
-        build_invocation = invocation_builder(effort, staging_directory)
-    else:
-        build_invocation = invocation_builder(effort)
-
+    reviewer_report = report
+    # The try opens before the first mkdtemp, so a stop at any later line still removes the directories.
     try:
+        if answer_to_report_from_file is not None:
+            # Outside the checkout, so the agent-binary's answer file is no stray write.
+            answer_directory = pathlib.Path(tempfile.mkdtemp(prefix="cold-read-answer-"))
+            answer_file = answer_directory / "answer.json"
+
+            def answer_to_report(completed):
+                return answer_to_report_from_file(completed, answer_file)
+        # The runner writes a JSON-answer cell's report itself, so that report needs no staging.
+        if (stage_report_outside_checkout and answer_to_report is None
+                and REPO_ROOT not in report.resolve().parents):
+            staging_root = pathlib.Path(tempfile.mkdtemp(prefix="cold-read-report-"))
+            staging_directory = staging_root / "report"
+            staging_directory.mkdir()
+        reviewer_report = (
+            staging_directory / report.name if staging_directory else report)
+        prompt = compose_prompt(template_path, target, reviewer_report, target_origin)
+
+        # An explicit model must not silently fall back to a different model.
+        chain = (args.model,) if args.model else tier_to_model_chain[args.tier]
+        effort = args.effort or tier_to_effort[args.tier]
+        if answer_to_report is not None:
+            build_invocation = structured_answer_support.invocation_builder(
+                effort, schema_path, answer_file)
+        elif stage_report_outside_checkout:
+            build_invocation = invocation_builder(effort, staging_directory)
+        else:
+            build_invocation = invocation_builder(effort)
+
         exit_code = run_model_chain(
             program=program, runtime=runtime, chain=chain, effort=effort,
             build_invocation=build_invocation, prompt=prompt,

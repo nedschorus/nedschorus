@@ -150,6 +150,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -2173,6 +2174,31 @@ with tempfile.TemporaryDirectory() as scratch:
           "Read,Grep,Glob,WebFetch" in json.loads(
               (scratch / "json-answer-claude-argv.json").read_text(encoding="utf-8")),
           (scratch / "json-answer-claude-argv.json").read_text(encoding="utf-8"))
+
+    # The grid stops a cell with SIGTERM, which can land on any line after the answer
+    # directory is made; here it lands while the prompt is composed, before any model runs.
+    stopped_cells_temporary_directory = scratch / "temporary-directory-json-answer-stopped"
+    stopped_cells_temporary_directory.mkdir()
+    report = report_path_for(repository, "json-answer-stopped", "claude")
+    stopped = subprocess.run(
+        [sys.executable, "-c", (
+            "import importlib.util, os, signal, sys\n"
+            "spec = importlib.util.spec_from_file_location('cell', sys.argv[1])\n"
+            "cell = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(cell)\n"
+            "cell.common.compose_prompt = lambda *_: os.kill(os.getpid(), signal.SIGTERM)\n"
+            "sys.argv = ['cold-read-claude-cell.py', *sys.argv[2:]]\n"
+            "sys.exit(cell.main())\n"),
+         str(repository / "nc-systems" / "cold-read" / "cold-read-claude-cell.py"),
+         "--cell", "terminology", "--tier", "second-strongest-model",
+         "--target", TARGET_RELATIVE_PATH, "--report", str(report)],
+        capture_output=True, text=True, check=False, cwd=repository,
+        env={**os.environ, "TMPDIR": str(stopped_cells_temporary_directory)})
+    left_over = sorted(path.name for path in stopped_cells_temporary_directory.glob("cold-read-answer-*"))
+    check("a terminology cell stopped by SIGTERM before its model runs exits 128 plus "
+          "SIGTERM's number and removes its answer directory",
+          stopped.returncode == 128 + signal.SIGTERM and left_over == [],
+          f"exit {stopped.returncode}; left {left_over}; stderr={stopped.stderr[-600:]!r}")
 
     broken_answer = dict(flagged_answer, flags=[dict(flagged_answer["flags"][0],
                                                      passage="walks a slot")])
