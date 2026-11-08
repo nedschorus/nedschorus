@@ -224,19 +224,41 @@ with tempfile.TemporaryDirectory() as directory:
     check("at the same commit after a pass, no run is due", code == 0 and calls == []
           and "no run due" in printed, (code, printed))
 
+    # No nc-test-sandbox has /run/user/<uid>/bus, so the daily run's helper is handed a
+    # machine where the bus is there, or is not.
+    real_module_loaded_by_path = program.module_loaded_by_path
+    FAKE_UID = 4242
+
+    def daily_run_module_on_a_machine_whose_user_bus(bus_exists):
+        def loaded(name, path):
+            daily = real_module_loaded_by_path(name, path)
+            real_helper = daily.environment_with_user_runtime_directory_when_the_user_session_bus_exists
+            daily.environment_with_user_runtime_directory_when_the_user_session_bus_exists = (
+                lambda environment: real_helper(
+                    environment, platform="linux", uid=FAKE_UID,
+                    path_exists=lambda path: bus_exists and path == f"/run/user/{FAKE_UID}/bus"))
+            return daily
+        return loaded
+
     saved_xdg = os.environ.pop("XDG_RUNTIME_DIR", None)
-    s.commit_on_origin("cron starts the program without the user's session bus")
-    code, printed, calls = s.run()
-    if saved_xdg is not None:
-        os.environ["XDG_RUNTIME_DIR"] = saved_xdg
-    daily = program.module_loaded_by_path(
-        "daily_full_test_run_of_main", PROGRAM_PATH.with_name("daily-full-test-run-of-main.py"))
-    wanted = daily.environment_with_user_runtime_directory_when_the_user_session_bus_exists(
-        {}).get("XDG_RUNTIME_DIR", "unset")
-    seen = Path(f"{s.calls}.xdg").read_text()
-    check("started without XDG_RUNTIME_DIR, as under cron, the runner is given the user's "
-          "runtime directory as the daily full run gives it",
-          code == 0 and len(calls) == 1 and seen == wanted, (code, printed, seen, wanted))
+    try:
+        s.commit_on_origin("cron starts the program without the user's session bus")
+        with constants(module_loaded_by_path=daily_run_module_on_a_machine_whose_user_bus(True)):
+            code, printed, calls = s.run()
+        seen = Path(f"{s.calls}.xdg").read_text()
+        check("started without XDG_RUNTIME_DIR, as under cron, on a machine with the user's "
+              "session bus, the runner is given XDG_RUNTIME_DIR=/run/user/<uid>",
+              code == 0 and len(calls) == 1 and seen == f"/run/user/{FAKE_UID}",
+              (code, printed, seen))
+        s.commit_on_origin("a machine with no user session bus")
+        with constants(module_loaded_by_path=daily_run_module_on_a_machine_whose_user_bus(False)):
+            code, printed, calls = s.run()
+        seen = Path(f"{s.calls}.xdg").read_text()
+        check("on a machine with no user session bus, the runner is given no XDG_RUNTIME_DIR",
+              code == 0 and len(calls) == 1 and seen == "unset", (code, printed, seen))
+    finally:
+        if saved_xdg is not None:
+            os.environ["XDG_RUNTIME_DIR"] = saved_xdg
     first_commit = s.state()["passing_commit"]
 
     # --- main moves, and the run fails -------------------------------------------
@@ -267,6 +289,13 @@ with tempfile.TemporaryDirectory() as directory:
     with constants(RETRY_FAILED_RUN_AFTER_SECONDS=-1):
         code, printed, calls = s.run("fail")
     check("a failure is tried again once the hour has passed", len(calls) == 1, (code, printed))
+
+    log_mark, fail_prefix = runner.SUITE_LINE_LOG_MARK, runner.FAILED_SUITE_LINE_PREFIX
+    check("a closing-list line before the suite's progress line keeps the closing list's log",
+          program.failing_suites_and_logs(
+              f"{fail_prefix}outside-a-test.py exit 1{log_mark}/logs/outside-a-test.py.log\n"
+              f"{fail_prefix}outside-a-test.py exit 1 (1.0s)\n", fail_prefix, log_mark)
+          == [("outside-a-test.py", "/logs/outside-a-test.py.log")])
 
     # --- Following a failure up ---------------------------------------------------
     own = held(Path(f"{s.state_file}.lock"))
@@ -449,10 +478,15 @@ with tempfile.TemporaryDirectory() as directory:
     s.state_file = s.root / "a-file" / "state.json"
     (s.root / "a-file").write_text("x\n")
     code, printed, calls = s.run()
-    s.state_file = real_state_file
     check("a lock that cannot be taken stops the program with exit 4 and says why",
           code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and "could not be taken" in printed and calls == [],
           (code, printed))
+    code, printed, _ = s.run("pass", "--record-follow-up-request-sent")
+    s.state_file = real_state_file
+    check("--record-follow-up-request-sent refuses, exit 2, when its lock file cannot be opened, "
+          "and says why",
+          code == program.EXIT_REFUSED and "the lock file" in printed
+          and "could not be opened" in printed, (code, printed))
 
     # --- A failed fetch -----------------------------------------------------------
     s.commit_on_origin("after the fetch fails")
