@@ -47,9 +47,11 @@ WHAT ONE RUN DOES, in order.
      into one and marks the others completed, whether or not the session-handoff
      has yet removed those completed tasks. A mutant of a task marked
      completed that no other open task names is finished: the state stops
-     naming it. Every other mutant, one whose task is not completed and that no
-     single open task names, or one of a completed task that two or more open
-     tasks name, is reported once:
+     naming it. Every other mutant is reported once: one whose task's file is
+     gone or cannot be read, or whose task is not marked completed and no
+     longer names the diff file, when no other open task or two or more name
+     its diff file; and one of a task marked completed when two or more other
+     open tasks name it. Reporting it goes like this:
      the record naming it is written at once, and only then does the state
      stop naming it, so a run killed later has still reported it; standard
      error names it at the end, and the run goes on and exits
@@ -166,9 +168,9 @@ EXIT_RECORD_NOT_WRITTEN (5) the record could not be written;
 EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6);
 EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR (7) no step failed, but a
 mutant a survivor task an earlier run opened held was reported at step 4:
-its task, not marked completed, no longer lists it and no single other open
-task names it, or its task is marked completed and two or more open tasks
-name it;
+its task's file is gone or cannot be read, or its task, not marked completed,
+no longer lists it, and no other open task or two or more name it; or its
+task is marked completed and two or more other open tasks name it;
 EXIT_SURVIVOR_TASK_MUTANTS_NOT_JUDGED_TASK_LEFT_AS_IT_WAS (8) no step failed
 and no task was lost, but the recheck gave no verdicts for a survivor task.
 """
