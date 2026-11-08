@@ -14,17 +14,23 @@ scripts/clean-worktrees.py reads. The owner named:
   - any other worktree, those agents make by hand inside .claude/worktrees/ included: the
     agent-seat GIT_AUTHOR_NAME names.
 
-It writes no owner file, and prints nothing, when GIT_AUTHOR_NAME names no agent-seat (an
-agent-seat being a directory under the agents root that holds a handoff-supervisor state
-file or a session-handoff file, as scripts/recover-crashed-seats.py lists them), as for a
-worktree a person makes by hand; for that agent-seat's own agent-home, <agents root>/<agent-seat>;
-for a merge-lane review checkout, directly inside ~/.cache/merge-lane-review-worktrees, which
-the cleaner judges by its pull request and which an owner file would keep from that; for the
-clone's main checkout; and when the worktree already has an owner file.
+The agents root is ~/agents, or $NEDSCHORUS_AGENTS_ROOT when set on a machine with the Mac launcher, as
+scripts/recover-crashed-seats.py's default_agents_root gives it. An agent-seat is a directory
+under the agents root whose name has a handoff-supervisor state file or a session-handoff file
+in ~/.claude/handoffs/, as scripts/recover-crashed-seats.py lists them.
+
+It writes no owner file, and prints nothing:
+  - when GIT_AUTHOR_NAME names no agent-seat, whatever the worktree, a subagent's included,
+    as for a worktree a person makes by hand;
+  - for that agent-seat's own agent-home, <agents root>/<agent-seat>;
+  - for a merge-lane review checkout, directly inside ~/.cache/merge-lane-review-worktrees,
+    which the cleaner judges by its pull request and which an owner file would keep from that;
+  - for the clone's main checkout;
+  - when the worktree already has an owner file.
 
 It does not tell a worktree made for a new agent-seat's agent-home from any other: the
 launchers make that worktree with GIT_AUTHOR_NAME set to the new agent-seat, which has no
-handoff records yet, so it gets none.
+records in ~/.claude/handoffs/ yet, so that worktree gets no owner file.
 
 When the owner file cannot be written, or a subagent's worktree has no `claude` process
 among this program's parents, it prints why on stderr, where the maker of the worktree sees
