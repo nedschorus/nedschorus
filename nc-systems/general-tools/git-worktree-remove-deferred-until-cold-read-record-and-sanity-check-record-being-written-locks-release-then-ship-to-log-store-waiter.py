@@ -68,15 +68,16 @@ GIT_TIMEOUT_SECONDS = 60
 ALERT_TITLE_TEMPLATE = "A deferred `git worktree remove` did not run: {worktree}"
 ALERT_TEXT_TEMPLATE = (
     "On {machine}, a `git worktree remove` of {worktree} was refused because a program was still writing "
-    "a record in it, and the removal was deferred to a waiter, which left the worktree in place: {failure}\n"
+    "a record in it. The program started to remove the worktree once its records were written and shipped "
+    "to the log-store has stopped without removing it, and the worktree is still there: {failure}\n"
     "{records}"
-    "The waiter's log: {log}")
-ALERT_ACTION = (
+    "The log file of that program's run: {log}")
+GIT_WORKTREE_REMOVE_DEFERRED_FAILED_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO = (
     "An agent on that machine can tell from the failure above whether a record is still being written or "
     "did not ship, ship it with the cold-read-record-ship.py or sanity-check-record-ship.py command for its "
     "folder, and then run `git worktree remove` on the worktree by its absolute path.")
-TIME_LIMIT_FAILURE = "its time limit ran out while these records were still being written."
-SHIPMENT_FAILURE = "these records did not ship to the log-store."
+WAITER_TIME_LIMIT_RAN_OUT_USER_ALERT_FAILURE_SENTENCE = "its time limit ran out while these records were still being written."
+RECORDS_NOT_SHIPPED_USER_ALERT_FAILURE_SENTENCE = "these records did not ship to the log-store."
 RECORDS_NOT_READ_FAILURE_TEMPLATE = "it could not read the worktree's records ({error})."
 GIT_FAILURE_TEMPLATE = "`{command}` exited {code}: {error}"
 UNEXPECTED_FAILURE_TEMPLATE = "the waiter stopped on an error: {error}"
@@ -93,7 +94,7 @@ def log(text):
     print(f"{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} {text}", flush=True)
 
 
-def lock_is_held(kinds, record):
+def record_directory_being_written_lock_is_held_by_any_process(kinds, record):
     """True while a process holds the record's being-written lock; a record gone has none."""
     try:
         return kinds[record.parent.name][2].record_directory_being_written_lock_is_held_by_any_process(record)
@@ -115,9 +116,9 @@ def being_written_lines(hook, worktree, records):
 def wait_until_released_and_shipped_by_writer(hook, kinds, worktree, records, deadline, clock, sleep,
                                               poll_seconds, grace_seconds):
     """Steps 1 and 2 for these records; raises WaiterFailed when the deadline passes first."""
-    while any(lock_is_held(kinds, record) for record in records):
+    while any(record_directory_being_written_lock_is_held_by_any_process(kinds, record) for record in records):
         if clock() >= deadline:
-            raise WaiterFailed(TIME_LIMIT_FAILURE,
+            raise WaiterFailed(WAITER_TIME_LIMIT_RAN_OUT_USER_ALERT_FAILURE_SENTENCE,
                                being_written_lines(hook, worktree, records))
         sleep(poll_seconds)
     log("every listed record's being-written lock is released")
@@ -144,7 +145,7 @@ def ship_until_none_is_being_written(hook, kinds, worktree, records, deadline, c
             raise WaiterFailed(RECORDS_NOT_READ_FAILURE_TEMPLATE.format(error=progress["error"]),
                                being_written_lines(hook, worktree, records))
         if progress["lines"]:
-            raise WaiterFailed(SHIPMENT_FAILURE, "".join(hook.UNSHIPPED_RECORD_LINE_TEMPLATE.format(
+            raise WaiterFailed(RECORDS_NOT_SHIPPED_USER_ALERT_FAILURE_SENTENCE, "".join(hook.UNSHIPPED_RECORD_LINE_TEMPLATE.format(
                 record=record, worktree=worktree, line=line,
                 command=f"python3 {kinds[record.parent.name][1]} {record}")
                 for record, line in progress["lines"].items()))
@@ -181,7 +182,7 @@ def user_alert_write(ned_box_home, worktree, failure, records_text, log_path):
             ALERT_TITLE_TEMPLATE.format(worktree=worktree),
             ALERT_TEXT_TEMPLATE.format(machine=socket.gethostname(), worktree=worktree, failure=failure,
                                        records=records_text, log=log_path),
-            ALERT_ACTION)
+            GIT_WORKTREE_REMOVE_DEFERRED_FAILED_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO)
     finally:
         if home_as_given is None:
             del os.environ["HOME"]

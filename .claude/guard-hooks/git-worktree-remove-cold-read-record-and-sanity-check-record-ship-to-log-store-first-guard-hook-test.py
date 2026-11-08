@@ -50,7 +50,7 @@ hook = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(hook)
 
 _waiter_spec = importlib.util.spec_from_file_location(
-    "git_worktree_remove_deferred_until_records_being_written_locks_release_waiter", hook.DEFERRED_REMOVAL_WAITER_SCRIPT)
+    "git_worktree_remove_deferred_until_records_being_written_locks_release_waiter", hook.GIT_WORKTREE_REMOVE_DEFERRED_WAITER_SCRIPT)
 waiter = importlib.util.module_from_spec(_waiter_spec)
 _waiter_spec.loader.exec_module(waiter)
 
@@ -63,7 +63,7 @@ STORE = _scratch / "store"
 os.environ[SHIP_DESTINATION_VARIABLE] = str(STORE / "cold-read-records")
 # Where the deferred-removal cases' waiters write their logs and user-alerts, never the real ned-box home.
 SCRATCH_NED_BOX_HOME = _scratch / "ned-box-home"
-WAITER_LOGS = SCRATCH_NED_BOX_HOME / "nedschorus-logs" / hook.DEFERRED_REMOVAL_WAITER_LOG_DIRECTORY_NAME
+WAITER_LOGS = SCRATCH_NED_BOX_HOME / "nedschorus-logs" / hook.GIT_WORKTREE_REMOVE_DEFERRED_WAITER_LOG_STORE_DIRECTORY_NAME
 PENDING_ALERTS = SCRATCH_NED_BOX_HOME / ".local" / "state" / "nedschorus" / "user-alerts" / "pending"
 # Before anything runs git, so a run started with GIT_DIR or another redirecting variable set builds its
 # scratch repositories here and not in the repository the variable names.
@@ -564,7 +564,7 @@ for command, expected in (
         ("git worktree remove -- -f", False),
         ("rm -f x && git worktree remove wt", False)):
     check(f"{command!r} {'gives' if expected else 'does not give'} a removal -f or --force",
-          hook.command_gives_worktree_remove_force(command) == expected)
+          hook.shell_command_runs_git_worktree_remove_with_force_option(command) == expected)
 
 # A slow shipment must be refused by the hook, not cut off by Claude Code, which lets the command through.
 settings = json.loads((hook.REPOSITORY_ROOT / ".claude" / "settings.json").read_text())
@@ -763,7 +763,7 @@ check("env without a directory option still resolves the path against the cwd",
 # The deferred removal, end to end: the hook starts the real waiter, detached, which waits for the writer,
 # ships the records and removes the worktree, or writes a user-alert.
 def start_waiter_quickly(worktree, force, records, git_directory):
-    return hook.deferred_removal_waiter_start_unless_one_waits(
+    return hook.git_worktree_remove_deferred_waiter_start_unless_one_already_waits(
         worktree, force, records, git_directory, ned_box_home=SCRATCH_NED_BOX_HOME,
         waiter_options=["--poll-seconds", "0.2", "--writer-own-shipment-grace-seconds", "2"])
 
@@ -849,7 +849,7 @@ from pathlib import Path
 spec = importlib.util.spec_from_file_location("hook", sys.argv[1])
 hook = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hook)
-print(hook.deferred_removal_waiter_start_unless_one_waits(
+print(hook.git_worktree_remove_deferred_waiter_start_unless_one_already_waits(
     Path(sys.argv[2]), True, [Path(sys.argv[3])], Path(sys.argv[4]), ned_box_home=Path(sys.argv[5]),
     waiter_options=["--poll-seconds", "0.2", "--writer-own-shipment-grace-seconds", "2"]))
 """
@@ -880,8 +880,8 @@ check("the user-alert names the worktree, its Record line, the git command that 
       alert.get("title") == f"A deferred `git worktree remove` did not run: {refused_worktree}"
       and f"Record {refused_record} (worktree {refused_worktree})\n" in alert.get("alert_text", "")
       and f"worktree remove {refused_worktree}` exited 128: " in alert.get("alert_text", "")
-      and f"The waiter's log: {waiter_logs_of(refused_worktree)[0]}" in alert.get("alert_text", "")
-      and alert.get("action") == waiter.ALERT_ACTION, alert)
+      and f"The log file of that program's run: {waiter_logs_of(refused_worktree)[0]}" in alert.get("alert_text", "")
+      and alert.get("action") == waiter.GIT_WORKTREE_REMOVE_DEFERRED_FAILED_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO, alert)
 check("git refusing leaves the worktree in place, with its record shipped",
       refused_worktree.is_dir() and (STORE / "cold-read-records" / refused_record.name / "fast-read.md").is_file())
 
@@ -894,7 +894,7 @@ blocked_home.write_text("not a directory\n")
 no_waiter_directory = _scratch / "directory-no-waiter-holds"
 no_waiter_directory.mkdir()
 check("a log that cannot be written starts no waiter, and says why",
-      (hook.deferred_removal_waiter_start_unless_one_waits(no_waiter_directory, False, [], no_waiter_directory,
+      (hook.git_worktree_remove_deferred_waiter_start_unless_one_already_waits(no_waiter_directory, False, [], no_waiter_directory,
                                                            ned_box_home=blocked_home) or "")
       .startswith("the waiter could not be started: "))
 
@@ -922,7 +922,7 @@ finally:
     writer.communicate("")
 check("a record still being written when the time limit runs out leaves the worktree and writes a user-alert",
       code == 1 and failing_worktree.is_dir() and len(alerts) == 1
-      and waiter.TIME_LIMIT_FAILURE in alerts[0]["alert_text"]
+      and waiter.WAITER_TIME_LIMIT_RAN_OUT_USER_ALERT_FAILURE_SENTENCE in alerts[0]["alert_text"]
       and f"Record {failing_record} (worktree {failing_worktree})\n" in alerts[0]["alert_text"], (code, log_text))
 
 
@@ -935,7 +935,7 @@ def shipper_failing_runner(argv, **keywords):
 code, log_text, alerts = waiter_run(failing_worktree, runner=shipper_failing_runner)
 check("a shipment that fails leaves the worktree and writes a user-alert quoting the shipper's line",
       code == 1 and failing_worktree.is_dir() and len(alerts) == 1
-      and waiter.SHIPMENT_FAILURE in alerts[0]["alert_text"]
+      and waiter.RECORDS_NOT_SHIPPED_USER_ALERT_FAILURE_SENTENCE in alerts[0]["alert_text"]
       and f"Record {failing_record} (worktree {failing_worktree}): FAILED: ned-box could not be reached\n"
       in alerts[0]["alert_text"], (code, log_text, alerts))
 
@@ -972,7 +972,7 @@ check("an unexpected error in the waiter leaves the worktree and writes a user-a
       code == 1 and failing_worktree.is_dir() and len(alerts) == 1
       and "the waiter stopped on an error: AttributeError: " in alerts[0]["alert_text"], (code, log_text))
 check("a record gone holds no being-written lock",
-      waiter.lock_is_held({kind[0]: kind for kind in hook.record_kinds()},
+      waiter.record_directory_being_written_lock_is_held_by_any_process({kind[0]: kind for kind in hook.record_kinds()},
                           failing_worktree / "cold-read-records" / "never-written") is False)
 
 print()

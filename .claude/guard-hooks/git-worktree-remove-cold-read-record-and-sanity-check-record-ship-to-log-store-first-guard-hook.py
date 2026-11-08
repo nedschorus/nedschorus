@@ -21,14 +21,14 @@ later one, refuse the record, and the program ships the record itself when it
 finishes. Such a record refuses the removal only when the command removes
 the worktree it is in, because the removal would delete it first. The hook
 then defers that removal: for each such worktree it starts, detached, the
-waiter DEFERRED_REMOVAL_WAITER_SCRIPT, which waits until no record in the
+waiter GIT_WORKTREE_REMOVE_DEFERRED_WAITER_SCRIPT, which waits until no record in the
 worktree is being written, ships the worktree's records, runs `git worktree
 remove` on it, with -f when the command gave -f or --force, and writes a
 user-alert when that fails. Before starting it the hook takes an flock on the
 worktree's directory and hands the descriptor to the waiter, which holds it
 until it exits; when another process already holds that flock, a waiter
 already waits on the worktree, and the hook starts none. Each waiter's output
-goes to a log file of its own in DEFERRED_REMOVAL_WAITER_LOG_DIRECTORY_NAME in
+goes to a log file of its own in GIT_WORKTREE_REMOVE_DEFERRED_WAITER_LOG_STORE_DIRECTORY_NAME in
 the log-store, which on the Mac the hook writes through its mount of ned-box's
 home.
 
@@ -137,10 +137,10 @@ ned_box_home_paths = importlib.util.module_from_spec(_ned_box_home_spec)
 _ned_box_home_spec.loader.exec_module(ned_box_home_paths)
 
 CLEAN_WORKTREES_SCRIPT = REPOSITORY_ROOT / "scripts" / "clean-worktrees.py"
-DEFERRED_REMOVAL_WAITER_SCRIPT = (
+GIT_WORKTREE_REMOVE_DEFERRED_WAITER_SCRIPT = (
     REPOSITORY_ROOT / "nc-systems" / "general-tools"
     / "git-worktree-remove-deferred-until-cold-read-record-and-sanity-check-record-being-written-locks-release-then-ship-to-log-store-waiter.py")
-DEFERRED_REMOVAL_WAITER_LOG_DIRECTORY_NAME = (
+GIT_WORKTREE_REMOVE_DEFERRED_WAITER_LOG_STORE_DIRECTORY_NAME = (
     "git-worktree-remove-deferred-until-cold-read-record-and-sanity-check-record-being-written-locks-release-then-ship-to-log-store-waiter-run-logs")
 
 # Below the hook's timeout in .claude/settings.json, so a slow shipment is refused, not let through.
@@ -206,8 +206,8 @@ REMOVAL_NOT_DEFERRED_ENDING_TEMPLATE = (
     "finished: {failures}.\n"
     f"Leave the worktree in place, stop, and {TELL_THE_USER_OR_DISPATCHING_AGENT} that `git worktree "
     "remove` is refused while a program writes a record in that worktree, and that this hook could not "
-    "defer the removal, quoting each Record line above and the reason the hook could not defer it, word "
-    "for word.")
+    "defer the removal, quoting each Record line above, and the reason after \"once the record is "
+    "finished:\", word for word.")
 REMOVAL_NOT_DEFERRED_FAILURE_TEMPLATE = "for {worktree}, {error}"
 REMOVED_WORKTREE_UNRESOLVED_REFUSAL_TEMPLATE = (
     "Refused on purpose: this hook could not tell which worktree this command removes ({reason}), "
@@ -293,7 +293,7 @@ def worktree_remove_force_given(words, index):
     return False
 
 
-def command_gives_worktree_remove_force(command):
+def shell_command_runs_git_worktree_remove_with_force_option(command):
     """True when a `git worktree remove` in the command, or in a bash, sh or zsh -c string in it, gives -f or --force."""
     for words in shell_reader.simple_commands(command):
         index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
@@ -303,7 +303,7 @@ def command_gives_worktree_remove_force(command):
             return True
         if any(is_program(words[index], runner) for runner in shell_reader.SHELL_STRING_RUNNERS):
             inner = shell_reader.shell_command_string(words[index + 1:])
-            if inner is not None and command_gives_worktree_remove_force(inner):
+            if inner is not None and shell_command_runs_git_worktree_remove_with_force_option(inner):
                 return True
     return False
 
@@ -558,7 +558,7 @@ def ned_box_home_as_this_machine_reaches_it():
     return Path(ned_box_home_paths.MAC_MOUNT_OF_NED_BOX_HOME)
 
 
-def deferred_removal_waiter_start_unless_one_waits(worktree, force, records, git_directory,
+def git_worktree_remove_deferred_waiter_start_unless_one_already_waits(worktree, force, records, git_directory,
                                                    ned_box_home=None, waiter_options=()):
     """Start the waiter that removes the worktree once no record in it is being written, unless one waits on it already.
 
@@ -576,10 +576,10 @@ def deferred_removal_waiter_start_unless_one_waits(worktree, force, records, git
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return None
-        log_directory = ned_box_home / "nedschorus-logs" / DEFERRED_REMOVAL_WAITER_LOG_DIRECTORY_NAME
+        log_directory = ned_box_home / "nedschorus-logs" / GIT_WORKTREE_REMOVE_DEFERRED_WAITER_LOG_STORE_DIRECTORY_NAME
         log_directory.mkdir(parents=True, exist_ok=True)
         log_path = log_directory / f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{Path(worktree).name}-{os.getpid()}.log"
-        command = [sys.executable, str(DEFERRED_REMOVAL_WAITER_SCRIPT), "--worktree", str(worktree),
+        command = [sys.executable, str(GIT_WORKTREE_REMOVE_DEFERRED_WAITER_SCRIPT), "--worktree", str(worktree),
                    "--git-directory", str(git_directory), "--ned-box-home", str(ned_box_home),
                    "--log-file", str(log_path), *(["--force"] if force else [])]
         for record in records:
@@ -612,7 +612,7 @@ def note_unchecked(notice):
 
 
 def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic, start_waiter=None):
-    start_waiter = start_waiter or deferred_removal_waiter_start_unless_one_waits
+    start_waiter = start_waiter or git_worktree_remove_deferred_waiter_start_unless_one_already_waits
     try:
         payload = json.load(stdin)
     except ValueError:
@@ -671,7 +671,7 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic, start_wai
         if unresolved is not None:
             refusals.append(REMOVED_WORKTREE_UNRESOLVED_REFUSAL_TEMPLATE.format(
                 reason=unresolved, records=listed,
-                force=" -f" if command_gives_worktree_remove_force(command) else ""))
+                force=" -f" if shell_command_runs_git_worktree_remove_with_force_option(command) else ""))
         elif in_removed:
             failures = []
             for worktree in dict.fromkeys(worktree for worktree, _ in in_removed):
