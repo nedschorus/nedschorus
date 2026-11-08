@@ -1059,7 +1059,7 @@ def recorded_mutants_judged_in_one_worktree(to_run, head, arguments, checkout, e
                                           recorded_inputs_directory),
                 cwd=str(worktree), env=environment, text=True, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, check=False)
-            if unmutated.returncode == runner.EXIT_LOCKED:
+            if unmutated.returncode == runner.EXIT_LOCKED:  # pragma: no mutate, `is` matches a small int as `==` does, and the runner exits no higher than EXIT_LOCKED but by a signal, which is negative
                 raise CouldNotRun(
                     f"{PROGRAM}: not run — the suite runner scripts/run-all-test-suites.py, run "
                     f"at head {head[:12]} without a mutant, exited {runner.EXIT_LOCKED}, which "
@@ -1070,7 +1070,7 @@ def recorded_mutants_judged_in_one_worktree(to_run, head, arguments, checkout, e
                     f"{unmutated.stdout.strip()}\n"
                     f"Run scripts/{PROGRAM}.py again, with the same options, once that process "
                     f"has ended.")
-            if unmutated.returncode != 0 and not runner.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(
+            if unmutated.returncode and not runner.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(
                     unmutated.stdout):
                 raise CouldNotRun(
                     f"{PROGRAM}: not run — the suite runner scripts/run-all-test-suites.py, run "
