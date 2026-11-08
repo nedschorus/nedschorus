@@ -16,6 +16,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -197,14 +198,29 @@ class GeminiTaskTests(unittest.TestCase):
                 result = self.run_cli(mode, extra=("--deadline-minutes", "0.03"))
                 self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertIn("deadline passed", result.stderr)
-                pid = int(self.child.read_text())
-                # Linux can retain a dead orphan as a zombie until PID 1 reaps it.
-                state = Path(f"/proc/{pid}/stat")
-                if sys.platform.startswith("linux") and state.exists():
-                    self.assertEqual(state.read_text().split(") ")[-1][0], "Z")
-                else:
-                    with self.assertRaises(ProcessLookupError):
-                        os.kill(pid, 0)
+                self.assert_process_dies(int(self.child.read_text()))
+
+    def assert_process_dies(self, pid, timeout=10):
+        # SIGKILL takes effect asynchronously; under load the child can still be running
+        # when the launcher returns. Linux can keep a dead orphan as a zombie until PID 1 reaps it.
+        deadline = time.monotonic() + timeout
+        last = None
+        while time.monotonic() < deadline:
+            if sys.platform.startswith("linux"):
+                try:
+                    last = Path(f"/proc/{pid}/stat").read_text().split(") ")[-1][0]
+                except FileNotFoundError:
+                    return
+                if last == "Z":
+                    return
+            else:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    return
+                last = "alive"
+            time.sleep(0.05)
+        self.fail(f"process {pid} still not dead after {timeout}s; last state {last!r}")
 
     def test_bad_arguments(self):
         for extra in (("--deadline-minutes", "nan"), ("--deadline-minutes", "0"),
