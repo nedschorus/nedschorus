@@ -163,7 +163,7 @@ rejects("a second definition of a term no glossary lists",
                    a["key_terms"].append("long-lived agent")),
         "no glossary lists the term")
 rejects("an empty restatement", lambda a: flag(a, 0).update(restatement=" "),
-        "flag 1's restatement is empty")
+        "flag 1 'bumps': its restatement is empty")
 rejects("an empty key-term", lambda a: a["key_terms"].append(""), "key_terms[4] is empty")
 rejects("an empty use", lambda a: flag(a, 1)["fixes"][0]["uses"].append("  "), "use 2 is empty")
 rejects("an empty definition",
@@ -192,7 +192,7 @@ rejects("a flagged term outside quotation marks in document_kind",
 rejects("a flagged term outside quotation marks in a question",
         lambda a: flag(a, 0).update(fixes=[{"fix": "question", "words": "Which slot?",
                                             "uses": []}]),
-        "flag 1's question uses the flagged term 'slot'")
+        "flag 1 'bumps': its question uses the flagged term 'slot'")
 rejects("a fix (a) naming no glossary term",
         lambda a: flag(a, 0).update(fixes=[{"fix": "a", "words": "incrementer", "uses": []}]),
         "fix (a) 'incrementer' is in no glossary")
@@ -250,15 +250,55 @@ problems = terminology.terminology_answer_problems(base_answer(), unchecked_sche
 check("a schema keyword the check does not enforce rejects every answer",
       len(problems) == 1 and "document_kind: pattern" in problems[0], problems)
 
-try:
-    terminology.terminology_report_from_answer(
-        dict(base_answer(), document_kind=""), SCHEMA, DOCUMENT, ENTRIES)
-    raised = None
-except terminology.TerminologyAnswerRejected as rejected:
-    raised = rejected
-check("terminology_report_from_answer raises TerminologyAnswerRejected listing the problems",
-      raised is not None and raised.problems == ["document_kind is empty"],
-      raised and raised.problems)
+def rejection_of(answer):
+    try:
+        terminology.terminology_report_from_answer(answer, SCHEMA, DOCUMENT, ENTRIES)
+    except terminology.TerminologyAnswerRejected as rejected:
+        return rejected
+    return None
+
+
+rejected = rejection_of(dict(base_answer(), flags="none"))
+check("an answer that breaks the schema is rejected whole",
+      rejected is not None and any("flags" in problem for problem in rejected.problems),
+      rejected and rejected.problems)
+
+# Most flags valid, one with a fix (a) that names two glossary terms at once.
+answer = base_answer()
+answer["flags"][0]["fixes"] = [{"fix": "a", "words": "agent-seat or cold-read-cell", "uses": []}]
+rejected = rejection_of(answer)
+report = terminology.terminology_report_from_answer(answer, SCHEMA, DOCUMENT, ENTRIES)
+check("a few broken flags among valid ones give a report, the broken flag marked with its rule",
+      rejected is None
+      and "   - runner check failed: fix (a) 'agent-seat or cold-read-cell' is in no glossary"
+      in report.split('3. "bumps"')[1]
+      and "runner check failed" not in report.split('3. "bumps"')[0]
+      and "3 flagged terms, 1 of them marked by a failed runner check" in report, report)
+
+answer["flags"][1]["fixes"].pop()
+rejected = rejection_of(answer)
+check("more than half the flags breaking a rule rejects the answer, listing each break",
+      rejected is not None and rejected.problems[0] == "2 of its 3 flags break a rule, more than half"
+      and any("flag 1 'bumps': fix (a)" in problem for problem in rejected.problems)
+      and any("flag 2 'slot': it fails test (3)" in problem for problem in rejected.problems),
+      rejected and rejected.problems)
+
+Break = terminology.RuleBreak
+check("exactly half the flags breaking a rule is not more than half",
+      not terminology.too_many_flags_break_a_rule(
+          {"flags": [{}, {}, {}, {}]}, [Break(1, "x"), Break(3, "y"), Break(3, "z"), Break(None, "w")]))
+check("a flag with several breaks counts once toward the half",
+      not terminology.too_many_flags_break_a_rule(
+          {"flags": [{}, {}, {}]}, [Break(2, "x"), Break(2, "y")]))
+check("an answer with no flags is never rejected for its rule breaks",
+      not terminology.too_many_flags_break_a_rule({"flags": []}, [Break(None, "x")]))
+
+report = terminology.terminology_report_from_answer(
+    dict(base_answer(), document_kind=""), SCHEMA, DOCUMENT, ENTRIES)
+check("a break of the answer as a whole is marked under the document's kind, not rejected",
+      "Failed runner checks on the answer as a whole:\n\n- runner check failed: document_kind is empty"
+      in report and report.index("document_kind is empty") < report.index("## Flagged terms"),
+      report[:400])
 
 # --- The lookups ------------------------------------------------------------
 looked_up = terminology.terminology_answer_with_runner_lookups(base_answer(), DOCUMENT, GLOSSARY)
@@ -361,7 +401,8 @@ check("the terms kept are listed on one line",
       'terms listed and kept: "worker", "queue"' in report, report)
 check("the report closes with the counts line",
       report.rstrip().splitlines()[-1]
-      == "Counts: 3 key-terms, 2 of them in no glossary; 3 flagged terms; test (1): 1, "
+      == "Counts: 3 key-terms, 2 of them in no glossary; 3 flagged terms, 0 of them marked by a "
+         "failed runner check; test (1): 1, "
          "test (2): 0, test (3): 1, test (4): 0, test (5): 0; 1 proposed definitions; "
          "2 terms kept.", report.rstrip().splitlines()[-1])
 empty = {"document_kind": "notes", "key_terms": [], "flags": [], "proposed_definitions": [],

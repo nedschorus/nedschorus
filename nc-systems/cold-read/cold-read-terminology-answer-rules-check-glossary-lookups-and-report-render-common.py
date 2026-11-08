@@ -6,17 +6,20 @@ agent-binary returned, the schema the model was given
 (.claude/skills/cold-read/prompts/terminology-answer-schema.json), the text
 of the frozen-copy and the entries of every glossary. It:
 
-1. checks the answer against the schema, then against every rule of
+1. checks the answer against the schema, and raises TerminologyAnswerRejected
+   listing every break when it fails; then checks it against every rule of
    nc-systems/cold-read/cold-read-terminology-answer-rules-the-runner-validates-beyond-the-schema.md,
-   one function per row of that page's table, and raises
-   TerminologyAnswerRejected listing every rule the answer breaks;
+   one function per row of that page's table, each break tied to the flag it
+   is about or to the answer as a whole, and raises TerminologyAnswerRejected
+   only when more than half the flags break a rule;
 2. makes the lookups that page's last section lists: the glossary entry of a
    term defined twice, the key-terms no glossary lists, where each flagged
    term first appears, clashes_with_location, the fix of a term defined twice
    that fails no test, and the glossary terms the document writes with a
    different case, hyphen or plural (test (5), one flag per term);
-3. renders the report a reader triages: the document's kind, one numbered
-   item per flag with its test numbers, the proposed definitions, the
+3. renders the report a reader triages: the document's kind, the rule breaks
+   of the answer as a whole, one numbered item per flag with its test numbers
+   and a "runner check failed: " line per rule it breaks, the proposed definitions, the
    key-terms missing from the glossaries, the terms kept, and a closing
    counts line.
 
@@ -63,6 +66,7 @@ QUOTED_SPAN_PATTERN = re.compile(r'"[^"]*"|“[^”]*”')
 SURROUNDING_QUOTES = "\"'`“”‘’"
 # A fix (a) written in a sentence, as "the cold-read-target", still names a glossary term.
 LEADING_ARTICLE_PATTERN = re.compile(r"^(?:the|an|a)\s+", re.I)
+RULE_BREAK_MARK = "runner check failed: "
 LOCATION_GLOSSARY = "glossary"
 LOCATION_DOCUMENT = "document"
 LOCATION_STANDARD_VOCABULARY = "standard_vocabulary"
@@ -147,34 +151,43 @@ def contains_term(text, term):
 
 
 # --- The rules: one function per row of the rules page's table -------------
+#
+# Each rule returns RuleBreak entries: `flag` is the 1-based number of the flag
+# the break is about, or None for a break of the answer as a whole.
+
+class RuleBreak(typing.NamedTuple):
+    flag: typing.Optional[int]
+    message: str
+
 
 def meaning_compared_only_for_test_1(answer, document, glossary):
-    return [f"flag {index} {flag['term']!r}: meaning_compared is "
-            f"{flag['meaning_compared']!r}, but it is filled exactly when tests_failed has 1"
+    return [RuleBreak(index, f"meaning_compared is {flag['meaning_compared']!r}, but it is "
+                             f"filled exactly when tests_failed has 1")
             for index, flag in enumerate(answer["flags"], 1)
             if (flag["meaning_compared"] != "") != (1 in flag["tests_failed"])]
 
 
 def fix_count_matches_tests(answer, document, glossary):
-    problems = []
+    breaks = []
     for index, flag in enumerate(answer["flags"], 1):
-        name = f"flag {index} {flag['term']!r}"
         fixes = flag["fixes"]
         if 3 in flag["tests_failed"]:
             if len(fixes) < 2 or not all(fix["uses"] for fix in fixes):
-                problems.append(f"{name} fails test (3), so it needs one fix per meaning, at "
-                                f"least two, each naming its uses; it has {len(fixes)}")
+                breaks.append(RuleBreak(index, f"it fails test (3), so it needs one fix per "
+                                               f"meaning, at least two, each naming its uses; "
+                                               f"it has {len(fixes)}"))
         elif not flag["tests_failed"]:
             if fixes:
-                problems.append(f"{name} fails no test, so its fixes must be empty; the runner "
-                                f"adds its fix")
+                breaks.append(RuleBreak(index, "it fails no test, so its fixes must be empty; "
+                                               "the runner adds its fix"))
         elif len(fixes) != 1 or fixes[0]["uses"]:
-            problems.append(f"{name} needs exactly one fix with empty uses; it has {len(fixes)}")
-    return problems
+            breaks.append(RuleBreak(index, f"it needs exactly one fix with empty uses; it has "
+                                           f"{len(fixes)}"))
+    return breaks
 
 
 def every_use_of_a_test_3_term_takes_one_fix(answer, document, glossary):
-    problems = []
+    breaks = []
     for index, flag in enumerate(answer["flags"], 1):
         if 3 not in flag["tests_failed"]:
             continue
@@ -186,139 +199,147 @@ def every_use_of_a_test_3_term_takes_one_fix(answer, document, glossary):
                            for spans in fix_spans)
             if covering != 1:
                 line = document.count("\n", 0, start) + 1
-                problems.append(f"flag {index} {flag['term']!r}: its use on line {line} of the "
-                                f"frozen-copy lies inside the uses of {covering} fixes, not one")
-    return problems
+                breaks.append(RuleBreak(index, f"its use on line {line} of the frozen-copy lies "
+                                               f"inside the uses of {covering} fixes, not one"))
+    return breaks
 
 
 def test_1_or_2_names_the_clashing_term(answer, document, glossary):
-    problems = []
+    breaks = []
     for index, flag in enumerate(answer["flags"], 1):
         if {1, 2} & set(flag["tests_failed"]) and not flag["clashes_with"].strip():
-            problems.append(f"flag {index} {flag['term']!r} fails test (1) or (2), so "
-                            f"clashes_with must name the term it clashes with")
+            breaks.append(RuleBreak(index, "it fails test (1) or (2), so clashes_with must name "
+                                           "the term it clashes with"))
         if not flag["clashes_with"].strip() and flag["clashes_with_location"] != "":
-            problems.append(f"flag {index} {flag['term']!r}: clashes_with is empty, so "
-                            f"clashes_with_location must be empty too")
-    return problems
+            breaks.append(RuleBreak(index, "clashes_with is empty, so clashes_with_location "
+                                           "must be empty too"))
+    return breaks
 
 
 def flag_fails_a_test_or_quotes_a_second_definition(answer, document, glossary):
-    return [f"flag {index} {flag['term']!r} fails no test and quotes no second definition"
+    return [RuleBreak(index, "it fails no test and quotes no second definition")
             for index, flag in enumerate(answer["flags"], 1)
             if not flag["tests_failed"] and not flag["second_definition"].strip()]
 
 
 def term_defined_twice_is_a_glossary_term(answer, document, glossary):
-    return [f"flag {index} {flag['term']!r} quotes a second definition, but no glossary "
-            f"lists the term"
+    return [RuleBreak(index, "it quotes a second definition, but no glossary lists the term")
             for index, flag in enumerate(answer["flags"], 1)
             if flag["second_definition"].strip() and glossary.entry_for(flag["term"]) is None]
 
 
 def strings_carry_content(answer, document, glossary):
-    named = [("document_kind", answer["document_kind"])]
-    named += [(f"key_terms[{index}]", term) for index, term in enumerate(answer["key_terms"], 1)]
-    named += [(f"terms_kept[{index}]", term) for index, term in enumerate(answer["terms_kept"], 1)]
+    named = [(None, "document_kind", answer["document_kind"])]
+    named += [(None, f"key_terms[{index}]", term)
+              for index, term in enumerate(answer["key_terms"], 1)]
+    named += [(None, f"terms_kept[{index}]", term)
+              for index, term in enumerate(answer["terms_kept"], 1)]
     for index, flag in enumerate(answer["flags"], 1):
-        named += [(f"flag {index}'s {field}", flag[field])
+        named += [(index, f"its {field}", flag[field])
                   for field in ("term", "passage", "restatement")]
         for fix_index, fix in enumerate(flag["fixes"], 1):
-            named.append((f"flag {index}'s fix {fix_index}'s words", fix["words"]))
-            named += [(f"flag {index}'s fix {fix_index}'s use {use_index}", use)
+            named.append((index, f"its fix {fix_index}'s words", fix["words"]))
+            named += [(index, f"its fix {fix_index}'s use {use_index}", use)
                       for use_index, use in enumerate(fix["uses"], 1)]
     for index, proposal in enumerate(answer["proposed_definitions"], 1):
-        named += [(f"proposed definition {index}'s {field}", proposal[field])
+        named += [(None, f"proposed definition {index}'s {field}", proposal[field])
                   for field in ("project_term", "definition")]
-    return [f"{where} is empty" for where, value in named if not value.strip()]
+    return [RuleBreak(flag, f"{where} is empty") for flag, where, value in named
+            if not value.strip()]
 
 
 def document_kind_is_one_line(answer, document, glossary):
     kind = answer["document_kind"]
-    return ["document_kind holds a line break; it is one line"] if "\n" in kind or "\r" in kind else []
+    if "\n" in kind or "\r" in kind:
+        return [RuleBreak(None, "document_kind holds a line break; it is one line")]
+    return []
 
 
 def test_number_once_per_flag(answer, document, glossary):
-    return [f"flag {index} {flag['term']!r} lists a test number twice in tests_failed"
+    return [RuleBreak(index, "it lists a test number twice in tests_failed")
             for index, flag in enumerate(answer["flags"], 1)
             if len(set(flag["tests_failed"])) != len(flag["tests_failed"])]
 
 
 def proposed_terms_match_fixes_d(answer, document, glossary):
-    fixes_d = {fix["words"].strip() for flag in answer["flags"] for fix in flag["fixes"]
-               if fix["fix"] == FIX_NEW_PROJECT_TERM}
     proposed = {proposal["project_term"].strip() for proposal in answer["proposed_definitions"]}
-    problems = [f"fix (d) {words!r} has no entry in proposed_definitions"
-                for words in sorted(fixes_d - proposed)]
-    problems += [f"proposed_definitions has {term!r}, which no fix (d) proposes"
-                 for term in sorted(proposed - fixes_d)]
-    return problems
+    breaks = []
+    proposing = set()
+    for index, flag in enumerate(answer["flags"], 1):
+        for fix in flag["fixes"]:
+            if fix["fix"] == FIX_NEW_PROJECT_TERM:
+                proposing.add(fix["words"].strip())
+                if fix["words"].strip() not in proposed:
+                    breaks.append(RuleBreak(index, f"fix (d) {fix['words']!r} has no entry in "
+                                                   f"proposed_definitions"))
+    breaks += [RuleBreak(None, f"proposed_definitions has {term!r}, which no fix (d) proposes")
+               for term in sorted(proposed - proposing)]
+    return breaks
 
 
 def term_is_flagged_or_kept(answer, document, glossary):
     kept = {term.strip().casefold() for term in answer["terms_kept"]}
-    return [f"flag {index} {flag['term']!r} is also in terms_kept"
+    return [RuleBreak(index, "it is also in terms_kept")
             for index, flag in enumerate(answer["flags"], 1)
             if flag["term"].strip().casefold() in kept]
 
 
 def key_terms_are_the_documents_words(answer, document, glossary):
-    return [f"key-term {term!r} does not occur in the frozen-copy"
+    return [RuleBreak(None, f"key-term {term!r} does not occur in the frozen-copy")
             for term in answer["key_terms"] if term.strip() and not contains_term(document, term)]
 
 
 def restatement_avoids_the_term_and_six_words(answer, document, glossary):
-    problems = []
+    breaks = []
     for index, flag in enumerate(answer["flags"], 1):
-        restatement = flag["restatement"]
         avoided = [flag["term"], *WORDS_A_RESTATEMENT_AVOIDS]
-        used = [word for word in avoided if contains_term(restatement, word)]
+        used = [word for word in avoided if contains_term(flag["restatement"], word)]
         if used:
-            problems.append(f"flag {index} {flag['term']!r}: its restatement uses "
-                            f"{', '.join(repr(word) for word in used)}")
-    return problems
+            breaks.append(RuleBreak(index, f"its restatement uses "
+                                           f"{', '.join(repr(word) for word in used)}"))
+    return breaks
 
 
 def strings_avoid_flagged_terms_outside_quotation_marks(answer, document, glossary):
     terms = [flag["term"] for flag in answer["flags"]]
-    named = [("document_kind", answer["document_kind"])]
+    named = [(None, "document_kind", answer["document_kind"])]
     for index, flag in enumerate(answer["flags"], 1):
-        named.append((f"flag {index}'s restatement", flag["restatement"]))
-        named += [(f"flag {index}'s question", fix["words"])
+        named.append((index, "its restatement", flag["restatement"]))
+        named += [(index, "its question", fix["words"])
                   for fix in flag["fixes"] if fix["fix"] == FIX_QUESTION]
-    named += [(f"proposed definition {index}", proposal["definition"])
+    named += [(None, f"proposed definition {index}", proposal["definition"])
               for index, proposal in enumerate(answer["proposed_definitions"], 1)]
-    problems = []
-    for where, value in named:
+    breaks = []
+    for flag, where, value in named:
         outside = QUOTED_SPAN_PATTERN.sub(" ", value)
-        problems += [f"{where} uses the flagged term {term!r} outside quotation marks"
-                     for term in terms if contains_term(outside, term)]
-    return problems
+        breaks += [RuleBreak(flag, f"{where} uses the flagged term {term!r} outside quotation "
+                                   f"marks")
+                   for term in terms if contains_term(outside, term)]
+    return breaks
 
 
 def fix_a_is_listed_and_fix_d_is_new(answer, document, glossary):
-    problems = []
+    breaks = []
     for index, flag in enumerate(answer["flags"], 1):
         for fix in flag["fixes"]:
             listed = glossary.entry_for(fix["words"]) is not None
             if fix["fix"] == FIX_GLOSSARY_NAME and not listed and glossary.entry_for(
                     LEADING_ARTICLE_PATTERN.sub("", unquoted(fix["words"]))) is None:
-                problems.append(f"flag {index} {flag['term']!r}: fix (a) {fix['words']!r} "
-                                f"is in no glossary")
+                breaks.append(RuleBreak(index, f"fix (a) {fix['words']!r} is in no glossary"))
             if fix["fix"] == FIX_NEW_PROJECT_TERM and ("-" not in fix["words"] or listed):
-                problems.append(f"flag {index} {flag['term']!r}: fix (d) {fix['words']!r} "
-                                f"must be hyphenated and in no glossary")
-    return problems
+                breaks.append(RuleBreak(index, f"fix (d) {fix['words']!r} must be hyphenated "
+                                               f"and in no glossary"))
+    return breaks
 
 
 def passage_uses_the_term(answer, document, glossary):
-    return [f"flag {index} {flag['term']!r}: its passage does not contain the term"
+    return [RuleBreak(index, "its passage does not contain the term")
             for index, flag in enumerate(answer["flags"], 1)
             if flag["term"].strip() and not contains_term(flag["passage"], flag["term"])]
 
 
 def quotations_are_in_the_document(answer, document, glossary):
-    problems = []
+    breaks = []
     for index, flag in enumerate(answer["flags"], 1):
         quotations = [("passage", flag["passage"])]
         if flag["second_definition"].strip():
@@ -326,11 +347,10 @@ def quotations_are_in_the_document(answer, document, glossary):
         quotations += [(f"fix {fix_index}'s use {use_index}", use)
                        for fix_index, fix in enumerate(flag["fixes"], 1)
                        for use_index, use in enumerate(fix["uses"], 1)]
-        problems += [f"flag {index} {flag['term']!r}: its {where} is not in the frozen-copy "
-                     f"word for word"
-                     for where, quotation in quotations
-                     if quotation.strip() and not found_in(quotation, document)]
-    return problems
+        breaks += [RuleBreak(index, f"its {where} is not in the frozen-copy word for word")
+                   for where, quotation in quotations
+                   if quotation.strip() and not found_in(quotation, document)]
+    return breaks
 
 
 RULE_CHECKS = (
@@ -354,16 +374,38 @@ RULE_CHECKS = (
 )
 
 
-def terminology_answer_problems(answer, schema, document, glossary):
-    """Every way the answer breaks the schema or a rule; empty when it keeps all of them."""
+def schema_problems(answer, schema):
+    """Every way the answer breaks the schema; empty when it keeps it."""
     not_checked = json_schema_check.schema_keywords_and_types_the_answer_check_does_not_enforce(schema)
     if not_checked:
         return [f"the answer schema uses keywords or types the answer check does not enforce: "
                 f"{'; '.join(not_checked)}"]
-    problems = json_schema_check.answer_problems(answer, schema)
+    return json_schema_check.answer_problems(answer, schema)
+
+
+def rule_breaks(answer, document, glossary):
+    """Every RuleBreak of a schema-valid answer, in rule order."""
+    return [found for rule in RULE_CHECKS for found in rule(answer, document, glossary)]
+
+
+def described(answer, found):
+    if found.flag is None:
+        return found.message
+    return f"flag {found.flag} {answer['flags'][found.flag - 1]['term']!r}: {found.message}"
+
+
+def terminology_answer_problems(answer, schema, document, glossary):
+    """Every way the answer breaks the schema or a rule, each a line; empty when it keeps all."""
+    problems = schema_problems(answer, schema)
     if problems:
         return problems
-    return [problem for rule in RULE_CHECKS for problem in rule(answer, document, glossary)]
+    return [described(answer, found) for found in rule_breaks(answer, document, glossary)]
+
+
+def too_many_flags_break_a_rule(answer, breaks):
+    """True when more than half the flags break a rule: the answer is then rejected."""
+    broken = {found.flag for found in breaks if found.flag is not None}
+    return 2 * len(broken) > len(answer["flags"])
 
 
 # --- The lookups ------------------------------------------------------------
@@ -441,9 +483,13 @@ def glossary_fix(entry):
     return {"fix": FIX_GLOSSARY_NAME, "words": entry.term, "uses": []}
 
 
-def terminology_answer_with_runner_lookups(answer, document, glossary):
-    """The answer with every lookup of the rules page's last section made."""
+def terminology_answer_with_runner_lookups(answer, document, glossary, breaks=()):
+    """The answer with every lookup of the rules page's last section made, and each
+    RuleBreak in breaks kept with its flag, or with the answer when it names none."""
     looked_up = copy.deepcopy(answer)
+    looked_up["rule_breaks"] = [found.message for found in breaks if found.flag is None]
+    for index, flag in enumerate(looked_up["flags"], 1):
+        flag["rule_breaks"] = [found.message for found in breaks if found.flag == index]
     for flag in looked_up["flags"]:
         flag["found_by_runner"] = False
         flag["clashes_with_location"] = clashes_with_location_looked_up(
@@ -469,7 +515,7 @@ def terminology_answer_with_runner_lookups(answer, document, glossary):
             "second_definition": "", "meaning_compared": "", "restatement": "",
             "tests_failed": [DIFFERENTLY_WRITTEN_GLOSSARY_TERM_TEST],
             "fixes": [glossary_fix(entry)], "found_by_runner": True,
-            "glossary_entry": "", "glossary_entry_path": ""})
+            "glossary_entry": "", "glossary_entry_path": "", "rule_breaks": []})
     for flag in looked_up["flags"]:
         flag["first_offset"] = first_occurrence(flag["term"], document)
         flag["tests_failed"].sort()
@@ -503,6 +549,7 @@ def rendered_flag(number, flag, document):
     tests = ", ".join(f"({test})" for test in flag["tests_failed"]) or "none"
     line = document.count("\n", 0, flag["first_offset"]) + 1
     lines = [f"{number}. {quoted(flag['term'])}, first on line {line}; tests failed: {tests}"]
+    lines += [f"   - {RULE_BREAK_MARK}{message}" for message in flag["rule_breaks"]]
     if flag["found_by_runner"]:
         lines.append("   - Found by the runner: a glossary term written with a different case, "
                      "hyphen or plural.")
@@ -528,14 +575,20 @@ def counts_line(looked_up):
         for test in TESTS)
     return (f"Counts: {len(looked_up['key_terms'])} key-terms, "
             f"{len(looked_up['key_terms_no_glossary_lists'])} of them in no glossary; "
-            f"{len(looked_up['flags'])} flagged terms; {per_test}; "
+            f"{len(looked_up['flags'])} flagged terms, "
+            f"{sum(bool(flag['rule_breaks']) for flag in looked_up['flags'])} of them marked "
+            f"by a failed runner check; {per_test}; "
             f"{len(looked_up['proposed_definitions'])} proposed definitions; "
             f"{len(looked_up['terms_kept'])} terms kept.")
 
 
 def terminology_report(looked_up, document):
-    lines = ["# Terminology report", "", f"Document: {looked_up['document_kind']}", "",
-             "## Flagged terms", ""]
+    lines = ["# Terminology report", "", f"Document: {looked_up['document_kind']}", ""]
+    if looked_up["rule_breaks"]:
+        lines += ["Failed runner checks on the answer as a whole:", ""]
+        lines += [f"- {RULE_BREAK_MARK}{message}" for message in looked_up["rule_breaks"]]
+        lines.append("")
+    lines += ["## Flagged terms", ""]
     if looked_up["flags"]:
         for number, flag in enumerate(looked_up["flags"], 1):
             lines += rendered_flag(number, flag, document)
@@ -555,10 +608,18 @@ def terminology_report(looked_up, document):
 
 
 def terminology_report_from_answer(answer, schema, document, glossary_entries):
-    """The rendered report; raises TerminologyAnswerRejected when the answer breaks a rule."""
+    """The rendered report, each rule break marked on its flag or on the answer; raises
+    TerminologyAnswerRejected when the answer breaks the schema, or when more than half
+    its flags break a rule."""
     glossary = Glossary.of(glossary_entries)
-    problems = terminology_answer_problems(answer, schema, document, glossary)
+    problems = schema_problems(answer, schema)
     if problems:
         raise TerminologyAnswerRejected(problems)
-    return terminology_report(terminology_answer_with_runner_lookups(answer, document, glossary),
-                              document)
+    breaks = rule_breaks(answer, document, glossary)
+    if too_many_flags_break_a_rule(answer, breaks):
+        broken = len({found.flag for found in breaks if found.flag is not None})
+        raise TerminologyAnswerRejected(
+            [f"{broken} of its {len(answer['flags'])} flags break a rule, more than half"]
+            + [described(answer, found) for found in breaks])
+    return terminology_report(
+        terminology_answer_with_runner_lookups(answer, document, glossary, breaks), document)
