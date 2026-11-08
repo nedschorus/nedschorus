@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Report or remove the worktrees whose work is done, judged by each worktree's owner file.
+"""Report or remove the worktrees whose work is done, judged by each worktree's owner file, or for
+a merge-lane review checkout by its pull request.
 
 WHICH WORKTREES. Every worktree of the clone except its main checkout, the
 reference-checkout, wherever the worktree is. Only a worktree holding an owner
-file can be removed: scripts/worktree-owner-file-read-and-write.py says where
+file, or a merge-lane review checkout, as MERGE-LANE REVIEW CHECKOUTS below
+says, can be removed: scripts/worktree-owner-file-read-and-write.py says where
 the file is, what it holds, and when its owner, an agent-seat or an
 agent-session, counts as running. A worktree is KEPT, with the reason, when:
 
-  - it has no owner file, as agent-homes, merge-lane review checkouts and
-    worktrees made by hand have, or its owner file cannot be read;
+  - its owner file cannot be read;
+  - it has no owner file, as agent-homes and worktrees made by hand have,
+    and is not a merge-lane review checkout;
   - it is locked with `git worktree lock`, as Claude Code locks a subagent's
     worktree while the subagent runs;
   - git would prune it, its directory being gone;
@@ -41,6 +44,26 @@ worktree whose verdict needs a pull request is kept.
   this invocation's own process and carrying the owner file's agent-seat, so
   the agent-seat's next agent-session is told of it once this invocation has
   ended. The branch keeps its commits.
+
+MERGE-LANE REVIEW CHECKOUTS. A worktree with no owner file directly inside
+~/.cache/merge-lane-review-worktrees, where merge-lane-2 checks out each pull
+request it reviews, is a merge-lane review checkout, judged by the pull
+request its directory name holds: the one part of the name, split at each
+hyphen, that is digits, optionally after `pr`, optionally followed by `r`
+and digits, then optionally by one letter, as in pr2700-head,
+tools-main-2700r2, tools-main-2343b or verdict-2587r1. It is removed when that
+pull request was merged or closed at least 24 hours ago, once the lock,
+prune, in-progress operation and vacancy checks above pass. It is kept, with
+the reason, when its name holds no such part or more than one, as main and
+main-green-<commit> do, when the pull request is open, finished less than 24
+hours ago, while merge-lane-2's merge program may still be removing its
+checkouts or testing main in pr<n>-merge-commit-on-main-worktree, or missing
+from gh's listing, or when gh fails or gives no closing time it can read. Its
+uncommitted, untracked and ignored files are named and discarded with it,
+with no work-snapshot, since no agent-seat owns them and the pull request is
+finished; commits on its detached HEAD get no branch, since a review
+checkout's own commits, such as pr<n>-merged's local merge commit, are not
+work anyone carries on.
 
 Ignored files do not keep a worktree. Before --remove removes one, it ships
 each walk in the worktree's docs/walk/, one for each <name>-minutes.md there,
@@ -201,6 +224,7 @@ or --force-delete-branch that is exit 1 with a FAILED line.
 import importlib.util
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -237,6 +261,20 @@ _mark_spec = importlib.util.spec_from_file_location(
     REPO_ROOT / "nc-systems" / "handoff" / "handoff-user-review-of-agent-memory-stores-mark.py")
 mark = importlib.util.module_from_spec(_mark_spec)
 _mark_spec.loader.exec_module(mark)
+
+_merge_lane_common_spec = importlib.util.spec_from_file_location(
+    "merge_lane_pull_request_helpers_common_options_paths_and_token",
+    REPO_ROOT / "scripts" / "merge-lane-pull-request-helpers-common-options-paths-and-token.py")
+merge_lane_common = importlib.util.module_from_spec(_merge_lane_common_spec)
+_merge_lane_common_spec.loader.exec_module(merge_lane_common)
+
+# After a merge, merge-lane-2's merge program removes pr<n>-head and pr<n>-merged and runs main's tests
+# in pr<n>-merge-commit-on-main-worktree; between its steps no process has a working directory
+# there, so the vacancy check alone could let a removal race it.
+MERGE_LANE_REVIEW_CHECKOUT_KEPT_AFTER_ITS_PULL_REQUEST_FINISHED_HOURS = 24
+
+# One hyphen-separated part of a merge-lane review checkout's name: pr2700, 2700, 2700r2, 2420m.
+MERGE_LANE_REVIEW_CHECKOUT_NAME_PULL_REQUEST_NUMBER_PART = re.compile(r"(?:pr)?(\d+)(?:r\d*)?[a-z]?")
 
 REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_DIRECTORY = (
     "/home/nedlern/nedschorus-logs/clean-worktrees-removed-worktrees-and-deleted-branches-log")
@@ -646,14 +684,20 @@ class PullRequestsByHeadBranchLazyCache:
             raise PullRequestListingFailed(self._error)
         return self._by_head_branch
 
+    def by_number(self):
+        """Return {pull request number: pull request}; raise PullRequestListingFailed."""
+        return {pull_request["number"]: pull_request
+                for pull_requests in self.by_head_branch().values()
+                for pull_request in pull_requests}
+
 
 def list_all_pull_requests_grouped_by_head_branch(repo,
                                                   timeout_seconds=PULL_REQUEST_LISTING_TIMEOUT_SECONDS):
-    """Return {head branch name: [{number, state, headRefName, headRefOid}]} for every pull request
+    """Return {head branch name: [{number, state, headRefName, headRefOid, closedAt}]} for every pull request
     of the repository's GitHub remote; raise PullRequestListingFailed when gh cannot list them, or
     does not finish within timeout_seconds."""
     command = ["gh", "pr", "list", "--state", "all", "--limit", str(PULL_REQUEST_LISTING_LIMIT),
-               "--json", "number,state,headRefName,headRefOid"]
+               "--json", "number,state,headRefName,headRefOid,closedAt"]
     try:
         listing = subprocess.run(command, cwd=repo, capture_output=True, text=True, check=False,
                                  timeout=timeout_seconds)
@@ -725,6 +769,8 @@ def classify(worktree, branch, record, pull_requests):
     except owner_file.WorktreeOwnerFileError as error:
         return Verdict(False, f"its owner file could not be read: {error}", KEPT_NOT_CHECKABLE)
     if owner is None:
+        if is_merge_lane_review_checkout(worktree):
+            return merge_lane_review_checkout_verdict(worktree, pull_requests)
         return Verdict(False, "it has no owner file, and the cleaner removes only a worktree "
                               "holding one", KEPT_NO_OWNER_FILE)
 
@@ -806,16 +852,84 @@ def classify(worktree, branch, record, pull_requests):
     if discarded is None:
         return Verdict(False, f"git cannot list its files ({listing_error})",
                        KEPT_NOT_CHECKABLE, owner, state)
-    records = log_store_records_in(worktree)
-    if records:
-        why += (f"; --remove first ships its {len(records)} record(s) to the log-store "
-                f"and keeps it if one does not ship: "
-                + ", ".join(str(record_path.relative_to(worktree)) for _, record_path in records))
-    if discarded:
-        why += (f"; removing it discards {len(discarded)} uncommitted, untracked or ignored "
-                f"file(s): {discarded_files_text(discarded)}")
+    why += removal_records_and_discarded_files_text(worktree, discarded)
     return Verdict(True, why, "", owner, state, uncommitted, discarded, detached_commit,
                    record.head if running else None, branch if running else None)
+
+
+def removal_records_and_discarded_files_text(worktree, discarded):
+    """The end of a done worktree's line: the records --remove ships first and the files it discards."""
+    text = ""
+    records = log_store_records_in(worktree)
+    if records:
+        text += (f"; --remove first ships its {len(records)} record(s) to the log-store "
+                 f"and keeps it if one does not ship: "
+                 + ", ".join(str(record_path.relative_to(worktree)) for _, record_path in records))
+    if discarded:
+        text += (f"; removing it discards {len(discarded)} uncommitted, untracked or ignored "
+                 f"file(s): {discarded_files_text(discarded)}")
+    return text
+
+
+def is_merge_lane_review_checkout(worktree):
+    # HOME is read at call time: the tests point it at a scratch directory.
+    directory = Path.home() / merge_lane_common.REVIEW_WORKTREES_DIRECTORY_UNDER_HOME
+    return worktree.resolve().parent == directory.resolve()
+
+
+def merge_lane_review_checkout_pull_request_number(name):
+    """The pull request number a merge-lane review checkout's directory name holds, or None when
+    it holds none or more than one."""
+    numbers = [match.group(1) for part in name.split("-")
+               if (match := MERGE_LANE_REVIEW_CHECKOUT_NAME_PULL_REQUEST_NUMBER_PART.fullmatch(part))]
+    return int(numbers[0]) if len(numbers) == 1 else None
+
+
+def merge_lane_review_checkout_verdict(worktree, pull_requests):
+    """Return the Verdict for a merge-lane review checkout, as MERGE-LANE REVIEW CHECKOUTS says."""
+    keep_reason = in_progress_git_operation_keep_reason(worktree)
+    if keep_reason is not None:
+        return Verdict(False, keep_reason, KEPT_IN_USE)
+    number = merge_lane_review_checkout_pull_request_number(worktree.name)
+    if number is None:
+        return Verdict(False, "it is a merge-lane review checkout with no owner file, and its "
+                              "name holds no single pull request number", KEPT_NO_OWNER_FILE)
+    try:
+        pull_request = pull_requests.by_number().get(number)
+    except PullRequestListingFailed as error:
+        return Verdict(False, f"it is a merge-lane review checkout of pull request #{number}, "
+                              f"whose state could not be read: {error}", KEPT_NOT_CHECKABLE)
+    if pull_request is None:
+        return Verdict(False, f"it is a merge-lane review checkout of pull request #{number}, "
+                              f"which gh's listing does not hold", KEPT_NO_OWNER_FILE)
+    if pull_request["state"] not in ("MERGED", "CLOSED"):
+        return Verdict(False, f"it is a merge-lane review checkout of "
+                              f"{pull_request_text(pull_request)}", KEPT_OPEN_PULL_REQUEST)
+    try:
+        finished = datetime.fromisoformat(pull_request["closedAt"])
+        hours_since_finished = (datetime.now(timezone.utc) - finished).total_seconds() / 3600
+    except (KeyError, TypeError, ValueError) as error:
+        return Verdict(False, f"it is a merge-lane review checkout of "
+                              f"{pull_request_text(pull_request)}, whose closing time gh did not "
+                              f"give in a form this program reads: {type(error).__name__}: {error}",
+                       KEPT_NOT_CHECKABLE)
+    if hours_since_finished < MERGE_LANE_REVIEW_CHECKOUT_KEPT_AFTER_ITS_PULL_REQUEST_FINISHED_HOURS:
+        return Verdict(False, f"it is a merge-lane review checkout of "
+                              f"{pull_request_text(pull_request)}, finished less than "
+                              f"{MERGE_LANE_REVIEW_CHECKOUT_KEPT_AFTER_ITS_PULL_REQUEST_FINISHED_HOURS} "
+                              f"hours ago, while merge-lane-2's merge program may still use it",
+                       KEPT_IN_USE)
+    keep_reason = worktree_vacancy_keep_reason(worktree)
+    if keep_reason is not None:
+        return Verdict(False, keep_reason, KEPT_IN_USE)
+    discarded, listing_error = files_a_removal_discards(worktree)
+    if discarded is None:
+        return Verdict(False, f"git cannot list its files ({listing_error})", KEPT_NOT_CHECKABLE)
+    why = f"it is a merge-lane review checkout of {pull_request_text(pull_request)}"
+    why += removal_records_and_discarded_files_text(worktree, discarded)
+    # No uncommitted list and no detached commit: no agent-seat owns a review checkout's files or
+    # commits, so nothing goes to a work-snapshot or a branch.
+    return Verdict(True, why, "", discarded=discarded)
 
 
 def detached_commits_branch_name(worktree, commit):
