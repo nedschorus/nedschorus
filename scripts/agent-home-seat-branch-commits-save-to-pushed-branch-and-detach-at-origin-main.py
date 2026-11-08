@@ -26,13 +26,14 @@ For each agent-home, in order:
      and holds commits no branch or remote branch holds;
   4. otherwise writes the file agent-home-marker into the agent-home's own git directory, which
      makes scripts/git-client-side-hooks/pre-commit refuse commits in it, then runs
-     `git checkout --detach origin/main` there. The detach comes last so that, when either
-     fails, the agent-home is still on the branch it was on, so a rerun finds it as this run
-     did and finishes.
+     `git checkout --detach origin/main` there. The detach comes last, so a failure of
+     either leaves the agent-home on the branch it was on, and a rerun finds it and finishes;
+     a marker written before a failed detach stays, and refuses commits on that branch until
+     the rerun moves the agent-home.
 It deletes nothing: the seat-branch, any other branch the agent-home was on, and every untracked
-or ignored file stay. It prints one line per agent-home, and with it the branch a step 2 pushed,
-or a branch other than the seat-branch that the agent-home was on, holds commits origin/main
-lacks and no branch on origin holds.
+or ignored file stay. It prints one line per agent-home. The line names the branch step 2
+pushed, if any, and a branch other than the seat-branch that the agent-home was on, when that
+branch holds commits origin/main lacks and no branch on origin holds.
 
 What it does not handle: an agent-home whose agent-session is running is moved under it, as the
 freshness hook moves a detached checkout; the agent-session's CLAUDE.md and skills may then be
@@ -41,8 +42,9 @@ origin already is not pushed again, so running it twice pushes nothing new.
 
 How it fails: a git step that fails is printed with git's error and the agent-home is left as
 that step found it, apart from a marker step 4 wrote before its detach failed; a failed push
-leaves the agent-home unmoved. The other agent-homes are still handled. Exit status: 0 when every agent-home now rests detached at origin/main and is marked; 1
-when any was left or a step failed; 2 when the agent-homes could not be listed.
+leaves the agent-home unmoved. The other agent-homes are still handled. Exit status: 0 when
+every agent-home now rests detached at origin/main and is marked; 1 when any was left or a step
+failed; 2 when the agent-homes could not be listed.
 """
 
 import argparse
@@ -71,10 +73,12 @@ def git(directory: Path, *arguments, accepted=(0,)) -> subprocess.CompletedProce
         result = subprocess.run(["git", "-C", str(directory), *arguments], capture_output=True,
                                 text=True, stdin=subprocess.DEVNULL, timeout=GIT_TIMEOUT_SECONDS)
     except (OSError, subprocess.TimeoutExpired) as error:
-        raise GitStepFailed(f"git {' '.join(arguments)} in {directory} did not run: {error}")
+        raise GitStepFailed(f"git {' '.join(arguments)} in {directory} could not start or timed out: "
+                            f"{error}")
     if result.returncode not in accepted:
         raise GitStepFailed(f"git {' '.join(arguments)} in {directory} exited "
-                            f"{result.returncode}: {result.stderr.strip() or 'no error printed'}")
+                            f"{result.returncode}: "
+                            f"{result.stderr.strip() or 'git printed nothing on stderr'}")
     return result
 
 
@@ -120,7 +124,7 @@ def free_saved_branch_name(home: Path, seat: str, today: datetime.date) -> str:
     return name
 
 
-def commits_on_no_origin_branch(home: Path, ref: str) -> int:
+def count_ref_commits_missing_from_every_origin_branch(home: Path, ref: str) -> int:
     # Only origin's remote-tracking refs are pruned by the fetch; another remote's may be stale.
     return len(output(home, "rev-list", ref, "--not", "--remotes=origin").split())
 
@@ -134,7 +138,7 @@ def save_seat_branch(home: Path, seat: str, today: datetime.date) -> str:
     not_on_main = int(output(home, "rev-list", "--count", f"origin/main..{seat_ref}"))
     if not_on_main == 0:
         return f"seat-branch {seat} holds no commit origin/main lacks"
-    if commits_on_no_origin_branch(home, seat_ref) == 0:
+    if count_ref_commits_missing_from_every_origin_branch(home, seat_ref) == 0:
         return (f"seat-branch {seat} holds {not_on_main} commit(s) origin/main lacks, all already "
                 "on a branch on origin")
     saved = free_saved_branch_name(home, seat, today)
@@ -165,7 +169,7 @@ def other_branch_note(home: Path, seat: str) -> str:
     branch = current_branch(home)
     if not branch or branch == seat:
         return ""
-    unpushed = commits_on_no_origin_branch(home, f"refs/heads/{branch}")
+    unpushed = count_ref_commits_missing_from_every_origin_branch(home, f"refs/heads/{branch}")
     not_on_main = int(output(home, "rev-list", "--count", f"origin/main..refs/heads/{branch}"))
     if not (unpushed and not_on_main):
         return ""
@@ -195,9 +199,10 @@ def move_agent_home(home: Path, today: datetime.date):
 
 
 LEFT_INSTRUCTIONS = (
-    "For each agent-home left as it was: if its changes or commits are work, carry them to a "
-    "worktree on an nc-topic-branch, or ask that agent-seat to, then run this program again.\n"
-    "If a step failed, fix what git's error names, then run this program again: it pushes "
+    "For each agent-home left as it was: carry its changes or commits to a worktree on an "
+    "nc-topic-branch, or ask that agent-seat to, unless they are throwaway, such as a test "
+    "run's output; then run this program again.\n"
+    "If a step failed, fix what its error names, then run this program again: it pushes "
     "nothing twice and moves only what is still to move."
 )
 
@@ -223,11 +228,13 @@ def main(argv=None) -> int:
             agents_root, handoff_directory))
         homes = list_agent_homes(agents_root, seat_names)
     except Exception as error:
-        print(f"agent-home migration: the agent-homes could not be listed, so nothing was moved: "
-              f"{type(error).__name__}: {error}", file=sys.stderr)
+        print(f"agent-home migration: the agent-homes under "
+              f"{arguments.agents_root or 'the agents root scripts/recover-crashed-seats.py names'} could not be listed, so "
+              f"nothing was moved: {type(error).__name__}: {error}", file=sys.stderr)
         return 2
     if not homes:
-        print(f"agent-home migration: no agent-home under {agents_root}; nothing to do")
+        print(f"agent-home migration: no agent-home under {agents_root}; nothing to do. If this "
+              "machine has agent-seats, pass the directory that holds them with --agents-root.")
         return 0
     today = datetime.date.today()
     all_moved = True
