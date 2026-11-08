@@ -3737,13 +3737,13 @@ def test_close_posts_the_ruling_on_each_open_pull_request_held_on_the_answered_i
         case = Case(next_to_present="item 4 of 9")
         case.run("check", *flags)
         closed = case.run("close", environment=gh_environment(pull_requests))
-        body = f"#ruling_given {word}"
-        check(f"close after check {' '.join(flags) or '(approved)'} posts `#ruling_given {word}` on the two pull "
+        body = f"#ruling_given {WALK_NAME} item 4 {word}"
+        check(f"close after check {' '.join(flags) or '(approved)'} posts `{body}` on the two pull "
               "requests whose review holds item 4's line on a line of its own, and on none held on another item or "
               "walk, or quoting the line inside a sentence",
               closed.returncode == 0 and case.gh_comments() == [("101", body), ("102", body)]
               and closed.stdout.rstrip("\n").split("\n")[-2:] == [
-                  f"The ruling on item 4 is posted as `#ruling_given {word}` on pull request {number}, held on it."
+                  f"The ruling on item 4 is posted as `{body}` on pull request {number}, held on it."
                   for number in (101, 102)],
               described(closed) + repr(case.gh_comments()))
 
@@ -3756,9 +3756,11 @@ def test_close_posts_the_ruling_for_each_item_an_answer_names():
                       "words \"a\", which makes its change. Fast reads:\n- no proposed text marked\n")
     closed = case.run("close", environment=gh_environment(held_pull_requests(
         (201, [f"#held_on_ruling {WALK_NAME} item 7"]), (202, [f"#held_on_ruling {WALK_NAME} item 6"]))))
-    check("an answer to items 6 and 7 posts the ruling on the pull request held on each",
-          closed.returncode == 0 and [number for number, _ in case.gh_comments()] == ["202", "201"]
-          and all(body == "#ruling_given approved" for _, body in case.gh_comments()),
+    check("an answer to items 6 and 7 posts on the pull request held on each the ruling naming that item, so the "
+          "two comments tell the items apart",
+          closed.returncode == 0
+          and case.gh_comments() == [("202", f"#ruling_given {WALK_NAME} item 6 approved"),
+                                     ("201", f"#ruling_given {WALK_NAME} item 7 approved")],
           described(closed) + repr(case.gh_comments()))
 
 
@@ -3778,7 +3780,8 @@ def test_a_held_answer_posts_no_ruling_until_the_new_item_decides_it():
     check("closing the new item posts its ruling on the pull request held on it and on the one held on the item "
           "whose answer was held for it",
           closed.returncode == 0
-          and comments == [("302", "#ruling_given disapproved"), ("301", "#ruling_given disapproved")],
+          and comments == [("302", f"#ruling_given {WALK_NAME} item 5 disapproved"),
+                           ("301", f"#ruling_given {WALK_NAME} item 3 disapproved")],
           described(closed) + repr(comments))
 
 
@@ -3805,7 +3808,8 @@ def test_a_lookup_that_fails_leaves_the_answer_recorded_and_prints_the_commands_
               and lines[-2].startswith(f"Run `cd {top} && gh pr list --state open --limit 1000 --json number,reviews "
                                        "--jq ")
               and f'. == "{HELD_ON_ITEM_4}"' in lines[-2]
-              and f"run `cd {top} && gh pr comment <number> --body '#ruling_given approved" in lines[-2]
+              and f"run `cd {top} && gh pr comment <number> --body '#ruling_given {WALK_NAME} item 4 approved'`"
+              in lines[-2]
               and lines[-1].startswith("If that fails too, tell the user: \"merge-lane-2 was not told that item 4 of "
                                        f"{WALK_NAME} is approved,")
               and case.gh_comments() == [],
@@ -3871,7 +3875,8 @@ def test_a_comment_that_fails_is_reported_with_its_command_and_the_others_are_st
               "answers the hold only when it reads that comment.",
               f"If that fails too, tell the user: \"merge-lane-2 was not told that item 4 of {WALK_NAME} is approved, "
               "so pull request 401 stays held; gh failed.\" A subagent passes this to the agent that dispatched it.",
-              "The ruling on item 4 is posted as `#ruling_given approved` on pull request 402, held on it."]
+              f"The ruling on item 4 is posted as `#ruling_given {WALK_NAME} item 4 approved` on pull request 402, "
+              "held on it."]
           and "item 4 of 9: approved; every text the change adds" in case.minutes.read_text(),
           described(closed))
 
