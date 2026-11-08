@@ -31,8 +31,8 @@ like macOS, leaves a nested agy possible.
 in when it exists: on ned-box /etc/resolv.conf is a link to
 /run/systemd/resolve/stub-resolv.conf, and without the bind agy could not
 look up any host name. On a Linux machine whose /etc/resolv.conf links into
-/run/systemd/resolve while that directory does not exist, agy fails with its
-own network error.
+/run/systemd/resolve while the host has no /run/systemd/resolve directory,
+nothing is bound in, and agy fails with its own network error.
 
 On macOS the sandbox is `sandbox-exec`, started by the command prefix that
 `credential_sandbox_prefix()` returns in nc-systems/cold-read/cold-read-agy-cell.py,
@@ -49,13 +49,15 @@ is only as
 tight as the cold reads' own agy runs. On macOS the working directory is a fresh empty
 temporary directory, removed afterwards.
 
-Exit codes: 2, from argument parsing, when --model or PROMPT is missing;
+Exit codes: 2, from argument parsing, on any argument error, such as a
+missing --model or PROMPT or an unknown option;
 1, with a line on stderr, when agy or the sandbox program is not
 on PATH, so nothing was run. Otherwise this program exits with the code
 bwrap or sandbox-exec exited with, which is agy's own code when agy ran,
 and bwrap's or sandbox-exec's own code when that program failed before agy
 started: 1 for bwrap's own errors, such as a bind it cannot make, and for
-sandbox-exec whatever code it chooses. So a nonzero code can come from this program, the sandbox
+sandbox-exec a code of its own choosing, which neither this program nor
+its caller can tell from a code of agy's. So a nonzero code can come from this program, the sandbox
 program or agy, and the same code from more than one of them: a 1 can mean
 a program missing from PATH, a sandbox that could not start, or a failure
 inside agy, and a 2 can come from agy as well as from argument parsing.
