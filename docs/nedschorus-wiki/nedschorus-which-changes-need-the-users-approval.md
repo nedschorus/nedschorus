@@ -19,19 +19,24 @@ A change is the difference an agent's work makes, from before it starts to after
 
 ## Exceptions: changes that need no approval, even when they fall under the list above
 
-- A user-approved-change.
-- Deleting a guarded-file, as the project glossary defines it, even one the user has not retired and whose change the list above covers, such as `CLAUDE.md`, a skill or a hook; the guarded-file hook, `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`, does not ask about a deletion either. A rename or a move is not a deletion: it is judged as the paragraph that begins "A change is the difference an agent's work makes" says. Emptying a file is a change to its text, not a deletion.
-- An obvious-error-fix, which the project glossary defines; it covers prose only.
-- A cosmetic-change; it covers prose only.
-- The wording of a message a program prints, such as an error, a refusal or a warning, when the message still tells the agent to do the same thing. Only the message's words change, together with each test or document that quotes the old words, changed to quote the new; the code that fills in the message's placeholders does not change. Before pushing, the agent that changes the wording saves the new wording to a file in its scratchpad, runs a cold-read-fast-read on that file, and applies each finding that holds without changing what the message tells the agent to do.
-- In prose: renumbering headings, steps or items; updating a citation; naming the source of a statement; adding an open question to a document without answering it. A number or heading that a program reads is data, and renumbering it is not this exception.
-- Renaming a page, a file of any kind or a title to a term the project glossary or a system glossary already lists, with every reference in the repository updated, when nothing outside the repository, such as a crontab entry or a LaunchAgent, names it.
-- Respelling a word or phrase in prose as the project glossary or a system glossary spells a term it lists, when the words name that term, such as "fresh agent" written for fresh-agent.
-- Adding to prose a hashtag marker that no program reads, on a line that already says what the marker marks.
-- Removing a citation, a date or history from standing instructions, which `CLAUDE.md` says they do not carry, when the sentence that loses it still tells the agent to do the same thing.
-- Rewording a sentence of prose to remove an ambiguity or a contradiction, when the rest of the same document or the latest user-ruling on the subject settles which meaning is intended.
-- Carrying out a decision the user already made: merging a clean pull request, deleting what he retired, closing a finished task or GHI, or recording the decision in a GHI's outcome section.
-- A change an approval-walk item makes when the /walk-me-through skill's rule for items that need no answer from the user settled the item without asking the user, and the walk-minutes record it as not asked.
+1. A user-approved-change.
+2. Deleting a guarded-file, as the project glossary defines it, even one the user has not retired and whose change the list above covers, such as `CLAUDE.md`, a skill or a hook; the guarded-file hook, `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`, does not ask about a deletion either. A rename or a move is not a deletion: it is judged as the paragraph that begins "A change is the difference an agent's work makes" says. Emptying a file is a change to its text, not a deletion.
+3. An obvious-error-fix, which the project glossary defines; it covers prose only.
+4. A cosmetic-change; it covers prose only.
+5. The wording of a message a program prints, such as an error, a refusal or a warning, when the message still tells the agent to do the same thing. Only the message's words change, together with each test or document that quotes the old words, changed to quote the new; the code that fills in the message's placeholders does not change. Before pushing, the agent that changes the wording saves the new wording to a file in its scratchpad, runs a cold-read-fast-read on that file, and applies each finding that holds without changing what the message tells the agent to do.
+6. In prose: renumbering headings, steps or items; updating a citation; naming the source of a statement; adding an open question to a document without answering it. A number or heading that a program reads is data, and renumbering it is not this exception.
+7. Renaming a page, a file of any kind or a title to a term the project glossary or a system glossary already lists, with every reference in the repository updated, when nothing outside the repository, such as a crontab entry or a LaunchAgent, names it.
+8. Respelling a word or phrase in prose as the project glossary or a system glossary spells a term it lists, when the words name that term, such as "fresh agent" written for fresh-agent.
+9. Adding to prose a hashtag marker that no program reads, on a line that already says what the marker marks.
+10. Removing a citation, a date or history from standing instructions, which `CLAUDE.md` says they do not carry, when the sentence that loses it still tells the agent to do the same thing.
+11. Rewording a sentence of prose to remove an ambiguity or a contradiction, when the rest of the same document or the latest user-ruling on the subject settles which meaning is intended.
+12. Carrying out a decision the user already made: merging a clean pull request, deleting what he retired, closing a finished task or GHI, filing the GHI a cited user-ruling asks for, handing an item to its owner, or recording the decision in a GHI's outcome section.
+13. A change an approval-walk item makes when the /walk-me-through skill's rule for items that need no answer from the user settled the item without asking the user, and the walk-minutes record it as not asked.
+14. Changing text to state a cited user-ruling, what merged code does, or a fact a shown command checked, adding no step, check or limiting word its source lacks.
+15. A code fix, a hook's or a setting's included, that a test shows failing before and passing after, adding no hook, job, setting, retry or fallback and leaving failure handling as it is.
+16. Removing code, a file or a setting that a program shows nothing uses.
+
+The exceptions are numbered; add a new one only at the end of the list, and never renumber them, because the walk check program and the walk-minutes name them by number.
 
 ## Terms
 
