@@ -10,7 +10,7 @@
   "permissions": {
     "allow": [
       "Bash(gh pr merge *)",
-      "Bash(python3 */.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py --approve *)"
+      "Bash(python3 */.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py --approve *)"
     ]
   },
   "hooks": {
@@ -94,7 +94,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/walk-me-through/walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/walk-me-through/walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py",
             "timeout": 30
           },
           {
@@ -285,7 +285,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
             "timeout": 30
           }
         ]
@@ -297,7 +297,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
             "timeout": 30
           }
         ]

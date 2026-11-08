@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Tests for .claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py.
+"""Tests for .claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py.
 
 Each case runs the hook as Claude Code runs it, a separate process fed a PostToolUse or
 PostToolUseFailure payload, in a throwaway repository, with a stand-in home and a stand-in
 store, so no real guarded file and no real log-store directory is touched.
 
-Run: python3 .claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook-test.py
+Run: python3 .claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook-test.py
 Prints one line per case and exits 1 if any case fails.
 """
 
+import hashlib
 import importlib.util
 import json
 import os
+import re
 import resource
 import shutil
 import subprocess
@@ -32,6 +34,7 @@ HOOK = Path(os.environ.get(
     "GUARDED_FILE_HOOK_PATH",
     Path(__file__).resolve().parent / "guarded-file-unapproved-change-afterward-backup-and-ask-hook.py"))
 OBVIOUS_FIX = "Obvious fix under CLAUDE.md's standing approval: a typo in CLAUDE.md"
+SETTINGS = Path(__file__).resolve().parents[2] / ".claude" / "settings.json"
 
 failures = 0
 
@@ -169,6 +172,24 @@ class World:
         return marker
 
 
+def bash_allow_rule_matches(rule, command):
+    """Whether a permissions.allow entry lets Claude Code run command without a prompt: an exact
+    Bash(command), Bash(prefix:*) for a command that starts with prefix, or a Bash(...) pattern
+    whose each * stands for any run of characters."""
+    match = re.fullmatch(r"Bash\((.*)\)", rule, re.DOTALL)
+    if not match:
+        return False
+    pattern = match.group(1)
+    if pattern.endswith(":*"):
+        return command.startswith(pattern[:-2])
+    return re.fullmatch(".*".join(map(re.escape, pattern.split("*"))), command,
+                        re.DOTALL) is not None
+
+
+def approve_commands(message):
+    return re.findall(r"python3 \S+ --approve \S+ [0-9a-f]+", message)
+
+
 def fresh(scratch_root, name, machine="ned-box"):
     directory = Path(scratch_root) / name
     directory.mkdir()
@@ -207,6 +228,21 @@ def cases(scratch):
     check("the message gives the --approve and --restore commands with the hook's full path",
           f"{HOOK} --approve {claude} {key}" in message
           and f"{HOOK} --restore {claude} {key}" in message, message)
+
+    # The allow rule and the printed command are two copies; a rule left on an old path or
+    # spelling makes every --approve the hook asks for wait on a permission prompt.
+    commands = approve_commands(message)
+    allow = json.loads(SETTINGS.read_text()).get("permissions", {}).get("allow", [])
+    check("each --approve command the message gives is let through by a permissions.allow rule "
+          "in .claude/settings.json",
+          commands and all(any(bash_allow_rule_matches(rule, command) for rule in allow)
+                           for command in commands), (commands, allow))
+    old_rule = ("Bash(python3 */.claude/hooks/guarded-file-unapproved-change-afterward-backup-"
+                "and-ask-hook.py --approve *)")
+    check("a permissions.allow rule naming the hook's old .claude/hooks/ path lets no --approve "
+          "command through",
+          commands and not any(bash_allow_rule_matches(old_rule, command) for command in commands),
+          commands)
 
     # -- reminders repeat in the asking session, once in another, and stop once settled
     reminder = world.run()
@@ -1599,6 +1635,75 @@ def cases(scratch):
     check("a changed .claude/scheduled_tasks.lock that git does not ignore is not asked about",
           message == "" and world.versions(lock) == [] and world.run() == "", message)
 
+    # -- the first run in a new checkout stocks a guarded file that differs from HEAD, whichever
+    # way its blob id sorts against HEAD's
+    for side, sorts in (("below", lambda blob, head: blob < head),
+                        ("above", lambda blob, head: blob > head)):
+        world = World(Path(scratch) / f"first-run-edit-sorting-{side}-head")
+        claude = world.repo / "CLAUDE.md"
+        head_blob = world.key(claude)
+        edited = text_whose_blob_id("project v1, edited before the first run",
+                                    lambda blob: sorts(blob, head_blob))
+        claude.write_bytes(edited)
+        world.run()
+        check(f"the first run in a new checkout stocks a guarded file edited away from HEAD, its "
+              f"blob id sorting {side} HEAD's",
+              world.store_file(claude, "approved").split()[:1] == [blob_id(edited)],
+              world.store_file(claude, "approved"))
+
+    # -- a path deleted while it held a later version is no rename source for its approved one,
+    # whichever way the later version's blob id sorts against the approved one's
+    for side, sorts in (("below", lambda later, approved: later < approved),
+                        ("above", lambda later, approved: later > approved)):
+        world = fresh(scratch, f"no-rename-from-later-version-sorting-{side}")
+        skills = world.repo / ".claude" / "skills"
+        skills.mkdir(parents=True)
+        approved = b"skill a, approved\n"
+        (skills / "a.md").write_bytes(approved)
+        world.run(tool="Write", file_path=skills / "a.md")
+        (skills / "a.md").write_bytes(text_whose_blob_id(
+            "skill a, unapproved", lambda blob: sorts(blob, blob_id(approved))))
+        world.run()
+        (skills / "a.md").unlink()
+        (skills / "b.md").write_bytes(approved)
+        message = world.run()
+        check(f"a new path holding a version approved under a path deleted while it held a later "
+              f"version, sorting {side}, is asked about, not approved as a rename",
+              f"{skills / 'b.md'}, version {blob_id(approved)}" in message, message)
+
+    # -- a run with nothing to do leaves the checkout's state file as it is
+    world = fresh(scratch, "nothing-to-do-state-unwritten")
+    world.run()
+    state = next((world.repo / ".git").glob("*-state.json"))
+    before = (state.stat().st_ino, state.stat().st_mtime_ns)
+    message = world.run()
+    check("a run with nothing to do does not rewrite the checkout's state file",
+          message == "" and (state.stat().st_ino, state.stat().st_mtime_ns) == before,
+          (message, before, state.stat()))
+
+    # -- git's own work after a first run made while a merge was stopped, in a checkout with no
+    # guarded file yet, is not asked about
+    world = World(Path(scratch) / "first-run-no-guarded-file-merge-stopped")
+    plain = world.agents / "plain"
+    plain.mkdir()
+    world.git("init", "-q", "-b", "main", cwd=plain)
+    (plain / "notes.txt").write_text("not guarded\n")
+    world.git("add", ".", cwd=plain)
+    world.git("commit", "-qm", "start", cwd=plain)
+    world.git("switch", "-q", "-c", "other", cwd=plain)
+    (plain / "CLAUDE.md").write_text("plain v1\n")
+    world.git("add", ".", cwd=plain)
+    world.git("commit", "-qm", "a CLAUDE.md", cwd=plain)
+    world.git("switch", "-q", "main", cwd=plain)
+    merge_head = plain / ".git" / "MERGE_HEAD"
+    merge_head.write_text(world.git("rev-parse", "other", cwd=plain).stdout)
+    world.run(cwd=plain)
+    merge_head.unlink()
+    world.git("merge", "-q", "--ff-only", "other", cwd=plain)
+    message = world.run(cwd=plain)
+    check("a guarded file a fast-forward brings, after a first run made while a merge was stopped "
+          "in a checkout with no guarded file, is not asked about", message == "", message)
+
     # -- speed, on a copy of main
     if sys.platform != "linux":
         print("SKIP  with nothing changed, a run does no hashing, copying or store work: not on ned-box")
@@ -1812,6 +1917,30 @@ def durable_ref_cases(scratch):
         os.environ["PATH"] = path_before
     check("git rev-parse --verify killed by a signal raises an error, not an empty commit",
           raised is not None and "exited -9" in raised, raised)
+
+    # A submodule is a commit entry in the tree, which git ls-tree lists by the path asked for.
+    first_commit = subprocess.run(["git", "-C", str(empty), "rev-parse", "HEAD"], check=True,
+                                  capture_output=True, text=True).stdout.strip()
+    git(empty, "update-index", "--add", "--cacheinfo", f"160000,{first_commit},submodule")
+    git(empty, "commit", "-q", "-m", "a submodule")
+    check("a commit's blobs leave out a submodule at a path asked for",
+          hook.blobs_at_commit(empty, "HEAD", [str(empty / "CLAUDE.md"), str(empty / "submodule")])
+          == {str(empty / "CLAUDE.md"): hook.blob_hash(b"first\n")})
+
+
+def blob_id(data: bytes) -> str:
+    """The id git gives a blob holding data."""
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def text_whose_blob_id(prefix: str, wanted) -> bytes:
+    """A line starting with prefix whose blob id meets wanted, for a case that needs one version's
+    id to sort below or above another's."""
+    for number in range(1000):
+        data = f"{prefix} {number}\n".encode()
+        if wanted(blob_id(data)):
+            return data
+    raise AssertionError(f"no line starting {prefix!r} has a blob id that meets the condition")
 
 
 def mac_cases(scratch):

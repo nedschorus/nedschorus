@@ -177,7 +177,7 @@ STACKED_AND_NOT = [{"number": 20, "baseRefName": BRANCH},
 
 def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_state="at-main",
              review_worktrees_state="none", git_killed_on_worktree_remove=None,
-             git_fails_after_merge_on=None, runner_answer=None):
+             git_fails_after_merge_on=None, runner_answer=None, head_test_run_test_logs=()):
     """Run main() once; return (exit code, output, gh calls, gate calls, waits).
 
     Each "MERGE_COMMIT" in routes becomes origin's commit, and each "ORIGIN"
@@ -188,6 +188,12 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     merge has run, a git command holding text is killed by SIGKILL or exits 1.
     runner_answer: None, for a fake runner that passes, or (output, exit code);
     a negative exit code -N makes the fake runner kill itself with signal N.
+    head_test_run_test_logs: (file name, contents) pairs, each written as a head
+    test run's test log under outputs/hr/pr10/log-store; contents None makes a
+    directory there instead, and bytes are written as they are. Each "MERGED"
+    in a file name or a text becomes a commit made in the review tools clone
+    with the tree of origin's commit, as pr10-merged has when main has not
+    moved since the head test run; its hash is in the case's merged-commit file.
 
     review_tools_state: "at-main", "behind-main" (origin/main moved on after the
     clone), "no-origin" (the clone's origin is gone) or "no-gate".
@@ -240,6 +246,23 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
         git("worktree", "add", "-q", "--detach", str(review_worktrees / "pr10-merged"),
             cwd=review_tools)
         (review_worktrees / "pr10-merged" / "left-by-a-test-run.txt").write_text("untracked\n")
+    if head_test_run_test_logs:
+        merged = subprocess.run(
+            ["git", *GIT_IDENTITY, "-C", str(review_tools), "commit-tree", "HEAD^{tree}",
+             "-p", "HEAD", "-m", "Merge commit into HEAD"],
+            capture_output=True, text=True, env=GIT_ENVIRONMENT, check=True).stdout.strip()
+        (directory / "merged-commit").write_text(merged)
+        machine_directory = (directory / "outputs" / "hr" / "pr10" / "log-store"
+                             / "pull-request-head-test-runs" / "ned-box")
+        machine_directory.mkdir(parents=True)
+        for file_name, contents in head_test_run_test_logs:
+            test_log = machine_directory / file_name.replace("MERGED", merged)
+            if contents is None:
+                test_log.mkdir()
+            elif isinstance(contents, bytes):
+                test_log.write_bytes(contents)
+            else:
+                test_log.write_text(contents.replace("MERGED", merged))
     if review_tools_state == "no-origin":
         shutil.rmtree(origin)
     for number, (output, exit_code) in enumerate(gate_answers, start=1):
@@ -285,6 +308,26 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     gate_log = directory / "gate-calls.log"
     gate_calls = gate_log.read_text().splitlines() if gate_log.exists() else []
     return exit_code, output.getvalue(), gh_calls, gate_calls, waits
+
+
+def head_test_run_record(commit, exit_code, started="2026-11-07T21:07:48Z"):
+    """A record in the shape pull-request-head-test-run.py writes, without the runner's output."""
+    lines = [f'head: commit {commit} ("Merge commit into HEAD")',
+             "selecting since: commit 0123456789ab, the merge base",
+             f"runner exit code: {exit_code}",
+             f"pull-request-head-test-run exit code: {exit_code}"]
+    return "\n".join([f"pull-request-head-test-run: ned-box, started {started}, a record of "
+                      f"{len(lines) + 1} lines", *lines]) + "\n"
+
+
+def merged_commit(scratch, name):
+    return (scratch / name / "merged-commit").read_text()
+
+
+def tree_of(scratch, name, commit):
+    return subprocess.run(["git", "-C", str(scratch / name / "review-tools"), "rev-parse",
+                           f"{commit}^{{tree}}"], capture_output=True, text=True,
+                          env=GIT_ENVIRONMENT, check=True).stdout.strip()
 
 
 def registered_worktrees(review_tools):
@@ -552,10 +595,13 @@ def main():
         log_dir = (scratch / "after-merge-passes" / "outputs"
                    / f"pr10-after-merge-test-run-logs-{merge_commit[:12]}")
         calls = runner_calls(scratch, "after-merge-passes")
-        check("after the merge, the runner in a worktree at the merge commit runs the suites "
-              "whose recorded inputs changed since the reviewed head, its logs in the outputs "
-              "directory",
-              len(calls) == 1 and calls[0]["cwd"] == str(merge_commit_worktree)
+        check("with no head test run record, after the merge the runner in a worktree at the "
+              "merge commit runs the suites whose recorded inputs changed since the reviewed "
+              "head, its logs in the outputs directory, and says it fell back to the head",
+              f"selecting the nc-test-suites whose recorded inputs changed since the head "
+              f"commit {HEAD[:12]}, which selects more suites than the merge changed: no "
+              f"readable head test run record under" in output
+              and len(calls) == 1 and calls[0]["cwd"] == str(merge_commit_worktree)
               and calls[0]["argv"] == ["--only-suites-whose-recorded-inputs-changed-since", HEAD,
                                        "--log-dir", str(log_dir)], json.dumps(calls))
         check("a passing after-merge test run prints its SUMMARY and log directory, removes "
@@ -568,6 +614,72 @@ def main():
               and not any("pr10-merge-commit-on-main-worktree" in path for path in registered_worktrees(
                   scratch / "after-merge-passes" / "review-tools")),
               f"exit {exit_code}\n{output}")
+
+        name = "since-merged-main-not-moved"
+        exit_code, output, _, _, _ = run_case(
+            scratch, name, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            head_test_run_test_logs=[
+                (f"{'0' * 40}.txt", head_test_run_record("0" * 40, 0, "2026-11-07T20:00:00Z")),
+                ("MERGED.txt", head_test_run_record("MERGED", 0)),
+                (f"{'f' * 40}.txt", head_test_run_record("f" * 40, 0, "2026-11-07T19:00:00Z"))])
+        merged = merged_commit(scratch, name)
+        calls = runner_calls(scratch, name)
+        check("when main has not moved since the head test run, the after-merge run selects "
+              "since the pr10-merged commit of the passing record started last, whose tree is "
+              "the merge commit's, so no suite is selected",
+              exit_code == 0 and len(calls) == 1 and calls[0]["argv"][:2] == [
+                  "--only-suites-whose-recorded-inputs-changed-since", merged]
+              and tree_of(scratch, name, merged)
+              == tree_of(scratch, name, origin_commit(scratch, name))
+              and f"selecting the nc-test-suites whose recorded inputs changed since "
+                  f"{merged[:12]}, the commit the head test run passed on: "
+                  f"pull request 10's head merged with main as main was when that run started"
+                  in output
+              and f"changed since {merged[:12]}" in output
+              and "since the head commit" not in output,
+              f"exit {exit_code}\n{output}\n{json.dumps(calls)}")
+
+        name = "since-merged-past-an-unreadable-test-log"
+        exit_code, output, _, _, _ = run_case(
+            scratch, name, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            head_test_run_test_logs=[(f"{'0' * 40}.txt", None),
+                                     ("MERGED.txt", head_test_run_record("MERGED", 0))])
+        merged = merged_commit(scratch, name)
+        calls = runner_calls(scratch, name)
+        check("a test log that cannot be read is passed over, and a passing record in a "
+              "test log read after it is still used",
+              exit_code == 0 and len(calls) == 1 and calls[0]["argv"][:2] == [
+                  "--only-suites-whose-recorded-inputs-changed-since", merged]
+              and "could not be read, so it is not used" in output,
+              f"exit {exit_code}\n{output}\n{json.dumps(calls)}")
+
+        for name, test_logs, notice in (
+                ("since-head-when-last-record-failed",
+                 [("MERGED.txt", head_test_run_record("MERGED", 0)
+                   + head_test_run_record("MERGED", 1, "2026-11-07T22:00:00Z"))],
+                 "no readable head test run record under"),
+                ("since-head-when-record-names-another-commit",
+                 [("MERGED.txt", head_test_run_record("b" * 40, 0))],
+                 "no readable head test run record under"),
+                ("since-head-when-test-log-is-a-directory", [("MERGED.txt", None)],
+                 "could not be read, so it is not used"),
+                ("since-head-when-record-is-torn",
+                 [("MERGED.txt", head_test_run_record("MERGED", 0).rsplit("\n", 2)[0] + "\n")],
+                 "could not be read, so it is not used"),
+                ("since-head-when-test-log-is-not-utf-8", [("MERGED.txt", b"\xff\n")],
+                 "could not be read, so it is not used")):
+            exit_code, output, _, _, _ = run_case(
+                scratch, name, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+                head_test_run_test_logs=test_logs)
+            calls = runner_calls(scratch, name)
+            check(f"{name.replace('-', ' ')}: the after-merge run selects since the head "
+                  f"commit, as before, and prints that it fell back",
+                  exit_code == 0 and len(calls) == 1 and calls[0]["argv"][:2] == [
+                      "--only-suites-whose-recorded-inputs-changed-since", HEAD]
+                  and notice in output
+                  and f"changed since the head commit {HEAD[:12]}, which selects more suites "
+                      f"than the merge changed" in output,
+                  f"exit {exit_code}\n{output}\n{json.dumps(calls)}")
 
         exit_code, output, _, _, _ = run_case(
             scratch, "after-merge-fails", [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),

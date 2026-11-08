@@ -21,8 +21,15 @@ Then main is tested where the merge changed it: the program fetches origin in
 --review-tools-worktree-at-main, makes a detached worktree pr<n>-merge-commit-on-main-worktree
 at the merge commit GitHub reports, and runs that worktree's own
 scripts/run-all-test-suites.py --only-suites-whose-recorded-inputs-changed-since
-<nc-head-commit>, so only the suites whose recorded inputs the merge changed
-run. The run's suite logs and test-run-report.txt go in
+<since>, so only the suites whose recorded inputs changed since a tested tree
+run. <since> is the pr<n>-merged commit the head test run passed on: of the
+records pull-request-head-test-run.py filed under hr/pr<n>/log-store in the
+worktrees and outputs directory, one test log per pr<n>-merged commit, named
+by its hash, the program takes each test log whose last record says it tested
+that commit and exited 0, and uses the one started last. When there is no
+such record, or a test log cannot be read, which the program prints, <since>
+is the nc-head-commit, which predates main's newer merges and so selects more
+suites, never fewer; the program prints that it fell back. The run's suite logs and test-run-report.txt go in
 <merge-lane-worktrees-and-outputs-directory>/pr<n>-after-merge-test-run-logs-<the
 merge commit's first 12 characters>. The program prints the run's SUMMARY line,
 each failed suite's line, and that directory, then removes the worktree.
@@ -67,6 +74,11 @@ _common_spec = importlib.util.spec_from_file_location(
         "merge-lane-pull-request-helpers-common-options-paths-and-token.py"))
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
+_head_test_run_spec = importlib.util.spec_from_file_location(
+    "pull_request_head_test_run", Path(__file__).resolve().with_name(
+        "pull-request-head-test-run.py"))
+head_test_run = importlib.util.module_from_spec(_head_test_run_spec)
+_head_test_run_spec.loader.exec_module(head_test_run)
 
 REPOSITORY = common.REPOSITORY
 
@@ -228,11 +240,52 @@ def review_worktrees_remove(arguments):
     return exit_code
 
 
+def head_test_run_passed_merged_commit(arguments):
+    """Return (the pr<n>-merged commit of the newest passing head test run record, None),
+    or (None, why no record gave one)."""
+    kind = (common.pull_request_head_test_run_log_store_root_directory(arguments, arguments.pull_request)
+            / head_test_run.PULL_REQUEST_HEAD_TEST_RUNS_KIND_DIRECTORY_NAME)
+    newest = None
+    for test_log in sorted(kind.glob("*/*.txt")):
+        commit = test_log.stem
+        try:
+            started, record = (
+                head_test_run.pull_request_head_test_run_test_log_split_into_records(
+                    test_log.read_text(encoding="utf-8"))[-1])
+        except (OSError, UnicodeDecodeError,
+                head_test_run.PullRequestHeadTestRunTestLogNotWholeRecordsError) as error:
+            print(f"the head test run record {test_log} could not be read, so it is not "
+                  f"used: {error}\n"
+                  f"Nothing to do: without it the test run selects more suites, never fewer.")
+            continue
+        if not head_test_run.pull_request_head_test_run_record_passed_on_commit_check(
+                record, commit):
+            continue
+        if newest is None or started > newest[0]:
+            newest = (started, commit)
+    if newest is None:
+        return None, f"no readable head test run record under {kind} passed"
+    return newest[1], None
+
+
 def after_merge_test_run(arguments, merge_commit):
     """Run the selective test run in a fresh worktree at merge_commit; return an exit code."""
     checkout = arguments.review_tools_worktree_at_main
+    since, why_not = head_test_run_passed_merged_commit(arguments)
+    if since is None:
+        since = arguments.head_commit
+        print(f"selecting the nc-test-suites whose recorded inputs changed since the head "
+              f"commit {since[:12]}, which selects more suites than "
+              f"the merge changed: {why_not}.\n"
+              f"Nothing to do: this run still tests every suite the merge could have changed.",
+              flush=True)
+    else:
+        print(f"selecting the nc-test-suites whose recorded inputs changed since "
+              f"{since[:12]}, the commit the head test run passed on: "
+              f"pull request {arguments.pull_request}'s head merged with main as main was "
+              f"when that run started", flush=True)
     by_hand = (f"python3 scripts/run-all-test-suites.py "
-               f"--only-suites-whose-recorded-inputs-changed-since {arguments.head_commit}")
+               f"--only-suites-whose-recorded-inputs-changed-since {since}")
     if not merge_commit:
         print(f"STOP: merged, but the merge commit could not be read, so main was not "
               f"tested.\n"
@@ -262,10 +315,10 @@ def after_merge_test_run(arguments, merge_commit):
         return EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
 
     print(f"testing main at the merge commit {merge_commit[:12]}: the suites whose recorded "
-          f"inputs changed since {arguments.head_commit[:12]}", flush=True)
+          f"inputs changed since {since[:12]}", flush=True)
     run_all = subprocess.run(
         [sys.executable, str(worktree / "scripts" / "run-all-test-suites.py"),
-         "--only-suites-whose-recorded-inputs-changed-since", arguments.head_commit,
+         "--only-suites-whose-recorded-inputs-changed-since", since,
          "--log-dir", str(log_dir)],
         cwd=worktree, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         env=environment, stdin=subprocess.DEVNULL)

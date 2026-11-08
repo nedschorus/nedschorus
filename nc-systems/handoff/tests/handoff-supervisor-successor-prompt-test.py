@@ -1104,8 +1104,9 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
             del os.environ["FAIL_GIT_CALL_CONTAINING"]
         check(f"a failed `git {call}` leaves the branch-state instruction out and prints why",
               instruction == "" and what_is_printed in console.getvalue()
-              and "handoff-supervisor: if this console shows the same why line when the handoff-supervisor "
-              "next launches this agent-seat, fix the git error it names; if the cause was passing" in console.getvalue(),
+              and "handoff-supervisor: this launch goes ahead without either instruction, and nobody needs to act on "
+              "this message: a git error that persists also fails the new agent-session's own git commands, "
+              "where that agent-session sees it." in console.getvalue(),
               (instruction, console.getvalue()))
 
     # A git killed by a signal exits with a negative returncode and prints nothing.

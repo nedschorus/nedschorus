@@ -8,8 +8,10 @@ MODEL is a model name agy accepts, such as gemini-3.8-flash-medium.
 
 Runs `agy --model MODEL --output-format text --print PROMPT` with stdin closed,
 without --dangerously-skip-permissions, and passes agy's stdout, stderr and
-exit code through; when the sandboxed run exits nonzero, this program adds one line of its own
-to stderr, after agy's or the sandbox program's own messages. GEMINI_API_KEY is removed from agy's environment, because a
+exit code through. bwrap or sandbox-exec, the sandbox program, runs agy and
+passes agy's exit code on; whenever the code that reaches this program is
+nonzero, whether agy or the sandbox program set it, this program adds one line
+of its own to stderr, after agy's or the sandbox program's own messages. GEMINI_API_KEY is removed from agy's environment, because a
 key is billed per call and agy's own Google login, in ~/.gemini, is not.
 
 The program's name describes the Linux sandbox; on macOS the home is not
@@ -18,9 +20,14 @@ emptied, as the macOS paragraph below says.
 On Linux the sandbox is `bwrap`: the home directory holds only ~/.gemini,
 where agy keeps its login, bound read-write; /usr and
 /etc are read-only; the network is shared; the working directory is a fresh
-empty directory in a tmpfs /tmp. On Linux only, the agy binary is bound
-read-only at /run/agy-bin/agy, outside the home and off PATH, so a plain `agy` command inside the sandbox
-finds nothing; agy could still start another agy by that full path. /run is an empty tmpfs, so /run/systemd/resolve is bound
+empty directory in a tmpfs /tmp. The agy binary is bound read-only at
+/run/agy-bin/agy, outside the home and off PATH, so a plain `agy` command
+inside the sandbox, such as one a model's tool call types, finds nothing.
+That does not block a nested agy: the agy running in the sandbox, or a tool
+call it makes, could still start a second agy by that full path, so Linux,
+like macOS, leaves a nested agy possible.
+
+/run is an empty tmpfs, so /run/systemd/resolve is bound
 in when it exists: on ned-box /etc/resolv.conf is a link to
 /run/systemd/resolve/stub-resolv.conf, and without the bind agy could not
 look up any host name. On a Linux machine whose /etc/resolv.conf links into
@@ -30,11 +37,12 @@ own network error.
 On macOS the sandbox is `sandbox-exec`, started by the command prefix that
 `credential_sandbox_prefix()` returns in nc-systems/cold-read/cold-read-agy-cell.py,
 the program that runs agy for cold reads. The sandbox-exec profile, built by
-`sandbox_exec_profile()` in the same file, denies reading and writing the
+`sandbox_exec_profile()` in the same file, denies reading and writing only the
 credential paths, which that function assembles from the lists in
-nc-systems/cold-read/cold-read-cell-common.py, such as ~/.ssh, ~/.config/gh, Claude's and Codex's login files, and files
-named *.token or .env, and nothing else: the rest of the
-home stays readable and writable, and agy stays on PATH, so a plain `agy`
+nc-systems/cold-read/cold-read-cell-common.py: ~/.config/nedschorus,
+~/.config/gh and ~/.ssh, Claude's and Codex's login files, and files named
+*.token or .env. The
+rest of the home stays readable and writable, and agy stays on PATH, so a plain `agy`
 command starts another agy. On macOS this program blocks neither that home access nor that
 nested agy; there it
 is only as
@@ -45,8 +53,9 @@ Exit codes: 2, from argument parsing, when --model or PROMPT is missing;
 1, with a line on stderr, when agy or the sandbox program is not
 on PATH, so nothing was run. Otherwise this program exits with the code
 bwrap or sandbox-exec exited with, which is agy's own code when agy ran,
-and bwrap's or sandbox-exec's own code, often 1, when that program failed
-before agy started. So a nonzero code can come from this program, the sandbox
+and bwrap's or sandbox-exec's own code when that program failed before agy
+started: 1 for bwrap's own errors, such as a bind it cannot make, and for
+sandbox-exec whatever code it chooses. So a nonzero code can come from this program, the sandbox
 program or agy, and the same code from more than one of them: a 1 can mean
 a program missing from PATH, a sandbox that could not start, or a failure
 inside agy, and a 2 can come from agy as well as from argument parsing.

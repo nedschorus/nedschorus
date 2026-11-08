@@ -331,9 +331,11 @@ def subprocess_run_copying_each_output_line_as_it_arrives(arguments, worktree: P
 
     copiers = [threading.Thread(target=copy, args=(process.stdout, captured["stdout"])),
                threading.Thread(target=copy, args=(process.stderr, captured["stderr"]))]
-    for copier in copiers:
-        copier.start()
     try:
+        # The starts are inside the try: the first copier can copy a line, and an
+        # interrupt can arrive, before the second copier is started.
+        for copier in copiers:
+            copier.start()
         for copier in copiers:
             copier.join()
     except BaseException:
@@ -341,7 +343,8 @@ def subprocess_run_copying_each_output_line_as_it_arrives(arguments, worktree: P
         process.kill()
         process.wait()
         for copier in copiers:
-            copier.join()
+            if copier.ident is not None:
+                copier.join()
         raise
     completed = subprocess.CompletedProcess(arguments, process.wait(),
                                             stdout="".join(captured["stdout"]),
