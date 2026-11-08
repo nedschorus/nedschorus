@@ -15,9 +15,10 @@ Steps:
   1. Collect the distinct (command, working directory) pairs of every Bash tool call in the
      transcripts of both machines (--transcript-directory, repeatable), or read them from
      --pairs-file.
-  2. Check out the base, and a commit holding the head merged with the base, each as a detached worktree
-     in the scratch directory; a merge that conflicts fails the replay. From here on, the head is that
-     merged commit. Check that the
+  2. Make a commit holding the head merged with the base: this check makes it, so pass the pull request's
+     own head as --head-ref, not a commit already merged with the base. Check out the base and that commit,
+     each as a detached worktree in the scratch directory; a merge that conflicts fails the replay. From
+     here on, the head is that merged commit. Check that the
      guards this replay reads are exactly the Bash PreToolUse hooks in the head checkout's
      .claude/settings.json, and, less the guards the head adds, in the base checkout's. A base hook
      at a former path, a key of this script's BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH map, is the
@@ -888,21 +889,28 @@ def head_merged_with_base_commit_make_or_raise_on_conflict(repository, base_comm
             f"{conflicted or 'no file; git named none, as for a conflict between directory renames'}.\n"
             "When you are the pull request's author: run python3 scripts/branch-conflict-check.py in the pull "
             "request's checkout and do what its report says, which may be to replace the pull request; then run "
-            f"this check, {this_check}, from the repository's top directory again with the same options and "
-            "--head-ref set to the commit that report's steps leave as the pull request's head.\n"
+            f"this check, {this_check}, from the repository's top directory again with the same options, but with "
+            "--head-ref set to the head of the pull request that report's steps leave open: this pull request's "
+            "new head, or, when the report had you replace this pull request, the head of the new one.\n"
             "When you are not the author, such as merge-lane-2: send the author, with SendMessage, the head, the "
             "base and the conflicted files above, and ask the author to run python3 scripts/branch-conflict-check.py "
             "in the pull request's checkout and do what its report says; the pull request cannot merge while its "
             "head conflicts with the base.")
     if completed.returncode:
+        reason = completed.stderr.strip() or "git printed no reason"
+        if "refusing to merge unrelated histories" in reason:
+            next_step = (
+                f"Run this check, {this_check}, from the repository's top directory again with --base-ref and "
+                "--head-ref naming commits that share history, such as origin/main and the pull request's head "
+                "commit.")
+        else:
+            next_step = (
+                f"Run this check, {this_check}, from the repository's top directory again once, with every option "
+                "you gave it this time unchanged. If it fails again with this same reason, stop and give the reason "
+                "to the agent or the user who asked for the check.")
         raise ReplayFailed(
             f"git merge-tree of the base {base_commit} and the head {head_commit} exited {completed.returncode}, so "
-            f"no guard was replayed: {completed.stderr.strip() or 'git printed no reason'}.\n"
-            "When git's reason contains \"refusing to merge unrelated histories\": run this check, "
-            f"{this_check}, from the repository's top directory again with --base-ref and --head-ref naming commits "
-            "that share history, such as origin/main and the pull request's head.\n"
-            "Otherwise: run this check again once with the same options; if git's reason is the same again, give "
-            "that reason to the agent or the user who asked for the check.")
+            f"no guard was replayed: {reason}.\n{next_step}")
     tree = completed.stdout.split("\0")[0]
     return run_git(repository, "-c", "user.name=bash guards replay", "-c", "user.email=bash-guards-replay@invalid",
                    "commit-tree", "--no-gpg-sign", tree, "-p", base_commit, "-p", head_commit,
