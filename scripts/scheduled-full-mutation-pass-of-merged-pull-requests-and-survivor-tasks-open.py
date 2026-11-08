@@ -32,7 +32,9 @@ WHAT ONE RUN DOES, in order.
      scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.lock
      in --state-directory; while another run holds it, this run exits
      EXIT_ANOTHER_RUN_HOLDS_THE_LOCK having done nothing, and the next
-     scheduled run carries on.
+     scheduled run carries on. The command a job failure task gives for a
+     hand run of one merge takes the same lock, but waits for it instead of
+     exiting: that hand run resumes the kept sessions this program uses.
   2. Runs `git fetch origin main` in the clone and resolves origin/main.
   3. Reads the state file. With no state file, it writes one naming
      origin/main and tests nothing: the merges after that commit are tested
@@ -652,11 +654,15 @@ def count_of_mutants_judged_in_kept_cosmic_ray_sessions(directory):
 def mutation_testing_hand_run_command(arguments, merge, parent, workers, sessions_directory):
     """The command that runs the mutation testing program on one merge as this run does,
     resuming its kept sessions with as many workers, outliving the shell it is typed in, with
-    its output in the log-store."""
+    its output in the log-store. It holds this job's lock while it runs, because it shares the
+    kept sessions with the nightly run: it waits while a run holds the lock, and a nightly run
+    that starts during it exits EXIT_ANOTHER_RUN_HOLDS_THE_LOCK."""
     log = (Path(arguments.log_store_root) / HAND_RUNS_DIRECTORY_NAME
            / f"merge-{merge[:8]}-hand-run.log")
     return (f"systemd-run --user --unit=mutation-hand-run-{merge[:8]} --collect "
             f"-p StandardOutput=append:{log} -p StandardError=append:{log} "
+            f"/usr/bin/flock --verbose "
+            f"{shlex.quote(str(arguments.state_directory / LOCK_FILE_NAME))} "
             f"/usr/bin/python3 {shlex.quote(str(arguments.mutation_testing_program))} "
             + shlex.join(mutation_testing_program_command_line_options_for_one_merge(
                 arguments, merge, parent, workers, sessions_directory)))
