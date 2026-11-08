@@ -638,18 +638,61 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the record's lock is free once both cells run directly have exited",
           not shipper_module.record_directory_being_written_lock_is_held_by_any_process(record_directory))
 
-    # A cell run while another process holds the record's lock without passing it on runs as usual:
-    # that process is a writer, which ships the record itself once it releases the lock.
+    # The shipper's own probe sees a cell run directly as a writer: it asks for the lock exclusively,
+    # so a shared hold makes it answer held.
+    record_directory = repository / "cold-read-records" / "run-direct-cell-shipper-probe"
+    record_directory.mkdir(parents=True)
+    running, may_exit = scratch / "probed-direct-cell-running", scratch / "probed-direct-cell-may-exit"
+    cell = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one finding\n", "signal_file": str(running),
+               "wait_for_file": str(may_exit)}},
+        record_directory / "claude-defect-hunt-second-strongest-model.md", background=True)
+    probe_saw_held = False
+    cell_stderr = ""
+    try:
+        wait_for_path(running)
+        probe_saw_held = shipper_module.record_directory_being_written_lock_is_held_by_any_process(record_directory)
+        may_exit.write_text("go", encoding="utf-8")
+        _, cell_stderr = cell.communicate(timeout=120)
+    finally:
+        if cell.poll() is None:
+            cell.kill()
+            cell.communicate()
+    check("the shipper's probe sees the lock a cell run directly holds while its reviewer writes",
+          probe_saw_held and cell.returncode == 0,
+          f"probe {probe_saw_held}; exit {cell.returncode}; stderr={cell_stderr[-2000:]!r}")
+
+    # A cell run directly into a record another writer holds, without being started by it, holds the
+    # lock too, so the record stays held after that writer releases its lock and until the cell exits.
     report = repository / "cold-read-records" / "run-held-elsewhere" / "claude-defect-hunt-second-strongest-model.md"
     report.parent.mkdir(parents=True)
+    running, may_exit = scratch / "held-elsewhere-cell-running", scratch / "held-elsewhere-cell-may-exit"
     shipper_module.record_directory_being_written_lock_take(report.parent)
+    cell = None
+    held_after_other_writer_released = False
+    cell_stderr = ""
     try:
-        result = run_claude_cell(repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}}, report)
+        cell = run_claude_cell(
+            repository, stubs,
+            {"*": {"report": "STUB REVIEW: one finding\n", "signal_file": str(running),
+                   "wait_for_file": str(may_exit)}},
+            report, background=True)
+        wait_for_path(running)
+        shipper_module.record_directory_being_written_lock_release(report.parent)
+        held_after_other_writer_released = shipper_module.record_directory_being_written_lock_is_held_by_any_process(report.parent)
+        may_exit.write_text("go", encoding="utf-8")
+        _, cell_stderr = cell.communicate(timeout=120)
     finally:
         shipper_module.record_directory_being_written_lock_release(report.parent)
-    check("a cell run while another process holds its record's lock writes its report and succeeds",
-          result.returncode == 0 and report.is_file(),
-          f"exit {result.returncode}; stderr={result.stderr[-2000:]!r}")
+        if cell is not None and cell.poll() is None:
+            cell.kill()
+            cell.communicate()
+    check("a cell run into a record another writer holds keeps it held after that writer releases",
+          held_after_other_writer_released and cell.returncode == 0 and report.is_file(),
+          f"held {held_after_other_writer_released}; exit {cell.returncode}; stderr={cell_stderr[-2000:]!r}")
+    check("the record's lock is free once that cell has exited",
+          not shipper_module.record_directory_being_written_lock_is_held_by_any_process(report.parent))
 
     # --- And it does not cry wolf ------------------------------------------
     # The tree is dirty and the reviewer touched nothing but its report. A

@@ -440,12 +440,14 @@ _RECORD_DIRECTORY_BEING_WRITTEN_LOCK_DESCRIPTORS = {}
 
 
 def record_directory_being_written_lock_take(record_dir: pathlib.Path) -> None:
-    """Hold record_dir's being-written lock until
+    """Hold record_dir's being-written lock, shared, until
     record_directory_being_written_lock_release, or until this process exits.
     Called right after the directory is created, before anything is written
-    into it, so no shipment sees a file the writer may still rewrite."""
+    into it, so no shipment sees a file the writer may still rewrite. Every
+    writer holds the lock shared, so a cell run directly into the directory
+    holds it too, and the record stays held until the last writer exits."""
     descriptor = os.open(record_dir, os.O_RDONLY)
-    fcntl.flock(descriptor, fcntl.LOCK_EX)
+    fcntl.flock(descriptor, fcntl.LOCK_SH)
     _RECORD_DIRECTORY_BEING_WRITTEN_LOCK_DESCRIPTORS[pathlib.Path(record_dir).resolve()] = descriptor
 
 
@@ -461,7 +463,7 @@ def record_directory_being_written_lock_is_held_by_any_process(record_dir: pathl
     """True while any process holds record_dir's being-written lock, shared or exclusive, this one included."""
     descriptor = os.open(record_dir, os.O_RDONLY)
     try:
-        # Exclusive, so that a cell run directly, which holds the lock shared, is seen too.
+        # Exclusive, since every writer holds the lock shared.
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         return True

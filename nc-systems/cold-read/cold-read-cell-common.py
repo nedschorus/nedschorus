@@ -871,21 +871,19 @@ def run_model_chain(
     return 0
 
 
-def record_directory_being_written_lock_hold_unless_passed_or_held(record_dir: pathlib.Path) -> None:
+def record_directory_being_written_lock_hold_shared_unless_passed(record_dir: pathlib.Path) -> None:
     """Hold record_dir's being-written lock, shared, until this process exits, so the record is not
     shipped, by the pre-remove hook or anyone, while this cell's reviewer still writes the report; the
-    reviewer is passed the descriptor in run_model_chain. The lock is shared so that two cells run
-    directly on one record directory both hold it, and the record stays held until the last one exits.
-    Holds nothing when a program holds the lock exclusively, as the cold-read-grid does: that program
-    ships the record itself once it releases the lock, and passes its own descriptor to the cells it
-    starts. A cell run directly into a directory such a program holds, but not started by it, is then
-    unprotected once that program exits."""
+    reviewer is passed the descriptor in run_model_chain. Every writer, the cold-read-grid and other
+    cells included, holds the lock shared, so the record stays held until the last of them exits.
+    Holds nothing more when the writer that started this cell passed it a descriptor on record_dir,
+    which already holds the lock."""
+    if record_names.record_directory_being_written_lock_pass_fds_for_child_writers(record_dir):
+        return
     # Left open on purpose: the kernel releases the lock when this process exits, however it ends.
     descriptor = os.open(record_dir, os.O_RDONLY)
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
-    except BlockingIOError:
-        os.close(descriptor)
+    # Blocking: only the shipper's probe takes the lock exclusively, and only for an instant.
+    fcntl.flock(descriptor, fcntl.LOCK_SH)
 
 
 def run_cell(
@@ -922,7 +920,7 @@ def run_cell(
         print(f"{program}: {refusal}", file=sys.stderr)
         report_stray_writes(program, baseline, report)
         return refusal.exit_code
-    record_directory_being_written_lock_hold_unless_passed_or_held(report.parent)
+    record_directory_being_written_lock_hold_shared_unless_passed(report.parent)
 
     # The staging directory is made after every refusal, so no refusal leaves one behind.
     # The Codex reviewer can write only inside the checkout, the temporary directories on
