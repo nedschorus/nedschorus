@@ -52,10 +52,12 @@ WHAT ONE RUN DOES, in order.
        has yet removed those completed tasks.
      - Finished: when its task is marked completed and no task not marked
        completed names its diff file, the state stops naming it.
-     - Reported once: in every other case, which is a task not marked
-       completed, gone or unreadable, with no other open task or with two or
-       more naming the diff file; or a task marked completed with two or more
-       other open tasks naming it.
+     - Reported once: in every other case, which is one of these:
+       - its task's file is gone or cannot be read, or its task is not marked
+         completed but no longer names the diff file, and no other open task
+         names the diff file, or two or more do;
+       - its task is marked completed and two or more other open tasks name
+         the diff file.
      Reporting it goes like this:
      the record naming it is written at once, and only then does the state
      stop naming it, so a run killed later has still reported it; standard
@@ -210,7 +212,7 @@ Exit codes: 0 every survivor task was rechecked and every merge since the last
 run was mutation-tested and its survivors given tasks, or the first run wrote
 the state file; EXIT_STEP_FAILED (4) a step failed, as above;
 EXIT_RECORD_NOT_WRITTEN (5) the record could not be written;
-EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6);
+EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6) another run holds the lock;
 EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR (7) no step failed, but a
 mutant a survivor task an earlier run opened held was reported at step 4:
 its task's file is gone or cannot be read, or its task, not marked completed,
@@ -220,10 +222,11 @@ EXIT_SURVIVOR_TASK_MUTANTS_NOT_JUDGED_TASK_LEFT_AS_IT_WAS (8) no step failed
 and no task was lost, but the recheck gave no verdicts for a survivor task;
 EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN (9) none of those, but a merge ran past the
 limit and is carried on.
-When more than one applies, the run exits with the first of 5, 4, 7, 8 and 9
-that applies: an unwritten record outranks a failed step, which outranks a
-lost task, which outranks an unjudged recheck, which outranks a carried-on
-merge.
+EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6) comes before all the others: the run exits
+with it at once, before any step, so none of them can apply. When more than one
+of the others applies, the run exits with the first of 5, 4, 7, 8 and 9 that
+applies: an unwritten record outranks a failed step, which outranks a lost
+task, which outranks an unjudged recheck, which outranks a carried-on merge.
 """
 
 # Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
