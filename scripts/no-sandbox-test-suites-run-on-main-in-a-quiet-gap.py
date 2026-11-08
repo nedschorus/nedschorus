@@ -30,8 +30,9 @@ WHAT ONE RUN DOES, in order:
      when either fails, the run stops, recorded with commit null.
   4. Exits 0 when no run is due. A run is due when there is no last run, the
      last run was at another commit, the last run stopped, or it failed more
-     than RETRY_FAILED_RUN_AFTER_SECONDS (3600) ago. That constant and the two
-     in step 6 are in seconds, set with the program's other constants.
+     than RETRY_FAILED_RUN_AFTER_SECONDS (3600) ago. That constant, and
+     RUNNER_TIMEOUT_SECONDS and RUNNER_STOP_GRACE_SECONDS of step 6, are in
+     seconds, set with the program's other constants.
   5. Takes the no-sandbox suites' lock without waiting and releases it at once.
      That lock is the file named by run-all-test-suites.py's
      SUITES_RUN_WITHOUT_ANY_SANDBOX_LOCK_FILE_NAME, inside the admission
@@ -84,7 +85,8 @@ adds it, because cron gives this program no user session bus.
 puts on its stderr: nothing when the state file is missing or the last run
 passed; for a failed run each failing suite, its log, the commit range and the
 pull requests merged in it, read from the clone's first-parent merge commits,
-or "range: none" when no run has passed yet; for a stopped run its reason, and
+or "range: none" when no run has passed yet, and for a failed run whose
+failing_suites list is empty, the same lines with no suite named; for a stopped run its reason, and
 its record when last_run.record is not null, so a run that stopped before
 step 6 gets no record line; for an unreadable state file, that it cannot be
 read and why. After a follow-up was recorded, one line naming when. It always
