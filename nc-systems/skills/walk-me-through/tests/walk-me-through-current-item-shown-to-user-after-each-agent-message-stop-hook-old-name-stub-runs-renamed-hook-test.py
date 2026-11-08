@@ -9,6 +9,7 @@ Delete this suite with the stub.
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -54,8 +55,13 @@ def check(case_name, condition, detail=""):
 
 
 def run(script, stdin_text, checkout):
+    # The hook passes every reply in an unattended session or one whose caller owns reincarnation,
+    # so a caller's own values of these would hide the block a case expects.
+    environment = {name: value for name, value in os.environ.items()
+                   if name not in ("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
+                                   "CLAUDE_CODE_SESSION_ATTENDED")}
     return subprocess.run([sys.executable, str(script), "an-argument"], input=stdin_text,
-                          capture_output=True, text=True, cwd=checkout)
+                          capture_output=True, text=True, cwd=checkout, env=environment)
 
 
 def main():
