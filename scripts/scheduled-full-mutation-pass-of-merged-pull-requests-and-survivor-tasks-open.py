@@ -40,18 +40,21 @@ WHAT ONE RUN DOES, in order.
   4. Checks that each survivor task the state names still lists each of its
      mutants: the task file is still on its owner's task list, not marked
      completed, and its description still names each mutant's diff file. A
-     mutant whose task is marked completed, or whose task's file is gone,
-     cannot be read or no longer names the diff file, is moved, in the state
-     alone, to the task on the same list when exactly one other task not marked
-     completed names its diff file, as when an agent moves the mutants of several survivor tasks
-     into one and marks the others completed, whether or not the session-handoff
-     has yet removed those completed tasks. A mutant of a task marked
-     completed that no other open task names is finished: the state stops
-     naming it. Every other mutant is reported once: one whose task's file is
-     gone or cannot be read, or whose task is not marked completed and no
-     longer names the diff file, when no other open task or two or more name
-     its diff file; and one of a task marked completed when two or more other
-     open tasks name it. Reporting it goes like this:
+     mutant whose task no longer holds it, because the task is marked
+     completed, or its file is gone or cannot be read, or its description no
+     longer names the diff file, goes one of three ways:
+     - Moved: when exactly one other task on the same list, not marked
+       completed, names its diff file, the state alone is changed to name that
+       task, as when an agent moves the mutants of several survivor tasks into
+       one and marks the others completed, whether or not the session-handoff
+       has yet removed those completed tasks.
+     - Finished: when its task is marked completed and no task not marked
+       completed names its diff file, the state stops naming it.
+     - Reported once: in every other case, which is a task not marked
+       completed, gone or unreadable, with no other open task or with two or
+       more naming the diff file; or a task marked completed with two or more
+       other open tasks naming it.
+     Reporting it goes like this:
      the record naming it is written at once, and only then does the state
      stop naming it, so a run killed later has still reported it; standard
      error names it at the end, and the run goes on and exits
@@ -215,6 +218,10 @@ EXIT_SURVIVOR_TASK_MUTANTS_NOT_JUDGED_TASK_LEFT_AS_IT_WAS (8) no step failed
 and no task was lost, but the recheck gave no verdicts for a survivor task;
 EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN (9) none of those, but a merge ran past the
 limit and is carried on.
+When more than one applies, the run exits with the first of 5, 4, 7, 8 and 9
+that applies: an unwritten record outranks a failed step, which outranks a
+lost task, which outranks an unjudged recheck, which outranks a carried-on
+merge.
 """
 
 # Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
