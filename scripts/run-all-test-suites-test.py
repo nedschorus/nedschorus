@@ -2975,6 +2975,18 @@ with tempfile.TemporaryDirectory() as scratch:
         (directory / "made-by-the-suite" / "file").write_text("x")
     now = time.time() + module.FINISHED_RUN_LOG_RETENTION_SECONDS + 60
     os.utime(still_in_use / "made-by-the-suite" / "file", (now, now))
+    # Only root can give a directory another owner, so the sweep is told it runs as another account.
+    real_getuid = module.os.getuid
+    module.os.getuid = lambda: real_getuid() + 1
+    try:
+        removed, removal_failures = (
+            module.remove_old_suite_temporary_directories_left_by_killed_runners(
+                now=now, temp_dir=temp))
+    finally:
+        module.os.getuid = real_getuid
+    check("a per-suite TMPDIR another account owns is never touched",
+          removed == [] and removal_failures == [] and left_by_killed_runner.exists(),
+          (removed, removal_failures))
     removed, removal_failures = module.remove_old_suite_temporary_directories_left_by_killed_runners(
         now=now, temp_dir=temp)
     check("a per-suite TMPDIR a killed runner left is removed once unchanged for two days",
