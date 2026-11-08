@@ -59,8 +59,16 @@ text. A target that cannot be
 written is marked in the plan, which leaves its message with no
 cold-read-fast-read command, so the program exits 3 after printing the plan.
 A string the collector's kind calls a prompt, text a program hands an agent as
-its instructions, is also marked "needs the user's approval", and has
-needs_user_approval set in --json; a printed message is not.
+its instructions, gets one of two labels; a printed message gets neither. The
+cosmetic-change label, with cosmetic_change_needs_no_approval set in --json,
+goes to a changed prompt whose old and new text, an f-string's read as the text
+it builds with each placeholder kept as {source}, have the same paragraphs,
+list items, headings and fenced code blocks in the same order, the same words
+in each once spacing and the * and _ marks of Markdown emphasis outside inline
+code are set aside, and every fenced code block's lines unchanged. Every other
+prompt gets the needs-approval label, with needs_user_approval set in --json,
+including an added prompt and one the plan lists with no old text, such as a
+prompt moved into another string.
 
 Rule 4: a pull request that adds or changes an nc-architecture-overview, a
 file at the path scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py
@@ -147,6 +155,7 @@ _agent_facing_string_collector_spec = importlib.util.spec_from_file_location(
 _agent_facing_string_collector = importlib.util.module_from_spec(_agent_facing_string_collector_spec)
 _agent_facing_string_collector_spec.loader.exec_module(_agent_facing_string_collector)
 path_is_test_file = _agent_facing_string_collector.path_is_test_file
+f_string_field_text = _agent_facing_string_collector.f_string_field_text
 agent_facing_string_nodes_in_source = _agent_facing_string_collector.agent_facing_string_nodes_in_source
 _message_reminder_hook_spec = importlib.util.spec_from_file_location(
     "python_edit_changed_agent_facing_message_check_reminder_hook",
@@ -540,6 +549,64 @@ def review_tier_and_deciding_reason(changed_files):
     return deciding_file["tier"], deciding_file["reason"]
 
 
+def prompt_text_handed_to_agent(text):
+    """The collector gives an f-string as its source, quoted and with \\n as two characters."""
+    try:
+        expression = ast.parse(text, mode="eval").body
+    except SyntaxError:
+        return text
+    if not isinstance(expression, ast.JoinedStr):
+        return text
+    return "".join(part.value if isinstance(part, ast.Constant) else f_string_field_text(part)
+                   for part in expression.values)
+
+
+MARKDOWN_EMPHASIS_MARK_RUN = re.compile(r"(?<!\w)[*_]+|[*_]+(?!\w)")
+
+
+def words_without_markdown_emphasis(text):
+    # Marks inside inline code are kept, so that `_private` and `private` stay different words.
+    pieces = re.split(r"(`[^`]*`)", text)
+    return "".join(piece if index % 2 else MARKDOWN_EMPHASIS_MARK_RUN.sub("", piece)
+                   for index, piece in enumerate(pieces)).split()
+
+
+def markdown_blocks_for_cosmetic_comparison(text):
+    """Each block in order, as (kind, words) for a heading, list item or paragraph, or
+    ("code", lines) for a fenced code block."""
+    code_line_numbers = fenced_code_block_line_numbers_in_markdown(text)
+    blocks, prose_is_open = [], False
+    for line_number, line in enumerate(text.splitlines(), 1):
+        if line_number in code_line_numbers:
+            if not (blocks and blocks[-1][0] == "code" and line_number - 1 in code_line_numbers):
+                blocks.append(("code", []))
+            blocks[-1][1].append(line)
+            prose_is_open = False
+            continue
+        if not line.strip():
+            prose_is_open = False
+            continue
+        marker = re.match(r"\s*(#{1,6})\s|\s*(?:[-*+]|\d+[.)])\s", line)
+        if marker or not prose_is_open:
+            blocks.append((marker[1] if marker and marker[1] else "list item" if marker else "paragraph", []))
+            line = line[marker.end():] if marker else line
+        blocks[-1][1].append(line)
+        prose_is_open = not (marker and marker[1])
+    return [(kind, content if kind == "code" else words_without_markdown_emphasis(" ".join(content)))
+            for kind, content in blocks]
+
+
+def prompt_texts_differ_only_in_spacing_or_markdown_emphasis(old_text, new_text):
+    return (markdown_blocks_for_cosmetic_comparison(prompt_text_handed_to_agent(old_text))
+            == markdown_blocks_for_cosmetic_comparison(prompt_text_handed_to_agent(new_text)))
+
+
+def approval_fields_for_agent_text(kind, old_text, new_text):
+    cosmetic = (kind == "prompt" and old_text is not None
+                and prompt_texts_differ_only_in_spacing_or_markdown_emphasis(old_text, new_text))
+    return {"needs_user_approval": kind == "prompt" and not cosmetic, "cosmetic_change_needs_no_approval": cosmetic}
+
+
 def changed_agent_facing_text_entries(repository, old_revision, new_revision, changed_files):
     entries = []
     for changed_file in changed_files:
@@ -552,7 +619,7 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
         if changed_file["status"] == "A":
             entries.extend({"path": path, "line": node["line"], "label": node["label"],
                             "old_text": None, "new_text": node["text"],
-                            "needs_user_approval": node["kind"] == "prompt"} for node in new_nodes)
+                            **approval_fields_for_agent_text(node["kind"], None, node["text"])} for node in new_nodes)
             continue
         old_nodes = agent_facing_string_nodes_in_source(read_revision_blob_or_none(repository, old_revision, path))
         diff_text = required_git_output(repository, "diff", "-U0", "--no-ext-diff", "--no-textconv", "--no-color",
@@ -574,9 +641,10 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
                 if old_match:
                     used_old_nodes.add(old_match[0])
                 listed_new_nodes.add(new_index)
+                old_text = old_match[1]["text"] if old_match else None
                 entries.append({"path": path, "line": new_node["line"], "label": new_node["label"],
-                                "old_text": old_match[1]["text"] if old_match else None, "new_text": new_node["text"],
-                                "needs_user_approval": new_node["kind"] == "prompt"})
+                                "old_text": old_text, "new_text": new_node["text"],
+                                **approval_fields_for_agent_text(new_node["kind"], old_text, new_node["text"])})
     return sorted(entries, key=lambda entry: (entry["path"], entry["line"], entry["label"]))
 
 
@@ -1020,7 +1088,16 @@ def changed_lines_for_agent_text_entry(entry):
     return list(difflib.unified_diff(old_lines, new_lines, lineterm="", n=2))[2:]
 
 
-PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE = "needs the user's approval: this is a prompt, text the program hands an agent as its instructions"
+PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE = "needs the user's approval unless it is a cosmetic-change, as `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` defines one: this is a prompt, text the program hands an agent as its instructions"
+PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE = "cosmetic-change, needs no approval: only this prompt's spacing or Markdown emphasis changed"
+
+
+def approval_label_for_agent_text_entry(entry):
+    if entry["cosmetic_change_needs_no_approval"]:
+        return PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE
+    if entry["needs_user_approval"]:
+        return PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE
+    return None
 
 
 def render_text_agent_entries(entries):
@@ -1028,8 +1105,8 @@ def render_text_agent_entries(entries):
     for entry in entries:
         lines.append(f"  {entry['path']}:{entry['line']} {entry['label']}")
         lines.append("    " + fast_read_line_for_agent_text_entry(entry))
-        if entry["needs_user_approval"]:
-            lines.append("    " + PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE)
+        if approval_label_for_agent_text_entry(entry):
+            lines.append("    " + approval_label_for_agent_text_entry(entry))
         changed_lines = changed_lines_for_agent_text_entry(entry)
         if changed_lines is not None:
             lines.append("    changed lines:")
@@ -1086,8 +1163,8 @@ def render_pull_request_brief_skeleton(plan):
         for entry in entries:
             lines.extend([f"{entry['path']}:{entry['line']} {entry['label']}", "",
                           *markdown_fenced_text_lines(fast_read_line_for_agent_text_entry(entry)), ""])
-            if entry["needs_user_approval"]:
-                lines.extend([PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE, ""])
+            if approval_label_for_agent_text_entry(entry):
+                lines.extend([approval_label_for_agent_text_entry(entry), ""])
             changed_lines = changed_lines_for_agent_text_entry(entry)
             if changed_lines is not None:
                 lines.extend(["changed lines:", *markdown_fenced_text_lines("\n".join(changed_lines), "diff"), ""])

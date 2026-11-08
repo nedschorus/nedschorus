@@ -251,6 +251,28 @@ def run_unit_cases():
     check("normalized AST preserves behaviour and f-string expressions",
           review_plan_module.normalized_syntax_tree_dump_without_strings(old_source)
           != review_plan_module.normalized_syntax_tree_dump_without_strings(old_source.replace("{x}", "{x + 1}")))
+    prompt_before = ("# Task\n\nRead the **whole** file, then\nreport `_private_name` and each_name.\n\n"
+                     "- first step\n- second step\n\n```sh\nls  -l\n```\n")
+    cosmetic_cases = [
+        ("a moved line break and wider spacing", prompt_before.replace("file, then\nreport", "file,  then report"), True),
+        ("dropped bold marks and added italic marks", prompt_before.replace("**whole**", "whole").replace("first step", "_first_ step"), True),
+        ("an f-string's moved line break, read from its source", None, True),
+        ("a changed word", prompt_before.replace("second step", "next step"), False),
+        ("a changed code block, spacing included", prompt_before.replace("ls  -l", "ls -l"), False),
+        ("swapped list items", prompt_before.replace("- first step\n- second step", "- second step\n- first step"), False),
+        ("a paragraph split by a blank line", prompt_before.replace("file, then\nreport", "file, then\n\nreport"), False),
+        ("a list item turned into a paragraph", prompt_before.replace("- second step", "second step"), False),
+        ("a changed heading level", prompt_before.replace("# Task", "## Task"), False),
+        ("an underscore removed inside inline code", prompt_before.replace("`_private_name`", "`private_name`"), False),
+        ("an underscore removed inside a word", prompt_before.replace("each_name", "eachname"), False),
+    ]
+    for name, prompt_after, expected in cosmetic_cases:
+        before, after = prompt_before, prompt_after
+        if prompt_after is None:
+            before, after = "f'Read {path!r}\\nthen report.'", "f'Read {path!r} then\\nreport.'"
+        check(f"prompt comparison: {name} is {'a cosmetic-change' if expected else 'not a cosmetic-change'}",
+              review_plan_module.prompt_texts_differ_only_in_spacing_or_markdown_emphasis(before, after) is expected,
+              (before, after))
     check("hunk parser handles omitted counts and zero-line sides",
           review_plan_module.parse_diff_hunk_line_ranges("@@ -1 +2 @@\n-x\n+y\n@@ -3,0 +4,2 @@ context\n@@ -9,3 +8,0 @@\n")
           == [(1, 1, 2, 1), (3, 0, 4, 2), (9, 3, 8, 0)])
@@ -646,6 +668,37 @@ def run_agent_text_cases(fixture):
     skeleton = skeleton_path.read_text() if skeleton_path.exists() else ""
     check("the brief skeleton marks the changed prompt as needing the user's approval",
           review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in skeleton, skeleton)
+    prompt_program_before = ('def compose(path):\n    prompt = f"# Task\\n\\nRead the **whole** file {path},\\nthen report.'
+                             '\\n\\n```sh\\nls  -l\\n```\\n"\n    return prompt\n')
+    for name, prompt_program_after, expected_cosmetic in [
+            ("a prompt whose only change is a moved line break", prompt_program_before.replace(",\\nthen", ", then\\n"), True),
+            ("a prompt whose only change is dropped bold marks", prompt_program_before.replace("**whole**", "whole"), True),
+            ("a prompt with a changed word", prompt_program_before.replace("then report", "then summarize"), False),
+            ("a prompt with a changed code block", prompt_program_before.replace("ls  -l", "ls -la"), False)]:
+        fixture.reset_fixture_to_base()
+        fixture.write_fixture_file("nc-systems/handoff/cosmetic-prompt-program.py", prompt_program_before)
+        earlier = fixture.commit_fixture_changes("prompt before")
+        # On the merge base too, so that the whole pull request's list pairs the prompt with its old text.
+        fixture.git_command("update-ref", "refs/remotes/origin/main", earlier)
+        fixture.write_fixture_file("nc-systems/handoff/cosmetic-prompt-program.py", prompt_program_after)
+        head = fixture.commit_fixture_changes("prompt after")
+        fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
+        delta = fixture.read_review_plan()["agent_facing_text_delta"]
+        text_plan = fixture.run_review_plan(json_output=False).stdout
+        skeleton_path = fixture.control_directory / f"cosmetic-prompt-brief-{len(name)}-{expected_cosmetic}.md"
+        fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
+        skeleton = skeleton_path.read_text() if skeleton_path.exists() else ""
+        expected_label, other_label = (
+            (review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE,
+             review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE)
+            if expected_cosmetic else
+            (review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE,
+             review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE))
+        check(f"{name} gets the {'cosmetic-change' if expected_cosmetic else 'needs-approval'} label in --json, the text plan and the brief skeleton",
+              [(entry["label"], entry["needs_user_approval"], entry["cosmetic_change_needs_no_approval"]) for entry in delta]
+              == [("prompt = in compose()", not expected_cosmetic, expected_cosmetic)]
+              and expected_label in text_plan and other_label not in text_plan
+              and expected_label in skeleton and other_label not in skeleton, (delta, text_plan, skeleton))
     fixture.reset_fixture_to_base()
     printed_before = compose_before.replace("return prompt", "print(prompt)").replace("prompt", "line")
     fixture.write_fixture_file("nc-systems/handoff/recovery-note-program.py", printed_before)
