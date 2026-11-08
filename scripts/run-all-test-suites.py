@@ -384,7 +384,12 @@ has its process group killed with SIGKILL; each suite starts in a session of
 its own, so the group holds every process it started except one that starts a
 session of its own. In an nc-test-sandbox the group holds the init of the suite's
 PID namespace, whose end ends every process inside, so nothing is left; outside
-one, such a process is not reached. It is reported FAIL with `TIMEOUT after
+one, such a process is not reached. A suite outside an nc-test-sandbox runs
+with TMPDIR set to a directory of its own in the system temp directory, which
+the runner removes once the suite has ended, however it ended, so what a
+killed suite made through TMPDIR is not left behind; when that removal fails,
+the suite's line is followed by one naming the directory and the command that
+removes it. A runner killed with SIGKILL leaves that directory. It is reported FAIL with `TIMEOUT after
 <n>s (limit <m>s, <k> times recorded <r>s)`, `(limit <m>s, the floor, more than
 <k> times recorded <r>s)` or `(limit <m>s from no passing recording)`; its
 cgroup counters are lost with the shell that keeps them, and the other suites
@@ -2915,7 +2920,9 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
     suite_timeout_and_the_recorded_seconds_it_came_from(); a suite still running at its limit
     has its process group killed, and its result carries "timeout". Once run_stops,
     a list naming what stopped the run, is not empty, the suite is killed the same way,
-    and its result carries "stopped by".
+    and its result carries "stopped by". A suite outside an nc-test-sandbox gets TMPDIR set to
+    a directory of its own, removed once the suite has ended; a removal that fails is named,
+    with its command, in the result's "output_note".
 
     With in_cgroup_scope, the suite runs in a cgroup scope of its own and its CPU seconds
     and peak memory are read from there; with nice, at low priority. Inside its
@@ -2958,6 +2965,12 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                 [interpreter])
         sandbox_prefix = command_prefix_starting_one_suite_in_its_test_sandbox(
             sandbox_prefix, top, writable_paths, suite, read_only_paths)
+    suite_temporary_directory = None
+    if not does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix):
+        # Outside an nc-test-sandbox's private /tmp, a suite killed with SIGKILL leaves what it
+        # made in the shared temp directory, so it gets a directory this function removes.
+        suite_temporary_directory = tempfile.mkdtemp(prefix=f"{PROGRAM}-suite-tmpdir-")
+        environment["TMPDIR"] = suite_temporary_directory
     status_read = status_write = None
     if sandbox_prefix and note_suite_process is not None:
         status_read_fd, status_write = os.pipe()
@@ -3052,6 +3065,16 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         # Closed only after bwrap exits: bwrap writes its exit status to this pipe last.
         if status_read is not None:
             status_read.close()
+        temporary_directory_left = (None if suite_temporary_directory is None
+                                    else remove_tree_or_say_why(suite_temporary_directory))
+    if temporary_directory_left is not None:
+        output_note = "; ".join(filter(None, (
+            output_note,
+            f"the temporary directory the suite was given, {suite_temporary_directory}, could not "
+            f"be removed ({temporary_directory_left}), so it uses space and inodes in the "
+            f"machine's shared temp directory; remove it with "
+            f"`chmod -R u+rwx {shlex.quote(suite_temporary_directory)} && "
+            f"rm -rf {shlex.quote(suite_temporary_directory)}`")))
     if copy_failures:
         raise OSError(f"the log of {suite}, {log_file}, could not be written while the suite "
                       f"ran, so its output is incomplete: {copy_failures[0]}")
