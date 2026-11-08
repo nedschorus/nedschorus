@@ -156,7 +156,8 @@ MEMORY_WRITE_DENY_MESSAGE = (
     "If you cannot tell where it belongs, tell the user in one sentence what you meant to "
     "remember, and ask him where to save it so that an agent recalls it when it applies.\n"
     "If it matters only to this conversation, drop it.\n"
-    "If you are a subagent, put this to the agent that dispatched you instead.\n"
+    "If you are a subagent, put the proposed edit or the question to the agent that "
+    "dispatched you instead.\n"
     "No {marker} marker lets a write into a memory directory through, so do not write one "
     "for this."
 )
