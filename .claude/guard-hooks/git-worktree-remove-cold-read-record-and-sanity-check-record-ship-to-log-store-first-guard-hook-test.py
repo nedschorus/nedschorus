@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Tests for git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py.
+"""Tests for git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py,
+and for the waiter it starts, nc-systems/general-tools/git-worktree-remove-deferred-until-cold-read-record-and-sanity-check-record-being-written-locks-release-then-ship-to-log-store-waiter.py.
 
 The shipping cases run the hook end to end as a subprocess, the way Claude
 Code does, on real git worktrees in a scratch directory, with the real
@@ -12,6 +13,15 @@ those failures in-process through main's runner and clock; the case for a
 shipment that fails while main reads the worker's results also holds main's
 copy of them until the worker has written. The command
 reading cases call command_runs_git_worktree_remove in-process.
+
+A record still being written is a second process holding its being-written
+lock. In-process runs of main record each waiter start instead of starting
+one, except in the deferred-removal cases, which start the real waiter,
+detached, with a scratch ned-box home for its log and user-alert and short
+waits; a writer that finishes, one killed early, git refusing the removal
+(untracked files and no -f) and a second removal while the waiter waits each
+run on a worktree of their own. The waiter's other failures are injected
+in-process through its main.
 
 Run: python3 .claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -39,6 +49,11 @@ _spec = importlib.util.spec_from_file_location("git_worktree_remove_records_ship
 hook = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(hook)
 
+_waiter_spec = importlib.util.spec_from_file_location(
+    "git_worktree_remove_deferred_until_records_being_written_locks_release_waiter", hook.DEFERRED_REMOVAL_WAITER_SCRIPT)
+waiter = importlib.util.module_from_spec(_waiter_spec)
+_waiter_spec.loader.exec_module(waiter)
+
 SHIP_DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 # Any test run that reaches a shipper ships here, never into the real log-store.
 # Resolved, because the hook names a worktree by its resolved path and the test sandbox's TMPDIR is a symlink.
@@ -46,6 +61,10 @@ _scratch = Path(tempfile.mkdtemp(prefix="git-worktree-remove-records-ship-first-
 atexit.register(shutil.rmtree, _scratch, ignore_errors=True)
 STORE = _scratch / "store"
 os.environ[SHIP_DESTINATION_VARIABLE] = str(STORE / "cold-read-records")
+# Where the deferred-removal cases' waiters write their logs and user-alerts, never the real ned-box home.
+SCRATCH_NED_BOX_HOME = _scratch / "ned-box-home"
+WAITER_LOGS = SCRATCH_NED_BOX_HOME / "nedschorus-logs" / hook.DEFERRED_REMOVAL_WAITER_LOG_DIRECTORY_NAME
+PENDING_ALERTS = SCRATCH_NED_BOX_HOME / ".local" / "state" / "nedschorus" / "user-alerts" / "pending"
 # Before anything runs git, so a run started with GIT_DIR or another redirecting variable set builds its
 # scratch repositories here and not in the repository the variable names.
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
@@ -100,10 +119,18 @@ def run_hook_process(command, cwd, environment=None):
     return completed.returncode, (json.loads(text) if text else None), completed.stderr
 
 
-def run_hook(payload, runner=subprocess.run, clock=None):
+waiter_starts = []
+
+
+def start_waiter_recorded(worktree, force, records, git_directory):
+    waiter_starts.append((worktree, force, list(records), git_directory))
+    return None
+
+
+def run_hook(payload, runner=subprocess.run, clock=None, start_waiter=start_waiter_recorded):
     """Run main in-process; return (exit code, parsed stdout or None)."""
     stdout = io.StringIO()
-    keywords = {"runner": runner}
+    keywords = {"runner": runner, "start_waiter": start_waiter}
     if clock is not None:
         keywords["clock"] = clock
     with contextlib.redirect_stdout(stdout):
@@ -528,6 +555,17 @@ for command, expected in (
     check(f"{command!r} {'runs' if expected else 'does not run'} git worktree remove",
           hook.command_runs_git_worktree_remove(command) == expected)
 
+# Reading the command: whether a removal in it gives -f or --force.
+for command, expected in (
+        ("git worktree remove -f wt", True),
+        ("git -C /r worktree remove --force wt", True),
+        ("bash -c 'git worktree remove -f \"$W\"'", True),
+        ("git worktree remove wt", False),
+        ("git worktree remove -- -f", False),
+        ("rm -f x && git worktree remove wt", False)):
+    check(f"{command!r} {'gives' if expected else 'does not give'} a removal -f or --force",
+          hook.command_gives_worktree_remove_force(command) == expected)
+
 # A slow shipment must be refused by the hook, not cut off by Claude Code, which lets the command through.
 settings = json.loads((hook.REPOSITORY_ROOT / ".claude" / "settings.json").read_text())
 hook_timeouts = [entry.get("timeout") for group in settings["hooks"]["PreToolUse"] for entry in group["hooks"]
@@ -573,72 +611,108 @@ for kind in hook.record_kinds():
 
 # A record a running program is still writing, such as a cold-read-grid's, is never shipped by the hook:
 # the program rewrites files it has written, and ships the record itself when it finishes. Its lock is held
-# here by a second process through the shipper's own function, as the grid takes it.
+# here by a second process through the shipper's own function, as the grid takes it. When stdin closes, the
+# writer finishes: with "finish-and-ship" as its third argument it first writes one more file, releases the
+# lock and ships the record itself, as the grid does.
 COLD_READ_RECORD_BEING_WRITTEN_LOCK_HOLDER_UNTIL_STDIN_CLOSES_PYTHON_SOURCE = """
-import importlib.util, pathlib, sys
+import importlib.util, pathlib, subprocess, sys
 spec = importlib.util.spec_from_file_location("shipper", sys.argv[1])
 shipper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(shipper)
-shipper.record_directory_being_written_lock_take(pathlib.Path(sys.argv[2]))
+record = pathlib.Path(sys.argv[2])
+shipper.record_directory_being_written_lock_take(record)
 print("held", flush=True)
 sys.stdin.read()
+if sys.argv[3:] == ["finish-and-ship"]:
+    (record / "written-last.md").write_text("the writer's last file\\n")
+    shipper.record_directory_being_written_lock_release(record)
+    subprocess.run([sys.executable, sys.argv[1], str(record)], check=False, capture_output=True)
 """
+COLD_READ_RECORD_SHIPPER = hook.REPOSITORY_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py"
+
+
+def record_writer_started(record, *mode):
+    writer = subprocess.Popen(
+        [sys.executable, "-c", COLD_READ_RECORD_BEING_WRITTEN_LOCK_HOLDER_UNTIL_STDIN_CLOSES_PYTHON_SOURCE,
+         str(COLD_READ_RECORD_SHIPPER), str(record), *mode],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    return writer, writer.stdout.readline() == "held\n"
+
+
 checkout, worktree = checkout_with_worktree("beingwritten")
 being_written = worktree / "cold-read-records" / "beingwritten-doc-2026-11-03"
 other_worktree = checkout.parent / "beingwritten-other-worktree"
 git(checkout, "worktree", "add", "-q", "--detach", str(other_worktree))
-writer = subprocess.Popen(
-    [sys.executable, "-c", COLD_READ_RECORD_BEING_WRITTEN_LOCK_HOLDER_UNTIL_STDIN_CLOSES_PYTHON_SOURCE,
-     str(hook.REPOSITORY_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py"), str(being_written)],
-    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+writer, held = record_writer_started(being_written)
 being_written_in_store = STORE / "cold-read-records" / being_written.name
 removes_worktree_refusal_start = ("Refused on purpose: this command removes a worktree in which a running "
                                   "program, such as the cold-read-grid, is still writing a record.")
 unresolved_refusal_start = "Refused on purpose: this hook could not tell which worktree this command removes ("
+deferred_ending = ("This hook has deferred the removal: a program waits until every record above is finished, "
+                   "ships the records, removes the worktree, and tells the user if that fails. You have nothing "
+                   "to do for the removal. If your command did anything else, none of it ran: run again now only "
+                   "the parts that do not need this worktree gone.")
 try:
-    check("the writer holds its record's being-written lock", writer.stdout.readline() == "held\n")
+    check("the writer holds its record's being-written lock", held)
+    waiter_starts.clear()
     code, output = run_hook(payload_for(f"git worktree remove {other_worktree}", checkout))
     check("removing another worktree is let through while a record is being written, and the record is not "
-          "shipped, while the other records are",
-          code == 0 and output is None and not being_written_in_store.exists()
+          "shipped, while the other records are, and no waiter is started",
+          code == 0 and output is None and not being_written_in_store.exists() and waiter_starts == []
           and (STORE / "sanity-check-records" / "2026-11-03-beingwritten-doc" / "finding-dispositions.md").is_file(),
-          (code, output))
-    for label, command, cwd in (
-            ("by its absolute path", f"git worktree remove --force {worktree}", checkout),
-            ("by a path relative to the cwd", "git worktree remove ../beingwritten-worktree", checkout),
-            ("by the end of its path alone, as git allows", "git worktree remove beingwritten-worktree", checkout),
-            ("by a path relative to a -C directory", "git -C .. worktree remove ./beingwritten-worktree", checkout),
-            ("inside bash -c", f"bash -c 'git worktree remove {worktree}'", checkout),
-            ("after another command", f"ls && git worktree remove -f -- {worktree}", checkout)):
+          (code, output, waiter_starts))
+    for label, command, cwd, force in (
+            ("by its absolute path", f"git worktree remove --force {worktree}", checkout, True),
+            ("by a path relative to the cwd", "git worktree remove ../beingwritten-worktree", checkout, False),
+            ("by the end of its path alone, as git allows", "git worktree remove beingwritten-worktree", checkout,
+             False),
+            ("by a path relative to a -C directory", "git -C .. worktree remove ./beingwritten-worktree", checkout,
+             False),
+            ("inside bash -c", f"bash -c 'git worktree remove -f {worktree}'", checkout, True),
+            ("after another command", f"ls && git worktree remove -f -- {worktree}", checkout, True)):
+        waiter_starts.clear()
         code, output = run_hook(payload_for(command, cwd))
         reason = refusal(output) or ""
-        check(f"removing the worktree a record is being written in, named {label}, is refused, naming the record",
+        check(f"removing the worktree a record is being written in, named {label}, is refused, naming the record, "
+              f"and the removal is deferred",
               code == 0 and reason.startswith(removes_worktree_refusal_start)
               and f"Record {being_written} (worktree {worktree})\n" in reason
+              and reason.endswith(deferred_ending)
               and not being_written_in_store.exists(),
               (code, output))
-    reason = refusal(run_hook(payload_for(f"git worktree remove {worktree}", checkout))[1]) or ""
-    for line in ("If the program writing a record above is yours, wait until it prints its `record:` line, then "
-                 "run your command again.",
-                 "If it is not yours, leave the worktree in place, stop, and "
-                 f"{hook.TELL_THE_USER_OR_DISPATCHING_AGENT} that `git worktree remove` is refused while a "
-                 "program writes a record in that worktree, quoting each Record line above word for word."):
-        check(f"the refusal carries the instruction {line[:50]!r}...", line in reason, reason)
-    for label, command, why in (
-            ("a variable", 'git worktree remove "$WORKTREE"', "holds a variable, a glob or a substitution"),
-            ("a -C holding a variable", "git -C $HOME worktree remove x", "holds a variable, a glob or a substitution"),
-            ("an option the hook does not read", "git worktree remove --frobnicate x", "is given the option --frobnicate"),
-            ("a relative path after cd", "cd .. && git worktree remove ./beingwritten-worktree",
-             "the command changes directory")):
+        check(f"the removal named {label} starts one waiter for that worktree and its record, "
+              f"{'with' if force else 'without'} -f, run from the main checkout",
+              waiter_starts == [(worktree, force, [being_written], checkout)], waiter_starts)
+    code, output = run_hook(payload_for(f"git worktree remove {worktree}", checkout),
+                            start_waiter=lambda *arguments: "the waiter could not be started: [Errno 2] no python")
+    reason = refusal(output) or ""
+    check("a waiter that cannot start makes the refusal say the removal was not deferred, and send the agent on",
+          reason.startswith(removes_worktree_refusal_start) and deferred_ending not in reason
+          and f"This hook could not defer the removal, so no program will remove the worktree once the record is "
+              f"finished: for {worktree}, the waiter could not be started: [Errno 2] no python.\n" in reason
+          and f"Leave the worktree in place, stop, and {hook.TELL_THE_USER_OR_DISPATCHING_AGENT} that `git worktree "
+              f"remove` is refused while a program writes a record in that worktree" in reason, reason)
+    for label, command, why, force in (
+            ("a variable", 'git worktree remove "$WORKTREE"', "holds a variable, a glob or a substitution", ""),
+            ("a variable, with -f", 'git worktree remove -f "$WORKTREE"', "holds a variable, a glob or a substitution",
+             " -f"),
+            ("a -C holding a variable", "git -C $HOME worktree remove x", "holds a variable, a glob or a substitution",
+             ""),
+            ("an option the hook does not read", "git worktree remove --frobnicate x", "is given the option --frobnicate",
+             ""),
+            ("a relative path after cd", "cd .. && git worktree remove --force ./beingwritten-worktree",
+             "the command changes directory", " -f")):
+        waiter_starts.clear()
         code, output = run_hook(payload_for(command, checkout))
         reason = refusal(output) or ""
-        check(f"a removal the hook cannot place, by {label}, is refused while a record is being written",
+        check(f"a removal the hook cannot place, by {label}, is refused while a record is being written, "
+              f"and no waiter is started",
               code == 0 and reason.startswith(unresolved_refusal_start) and why in reason
-              and f"Record {being_written} (worktree {worktree})\n" in reason
-              and "Run the removal again as `git worktree remove <path>`, with the worktree's path written out "
-                  "in full, as an absolute path with no variable, in a command that does not change directory."
+              and f"Record {being_written} (worktree {worktree})\n" in reason and waiter_starts == []
+              and f"Run the removal again as `git worktree remove{force} <path>`, with the worktree's path written "
+                  "out in full, as an absolute path with no variable, in a command that does not change directory."
                   in reason,
-              (code, output))
+              (code, output, waiter_starts))
     code, output = run_hook(payload_for(f"cd .. && git worktree remove {other_worktree}", checkout))
     check("an absolute path after cd still names its worktree, and another worktree's removal is let through",
           code == 0 and output is None, (code, output))
@@ -659,7 +733,11 @@ check("two paths given to one removal leave the hook unable to tell",
       hook.worktrees_removed_or_unresolved_reason("git worktree remove /a/b/one /a/b/two", "/", worktrees)
       == (None, "`worktree remove` is given 2 paths"))
 check("a removal naming no worktree removes none",
-      hook.worktrees_removed_or_unresolved_reason("git worktree remove /a/nowhere", "/", worktrees) == (set(), None))
+      hook.worktrees_removed_or_unresolved_reason("git worktree remove /a/nowhere", "/", worktrees) == ({}, None))
+check("a worktree removed twice, once with -f, is removed with -f",
+      hook.worktrees_removed_or_unresolved_reason(
+          "git worktree remove /a/b/two; bash -c 'git worktree remove --force /a/b/two'", "/", worktrees)
+      == ({Path("/a/b/two"): True}, None))
 
 # A removal the shell or a wrapper resolves in another directory than the hook's cwd is unresolved, not let through.
 repository_worktrees = [Path("/r"), Path("/r/.claude/worktrees/A"), Path("/r/.claude/worktrees/B")]
@@ -679,7 +757,223 @@ check("a bracket glob in the path leaves the hook unable to tell",
 check("env without a directory option still resolves the path against the cwd",
       hook.worktrees_removed_or_unresolved_reason("env -u X git worktree remove .claude/worktrees/A", "/r",
                                                   repository_worktrees)
-      == ({Path("/r/.claude/worktrees/A")}, None))
+      == ({Path("/r/.claude/worktrees/A"): False}, None))
+
+
+# The deferred removal, end to end: the hook starts the real waiter, detached, which waits for the writer,
+# ships the records and removes the worktree, or writes a user-alert.
+def start_waiter_quickly(worktree, force, records, git_directory):
+    return hook.deferred_removal_waiter_start_unless_one_waits(
+        worktree, force, records, git_directory, ned_box_home=SCRATCH_NED_BOX_HOME,
+        waiter_options=["--poll-seconds", "0.2", "--writer-own-shipment-grace-seconds", "2"])
+
+
+def waiter_logs_of(worktree):
+    return sorted(WAITER_LOGS.glob(f"*-{worktree.name}-*.log"))
+
+
+def alerts_naming(worktree):
+    return [alert for alert in (json.loads(path.read_text()) for path in sorted(PENDING_ALERTS.glob("*.json")))
+            if str(worktree) in alert["title"]]
+
+
+def waited_until(condition, seconds=60):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.2)
+    return condition()
+
+
+def deferred_removal_case(name, command_options, writer_mode=()):
+    """Start a writer in a new worktree and run the hook's removal of it; return (checkout, worktree, record,
+    writer, refusal text)."""
+    case_checkout, case_worktree = checkout_with_worktree(name)
+    record = case_worktree / "cold-read-records" / f"{name}-doc-2026-11-03"
+    case_writer, case_held = record_writer_started(record, *writer_mode)
+    check(f"{name}: the writer holds its record's being-written lock", case_held)
+    _, case_output = run_hook(payload_for(f"git worktree remove {command_options}{case_worktree}", case_checkout),
+                              start_waiter=start_waiter_quickly)
+    return case_checkout, case_worktree, record, case_writer, refusal(case_output) or ""
+
+
+# A writer that finishes, shipping its record itself; a second removal while the waiter waits starts no waiter.
+_, finishes_worktree, finishes_record, writer, reason = deferred_removal_case(
+    "deferred-writer-finishes", "-f ", ["finish-and-ship"])
+try:
+    check("a removal deferred while the writer runs is refused with the deferred ending, and the worktree stays",
+          reason.endswith(deferred_ending) and finishes_worktree.is_dir(), reason)
+    check("the hook started one waiter, whose log is in the log-store's waiter log directory",
+          len(waiter_logs_of(finishes_worktree)) == 1, list(WAITER_LOGS.glob("*")))
+    code, output = run_hook(payload_for(f"git worktree remove {finishes_worktree}", finishes_worktree),
+                            start_waiter=start_waiter_quickly)
+    check("a second removal while a waiter waits on the worktree is deferred too, and starts no second waiter",
+          (refusal(output) or "").endswith(deferred_ending) and len(waiter_logs_of(finishes_worktree)) == 1,
+          (output, waiter_logs_of(finishes_worktree)))
+    check("the waiter holds the worktree's flock, so the start function itself starts none",
+          start_waiter_quickly(finishes_worktree, True, [finishes_record], finishes_worktree) is None
+          and len(waiter_logs_of(finishes_worktree)) == 1)
+finally:
+    writer.communicate("")
+check("once the writer finishes, the waiter removes the worktree",
+      waited_until(lambda: not finishes_worktree.exists()),
+      [path.read_text() for path in waiter_logs_of(finishes_worktree)])
+check("the record the writer finished is in the log-store whole, with the file it wrote last",
+      (STORE / "cold-read-records" / finishes_record.name / "written-last.md").is_file()
+      and (STORE / "cold-read-records" / finishes_record.name / "fast-read.md").is_file())
+log_text = "".join(path.read_text() for path in waiter_logs_of(finishes_worktree))
+check("the waiter's log says it removed the worktree with -f, and it wrote no user-alert",
+      f"removed: git -C " in log_text and f"worktree remove -f {finishes_worktree}" in log_text
+      and alerts_naming(finishes_worktree) == [], log_text)
+
+# A writer killed early never ships its record: the waiter ships it once the grace runs out, then removes.
+_, killed_worktree, killed_record, writer, reason = deferred_removal_case("deferred-writer-killed", "--force ")
+writer.kill()
+writer.wait()
+check("after a writer is killed early, the waiter removes the worktree",
+      waited_until(lambda: not killed_worktree.exists()), [path.read_text() for path in waiter_logs_of(killed_worktree)])
+log_text = "".join(path.read_text() for path in waiter_logs_of(killed_worktree))
+check("the killed writer's record was shipped by the waiter, after the writer did not ship it",
+      (STORE / "cold-read-records" / killed_record.name / "fast-read.md").is_file()
+      and f"not shipped by their writers within 2.0 seconds: {killed_record}" in log_text, log_text)
+
+# The process that starts the waiter returns at once, though the waiter waits: Claude Code reads the hook's output
+# until it closes, so a waiter holding it would keep the hook running past its timeout, which lets the removal through.
+detached_checkout, detached_worktree = checkout_with_worktree("deferred-start-detaches")
+detached_record = detached_worktree / "cold-read-records" / "deferred-start-detaches-doc-2026-11-03"
+writer, held = record_writer_started(detached_record)
+WAITER_STARTED_IN_A_PROCESS_OF_ITS_OWN_PYTHON_SOURCE = """
+import importlib.util, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("hook", sys.argv[1])
+hook = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(hook)
+print(hook.deferred_removal_waiter_start_unless_one_waits(
+    Path(sys.argv[2]), True, [Path(sys.argv[3])], Path(sys.argv[4]), ned_box_home=Path(sys.argv[5]),
+    waiter_options=["--poll-seconds", "0.2", "--writer-own-shipment-grace-seconds", "2"]))
+"""
+try:
+    started = time.monotonic()
+    starter = subprocess.run(
+        [sys.executable, "-c", WAITER_STARTED_IN_A_PROCESS_OF_ITS_OWN_PYTHON_SOURCE, str(HOOK_SCRIPT),
+         str(detached_worktree), str(detached_record), str(detached_checkout), str(SCRATCH_NED_BOX_HOME)],
+        capture_output=True, text=True, timeout=60)
+    took = time.monotonic() - started
+    check("a process that starts the waiter, its output captured, returns while the waiter still waits",
+          starter.returncode == 0 and starter.stdout == "None\n" and took < 30 and detached_worktree.is_dir()
+          and len(waiter_logs_of(detached_worktree)) == 1, (starter, took))
+finally:
+    writer.communicate("")
+check("the waiter that process started removes the worktree once the writer finishes",
+      waited_until(lambda: not detached_worktree.exists()),
+      [path.read_text() for path in waiter_logs_of(detached_worktree)])
+
+# Git refuses the removal: the worktree holds untracked files and the command gave no -f.
+_, refused_worktree, refused_record, writer, reason = deferred_removal_case("deferred-git-refuses", "")
+writer.communicate("")
+check("when git refuses the deferred removal, the waiter writes a user-alert",
+      waited_until(lambda: alerts_naming(refused_worktree) != []),
+      [path.read_text() for path in waiter_logs_of(refused_worktree)])
+alert = (alerts_naming(refused_worktree) or [{}])[0]
+check("the user-alert names the worktree, its Record line, the git command that failed and the log",
+      alert.get("title") == f"A deferred `git worktree remove` did not run: {refused_worktree}"
+      and f"Record {refused_record} (worktree {refused_worktree})\n" in alert.get("alert_text", "")
+      and f"worktree remove {refused_worktree}` exited 128: " in alert.get("alert_text", "")
+      and f"The waiter's log: {waiter_logs_of(refused_worktree)[0]}" in alert.get("alert_text", "")
+      and alert.get("action") == waiter.ALERT_ACTION, alert)
+check("git refusing leaves the worktree in place, with its record shipped",
+      refused_worktree.is_dir() and (STORE / "cold-read-records" / refused_record.name / "fast-read.md").is_file())
+
+# The start function's own failures: a worktree directory it cannot open, a log it cannot write.
+check("a worktree directory that cannot be opened starts no waiter, and says why",
+      (start_waiter_quickly(_scratch / "no-such-worktree", False, [], _scratch) or "")
+      .startswith("its directory could not be opened: "))
+blocked_home = _scratch / "ned-box-home-is-a-file"
+blocked_home.write_text("not a directory\n")
+no_waiter_directory = _scratch / "directory-no-waiter-holds"
+no_waiter_directory.mkdir()
+check("a log that cannot be written starts no waiter, and says why",
+      (hook.deferred_removal_waiter_start_unless_one_waits(no_waiter_directory, False, [], no_waiter_directory,
+                                                           ned_box_home=blocked_home) or "")
+      .startswith("the waiter could not be started: "))
+
+
+# The waiter's other failures, injected in-process through its main.
+def waiter_run(worktree, *options, runner=subprocess.run, injected_hook=hook):
+    """Run the waiter's main in-process on worktree; return (exit code, its log, the alerts this run wrote)."""
+    alerts_before = alerts_naming(worktree)
+    log_output = io.StringIO()
+    with contextlib.redirect_stdout(log_output):
+        code = waiter.main(["--worktree", str(worktree), "--git-directory", str(worktree),
+                            "--ned-box-home", str(SCRATCH_NED_BOX_HOME), "--poll-seconds", "0.05",
+                            "--writer-own-shipment-grace-seconds", "0", *options],
+                           runner=runner, hook=injected_hook)
+    return code, log_output.getvalue(), [alert for alert in alerts_naming(worktree) if alert not in alerts_before]
+
+
+failing_checkout, failing_worktree = checkout_with_worktree("waiter-failures")
+failing_record = failing_worktree / "cold-read-records" / "waiter-failures-doc-2026-11-03"
+writer, held = record_writer_started(failing_record)
+try:
+    code, log_text, alerts = waiter_run(failing_worktree, "--record", str(failing_record),
+                                        "--total-limit-seconds", "0.3")
+finally:
+    writer.communicate("")
+check("a record still being written when the time limit runs out leaves the worktree and writes a user-alert",
+      code == 1 and failing_worktree.is_dir() and len(alerts) == 1
+      and waiter.TIME_LIMIT_FAILURE in alerts[0]["alert_text"]
+      and f"Record {failing_record} (worktree {failing_worktree})\n" in alerts[0]["alert_text"], (code, log_text))
+
+
+def shipper_failing_runner(argv, **keywords):
+    if argv[0] == sys.executable:
+        return subprocess.CompletedProcess(argv, 1, "FAILED: ned-box could not be reached", "")
+    return subprocess.run(argv, **keywords)
+
+
+code, log_text, alerts = waiter_run(failing_worktree, runner=shipper_failing_runner)
+check("a shipment that fails leaves the worktree and writes a user-alert quoting the shipper's line",
+      code == 1 and failing_worktree.is_dir() and len(alerts) == 1
+      and waiter.SHIPMENT_FAILURE in alerts[0]["alert_text"]
+      and f"Record {failing_record} (worktree {failing_worktree}): FAILED: ned-box could not be reached\n"
+      in alerts[0]["alert_text"], (code, log_text, alerts))
+
+
+def git_stalling_runner(argv, **keywords):
+    if argv[0] == "git":
+        raise subprocess.TimeoutExpired(argv, keywords.get("timeout"))
+    return subprocess.run(argv, **keywords)
+
+
+code, log_text, alerts = waiter_run(failing_worktree, "--force", runner=git_stalling_runner)
+check("a git removal past its time limit leaves the worktree and writes a user-alert",
+      code == 1 and failing_worktree.is_dir() and len(alerts) == 1
+      and f"ran past {waiter.GIT_TIMEOUT_SECONDS} seconds." in alerts[0]["alert_text"], (code, log_text))
+
+
+class HookWhoseRecordReadingFails:
+    """The hook's functions, except that the worker fails before it has read the records."""
+
+    def __getattr__(self, name):
+        return getattr(hook, name)
+
+    def ship_every_record(self, worktrees, runner, clock, deadline, progress):
+        progress["error"] = "ImportError: shipper module missing"
+
+
+code, log_text, alerts = waiter_run(failing_worktree, injected_hook=HookWhoseRecordReadingFails())
+check("records the waiter cannot read leave the worktree and write a user-alert naming the error",
+      code == 1 and len(alerts) == 1
+      and "it could not read the worktree's records (ImportError: shipper module missing)."
+      in alerts[0]["alert_text"], (code, log_text))
+code, log_text, alerts = waiter_run(failing_worktree, injected_hook=object())
+check("an unexpected error in the waiter leaves the worktree and writes a user-alert naming it",
+      code == 1 and failing_worktree.is_dir() and len(alerts) == 1
+      and "the waiter stopped on an error: AttributeError: " in alerts[0]["alert_text"], (code, log_text))
+check("a record gone holds no being-written lock",
+      waiter.lock_is_held({kind[0]: kind for kind in hook.record_kinds()},
+                          failing_worktree / "cold-read-records" / "never-written") is False)
 
 print()
 if failures:
