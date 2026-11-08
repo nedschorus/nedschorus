@@ -78,9 +78,6 @@ writes it again over the old time when run again; it refuses, exit 2, when the
 last run passed or there is none, or while a run holds the program's lock,
 since that run rewrites the state file when it ends.
 
-The runner is started with XDG_RUNTIME_DIR added as scripts/daily-full-test-run-of-main.py
-adds it, because cron gives this program no user session bus.
-
 --print-merge-gate-notice-of-last-failed-or-stopped-run prints, on stdout, the notice scripts/merge-gate.sh
 puts on its stderr: nothing when the state file is missing or the last run
 passed; for a failed run each failing suite, its log, the commit range and the
@@ -282,19 +279,9 @@ def remove_worktree(clone, worktree):
     return None
 
 
-def runner_environment():
-    """This process's environment, with XDG_RUNTIME_DIR added as the daily full run adds it,
-    because cron starts this program without the user's session bus and the runner's
-    `systemd-run --user --scope` then puts no CPU weight or memory ceiling on any suite."""
-    daily = module_loaded_by_path("daily_full_test_run_of_main",
-                                  Path(__file__).resolve().with_name("daily-full-test-run-of-main.py"))
-    return daily.environment_with_user_runtime_directory_when_the_user_session_bus_exists(
-        dict(os.environ))
-
-
 def run_runner_with_time_limit(command, worktree):
     """(exit code or None when stopped at the time limit, stdout, stderr)."""
-    process = subprocess.Popen(command, cwd=str(worktree), env=runner_environment(),
+    process = subprocess.Popen(command, cwd=str(worktree),
                                stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                errors="replace", start_new_session=True)
