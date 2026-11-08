@@ -54,10 +54,16 @@ control_directory = pathlib.Path(os.environ[{CONTROL_DIRECTORY_VARIABLE!r}])
 arguments = sys.argv[1:]
 with (control_directory / "calls.jsonl").open("a", encoding="utf-8") as call_log:
     call_log.write(json.dumps(arguments) + "\\n")
+# A replaced pull request's answers sit in files named for its number.
 if arguments[:2] == ["pr", "view"]:
     control_name = "pull-request.json"
+    if (control_directory / f"pull-request-{{arguments[2]}}.json").exists():
+        control_name = f"pull-request-{{arguments[2]}}.json"
 elif arguments[:3] == ["api", "--paginate", "--slurp"] and arguments[-1].endswith("/reviews"):
     control_name = "reviews.json"
+    replaced_reviews = f"reviews-{{arguments[-1].split('/')[-2]}}.json"
+    if (control_directory / replaced_reviews).exists():
+        control_name = replaced_reviews
 elif arguments[:3] == ["api", "--paginate", "--slurp"] and arguments[-1].endswith("/comments"):
     control_name = "comments.json"
 elif len(arguments) == 2 and arguments[0] == "api" and "/branches/" in arguments[1]:
@@ -92,8 +98,8 @@ BASELINE_FILE_CONTENTS = {
     "operative-note.md": "Old prose outside docs.\n",
     "scripts/example-program.py": '"""Old module documentation."""\n# Old comment\nVALUE = "old"\n\ndef show_value():\n    """Old function documentation."""\n    print(VALUE)\n    return 1\n',
     "scripts/example-program-test.py": 'EXPECTED = "old"\nassert EXPECTED\n',
-    ".claude/hooks/example-hook.py": 'print("old")\n',
-    ".claude/hooks/example-hook-test.py": 'print("old")\n',
+    ".claude/guard-hooks/example-hook.py": 'print("old")\n',
+    ".claude/guard-hooks/example-hook-test.py": 'print("old")\n',
     ".claude/guard-hooks/synthetic-keystroke-guard-hook.py": 'print("old")\n',
     "scripts/registered-example-hook.py": 'print("old")\n',
     ".claude/settings.json": json.dumps({"hooks": {"PreToolUse": [{"hooks": [
@@ -178,12 +184,14 @@ class ReviewPlanTemporaryRepositoryFixture:
         (self.control_directory / control_name).write_text(json.dumps(response), encoding="utf-8")
 
     def configure_github_answers(self, head, *, author="someone-else", reviews=None, comments=None,
-                                 live_base=None, state="OPEN", merge_commit=None, base_branch="main"):
+                                 live_base=None, state="OPEN", merge_commit=None, base_branch="main",
+                                 description="Plain description."):
         self.set_github_response("pull-request.json", {
             "number": FIXTURE_PULL_REQUEST_NUMBER, "title": "Compute a review plan",
             "url": "https://github.com/fixture-owner/fixture-repository/pull/852",
             "state": state, "author": {"login": author}, "headRefOid": head,
-            "baseRefName": base_branch, "mergeCommit": {"oid": merge_commit} if merge_commit else None})
+            "baseRefName": base_branch, "mergeCommit": {"oid": merge_commit} if merge_commit else None,
+            "body": description})
         self.set_github_response("reviews.json", reviews if reviews is not None else [[]])
         self.set_github_response("comments.json", comments if comments is not None else [[]])
         self.set_github_response("branch.json", {"commit": {"sha": live_base or self.base_head}})
@@ -263,12 +271,12 @@ def run_classification_cases(fixture):
     check("fenced Markdown code changes get codex-review-and-head-tests-tier", plan["tier"] == "codex-review-and-head-tests-tier" and "fenced code blocks" in plan["tier_decided_by"], plan)
     full_reviewer_cases = [
         ("Python logic changes get claude-and-codex-review-and-head-tests-tier", "scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace("return 1", "return 2")),
-        ("every hook directory file gets claude-and-codex-review-and-head-tests-tier", ".claude/hooks/example-hook.py", 'print("new")\n'),
+        ("every hook directory file gets claude-and-codex-review-and-head-tests-tier", ".claude/guard-hooks/example-hook.py", 'print("new")\n'),
         ("settings gets claude-and-codex-review-and-head-tests-tier", ".claude/settings.json", '{"hooks": {}}\n'),
         ("a Bash guard string-only change gets claude-and-codex-review-and-head-tests-tier", ".claude/guard-hooks/synthetic-keystroke-guard-hook.py", 'print("new")\n'),
         ("a registered hook string-only change gets claude-and-codex-review-and-head-tests-tier", "scripts/registered-example-hook.py", 'print("new")\n'),
         ("a new Python program gets claude-and-codex-review-and-head-tests-tier", "scripts/new-example-program.py", 'print("new")\n'),
-        ("a test under the hook directory gets claude-and-codex-review-and-head-tests-tier", ".claude/hooks/example-hook-test.py", 'print("new")\n'),
+        ("a test under the hook directory gets claude-and-codex-review-and-head-tests-tier", ".claude/guard-hooks/example-hook-test.py", 'print("new")\n'),
     ]
     for case_name, path, content in full_reviewer_cases:
         plan = fixture.plan_for_changed_file(path, content)
@@ -281,14 +289,14 @@ def run_classification_cases(fixture):
     plan = fixture.read_review_plan()
     check("always-full hook wins the deciding line before path order", "scripts/registered-example-hook.py" in plan["tier_decided_by"], plan)
     fixture.reset_fixture_to_base()
-    fixture.write_fixture_file(".claude/hooks/example-hook.py", 'print("new")\n')
-    fixture.write_fixture_file(".claude/hooks/example-hook-test.py", 'print("new")\n')
+    fixture.write_fixture_file(".claude/guard-hooks/example-hook.py", 'print("new")\n')
+    fixture.write_fixture_file(".claude/guard-hooks/example-hook-test.py", 'print("new")\n')
     head = fixture.commit_fixture_changes("hook program priority over hook test")
     fixture.configure_github_answers(head)
     plan = fixture.read_review_plan()
     check("the deciding line prefers the hook program over its earlier-sorting test",
           plan["tier"] == "claude-and-codex-review-and-head-tests-tier"
-          and ".claude/hooks/example-hook.py" in plan["tier_decided_by"]
+          and ".claude/guard-hooks/example-hook.py" in plan["tier_decided_by"]
           and "example-hook-test.py" not in plan["tier_decided_by"], plan)
     plan = fixture.plan_for_changed_file("scripts/example-program.py", "def broken(:\n")
     check("unparseable Python gets claude-and-codex-review-and-head-tests-tier with side named", plan["tier"] == "claude-and-codex-review-and-head-tests-tier" and "does not parse at new side" in plan["tier_decided_by"], plan)
@@ -302,6 +310,38 @@ def run_classification_cases(fixture):
     fixture.configure_github_answers(fixture.base_head)
     plan = fixture.read_review_plan()
     check("an empty change set gets no-reviewer-tier with explicit reason", plan["tier"] == "no-reviewer-tier" and plan["tier_decided_by"] == "the pull request changes no file", plan)
+
+
+def run_replaces_line_cases(fixture):
+    """A #replaces line adds each replaced pull request's reviewed heads to the round."""
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace("return 1", "return 2"))
+    head = fixture.commit_fixture_changes("replacement")
+    link = f"https://github.com/{FIXTURE_GITHUB_REPOSITORY}/pull/"
+    fixture.set_github_response("pull-request-800.json", {"url": f"{link}800", "body": f"- #replaces {link}700"})
+    fixture.set_github_response("pull-request-700.json", {"url": f"{link}700", "body": None})
+    fixture.set_github_response("reviews-800.json", [[fixture_review(81, "1" * 40), fixture_review(82, "2" * 40)],
+                                                     [fixture_review(83, "2" * 40, state="CHANGES_REQUESTED"),
+                                                      fixture_review(84, "3" * 40, state="PENDING", submitted_at=None)]])
+    fixture.set_github_response("reviews-700.json", [[fixture_review(71, "4" * 40)]])
+    try:
+        fixture.configure_github_answers(head, description=f"Text.\n#replaces {link}800\n")
+        plan = fixture.read_review_plan()
+        check("a #replaces chain adds each replaced pull request's reviewed heads, oldest first, to round one",
+              plan["round"] == 4 and not plan["fix_round"]
+              and plan["replaced_pull_requests"] == [{"number": 700, "url": f"{link}700", "reviewed_heads": 1},
+                                                     {"number": 800, "url": f"{link}800", "reviewed_heads": 2}], plan)
+        text = fixture.run_review_plan(json_output=False)
+        check("the text plan names each replaced pull request under its round line",
+              text.returncode == 0 and f"round: 4\n  carried over by #replaces: 1 reviewed heads of {link}700\n"
+              f"  carried over by #replaces: 2 reviewed heads of {link}800\n" in text.stdout, text.stdout + text.stderr)
+        fixture.configure_github_answers(head, description="#replaces 800")
+        result = fixture.run_review_plan()
+        check("a #replaces line with no full link is refused with what to write",
+              refusal_has_expected_prefix(result) and "has the line `#replaces 800`" in result.stderr, result.stderr)
+    finally:
+        for name in ("pull-request-800.json", "pull-request-700.json", "reviews-800.json", "reviews-700.json"):
+            (fixture.control_directory / name).unlink()
 
 
 def run_fix_round_cases(fixture):
@@ -933,10 +973,14 @@ def run_refusal_and_call_shape_cases(fixture):
     prefix = f"repos/{FIXTURE_GITHUB_REPOSITORY}"
     accepted_calls = [
         ["pr", "view", str(FIXTURE_PULL_REQUEST_NUMBER), "--repo", FIXTURE_GITHUB_REPOSITORY,
-         "--json", "number,title,url,state,author,headRefOid,baseRefName,mergeCommit"],
+         "--json", "number,title,url,state,author,headRefOid,baseRefName,mergeCommit,body"],
         ["api", "--paginate", "--slurp", f"{prefix}/pulls/{FIXTURE_PULL_REQUEST_NUMBER}/reviews"],
         ["api", "--paginate", "--slurp", f"{prefix}/pulls/{FIXTURE_PULL_REQUEST_NUMBER}/comments"],
         *[["api", f"{prefix}/branches/{base}"] for base in ("main", "topic-base", "topic%2Fbase")],
+        # The two read-only reads of each pull request run_replaces_line_cases replaces.
+        *[call for replaced in (700, 800) for call in (
+            ["pr", "view", str(replaced), "--repo", FIXTURE_GITHUB_REPOSITORY, "--json", "url,body"],
+            ["api", "--paginate", "--slurp", f"{prefix}/pulls/{replaced}/reviews"])],
     ]
     check("every gh call is one of the four read-only shapes with the requested repository", bool(calls) and all(call in accepted_calls for call in calls) and all(shape in calls for shape in accepted_calls[:4]), calls)
 
@@ -1202,6 +1246,7 @@ def main():
         fixture = ReviewPlanTemporaryRepositoryFixture(Path(temporary_directory))
         run_classification_cases(fixture)
         run_fix_round_cases(fixture)
+        run_replaces_line_cases(fixture)
         run_hook_registration_and_delta_boundary_cases(fixture)
         run_agent_text_cases(fixture)
         run_fast_read_command_cases(fixture)

@@ -63,6 +63,18 @@ def ship(destination, *args, script=SHIP, extra_env=None):
                           capture_output=True, text=True, check=False, env=env)
 
 
+# A writer: loads the record shipper given as argv[1], takes the being-written
+# lock on the record argv[2], prints "held", and holds it until its stdin closes.
+COLD_READ_RECORD_BEING_WRITTEN_LOCK_HOLDER_UNTIL_STDIN_CLOSES_PYTHON_SOURCE = """
+import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location("shipper", sys.argv[1])
+shipper = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(shipper)
+shipper.record_directory_being_written_lock_take(pathlib.Path(sys.argv[2]))
+print("held", flush=True)
+sys.stdin.read()
+"""
+
 CUT_REPORT = "<!-- provenance: runtime=claude model=opus -->\n# cut\n\nfinding one\n"
 MECHANIZATION_REPORT = "<!-- provenance: runtime=codex model=gpt -->\n# mechanization\n\nfinding two\n"
 DISPOSITIONS = "# Dispositions\n\nfinding one: ruled by the user.\n"
@@ -210,6 +222,27 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
           result.stdout + result.stderr)
     check("--all leaves cold-read records alone",
           "not-this-kind" not in result.stdout and "of 2" in lines[-1], result.stdout)
+
+    # --- A sanity-check record still being written is not shipped -------------
+    # scripts/sanity-check-adversarial-prompts.py holds its record's
+    # being-written lock until it ships the record; this kind goes through the
+    # same refusal. The writer is a second process taking the lock.
+    being_written = make_record(scratch_repo / "sanity-check-records", "2026-09-12-being-written",
+                                {"cut-adversarial-prompt-claude.md": CUT_REPORT})
+    holder = subprocess.Popen(
+        [sys.executable, "-c", COLD_READ_RECORD_BEING_WRITTEN_LOCK_HOLDER_UNTIL_STDIN_CLOSES_PYTHON_SOURCE,
+         str(scratch_repo / "nc-systems" / "cold-read" / "cold-read-record-ship.py"), str(being_written)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        held_line = holder.stdout.readline()
+        result = ship(all_store, str(being_written), script=scratch_ship)
+    finally:
+        holder.communicate("")
+    check("a sanity-check record whose writer holds its being-written lock is FAILED, exit 1",
+          held_line == "held\n" and result.returncode == 1
+          and result.stdout.startswith("FAILED: 2026-09-12-being-written — still being written")
+          and not (pathlib.Path(all_store).parent / "sanity-check-records" / being_written.name).exists(),
+          f"{held_line!r}; exit {result.returncode}: {result.stdout}")
 
 print()
 if failures:

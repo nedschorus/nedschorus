@@ -138,6 +138,11 @@ NED_BOX_TEMP_FOLDERS_DELETE_LINE = (
     "30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
     "claude-code-temp-folders-of-exited-agent-sessions-delete.py >> "
     "/home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1")
+# The no-sandbox test suites' run on main in a quiet gap, on ned-box alone.
+NED_BOX_NO_SANDBOX_SUITES_LINE = (
+    "*/10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py >> "
+    "/home/nedlern/.claude/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.log 2>&1")
 # The scheduled full mutation pass of merged pull requests, on ned-box alone.
 NED_BOX_SCHEDULED_FULL_MUTATION_PASS_LINE = (
     "30 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
@@ -288,7 +293,7 @@ check("the table's jobs are the two typed by hand before this program, the workt
       "weekly owner check of the work-snapshot hook, the session dialogs refresh, the "
       "guarded-file store's prune, the nc-shared-database's backup and its copy to the "
       "Mac, the deletion of exited agent-sessions' temp folders, the scheduled full "
-      "mutation pass, and no other",
+      "mutation pass, the no-sandbox test suites' run on main, and no other",
       sorted(real_jobs) == ["claude-code-temp-folders-of-exited-agent-sessions-delete",
                             "clean-worktrees", "daily-full-test-run-of-main",
                             "guarded-file-versions-and-approvals-store-removed-checkout-"
@@ -299,6 +304,7 @@ check("the table's jobs are the two typed by hand before this program, the workt
                             "log-store-session-dialogs-refresh",
                             "nc-shared-database-newest-backup-copy-to-mac",
                             "nc-shared-database-nightly-backup-with-integrity-check",
+                            "no-sandbox-test-suites-run-on-main-in-a-quiet-gap",
                             "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-"
                             "tasks-open",
                             "transcript-mirror-to-log-store",
@@ -349,6 +355,17 @@ check("the scheduled full mutation pass runs on ned-box alone, at 00:30, and its
       and f"    {NED_BOX_SCHEDULED_FULL_MUTATION_PASS_LINE}\n"
       in (REPOSITORY_ROOT / full_mutation_pass["program"]).read_text(encoding="utf-8"),
       installer.cron_line(ned_box, full_mutation_pass, full_mutation_pass["on"]["ned-box"]))
+no_sandbox_suites = real_jobs["no-sandbox-test-suites-run-on-main-in-a-quiet-gap"]
+check("the no-sandbox test suites' run on main runs on ned-box alone, every 10 minutes, and its "
+      "program documents the table's line and names this installer",
+      list(no_sandbox_suites["on"]) == ["ned-box"]
+      and installer.cron_line(ned_box, no_sandbox_suites, no_sandbox_suites["on"]["ned-box"])
+      == NED_BOX_NO_SANDBOX_SUITES_LINE
+      and f"    {NED_BOX_NO_SANDBOX_SUITES_LINE}\n"
+      in (REPOSITORY_ROOT / no_sandbox_suites["program"]).read_text(encoding="utf-8")
+      and "nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py"
+      in (REPOSITORY_ROOT / no_sandbox_suites["program"]).read_text(encoding="utf-8"),
+      installer.cron_line(ned_box, no_sandbox_suites, no_sandbox_suites["on"]["ned-box"]))
 weekly_live_check_documentation = (
     REPOSITORY_ROOT / real_jobs["weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"]
     ["program"]).read_text(encoding="utf-8")
@@ -381,13 +398,15 @@ printed, errors = io.StringIO(), io.StringIO()
 stub = MachineStub()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="linux", home=Path("/home/nedlern"), run=stub)
-check("--print as ned-box prints ned-box's ten cron lines from the real table and runs nothing",
+check("--print as ned-box prints ned-box's cron lines from the real table and runs nothing",
       exit_code == 0 and stub.commands == []
       and printed.getvalue().splitlines() == [
           "machine: ned-box (linux, /home/nedlern)",
           "transcript-mirror-to-log-store — cron line:", NED_BOX_MIRROR_LINE,
           "log-store-session-dialogs-refresh — cron line:", NED_BOX_SESSION_DIALOGS_LINE,
           "daily-full-test-run-of-main — cron line:", NED_BOX_DAILY_LINE,
+          "no-sandbox-test-suites-run-on-main-in-a-quiet-gap — cron line:",
+          NED_BOX_NO_SANDBOX_SUITES_LINE,
           "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open — cron "
           "line:", NED_BOX_SCHEDULED_FULL_MUTATION_PASS_LINE,
           "clean-worktrees — cron line:", NED_BOX_CLEAN_LINE,

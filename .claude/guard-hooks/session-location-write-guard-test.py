@@ -405,12 +405,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # that a module that cannot be loaded is reported.
     broken_tree = tmp / "broken-freshness-tree"
     (broken_tree / ".claude" / "guard-hooks").mkdir(parents=True)
-    (broken_tree / ".claude" / "hooks").mkdir()
     (broken_tree / "scripts").mkdir()
     import shutil as _copier
     _copier.copy(SCRIPT_PATH, broken_tree / ".claude" / "guard-hooks" / SCRIPT_PATH.name)
-    _copier.copy(SCRIPT_PATH.resolve().parents[1] / "hooks" / "guard-approval-marker-common.py",
-                 broken_tree / ".claude" / "hooks" / "guard-approval-marker-common.py")
+    _copier.copy(SCRIPT_PATH.resolve().parent / "guard-approval-marker-common.py",
+                 broken_tree / ".claude" / "guard-hooks" / "guard-approval-marker-common.py")
     (broken_tree / "scripts" / "checkout-freshness-catch-up.py").write_text(
         "raise RuntimeError('stand-in broken module')\n", encoding="utf-8")
     result = run_hook(detached, str(detached / "notes.md"), decoy,

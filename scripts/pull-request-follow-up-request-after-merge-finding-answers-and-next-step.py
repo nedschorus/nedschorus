@@ -95,7 +95,10 @@ line; a nit is a fix-in-maintenance finding, so it is printed as one, whether or
 the block is parsed back with parse_follow_up_request_blocks_from_message_text(), as the hook parses it, and must
 read back as the same lines. With no such finding it prints nothing. It refuses when merge-lane-2 has no approving
 review of the pull request, and when one of merge-lane-2's comments opens with no mark, as a review posted before
-the posting program wrote category marks does.
+the posting program wrote category marks does. The findings of merge-lane-2's reviews of each pull request this one
+replaces, by its description's #replaces lines followed as REPLACES_READER_FILE_NAME reads them, come first, oldest
+pull request first, read the same way but with no approving review needed; a #replaces line that reader cannot
+follow is refused.
 
 A block that differs from the saved one is a new request: saving it removes
 the answers file, with its started findings and its finished mark, but keeps the topic branch records,
@@ -151,6 +154,7 @@ pre_push_conflict_check = load_script_beside_this_one("git-client-side-hooks-pre
 PROGRAM = "scripts/" + Path(__file__).name
 REPOSITORY = "nedschorus/nedschorus"
 POSTING_PROGRAM_FILE_NAME = "merge-lane-pull-request-reviewer-review-post-and-read-back.py"
+REPLACES_READER_FILE_NAME = "pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py"
 FOLLOW_UP_REQUEST_LINE_START = "#follow_up_request"
 FOLLOW_UP_REQUEST_LINE_PATTERN = re.compile(r"^#follow_up_request pull request (\d+)[ \t]*$")
 FINDING_LINE_PATTERN = re.compile(r"^(\d+)\.\s+(\S.*)$")
@@ -919,10 +923,8 @@ def gh_api_pages(path):
                          f"{error}") from None
 
 
-def print_follow_up_request_block_from_merge_lane_2_reviews(number):
-    # Loaded here, not at the top, so the hook, which loads this program for every merge-lane-2 message, does not load it.
-    posting = load_script_beside_this_one(POSTING_PROGRAM_FILE_NAME)
-    account = posting.MERGE_LANE_ACCOUNT
+def merge_lane_2_reviews_and_their_comments(number, posting, account):
+    """merge-lane-2's reviews of the pull request, and their comments, each marked with the pull request's number."""
     try:
         reviews = sorted((review for review in gh_api_pages(f"pulls/{number}/reviews")
                           if review["user"]["login"] == account), key=lambda review: review["id"])
@@ -939,18 +941,41 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
     except (KeyError, TypeError, AttributeError) as error:
         raise StepFailed(f"GitHub's reviews of pull request {number} were not in the expected shape: "
                          f"{type(error).__name__}: {error}") from None
+    return reviews, [{**comment, "pull_request": number} for comment in comments]
+
+
+def replaced_pull_request_numbers(number):
+    """The pull requests this one replaces by its #replaces lines, oldest first."""
+    replaces_reader = load_script_beside_this_one(REPLACES_READER_FILE_NAME)
+
+    def read_description(replaced):
+        return gh(["pr", "view", str(replaced), "--repo", REPOSITORY, "--json", "body", "--jq", ".body"])
+    try:
+        return replaces_reader.replaced_pull_request_chain_numbers_oldest_first(number, REPOSITORY, read_description)
+    except replaces_reader.ReplacedPullRequestChainUnreadable as error:
+        raise Refused(f"{error} No {FOLLOW_UP_REQUEST_LINE_START} block was printed.") from None
+
+
+def print_follow_up_request_block_from_merge_lane_2_reviews(number):
+    # Loaded here, not at the top, so the hook, which loads this program for every merge-lane-2 message, does not load it.
+    posting = load_script_beside_this_one(POSTING_PROGRAM_FILE_NAME)
+    account = posting.MERGE_LANE_ACCOUNT
+    reviews, comments = merge_lane_2_reviews_and_their_comments(number, posting, account)
     if not any(review.get("state") == "APPROVED" for review in reviews):
         raise Refused(f"{account}, merge-lane-2's GitHub account, has no approving review of pull request {number}, so "
                       f"merge-lane-2 has not approved it yet: its review is still running or it requested changes. No "
                       f"{FOLLOW_UP_REQUEST_LINE_START} block was printed.\n"
                       f"Once {account}'s approving review is posted, run: "
                       f"{command(number, 'print-follow-up-request-block-from-merge-lane-2-reviews')}")
+    replaced_comments = []
+    for replaced in replaced_pull_request_numbers(number):
+        replaced_comments += merge_lane_2_reviews_and_their_comments(replaced, posting, account)[1]
     findings = []
-    for comment in comments:
+    for comment in replaced_comments + comments:
         marked = posting.finding_category_and_text_read_from_review_comment_opening_mark(comment["body"])
         if marked is None:
             raise Refused(
-                f"{account}'s comment on {comment['path']}:{comment['line']} of pull request {number} does not open "
+                f"{account}'s comment on {comment['path']}:{comment['line']} of pull request {comment['pull_request']} does not open "
                 f"with a category mark, such as **fix-next**, so its category cannot be read and no "
                 f"{FOLLOW_UP_REQUEST_LINE_START} block was printed; reviews posted before "
                 f"scripts/{POSTING_PROGRAM_FILE_NAME} wrote category marks have none.\n"

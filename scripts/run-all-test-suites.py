@@ -37,7 +37,10 @@ Usage:
   --only-suites-whose-recorded-inputs-changed-since COMMIT
                 run only the suites whose recorded inputs differ between
                 COMMIT and the checkout's files; see RECORDED INPUTS below.
-                Without it every suite runs.
+                Without it every suite runs. Without --only-suites-named,
+                and where suites run in nc-test-sandboxes, it leaves out
+                every suite in SUITES_RUN_WITHOUT_ANY_SANDBOX; see SUITES
+                LEFT OUT OF A SELECTIVE RUN below
   --recorded-inputs-directory
                 where each suite's recorded inputs are kept; default
                 ~/.cache/nedschorus-test-suite-recorded-inputs
@@ -575,7 +578,7 @@ which calls see no file and which commands run on another repository.
 The files that differ are `git diff --no-renames COMMIT` against the
 checkout's files, plus untracked files git does not ignore, as added. Every
 suite runs when one of them is this program (it holds the recorder), under
-.claude/hooks/ or .claude/guard-hooks/, or .claude/settings.json. Otherwise a suite runs when: it
+.claude/guard-hooks/, or .claude/settings.json. Otherwise a suite runs when: it
 has no recording on this machine, or one made by an older version of this
 program; its recorded run did not exit 0, since a run that failed or was
 killed recorded only what it read before it stopped; its recorded run
@@ -621,6 +624,19 @@ suites on both machines. The one added to each count on each machine is the
 suite running `git status` or `git grep` on the checkout that the machine
 did not already choose; both now run on any change. Full runs at -j 4: the
 Mac 278 s, ned-box 305 s; a store of 79 recordings is about 500 KB.
+
+SUITES LEFT OUT OF A SELECTIVE RUN. A run given
+--only-suites-whose-recorded-inputs-changed-since without --only-suites-named,
+where suites run in nc-test-sandboxes (Linux with bwrap), leaves out every
+suite in SUITES_RUN_WITHOUT_ANY_SANDBOX, whatever changed, its own file
+included, because those suites share one machine-wide lock and a run for one
+change would otherwise wait for it. Such a suite the selection would have
+picked gets a line opening NO-SANDBOX SUITE LEFT OUT OF SELECTIVE TEST RUN, in place of its
+SELECTED line, with the command that runs it by hand; it counts as neither
+failed nor not run, and the SUMMARY line counts it.
+scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py runs those
+suites on main instead. A run with --only-suites-named, or with no
+selection, runs them as before.
 
 WHAT A RECORDING CANNOT SEE: a path a program other than Python checks for
 or fails to open, on either machine, because strace's -z drops failed calls
@@ -886,6 +902,7 @@ ADMISSION_WAITED_LINE_PREFIX = "seconds suites waited for admission: "
 # Readers of the runner's output pick its lines apart by these.
 FAILED_SUITE_LINE_PREFIX = "FAIL "
 NOT_RUN_SUITE_LINE_PREFIX = "NOT RUN "
+NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX = "NO-SANDBOX SUITE LEFT OUT OF SELECTIVE TEST RUN "
 SUITE_LINE_LOG_MARK = " — log "
 SUMMARY_LINE_PREFIX = "SUMMARY:"
 FIRST_REPORT_LINE_LOG_DIRECTORY_MARK = "; logs in "
@@ -973,7 +990,7 @@ FILES_ONLY_STRACE_SAW_FILE_SUFFIX = ".files-only-strace-saw.json"
 FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE = 36
 # The runner, hooks and settings can affect every suite or session a suite starts.
 EVERY_SUITE_RUNS_WHEN_THESE_CHANGE = (
-    "scripts/run-all-test-suites.py", ".claude/hooks/", ".claude/guard-hooks/", ".claude/settings.json")
+    "scripts/run-all-test-suites.py", ".claude/guard-hooks/", ".claude/settings.json")
 # Object-store content reads evade recorders; only metadata-only commands belong here.
 # status is excluded because stale timestamps can make it read working files.
 GIT_COMMANDS_THAT_ONLY_LIST = frozenset((
@@ -3671,6 +3688,20 @@ def suites_selected_since(top, suites, recordings, commit, files_only_strace_saw
             for suite in suites]
 
 
+def selective_test_run_selection_without_no_sandbox_suites(selection, applies):
+    """(the selection with every selected no-sandbox suite taken out, [(suite, why) left out]).
+
+    The one place a run for one change leaves those suites out, so an exception,
+    such as running a suite whose own file changed, goes here."""
+    if not applies:
+        return selection, []
+    left_out = [(suite, why) for suite, selected, why in selection
+                if selected and suite in SUITES_RUN_WITHOUT_ANY_SANDBOX]
+    kept = [(suite, selected, why) for suite, selected, why in selection
+            if not (selected and suite in SUITES_RUN_WITHOUT_ANY_SANDBOX)]
+    return kept, left_out
+
+
 def describe_exit(code):
     if code >= 0:
         return f"exit {code}"
@@ -3955,6 +3986,9 @@ def main(argv=None, platform=None):
         except CouldNotRun as refusal:
             print(refusal, file=sys.stderr)
             return EXIT_COULD_NOT_RUN
+        selection, left_out = selective_test_run_selection_without_no_sandbox_suites(
+            selection, applies=(changed_since is not None and arguments.only_suites_named is None
+                                and in_test_sandboxes))
         chosen = suites_longest_recorded_first(
             [suite for suite, selected, _ in selection if selected], recordings)
         jobs = suites_run_at_once(arguments.jobs, len(chosen), os.cpu_count(),
@@ -4037,6 +4071,12 @@ def main(argv=None, platform=None):
         if changed_since is not None:
             for suite, selected, why in selection:
                 report.line(f"{'SELECTED' if selected else 'NOT SELECTED'} {suite}: {why}")
+            for suite, why in left_out:
+                report.line(f"{NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX}{suite}: {why}; it runs "
+                            f"without a sandbox, so a run for one change leaves it out and "
+                            f"scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py runs "
+                            f"it on main. To run it now: python3 scripts/run-all-test-suites.py "
+                            f"--only-suites-named {suite}")
 
         run_stop_signals = []
         # What stopped the run: a stop signal's name, or, with --stop-at-first-failing-suite,
@@ -4265,16 +4305,17 @@ def main(argv=None, platform=None):
             else:
                 report.line(f"case times, suite resources and JUnit XML in {log_dir}")
         skip_count = sum(len(result["skips"]) for result in results)
-        not_selected = (f"; {len(suites) - len(chosen)} suites not selected, their recorded "
-                        f"inputs unchanged since {changed_since[:12]}"
+        not_selected = (f"; {len(suites) - len(chosen) - len(left_out)} suites not selected, "
+                        f"their recorded inputs unchanged since {changed_since[:12]}"
                         if changed_since is not None else "")
+        left_out_note = (f"; {len(left_out)} no-sandbox suites left out" if left_out else "")
         stopped_note = f", {len(stopped)} stopped" if run_stops else ""
         not_run_note = f", {len(not_run)} not run" if not_run else ""
         report.line(f"{SUMMARY_LINE_PREFIX} "
                     f"{len(results) - len(failed) - len(stopped) - len(not_run)} passed, "
                     f"{len(failed)} failed{not_run_note}{stopped_note}, "
                     f"{len(results)} total; {skip_count} cases skipped in {len(skipping)} "
-                    f"suites; {top.name} at {commit[:12]}; {version}{not_selected}")
+                    f"suites; {top.name} at {commit[:12]}; {version}{not_selected}{left_out_note}")
         report.close()
         if run_record is not None:
             run_record.finish()

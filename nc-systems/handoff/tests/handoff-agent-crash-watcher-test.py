@@ -858,17 +858,17 @@ def run_stopped_on_purpose_cases(root: Path):
           not predicate("seat-a", (1, "t", None)))
     state_path = supervisor.supervisor_state_path(handoff_directory, "seat-a")
     supervisor.handoff_file_path(handoff_directory, "seat-a").write_text(
-        "session-handoff-sequence-number: 7\ndont-restart: the user asked to be consulted before a relaunch\n"
+        "session-handoff-sequence-number: 7\nask-user-before-restart: the user asked to be consulted before a relaunch\n"
         "next-step: stop\n", encoding="utf-8")
     supervisor.record_agent_exit_in_supervisor_state(
         state_path, {"consumed_counter": 7}, None,
-        reason=supervisor.AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF)
-    check("an exit its supervisor recorded as a stop at a dont-restart handoff is a stop on "
+        reason=supervisor.AGENT_EXIT_REASON_STOPPED_AT_AN_ASK_USER_BEFORE_RESTART_HANDOFF)
+    check("an exit its supervisor recorded as a stop at an ask-user-before-restart handoff is a stop on "
           "purpose", predicate("seat-a", (None, "t", None)))
     # The user answered y: the handoff stays on disk, consumed, and its successor later
     # failed and used up its resumes, so the supervisor recorded that exit with no reason.
     supervisor.record_agent_exit_in_supervisor_state(state_path, {"consumed_counter": 7}, -15)
-    check("a later failure of the successor of a dont-restart handoff answered y is not a "
+    check("a later failure of the successor of an ask-user-before-restart handoff answered y is not a "
           "stop on purpose, though the consumed handoff is still on disk",
           not predicate("seat-a", (-15, "t", None)))
 
@@ -893,9 +893,9 @@ def run_stopped_on_purpose_cases(root: Path):
           "purpose", not records(seat_with("records-error-exit", exit_code=1)))
     check("a refused seat with no exit record and no handoff did not stop on purpose",
           not records(seat_with("records-none")))
-    check("a refused seat with a dont-restart handoff waiting stopped on purpose",
-          records(seat_with("records-dont-restart",
-                            handoff="session-handoff-sequence-number: 3\ndont-restart: consult the user\n")))
+    check("a refused seat with an ask-user-before-restart handoff waiting stopped on purpose",
+          records(seat_with("records-ask-user-before-restart",
+                            handoff="session-handoff-sequence-number: 3\nask-user-before-restart: consult the user\n")))
     check("a refused seat with an ordinary handoff waiting did not stop on purpose, though an "
           "older clean exit is recorded",
           not records(seat_with("records-waiting-handoff", exit_code=0,

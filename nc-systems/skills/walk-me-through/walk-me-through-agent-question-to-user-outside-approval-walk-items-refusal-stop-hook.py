@@ -7,7 +7,7 @@ closing line but its checkout holds no open or paused walk, as NO WALK IN THE
 CHECKOUT says.
 
 Wired as a Stop hook in .claude/settings.json, beside the current-item Stop
-hook, walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py,
+hook, walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py,
 whose turn and transcript readers this hook loads, and the approval-walk
 finder, walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py,
 which finds the open walk, its waiting items and its walk-document's items. It
@@ -172,7 +172,7 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-CURRENT_ITEM_HOOK_FILE = HERE / "walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py"
+CURRENT_ITEM_HOOK_FILE = HERE / "walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py"
 WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
 ANSWER_HOOK_FILE = (HERE / "walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-"
                     "user-prompt-submit-hook.py")
@@ -182,6 +182,9 @@ STOP_HOOKS_STAY_SILENT_RULE_FILE = (
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
 PATH_CONSTANTS_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
                        / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+CLAUDE_CODE_COMMAND_LINE_PREFIX_FILE = (
+    REPOSITORY_TOP / "nc-systems" / "general-tools"
+    / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 
 MODEL = "claude-haiku-5-5"
 MODEL_TIMEOUT_SECONDS = 25
@@ -355,11 +358,13 @@ def load_module(name, path):
 
 walk_finder = load_module("walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
                           WALK_FINDER_FILE)
-current_item_hook = load_module("walk_me_through_current_item_shown_to_user_after_each_agent_message_stop_hook",
+current_item_hook = load_module("walk_me_through_agent_reply_to_user_not_ending_with_waiting_item_closing_line_refusal_stop_hook",
                                 CURRENT_ITEM_HOOK_FILE)
 answer_hook = load_module(
     "walk_me_through_user_short_answer_to_approval_walk_item_expanded_into_instructions_user_prompt_submit_hook",
     ANSWER_HOOK_FILE)
+command_line_prefix = load_module("claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+                            CLAUDE_CODE_COMMAND_LINE_PREFIX_FILE)
 
 
 def normalized(line):
@@ -528,9 +533,11 @@ def model_judgement(message_lines, question_like_lines, total, waiting, waiting_
         waiting_phrase=f"items {waiting} wait" if " and " in waiting else f"item {waiting} waits",
         message="\n".join(message_lines),
         lines="\n".join(f"{number}. {line}" for number, line in enumerate(question_like_lines, 1)))
-    command = ["claude", "-p", "--model", MODEL, "--output-format", "json",
+    command = [*command_line_prefix.claude_code_headless_run_command_line_prefix_build(
+                   "dontAsk", caller_claude_code_session_settings={"disableAllHooks": True}),
+               "--model", MODEL, "--output-format", "json",
                "--json-schema", json.dumps(MODEL_SCHEMA), "--system-prompt", MODEL_SYSTEM_PROMPT,
-               "--tools", "", "--settings", json.dumps({"disableAllHooks": True}),
+               "--tools", "",
                # Without this every check would leave a session file behind.
                "--no-session-persistence"]
     try:

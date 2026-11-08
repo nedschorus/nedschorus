@@ -464,9 +464,59 @@ def run_cases(scratch: Path):
           repr(tool.first_heading("---\nstatus: draft\n\n# Still found\n")))
     check("a file with no heading yields none, and is refused later",
           tool.first_heading("no heading here\n") == "")
-    check("the slug is bounded and hyphenated",
+    check("the slug is lowercased and hyphenated",
           tool.slug("A statusline that drops its branch name")
           == "a-statusline-that-drops-its-branch-name")
+    symtable_title = ("Base the agent-facing string collector's scope rules "
+                      "on Python's symtable module instead of hand-written "
+                      "rules")
+    symtable_slug = tool.slug(symtable_title)
+    check("the slug keeps every word of a title past eight words, so the "
+          "title's point is in the file name",
+          symtable_slug == "base-the-agent-facing-string-collector-scope-"
+                           "rules-on-python-symtable-module-instead-of-hand-"
+                           "written-rules", repr(symtable_slug))
+    curly_slug = tool.slug("The walker\u2019s marker")
+    check("an 's at a word's end, straight or curly, is dropped, not made a word",
+          "-s-" not in symtable_slug and curly_slug == "the-walker-marker",
+          repr(curly_slug))
+    check("a contraction's 's is dropped too, as the docstring says",
+          tool.slug("Let's file it") == "let-file-it",
+          repr(tool.slug("Let's file it")))
+    check("any other apostrophe is closed up, not made a hyphen",
+          tool.slug("Hooks that don't exit") == "hooks-that-dont-exit",
+          repr(tool.slug("Hooks that don't exit")))
+    linked_slug = tool.slug("Notes from issue [Build draft-md]"
+                            "(https://github.com/nedschorus/nedschorus/issues/142)")
+    check("a Markdown link in the title gives its text, not its address",
+          linked_slug == "notes-from-issue-build-draft-md", repr(linked_slug))
+    bracketed_label_slug = tool.slug(
+        "Scope of [the `[a-z]` parser](https://example.com/scope) checks")
+    check("a link whose text holds brackets gives its text, not its address",
+          bracketed_label_slug == "scope-of-the-a-z-parser-checks",
+          repr(bracketed_label_slug))
+    parenthesised_url_slug = tool.slug(
+        "See [the page](https://en.wikipedia.org/wiki/Slug_(web)) first")
+    check("a link whose address holds parentheses gives its text alone",
+          parenthesised_url_slug == "see-the-page-first",
+          repr(parenthesised_url_slug))
+    check("a bracket that opens no link is kept as text",
+          tool.slug("Match [a-z] (letters) only") == "match-a-z-letters-only",
+          repr(tool.slug("Match [a-z] (letters) only")))
+    long_title = " ".join(["word"] * 60)
+    long_slug = tool.slug(long_title)
+    check("a slug over the character limit is cut at a hyphen, inside it",
+          len(long_slug) <= tool.GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT
+          and long_title.replace(" ", "-").startswith(long_slug + "-"),
+          repr(long_slug))
+    check("a single word over the character limit is cut at the limit",
+          tool.slug("x" * 300) == "x" * tool.GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT)
+    log_store_name = (f"99999-{long_slug}"
+                      f"{tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX}"
+                      f"{tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_GUIDE_AGENT}"
+                      "-2026-11-02-99.md")
+    check("the longest log-store name built on a slug fits a file name",
+          len(log_store_name.encode("utf-8")) <= 255, len(log_store_name))
     check("the pairing key follows the content, not the name",
           tool.pairing_key(FILE_TEXT) == tool.pairing_key(FILE_TEXT)
           and tool.pairing_key(FILE_TEXT) != tool.pairing_key(FILE_TEXT + "x"))

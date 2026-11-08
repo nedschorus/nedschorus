@@ -22,7 +22,7 @@ from pathlib import Path
 
 _marker_spec = importlib.util.spec_from_file_location(
     "guard_approval_marker_common",
-    Path(__file__).resolve().parents[1] / "hooks" / "guard-approval-marker-common.py")
+    Path(__file__).resolve().parent / "guard-approval-marker-common.py")
 _guard_approval_marker_common = importlib.util.module_from_spec(_marker_spec)
 _marker_spec.loader.exec_module(_guard_approval_marker_common)
 consume_approval_marker = _guard_approval_marker_common.consume_approval_marker
@@ -156,7 +156,8 @@ MEMORY_WRITE_DENY_MESSAGE = (
     "If you cannot tell where it belongs, tell the user in one sentence what you meant to "
     "remember, and ask him where to save it so that an agent recalls it when it applies.\n"
     "If it matters only to this conversation, drop it.\n"
-    "If you are a subagent, put this to the agent that dispatched you instead.\n"
+    "If you are a subagent, put the proposed edit or the question to the agent that "
+    "dispatched you instead.\n"
     "No {marker} marker lets a write into a memory directory through, so do not write one "
     "for this."
 )

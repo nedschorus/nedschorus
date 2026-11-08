@@ -135,16 +135,14 @@ NEVER_PUSHED_ADVICE = (
     "branch only when the tree is clean — then run `python3 scripts/run-all-test-suites.py "
     "--only-suites-whose-recorded-inputs-changed-since origin/main`."
 )
-# A pushed branch that conflicts with main is the one exception: no commit on
-# top can clear a conflict, so it is cleared by the hand-merge that
-# the VERDICT: CONFLICT report of scripts/branch-conflict-check.py describes.
-# Forbidding every merge here would send an agent with a conflict away from
-# the one move that clears it.
+# No commit on top can clear a conflict with main, so a pushed branch that
+# conflicts is sent to scripts/branch-conflict-check.py, whose report says
+# whether it is rebased or its pull request replaced.
 PUSHED_ADVICE = (
     "This branch is pushed, so its review may be running: do not rebase or amend "
     "it. A fix for this topic is a new commit on top. If it conflicts with main, "
-    "clear the conflict with the hand-merge that scripts/branch-conflict-check.py "
-    "describes. Your next topic starts with `git checkout -b <name> origin/main`."
+    "do what scripts/branch-conflict-check.py reports. Your next topic starts with "
+    "`git checkout -b <name> origin/main`."
 )
 
 

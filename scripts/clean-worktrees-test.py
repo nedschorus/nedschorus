@@ -76,6 +76,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Before anything runs git: a run started with GIT_DIR set, or with another
@@ -1607,7 +1608,8 @@ with tempfile.TemporaryDirectory() as scratch:
     reported_walk_wt = worktree_holding_a_walk("reported-walk-wt")
     reported = run_clean_shipping_to(str(walk_store / "cold-read-records")).stdout
     check("the report names a done worktree's walk and says --remove ships it first",
-          f"--remove first ships its 1 record(s) to the log-store and keeps it if one does not ship: "
+          f"--remove first ships its 1 record(s) to the log-store and keeps the worktree if one "
+          f"does not ship; the records it ships: "
           f"docs/walk/{walk_name}.md" in reported, reported)
     check("the report ships no walk", not (walk_store / "walk").exists())
     remove_worktree_for_next_case(reported_walk_wt)
@@ -2282,6 +2284,175 @@ with tempfile.TemporaryDirectory() as scratch:
         bad = run_one_named(*flags)
         check(f"a bad invocation of the one-named modes exits 2: {case}",
               bad.returncode == 2 and gh_wt.exists(), bad.stdout + bad.stderr)
+
+# --- Merge-lane review checkouts: judged by the pull request their name holds ---
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch).resolve()
+    checkout = scratch / "checkout"
+    origin = scratch / "origin.git"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
+    git(checkout, "remote", "add", "origin", str(origin))
+    git(checkout, "push", "-u", "origin", "main")
+    fake_home = scratch / "home"
+    (fake_home / ".claude" / "handoffs").mkdir(parents=True)
+    review_directory = fake_home / ".cache" / "merge-lane-review-worktrees"
+    review_directory.mkdir(parents=True)
+
+    def review_checkout(name, directory=review_directory):
+        path = directory / name
+        git(checkout, "worktree", "add", "--detach", str(path), "origin/main")
+        return path
+
+    merged_checkout = review_checkout("pr10-merged")
+    # merge-lane-2's local merge commit: on no branch, and origin/main lacks it.
+    (merged_checkout / "merged.txt").write_text("merged\n", encoding="utf-8")
+    git(merged_checkout, "add", "-A")
+    git(merged_checkout, "commit", "-m", "local merge commit")
+    (merged_checkout / "test-output.txt").write_text("left by a test run\n", encoding="utf-8")
+    closed_checkout = review_checkout("tools-main-11r2")
+    open_checkout = review_checkout("pr12-head")
+    main_checkout = review_checkout("main")
+    main_green_checkout = review_checkout("main-green-0b3364167")
+    unlisted_checkout = review_checkout("verdict-99r1")
+    two_numbers_checkout = review_checkout("head-13-12345678")
+    locked_checkout = review_checkout("pr14-head")
+    git(checkout, "worktree", "lock", "--reason", "reviewing", str(locked_checkout))
+    occupied_checkout = review_checkout("pr15-head")
+    elsewhere = scratch / "elsewhere"
+    elsewhere.mkdir()
+    outside_checkout = review_checkout("pr16-head", elsewhere)
+    # The merge program's after-merge window: merged an hour ago, its main test checkout still there.
+    recently_merged_checkout = review_checkout("pr17-merge-commit-on-main-worktree")
+    no_closing_time_checkout = review_checkout("pr18-head")
+    long_ago = "2026-01-01T00:00:00Z"
+    an_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    review_pull_requests = [
+        {"number": 10, "state": "MERGED", "headRefName": "a", "headRefOid": "1" * 40,
+         "closedAt": long_ago},
+        {"number": 11, "state": "CLOSED", "headRefName": "b", "headRefOid": "2" * 40,
+         "closedAt": long_ago},
+        {"number": 12, "state": "OPEN", "headRefName": "c", "headRefOid": "3" * 40,
+         "closedAt": None},
+        {"number": 13, "state": "MERGED", "headRefName": "d", "headRefOid": "4" * 40,
+         "closedAt": long_ago},
+        {"number": 14, "state": "MERGED", "headRefName": "e", "headRefOid": "5" * 40,
+         "closedAt": long_ago},
+        {"number": 15, "state": "MERGED", "headRefName": "f", "headRefOid": "6" * 40,
+         "closedAt": long_ago},
+        {"number": 16, "state": "MERGED", "headRefName": "g", "headRefOid": "7" * 40,
+         "closedAt": long_ago},
+        {"number": 17, "state": "MERGED", "headRefName": "h", "headRefOid": "8" * 40,
+         "closedAt": an_hour_ago},
+        {"number": 18, "state": "MERGED", "headRefName": "i", "headRefOid": "9" * 40},
+    ]
+    review_log = scratch / "removals-log.txt"
+
+    def run_review_cleanup(*flags, gh_exit=None):
+        environment = dict(os.environ, HOME=str(fake_home),
+                           FAKE_GH_PULL_REQUESTS=json.dumps(review_pull_requests))
+        environment[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(review_log)
+        if gh_exit is not None:
+            environment["FAKE_GH_EXIT_CODE"] = str(gh_exit)
+        return subprocess.run([sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), *flags],
+                              capture_output=True, text=True, check=False, env=environment)
+
+    def review_line(output, name):
+        return next((line for line in output.splitlines() if line.startswith(f"{name}:")), "")
+
+    every_checkout = (merged_checkout, closed_checkout, open_checkout, main_checkout,
+                      main_green_checkout, unlisted_checkout, two_numbers_checkout, locked_checkout,
+                      occupied_checkout, outside_checkout, recently_merged_checkout,
+                      no_closing_time_checkout)
+    # Stands in for a process working in a review checkout; lives until its stdin closes.
+    review_occupant = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"],
+                                       stdin=subprocess.PIPE, cwd=occupied_checkout)
+    try:
+        gh_failed = run_review_cleanup("--remove", gh_exit=1)
+        check("when gh cannot list the pull requests, every merge-lane review checkout is kept and "
+              "the line names gh's failure, as for other worktrees whose verdict needs a pull request",
+              gh_failed.returncode == 0 and all(path.exists() for path in every_checkout)
+              and review_line(gh_failed.stdout, "pr10-merged").startswith(
+                  "pr10-merged: kept — it is a merge-lane review checkout of pull request #10, whose "
+                  "state could not be read: `gh pr list")
+              and "gh: stand-in listing failure" in review_line(gh_failed.stdout, "pr10-merged"),
+              gh_failed.stdout + gh_failed.stderr)
+
+        report = run_review_cleanup().stdout
+        check("the report calls a merge-lane review checkout of a merged pull request done, naming "
+              "the untracked file its removal discards",
+              review_line(report, "pr10-merged").startswith(
+                  "pr10-merged: done — it is a merge-lane review checkout of pull request #10 "
+                  "(merged); removing it discards 1 uncommitted, untracked or ignored file(s): "
+                  "test-output.txt"), report)
+
+        removal = run_review_cleanup("--remove")
+        check("--remove removes the merge-lane review checkouts of a merged and a closed pull request",
+              not merged_checkout.exists() and not closed_checkout.exists()
+              and "pr10-merged: removed" in removal.stdout
+              and "tools-main-11r2: removed" in removal.stdout, removal.stdout + removal.stderr)
+        check("removing a merge-lane review checkout puts its local merge commit on no branch, and "
+              "its untracked file in no work-snapshot",
+              "worktree-cleaner-detached-commits" not in git(checkout, "branch", "--list")
+              and git(checkout, "for-each-ref", "refs/work-snapshots/") == "", removal.stdout)
+        check("each removal of a merge-lane review checkout is written to the log of removals",
+              f"path={merged_checkout}\t" in (text_or_none(review_log) or "")
+              and f"path={closed_checkout}\t" in (text_or_none(review_log) or ""),
+              text_or_none(review_log) or "no log written")
+        check("a merge-lane review checkout of an open pull request is kept",
+              open_checkout.exists() and review_line(removal.stdout, "pr12-head")
+              == "pr12-head: kept — it is a merge-lane review checkout of pull request #12 (open)",
+              removal.stdout)
+        check("main and main-green-<commit> are kept, their names holding no pull request number",
+              main_checkout.exists() and main_green_checkout.exists()
+              and "name holds no single pull request number" in review_line(removal.stdout, "main")
+              and "name holds no single pull request number"
+              in review_line(removal.stdout, "main-green-0b3364167"), removal.stdout)
+        check("a name holding two numbers is kept, though one is a merged pull request's",
+              two_numbers_checkout.exists()
+              and "name holds no single pull request number"
+              in review_line(removal.stdout, "head-13-12345678"), removal.stdout)
+        check("a pull request number gh's listing does not hold keeps the checkout",
+              unlisted_checkout.exists()
+              and "pull request #99, which gh's listing does not hold"
+              in review_line(removal.stdout, "verdict-99r1"), removal.stdout)
+        check("a locked merge-lane review checkout of a merged pull request is kept",
+              locked_checkout.exists()
+              and review_line(removal.stdout, "pr14-head").startswith(
+                  "pr14-head: kept — locked with git worktree lock (reviewing)"), removal.stdout)
+        check("a merge-lane review checkout of a merged pull request is kept while a live process "
+              "works in it",
+              occupied_checkout.exists()
+              and review_line(removal.stdout, "pr15-head")
+              == "pr15-head: kept — a live process is rooted inside it", removal.stdout)
+        check("a worktree with no owner file outside the merge-lane review checkouts directory is "
+              "kept, though its name holds a merged pull request's number",
+              outside_checkout.exists()
+              and "it has no owner file, and the cleaner removes only a worktree holding one"
+              in review_line(removal.stdout, "pr16-head"), removal.stdout)
+        check("a merge-lane review checkout of a pull request merged an hour ago is kept, while "
+              "merge-lane-2's merge program may still be testing main in it",
+              recently_merged_checkout.exists()
+              and review_line(removal.stdout, "pr17-merge-commit-on-main-worktree")
+              == "pr17-merge-commit-on-main-worktree: kept — it is a merge-lane review checkout of "
+                 "pull request #17 (merged), finished less than 24 hours ago; the cleaner waits that "
+                 "long because merge-lane-2's merge program may still be using it, unseen by the "
+                 "vacancy check", removal.stdout)
+        check("a merge-lane review checkout whose pull request gh gives no closing time for is kept",
+              no_closing_time_checkout.exists()
+              and "whose closing time gh did not give in a form this program reads: KeyError"
+              in review_line(removal.stdout, "pr18-head"), removal.stdout)
+        check("--remove exits 0 when it only removed and kept merge-lane review checkouts",
+              removal.returncode == 0, removal.stdout + removal.stderr)
+    finally:
+        review_occupant.kill()
+        review_occupant.wait()
 
 check("no run of the suite shipped into the store every run defaults to",
       not any(Path(_ship_store_for_every_run).iterdir()),
