@@ -4598,7 +4598,8 @@ def test_a_check_without_the_users_reply_is_refused_writing_nothing():
 
 
 # Each answer flag that takes a reply, with the values it is given. --not-asked, --already-decided,
-# --now-over-later-already-decided and --moved-on take no reply, so no refusal that asks for one repeats them.
+# --now-over-later-already-decided and --moved-on take no reply, so no refusal that asks for one repeats them;
+# --bump records no answer and runs none of the refusals that print a rerun command.
 ANSWER_FLAGS_TAKING_A_REPLY = {"--obvious": (), "--after-advisor": (), "--disapproved": (), "--deferred": (),
                                "--moved-on-no-decision": (), "--option": ("2",), "--part-answer": ("1=A",)}
 
@@ -4609,7 +4610,7 @@ def test_every_answer_flag_is_covered_by_the_rerun_command_cases():
     flags = set(re.findall(r"--[\w-]+", group[1])) if group else set()
     check("the rerun command cases cover every answer flag of check's --help",
           usage.returncode == 0 and flags == {*ANSWER_FLAGS_TAKING_A_REPLY, "--not-asked", "--already-decided", NOW_OVER_LATER,
-                                                         "--moved-on"},
+                                                         "--moved-on", "--bump"},
           f"--help answer flags {sorted(flags)}, {described(usage)}")
 
 
@@ -6007,6 +6008,50 @@ def test_close_reads_an_answer_line_whose_time_is_the_old_local_form_or_the_utc_
               and "\nitem 3 of 9: approved; every text the change adds has had a fast read." in case.minutes.read_text(),
               described(closed) + case.minutes.read_text())
 
+
+
+def bump_walk():
+    return ordered_walk(unshown_item("two", f"{CATEGORY_TAG}must_fix_now"),
+                        unshown_item("three", f"{CATEGORY_TAG}fix_next"))
+
+
+def test_bump_shows_the_named_unshown_item_next_and_the_waiting_item_after_it():
+    case = Case(next_to_present="item 1 of 9", document=bump_walk())
+    bumped = case.run("check", "--bump", "three", reply="bump three")
+    check("check --bump numbers the named unshown item, makes it the waiting item and says to read it",
+          bumped.returncode == 0 and marker(case) == "#next_to_present item 2 of 4"
+          and re.search(r"^## Item 2 of 4: three$", walk_document(case), re.M)
+          and "item 2 of 4 is now the waiting item" in bumped.stdout, described(bumped) + walk_document(case))
+    check("check --bump writes no answer line, and records the user's words",
+          'Bumped by the user: item 2 of 4 is shown next, before item 1 of 9, which waits again after it. '
+          'in his words "bump three"' in case.minutes.read_text()
+          and "approved" not in case.minutes.read_text(), case.minutes.read_text())
+    check("check --bump moves the bumped item to stand right before the item that waited",
+          walk_document(case).index("## Item 2 of 4: three") < walk_document(case).index("## Item 1 of 9: one"),
+          walk_document(case))
+    shown = titles_shown_in_turn(case)
+    check("once the bumped item is answered, the item that waited comes next, then the rest in their order",
+          shown == ["one", "two", "Summary"], f"{shown}\n{walk_document(case)}")
+    again = case.run("check", "--bump", "three", reply="bump three")
+    check("check --bump refuses an item the minutes decide",
+          again.returncode == 1 and "has already been shown, and the minutes record it as decided" in again.stderr,
+          described(again))
+
+
+def test_bump_refuses_an_item_no_heading_has_or_one_already_shown_writing_nothing():
+    case = Case(next_to_present="item 1 of 9", document=bump_walk())
+    document, minutes = walk_document(case), case.minutes.read_text()
+    missing = case.run("check", "--bump", "four", reply="bump four")
+    check("check --bump refuses a title no item heading has, naming an unshown item to bump instead",
+          missing.returncode == 1 and "no item heading in the walk-document" in missing.stderr
+          and "`four`" in missing.stderr and 'check --bump \\"two\\"' in missing.stderr.replace('"', '\\"'),
+          described(missing))
+    shown = case.run("check", "--bump", "one", reply="bump one")
+    check("check --bump refuses the waiting item, which has been shown and is not decided",
+          shown.returncode == 1 and "`## Item 1 of 9: one`" in shown.stderr
+          and "it is not decided yet" in shown.stderr, described(shown))
+    check("a refused check --bump writes nothing",
+          walk_document(case) == document and case.minutes.read_text() == minutes)
 
 
 def stopped_by_sigterm(*_):

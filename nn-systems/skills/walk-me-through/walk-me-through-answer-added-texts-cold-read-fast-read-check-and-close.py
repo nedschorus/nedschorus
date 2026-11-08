@@ -15,6 +15,8 @@ Usage, from the agent-session's checkout:
        | --moved-on REASON]
       --user-reply-as-typed REPLY    (every answer but --not-asked, --already-decided,
                                       --now-over-later-already-decided and --moved-on)
+  walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check --bump ITEM
+      [--user-reply-as-typed REPLY]
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py close
       [--hold-answer-until-new-item-answered]
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py approval-walk-waiting-item-cold-read-fast-read
@@ -33,6 +35,13 @@ user-ruling decides as the item recommends, USER_RULING citing that ruling,
 which adds the `#new` texts as A does; --now-over-later-already-decided, the
 same with the now-over-later ruling as its citation; and --moved-on for an item the walk
 leaves with no decision, REASON saying why, which changes nothing.
+--bump ITEM, for the user's "bump" and the item he names, records no answer: it
+makes ITEM, an item not yet shown named by its heading's title, the next item
+shown, numbering it and moving it to stand right before the waiting item in the
+walk-document, so that close comes back to the waiting item once ITEM is
+answered, and it writes the minutes' `#next_to_present` line. It refuses, writing
+nothing, an ITEM no item heading has, and one already shown, which is every
+numbered item, decided or not.
 --moved-on-no-decision records that the user moved on from an
 item that asks for no decision, such as a summary item: it needs no
 `#case_against` line, runs no fast read, and close records the item as `<moved on, no
@@ -557,6 +566,22 @@ CHECK_JUDGEMENT_LINES = (
     "it, and says when to present it.",
 )
 CHECK_CLOSE_LINE = "Then run `python3 {program} close --cwd {top}` and do what it prints."
+BUMP_NOT_FOUND = (
+    "check --bump refused: no item heading in the walk-document {document} has the title `{title}`, so nothing "
+    "was bumped and nothing was written.\n"
+    "Run check --bump again with the title of an item not yet shown, its heading's text after `## `, as in "
+    "`check --bump \"{example}\"`.")
+BUMP_ALREADY_SHOWN = (
+    "check --bump refused: `{heading}` in the walk-document {document} has already been shown, and {state}, so "
+    "nothing was bumped and nothing was written.\n"
+    "Bump only an item not yet shown. To show a shown item again, end your message with its closing line.")
+BUMP_ALREADY_SHOWN_DECIDED = "the minutes record it as decided"
+BUMP_ALREADY_SHOWN_WAITING = "it is not decided yet"
+BUMP_MINUTES = "Bumped by the user: {bumped} is shown next, before {waiting}, which waits again after it.{words}"
+BUMP_DONE = (
+    "{bumped} is now the waiting item, and {waiting} comes right after it.\n"
+    "Then run `{command}`, which gives {bumped} its cold-read-fast-read, and do what it prints before you "
+    "present it.")
 COUNTS_NOT_LOGGED = (
     "The minutes record the answer, but the fast-read counts were not logged to {log}: {error}.",
     "Include this line in your next message to the user, and carry on as the lines above say.",
@@ -1878,6 +1903,8 @@ def now_over_later_problems(walk_finder, minutes, value, numbers, total, parser)
 
 
 def check(arguments):
+    if arguments.bump is not None:
+        return bump(arguments)
     if arguments.now_over_later_already_decided:
         arguments.already_decided = NOW_OVER_LATER_USER_RULING_CITATION
     part_numbers = [number for number, _ in arguments.part_answer or []]
@@ -3136,6 +3163,51 @@ def ruling_given_comments_posted(walk_name, rulings, top, gh_program, timeout):
     return output, failed
 
 
+def bump(arguments):
+    """Make the unshown item arguments.bump names the waiting item, standing right before the item that waited,
+    as the docstring's --bump paragraph says."""
+    walk_finder = load_walk_finder()
+    top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
+    waiting, numbers, total = waiting_items(walk_finder, value, minutes)
+    _, _, _, units, placing = walk_document_items(walk_finder, minutes, value, numbers, total, parser,
+                                                  "check --bump", top, stamp=False)
+    document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
+    lines = document.read_text(encoding="utf-8").split("\n")
+    title = heading_title(walk_finder, "## " + arguments.bump.strip().lstrip("# "))
+    named = [unit for unit in units if heading_title(walk_finder, lines[unit[3]]) == title]
+    unshown = [unit for unit in named if unit[3] in placing]
+    if not unshown:
+        if named:
+            decided, _ = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
+            state = (BUMP_ALREADY_SHOWN_DECIDED if named[0][0] and set(named[0][0]) <= decided
+                     else BUMP_ALREADY_SHOWN_WAITING)
+            raise Failure(BUMP_ALREADY_SHOWN.format(heading=lines[named[0][3]].strip(), document=document,
+                                                    state=state))
+        example = next((lines[first][3:].strip() for first in placing), "the point of the item")
+        raise Failure(BUMP_NOT_FOUND.format(document=document, title=arguments.bump.strip(), example=example))
+    first, end = unshown[0][3], unshown[0][4]
+    _, waiting_units = walk_finder.waiting_item_units(document, value, numbers, total, parser, units)
+    before = waiting_units[0][3]
+    number = walk_finder.approval_walk_next_unnumbered_item_number(units)
+    count = walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units)
+    # Numbered before it moves: an unnumbered heading above the walk-document's first numbered item is no item.
+    block = [numbered_heading(lines[first], number, count)] + lines[first + 1:end]
+    while block and not block[-1].strip():
+        block.pop()
+    rest = lines[:first] + lines[end:]
+    at = before if before < first else before - (end - first)
+    text = "\n".join(rest[:at] + block + [""] + rest[at:])
+    document.write_text(text, encoding="utf-8")
+    bumped = items_named([str(number)], count)
+    words = " ".join((arguments.user_reply_as_typed or "").split())
+    append_to_minutes(minutes, [BUMP_MINUTES.format(bumped=bumped, waiting=waiting,
+                                                    words=USER_WORDS.format(words=words) if words else ""),
+                                NEXT_MARKER_LINE.format(value=bumped)])
+    print(BUMP_DONE.format(bumped=bumped, waiting=waiting, command=READ_STEP_COMMAND.format(
+        program=Path(__file__).resolve(), flags="", top=shlex.quote(str(top)))))
+    return 0
+
+
 def close(arguments):
     walk_finder = load_walk_finder()
     top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
@@ -3286,6 +3358,9 @@ def main(argv=None):
                         help="check: not shown, and the walk moves on from the item with no decision, for REASON")
     answer.add_argument("--part-answer", type=part_answer, action="append", metavar="N=ANSWER",
                         help="check: part N of the item was answered ANSWER, A, AO or D; give it once for each part")
+    answer.add_argument("--bump", metavar="ITEM",
+                        help="check: the user said bump and named ITEM, an item not yet shown, by its heading's title; "
+                             "show it next, before the waiting item")
     answer.add_argument("--not-asked", type=not_asked_kind, metavar="KIND",
                         help="check: the user is not asked; settle the item as kind KIND, 1 to 6, of the "
                              "walk-me-through skill's list of items that need no answer, if its evidence lines pass, "
