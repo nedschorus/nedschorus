@@ -148,16 +148,24 @@ def pull_request_head_test_run_test_log_split_into_records(text: str) -> list:
             raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
                 f"line {at + 1} should begin a record and does not: {lines[at][:200]!r}")
         count = int(first_line.group(2))
-        record = lines[at:at + count]
-        if len(record) != count or not record[-1].startswith(
-                PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX):
+        if count == 0:
             raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
-                f"the record that begins at line {at + 1} is not {count} lines ending with "
-                f"its exit code")
+                f"the record that begins at line {at + 1} says it has 0 lines, but its first line "
+                f"is one")
+        record = lines[at:at + count]
+        if len(record) != count:
+            raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
+                f"the record that begins at line {at + 1} says it has {count} lines, but the test "
+                f"log ends after {len(record)}")
+        if not record[-1].startswith(PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX):
+            raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
+                f"the record that begins at line {at + 1} does not end with its "
+                f"{PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX!r} line: line "
+                f"{at + count} is {record[-1][:200]!r}")
         records.append((first_line.group(1), record))
         at += count
     if not records:
-        raise PullRequestHeadTestRunTestLogNotWholeRecordsError("the test log holds no record")
+        raise PullRequestHeadTestRunTestLogNotWholeRecordsError("the test log is empty")
     return records
 
 

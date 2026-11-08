@@ -279,8 +279,9 @@ def after_merge_test_run(arguments, merge_commit):
               f"Nothing to do: this run still tests every suite the merge could have changed.",
               flush=True)
     else:
-        print(f"selecting since {since[:12]}, the pr{arguments.pull_request}-merged commit "
-              f"the head test run passed on", flush=True)
+        print(f"selecting since {since[:12]}, the commit the head test run passed on: "
+              f"pull request {arguments.pull_request}'s head merged with main as main was "
+              f"when that run started", flush=True)
     by_hand = (f"python3 scripts/run-all-test-suites.py "
                f"--only-suites-whose-recorded-inputs-changed-since {since}")
     if not merge_commit:
