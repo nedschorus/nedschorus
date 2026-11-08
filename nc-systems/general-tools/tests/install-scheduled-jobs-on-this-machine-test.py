@@ -46,15 +46,14 @@ def check(case_name, condition, detail=""):
             print(f"      {detail}")
 
 
-# What each machine had installed when this program was written, measured
-# with `crontab -l` on both on 2026-10-01. The table must give these lines
-# byte for byte: an install on either machine then changes nothing.
+# The cron lines the table must give each machine, byte for byte, in the form
+# `crontab -l` prints them.
 NED_BOX_MIRROR_LINE = (
     "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
     "transcript-mirror-to-log-store.py --failures-only >> "
     "/home/nedlern/.claude/transcript-mirror.log 2>&1")
 NED_BOX_DAILY_LINE = (
-    "30 3 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "0 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
     "daily-full-test-run-of-main.py >> "
     "/home/nedlern/.claude/daily-full-test-run-of-main.log 2>&1")
 MAC_MIRROR_LINE = (
@@ -268,7 +267,7 @@ clean = real_jobs["clean-worktrees"]
 check("the table gives ned-box the transcript mirror's cron line it has installed, byte for byte",
       installer.cron_line(ned_box, mirror, mirror["on"]["ned-box"]) == NED_BOX_MIRROR_LINE,
       installer.cron_line(ned_box, mirror, mirror["on"]["ned-box"]))
-check("the table gives ned-box the daily full test run's cron line it has installed, byte for byte",
+check("the table gives ned-box the daily full test run's cron line, byte for byte",
       installer.cron_line(ned_box, daily, daily["on"]["ned-box"]) == NED_BOX_DAILY_LINE,
       installer.cron_line(ned_box, daily, daily["on"]["ned-box"]))
 check("the table gives the Mac the transcript mirror's cron line it has installed, byte for byte",
@@ -279,8 +278,8 @@ check("the Mac's daily full test run is a launchd job at 03:30, not a cron line:
       "while the Mac sleeps starts at the next wake",
       daily["on"]["mac"]["scheduler"] == "launchd" and mac_plist == MAC_DAILY_PLIST
       and list(mac_plist) == list(MAC_DAILY_PLIST), mac_plist)
-check("the table gives ned-box the worktree cleanup's cron line at 06:30, two hours after "
-      "the daily full test run",
+check("the table gives ned-box the worktree cleanup's cron line at 06:30, after the daily "
+      "full test run",
       installer.cron_line(ned_box, clean, clean["on"]["ned-box"]) == NED_BOX_CLEAN_LINE,
       installer.cron_line(ned_box, clean, clean["on"]["ned-box"]))
 mac_clean_plist = installer.launch_agent_plist(mac, clean, clean["on"]["mac"])
@@ -568,7 +567,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     # --- cron: only the selected jobs' lines change -----------------------
     foreign_line = "15 2 * * * /usr/local/bin/something-else --nightly"
-    differing_daily = BOX_DAILY.replace("30 3 * * *", "0 4 * * *")
+    differing_daily = BOX_DAILY.replace("0 0 * * *", "0 4 * * *")
     stub = MachineStub(crontab=(
         f"{NED_BOX_FOREIGN_COMMENT}\n{differing_daily}\n{foreign_line}\n").encode())
     exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
@@ -1358,7 +1357,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # A retired line that runs a program file of the same name as a cron job
     # of the table is found as that job's line, the way an install finds it:
     # --check reports it as that job's DIFFERS, and --install replaces it.
-    same_file_other_arguments = BOX_DAILY.replace("30 3 * * *", "0 2 * * *").replace(
+    same_file_other_arguments = BOX_DAILY.replace("0 0 * * *", "0 2 * * *").replace(
         "daily-full-test-run-of-main.py", "daily-full-test-run-of-main.py --a-retired-argument")
     stub = MachineStub(crontab=(f"{BOX_MIRROR}\n{BOX_DAILY}\n{BOX_ALONE}\n"
                                 f"{same_file_other_arguments}\n").encode())
