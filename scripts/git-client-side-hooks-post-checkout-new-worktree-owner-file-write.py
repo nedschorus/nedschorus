@@ -40,7 +40,6 @@ one. It always exits 0, because the hook's exit status becomes git's.
 
 import importlib.util
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -57,8 +56,6 @@ def load_module(name, relative_path):
 owner_file = load_module("worktree_owner_file_read_and_write",
                          "scripts/worktree-owner-file-read-and-write.py")
 
-CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY = Path(".claude") / "worktrees"
-CLAUDE_CODE_SUBAGENT_WORKTREE_DIRECTORY_NAME = re.compile(r"agent-a[0-9a-f]{16}")
 
 OWNER_FILE_NOT_WRITTEN_MESSAGE = (
     "post-checkout: the owner file of the new worktree {worktree} was not written: {reason}\n"
@@ -83,8 +80,7 @@ def new_worktree_owner(worktree, main_checkout, agent_seat, agent_seats, agents_
         return None
     if agent_seat not in agent_seats:
         return None
-    if (worktree.parent == (main_checkout / CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY).resolve()
-            and CLAUDE_CODE_SUBAGENT_WORKTREE_DIRECTORY_NAME.fullmatch(worktree.name)):
+    if owner_file.claude_code_subagent_worktree_check(worktree, main_checkout):
         key = claude_process_key()
         if key is None:
             raise owner_file.WorktreeOwnerFileError(
