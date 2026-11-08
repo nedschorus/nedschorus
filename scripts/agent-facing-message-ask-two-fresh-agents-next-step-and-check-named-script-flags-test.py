@@ -80,7 +80,7 @@ def run_main(scratch: pathlib.Path, message: str, failing_tiers: str = "", situa
     os.environ["FAKE_STRAY_WRITE_TIERS"] = stray_write_tiers
     os.environ["FAKE_STRAY_WRITE_PHRASE"] = ask_two_fresh_agents.cell_common.STRAY_WRITE_PHRASE
     os.environ["FAKE_RENDEZVOUS_DIRECTORY"] = str(rendezvous_directory or "")
-    os.environ["FAKE_RENDEZVOUS_SECONDS"] = "10"
+    os.environ["FAKE_RENDEZVOUS_SECONDS"] = "60"
     os.environ["FAKE_RENDEZVOUS_TIER_COUNT"] = str(len(ask_two_fresh_agents.FOLLOWER_TIERS))
     ask_two_fresh_agents.CLAUDE_CELL_LAUNCHER = launcher
     sys.argv = [str(SCRIPT_PATH), "--message-file", str(message_file),
@@ -195,20 +195,16 @@ def test_named_scripts(scratch):
     signalled = scratch / "signalled.py"
     signalled.write_text("import os\nos.kill(os.getpid(), 9)\n")
     hanging = scratch / "hanging.py"
-    hanging.write_text("import time\ntime.sleep(30)\n")
+    hanging.write_text("import time\ntime.sleep(3600)\n")
     longer_flag_only = scratch / "longer-flag-only.py"
     longer_flag_only.write_text("print('usage: longer-flag-only.py [--head-commit COMMIT]')\n")
     message = (
         f"Rerun `python3 {helped} --head HEAD --base-branch main` then `{shell} --pull-request 5`.\n"
-        f"Or run {broken} --dry-run; {hanging} --wait\n"
+        f"Or run {broken} --dry-run\n"
         f"Never run {scratch}/missing.py --force.\n"
         f"Last, {signalled} --once.\n"
         f"Then {longer_flag_only} --head.\n")
-    ask_two_fresh_agents.HELP_TIMEOUT_SECONDS = 2
-    try:
-        exit_code, stdout, _, _ = run_main(scratch, message)
-    finally:
-        ask_two_fresh_agents.HELP_TIMEOUT_SECONDS = 60
+    exit_code, stdout, _, _ = run_main(scratch, message)
     check("named scripts: exit 0 although checks found problems", exit_code == 0, f"exit {exit_code}")
     check("named scripts: a flag in --help is reported in it", "`--head`: in the --help output" in stdout, stdout)
     check("named scripts: a flag only a prefix of which is in --help is reported missing",
@@ -221,11 +217,17 @@ def test_named_scripts(scratch):
     check("named scripts: a --help that fails is reported with its output",
           f"`{broken}`: exists; --help exited 3" in stdout and "cannot start: missing module" in stdout
           and "`--dry-run`" not in stdout, stdout)
-    check("named scripts: a --help that hangs is reported",
-          f"`{hanging}`: exists; --help did not finish within 2 s" in stdout, stdout)
     check("named scripts: a --help killed by a signal is reported",
           f"`{signalled}`: exists; --help exited -9" in stdout, stdout)
     check("named scripts: a missing script is reported", f"`{scratch}/missing.py`: NOT FOUND" in stdout, stdout)
+    # The short timeout goes only to this run: it would also time out a script above that starts slowly on a loaded machine.
+    ask_two_fresh_agents.HELP_TIMEOUT_SECONDS = 2
+    try:
+        _, stdout, _, _ = run_main(scratch, f"Or run {hanging} --wait\n")
+    finally:
+        ask_two_fresh_agents.HELP_TIMEOUT_SECONDS = 60
+    check("named scripts: a --help that hangs is reported",
+          f"`{hanging}`: exists; --help did not finish within 2 s" in stdout, stdout)
 
 
 def test_named_scripts_parsing():
