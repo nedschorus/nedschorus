@@ -89,6 +89,13 @@ loop_text = loop_refusal()
 check("a loop is refused, naming each pull request in it",
       "pull request 3 replaces pull request 2 replaces pull request 1 replaces pull request 3" in (loop_text or ""),
       loop_text)
+looping = {9: f"#replaces {LINK}3", **looping}
+looping_reads.clear()
+lead_in_loop_text = refusal(lambda: reader.replaced_pull_request_chain_numbers_oldest_first(
+    9, REPOSITORY, looping.__getitem__))
+check("a loop reached through a pull request outside it is refused naming only the loop",
+      "loop: pull request 3 replaces pull request 2 replaces pull request 1 replaces pull request 3," in (lead_in_loop_text or "")
+      and "pull request 9" not in (lead_in_loop_text or ""), lead_in_loop_text)
 shared = {4: f"#replaces {LINK}2\n#replaces {LINK}3", 3: f"#replaces {LINK}2", 2: ""}
 check("an old pull request two lines reach is listed once",
       reader.replaced_pull_request_chain_numbers_oldest_first(4, REPOSITORY, shared.__getitem__) == [2, 3])

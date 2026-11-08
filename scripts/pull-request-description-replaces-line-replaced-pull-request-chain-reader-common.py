@@ -81,10 +81,11 @@ def replaced_pull_request_chain_numbers_oldest_first(number, repository, read_de
             if replaced in on_path:
                 raise ReplacedPullRequestChainUnreadable(
                     f"the {PULL_REQUEST_DESCRIPTION_REPLACES_HASHTAG} lines loop: "
-                    + " replaces ".join(f"pull request {step}" for step in [*on_path, replaced])
+                    + " replaces ".join(f"pull request {step}"
+                                        for step in [*on_path[on_path.index(replaced):], replaced])
                     + ", so no pull request in the loop is the oldest.\n"
                     f"In the loop, find the pull request whose {PULL_REQUEST_DESCRIPTION_REPLACES_HASHTAG} line names a pull request opened after "
-                    "it, have its author remove that line, then run this again.")
+                    "it, have that pull request's author remove the line, then run this again.")
             if replaced not in order:
                 follow(replaced)
                 order.append(replaced)

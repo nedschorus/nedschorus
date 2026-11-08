@@ -1886,6 +1886,44 @@ def replaces_cases(root, repository, base, frozen_head):
     check("replaces: a replaced pull request with no open round does not stop the next one's findings from "
           "being carried", code == 0 and "Blocking findings (3)" in out and "3. old.py:30" in out, err + out)
 
+    def chain(middle_head, middle_reviews, middle_records=(), middle_comments=()):
+        """Pull request NUMBER replaces 5, which replaces 4; 4's last round is open, with old.py's finding."""
+        routes = replaced_routes(frozen_head, middle_head, middle_reviews, middle_comments,
+                                 replaced_records=middle_records)
+        routes[f"pr view {REPLACED_NUMBER} --json url,headRefOid,headRefName,body"] = {"stdout": json.dumps(
+            {"url": REPLACED_URL, "headRefOid": middle_head, "headRefName": "old-branch",
+             "body": "#replaces https://github.com/o/r/pull/4\n"})}
+        oldest = {key.replace(f"/{REPLACED_NUMBER}/", "/4/").replace(f"pr view {REPLACED_NUMBER} ", "pr view 4 "):
+                  value for key, value in replaced_routes(frozen_head, REPLACED_SECOND_HEAD, REPLACED_TWO_ROUNDS,
+                                                          REPLACED_COMMENTS).items()
+                  if f"/{REPLACED_NUMBER}/" in key or key.startswith(f"pr view {REPLACED_NUMBER} ")}
+        return run(root, repository, {**routes, **oldest})
+
+    middle_head = "6" * 40
+    middle_finding = dict(comment("mid.py", "**Blocks.** mid.py drops the line.", line=8, comment_id=62),
+                          html_url=f"{REPLACED_URL}#discussion_r62")
+    code, out, err = chain(middle_head, [replaced_review(51, "5" * 40), replaced_review(52, middle_head)],
+                           middle_comments=[middle_finding])
+    check("replaces: when C replaces B and B replaces A, A's open round is not carried into C once B's first "
+          "round was answered by a fix commit, while B's open second round is", code == 0
+          and "Blocking findings (3)" in out and "3. mid.py:8" in out and "old.py" not in out, err + out)
+    code, out, err = chain(middle_head, [replaced_review(53, middle_head)],
+                           middle_records=[round_record(middle_head, [53])])
+    check("replaces: A's open round is not carried into C once B's first round was answered without a "
+          "commit, as its round record says", code == 0 and "Blocking findings (2)" in out
+          and "old.py" not in out, err + out)
+    code, out, err = chain(middle_head, [replaced_review(53, middle_head),
+                                         replaced_review(54, middle_head, state="APPROVED")])
+    check("replaces: A's open round is not carried into C once B was approved after its changes-requested "
+          "round", code == 0 and "Blocking findings (2)" in out and "old.py" not in out, err + out)
+    code, out, err = chain(middle_head, [replaced_review(52, middle_head)], middle_comments=[middle_finding])
+    check("replaces: A's open round is still carried into C while B's first round is open, since B's answer "
+          "never covered it", code == 0 and "Blocking findings (4)" in out and "mid.py:8" in out
+          and "old.py:30" in out, err + out)
+    code, out, err = chain(middle_head, [])
+    check("replaces: A's open round is carried into C when merge-lane-2 never reviewed B",
+          code == 0 and "Blocking findings (3)" in out and "3. old.py:30" in out, err + out)
+
     code, out, err = run(root, repository, replaced_routes(
         frozen_head, REPLACED_SECOND_HEAD, REPLACED_TWO_ROUNDS, REPLACED_COMMENTS,
         description="#replaces pull request 5\n"))
