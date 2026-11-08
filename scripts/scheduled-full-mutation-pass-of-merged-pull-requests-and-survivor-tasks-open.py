@@ -1223,12 +1223,13 @@ def main_under_lock(arguments):
                  f"Mark this task completed once a run's record is written to the log-store."),
                 arguments, True)
         except OSError as task_error:
-            print(f"{PROGRAM}: no job failure task could be opened on "
-                  f"{JOB_FAILURE_TASK_AGENT_SEAT}'s task list for the record not written "
-                  f"({type(task_error).__name__}: {task_error}), so no agent is told of it.\n"
-                  f"Fix what that error names too, such as a task list directory that does not "
-                  f"exist, then run this program again on ned-box: {RUN_BY_HAND}",
-                  file=sys.stderr)
+            print(f"{PROGRAM}: the task that tells an agent this run's record was not written "
+                  f"could not be opened on {JOB_FAILURE_TASK_AGENT_SEAT}'s task list either "
+                  f"({type(task_error).__name__}: {task_error}), so only this log shows that "
+                  f"the record was not written.\n"
+                  f"Fix what both errors name, the record's above and the task's here, such as "
+                  f"a task list directory that does not exist. The next nightly run tries both "
+                  f"again.", file=sys.stderr)
         else:
             print(f"{PROGRAM}: JOB FAILURE TASK: "
                   f"{'opened' if opened else 'already open, so none opened:'} task #{task_id} on "
