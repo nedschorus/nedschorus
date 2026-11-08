@@ -20,9 +20,9 @@ are read as one hyphen, so `instruction-file guard` and
 `Instruction-File-Guard` are one term. A leading `/` or `-` is kept, because
 it marks a skill or a filename suffix. Plurals are not matched.
 
-A term repeated inside one glossary is not this suite's concern. A glossary
-from which no entry can be read fails, because a check that reads nothing
-must never pass.
+A term repeated inside one glossary is not this suite's concern. A listed
+glossary whose file is missing, and a glossary from which no entry can be
+read, fail, because a check that reads nothing must never pass.
 
 Run: python3 scripts/glossary-term-has-entries-in-only-one-glossary-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -31,6 +31,7 @@ Prints one line per case and exits non-zero if any case fails.
 import importlib.util
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -79,19 +80,24 @@ def entry_terms(glossary_text):
 
 def listed_glossary_paths(repo_root):
     """The project glossary, then each system glossary its listing paragraph
-    names, as repository-relative paths; and the fault when the paragraph
-    cannot be located."""
+    names, as repository-relative paths; the paths the paragraph names that
+    lead to no file; and the fault when the paragraph cannot be located."""
     page = (repo_root / PROJECT_GLOSSARY_RELATIVE_PATH).read_text(encoding="utf-8")
     paragraph, fault = GLOSSARIES_LISTED.system_glossary_paragraph(page)
     if paragraph is None:
-        return [PROJECT_GLOSSARY_RELATIVE_PATH], fault
-    paths = [PROJECT_GLOSSARY_RELATIVE_PATH]
-    for _, readings in GLOSSARIES_LISTED.glossary_paths_named_in(paragraph):
+        return [PROJECT_GLOSSARY_RELATIVE_PATH], [], fault
+    paths, missing = [PROJECT_GLOSSARY_RELATIVE_PATH], []
+    for written, readings in GLOSSARIES_LISTED.glossary_paths_named_in(paragraph):
         found = next((reading for reading in readings
                       if (repo_root / reading).is_file()), None)
-        if found and found not in paths:
+        if found is None:
+            # A bare file name names a file located elsewhere, as the
+            # listing suite also reads it, so only a path can be missing.
+            if "/" in written and written not in missing:
+                missing.append(written)
+        elif found not in paths:
             paths.append(found)
-    return paths, ""
+    return paths, missing, ""
 
 
 def terms_in_more_than_one_glossary(glossary_texts):
@@ -125,9 +131,13 @@ def duplicate_failure_detail(duplicates):
 
 if __name__ == "__main__":
     # --- the rule, against the checkout this file is in ----------------------
-    paths, paragraph_fault = listed_glossary_paths(REPO_ROOT)
+    paths, missing, paragraph_fault = listed_glossary_paths(REPO_ROOT)
     check("the project glossary's paragraph listing the system glossaries is located",
           not paragraph_fault, paragraph_fault)
+    check("every glossary the project glossary lists has a file", not missing,
+          f"no file at {missing}; run "
+          f"scripts/system-glossaries-listed-on-the-project-glossary-test.py and fix what it "
+          f"reports")
     check("the project glossary lists at least one system glossary that exists",
           len(paths) > 1,
           f"found only {paths}; run "
@@ -176,5 +186,18 @@ if __name__ == "__main__":
     check("the failure message names each term's glossaries",
           "'Agent seat' in b-glossary.md" in detail and "'cpc' in b-glossary.md" in detail,
           detail)
+
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch_root = Path(scratch)
+        project_glossary = scratch_root / PROJECT_GLOSSARY_RELATIVE_PATH
+        project_glossary.parent.mkdir(parents=True)
+        project_glossary.write_text((REPO_ROOT / PROJECT_GLOSSARY_RELATIVE_PATH)
+                                    .read_text(encoding="utf-8"), encoding="utf-8")
+        _, scratch_missing, scratch_fault = listed_glossary_paths(scratch_root)
+        check("a listed glossary whose file is missing is reported, not dropped",
+              not scratch_fault and len(scratch_missing) == len(paths) - 1,
+              f"with no system glossary in the checkout, {scratch_missing} were reported "
+              f"missing, not the {len(paths) - 1} the project glossary lists"
+              + (f"; {scratch_fault}" if scratch_fault else ""))
 
     sys.exit(1 if failures else 0)
