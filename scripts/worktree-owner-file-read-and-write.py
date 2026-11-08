@@ -88,7 +88,7 @@ CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY = Path(".claude") / "worktrees"
 CLAUDE_CODE_SUBAGENT_WORKTREE_DIRECTORY_NAME = re.compile(r"agent-a[0-9a-f]{16}")
 
 
-def claude_code_subagent_worktree_check(worktree, main_checkout):
+def worktree_is_claude_code_subagent_worktree_by_location_and_directory_name(worktree, main_checkout):
     """True when worktree is where, and named as, Claude Code makes a subagent's worktree."""
     worktree = Path(worktree).resolve()
     return (worktree.parent == (Path(main_checkout) / CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY).resolve()
