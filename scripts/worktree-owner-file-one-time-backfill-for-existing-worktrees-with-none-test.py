@@ -93,6 +93,9 @@ def run_cases(root):
     add("unmatched", agents / "ghi-32-edit")
     (agents / "ghi-32-edit" / "notes.txt").write_text("uncommitted\n")
     add("outside", root / "elsewhere" / "wt")
+    (clone / ".git" / "info").mkdir(exist_ok=True)
+    (clone / ".git" / "info" / "exclude").write_text("ignored-state.json\n")
+    (root / "elsewhere" / "wt" / "ignored-state.json").write_text("{}\n")
     git("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
         "commit", "--quiet", "--allow-empty", "-m", "unlanded", cwd=worktrees["outside"])
     add("upstream", root / "elsewhere" / "with-upstream")
@@ -199,15 +202,15 @@ def run_cases(root):
           and "the Claude Code transcripts of 2 agent-seats, seat, seat-long, name its subagent "
               f"agent-{subagent_ids['two-seat-subagent']}; for the user to keep or delete"
           in line_of(output, "two-seat-subagent"), output)
-    check("a worktree for the user is named with its uncommitted files, the commits origin/main "
-          "lacks, and whether its branch is merged",
+    check("a worktree for the user is named with its uncommitted, untracked and ignored files, "
+          "the commits origin/main lacks, and whether its branch is merged",
           line_of(output, "unmatched").endswith(
-              "for the user to keep or delete: 1 uncommitted or untracked file(s); "
+              "for the user to keep or delete: 1 uncommitted, untracked or ignored file(s); "
               "0 commit(s) origin/main lacks; its branch branch-unmatched is merged into "
               "origin/main")
           and line_of(output, "outside").endswith(
-              "0 uncommitted or untracked file(s); 1 commit(s) origin/main lacks; its branch "
-              "branch-outside is not merged into origin/main"), output)
+              "1 uncommitted, untracked or ignored file(s); 1 commit(s) origin/main lacks; its "
+              "branch branch-outside is not merged into origin/main"), output)
     check("a worktree whose branch has an upstream is named with the commits its upstream lacks",
           line_of(output, "upstream").endswith(
               "1 commit(s) origin/branch-upstream lacks; its branch branch-upstream is not merged "
@@ -289,7 +292,8 @@ def run_cases(root):
         capture_output=True, text=True, check=False)
     check("a fact git cannot read, or whose git a signal kills, is printed as unknown, with git's "
           "error on one line",
-          "for the user to keep or delete: uncommitted or untracked files unknown (facts refused); "
+          "for the user to keep or delete: uncommitted, untracked or ignored files unknown "
+          "(facts refused); "
           "commits origin/main lacks unknown (rev-list refused); its branch branch-unmatched"
           in line_of(unread_facts.stdout, "unmatched")
           and "commits origin/main lacks unknown (rev-list refused); its branch branch-outside"

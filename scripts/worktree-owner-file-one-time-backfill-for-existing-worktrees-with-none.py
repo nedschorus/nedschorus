@@ -45,7 +45,7 @@ Each worktree of the clone with no owner file is handled as follows:
     fits <name>.
 
 FOR THE USER. Each worktree listed for the user is named on a line of its own with the facts that
-decide whether to keep or delete it: how many uncommitted or untracked files it holds, how many
+decide whether to keep or delete it: how many uncommitted, untracked or ignored files it holds, how many
 commits its HEAD has that its branch's upstream lacks, or origin/main when the branch has no
 upstream or the worktree is on a detached HEAD, and whether its branch is merged into origin/main,
 as git reads origin/main without fetching, or that it is on a detached HEAD and has no branch. A
@@ -58,7 +58,8 @@ that delete one such worktree, and its branch when it has one:
 The second command keeps a worktree with no owner file, so the first gives it one. <agent-seat> is
 any agent-seat the user chooses: the second command copies the worktree's uncommitted and
 untracked files to a work-snapshot before removing it, and that agent-seat's next agent-session is
-told of the work-snapshot.
+told of the work-snapshot. The work-snapshot keeps no ignored file, so removing the worktree
+deletes its ignored files for good.
 
 A worktree whose owner file cannot be read, or cannot be written, is named on a FAILED line,
 and the program exits 1 once it has handled every other worktree.
@@ -135,9 +136,10 @@ def backfill_action(worktree, locked_reason, main_checkout, agents_root, agent_s
 
 def keep_or_delete_facts_text(repo, worktree, branch):
     """The facts FOR THE USER names beside a worktree listed for the user."""
-    uncommitted, listing_error = cleaner.uncommitted_or_untracked_files(worktree)
-    changes = (f"uncommitted or untracked files unknown ({listing_error})" if uncommitted is None
-               else f"{len(uncommitted)} uncommitted or untracked file(s)")
+    discarded, listing_error = cleaner.files_a_removal_discards(worktree)
+    changes = (f"uncommitted, untracked or ignored files unknown ({listing_error})"
+               if discarded is None
+               else f"{len(discarded)} uncommitted, untracked or ignored file(s)")
     base = "origin/main"
     if branch is not None:
         upstream = cleaner.run_git(worktree, "rev-parse", "--abbrev-ref", "--symbolic-full-name",
