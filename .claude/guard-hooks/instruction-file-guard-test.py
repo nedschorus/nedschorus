@@ -614,7 +614,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     checkout_in_scratchpad = scratchpad / "wt" / "a-checkout"
     checkout_in_scratchpad.mkdir(parents=True)
     subprocess.run(["git", "init", "-q", str(checkout_in_scratchpad)], check=True)
-    for relative in (".claude/hooks/a-guard.py", "CLAUDE.md",
+    for relative in (".claude/guard-hooks/a-guard.py", "CLAUDE.md",
                      "docs/agents/a-seat-instructions.md"):
         payload = json.dumps({"cwd": str(checkout_in_scratchpad), "session_id": session_id,
                               "tool_input": {"file_path": str(checkout_in_scratchpad / relative)}})

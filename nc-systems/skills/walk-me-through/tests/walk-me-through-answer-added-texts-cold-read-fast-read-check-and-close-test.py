@@ -2489,14 +2489,27 @@ def refused_as_rated_none(case, *problems):
 def test_an_item_of_no_kind_settles_only_when_rated_none_and_touching_no_guarded_file():
     check("an item of no kind rated weak is refused",
           *refused_as_rated_none(rated_none_case("item 2 of 3"), "rates the case against weak; an item of none of "
-                                 "the five kinds settles without the user only when its case against is rated none"))
+                                 "the kinds settles without the user only when its case against is rated none"))
     check("an item of no kind with no touches line is refused",
           *refused_as_rated_none(rated_none_case(touches=""), "it has no `#not_asked_touches` line"))
+    for word in ("CLAUDE.md:12", "tools/counter.py.", "tools/missing.py"):
+        check(f"an item of no kind whose touches line names {word}, no path in the checkout, is refused",
+              *refused_as_rated_none(rated_none_case(touches=f"#not_asked_touches {word}\n\n"),
+                                     f"`#not_asked_touches` names {word}, which is not in the checkout"))
     for path in ("CLAUDE.md", ".claude/skills/poems/SKILL.md", "docs/nedschorus-wiki/poems.md",
                  "docs/poems-instructions.md"):
         check(f"an item of no kind that touches {path}, which the instruction-file guard protects, is refused",
               *refused_as_rated_none(rated_none_case(touches=f"#not_asked_touches tools/counter.py {path}\n\n"),
                                      f"`#not_asked_touches` names {path}, which the instruction-file guard protects"))
+
+
+def test_an_item_of_no_kind_with_an_empty_touches_line_settles_as_a_change_that_touches_no_file():
+    case = rated_none_case(touches="#not_asked_touches\n\n")
+    result = case.run("check", "--not-asked", "none")
+    check("an item of no kind rated none whose touches line is empty, such as one that recommends doing nothing, "
+          "is settled", result.returncode == 0
+          and "item 1 of 3 is recorded as settled without asking the user, case against none;" in result.stdout,
+          described(result))
 
 
 def test_a_not_asked_value_other_than_a_kind_or_none_is_refused_as_usage():

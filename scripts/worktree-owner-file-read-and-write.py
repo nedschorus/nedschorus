@@ -30,8 +30,10 @@ agent-session's `claude` process, and unlocks it when the subagent finishes;
 scripts/uncommitted-work-snapshot-hook.py writes the agent-session's owner
 file after the subagent's Edit, Write, NotebookEdit or Bash calls there,
 while that lock still names the process; a subagent that makes none of those
-calls there leaves its worktree with no owner file. A worktree with no owner file is
-never removed by the cleaner.
+calls there leaves its worktree with no owner file. The cleaner never removes a
+worktree with no owner file, except a merge-lane review checkout, a worktree in
+~/.cache/merge-lane-review-worktrees, which it removes once its pull request has
+been merged or closed for 24 hours.
 
 It refuses to write into the reference-checkout, whose git directory is the
 clone's common one, and over an existing owner file.
@@ -84,7 +86,8 @@ WORKTREE_OWNER_FILE_COMMAND_FAILED_NEXT_STEP_LINES = (
     "arguments.\n"
     "If it fails the same way again, give the FAILED line to the agent that dispatched you, or to "
     "the user if no agent did, and say that scripts/clean-worktrees.py never removes a worktree "
-    "that has no owner file, so the worktree stays on disk until someone runs "
+    "that has no owner file, apart from a merge-lane review checkout in "
+    "~/.cache/merge-lane-review-worktrees, so the worktree stays on disk until someone runs "
     "git worktree remove <the worktree's path>.")
 
 _work_snapshots = None

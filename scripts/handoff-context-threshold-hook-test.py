@@ -832,6 +832,25 @@ with tempfile.TemporaryDirectory() as workspace:
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(loud)})
         check("hook fires only once per session", result.returncode == 0, f"code {result.returncode}")
 
+        # 70,000 of the 200,000-token default is 35%, past the threshold.
+        unlisted_model = transcript_with_usage(workspace, "unlisted-model.jsonl", 70_000,
+                                               model="claude-something-unreleased")
+        marker_file.unlink(missing_ok=True)
+        result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(unlisted_model)})
+        message_lines = result.stderr.strip().splitlines()
+        check("for a model id not in the table, the hook fires with the instruction and then "
+              "names the model id and the default window it assumed",
+              result.returncode == 2 and len(message_lines) == 2
+              and HANDOFF_INSTRUCTION_PATTERN.fullmatch(message_lines[0]) is not None
+              and message_lines[1] == (
+                  "The model id claude-something-unreleased is not in the threshold hook's "
+                  "context-window table, so the share above assumes a 200K window; tell the "
+                  "user, so the table can be updated."),
+              f"code {result.returncode}, stderr {result.stderr!r}")
+        check("a model id matching a table prefix is in the table, and an unlisted one is not",
+              hook.model_id_is_in_context_window_table("claude-haiku-4-5-20251001")
+              and not hook.model_id_is_in_context_window_table("claude-something-unreleased"))
+
         marker_file.unlink(missing_ok=True)
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(loud)},
                           ("--threshold-used-percentage", "75"))
