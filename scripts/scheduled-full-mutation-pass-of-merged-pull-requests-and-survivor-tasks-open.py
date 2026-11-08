@@ -593,15 +593,23 @@ def program_run_with_limit(command, timeout_seconds):
         return None, stdout, stderr
 
 
+def mutation_testing_program_command_line_options_for_one_merge(arguments, merge, parent, workers,
+                                                                sessions_directory):
+    """The mutation testing program's options for one merge, shared by this run and the hand
+    run a task gives, so the hand run resumes the same kept sessions."""
+    return ["--full-mutation-pass", "--checkout", str(arguments.clone), "--head", merge,
+            "--base", parent, "--cosmic-ray-venv", str(arguments.cosmic_ray_venv),
+            "--parallel-mutant-workers", str(workers),
+            "--cosmic-ray-sessions-directory-kept-to-resume", str(sessions_directory)]
+
+
 def run_mutation_testing(arguments, merge, parent, json_file, workers, sessions_directory):
     """Return (exit code or None when it ran past the limit, stdout, stderr)."""
     return program_run_with_limit(
-        [sys.executable, arguments.mutation_testing_program, "--full-mutation-pass",
-         "--checkout", str(arguments.clone), "--head", merge, "--base", parent,
-         "--cosmic-ray-venv", str(arguments.cosmic_ray_venv),
-         "--survived-and-errored-mutants-json-file", str(json_file),
-         "--parallel-mutant-workers", str(workers),
-         "--cosmic-ray-sessions-directory-kept-to-resume", str(sessions_directory)],
+        [sys.executable, arguments.mutation_testing_program,
+         *mutation_testing_program_command_line_options_for_one_merge(
+             arguments, merge, parent, workers, sessions_directory),
+         "--survived-and-errored-mutants-json-file", str(json_file)],
         arguments.merge_timeout_seconds)
 
 
@@ -649,11 +657,9 @@ def mutation_testing_hand_run_command(arguments, merge, parent, workers, session
            / f"merge-{merge[:8]}-hand-run.log")
     return (f"systemd-run --user --unit=mutation-hand-run-{merge[:8]} --collect "
             f"-p StandardOutput=append:{log} -p StandardError=append:{log} "
-            f"/usr/bin/python3 {arguments.mutation_testing_program} --full-mutation-pass "
-            f"--checkout {shlex.quote(str(arguments.clone))} --head {merge} --base {parent} "
-            f"--cosmic-ray-venv {shlex.quote(str(arguments.cosmic_ray_venv))} "
-            f"--parallel-mutant-workers {workers} --cosmic-ray-sessions-directory-kept-to-resume "
-            f"{shlex.quote(str(sessions_directory))}")
+            f"/usr/bin/python3 {shlex.quote(str(arguments.mutation_testing_program))} "
+            + shlex.join(mutation_testing_program_command_line_options_for_one_merge(
+                arguments, merge, parent, workers, sessions_directory)))
 
 
 def job_failure_task_opened_unless_open(subject, description, arguments,
