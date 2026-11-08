@@ -735,15 +735,21 @@ def refuse_heading_with_date(heading: str):
 
 def balanced_close(text: str, start: int, opening: str, closing: str) -> int:
     """The index of the `closing` that balances the `opening` at `start`,
-    or -1 when the text ends first."""
+    or -1 when the text ends first. A backslash-escaped `opening` or
+    `closing`, as in `a\\(b`, is text, as Markdown reads it."""
     depth = 0
-    for index in range(start, len(text)):
+    index = start
+    while index < len(text):
+        if text[index] == "\\":
+            index += 2
+            continue
         if text[index] == opening:
             depth += 1
         elif text[index] == closing:
             depth -= 1
             if depth == 0:
                 return index
+        index += 1
     return -1
 
 
