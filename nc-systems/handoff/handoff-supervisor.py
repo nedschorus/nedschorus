@@ -419,13 +419,16 @@ BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION = (
 
 # Printed to the handoff-supervisor's console, which the agent-session never reads.
 BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE = (
-    "handoff-supervisor: could not tell whether the branch checked out in the agent-home is pushed, "
+    "handoff-supervisor: could not tell whether {branch} is pushed, "
     "so the new agent-session's initial-agent-instructions tell it neither to rebase that branch onto "
     "origin/main nor to leave the branch's head as it is.\n"
     "handoff-supervisor: why: {cause}\n"
     "handoff-supervisor: this launch goes ahead without either instruction, and nobody needs to act on "
     "this message: a git error that persists also fails the new agent-session's own git commands, "
-    "where that agent-session sees it."
+    "which show it the error; once an error has cleared, the Stop hook "
+    "scripts/checkout-freshness-catch-up.py, at the end of each of the agent-session's turns, rebases "
+    "a never-pushed branch onto origin/main, and tells the agent-session when the agent-session has "
+    "rewritten a pushed branch's history."
 )
 
 
@@ -437,6 +440,7 @@ def choose_branch_state_instruction_from_working_directory_push_state(working_di
     if branch.returncode != 0:
         command = shlex.join(["git", "-C", str(working_directory), "rev-parse", "--abbrev-ref", "HEAD"])
         print(BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE.format(
+            branch=f"the branch checked out in {working_directory}",
             cause=f"`{command}` failed (exit {branch.returncode}): "
                   f"{branch.stderr.strip() or 'git printed no error'}"))
         return ""
@@ -452,6 +456,7 @@ def choose_branch_state_instruction_from_working_directory_push_state(working_di
         return ""
     if key == "unknown":
         print(BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE.format(
+            branch=f"branch {name} in {working_directory}",
             cause=f"git could not tell whether branch {name} in {working_directory} is pushed to origin: {text}"))
         return ""
     return BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION
