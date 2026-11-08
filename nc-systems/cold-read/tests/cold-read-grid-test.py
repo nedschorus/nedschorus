@@ -685,8 +685,12 @@ with tempfile.TemporaryDirectory() as scratch:
 
     repository = build_scratch_repository(scratch, "checkout-target-moves-mid-run")
     slow_stubs = scratch / "stub-bin-target-moves-mid-run"
+    # A temporary directory of the case's own, so another run's answer directories cannot be counted here.
+    cells_temporary_directory = scratch / "temporary-directory-target-moves-mid-run"
+    cells_temporary_directory.mkdir()
     started = time.monotonic()
     result = run_grid(repository, slow_stubs, {
+        "TMPDIR": str(cells_temporary_directory),
         "COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": "120",
         "COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT": "codex-hunt-second-strongest-model",
         "COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET": "1"})
@@ -738,6 +742,9 @@ with tempfile.TemporaryDirectory() as scratch:
     check("no stopped reviewer or its launcher is left running",
           processes_mentioning(str(slow_stubs), str(repository)) == [],
           processes_mentioning(str(slow_stubs), str(repository)))
+    check("a stopped terminology cell removes its answer directory",
+          sorted(path.name for path in cells_temporary_directory.glob("cold-read-answer-*")) == [],
+          sorted(path.name for path in cells_temporary_directory.glob("cold-read-answer-*")))
     # A stopped cell never reaches its stray-write check, which runs after the
     # model exits; without a line saying so the run reads as checked and
     # clean (nedschorus#167, and PR 699's review).

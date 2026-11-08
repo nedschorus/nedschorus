@@ -798,11 +798,10 @@ def run_reviewer_program_in_own_process_group_until_timeout(
     """Run `command` in a session of its own and return its result; when it
     runs past `timeout_seconds`, kill its whole process group and return a
     result whose returncode is None. The group is also killed when this
-    process is interrupted or sent SIGTERM while waiting."""
+    process is interrupted while waiting, or sent a SIGTERM that run_cell turns into SystemExit."""
     # The reviewer's own session puts it outside the group the grid stops, so
-    # SIGTERM must reach the except BaseException handler below that stops
-    # the reviewer's group.
-    signal.signal(signal.SIGTERM, exit_on_sigterm)
+    # the SIGTERM that run_cell turns into SystemExit must reach the except
+    # BaseException handler below that stops the reviewer's group.
     process = subprocess.Popen(
         command,
         # communicate closes stdin after writing stdin_text, or at once when it is None.
@@ -984,6 +983,9 @@ def run_cell(
 ) -> int:
     # Include failed attempts in the cell's total cost.
     cell_started_at = time.time()
+    # The grid stops a cell with SIGTERM, which by default ends the process before the
+    # finally below removes the answer and staging directories.
+    signal.signal(signal.SIGTERM, exit_on_sigterm)
     parser = build_argument_parser(
         description, model_help, tier_choices=tuple(tier_to_model_chain))
     args = parser.parse_args()
