@@ -922,9 +922,8 @@ def cause_of_failed_attempt(attempt: CellAttempt, exit_code, log_lines: list) ->
                    if cell_status_line(line, cell_common.CAUSE_PHRASE)]
     if cause_lines:
         text = cause_lines[-1].split(f": {cell_common.CAUSE_PHRASE} ", 1)[1]
-        # strip() removes the trailing space from an empty-detail cause line.
-        cause_class, _, detail = text.partition(cell_common.CAUSE_SEPARATOR.rstrip())
-        return cause_class, detail.strip()
+        cause_class, _, detail = text.partition(cell_common.CAUSE_SEPARATOR)
+        return cause_class, detail
     if exit_code == 0:
         return "no-report", "no report written"
     non_empty = [line.strip() for line in log_lines if line.strip()]

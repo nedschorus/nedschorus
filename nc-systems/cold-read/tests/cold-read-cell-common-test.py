@@ -875,6 +875,13 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a line starting \"You've hit your \" whose next words do not end in limit is exit-N",
           classify(stdout="You've hit your limitless quota · resets Nov 7\n")[0] == "exit-1",
           repr(classify(stdout="You've hit your limitless quota · resets Nov 7\n")))
+    check("three words before limit is still account-limit",
+          classify(stdout="You've hit your Opus weekly usage limit · resets Nov 7\n")
+          == ("account-limit", "Opus weekly usage limit · resets Nov 7"),
+          repr(classify(stdout="You've hit your Opus weekly usage limit · resets Nov 7\n")))
+    check("a line whose \"limit\" comes four or more words after \"You've hit your \" is exit-N",
+          classify(stdout="You've hit your stride and now the speed limit\n")[0] == "exit-1",
+          repr(classify(stdout="You've hit your stride and now the speed limit\n")))
     check("the Fable limit line is model-limit for a Fable attempt, the family as detail",
           classify(stdout=PERMISSION_NOISE + FABLE_LIMIT_LINE + "\n") == ("model-limit", "Fable"),
           repr(classify(stdout=PERMISSION_NOISE + FABLE_LIMIT_LINE + "\n")))
