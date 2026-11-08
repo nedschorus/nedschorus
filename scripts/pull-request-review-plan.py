@@ -61,17 +61,14 @@ cold-read-fast-read command, so the program exits 3 after printing the plan.
 A string the collector's kind calls a prompt, text a program hands an agent as
 its instructions, gets one of two labels; a printed message gets neither. The
 cosmetic-change label, with cosmetic_change_needs_no_approval set in --json,
-goes to a changed prompt whose old and new text have the same paragraphs,
-headings, fenced code blocks and list items, each list item with the same
-marker and indent, in the same order; the same words in each once spacing and
-paired Markdown emphasis marks around words are set aside; every inline code
-span and every fenced code block's lines unchanged; and, for an f-string, read
-as the text it builds, the same fields with the same source. A prompt that is an
-f-string on one side only, a text outside an f-string holding a brace, and a text
-whose inline code backticks do not pair up get the needs-approval label. Every other
-prompt gets the needs-approval label, with needs_user_approval set in --json,
-including an added prompt and one the plan lists with no old text, such as a
-prompt moved into another string.
+goes to a changed prompt whose old and new text, as the agent receives it, are
+identical once whitespace at line ends is removed, each run of blank lines
+becomes one, and blank lines at the start or end are dropped; for an f-string,
+each field's source must also match exactly. A prompt that is an f-string on one
+side only gets the needs-approval label. Every other prompt gets the
+needs-approval label, with needs_user_approval set in --json, including an added
+prompt and one the plan lists with no old text, such as a prompt moved into
+another string.
 
 Rule 4: a pull request that adds or changes an nc-architecture-overview, a
 file at the path scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py
@@ -575,88 +572,29 @@ def prompt_text_handed_to_agent(text):
     return True, "".join(pieces), fields
 
 
-# Only a delimiter pair that opens after a space or an opening bracket or quote, and closes before a space, the end,
-# or closing punctuation that a space or the end follows, is emphasis; so __init__.py, /tmp/_scratch, 2 * 3, **kwargs
-# and \*args keep their marks.
-MARKDOWN_EMPHASIS_PAIR = re.compile(
-    r"(?<![^\s(\[\"'])(\*\*|__|\*|_)(?=\S)(.+?)(?<=\S)\1(?=\s|$|[,.;:!?)\]\"']+(?:\s|$))", re.DOTALL)
-INLINE_CODE_BACKTICK_RUN = re.compile(r"`+")
+def prompt_text_lines_without_trailing_whitespace_or_extra_blank_lines(text):
+    lines = []
+    for line in text.split("\n"):
+        line = line.rstrip()
+        if line or (lines and lines[-1]):
+            lines.append(line)
+    while lines and not lines[-1]:
+        lines.pop()
+    return lines
 
 
-def words_without_markdown_emphasis(prose):
-    while True:
-        stripped = MARKDOWN_EMPHASIS_PAIR.sub(r"\2", prose)
-        if stripped == prose:
-            return prose.split()
-        prose = stripped
-
-
-def inline_tokens_or_none(text):
-    """Words outside inline code with emphasis set aside, and each inline code span verbatim; None when a backtick
-    run has no closing run of the same length, since the text's reading is then unclear."""
-    tokens, position = [], 0
-    while True:
-        opening = INLINE_CODE_BACKTICK_RUN.search(text, position)
-        if not opening:
-            return tokens + words_without_markdown_emphasis(text[position:])
-        closing = next((run for run in INLINE_CODE_BACKTICK_RUN.finditer(text, opening.end())
-                        if len(run[0]) == len(opening[0])), None)
-        if closing is None:
-            return None
-        tokens += words_without_markdown_emphasis(text[position:opening.start()])
-        tokens.append(("inline code", text[opening.start():closing.end()]))
-        position = closing.end()
-
-
-def markdown_blocks_for_cosmetic_comparison(text):
-    """Each block in order, as (kind, tokens) for a heading, list item or paragraph, a list item's kind holding its
-    indent and marker, or ("code", lines) for a fenced code block; None when a block's inline code does not balance."""
-    code_line_numbers = fenced_code_block_line_numbers_in_markdown(text)
-    blocks, prose_is_open = [], False
-    for line_number, line in enumerate(text.splitlines(), 1):
-        if line_number in code_line_numbers:
-            if not (blocks and blocks[-1][0] == "code" and line_number - 1 in code_line_numbers):
-                blocks.append(("code", []))
-            blocks[-1][1].append(line)
-            prose_is_open = False
-            continue
-        if not line.strip():
-            prose_is_open = False
-            continue
-        heading = re.match(r"\s*(#{1,6})\s", line)
-        list_marker = None if heading else re.match(r"(\s*)([-*+]|\d+[.)])\s", line)
-        if heading or list_marker or not prose_is_open:
-            kind = (heading[1] if heading else
-                    ("list item", len(list_marker[1].expandtabs(4)), list_marker[2]) if list_marker else "paragraph")
-            blocks.append((kind, []))
-            line = line[(heading or list_marker).end():] if heading or list_marker else line
-        blocks[-1][1].append(line)
-        prose_is_open = not heading
-    compared = []
-    for kind, content in blocks:
-        tokens = content if kind == "code" else inline_tokens_or_none("\n".join(content))
-        if tokens is None:
-            return None
-        compared.append((kind, tokens))
-    return compared
-
-
-def prompt_texts_differ_only_in_spacing_or_markdown_emphasis(old_text, new_text):
+def prompt_texts_differ_only_in_trailing_whitespace_or_blank_lines(old_text, new_text):
     old_is_f_string, old_prose, old_fields = prompt_text_handed_to_agent(old_text)
     new_is_f_string, new_prose, new_fields = prompt_text_handed_to_agent(new_text)
     if old_is_f_string != new_is_f_string or old_fields != new_fields:
         return False
-    # Outside an f-string's source, the collector writes a field of a joined string as {source}, which reads the same
-    # as literal braces, so a change to such a text is never taken as cosmetic.
-    if not old_is_f_string and "{" in old_prose + new_prose and old_prose != new_prose:
-        return False
-    old_blocks = markdown_blocks_for_cosmetic_comparison(old_prose)
-    return old_blocks is not None and old_blocks == markdown_blocks_for_cosmetic_comparison(new_prose)
+    return (prompt_text_lines_without_trailing_whitespace_or_extra_blank_lines(old_prose)
+            == prompt_text_lines_without_trailing_whitespace_or_extra_blank_lines(new_prose))
 
 
 def approval_fields_for_agent_text(kind, old_text, new_text):
     cosmetic = (kind == "prompt" and old_text is not None
-                and prompt_texts_differ_only_in_spacing_or_markdown_emphasis(old_text, new_text))
+                and prompt_texts_differ_only_in_trailing_whitespace_or_blank_lines(old_text, new_text))
     return {"needs_user_approval": kind == "prompt" and not cosmetic, "cosmetic_change_needs_no_approval": cosmetic}
 
 
@@ -1142,7 +1080,7 @@ def changed_lines_for_agent_text_entry(entry):
 
 
 PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE = "needs the user's approval unless it is a cosmetic-change, as `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` defines one: this is a prompt, text the program hands an agent as its instructions"
-PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE = "cosmetic-change, needs no approval: only this prompt's spacing or Markdown emphasis changed"
+PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE = "cosmetic-change, needs no approval: this prompt changed only in whitespace at line ends or in the number of blank lines between its paragraphs"
 
 
 def approval_label_for_agent_text_entry(entry):

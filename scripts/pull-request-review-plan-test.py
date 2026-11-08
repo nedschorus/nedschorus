@@ -251,20 +251,18 @@ def run_unit_cases():
     check("normalized AST preserves behaviour and f-string expressions",
           review_plan_module.normalized_syntax_tree_dump_without_strings(old_source)
           != review_plan_module.normalized_syntax_tree_dump_without_strings(old_source.replace("{x}", "{x + 1}")))
-    prompt_before = ("# Task\n\nRead the **whole** file, then\nreport `_private_name` and each_name.\n\n"
-                     "- first step\n- second step\n\n```sh\nls  -l\n```\n")
+    prompt_before = "# Task\n\nRead the whole file, then\nreport each name.\n\n- first step\n- second step\n"
+    compare = review_plan_module.prompt_texts_differ_only_in_trailing_whitespace_or_blank_lines
     cosmetic_cases = [
-        ("a moved line break and wider spacing", prompt_before.replace("file, then\nreport", "file,  then report"), True),
-        ("dropped bold marks and added italic marks", prompt_before.replace("**whole**", "whole").replace("first step", "_first_ step"), True),
-        ("an f-string's moved line break, read from its source", None, True),
+        ("trailing spaces and tabs added", prompt_before.replace("then\n", "then  \t\n").replace("step\n", "step \n"), True),
+        ("extra blank lines between paragraphs", prompt_before.replace("# Task\n\n", "# Task\n\n\n\n"), True),
+        ("a blank line holding only spaces", prompt_before.replace("# Task\n\n", "# Task\n   \n"), True),
+        ("blank lines added at the start and the end", "\n\n" + prompt_before + "\n\n", True),
+        ("an f-string with trailing spaces added, read from its source", None, True),
+        ("a moved line break", prompt_before.replace("then\nreport", "then report"), False),
+        ("dropped emphasis marks", prompt_before.replace("whole", "**whole**"), False),
+        ("a paragraph split by a blank line", prompt_before.replace("then\nreport", "then\n\nreport"), False),
         ("a changed word", prompt_before.replace("second step", "next step"), False),
-        ("a changed code block, spacing included", prompt_before.replace("ls  -l", "ls -l"), False),
-        ("swapped list items", prompt_before.replace("- first step\n- second step", "- second step\n- first step"), False),
-        ("a paragraph split by a blank line", prompt_before.replace("file, then\nreport", "file, then\n\nreport"), False),
-        ("a list item turned into a paragraph", prompt_before.replace("- second step", "second step"), False),
-        ("a changed heading level", prompt_before.replace("# Task", "## Task"), False),
-        ("an underscore removed inside inline code", prompt_before.replace("`_private_name`", "`private_name`"), False),
-        ("an underscore removed inside a word", prompt_before.replace("each_name", "eachname"), False),
     ]
     reviewed_pairs_that_are_not_cosmetic = [
         ("Edit _private_helper only.", "Edit private_helper only."),
@@ -284,20 +282,35 @@ def run_unit_cases():
         ("Hello {name}", "f'Hello {name}'"),
         ("Use {x} here.", "Use  {x}  here."),
         ("f\"Report {len('a b')}\"", "f\"Report {len('a  b')}\""),
+        ("Delete every __pycache__ directory first.", "Delete every pycache directory first."),
+        ("Call __init__ first.", "Call init first."),
+        ("Edit __main__.", "Edit main."),
+        ("f'Delete __pycache__ in {d}.'", "f'Delete pycache in {d}.'"),
+        ("Remove *tmp* files.", "Remove tmp files."),
+        ("Delete `build`/old now.", "Delete `build` /old now."),
+        ("Run `make`test now.", "Run `make` test now."),
+        ("Run x`a`.", "Run x `a`."),
+        ("Text\n---", "Text ---"),
+        ("Text\n===\nmore", "Text === more"),
+        ("a\n> quote", "a > quote"),
+        ("| a | b |\n|---|---|", "| a | b | |---|---|"),
+        ("a\n\n    code  x", "a\n\n    code x"),
     ]
+    check("a prompt text that is not Python source is read as plain text with no fields",
+          review_plan_module.prompt_text_handed_to_agent("Read the file now.") == (False, "Read the file now.", ()))
+    check("a prompt text that parses as Python but is not an f-string is read as plain text with no fields",
+          review_plan_module.prompt_text_handed_to_agent("report") == (False, "report", ()))
+    check("an f-string prompt is read as the text it builds, with each field's source",
+          review_plan_module.prompt_text_handed_to_agent("f'Read {path}\\nnow.'")
+          == (True, "Read " + review_plan_module.F_STRING_FIELD_STAND_IN.format(index=0) + "\nnow.", ("{path}",)))
     for before, after in reviewed_pairs_that_are_not_cosmetic:
-        check(f"prompt comparison: {before!r} to {after!r} is not a cosmetic-change",
-              review_plan_module.prompt_texts_differ_only_in_spacing_or_markdown_emphasis(before, after) is False)
-    check("prompt comparison: emphasis closing before a comma, and nested bold italic, are cosmetic",
-          review_plan_module.prompt_texts_differ_only_in_spacing_or_markdown_emphasis(
-              "Do *this*, then ***that*** now.", "Do this, then that now."))
+        check(f"prompt comparison: {before!r} to {after!r} is not a cosmetic-change", compare(before, after) is False)
     for name, prompt_after, expected in cosmetic_cases:
         before, after = prompt_before, prompt_after
         if prompt_after is None:
-            before, after = "f'Read {path!r}\\nthen report.'", "f'Read {path!r} then\\nreport.'"
+            before, after = "f'Read {path!r}\\nthen report.'", "f'Read {path!r}  \\nthen report.'"
         check(f"prompt comparison: {name} is {'a cosmetic-change' if expected else 'not a cosmetic-change'}",
-              review_plan_module.prompt_texts_differ_only_in_spacing_or_markdown_emphasis(before, after) is expected,
-              (before, after))
+              compare(before, after) is expected, (before, after))
     check("hunk parser handles omitted counts and zero-line sides",
           review_plan_module.parse_diff_hunk_line_ranges("@@ -1 +2 @@\n-x\n+y\n@@ -3,0 +4,2 @@ context\n@@ -9,3 +8,0 @@\n")
           == [(1, 1, 2, 1), (3, 0, 4, 2), (9, 3, 8, 0)])
@@ -696,8 +709,9 @@ def run_agent_text_cases(fixture):
     prompt_program_before = ('def compose(path):\n    prompt = f"# Task\\n\\nRead the **whole** file {path},\\nthen report.'
                              '\\n\\n```sh\\nls  -l\\n```\\n"\n    return prompt\n')
     for name, prompt_program_after, expected_cosmetic in [
-            ("a prompt whose only change is a moved line break", prompt_program_before.replace(",\\nthen", ", then\\n"), True),
-            ("a prompt whose only change is dropped bold marks", prompt_program_before.replace("**whole**", "whole"), True),
+            ("a prompt whose only change is trailing spaces", prompt_program_before.replace(",\\nthen", ",  \\nthen"), True),
+            ("a prompt whose only change is an extra blank line", prompt_program_before.replace("# Task\\n\\n", "# Task\\n\\n\\n"), True),
+            ("a prompt whose only change is dropped bold marks", prompt_program_before.replace("**whole**", "whole"), False),
             ("a prompt with a changed word", prompt_program_before.replace("then report", "then summarize"), False),
             ("a prompt with a changed code block", prompt_program_before.replace("ls  -l", "ls -la"), False)]:
         fixture.reset_fixture_to_base()
