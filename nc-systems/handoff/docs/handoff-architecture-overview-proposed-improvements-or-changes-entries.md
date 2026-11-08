@@ -105,3 +105,25 @@ Goes wrong when: a reader takes the assertion as exact.
 The claim check's evidence:
 > A writer is missing: the Stop hook checkout-freshness-catch-up.py also fast-forwards the reference-checkout at each turn end. See checkout-freshness-catch-up.py:1779-1781 `reference = reference_checkout_of(root)` / `fast_forward_reference_checkout(reference, ...`, and :1567-1573 `operator_facing=False is the Stop hook ... This function runs at every turn end`. It is registered at .claude/settings.json:72. So the checkout can move under a running handoff-supervisor between session-handoffs. The listed writers hold: launch-claude-ubuntu:327, launch-claude-mac:280, handoff-supervisor.py:2215, restart program:19.
 State: open
+
+## E13 — possible problem: an assertion of the overview is contradicted
+
+Claim: `<session>-handoff-asked` and `<session>-handoff-deferred` are read by the threshold hook and by `scripts/agent-seat-due-task-raise-hook.py`.
+Found by: the overview claim check of 2026-11-08 against commit 10e18749c1f0845cb6ca1552068728dbf8d5d56e; its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/83cab4082b64cb25a57a0892626dc5f2d9d48ffa-2026-11-08T00-33-58-763065Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> - A third program reads the deferral marker: scripts/agent-seat-idle-sweep-verdicts-print.py:82 `HANDOFF_DEFERRED_SUFFIX = "-handoff-deferred"` and :531-533 `marker = paths.handoff_directory / f"{session_id}{HANDOFF_DEFERRED_SUFFIX}" ... marker.stat().st_mtime`.
+> - The list of readers is incomplete. No agent opens a wrong file because of it.
+State: open
+
+## E14 — possible problem: an assertion of the overview is contradicted
+
+Claim: `<seat>-leftovers-prompt-listing-counts.json` is written and read by `handoff-supervisor.py` at each launch, keeping only the entries listed that time.
+Found by: the overview claim check of 2026-11-08 against commit 10e18749c1f0845cb6ca1552068728dbf8d5d56e; its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/83cab4082b64cb25a57a0892626dc5f2d9d48ffa-2026-11-08T00-33-58-763065Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> - The counts file is not touched at a launch that lists no leftovers: handoff-supervisor.py:1618-1620 `leftovers = "\n\n".join(part for part in leftover_parts if part)` / `if not leftovers:` / `return prompt`.
+> - So the entries from an earlier launch stay in the file. "At each launch" is loose; no agent acts wrongly on it.
+State: open
