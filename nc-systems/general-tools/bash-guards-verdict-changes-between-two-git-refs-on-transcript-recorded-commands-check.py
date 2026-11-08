@@ -15,7 +15,7 @@ Steps:
   1. Collect the distinct (command, working directory) pairs of every Bash tool call in the
      transcripts of both machines (--transcript-directory, repeatable), or read them from
      --pairs-file.
-  2. Make a commit holding the head merged with the base: this check makes it, so pass the pull request's
+  2. This check makes a commit holding the head merged with the base, so pass the pull request's
      own head as --head-ref, not a commit already merged with the base. Check out the base and that commit,
      each as a detached worktree in the scratch directory; a merge that conflicts fails the replay. From
      here on, the head is that merged commit. Check that the
@@ -882,6 +882,8 @@ def head_merged_with_base_commit_make_or_raise_on_conflict(repository, base_comm
     this_check = f"python3 {this_file.relative_to(this_file.parents[2])}"
     if completed.returncode == 1:
         conflicted = [name for name in completed.stdout.split("\0")[1:] if name]
+        # Agent-seat launchers set git's author name to the agent-seat, so the head's author is the one to tell.
+        head_author = run_git(repository, "log", "-1", "--format=%an", head_commit)
         raise ReplayFailed(
             f"the head {head_commit} does not merge cleanly with the base {base_commit}, so no guard was replayed: "
             f"this check replays the head merged with the base, which is what the pull request's merge puts on the "
@@ -892,7 +894,8 @@ def head_merged_with_base_commit_make_or_raise_on_conflict(repository, base_comm
             f"this check, {this_check}, from the repository's top directory again with the same options, but with "
             "--head-ref set to the head of the pull request that report's steps leave open: this pull request's "
             "new head, or, when the report had you replace this pull request, the head of the new one.\n"
-            "When you are not the author, such as merge-lane-2: send the author, with SendMessage, the head, the "
+            f"When you are not the author, such as merge-lane-2: send the author, the agent-seat {head_author} that "
+            "the head's commit names as its author, with SendMessage, the head, the "
             "base and the conflicted files above, and ask the author to run python3 scripts/branch-conflict-check.py "
             "in the pull request's checkout and do what its report says; the pull request cannot merge while its "
             "head conflicts with the base.")
@@ -900,9 +903,9 @@ def head_merged_with_base_commit_make_or_raise_on_conflict(repository, base_comm
         reason = completed.stderr.strip() or "git printed no reason"
         if "refusing to merge unrelated histories" in reason:
             next_step = (
-                f"Run this check, {this_check}, from the repository's top directory again with --base-ref and "
-                "--head-ref naming commits that share history, such as origin/main and the pull request's head "
-                "commit.")
+                f"Run this check, {this_check}, from the repository's top directory again, keeping every other "
+                "option you gave it, with --base-ref and --head-ref naming commits that share history, such as origin/main and the pull request's head "
+                "commit. Two commits share history when git merge-base, given the two, prints a commit.")
         else:
             next_step = (
                 f"Run this check, {this_check}, from the repository's top directory again once, with every option "

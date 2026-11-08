@@ -898,8 +898,10 @@ try:
     conflicting_base = commit_with_guard_changed(TMUX_KILL_GUARD, "# the base's last line", scratch)
     conflicting_head = commit_with_guard_changed(TMUX_KILL_GUARD, "# the head's last line", scratch)
     status, out, err = run_replay(conflicting_head, scratch, base_ref=conflicting_base, head_cut_from_base=False)
-    check("a head that does not merge cleanly with the base: exit 2, naming the conflicted file",
+    check("a head that does not merge cleanly with the base: exit 2, naming the conflicted file and the head's "
+          "author as the agent-seat to tell",
           status == 2 and "does not merge cleanly with the base" in err and f"in: ['{TMUX_KILL_GUARD}']" in err
+          and "send the author, the agent-seat replay test that the head's commit names" in err
           and "VERDICT" not in out, f"status {status}\n{out}\n{err}")
 
     unrelated_head = git("-c", "user.name=replay test", "-c", "user.email=replay@test.invalid", "commit-tree",
