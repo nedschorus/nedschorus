@@ -299,13 +299,28 @@ def claude_code_subagent_worktree_lock_reason_parse(lock_reason):
 
 
 def claude_code_subagent_worktree_lock_dispatching_process_running_state(lock, proc_root="/proc",
-                                                                         platform=sys.platform):
+                                                                         platform=sys.platform,
+                                                                         process_exists=None):
     """Return (state, explanation): whether the `claude` process the lock names, the process with
-    its id that started at its start, runs. UNKNOWN off Linux, where the start is not read."""
-    if not platform.startswith("linux"):
-        return UNKNOWN, (f"whether claude process {lock.process_id} runs is read only on Linux, "
-                         f"where the lock's start is the process's start in clock ticks")
+    its id that started at its start, runs. On macOS the lock's start is not compared, so the
+    state is STOPPED when no process has the lock's id and UNKNOWN when one has; UNKNOWN on any
+    other platform but Linux."""
     snapshots = load_uncommitted_work_snapshots_module_once()
+    if platform == "darwin":
+        try:
+            exists = (process_exists or snapshots.process_exists_or_raise)(lock.process_id)
+        except OSError as error:
+            return UNKNOWN, (f"whether claude process {lock.process_id} runs could not be read: "
+                             f"{type(error).__name__}: {error}")
+        if exists:
+            return UNKNOWN, (f"a process with the id {lock.process_id} of the claude process "
+                             f"Claude Code's lock names runs, and on macOS whether it is that "
+                             f"claude process is not read")
+        return STOPPED, (f"Claude Code's lock names claude process {lock.process_id}, and no "
+                         f"process has that id, so it has ended")
+    if not platform.startswith("linux"):
+        return UNKNOWN, (f"whether claude process {lock.process_id} runs is read only on Linux "
+                         f"and macOS")
     try:
         started = snapshots.linux_start_ticks(lock.process_id, proc_root)
     except (FileNotFoundError, ProcessLookupError):
@@ -320,10 +335,15 @@ def claude_code_subagent_worktree_lock_dispatching_process_running_state(lock, p
                      f"{lock.start_ticks}, which has ended")
 
 
-def claude_code_subagent_worktree_lock_ended_agent_session_owner_key(lock, proc_root="/proc"):
-    """The owner key of the ended agent-session a Linux lock names, as
-    nc-systems/handoff/uncommitted-work-snapshots.py writes one; after a reboot the boot id
-    differs from the process's, and the key still reads as stopped."""
+def claude_code_subagent_worktree_lock_ended_agent_session_owner_key(lock, proc_root="/proc",
+                                                                   platform=sys.platform):
+    """The owner key of the ended agent-session a lock names, in the form
+    nc-systems/handoff/uncommitted-work-snapshots.py writes for the platform; after a reboot the
+    Linux boot id differs from the process's, and the key still reads as stopped. On macOS the
+    key holds the lock's start, which no later process with that id matches, so it reads as
+    stopped too."""
+    if platform == "darwin":
+        return f"{lock.process_id}-{lock.start_ticks}"
     snapshots = load_uncommitted_work_snapshots_module_once()
     return f"{snapshots.linux_boot_id(proc_root)}-{lock.process_id}-{lock.start_ticks}"
 

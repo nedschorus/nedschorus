@@ -172,9 +172,10 @@ with tempfile.TemporaryDirectory() as scratch:
     (fake_proc / "42" / "stat").write_text("42 (claude) S 1\n")
     (fake_proc / "43" / "stat").mkdir(parents=True)
 
-    def lock_state(process_id, start, platform="linux"):
+    def lock_state(process_id, start, platform="linux", process_exists=None):
         return module.claude_code_subagent_worktree_lock_dispatching_process_running_state(
-            module.ClaudeCodeSubagentWorktreeLock("a1", process_id, start), fake_proc, platform)
+            module.ClaudeCodeSubagentWorktreeLock("a1", process_id, start), fake_proc, platform,
+            process_exists)
 
     state, _ = lock_state(41, "22")
     check("a lock whose process runs with the lock's start is running", state == module.RUNNING, state)
@@ -189,12 +190,28 @@ with tempfile.TemporaryDirectory() as scratch:
     state, explanation = lock_state(43, "22")
     check("a lock whose process's stat cannot be read is unknown, never ended",
           state == module.UNKNOWN and "could not be read" in explanation, explanation)
-    state, explanation = lock_state(41, "22", platform="darwin")
-    check("a lock off Linux is unknown, since its start is read only on Linux",
-          state == module.UNKNOWN and "only on Linux" in explanation, explanation)
+    state, explanation = lock_state(41, "22", platform="darwin", process_exists=lambda pid: False)
+    check("a macOS lock whose process id no process has has ended",
+          state == module.STOPPED and "has ended" in explanation, explanation)
+    state, explanation = lock_state(41, "22", platform="darwin", process_exists=lambda pid: True)
+    check("a macOS lock whose process id a process has is unknown, never running or ended",
+          state == module.UNKNOWN and "not read" in explanation, explanation)
+
+    def process_check_fails(pid):
+        raise OSError("signal check failed")
+
+    state, explanation = lock_state(41, "22", platform="darwin", process_exists=process_check_fails)
+    check("a macOS lock whose process cannot be checked is unknown, never ended",
+          state == module.UNKNOWN and "could not be read" in explanation, explanation)
+    state, explanation = lock_state(41, "22", platform="win32", process_exists=lambda pid: False)
+    check("a lock on neither Linux nor macOS is unknown",
+          state == module.UNKNOWN and "only on Linux and macOS" in explanation, explanation)
     check("the ended agent-session's owner key is this boot's id, the lock's process and its start",
           module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key(
-              module.ClaudeCodeSubagentWorktreeLock("a1", 7, "8"), fake_proc) == "abcd-7-8")
+              module.ClaudeCodeSubagentWorktreeLock("a1", 7, "8"), fake_proc, "linux") == "abcd-7-8")
+    check("on macOS the ended agent-session's owner key is the lock's process and its start",
+          module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key(
+              module.ClaudeCodeSubagentWorktreeLock("a1", 7, "8"), fake_proc, "darwin") == "7-8")
 
     agents_root = scratch / "agents"
     seat_handoffs = scratch / "seat-handoffs"

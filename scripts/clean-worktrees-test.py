@@ -2467,7 +2467,7 @@ with tempfile.TemporaryDirectory() as scratch:
         review_occupant.wait()
 
 # --- Claude Code's lock exception: a lock whose claude process has ended is unlocked ---
-# Linux only: off Linux the lock's start is not read, so the lock keeps the worktree.
+# Linux only: the case reads its ended process's start and the boot id from /proc.
 if sys.platform.startswith("linux"):
     with tempfile.TemporaryDirectory() as scratch:
         scratch = Path(scratch).resolve()
