@@ -389,7 +389,8 @@ def run_carry_on_and_job_failure_task_cases():
               and len(tasks) == 1 and "Traceback" in tasks[0]["description"],
               f"rc={completed.returncode} record={record} err={completed.stderr}")
 
-    # A merge still untested three days after its merge commit gets a task of its own.
+    # Merges still untested three days after their merge commits share one task, whose
+    # description each run rewrites with the count and the oldest.
     with tempfile.TemporaryDirectory() as scratch:
         fixture = Fixture(scratch)
         fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
@@ -408,13 +409,35 @@ def run_carry_on_and_job_failure_task_cases():
         three_days_old = git(fixture.work, "rev-parse", "HEAD")
         completed = fixture.run({old: {"sleep": 30, "judged_in_kept_session": 1}},
                                 timeout_seconds=2)
-        subjects = [task["subject"] for task in job_failure_tasks(fixture)]
-        check("a merge waiting behind a carried-on one three days after its merge commit gets a "
-              "task; a newer one does not",
+        tasks = job_failure_tasks(fixture)
+        warnings = [task for task in tasks if task["subject"]
+                    == job.MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT]
+        check("a merge waiting behind a carried-on one three days after its merge commit gets "
+              "the one untested-merges task, naming it as the oldest of 1; a newer one does not",
               completed.returncode == job.EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN
-              and subjects == [(f"Nightly full mutation pass: merge {three_days_old[:12]} "
-                                f"still untested three days after it merged")],
-              f"rc={completed.returncode} subjects={subjects} err={completed.stderr}")
+              and len(warnings) == 1
+              and warnings[0]["description"].startswith("1 merge(s) into main")
+              and f"The oldest is merge {three_days_old}," in warnings[0]["description"],
+              f"rc={completed.returncode} tasks={tasks} err={completed.stderr}")
+        (fixture.work / "scripts" / "third.py").write_text("VALUE = 3\n")
+        git(fixture.work, "add", "-A")
+        subprocess.run(["git", "-C", str(fixture.work), "commit", "-q", "-m", "older too"],
+                       env={**os.environ, "GIT_COMMITTER_DATE": f"{days_ago + 1} +0000",
+                            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+                            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"},
+                       check=True)
+        git(fixture.work, "push", "-q", "origin", "HEAD:main")
+        completed = fixture.run({old: {"sleep": 30, "judged_in_kept_session": 1}},
+                                timeout_seconds=2)
+        tasks = job_failure_tasks(fixture)
+        warnings = [task for task in tasks if task["subject"]
+                    == job.MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT]
+        check("a second three-day-old merge opens no second task: the one open task's "
+              "description now counts 2, the oldest unchanged",
+              len(warnings) == 1
+              and warnings[0]["description"].startswith("2 merge(s) into main")
+              and f"The oldest is merge {three_days_old}," in warnings[0]["description"],
+              f"rc={completed.returncode} tasks={tasks} err={completed.stderr}")
         # With the task list gone, neither of this run's two tasks can be opened.
         for path in (fixture.tasks / f"nedschorus-{job.JOB_FAILURE_TASK_AGENT_SEAT}-tasks").iterdir():
             path.unlink()

@@ -1057,6 +1057,7 @@ class WorkDB:
 """,
     "mutating.py": """
 import os, sys
+import time
 from cosmic_ray.work_item import TestOutcome, WorkerOutcome, WorkResult
 def mutate_and_test(mutations, test_command, timeout):
     operator = mutations[0].operator_name
@@ -1066,6 +1067,8 @@ def mutate_and_test(mutations, test_command, timeout):
         sys.exit(3)
     if operator == "worker-prints-no-json":
         print("not JSON")
+    if operator == "slow":
+        time.sleep(2)
     return WorkResult(worker_outcome=WorkerOutcome.NORMAL,
                       output=f"{os.getcwd()} {test_command} {timeout}",
                       test_outcome=TestOutcome.KILLED, diff=f"diff of {operator}")
@@ -1116,6 +1119,17 @@ def run_parallel_mutant_workers_cases_with_fake_cosmic_ray_package():
                       and output.endswith(" run the suites 12.5") for output in outputs)
               and session["results"]["job-1"]["diff"] == "diff of second",
               f"rc={completed.returncode} err={completed.stderr} session={session}")
+    # Two mutants that each take two seconds, and two workers: each worker takes one before
+    # either finishes, so each must have run in a worktree of its own.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, session, worktrees = run_parallel_mutant_workers_with_fake_cosmic_ray_package(
+            scratch_name, ["slow", "slow"], ["one", "two"])
+        ran_in = sorted(str(Path(result["output"].split(" ")[0]).resolve())
+                        for result in session["results"].values())
+        check("mutants given to different workers run in different worktrees, one per worker",
+              completed.returncode == 0
+              and ran_in == sorted(str(worktree.resolve()) for worktree in worktrees),
+              f"rc={completed.returncode} err={completed.stderr} ran_in={ran_in}")
     for case_name, operators, worktree_names, wanted in [
         ("a worker that exits nonzero", ["first", "worker-exits-3"], ["one", "two"],
          "work item job-1: the worker exited 3; its last line on standard error: last line"),

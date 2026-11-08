@@ -153,13 +153,17 @@ JOB FAILURE TASKS. The run opens a task on the task list of the agent-seat
 JOB_FAILURE_TASK_AGENT_SEAT names, saying what failed and what to do, for each
 failure of the run itself: a step that failed, as above; a merge carried on
 with no mutant judged beyond those its kept sessions held before the run; and
-each merge still not recorded as tested
+any merge still not recorded as tested
 MERGE_STILL_UNTESTED_TASK_OPENED_AFTER_SECONDS_SINCE_MERGE, three days, after
 its merge commit, the sign that the pass no longer keeps up and that the lines
-it mutates must be chosen. Each such task's subject names the failure, the
-first line of a failed step's message or the merge; while a task with the
-same subject is open on that list, no second one is opened, and the record
-names the open one. No task is completed by this program: the agent-seat
+it mutates must be chosen. A failed step's task has the first line of its
+message as its subject, and a carried-on merge's task names the merge. The
+untested merges share one task, with the fixed subject
+MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT, whose
+description gives their count and the oldest; each run rewrites the
+description of that task while it is open. While a task with the same
+subject is open on that list, no second one is opened, and the record names
+the open one. No task is completed by this program: the agent-seat
 completes it once the cause is fixed. A task that cannot be opened is named
 in the record and on standard error, and the run exits EXIT_STEP_FAILED.
 
@@ -261,6 +265,8 @@ COSMIC_RAY_SESSION_JUDGED_MUTANTS_QUERY = (
     "SELECT COUNT(*) FROM work_results WHERE worker_outcome != 'SKIPPED'")
 JOB_FAILURE_TASK_AGENT_SEAT = "fleet-restart-at-login"
 MERGE_STILL_UNTESTED_TASK_OPENED_AFTER_SECONDS_SINCE_MERGE = 3 * 24 * 3600
+MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT = (
+    "Nightly full mutation pass: merges still untested three days after they merged")
 DEFAULT_SURVIVOR_TASK_RECORDED_MUTANT_KILLED_CHECK_TIMEOUT_SECONDS = 2 * 3600
 RECORDED_MUTANT_KILLED_CHECK_FLAG = "--recorded-mutant-killed-check"
 SURVIVOR_TASK_SUBJECT_PLACE = re.compile(r"Surviving mutants? in (\S+:[0-9]+): ")
@@ -637,10 +643,12 @@ def mutation_testing_hand_run_command(arguments, merge, parent):
             f"{shlex.quote(str(arguments.cosmic_ray_venv))}")
 
 
-def job_failure_task_opened_unless_open(subject, description, arguments):
+def job_failure_task_opened_unless_open(subject, description, arguments,
+                                        open_task_description_rewritten=False):
     """Open a task with this subject on JOB_FAILURE_TASK_AGENT_SEAT's task list, unless a task
-    there not marked completed has the same subject. Return (its id, True when opened now).
-    Raises OSError."""
+    there not marked completed has the same subject; with open_task_description_rewritten,
+    that open task's description is replaced by this one. Return (its id, True when opened
+    now). Raises OSError."""
     list_directory = (arguments.task_lists_directory
                       / f"nedschorus-{JOB_FAILURE_TASK_AGENT_SEAT}-tasks")
     if list_directory.is_dir():
@@ -650,6 +658,8 @@ def job_failure_task_opened_unless_open(subject, description, arguments):
             task = task_file_read(path)
             if task is not None and task.get("status") != "completed" \
                     and task.get("subject") == subject:
+                if open_task_description_rewritten and task.get("description") != description:
+                    task_file_rewrite(path, {**task, "description": description})
                 return int(path.stem), False
     return agent_seat_task_list_new_pending_task_write(list_directory, subject,
                                                        description), True
@@ -1071,27 +1081,33 @@ def main_under_lock(arguments):
             f"Mark this task completed once a run gets past the step; to check sooner, run it by "
             f"hand on ned-box: {RUN_BY_HAND}")))
     checked_at = time.time()
-    for merge, merged_at in untested_merges_and_times:
-        if checked_at - merged_at < MERGE_STILL_UNTESTED_TASK_OPENED_AFTER_SECONDS_SINCE_MERGE:
-            continue
-        merged = datetime.fromtimestamp(merged_at, timezone.utc).strftime("%Y-%m-%d %H:%M")
+    overdue = [(merge, merged_at) for merge, merged_at in untested_merges_and_times
+               if checked_at - merged_at
+               >= MERGE_STILL_UNTESTED_TASK_OPENED_AFTER_SECONDS_SINCE_MERGE]
+    if overdue:
+        oldest, oldest_merged_at = overdue[0]
+        merged = datetime.fromtimestamp(oldest_merged_at, timezone.utc).strftime(
+            "%Y-%m-%d %H:%M")
         job_failure_tasks.append((
-            (f"Nightly full mutation pass: merge {merge[:12]} still untested three days after "
-             f"it merged"),
-            (f"Merge {merge} into main, made {merged} UTC, is not yet recorded as "
-            f"mutation-tested by the scheduled full mutation pass on ned-box, three days later. "
-            f"The pass tests the merges in order, and goes on testing this one each night, so it "
-            f"no longer keeps up with what is merged.\n"
+            MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT,
+            (f"{len(overdue)} merge(s) into main are not yet recorded as mutation-tested by the "
+            f"scheduled full mutation pass on ned-box three days or more after they merged, as "
+            f"of its run of {started.strftime('%Y-%m-%d %H:%M')} UTC. The oldest is merge "
+            f"{oldest}, made {merged} UTC. The pass tests the merges in order, so it no longer "
+            f"keeps up with what is merged. Each night's run rewrites this description with "
+            f"that night's count and oldest merge.\n"
             f"Its latest record: {record_citation}\n"
             f"Choose which changed lines matter most to mutation-test: bring the user an "
             f"approval-walk item proposing how the pass should choose them, since until then it "
             f"tests every changed line of every merge, in order.\n"
-            f"Mark this task completed once the user has ruled on that, or once the merge is "
-            f"recorded as tested.")))
+            f"Mark this task completed once the user has ruled on that, or once no merge is "
+            f"three days untested."),
+            True))
     tasks_not_written = []
-    for subject, description in job_failure_tasks:
+    for subject, description, *rewritten in job_failure_tasks:
         try:
-            task_id, opened = job_failure_task_opened_unless_open(subject, description, arguments)
+            task_id, opened = job_failure_task_opened_unless_open(
+                subject, description, arguments, *rewritten)
         except OSError as error:
             tasks_not_written.append(
                 f"{subject} ({type(error).__name__}: {error})")
