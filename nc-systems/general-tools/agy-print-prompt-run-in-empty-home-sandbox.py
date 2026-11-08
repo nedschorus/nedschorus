@@ -7,12 +7,12 @@ Usage:
 MODEL is a model name agy accepts, such as gemini-3.8-flash-medium.
 
 Runs `agy --model MODEL --output-format text --print PROMPT` with stdin closed,
-without --dangerously-skip-permissions, and passes agy's stdout, stderr and
-exit code through. bwrap or sandbox-exec, the sandbox program, runs agy and
-passes agy's exit code on; whenever the code that reaches this program is
-nonzero, whether agy or the sandbox program set it, this program adds one line
-of its own to stderr, after agy's or the sandbox program's own messages. GEMINI_API_KEY is removed from agy's environment, because a
-key is billed per call and agy's own Google login, in ~/.gemini, is not.
+without --dangerously-skip-permissions, inside bwrap or sandbox-exec, the
+sandbox program, and passes agy's stdout and stderr through. Its exit code is
+listed under "Exit codes" below. Whenever the sandbox program exits nonzero,
+this program adds one line of its own to stderr, after the messages of agy or
+the sandbox program. GEMINI_API_KEY is removed from agy's environment, because
+a key is billed per call and agy's own Google login, in ~/.gemini, is not.
 
 The program's name describes the Linux sandbox; on macOS the home is not
 emptied, as the macOS paragraph below says.
@@ -49,19 +49,20 @@ is only as
 tight as the cold reads' own agy runs. On macOS the working directory is a fresh empty
 temporary directory, removed afterwards.
 
-Exit codes: 2, from argument parsing, on any argument error, such as a
-missing --model or PROMPT or an unknown option;
-1, with a line on stderr, when agy or the sandbox program is not
-on PATH, so nothing was run. Otherwise this program exits with the code
-bwrap or sandbox-exec exited with, which is agy's own code when agy ran,
-and bwrap's or sandbox-exec's own code when that program failed before agy
-started: 1 for bwrap's own errors, such as a bind it cannot make, and for
-sandbox-exec a code of its own choosing, which neither this program nor
-its caller can tell from a code of agy's. So a nonzero code can come from this program, the sandbox
-program or agy, and the same code from more than one of them: a 1 can mean
-a program missing from PATH, a sandbox that could not start, or a failure
-inside agy, and a 2 can come from agy as well as from argument parsing.
-Only stderr tells them apart. Nothing is retried.
+Exit codes, and where each comes from:
+- 2: argument parsing, on any argument error, such as a missing --model or
+  PROMPT or an unknown option. Nothing was run.
+- 1, with a line on stderr: agy or the sandbox program is not on PATH.
+  Nothing was run.
+- any other outcome: the code the sandbox program exited with. That is agy's
+  own code when agy ran. When the sandbox program failed before agy started,
+  it is that program's own code: 1 for bwrap, such as for a bind it cannot
+  make, and a code of sandbox-exec's own choosing on macOS.
+The same code can come from more than one place: a 1 can mean a program
+missing from PATH, a bwrap failure or a failure inside agy, a 2 can come from
+agy as well as from argument parsing, and no code from bwrap or sandbox-exec
+can be told from the same code from agy. Only stderr tells them apart.
+Nothing is retried.
 """
 
 import argparse
