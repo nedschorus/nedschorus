@@ -45,7 +45,8 @@ the replaced pull request's head is still that round's frozen-head and no round 
 round that was answered has its fix commit carried onto the replacing branch, and merge-lane-2's review
 of the replacement, which the brief still needs, grades it. Once this pull request's first round is
 answered, by a fix commit or a round record, that answer covers the carried findings, so its later
-rounds carry none. A carried finding or nit with the same path, line and body as one of this pull
+rounds carry none. For the same reason, when C replaces B and B replaces A, A's findings are not carried
+into C when B's first round was answered, since they were carried into that round. A carried finding or nit with the same path, line and body as one of this pull
 request's own counts once. A #replaces line the reader cannot follow is refused.
 
 Without --check, run in the author's checkout: refuse when the pull request's head has moved past
@@ -360,7 +361,8 @@ def changes_requested_round_count(number, reviewer_login):
 
 
 def replaced_pull_requests(number, url, description):
-    """(number, head) of each pull request this one replaces, oldest first, by the #replaces lines."""
+    """(number, head, numbers it replaces directly) of each pull request this one replaces, oldest first, by the
+    #replaces lines."""
     repository = "/".join(url.split("/")[3:5])
     facts = {number: (url, None, None, description)}
 
@@ -372,20 +374,41 @@ def replaced_pull_requests(number, url, description):
         chain = replaces_reader.replaced_pull_request_chain_numbers_oldest_first(number, repository, read_description)
     except replaces_reader.ReplacedPullRequestChainUnreadable as error:
         raise Refused(str(error)) from None
-    return [(replaced, facts[replaced][1]) for replaced in chain]
+    return [(replaced, facts[replaced][1],
+             replaces_reader.replaced_pull_request_numbers_on_replaces_lines(facts[replaced][3], repository, replaced))
+            for replaced in chain]
 
 
 def unanswered_round_findings_of_replaced_pull_requests(replaced, reviewer_login):
     """The blocking findings and nits of each replaced pull request's latest round that was never answered,
-    each marked with that round's review under "carried_from"."""
-    blocking, nits = [], []
-    for replaced_number, replaced_head in replaced:
+    each marked with that round's review under "carried_from", leaving out the pull requests that a replaced
+    pull request whose first round was answered replaces, directly or through others: that answer covered them."""
+    open_rounds, answered_first_round = {}, []
+    for replaced_number, replaced_head, _replaces in replaced:
         try:
-            anchor, reviews, recorded, _round_number = round_reviews(replaced_number, reviewer_login)
+            anchor, reviews, recorded, round_number = round_reviews(replaced_number, reviewer_login)
         except Refused:
+            # No open round: any changes-requested round it had was answered.
+            if changes_requested_round_count(replaced_number, reviewer_login):
+                answered_first_round.append(replaced_number)
             continue
-        if recorded or anchor.get("commit_id") != replaced_head:
+        if not recorded and anchor.get("commit_id") == replaced_head:
+            open_rounds[replaced_number] = (anchor, reviews)
+        if round_number > 1 or replaced_number not in open_rounds:
+            answered_first_round.append(replaced_number)
+    replaces = {replaced_number: direct for replaced_number, _head, direct in replaced}
+    covered = set()
+    pending = [older for number in answered_first_round for older in replaces[number]]
+    while pending:
+        older = pending.pop()
+        if older not in covered:
+            covered.add(older)
+            pending += replaces.get(older, [])
+    blocking, nits = [], []
+    for replaced_number, _head, _replaces in replaced:
+        if replaced_number not in open_rounds or replaced_number in covered:
             continue
+        anchor, reviews = open_rounds[replaced_number]
         carried = {"carried_from": anchor.get("html_url")}
         blocking += [{**finding, **carried}
                      for finding in blocking_findings(replaced_number, anchor, reviews, reviewer_login)]
@@ -505,7 +528,7 @@ def round_facts(number, reviewer_login):
     nits = nit_findings_of_merge_lane_2_reviews_in_round(number, reviews, reviewer_login)
     replaced = replaced_pull_requests(number, url, description)
     fix_round_number = own_round_number + sum(changes_requested_round_count(replaced_number, reviewer_login)
-                                              for replaced_number, _head in replaced)
+                                              for replaced_number, _head, _replaces in replaced)
     # The answer to this pull request's first round, a fix commit or a round record, answers the carried
     # findings too, so a later round carries none.
     if own_round_number == 1:

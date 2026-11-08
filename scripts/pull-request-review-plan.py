@@ -20,7 +20,9 @@ another round. To it is added, for each pull request this one replaces, by its
 description's #replaces lines followed through replacements of replacements as
 scripts/pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py
 reads them, the number of distinct heads reviewed on that pull request. A
-#replaces line that reader cannot follow is refused. The earlier reviewed head is the head of the most recently
+#replaces line that reader cannot follow is refused. Only this pull request's own
+earlier reviewed heads make a fix round, so a replacement with no reviews of its
+own is reviewed whole even though its round number is above 1. The earlier reviewed head is the head of the most recently
 submitted review on a head other than the current one.
 A fix round is reviewed whole, at the pull request's tier, in three cases, and
 the plan lists every case that holds, not only the first:
