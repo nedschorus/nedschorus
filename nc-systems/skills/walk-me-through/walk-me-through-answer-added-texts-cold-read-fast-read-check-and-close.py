@@ -144,9 +144,12 @@ one line where it can find it, from the run-on lines, from the rest of the
 code block, or, for a mark with no text, from the lines running on right below
 it or else the one fenced block or quotation after the blank lines below it,
 and says how to rerun. A mark in an HTML comment is not refused, since the user
-is not shown it. For each text it looks for a cold-read-record holding a fast read's report and
-a file under target/ that contains the text, whitespace aside, in the
-checkout's cold-read-records/ and in the log-store's. The log-store's
+is not shown it. For each text it looks for a cold-read-record of this walk, one
+whose name starts with the walk's name and a hyphen as every fast read this
+program runs is named, holding a fast read's report and a file under target/
+that contains the text, whitespace aside, in the checkout's cold-read-records/
+and in the log-store's. Other records are not opened: the log-store holds
+thousands, and a text fast-read outside this program is read again. The log-store's
 cold-read-records directory is the path in cold-read-record-ship.py's
 LOG_STORE_RECORDS_DESTINATION, read on ned-box as it is and on the Mac through
 the Mac's mount of ned-box's home. For each text with none, it saves the text to
@@ -1122,14 +1125,23 @@ def squeezed(text):
     return " ".join(text.split())
 
 
-def fast_read_record_holding(text, record_directories):
-    """Return the cold-read-record directory whose fast read read the text, or None."""
+def walk_fast_read_name(walk_name, *parts):
+    """The target name of a fast read this program runs for the walk, which starts its cold-read-record's name;
+    fast_read_record_holding finds the walk's records by the walk_name- prefix this gives."""
+    return "-".join([walk_name, *(file_name_part(str(part)) for part in parts)])
+
+
+def fast_read_record_holding(text, record_directories, walk_name):
+    """Return the walk's cold-read-record directory whose fast read read the text, or None."""
     wanted = squeezed(text)
     record_names = load_module("cold_read_record_names", RECORD_NAMES_FILE)
+    prefix = walk_fast_read_name(walk_name) + "-"
     for directory in record_directories:
         if not directory.is_dir():
             continue
         for record in sorted(directory.iterdir()):
+            if not record.name.startswith(prefix):
+                continue
             report = record_names.cold_read_record_file_path_prefixed_name_else_name_before_prefix(
                 record, record_names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
             if not report.is_file() or not (record / "target").is_dir():
@@ -1569,13 +1581,13 @@ def check(arguments):
     for mark, text in texts:
         counted[mark] += 1
         number = counted[mark]
-        record = fast_read_record_holding(text, record_directories)
+        record = fast_read_record_holding(text, record_directories, walk_name)
         if record is not None:
             already_done += 1
             statuses.append(STATUS_ALREADY_DONE.format(mark=mark, number=number, excerpt=excerpt(text),
                                                        record=record))
             continue
-        name = f"{walk_name}-{file_name_part(item)}-{file_name_part(mark)}-{number}"
+        name = walk_fast_read_name(walk_name, item, mark, number)
         record, notes = run_fast_read(text, name, arguments.fast_read_program)
         had_to_be_run += 1
         statuses.append(STATUS_HAD_TO_BE_RUN.format(mark=mark, number=number, excerpt=excerpt(text), record=record)
@@ -1721,7 +1733,7 @@ def start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, t
                                 named_by=f"the item after {named}")
         walk_name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
         start_read_ahead(item_reads_directory(walk_finder, minutes), after_named, text,
-                         f"{walk_name}-{file_name_part(after_named)}", fast_read_program, top)
+                         walk_fast_read_name(walk_name, after_named), fast_read_program, top)
     except Failure as problem:
         return READ_AHEAD_NOT_STARTED.format(item=named, problem=problem)
     return None
@@ -1819,7 +1831,7 @@ def waiting_item_read(arguments):
                 return 0
             why = ITEM_READ_RUN_FACTS.format(report=latest[1]["report"], facts=", ".join(facts[:FACTS_LISTED]))
         walk_name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
-        outcome = fast_read_outcome(text, f"{walk_name}-{file_name_part(item)}", arguments.fast_read_program)
+        outcome = fast_read_outcome(text, walk_fast_read_name(walk_name, item), arguments.fast_read_program)
         reads.mkdir(exist_ok=True)
         (reads / f"{key}-started.json").unlink(missing_ok=True)
         record_read(reads, key, item, text, outcome)

@@ -257,8 +257,8 @@ class Case:
     def left_in_temporary_directory(self):
         return sorted(path.name for path in self.temporary_directory.iterdir())
 
-    def record_holding(self, text, report_name="cold-read-fast-read.md"):
-        record = self.records / "earlier-read-2026-10-15"
+    def record_holding(self, text, report_name="cold-read-fast-read.md", name=f"{WALK_NAME}-item-3-of-9-2026-10-15"):
+        record = self.records / name
         (record / "target" / "docs" / "walk").mkdir(parents=True)
         (record / "target" / "docs" / "walk" / "item.md").write_text(f"Item 3 of 9\n\n#new \"{text}\"\n")
         (record / report_name).write_text("findings\n")
@@ -390,6 +390,19 @@ def test_a_fast_read_already_done_is_not_run_again():
           and f'"The page lists one poem per job an agent does.": fast read already done ({record}).'
           in result.stdout
           and case.calls.read_text() == "Each row names the mistake it prevents.\n",
+          described(result))
+
+
+def test_another_walks_record_holding_the_text_is_not_opened():
+    case = Case()
+    for name in ("earlier-read-2026-10-15", f"{WALK_NAME}0-item-3-of-9-2026-10-15"):
+        case.record_holding("The page lists one poem\n per job an agent does.", name=name)
+    result = case.run("check")
+    check("a record whose name does not start with the walk's name and a hyphen is not searched, so its text is "
+          "fast-read again",
+          result.returncode == 0
+          and '"The page lists one poem per job an agent does.": fast read had to be run' in result.stdout
+          and "The page lists one poem per job an agent does." in case.calls.read_text(),
           described(result))
 
 
