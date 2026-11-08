@@ -38,15 +38,18 @@ WHAT ONE RUN DOES, in order.
      origin/main and tests nothing: the merges after that commit are tested
      from the next run on.
   4. Checks that each survivor task the state names still lists each of its
-     mutants: the task file is still on its owner's task list, and its
-     description still names each mutant's diff file. A task marked completed
-     is finished: the state stops naming its mutants. Each mutant whose task
-     is not completed and no longer lists it, because the task's file is
-     gone, cannot be read or no longer names the diff file, is moved to the
-     task on the same list when exactly one other task not marked completed
-     names its diff file, as when an agent moves the mutants of several
-     survivor tasks into one and marks the others completed; otherwise it is
-     reported once:
+     mutants: the task file is still on its owner's task list, not marked
+     completed, and its description still names each mutant's diff file. A
+     mutant whose task is marked completed, or whose task's file is gone,
+     cannot be read or no longer names the diff file, is moved to the task on
+     the same list when exactly one other task not marked completed names its
+     diff file, as when an agent moves the mutants of several survivor tasks
+     into one and marks the others completed, whether or not the session-handoff
+     has yet removed those completed tasks. A mutant of a task marked
+     completed that no other open task names is finished: the state stops
+     naming it. Every other mutant, one whose task is not completed and that no
+     single open task names, or one of a completed task that two or more open
+     tasks name, is reported once:
      the record naming it is written at once, and only then does the state
      stop naming it, so a run killed later has still reported it; standard
      error names it at the end, and the run goes on and exits
@@ -162,8 +165,10 @@ the state file; EXIT_STEP_FAILED (4) a step failed, as above;
 EXIT_RECORD_NOT_WRITTEN (5) the record could not be written;
 EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6);
 EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR (7) no step failed, but a
-survivor task an earlier run opened, and not marked completed, no longer
-lists one of its mutants (step 4);
+mutant a survivor task an earlier run opened held was reported at step 4:
+its task, not marked completed, no longer lists it and no single other open
+task names it, or its task is marked completed and two or more open tasks
+name it;
 EXIT_SURVIVOR_TASK_MUTANTS_NOT_JUDGED_TASK_LEFT_AS_IT_WAS (8) no step failed
 and no task was lost, but the recheck gave no verdicts for a survivor task.
 """
