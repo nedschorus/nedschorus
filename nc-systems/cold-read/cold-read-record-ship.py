@@ -458,10 +458,11 @@ def record_directory_being_written_lock_release(record_dir: pathlib.Path) -> Non
 
 
 def record_directory_being_written_lock_is_held_by_any_process(record_dir: pathlib.Path) -> bool:
-    """True while any process holds record_dir's being-written lock, this one included."""
+    """True while any process holds record_dir's being-written lock, shared or exclusive, this one included."""
     descriptor = os.open(record_dir, os.O_RDONLY)
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        # Exclusive, so that a cell run directly, which holds the lock shared, is seen too.
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         return True
     finally:

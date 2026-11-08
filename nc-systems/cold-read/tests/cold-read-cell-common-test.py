@@ -305,13 +305,22 @@ if "dump_record_directory_descriptor_count" in step:
             continue
         count += (opened.st_dev, opened.st_ino) == (record_directory.st_dev, record_directory.st_ino)
     pathlib.Path(step["dump_record_directory_descriptor_count"]).write_text(str(count), encoding="utf-8")
+if "signal_file" in step:
+    # Tells the case this reviewer is running, so it can order two cells' steps.
+    pathlib.Path(step["signal_file"]).write_text("running", encoding="utf-8")
+if "wait_for_file" in step:
+    # Waits, at most 60 seconds, until the case creates this file.
+    import time
+    waited_until = time.monotonic() + 60
+    while not pathlib.Path(step["wait_for_file"]).exists() and time.monotonic() < waited_until:
+        time.sleep(0.05)
 if "dump_record_directory_lock_held" in step:
     # What the shipper's lock test sees while the reviewer runs: "held" when any process holds the
-    # record's being-written lock, so a shipment now would print FAILED and copy nothing.
+    # record's being-written lock, shared or exclusive, so a shipment now would print FAILED and copy nothing.
     import fcntl
     probe = os.open(report_path.parent, os.O_RDONLY)
     try:
-        fcntl.flock(probe, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
         held = "free"
     except BlockingIOError:
         held = "held"
@@ -336,6 +345,15 @@ def check(case_name, condition, detail=""):
     else:
         print(f"FAIL  {case_name}: {detail}")
         failures.append(case_name)
+
+
+def wait_for_path(path, seconds=60):
+    """Wait until path exists; raise when it does not within seconds, so a stuck case fails loudly."""
+    waited_until = time.monotonic() + seconds
+    while not path.exists():
+        if time.monotonic() > waited_until:
+            raise TimeoutError(f"{path} did not appear within {seconds} seconds")
+        time.sleep(0.05)
 
 
 def stray_write_warning(stderr_text):
@@ -382,7 +400,8 @@ def dirty_the_target(repository):
 
 
 def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
-                      runtime="claude", environment_overrides=None, cell="defect-hunt", pass_fds=()):
+                      runtime="claude", environment_overrides=None, cell="defect-hunt", pass_fds=(),
+                      background=False):
     """One cell launcher, run against a stub standing in for its runtime.
 
     The stub is installed under the runtime's own name, because that is how
@@ -406,21 +425,24 @@ def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
     environment["COLD_READ_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["COLD_READ_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
     environment.update(environment_overrides or {})
-    return subprocess.run(
-        [sys.executable, str(repository / "nc-systems" / "cold-read" / f"cold-read-{runtime}-cell.py"),
-         "--cell", cell, "--tier", "second-strongest-model",
-         "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
-         *arguments],
-        capture_output=True, text=True, check=False, env=environment, cwd=repository,
-        pass_fds=pass_fds,
-    )
+    command = [sys.executable, str(repository / "nc-systems" / "cold-read" / f"cold-read-{runtime}-cell.py"),
+               "--cell", cell, "--tier", "second-strongest-model",
+               "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
+               *arguments]
+    if background:
+        # The case waits on the returned process and reads its streams with communicate().
+        return subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                env=environment, cwd=repository, pass_fds=pass_fds)
+    return subprocess.run(command, capture_output=True, text=True, check=False, env=environment,
+                          cwd=repository, pass_fds=pass_fds)
 
 
 def run_claude_cell(repository, stub_directory, plan, report_path, *arguments,
-                    environment_overrides=None, cell="defect-hunt", pass_fds=()):
+                    environment_overrides=None, cell="defect-hunt", pass_fds=(), background=False):
     return run_cell_launcher(repository, stub_directory, plan, report_path,
                              *arguments, runtime="claude",
-                             environment_overrides=environment_overrides, cell=cell, pass_fds=pass_fds)
+                             environment_overrides=environment_overrides, cell=cell, pass_fds=pass_fds,
+                             background=background)
 
 
 def run_codex_cell(repository, stub_directory, plan, report_path, *arguments,
@@ -575,6 +597,46 @@ with tempfile.TemporaryDirectory() as scratch:
           f"stderr={result.stderr[-2000:]!r}")
     check("a cell run directly leaves its record's lock free once it exits",
           not shipper_module.record_directory_being_written_lock_is_held_by_any_process(report.parent))
+
+    # Two cells run directly on one record directory both hold its lock, so when the first exits
+    # while the second's reviewer still writes, the record stays held until the second exits too.
+    record_directory = repository / "cold-read-records" / "run-two-direct-cells"
+    record_directory.mkdir(parents=True)
+    first_running, first_may_exit = scratch / "first-direct-cell-running", scratch / "first-direct-cell-may-exit"
+    second_running, second_may_probe = scratch / "second-direct-cell-running", scratch / "second-direct-cell-may-probe"
+    lock_held_file = scratch / "second-direct-cell-record-directory-lock-held"
+    first_stderr = second_stderr = ""
+    first = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: first\n", "signal_file": str(first_running),
+               "wait_for_file": str(first_may_exit)}},
+        record_directory / "claude-defect-hunt-second-strongest-model.md", background=True)
+    second = None
+    try:
+        wait_for_path(first_running)
+        second = run_claude_cell(
+            repository, stubs,
+            {"*": {"report": "STUB REVIEW: second\n", "signal_file": str(second_running),
+                   "wait_for_file": str(second_may_probe),
+                   "dump_record_directory_lock_held": str(lock_held_file)}},
+            record_directory / "claude-defect-hunt-second-direct-run.md", background=True)
+        wait_for_path(second_running)
+        first_may_exit.write_text("go", encoding="utf-8")
+        _, first_stderr = first.communicate(timeout=120)
+        second_may_probe.write_text("go", encoding="utf-8")
+        _, second_stderr = second.communicate(timeout=120)
+    finally:
+        for process in (first, second):
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.communicate()
+    lock_seen = lock_held_file.read_text(encoding="utf-8") if lock_held_file.exists() else "not written"
+    check("a second cell run directly on one record keeps its lock held after the first exits",
+          lock_seen == "held" and first.returncode == 0 and second.returncode == 0,
+          f"lock {lock_seen}; exits {first.returncode}, {second.returncode}; "
+          f"stderr={first_stderr[-1000:]!r} {second_stderr[-1000:]!r}")
+    check("the record's lock is free once both cells run directly have exited",
+          not shipper_module.record_directory_being_written_lock_is_held_by_any_process(record_directory))
 
     # A cell run while another process holds the record's lock without passing it on runs as usual:
     # that process is a writer, which ships the record itself once it releases the lock.

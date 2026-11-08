@@ -868,16 +868,18 @@ def run_model_chain(
 
 
 def record_directory_being_written_lock_hold_unless_passed_or_held(record_dir: pathlib.Path) -> None:
-    """Hold record_dir's being-written lock until this process exits, unless the program that started
-    this cell passed it a descriptor on record_dir, as the cold-read-grid does, or another process holds
-    the lock. A cell run directly is then not shipped, by the pre-remove hook or anyone, while its
-    reviewer still writes the report; the reviewer is passed the descriptor in run_model_chain."""
-    if record_names.record_directory_being_written_lock_pass_fds_for_child_writers(record_dir):
-        return
+    """Hold record_dir's being-written lock, shared, until this process exits, so the record is not
+    shipped, by the pre-remove hook or anyone, while this cell's reviewer still writes the report; the
+    reviewer is passed the descriptor in run_model_chain. The lock is shared so that two cells run
+    directly on one record directory both hold it, and the record stays held until the last one exits.
+    Holds nothing when a program holds the lock exclusively, as the cold-read-grid does: that program
+    ships the record itself once it releases the lock, and passes its own descriptor to the cells it
+    starts. A cell run directly into a directory such a program holds, but not started by it, is then
+    unprotected once that program exits."""
     # Left open on purpose: the kernel releases the lock when this process exits, however it ends.
     descriptor = os.open(record_dir, os.O_RDONLY)
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
     except BlockingIOError:
         os.close(descriptor)
 
