@@ -165,20 +165,26 @@ mutant adds about 30 seconds to the run.
 JOB FAILURE TASKS. The run opens a task on the task list of the agent-seat
 JOB_FAILURE_TASK_AGENT_SEAT names, saying what failed and what to do, for each
 failure of the run itself: a step that failed, as above; a merge carried on
-with no mutant judged beyond those its kept sessions held before the run; and
-any merge still not recorded as tested
-MERGE_STILL_UNTESTED_TASK_OPENED_AFTER_SECONDS_SINCE_MERGE, three days, after
-its merge commit, the sign that the pass no longer keeps up and that the lines
-it mutates must be chosen. A failed step's task has the first line of its
-message as its subject, and a carried-on merge's task names the merge. The
-untested merges share one task, with the fixed subject
+with no mutant judged beyond those its kept sessions held before the run; a
+survivor task whose recheck gave no verdicts; a run record that could not be
+written, opened after the failed write; and any merge still not recorded as
+tested MERGE_STILL_UNTESTED_TASK_OPENED_AFTER_SECONDS_SINCE_MERGE, three days,
+after its merge commit, the sign that the pass no longer keeps up and that the
+lines it mutates must be chosen. A failed step's task has the first line of
+its message as its subject, and a carried-on merge's task names the merge.
+Each of the other three kinds has one task with a fixed subject:
+SURVIVOR_TASKS_NOT_RECHECKED_TASK_SUBJECT, whose description names the
+survivor tasks not rechecked; RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT, whose
+description gives the error; and
 MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT, whose
-description gives their count and the oldest; each run rewrites the
-description of that task while it is open. While a task with the same
+description gives the untested merges' count and the oldest. Each run rewrites
+the description of such a task while it is open. While a task with the same
 subject is open on that list, no second one is opened, and the record names
 the open one. No task is completed by this program: the agent-seat
 completes it once the cause is fixed. A task that cannot be opened is named
-in the record and on standard error, and the run exits EXIT_STEP_FAILED.
+in the record and on standard error, and the run exits EXIT_STEP_FAILED; the
+task for a record not written, when it cannot be opened, is named on standard
+error only, and the run still exits EXIT_RECORD_NOT_WRITTEN.
 
 THE RECORD is one text file per run in the log-store:
 
@@ -287,6 +293,10 @@ JOB_FAILURE_TASK_AGENT_SEAT = "fleet-restart-at-login"
 MERGE_STILL_UNTESTED_TASK_OPENED_AFTER_SECONDS_SINCE_MERGE = 3 * 24 * 3600
 MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT = (
     "Nightly full mutation pass: merges still untested three days after they merged")
+SURVIVOR_TASKS_NOT_RECHECKED_TASK_SUBJECT = (
+    "Nightly full mutation pass: survivor tasks left as they were, because their recheck gave "
+    "no verdicts")
+RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT = "Nightly full mutation pass: a run's record was not written"
 DEFAULT_SURVIVOR_TASK_RECORDED_MUTANT_KILLED_CHECK_TIMEOUT_SECONDS = 2 * 3600
 RECORDED_MUTANT_KILLED_CHECK_FLAG = "--recorded-mutant-killed-check"
 SURVIVOR_TASK_SUBJECT_PLACE = re.compile(r"Surviving mutants? in (\S+:[0-9]+): ")
@@ -1137,6 +1147,19 @@ def main_under_lock(arguments):
             f"Mark this task completed once the user has ruled on that, or once no merge is "
             f"three days untested."),
             True))
+    if not_rechecked:
+        job_failure_tasks.append((
+            SURVIVOR_TASKS_NOT_RECHECKED_TASK_SUBJECT,
+            (f"The scheduled full mutation pass on ned-box left {len(not_rechecked)} survivor "
+             f"task(s) as they were in its run of {started.strftime('%Y-%m-%d %H:%M')} UTC, "
+             f"because the recorded mutant killed check gave no verdicts for them on main:\n\n"
+             + "".join(f"- {line}\n" for line in not_rechecked)
+             + f"\nIts latest record: {record_citation}\n"
+             f"Run each named task's command, given in the task, on ned-box with --head "
+             f"origin/main added at its end, and fix what it prints. Each night's run rewrites "
+             f"this description with that night's tasks.\n"
+             f"Mark this task completed once a run rechecks every survivor task."),
+            True))
     tasks_not_written = []
     for subject, description, *rewritten in job_failure_tasks:
         try:
@@ -1184,6 +1207,33 @@ def main_under_lock(arguments):
               f"({type(error).__name__}: {error}).\n"
               f"Fix what the error names; the next run writes its own record, and this one "
               f"stays only in this output.", file=sys.stderr)
+        try:
+            task_id, opened = job_failure_task_opened_unless_open(
+                RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT,
+                (f"The scheduled full mutation pass on ned-box could not write the record of its "
+                 f"run of {started.strftime('%Y-%m-%d %H:%M')} UTC to {record_citation} "
+                 f"({type(error).__name__}: {error}). The record is in the job's log instead, "
+                 f"{LOG_STORE_HOST}:{JOB_LOG_FILE}, under that run's start line.\n"
+                 f"Fix what the error names, such as a log-store directory that cannot be "
+                 f"written. Each night's run whose record is not written rewrites this "
+                 f"description.\n"
+                 f"Mark this task completed once a run's record is written to the log-store."),
+                arguments, True)
+        except OSError as task_error:
+            print(f"{PROGRAM}: the task that tells an agent this run's record was not written "
+                  f"could not be opened on {JOB_FAILURE_TASK_AGENT_SEAT}'s task list either "
+                  f"({type(task_error).__name__}: {task_error}), so only this job's log, "
+                  f"{LOG_STORE_HOST}:{JOB_LOG_FILE}, shows that the record was not written.\n"
+                  f"Fix what both errors name: the record's, in the line before this one, and "
+                  f"the task's, here, such as the task list directory "
+                  f"{arguments.task_lists_directory / f'nedschorus-{JOB_FAILURE_TASK_AGENT_SEAT}-tasks'} "
+                  f"not existing. The next nightly run writes its own record and, if that fails "
+                  f"again, tries again to open this task.", file=sys.stderr)
+        else:
+            print(f"{PROGRAM}: JOB FAILURE TASK: "
+                  f"{'opened' if opened else 'already open, so none opened:'} task #{task_id} on "
+                  f"{JOB_FAILURE_TASK_AGENT_SEAT}'s task list, "
+                  f"{RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT}", file=sys.stderr)
         return EXIT_RECORD_NOT_WRITTEN
     print(f"{PROGRAM}: record written to {record_citation}")
     if failure is not None or tasks_not_written:
