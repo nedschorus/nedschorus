@@ -708,7 +708,7 @@ def next_action_prompt_lines(payload: dict, tasks: dict, directory: Path, state:
             walk_directory, walk_finder.markdown_parser()):
         return None
     handoff = _load_module_by_path("handoff_context_threshold_hook", HANDOFF_THRESHOLD_HOOK_FILE)
-    if (handoff.fired_marker_path(session_id).exists()
+    if (handoff.handoff_asked_marker_path(session_id).exists()
             or handoff.deferred_marker_path(session_id).exists()):
         return None
     used_percentage = handoff.context_used_percentage_from_transcript(str(transcript))

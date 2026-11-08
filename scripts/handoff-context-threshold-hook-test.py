@@ -1353,7 +1353,7 @@ with tempfile.TemporaryDirectory() as workspace:
         # Monitor as a shell task, and a subagent waiting on its own shell task
         # leaves the list while that task stays on it.
         LIST_PROBE_SESSION_ID = "handoff-threshold-hook-test-background-tasks-list-session"
-        list_fired_marker_file = hook.fired_marker_path(LIST_PROBE_SESSION_ID)
+        list_fired_marker_file = hook.handoff_asked_marker_path(LIST_PROBE_SESSION_ID)
         list_deferred_marker_file = hook.deferred_marker_path(LIST_PROBE_SESSION_ID)
 
         def clear_list_markers():
@@ -1634,7 +1634,7 @@ with tempfile.TemporaryDirectory() as workspace:
 
         # --- Below the threshold, nothing fires ------------------------------
         SHARE_PROBE_SESSION_ID = "handoff-threshold-hook-test-share-session"
-        share_fired_marker_file = hook.fired_marker_path(SHARE_PROBE_SESSION_ID)
+        share_fired_marker_file = hook.handoff_asked_marker_path(SHARE_PROBE_SESSION_ID)
         share_payload = {"session_id": SHARE_PROBE_SESSION_ID}
         # Live sessions keep walk-closed markers written before the lower threshold was removed.
         share_walk_closed_marker_file = hook.HANDOFF_DIRECTORY / (
@@ -1685,7 +1685,7 @@ with tempfile.TemporaryDirectory() as wait_set_workspace:
                              [usage_record(100_000, cache_read=450_000), *records])  # 55%
 
     def markers_of(session_id):
-        return (hook.fired_marker_path(session_id),
+        return (hook.handoff_asked_marker_path(session_id),
                 hook.handoff_deferred_marker_and_refused_commands_files_common.handoff_deferred_marker_path(
                     hook.HANDOFF_DIRECTORY, session_id))
 

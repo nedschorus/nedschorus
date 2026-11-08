@@ -65,6 +65,9 @@ threshold_hook = _load("handoff_context_threshold_hook",
                        _SCRIPTS / "handoff-context-threshold-hook.py")
 supervisor = _load("handoff_supervisor",
                    _SCRIPTS.parent / "nc-systems" / "handoff" / "handoff-supervisor.py")
+deferred_marker_files = _load(
+    "handoff_deferred_marker_and_refused_commands_files_common",
+    _SCRIPTS.parent / "nc-systems" / "handoff" / "handoff-deferred-marker-and-refused-commands-files-common.py")
 due_task_hook = _load("agent_seat_due_task_raise_hook", _SCRIPTS / "agent-seat-due-task-raise-hook.py")
 walk_finder = _load("walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
                     _SCRIPTS.parent / "nc-systems" / "skills" / "walk-me-through"
@@ -79,7 +82,6 @@ LAUNCHED_SESSION_ID_KEY = "launched_session_id"
 # State files older than the key's rename still name the session under this key.
 LEGACY_SESSION_ID_KEY = "session_id"
 AGENT_EXIT_CODE_KEY = "agent_exit_code"
-HANDOFF_DEFERRED_SUFFIX = "-handoff-deferred"
 USAGE_LIMIT_API_ERROR = "usage_limit_reached"
 SYNTHETIC_MODEL = "<synthetic>"
 TASK_TOOL_NAMES = ("TaskCreate", "TaskUpdate")
@@ -528,7 +530,8 @@ def verdict_for_seat(seat, paths, now, since, checker, parser):
                           for agent_id in flight.subagent_ids],
             "background_commands": [{"id": task_id, "started": iso(facts.launch_times.get(task_id))}
                                     for task_id in flight.background_task_ids]}
-        marker = paths.handoff_directory / f"{session_id}{HANDOFF_DEFERRED_SUFFIX}"
+        marker = deferred_marker_files.handoff_deferred_marker_path(
+            paths.handoff_directory, session_id)
         try:
             put_off_at = datetime.fromtimestamp(marker.stat().st_mtime, timezone.utc)
         except FileNotFoundError:
