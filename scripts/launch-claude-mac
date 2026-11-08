@@ -246,12 +246,14 @@ python3 "$SCRIPT_DIRECTORY/claude-json-agent-seat-folder-trust-and-onboarding-pr
 # start, so an agent booted into a bare directory runs with none of them, and
 # fixing its own home later cannot retrofit the session it is already in.
 # Skipped when the home is already a checkout; an existing branch is reused,
-# since git allows a branch in only one worktree at a time.
+# since git allows a branch in only one worktree at a time. GIT_AUTHOR_NAME
+# names the new agent-seat, so the post-checkout hook sees the agent-seat's own
+# agent-home and writes it no owner file, whichever agent-seat runs this launcher.
 REPOSITORY=$(cd "$SCRIPT_DIRECTORY/.." && pwd)
 if ! git -C "$AGENT_DIRECTORY" rev-parse --show-toplevel >/dev/null 2>&1; then
     git -C "$REPOSITORY" fetch --quiet origin || true
-    git -C "$REPOSITORY" worktree add "$AGENT_DIRECTORY" -b "$AGENT_NAME" origin/main 2>/dev/null \
-        || git -C "$REPOSITORY" worktree add "$AGENT_DIRECTORY" "$AGENT_NAME" \
+    GIT_AUTHOR_NAME="$AGENT_NAME" git -C "$REPOSITORY" worktree add "$AGENT_DIRECTORY" -b "$AGENT_NAME" origin/main 2>/dev/null \
+        || GIT_AUTHOR_NAME="$AGENT_NAME" git -C "$REPOSITORY" worktree add "$AGENT_DIRECTORY" "$AGENT_NAME" \
         || echo "launch-claude-mac: could not make $AGENT_DIRECTORY a checkout; the agent will start without project settings" >&2
 fi
 

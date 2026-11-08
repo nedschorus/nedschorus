@@ -301,12 +301,14 @@ PREPARE_COMMAND="$UPDATE_COMMAND && mkdir -p \"$AGENT_DIRECTORY_REMOTE\""
 # session it is already in. Skipped when
 # the home is already a checkout, so relaunches are untouched; a branch that
 # already exists is reused rather than recreated, since git allows a branch
-# in only one worktree at a time.
+# in only one worktree at a time. GIT_AUTHOR_NAME names the new agent-seat, so
+# the post-checkout hook sees the agent-seat's own agent-home and writes it no
+# owner file, whichever agent-seat runs this launcher.
 PREPARE_COMMAND="$PREPARE_COMMAND && \
 if ! git -C \"$AGENT_DIRECTORY_REMOTE\" rev-parse --show-toplevel >/dev/null 2>&1; then \
   git -C \$HOME/Projects/nedschorus fetch --quiet origin || true; \
-  git -C \$HOME/Projects/nedschorus worktree add \"$AGENT_DIRECTORY_REMOTE\" -b '$AGENT_NAME' origin/main 2>/dev/null \
-  || git -C \$HOME/Projects/nedschorus worktree add \"$AGENT_DIRECTORY_REMOTE\" '$AGENT_NAME' \
+  GIT_AUTHOR_NAME='$AGENT_NAME' git -C \$HOME/Projects/nedschorus worktree add \"$AGENT_DIRECTORY_REMOTE\" -b '$AGENT_NAME' origin/main 2>/dev/null \
+  || GIT_AUTHOR_NAME='$AGENT_NAME' git -C \$HOME/Projects/nedschorus worktree add \"$AGENT_DIRECTORY_REMOTE\" '$AGENT_NAME' \
   || echo \"launch-claude-ubuntu: could not make $AGENT_DIRECTORY_REMOTE a checkout; the agent will start without project settings\" >&2; \
 fi"
 
