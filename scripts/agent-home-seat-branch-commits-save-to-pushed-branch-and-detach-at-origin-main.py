@@ -108,14 +108,8 @@ def list_agent_homes(agents_root: Path, agent_seat_names) -> list:
     for entry in sorted(agents_root.iterdir()):
         if not entry.is_dir() or not is_checkout(entry):
             continue
-        if entry.name in agent_seat_names:
+        if entry.name in agent_seat_names or current_branch(entry) == entry.name:
             homes.append(entry)
-            continue
-        try:
-            if current_branch(entry) == entry.name:
-                homes.append(entry)
-        except GitStepFailed:
-            continue
     return homes
 
 

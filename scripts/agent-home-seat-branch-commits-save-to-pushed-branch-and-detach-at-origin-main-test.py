@@ -204,6 +204,57 @@ def main() -> int:
     check("when the agent-homes cannot be listed, the run moves nothing and exits 2",
           exit_status == 2, str(exit_status))
 
+    with tempfile.TemporaryDirectory() as temporary:
+        fleet = Fleet(Path(temporary))
+        os.environ["GIT_CONFIG_GLOBAL"] = str(fleet.global_config)
+        os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+        zeta = fleet.seat_home("zeta", own_commits=0, recorded=True)
+        today = datetime.date.today()
+        real_run = module.subprocess.run
+
+        def run_that_times_out(*arguments, **options):
+            raise subprocess.TimeoutExpired(arguments[0], 1)
+        module.subprocess.run = run_that_times_out
+        try:
+            moved, line = module.move_agent_home(zeta, today)
+            checkout_answer = module.is_checkout(zeta)
+        finally:
+            module.subprocess.run = real_run
+        check("a git step that cannot run leaves the agent-home and says which step",
+              not moved and "saving its seat-branch failed: git fetch --quiet origin" in line
+              and "did not run" in line, line)
+        check("a directory git cannot be asked about is not taken for a checkout",
+              checkout_answer is False, str(checkout_answer))
+
+        real_git = module.git
+
+        def git_whose_checkout_fails(directory, *arguments, **options):
+            if arguments[:1] == ("checkout",):
+                raise module.GitStepFailed("git checkout failed in the test")
+            return real_git(directory, *arguments, **options)
+        module.git = git_whose_checkout_fails
+        try:
+            moved, line = module.move_agent_home(zeta, today)
+        finally:
+            module.git = real_git
+        check("a failed detach leaves the agent-home unmarked and says so",
+              not moved and "not moved and marked: git checkout failed in the test" in line
+              and not fleet.is_moved_and_marked(zeta), line)
+
+        real_output = module.output
+
+        def output_naming_a_missing_git_directory(directory, *arguments, **options):
+            if arguments == ("rev-parse", "--absolute-git-dir"):
+                return str(Path(temporary) / "missing" / "git-directory")
+            return real_output(directory, *arguments, **options)
+        module.output = output_naming_a_missing_git_directory
+        try:
+            moved, line = module.move_agent_home(zeta, today)
+        finally:
+            module.output = real_output
+        check("a marker that cannot be written is reported, not counted as moved",
+              not moved and "not moved and marked:" in line and "No such file" in line, line)
+
     print(f"\n{len(failures)} failure(s)" if failures else "\nall cases passed")
     return 1 if failures else 0
 
