@@ -23,6 +23,8 @@ import threading
 import time
 from pathlib import Path
 
+FLOCK_PROGRAM = Path("/usr/bin/flock")
+
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
     "git_redirecting_environment_removal_test_fixture",
     str(Path(__file__).resolve().with_name(
@@ -1431,6 +1433,47 @@ def run_cases():
               and "another run holds" in completed.stderr and fixture.records() == []
               and not (fixture.state / job.STATE_FILE_NAME).exists(),
               f"rc={completed.returncode} err={completed.stderr}")
+
+    # The hand run a job failure task gives holds the job's lock, because it shares the
+    # merge's kept sessions with the nightly run.
+    if not FLOCK_PROGRAM.exists():
+        # The job runs only on ned-box; the Mac's daily full test run still runs this suite.
+        print(f"SKIP  [this machine cannot run it] the hand-run command's lock case: {FLOCK_PROGRAM} is missing; it exists on Linux only")
+    else:
+        with tempfile.TemporaryDirectory() as scratch:
+            scratch = Path(scratch)
+            state = scratch / "state directory"
+            state.mkdir()
+            ran = scratch / "ran"
+            program = scratch / "fake-program.py"
+            program.write_text("import sys, time\nfrom pathlib import Path\n"
+                               f"Path({str(ran)!r}).write_text('ran')\ntime.sleep(3)\n")
+            arguments = type("Arguments", (), {
+                "log_store_root": str(scratch / "logs"), "state_directory": state,
+                "mutation_testing_program": str(program), "clone": scratch / "clone",
+                "cosmic_ray_venv": scratch / "venv"})()
+            command = job.mutation_testing_hand_run_command(arguments, "a" * 40, "b" * 40, 2,
+                                                            scratch / "sessions")
+            # What systemd-run runs: the command after its own options.
+            under_lock = command[command.index("/usr/bin/flock "):]
+            with open(state / job.LOCK_FILE_NAME, "a") as holder:
+                fcntl.flock(holder, fcntl.LOCK_EX)
+                hand_run = subprocess.Popen(["sh", "-c", under_lock])
+                time.sleep(2)
+                ran_while_held = ran.exists()
+            deadline = time.monotonic() + 30
+            while not ran.exists() and time.monotonic() < deadline:
+                time.sleep(0.1)
+            nightly_lock = job.take_lock(state / job.LOCK_FILE_NAME)
+            hand_run_exit = hand_run.wait(timeout=60)
+            check("a hand run waits while a run holds the job's lock, then runs the mutation "
+                  "testing program, and the nightly run cannot take the lock while it runs",
+                  not ran_while_held and ran.exists() and nightly_lock is None
+                  and hand_run_exit == 0,
+                  f"ran_while_held={ran_while_held} ran={ran.exists()} "
+                  f"nightly_lock={nightly_lock} exit={hand_run_exit}")
+            if nightly_lock is not None:
+                nightly_lock.close()
 
     # A record that cannot be written is printed instead.
     with tempfile.TemporaryDirectory() as scratch:
