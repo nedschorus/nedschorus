@@ -146,7 +146,7 @@ Unless named otherwise, files are in `~/.claude/handoffs/` on the agent-seat's m
 - GHI [Moving an agent-seat to the other machine in one handoff that stops it on the old machine and starts it on the new one without restart prompts](https://github.com/nedschorus/nedschorus/issues/1129)
 - GHI [Wake an agent-seat when its 5-hour session limit resets](https://github.com/nedschorus/nedschorus/issues/1152)
 - GHI [The handoff-supervisor restarts itself on main's current code at each handoff](https://github.com/nedschorus/nedschorus/issues/2036)
-- GHI [Hooks, skills and instructions load from one copy per machine that tracks main, so a fix reaches every agent-seat when it merges](https://github.com/nedschorus/nedschorus/issues/2408)
+- GHI [Hooks, skills and instructions load from one copy per machine kept at the last known good commit, so a fix reaches every agent-seat once a full test run passes it](https://github.com/nedschorus/nedschorus/issues/2408)
 - GHI [A session-handoff's next step carries forward a step that a later ruling or skill change removed](https://github.com/nedschorus/nedschorus/issues/2412)
 - GHI [Restore and discard commands in `nc-systems/handoff/uncommitted-work-snapshots.py` replace the restore steps an agent runs by hand](https://github.com/nedschorus/nedschorus/issues/2539)
 - GHI [The agent-crash-watcher puts a handoff-supervisor back on an unsupervised agent-seat whose session-handoff is waiting](https://github.com/nedschorus/nedschorus/issues/2541)
