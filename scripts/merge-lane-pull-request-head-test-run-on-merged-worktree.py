@@ -76,14 +76,15 @@ def main(argv=None):
 
     first_failure = 0
     for number in arguments.pull_requests:
-        outputs = helpers / "hr" / f"pr{number}"
-        (outputs / "log-store").mkdir(parents=True, exist_ok=True)
+        log_store = common.pull_request_head_test_run_log_store_root_directory(arguments, number)
+        outputs = log_store.parent
+        log_store.mkdir(parents=True, exist_ok=True)
         (outputs / "tmp").mkdir(parents=True, exist_ok=True)
         with open(outputs / "stdout", "w") as stdout, open(outputs / "stderr", "w") as stderr:
             run = subprocess.Popen(
                 [sys.executable, str(review_tools_worktree / HEAD_TEST_RUNNER),
                  "--checkout", str(common.pull_request_merged_worktree(arguments, number)),
-                 "--log-store-root", str(outputs / "log-store"),
+                 "--log-store-root", str(log_store),
                  "--temporary-directory", str(outputs / "tmp"),
                  "--recorded-inputs-directory", str(helpers / "hr" / "store")],
                 cwd=helpers, env=environment, stdin=subprocess.DEVNULL,
