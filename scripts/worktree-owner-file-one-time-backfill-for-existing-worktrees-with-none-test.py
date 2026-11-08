@@ -90,7 +90,9 @@ def run_cases(root):
     add("unmatched", agents / "ghi-32-edit")
     add("outside", root / "elsewhere" / "wt")
     add("review", home / ".cache" / "merge-lane-review-worktrees" / "pr12-head")
-    add("subagent", clone / ".claude" / "worktrees" / "agent-a1")
+    add("subagent", clone / ".claude" / "worktrees" / "agent-a45a189e6c5e2e31e")
+    add("restored", clone / ".claude" / "worktrees" / "restored-agent-a45a189e6c5e2e31e")
+    add("short-agent-id", clone / ".claude" / "worktrees" / "agent-a45a189e6c5e2e31")
     add("owned", agents / "seat-owned")
     add("unreadable", agents / "seat-unreadable")
     add("unwritable", agents / "seat-unwritable")
@@ -145,10 +147,20 @@ def run_cases(root):
           owner("subagent") is None
           and "given no owner file, as a Claude Code subagent's worktree"
           in line_of(output, "subagent"), output)
+    check("a restored-* worktree, or an agent-a one without 16 hex digits, in .claude/worktrees is "
+          "not taken for a subagent's: it is listed for the user",
+          all(owner(name) is None
+              and "for the user to keep or delete" in line_of(output, name)
+              and "subagent" not in line_of(output, name)
+              for name in ("restored", "short-agent-id")), output)
+    for_the_user_line = next((line for line in output.splitlines()
+                              if "worktree(s) for the user to keep or delete" in line), "")
     check("worktrees matching no agent-seat are given none and listed for the user",
           owner("unmatched") is None and owner("outside") is None
-          and f"2 worktree(s) for the user to keep or delete, matching no agent-seat: "
-              f"{worktrees['outside']}, {worktrees['unmatched']}" in output, output)
+          and for_the_user_line.startswith("4 worktree(s) for the user to keep or delete, "
+                                           "matching no agent-seat: ")
+          and all(str(worktrees[name]) in for_the_user_line
+                  for name in ("outside", "unmatched", "restored", "short-agent-id")), output)
     check("an owner file that cannot be read is named on a FAILED line",
           "FAILED, its owner file could not be read" in line_of(output, "unreadable"), output)
     check("an owner file that cannot be written is named on a FAILED line, and the others are "

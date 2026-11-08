@@ -12,7 +12,8 @@ WHICH WORKTREES. Every worktree of the clone with no owner file, apart from:
     review checkouts directly inside ~/.cache/merge-lane-review-worktrees, which the cleaner
     judges by their pull request: skipped silently;
   - a Claude Code subagent's worktree, directly inside .claude/worktrees/ of the reference-
-    checkout: given none, and named on a line of its own. While Claude Code's lock is on it,
+    checkout and named agent-a followed by 16 lowercase hex digits, Claude Code's name for it:
+    given none, and named on a line of its own. While Claude Code's lock is on it,
     scripts/clean-worktrees.py --remove gives it one once the lock's claude process has ended.
     Without the lock, the owner file would have to name the agent-session that dispatched the
     subagent, as the owner key of that agent-session's ended `claude` process, and no record
@@ -24,7 +25,7 @@ under the agents root, the longest such name when several do, as prime-intellect
 An agent-seat is a directory under the agents root holding handoff records, as
 scripts/recover-crashed-seats.py lists them. A worktree outside the agents root, or whose
 directory there no agent-seat's name begins, is given none and listed for the user to keep or
-delete.
+delete; so is any other worktree inside .claude/worktrees/, such as restored-<name>.
 
 A worktree whose owner file cannot be read, or cannot be written, is named on a FAILED line,
 and the program exits 1 after the others.
@@ -37,6 +38,7 @@ git could not list the worktrees.
 """
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -55,6 +57,7 @@ owner_file = cleaner.owner_file
 recover_crashed_seats = owner_file.recover_crashed_seats_module()
 
 CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY = Path(".claude") / "worktrees"
+CLAUDE_CODE_SUBAGENT_WORKTREE_DIRECTORY_NAME = re.compile(r"agent-a[0-9a-f]{16}")
 
 
 def agent_seat_whose_name_begins(directory_name, agent_seats):
@@ -70,7 +73,8 @@ def backfill_action(worktree, main_checkout, agents_root, agent_seats, review_wo
     worktree = worktree.resolve()
     if worktree.parent == review_worktrees_directory.resolve():
         return "skip", None, "a merge-lane review checkout"
-    if worktree.parent == (main_checkout / CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY).resolve():
+    if (worktree.parent == (main_checkout / CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY).resolve()
+            and CLAUDE_CODE_SUBAGENT_WORKTREE_DIRECTORY_NAME.fullmatch(worktree.name)):
         return "subagent", None, "a Claude Code subagent's worktree"
     agents_root = agents_root.resolve()
     if worktree.parent == agents_root and worktree.name in agent_seats:
