@@ -598,7 +598,7 @@ class Sweep:
 
     # --- One idle agent-seat ---
 
-    def handle_seat(self, seat, verdict):
+    def handle_seat(self, seat, verdict, transcript_read_at):
         session = verdict[fields.SESSION_ID]
         stretch = (verdict.get(fields.LAST_ACTIVITY) or {}).get("time")
         wait = self.log.open_wait(seat)
@@ -608,6 +608,7 @@ class Sweep:
         check = self.log.last_check(seat)
         if not (check and check["session_id"] == session and check["last_activity"] == stretch):
             self.record({"event": "checked", "agent_seat": seat, "session_id": session,
+                         "transcript_read_at": iso(transcript_read_at),
                          "last_activity": stretch, "rule": verdict[fields.RULE],
                          "decision": verdict.get(fields.DECISION)})
         rule, text = verdict[fields.RULE], verdict.get(fields.TEXT)
@@ -862,14 +863,17 @@ def sweep(arguments, now):
     seats = verdicts_print.agent_seats(paths.handoff_directory)
     checker = verdicts_print.due_task_hook.GitHubConditionChecker({}, now.timestamp())
     parser = verdicts_print.walk_finder.markdown_parser()
-    verdicts = {}
+    verdicts, read_times = {}, {}
     for seat in seats:
         check = log.last_check(seat)
         skipped = {record_uuid for record_uuid, woken_at in log.limit_wakes(seat).items()
                    if seconds_between(woken_at, now) >= LIMIT_WAKE_GRACE_SECONDS}
         # Sentences only from the turns that ended since the last check of the same agent-session;
-        # a new agent-session is read again with its last turn-ending message only.
-        since = parse_time(check["at"]) if check else None
+        # a new agent-session is read again with its last turn-ending message only. Since the read,
+        # not the record: judge calls for other agent-seats run between the two, and a turn that
+        # ends then must be read next time. A record from before the field has only its "at".
+        since = parse_time(check.get("transcript_read_at", check["at"])) if check else None
+        read_times[seat] = run.current()
         verdict = verdicts_print.verdict_for_seat(seat, paths, now, since, checker, parser, skipped)
         if since and verdict.get(fields.SESSION_ID) not in (None, check["session_id"]):
             verdict = verdicts_print.verdict_for_seat(seat, paths, now, None, checker, parser,
@@ -882,7 +886,7 @@ def sweep(arguments, now):
             run.read_failure(seat, error)
         if verdict.get(fields.ERRORS) or not verdict.get(fields.IDLE) or verdict.get(fields.RULE) is None:
             continue
-        run.handle_seat(seat, verdict)
+        run.handle_seat(seat, verdict, read_times[seat])
     return 1 if run.failed else 0
 
 

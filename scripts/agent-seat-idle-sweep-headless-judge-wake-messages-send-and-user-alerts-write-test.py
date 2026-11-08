@@ -9,10 +9,12 @@ arguments and prompt. `gh` is never reached: no case gives a task prerequisites.
 fixes the time with --now.
 """
 
+import atexit
 import fcntl
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -68,6 +70,8 @@ LONG_TEXT = "".join(f"{number:05d}" for number in range(400))
 
 failures = []
 SUITE_ROOT = Path(tempfile.mkdtemp(prefix="agent-seat-idle-sweep-slice-2-test-"))
+# atexit, so that a case that raises or a sys.exit still leaves no files in /tmp.
+atexit.register(shutil.rmtree, SUITE_ROOT, ignore_errors=True)
 
 
 def check(case_name, condition, detail=""):
@@ -899,6 +903,26 @@ check("a promise with an older open task held by blockedBy: the judge is handed 
       len(calls) == 2 and '"open_tasks_with_prerequisites_or_blocked_by": [ { "id": "7", "subject": '
       '"task 7", "prerequisites": [], "blockedBy": [ "6" ] } ]' in " ".join(calls[0]["prompt"].split())
       and not machine.events("message_sent"), calls)
+
+# --- the next check reads from the time of the transcript read, not of the record --------------
+# alpha's sender takes 2 s, so beta's check record is written 2 s after beta's transcript was read;
+# a promise beta writes 1 s into the run must still be read on the next run.
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.seat("beta", [user("go"), assistant(PROMISE), turn_end()], session="s-2")
+machine.script(dict(sent_ok(), sleep=2), sent_ok("beta"))
+machine.run(0)
+beta_checks = [event for event in machine.events("checked") if event["agent_seat"] == "beta"]
+check("a check record keeps the time the transcript was read, apart from the time it was written",
+      len(beta_checks) == 1 and beta_checks[0]["transcript_read_at"] == at(0)
+      and beta_checks[0]["at"] > at(0), beta_checks)
+machine.append("beta", user("more", at(1 / 60)), assistant(SECOND_PROMISE, at(1 / 60)),
+               turn_end(at(1 / 60)))
+machine.script(sent_ok("beta"), sent_ok("beta"))
+machine.run(7)
+check("a promise written between the transcript read and the check record is read on the next run",
+      SECOND_PROMISE in [event["sentence"] for event in machine.events("sentence_checked")
+                         if event["agent_seat"] == "beta"], machine.events())
 
 if failures:
     print(f"{len(failures)} case(s) failed")
