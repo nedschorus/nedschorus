@@ -41,9 +41,9 @@ WHAT ONE RUN DOES, in order.
      mutants: the task file is still on its owner's task list, not marked
      completed, and its description still names each mutant's diff file. A
      mutant whose task is marked completed, or whose task's file is gone,
-     cannot be read or no longer names the diff file, is moved to the task on
-     the same list when exactly one other task not marked completed names its
-     diff file, as when an agent moves the mutants of several survivor tasks
+     cannot be read or no longer names the diff file, is moved, in the state
+     alone, to the task on the same list when exactly one other task not marked
+     completed names its diff file, as when an agent moves the mutants of several survivor tasks
      into one and marks the others completed, whether or not the session-handoff
      has yet removed those completed tasks. A mutant of a task marked
      completed that no other open task names is finished: the state stops
