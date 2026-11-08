@@ -871,7 +871,7 @@ def run_model_chain(
     return 0
 
 
-def record_directory_being_written_lock_hold_shared_unless_passed(record_dir: pathlib.Path) -> None:
+def record_directory_being_written_lock_hold_shared_until_exit_unless_parent_passed_descriptor(record_dir: pathlib.Path) -> None:
     """Hold record_dir's being-written lock, shared, until this process exits, so the record is not
     shipped, by the pre-remove hook or anyone, while this cell's reviewer still writes the report; the
     reviewer is passed the descriptor in run_model_chain. Every writer, the cold-read-grid and other
@@ -920,7 +920,7 @@ def run_cell(
         print(f"{program}: {refusal}", file=sys.stderr)
         report_stray_writes(program, baseline, report)
         return refusal.exit_code
-    record_directory_being_written_lock_hold_shared_unless_passed(report.parent)
+    record_directory_being_written_lock_hold_shared_until_exit_unless_parent_passed_descriptor(report.parent)
 
     # The staging directory is made after every refusal, so no refusal leaves one behind.
     # The Codex reviewer can write only inside the checkout, the temporary directories on
