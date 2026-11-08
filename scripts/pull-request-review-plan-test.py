@@ -704,13 +704,13 @@ def run_agent_text_cases(fixture):
                "f'new note, transcript at {self.transcript_path}.'", True)], delta)
     text_plan = fixture.run_review_plan(json_output=False).stdout
     check("the text plan marks the changed prompt as needing the user's approval",
-          review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in text_plan, text_plan)
+          review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE in text_plan, text_plan)
     skeleton_path = fixture.control_directory / "prompt-brief.md"
     skeleton_result = fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
     skeleton = skeleton_path.read_text() if skeleton_path.exists() else ""
     check("the brief skeleton marks the changed prompt as needing the user's approval",
           skeleton_result.returncode == 0
-          and review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in skeleton,
+          and review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE in skeleton,
           (skeleton_result, skeleton))
     prompt_program_before = ('def compose(path):\n    prompt = f"# Task\\n\\nRead the **whole** file {path},\\nthen report.'
                              '\\n\\n```sh\\nls  -l\\n```\\n"\n    return prompt\n')
@@ -747,9 +747,9 @@ def run_agent_text_cases(fixture):
         skeleton = skeleton_path.read_text() if skeleton_path.exists() else ""
         expected_label, other_label = (
             (review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE,
-             review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE)
+             review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE)
             if expected_cosmetic else
-            (review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE,
+            (review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE,
              review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE))
         check(f"{name} gets the {'cosmetic-change' if expected_cosmetic else 'needs-approval'} label in --json, the text plan and the brief skeleton",
               [(entry["label"], entry["needs_user_approval"], entry["cosmetic_change_needs_no_approval"]) for entry in delta]
@@ -770,7 +770,7 @@ def run_agent_text_cases(fixture):
     check("a changed message built in a local name and printed is listed with no approval needed",
           [(entry["label"], entry["needs_user_approval"]) for entry in delta]
           == [("recovery_note = in IgnitionPlan.compose()", False)]
-          and review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE not in text_plan, (delta, text_plan))
+          and review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE not in text_plan, (delta, text_plan))
     fixture.reset_fixture_to_base()
     fixture.write_fixture_file("nc-systems/handoff/added-prompt-program.py",
                                'def compose(next_step):\n    prompt = f"added prompt: {next_step}"\n    return prompt\n\n\n'
