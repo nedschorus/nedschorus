@@ -266,6 +266,31 @@ def run_unit_cases():
         ("an underscore removed inside inline code", prompt_before.replace("`_private_name`", "`private_name`"), False),
         ("an underscore removed inside a word", prompt_before.replace("each_name", "eachname"), False),
     ]
+    reviewed_pairs_that_are_not_cosmetic = [
+        ("Edit _private_helper only.", "Edit private_helper only."),
+        ("Edit __init__.py now.", "Edit init.py now."),
+        ("Write to /tmp/_scratch now.", "Write to /tmp/scratch now."),
+        ("Delete files matching *.pyc here.", "Delete files matching .pyc here."),
+        ("Pass **kwargs on.", "Pass kwargs on."),
+        ("Wait 2 * 3 seconds.", "Wait 2 3 seconds."),
+        ("Name it x _ y.", "Name it x y."),
+        ("Use \\*args here.", "Use \\args here."),
+        ("1. first\n2. second", "1. first\n3. second"),
+        ("1. first\n2. second", "- first\n- second"),
+        ("- a\n  - b", "- a\n- b"),
+        ("Run `` _x `` now.", "Run `` x `` now."),
+        ("Run `a  b` now.", "Run `a b` now."),
+        ("Run `x now.", "Run x now."),
+        ("Hello {name}", "f'Hello {name}'"),
+        ("Use {x} here.", "Use  {x}  here."),
+        ("f\"Report {len('a b')}\"", "f\"Report {len('a  b')}\""),
+    ]
+    for before, after in reviewed_pairs_that_are_not_cosmetic:
+        check(f"prompt comparison: {before!r} to {after!r} is not a cosmetic-change",
+              review_plan_module.prompt_texts_differ_only_in_spacing_or_markdown_emphasis(before, after) is False)
+    check("prompt comparison: emphasis closing before a comma, and nested bold italic, are cosmetic",
+          review_plan_module.prompt_texts_differ_only_in_spacing_or_markdown_emphasis(
+              "Do *this*, then ***that*** now.", "Do this, then that now."))
     for name, prompt_after, expected in cosmetic_cases:
         before, after = prompt_before, prompt_after
         if prompt_after is None:

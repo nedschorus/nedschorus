@@ -61,11 +61,14 @@ cold-read-fast-read command, so the program exits 3 after printing the plan.
 A string the collector's kind calls a prompt, text a program hands an agent as
 its instructions, gets one of two labels; a printed message gets neither. The
 cosmetic-change label, with cosmetic_change_needs_no_approval set in --json,
-goes to a changed prompt whose old and new text, an f-string's read as the text
-it builds with each placeholder kept as {source}, have the same paragraphs,
-list items, headings and fenced code blocks in the same order, the same words
-in each once spacing and the * and _ marks of Markdown emphasis outside inline
-code are set aside, and every fenced code block's lines unchanged. Every other
+goes to a changed prompt whose old and new text have the same paragraphs,
+headings, fenced code blocks and list items, each list item with the same
+marker and indent, in the same order; the same words in each once spacing and
+paired Markdown emphasis marks around words are set aside; every inline code
+span and every fenced code block's lines unchanged; and, for an f-string, read
+as the text it builds, the same fields with the same source. A prompt that is an
+f-string on one side only, a text outside an f-string holding a brace, and a text
+whose inline code backticks do not pair up get the needs-approval label. Every other
 prompt gets the needs-approval label, with needs_user_approval set in --json,
 including an added prompt and one the plan lists with no old text, such as a
 prompt moved into another string.
@@ -549,31 +552,65 @@ def review_tier_and_deciding_reason(changed_files):
     return deciding_file["tier"], deciding_file["reason"]
 
 
+F_STRING_FIELD_STAND_IN = "\x00{index}\x00"
+
+
 def prompt_text_handed_to_agent(text):
-    """The collector gives an f-string as its source, quoted and with \\n as two characters."""
+    """(is_f_string, text, fields): the collector gives an f-string as its source, quoted and with \\n as two
+    characters; its text then holds a stand-in for each field, and fields each field's source, compared exactly."""
     try:
         expression = ast.parse(text, mode="eval").body
     except SyntaxError:
-        return text
+        return False, text, ()
     if not isinstance(expression, ast.JoinedStr):
-        return text
-    return "".join(part.value if isinstance(part, ast.Constant) else f_string_field_text(part)
-                   for part in expression.values)
+        return False, text, ()
+    fields = tuple(f_string_field_text(part) for part in expression.values if not isinstance(part, ast.Constant))
+    pieces, index = [], 0
+    for part in expression.values:
+        if isinstance(part, ast.Constant):
+            pieces.append(part.value)
+        else:
+            pieces.append(F_STRING_FIELD_STAND_IN.format(index=index))
+            index += 1
+    return True, "".join(pieces), fields
 
 
-MARKDOWN_EMPHASIS_MARK_RUN = re.compile(r"(?<!\w)[*_]+|[*_]+(?!\w)")
+# Only a delimiter pair that opens after a space or an opening bracket or quote, and closes before a space, the end,
+# or closing punctuation that a space or the end follows, is emphasis; so __init__.py, /tmp/_scratch, 2 * 3, **kwargs
+# and \*args keep their marks.
+MARKDOWN_EMPHASIS_PAIR = re.compile(
+    r"(?<![^\s(\[\"'])(\*\*|__|\*|_)(?=\S)(.+?)(?<=\S)\1(?=\s|$|[,.;:!?)\]\"']+(?:\s|$))", re.DOTALL)
+INLINE_CODE_BACKTICK_RUN = re.compile(r"`+")
 
 
-def words_without_markdown_emphasis(text):
-    # Marks inside inline code are kept, so that `_private` and `private` stay different words.
-    pieces = re.split(r"(`[^`]*`)", text)
-    return "".join(piece if index % 2 else MARKDOWN_EMPHASIS_MARK_RUN.sub("", piece)
-                   for index, piece in enumerate(pieces)).split()
+def words_without_markdown_emphasis(prose):
+    while True:
+        stripped = MARKDOWN_EMPHASIS_PAIR.sub(r"\2", prose)
+        if stripped == prose:
+            return prose.split()
+        prose = stripped
+
+
+def inline_tokens_or_none(text):
+    """Words outside inline code with emphasis set aside, and each inline code span verbatim; None when a backtick
+    run has no closing run of the same length, since the text's reading is then unclear."""
+    tokens, position = [], 0
+    while True:
+        opening = INLINE_CODE_BACKTICK_RUN.search(text, position)
+        if not opening:
+            return tokens + words_without_markdown_emphasis(text[position:])
+        closing = next((run for run in INLINE_CODE_BACKTICK_RUN.finditer(text, opening.end())
+                        if len(run[0]) == len(opening[0])), None)
+        if closing is None:
+            return None
+        tokens += words_without_markdown_emphasis(text[position:opening.start()])
+        tokens.append(("inline code", text[opening.start():closing.end()]))
+        position = closing.end()
 
 
 def markdown_blocks_for_cosmetic_comparison(text):
-    """Each block in order, as (kind, words) for a heading, list item or paragraph, or
-    ("code", lines) for a fenced code block."""
+    """Each block in order, as (kind, tokens) for a heading, list item or paragraph, a list item's kind holding its
+    indent and marker, or ("code", lines) for a fenced code block; None when a block's inline code does not balance."""
     code_line_numbers = fenced_code_block_line_numbers_in_markdown(text)
     blocks, prose_is_open = [], False
     for line_number, line in enumerate(text.splitlines(), 1):
@@ -586,19 +623,35 @@ def markdown_blocks_for_cosmetic_comparison(text):
         if not line.strip():
             prose_is_open = False
             continue
-        marker = re.match(r"\s*(#{1,6})\s|\s*(?:[-*+]|\d+[.)])\s", line)
-        if marker or not prose_is_open:
-            blocks.append((marker[1] if marker and marker[1] else "list item" if marker else "paragraph", []))
-            line = line[marker.end():] if marker else line
+        heading = re.match(r"\s*(#{1,6})\s", line)
+        list_marker = None if heading else re.match(r"(\s*)([-*+]|\d+[.)])\s", line)
+        if heading or list_marker or not prose_is_open:
+            kind = (heading[1] if heading else
+                    ("list item", len(list_marker[1].expandtabs(4)), list_marker[2]) if list_marker else "paragraph")
+            blocks.append((kind, []))
+            line = line[(heading or list_marker).end():] if heading or list_marker else line
         blocks[-1][1].append(line)
-        prose_is_open = not (marker and marker[1])
-    return [(kind, content if kind == "code" else words_without_markdown_emphasis(" ".join(content)))
-            for kind, content in blocks]
+        prose_is_open = not heading
+    compared = []
+    for kind, content in blocks:
+        tokens = content if kind == "code" else inline_tokens_or_none("\n".join(content))
+        if tokens is None:
+            return None
+        compared.append((kind, tokens))
+    return compared
 
 
 def prompt_texts_differ_only_in_spacing_or_markdown_emphasis(old_text, new_text):
-    return (markdown_blocks_for_cosmetic_comparison(prompt_text_handed_to_agent(old_text))
-            == markdown_blocks_for_cosmetic_comparison(prompt_text_handed_to_agent(new_text)))
+    old_is_f_string, old_prose, old_fields = prompt_text_handed_to_agent(old_text)
+    new_is_f_string, new_prose, new_fields = prompt_text_handed_to_agent(new_text)
+    if old_is_f_string != new_is_f_string or old_fields != new_fields:
+        return False
+    # Outside an f-string's source, the collector writes a field of a joined string as {source}, which reads the same
+    # as literal braces, so a change to such a text is never taken as cosmetic.
+    if not old_is_f_string and "{" in old_prose + new_prose and old_prose != new_prose:
+        return False
+    old_blocks = markdown_blocks_for_cosmetic_comparison(old_prose)
+    return old_blocks is not None and old_blocks == markdown_blocks_for_cosmetic_comparison(new_prose)
 
 
 def approval_fields_for_agent_text(kind, old_text, new_text):
