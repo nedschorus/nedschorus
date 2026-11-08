@@ -26,14 +26,14 @@ For each agent-home, in order:
      and holds commits no branch or remote branch holds;
   4. otherwise writes the file agent-home-marker into the agent-home's own git directory, which
      makes scripts/git-client-side-hooks/pre-commit refuse commits in it, then runs
-     `git checkout --detach origin/main` there. The detach comes last, so a failure of
-     either leaves the agent-home on the branch it was on, and a rerun finds it and finishes;
+     `git checkout --detach origin/main` there. The detach comes last, so when the marker
+     write or the detach fails, the agent-home is still on its branch, and a rerun finds it and finishes;
      a marker written before a failed detach stays, and refuses commits on that branch until
      the rerun moves the agent-home.
 It deletes nothing: the seat-branch, any other branch the agent-home was on, and every untracked
 or ignored file stay. It prints one line per agent-home. The line names the branch step 2
-pushed, if any, and a branch other than the seat-branch that the agent-home was on, when that
-branch holds commits origin/main lacks and no branch on origin holds.
+pushed, if any. The line of a moved agent-home also names a branch other than the seat-branch that
+it was on, when that branch holds commits origin/main lacks and no branch on origin holds.
 
 What it does not handle: an agent-home whose agent-session is running is moved under it, as the
 freshness hook moves a detached checkout; the agent-session's CLAUDE.md and skills may then be
@@ -200,8 +200,8 @@ def move_agent_home(home: Path, today: datetime.date):
 
 LEFT_INSTRUCTIONS = (
     "For each agent-home left as it was: carry its changes or commits to a worktree on an "
-    "nc-topic-branch, or ask that agent-seat to, unless they are throwaway, such as a test "
-    "run's output; then run this program again.\n"
+    "nc-topic-branch, or ask that agent-seat to; delete those that are throwaway, such as a "
+    "test run's output; then run this program again.\n"
     "If a step failed, fix what its error names, then run this program again: it pushes "
     "nothing twice and moves only what is still to move."
 )
@@ -220,16 +220,17 @@ def main(argv=None) -> int:
     parser.add_argument("--agents-root", type=Path)
     parser.add_argument("--handoff-directory", type=Path)
     arguments = parser.parse_args(argv)
+    agents_root = arguments.agents_root
     try:
         seats_module = load_recover_crashed_seats()
-        agents_root = arguments.agents_root or seats_module.default_agents_root()
+        agents_root = agents_root or seats_module.default_agents_root()
         handoff_directory = arguments.handoff_directory or seats_module.default_handoff_directory()
         seat_names = set(seats_module.list_agent_seat_names_with_agent_session_records(
             agents_root, handoff_directory))
         homes = list_agent_homes(agents_root, seat_names)
     except Exception as error:
         print(f"agent-home migration: the agent-homes under "
-              f"{arguments.agents_root or 'the agents root scripts/recover-crashed-seats.py names'} could not be listed, so "
+              f"{agents_root or 'the agents root scripts/recover-crashed-seats.py names'} could not be listed, so "
               f"nothing was moved: {type(error).__name__}: {error}", file=sys.stderr)
         return 2
     if not homes:
