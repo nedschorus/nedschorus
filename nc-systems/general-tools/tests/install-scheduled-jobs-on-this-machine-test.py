@@ -1357,7 +1357,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # A retired line that runs a program file of the same name as a cron job
     # of the table is found as that job's line, the way an install finds it:
     # --check reports it as that job's DIFFERS, and --install replaces it.
-    same_file_other_arguments = BOX_DAILY.replace("0 0 * * *", "0 2 * * *").replace(
+    same_file_other_arguments = BOX_DAILY.replace(
         "daily-full-test-run-of-main.py", "daily-full-test-run-of-main.py --a-retired-argument")
     stub = MachineStub(crontab=(f"{BOX_MIRROR}\n{BOX_DAILY}\n{BOX_ALONE}\n"
                                 f"{same_file_other_arguments}\n").encode())
