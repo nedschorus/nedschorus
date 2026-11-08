@@ -8,9 +8,11 @@ The owner file is the one scripts/worktree-owner-file-read-and-write.py writes a
 scripts/clean-worktrees.py reads. The owner named:
 
   - a Claude Code subagent's worktree, one directly inside .claude/worktrees/ of the
-    clone's main checkout: the agent-session of the nearest `claude` process among this
-    program's parent processes, with the agent-seat GIT_AUTHOR_NAME names;
-  - any other worktree: the agent-seat GIT_AUTHOR_NAME names.
+    clone's main checkout whose directory name has the form Claude Code gives a subagent's,
+    agent-a followed by 16 lowercase hex digits: the agent-session of the nearest `claude`
+    process among this program's parent processes, with the agent-seat GIT_AUTHOR_NAME names;
+  - any other worktree, those agents make by hand inside .claude/worktrees/ included: the
+    agent-seat GIT_AUTHOR_NAME names.
 
 It writes no owner file, and prints nothing, when GIT_AUTHOR_NAME names no agent-seat (an
 agent-seat being a directory under the agents root that holds a handoff-supervisor state
@@ -32,6 +34,7 @@ one. It always exits 0, because the hook's exit status becomes git's.
 
 import importlib.util
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -49,6 +52,7 @@ owner_file = load_module("worktree_owner_file_read_and_write",
                          "scripts/worktree-owner-file-read-and-write.py")
 
 CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY = Path(".claude") / "worktrees"
+CLAUDE_CODE_SUBAGENT_WORKTREE_DIRECTORY_NAME = re.compile(r"agent-a[0-9a-f]{16}")
 
 OWNER_FILE_NOT_WRITTEN_MESSAGE = (
     "post-checkout: the owner file of the new worktree {worktree} was not written: {reason}\n"
@@ -73,7 +77,8 @@ def new_worktree_owner(worktree, main_checkout, agent_seat, agent_seats, agents_
         return None
     if agent_seat not in agent_seats:
         return None
-    if worktree.parent == (main_checkout / CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY).resolve():
+    if (worktree.parent == (main_checkout / CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY).resolve()
+            and CLAUDE_CODE_SUBAGENT_WORKTREE_DIRECTORY_NAME.fullmatch(worktree.name)):
         key = claude_process_key()
         if key is None:
             raise owner_file.WorktreeOwnerFileError(

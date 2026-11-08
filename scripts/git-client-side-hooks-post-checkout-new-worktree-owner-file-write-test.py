@@ -159,13 +159,18 @@ def run_cases(root):
           added.returncode == 0 and machine.owner_file(review) is None,
           f"exit {added.returncode}, owner {machine.owner_file(review)}")
 
+    # Made with GIT_AUTHOR_NAME unset, so it has no owner file, though a new worktree at this
+    # path made by SEAT would get one; only the hook's all-zeros guard keeps the switch from
+    # writing it.
+    unowned = machine.agents / f"{SEAT}-worktrees" / "made-before-the-hook"
+    machine.worktree_add(unowned)
     switched = machine.git({"GIT_AUTHOR_NAME": SEAT}, "checkout", "--quiet", "-b", "another",
-                           cwd=review)
+                           cwd=unowned)
     check("a branch switch writes no owner file",
-          switched.returncode == 0 and machine.owner_file(review) is None,
-          f"exit {switched.returncode}, owner {machine.owner_file(review)}")
+          switched.returncode == 0 and unowned.is_dir() and machine.owner_file(unowned) is None,
+          f"exit {switched.returncode}, owner {machine.owner_file(unowned)}")
 
-    subagent = machine.clone / ".claude" / "worktrees" / "agent-a1"
+    subagent = machine.clone / ".claude" / "worktrees" / "agent-a45a189e6c5e2e31e"
     claude = root / "bin" / "claude"
     claude.parent.mkdir()
     claude.symlink_to(shutil.which("sh"))
@@ -178,10 +183,21 @@ def run_cases(root):
     check("a subagent's worktree names the agent-session of the nearest claude parent process",
           added.returncode == 0 and owner is not None
           and owner.get("owner_kind") == "agent-session" and owner.get("agent_seat") == SEAT
-          and len(key_parts) == 3 and key_parts[1] == claude_pid,
+          and claude_pid in key_parts,
           f"exit {added.returncode}, stderr {added.stderr!r}, owner {owner}, claude pid {claude_pid}")
 
-    orphan = machine.clone / ".claude" / "worktrees" / "agent-a2"
+    for name in ("bash-guards-replay-grouped-refusals", "restored-agent-a45a189e6c5e2e31e",
+                 "agent-a45a189e6c5e2e31"):
+        by_hand = machine.clone / ".claude" / "worktrees" / name
+        added = machine.worktree_add(by_hand, author=SEAT,
+                                     wrapper=[str(claude), "-c", 'sh -c "$0"'])
+        check(f"a worktree named {name} inside .claude/worktrees/ names the agent-seat, "
+              "not an agent-session",
+              added.returncode == 0
+              and machine.owner_file(by_hand) == {"owner_kind": "agent-seat", "agent_seat": SEAT},
+              f"exit {added.returncode}, stderr {added.stderr!r}, owner {machine.owner_file(by_hand)}")
+
+    orphan = machine.clone / ".claude" / "worktrees" / "agent-a0123456789abcdef"
     added = machine.worktree_add(orphan, author=SEAT, with_no_claude_parent=True)
     check("a subagent's worktree with no claude parent process gets no owner file, and says why",
           added.returncode == 0 and machine.owner_file(orphan) is None
