@@ -217,7 +217,9 @@ RULING GIVEN. Once CLOSE has written the minutes for an answer that is not
 held, it lists the open pull requests with `gh pr list`, run in the checkout,
 and, for each answered item and each item whose held answer it decides with
 it, posts on every pull request with a review holding the line
-`#held_on_ruling <walk name> item <number>` the comment `#ruling_given <word>`.
+`#held_on_ruling <walk name> item <number>` the comment `#ruling_given <walk
+name> item <number> <word>`, naming the same walk and item, so that a pull
+request held on two items gets a comment for each that tells them apart.
 The walk name is the walk-minutes' file name without `-minutes.md`; a
 review line matches only when, whitespace at its ends aside, it is that line
 exactly. The word is `approved` for an answer recorded `<accepted>`, an
@@ -794,7 +796,7 @@ CLOSE_ALREADY_DECIDED_CHANGE = "Its change may now be made; the fast reads of th
 # Both line formats are agreed with merge-lane-2, whose hold command writes the first into its review and whose
 # pull request intake reads the second; change neither without changing those programs.
 HELD_ON_RULING_LINE = "#held_on_ruling {walk} item {number}"
-RULING_GIVEN_LINE = "#ruling_given {word}"
+RULING_GIVEN_LINE = "#ruling_given {walk} item {number} {word}"
 RULING_GIVEN_WORDS = {OUTCOMES[APPROVED]: APPROVED, OUTCOMES[DISAPPROVED]: DISAPPROVED}
 RULING_GIVEN_DEFERRED, RULING_GIVEN_MOVED_ON, RULING_GIVEN_PART_ANSWERS = "deferred", "moved_on", "part_answers"
 GH_PROGRAM = "gh"
@@ -2295,7 +2297,7 @@ def ruling_given_comments_posted(walk_name, rulings, top, gh_program, timeout):
     in_top = f"cd {shlex.quote(str(top))} && gh "
     output, failed = [], bool(error)
     for line, (number, word) in lines.items():
-        body = RULING_GIVEN_LINE.format(word=word)
+        body = RULING_GIVEN_LINE.format(walk=walk_name, number=number, word=word)
         values = {"number": number, "walk": walk_name, "word": word}
         if error:
             list_command = (in_top + shlex.join(HELD_PULL_REQUESTS_LIST) + " --jq "
