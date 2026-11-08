@@ -20,8 +20,8 @@ It keeps a copy of a worktree's uncommitted changes, a work-snapshot, as a git c
 The design is one shared module, `nc-systems/handoff/uncommitted-work-snapshots.py`, and three callers:
 
 1. A hook, `scripts/uncommitted-work-snapshot-hook.py`, that writes, refreshes and deletes work-snapshots while agents work.
-2. `nc-systems/handoff/handoff-supervisor.py`, which lists leftover work-snapshots whose worktree is gone or no longer holds their changes, with restore steps, in the first prompt of every agent-session it starts.
-3. `scripts/clean-worktrees.py`, which deletes a leftover work-snapshot nobody restored within 10 days of its first listing in an agent-session's first prompt.
+2. `nc-systems/handoff/handoff-supervisor.py`, which lists leftover work-snapshots whose worktree is gone or no longer holds their changes, each entry ending with the `restore` or `discard` command that handles it, followed by the restore steps, in the first prompt of every agent-session it starts.
+3. `scripts/clean-worktrees.py`, which deletes a leftover work-snapshot nobody restored within 10 days of its first listing in an agent-session's first prompt, and closes the task a `restore` opened once its restore commit is on main or no ref holds it.
 
 ## 1. The hook: writing, refreshing and deleting work-snapshots
 
@@ -68,25 +68,68 @@ Every time `nc-systems/handoff/handoff-supervisor.py` starts an agent-session, w
 **Duplicates.** Each session-handoff of an agent-seat that keeps uncommitted drafts leaves another leftover of the same files, written by the next owner. A leftover is a duplicate when a newer leftover of the same agent-seat and the same worktree has the same parent commit and the same tree, compared by git object id, so the newer one holds every byte it holds. A duplicate is not listed, the newer one standing for it, and the cleaner deletes it. Only leftovers count: never a live owner's work-snapshot, which its own hook may delete, and never the worktree or its HEAD.
 
 - The first time the handoff-supervisor lists a work-snapshot, it records the time in `~/.claude/handoffs/<seat>-work-snapshots-first-listed.json` on that machine, ref to time; the cleaner reads that file. A failure to write it is said in the first prompt, and that work-snapshot then counts as never listed.
-- Each entry gives the ref, the worktree path and whether it exists, the branch, the time, the transcript path and whether that file exists, the operation if any, and up to ten changed files with a count of the rest.
+- Each entry gives the ref, the worktree path and whether it exists, the branch, the time, the transcript path and whether that file exists, the operation if any, and up to ten changed files with a count of the rest, and ends with the command that handles it (section 3).
 - At most 20 entries are listed, newest first, then a count of the rest and the command that lists them all: `python3 nc-systems/handoff/uncommitted-work-snapshots.py list --agent-seat <name>`.
 - When there are none, the prompt says nothing about work-snapshots.
 - When the list cannot be built, the prompt says so, with the reason and that same command, so the failure is not mistaken for "none".
 
-## 3. The restore steps, printed with the list
+## 3. Restoring or discarding a leftover: the `restore` and `discard` commands, and the task a restore opens
 
-The restore steps come before the agent's other work. They are written as instructions, with no history.
+Each entry the handoff-supervisor lists in the initial-agent-instructions ends with the command that handles that work-snapshot: `python3 nc-systems/handoff/uncommitted-work-snapshots.py discard <ref>` for a work-snapshot taken during a merge, rebase, cherry-pick, revert or am, and otherwise `python3 nc-systems/handoff/uncommitted-work-snapshots.py restore <ref> --keep` followed by every changed file, each path quoted for the shell, so the agent's only edit to the command is to delete the files it drops. After the list come the restore steps, the constant `RESTORE_STEPS`, which hold only the steps that need the agent's judgment; the two commands do every other step.
 
-For each listed work-snapshot:
+### The steps that need the agent's judgment
+
+The restore steps come before the agent's other work. They are written as instructions, with no history. For each listed work-snapshot:
 
 1. **See what it holds:** `git diff --stat <ref>^ <ref>`, then `git diff <ref>^ <ref>`.
-2. **Decide what to keep.** If you keep nothing, skip step 3. Read the end of the transcript the entry names, to learn what the dead agent was doing; if the transcript is gone, decide from the diff alone, and ask the user when unsure. Drop any mutant: a deliberate small break in code that nc-mutation-testing makes, by a program or by an agent's own edit, to check that the tests notice. A crash during nc-mutation-testing leaves the mutant in the work-snapshot. If one file holds both wanted work and a mutant, keep the file and remove the mutant from it by editing it before you commit in step 3.
-3. **Restore what you keep, as a commit.**
-   - Make a new worktree from the work-snapshot's parent, so the changes apply without conflict. A listed work-snapshot's worktree is gone or no longer holds its changes; if it still exists, leave it alone. With `<name>` standing for `restored-` and the ref's last two parts joined by a hyphen, which no other work-snapshot shares: `git worktree add -b <name> <clone>/.claude/worktrees/<name> <ref>^`, where `<clone>` is the clone's main checkout, the directory containing the path `git rev-parse --path-format=absolute --git-common-dir` prints. In the new worktree, run `git diff --binary <ref>^ <ref> -- <files to keep> | git apply --index`, then `git commit -m "Restore work from <ref>"`. The restored branch is ordinary work in progress: carry it on, or tell the user it is there; the cleaner keeps its worktree while the branch has a commit not on main, and removes it once the branch is merged.
-   - If the entry names an operation, the files are from the middle of that merge, rebase or similar, and git's record of the operation is not in the work-snapshot, so it cannot be resumed. Restore nothing from it: delete the work-snapshot, tell the user in one line which worktree and which operation were discarded, and, if the dead agent's task still needs the operation, start it again from the branch. The operation works on commits, which the branches still hold, so only the conflict resolution done before the crash is lost; uncommitted edits to files the operation does not touch are lost with it, which is accepted because agents commit before merging and crashes are rare.
-   - If a command here fails, stop, leave the ref in place, and tell the user what failed.
-4. **Delete the ref:** `git update-ref -d <ref>`, whether the work was kept or dropped.
-5. **Tell the user**, in the next message to the user, each work-snapshot handled, what was kept and where, and what was dropped and why. Finishing the dead agent's task is a separate decision, made after the restore.
+2. **Decide what to keep.** Read the end of the transcript the entry names, to learn what the dead agent was doing; if the transcript is gone, decide from the diff alone, and ask the user when unsure. Drop any mutant: a deliberate small break in code that nc-mutation-testing makes, by a program or by an agent's own edit, to check that the tests notice. A crash during nc-mutation-testing leaves the mutant in the work-snapshot. Leave a file that holds only a mutant off `--keep`; keep a file that holds both wanted work and a mutant, and after `restore` remove the mutant from it in a commit of its own on the restored branch, before the branch is pushed.
+3. **Run the entry's command.** To keep one file or more, run `restore`, after deleting from `--keep` the files you drop. To keep nothing, run `discard`. For a work-snapshot taken during an operation, run `discard`, as its entry says. When the command refuses or fails, do what it prints, and tell the user what failed.
+4. **Tell the user**, in the next message to the user, each work-snapshot handled, using the summary line each command prints, and add why each dropped file was dropped. Whether to finish the dead agent's task is a separate decision, made after the restore; the task `restore` opens keeps the restored branch on the agent-seat's task list until that decision is carried out.
+
+### `restore <ref> --keep <file> [<file> ...]`
+
+`--keep` takes one file or more; the paths are relative to the clone's root, as the list entry prints them. The branch is named `restored-` followed by the ref's last two parts joined by a hyphen, which no other work-snapshot shares; the worktree is `<clone>/.claude/worktrees/<branch name>`, where `<clone>` is the clone's main checkout, the directory containing the path `git rev-parse --path-format=absolute --git-common-dir` prints.
+
+Before it changes anything, `restore` refuses, saying why, when:
+
+- the ref does not exist;
+- `--keep` names no file, which would restore every file; the refusal says that keeping nothing is `discard`;
+- a kept path is not among the work-snapshot's changed files;
+- the work-snapshot was taken during a merge, rebase, cherry-pick, revert or am; the refusal names the work-snapshot's worktree and operation, and tells the agent to run `discard` and to tell the user which worktree and which operation were discarded. Git's record of the operation is not in the work-snapshot, so the operation cannot be resumed; its commits are still on the branches, so only the conflict resolution done before the crash is lost, with any uncommitted edits to files the operation does not touch, which is accepted because agents commit before merging and crashes are rare;
+- the branch or the worktree directory already exists; when the branch's newest commit is `Restore work from <ref>`, the work is already restored and only the ref's deletion failed earlier, so the refusal says so and prints the `git update-ref -d <ref>` to run;
+- `CLAUDE_CODE_TASK_LIST_ID` or `GIT_AUTHOR_NAME` is unset; the launchers set both for every agent-seat.
+
+Otherwise it does, in order:
+
+1. `git worktree add -b <branch name> <worktree> <ref>^`, from the work-snapshot's parent, so the changes apply without conflict. The entry's own worktree, if it still exists, no longer holds these changes and is left alone.
+2. Writes the new worktree's owner file, naming the agent-seat `GIT_AUTHOR_NAME` names, with `scripts/worktree-owner-file-read-and-write.py`, so that `scripts/clean-worktrees.py` judges the worktree as it judges the agent-seat's other worktrees, and the agent-seat's list of worktrees in the initial-agent-instructions names it.
+3. In the new worktree, `git diff --binary <ref>^ <ref> -- <kept files> | git apply --index`, then `git commit -m "Restore work from <ref>"`.
+4. Opens the restored branch's task, below, on the task list in `~/.claude/tasks/<CLAUDE_CODE_TASK_LIST_ID>`, making that directory when it does not yet exist.
+5. Deletes the ref with `git update-ref -d <ref>`.
+6. Prints the branch, the worktree and the task's id, then a summary line for the agent's message to the user: the ref, the kept files, the dropped files, the branch and the worktree.
+
+When a step fails, `restore` prints what failed and exits nonzero:
+
+- a failure in steps 1 to 3 removes the worktree and the branch `restore` made, and leaves the ref in place; a worktree or branch that cannot be removed is named, with the command that removes it;
+- a failure to open the task keeps the branch and the worktree and still deletes the ref, since the branch now holds the work, and prints the task's exact subject and description for the agent to create with Claude Code's TaskCreate tool; the cleaner closes a task with that subject as it closes one `restore` opened;
+- a failure of only the ref's deletion keeps the branch and the task, and prints the `git update-ref -d <ref>` to run.
+
+### `discard <ref>`
+
+`discard` deletes the ref and prints its list entry, which names the files it held and, for a work-snapshot taken during an operation, the worktree and the operation, as the summary line for the agent's message to the user. It refuses when the ref does not exist. It opens no task.
+
+### The task `restore` opens, and how the task closes itself
+
+The task's subject is `Restored branch <branch name>: open its pull request or delete it`. Its first words, `Restored branch `, are the constant `RESTORED_BRANCH_TASK_SUBJECT_PREFIX` in `nc-systems/handoff/uncommitted-work-snapshots.py`, and the branch name is the text between them and the first colon; a git branch name cannot hold a colon. Its description names the work-snapshot's ref, the worktree and transcript the entry named, the kept files and the restored worktree, and the commit `restore` made, by its SHA, on a line of its own that opens `Restore commit: `. It tells the agent: carry the branch on to a pull request, or delete it; and leave the task open, because `scripts/clean-worktrees.py` marks it completed once that commit is on main or no branch holds it any more. The task is a Claude Code task file, written as `scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py` writes a survivor task: its id is one more than the highest of the list's task ids and its `.highwatermark`, and the file is linked into place only where no file of that name exists, so a task Claude Code creates at the same moment is not overwritten.
+
+`scripts/clean-worktrees.py` closes these tasks with `--remove`, at its daily run and at every session-handoff, after its worktree and branch removals. So a task closes at the cleaner's next such run, not at the moment of the merge or the deletion. The cleaner reads every task list on its machine, `~/.claude/tasks/nedschorus-*-tasks`. Each task not marked completed whose subject starts with `RESTORED_BRANCH_TASK_SUBJECT_PREFIX` is marked completed, with a line at the end of its description saying why, when, after `git fetch --prune origin`, the commit its `Restore commit: ` line names is either:
+
+- reachable from `origin/main`, because the branch's pull request merged, whatever the branch is called by then; or
+- held by no ref at all, `git for-each-ref --contains <sha>` printing nothing, because the branch was deleted, in the clone and on origin, by whatever command.
+
+The rule follows the commit, not the branch's name, so a renamed branch or one deleted with `git branch -D` is judged correctly, and a branch an agent pushed and then deleted locally stays open while origin still has it.
+
+Any other task with that subject stays open. A pull request closed without merging leaves the task open while a branch still holds the commit, since that branch holds work main lacks. Each machine's cleaner closes the tasks of its own clone's restored branches, because `restore` writes the task list of the machine it runs on. When `git fetch` fails, a task has no `Restore commit: ` line, or a task file cannot be read or written, the cleaner leaves that task as it was, says so in a line opening `FAILED: `, and exits 1. Run without `--remove`, the cleaner names each task it would close and changes none.
 
 ## 4. The cleaner: removing what nobody restored
 
@@ -98,6 +141,7 @@ For each listed work-snapshot:
 - Run without `--remove`, it only reports, and deletes nothing.
 - It never deletes a work-snapshot whose owner process is alive.
 - If it cannot list or delete work-snapshots, it says so in its output and exits nonzero.
+- After its worktree and branch removals, it closes the tasks `restore` opens whose restore commit is on `origin/main` or held by no ref, as section 3 says.
 
 A replaced work-snapshot's commit is no longer referenced by any ref; git's automatic `git gc --auto`, which ordinary git commands start when loose objects pile up, removes such objects once they are older than `gc.pruneExpire`, two weeks by default. A work-snapshot stores only the changed files, so these objects are small.
 
@@ -121,9 +165,11 @@ Each machine has its own clone and its own work-snapshots: on ned-box the clone 
 - A hook that cannot write reports it through `additionalContext` and exits 0.
 - An owner process still running keeps its work-snapshots off the list; a dead one's is not listed while its worktree still holds its changes, and is listed once the worktree is removed or changed, or its changes are committed or discarded; of two leftovers with the same parent and tree only the newer is listed, and two that differ in either are both listed; a leftover whose worktree cannot be read is listed with the reason; a reused process id with a different start counts as dead; a live owner still counts as alive after the system clock is stepped.
 - The list caps at 20 entries and ten files each, and a failure to build it is stated in the prompt.
-- Restoring a chosen subset of files into a new worktree from `<ref>^`, both when the original worktree is gone and when it survives changed, gives a commit with exactly those modifications, new files and deletions, and leaves a surviving original alone.
+- `restore` of a chosen subset of files into a new worktree from `<ref>^`, both when the original worktree is gone and when it survives changed, gives a commit with exactly those modifications, new files and deletions, leaves a surviving original alone, writes the worktree's owner file, opens the task naming the restore commit, deletes the ref and prints the summary line. Each list entry ends with its command, `discard` for a work-snapshot taken during an operation and otherwise `restore` keeping every changed file, each path quoted, and the restore steps name no git step the commands carry out.
+- `restore` refuses, changing nothing, a ref that does not exist, an empty `--keep`, a kept path the work-snapshot did not change, a work-snapshot taken during a merge, an existing branch or worktree directory, a branch that already holds this restore, and an unset `CLAUDE_CODE_TASK_LIST_ID` or `GIT_AUTHOR_NAME`. A `git worktree add`, an owner file, an apply and a commit that fail each remove the worktree and branch it made and keep the ref, and a worktree or branch it cannot remove is named with its command; a task that cannot be opened keeps the branch, deletes the ref and prints the task for TaskCreate; a ref deletion that fails keeps the branch and the task and prints the command. `discard` deletes the ref and prints its entry, refuses a ref that does not exist, reports a deletion that fails, and opens no task.
+- The cleaner, after `git fetch --prune origin`, marks completed the task of a branch whose restore commit reached `origin/main` and of one deleted with `git branch -D`, and keeps open a renamed branch's and one deleted locally while origin still has it, closing that one once origin's copy is deleted; without `--remove` it names what it would close and changes nothing; a failed fetch, a task with no `Restore commit: ` line, a commit git cannot judge, a task file that cannot be read and one that cannot be rewritten are each left as they were and reported.
 - The cleaner deletes a dead owner's work-snapshot first listed more than 10 days ago, naming it in its output, and keeps one listed more recently, one never listed, and a live owner's one. It keeps an in-place work-snapshot, even one first listed more than 10 days ago; deletes the older of two leftovers of the same agent-seat with the same parent and tree, and keeps both when the tree, the parent or the agent-seat differs, and keeps a leftover that only a live owner's work-snapshot duplicates; lists and keeps one where an empty directory without `.git` is left; and keeps one whose worktree cannot be read, counting a failure. A HEAD that cannot be read, including a branch whose ref names a missing object, is reported, not taken for a mismatch; a work-snapshot taken on an unborn HEAD stays in place while that HEAD is still unborn. `list` exits 1 when a work-snapshot could not be compared with its worktree.
-- The 2026-10-05 loss replayed: a worktree on a branch with no commits of its own, two uncommitted files, the owner process killed, the cleaner run, which removes the worktree; the next agent-session's first prompt lists the work-snapshot, and following the restore steps brings both files back as a commit.
+- The 2026-10-05 loss replayed: a worktree on a branch with no commits of its own, two uncommitted files, the owner process killed, the cleaner run, which removes the worktree; the next agent-session's first prompt lists the work-snapshot, and `restore` brings both files back as a commit, whose task the cleaner closes once the restored branch is deleted.
 
 ## Decisions for the user
 

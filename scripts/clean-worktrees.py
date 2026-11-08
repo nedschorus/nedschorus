@@ -153,6 +153,21 @@ worktree duplicates: the same parent commit and the same tree, by git object
 id. --only-done prints only the ones --remove would delete.
 A live owner's work-snapshot is never touched.
 
+Last, it closes the tasks that `uncommitted-work-snapshots.py restore` opens,
+in every task list on the machine, ~/.claude/tasks/nedschorus-*-tasks. Each
+task not marked completed whose subject starts with
+RESTORED_BRANCH_TASK_SUBJECT_PREFIX is judged by the commit its description's
+`Restore commit: ` line names: --remove first runs `git fetch --prune
+origin`, then marks the task completed, adding a line at the end of its
+description saying why and when, when that commit is reachable from
+origin/main, or when `git for-each-ref --contains` names no ref holding it.
+Any other such task stays open. The report modes name each task --remove
+would mark and change none; they do not fetch, and judge the refs as last
+fetched, so a stale origin only keeps more open. When the fetch fails or runs
+past RESTORED_BRANCH_TASK_FETCH_TIMEOUT_SECONDS, a task list or a task file
+cannot be read, a task file cannot be rewritten, a task has no `Restore commit: ` line, or git cannot judge its
+commit, the task is left as it was and a line opening `FAILED: ` says so.
+
 Modes:
   (default)    report every worktree, one line each, then the count lines
   --only-done  print only what needs someone's attention — done worktrees,
@@ -205,7 +220,8 @@ the next wake; on ned-box the cron line
 
     30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/clean-worktrees.py --remove >> /home/nedlern/.claude/clean-worktrees.log 2>&1
 
-It does not fetch; a stale origin/main only keeps more.
+It does not fetch, apart from the fetch before it judges the restored branches'
+tasks; a stale origin/main only keeps more.
 
 Usage:
   scripts/clean-worktrees.py [--only-done | --remove] [--repo PATH]
@@ -213,8 +229,9 @@ Usage:
   scripts/clean-worktrees.py --force-delete-branch NAME [--repo PATH]
 
 Exit codes: 0 ok, 1 a removal, a record's shipment, a branch or work-snapshot
-made before a removal, a ref deletion, a line of the log of removals, or a
-work-snapshot listing or deletion failed, or the one named worktree or
+made before a removal, a ref deletion, a line of the log of removals, a
+work-snapshot listing or deletion, or the fetch, reading, judging or
+rewriting of a restored branch's task failed, or the one named worktree or
 branch was kept for a reason other than an open pull request, 2 bad
 invocation, or git could not list the worktrees or the branches, which stops
 the run where it failed; with --remove-worktree-and-force-delete-its-branch
@@ -1198,6 +1215,129 @@ def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
     return failures
 
 
+TASK_LISTS_DIRECTORY = Path.home() / ".claude" / "tasks"
+NEDSCHORUS_TASK_LISTS_GLOB = "nedschorus-*-tasks"
+RESTORED_BRANCH_TASK_FETCH_TIMEOUT_SECONDS = 300
+
+
+def open_restored_branch_tasks(task_lists_directory, out):
+    """(task file, task) for each task restore opened that is not marked completed, and the
+    number of task files that could not be read, each named in a FAILED line."""
+    tasks, failures = [], 0
+    for list_directory in sorted(Path(task_lists_directory).glob(NEDSCHORUS_TASK_LISTS_GLOB)):
+        if not list_directory.is_dir():
+            continue
+        try:
+            task_files = sorted(list_directory.iterdir())
+        except OSError as error:
+            out(f"FAILED: the task list {list_directory} could not be read ({type(error).__name__}: "
+                f"{error}), so its restored branches' tasks are left as they were")
+            failures += 1
+            continue
+        for task_file in task_files:
+            if not work_snapshots.TASK_FILE_NAME_PATTERN.fullmatch(task_file.name):
+                continue
+            try:
+                task = json.loads(task_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as error:
+                out(f"FAILED: the task file {task_file} could not be read ({type(error).__name__}: "
+                    f"{error}), so whether it is a restored branch's task to close is unknown; "
+                    f"it is left as it was")
+                failures += 1
+                continue
+            if (isinstance(task, dict) and task.get("status") != "completed"
+                    and str(task.get("subject", "")).startswith(
+                        work_snapshots.RESTORED_BRANCH_TASK_SUBJECT_PREFIX)):
+                tasks.append((task_file, task))
+    return tasks, failures
+
+
+def restore_commit_of_task(task):
+    for line in str(task.get("description", "")).splitlines():
+        if line.startswith(work_snapshots.RESTORE_COMMIT_LINE_PREFIX):
+            return line[len(work_snapshots.RESTORE_COMMIT_LINE_PREFIX):].strip()
+    return None
+
+
+def restore_commit_done_reason(repo, commit):
+    """(why the restored branch's task is done, or None while a ref holds work main lacks;
+    the git failure that kept it from being judged, or None)."""
+    on_main = run_git(repo, "merge-base", "--is-ancestor", commit, "origin/main")
+    if not on_main.returncode:
+        return f"the restore commit {commit} is reachable from origin/main", None
+    if on_main.returncode != 1:  # pragma: no mutate, > 1 differs only for a git killed by a signal
+        return None, (f"git merge-base --is-ancestor {commit} origin/main "
+                      f"{work_snapshots.git_failure_text(on_main)}")
+    holders = run_git(repo, "for-each-ref", "--contains", commit, "--format=%(refname)")
+    if holders.returncode:
+        return None, (f"git for-each-ref --contains {commit} "
+                      f"{work_snapshots.git_failure_text(holders)}")
+    if holders.stdout.strip():
+        return None, None
+    return f"no ref holds the restore commit {commit} any more", None
+
+
+def close_restored_branch_tasks(repo, remove, only_done, task_lists_directory=None, out=print):
+    """Mark completed each task restore opened whose restore commit is on origin/main or held
+    by no ref; return the number of failures. Without remove, name them and change nothing."""
+    task_lists_directory = TASK_LISTS_DIRECTORY if task_lists_directory is None else task_lists_directory
+    tasks, failures = open_restored_branch_tasks(task_lists_directory, out)
+    if not tasks:
+        return failures
+    if remove:
+        try:
+            fetched = subprocess.run(["git", "-C", str(repo), "fetch", "--prune", "origin"],
+                                     capture_output=True, text=True, check=False,
+                                     timeout=RESTORED_BRANCH_TASK_FETCH_TIMEOUT_SECONDS)
+            fetch_failure = (work_snapshots.git_failure_text(fetched) if fetched.returncode
+                             else None)
+        except subprocess.TimeoutExpired:
+            fetch_failure = f"ran past {RESTORED_BRANCH_TASK_FETCH_TIMEOUT_SECONDS} seconds"
+        if fetch_failure:
+            out(f"FAILED: git fetch --prune origin {fetch_failure}, so the restored branches' "
+                f"tasks were not judged and are left as they were: "
+                + ", ".join(str(task_file) for task_file, _task in tasks))
+            return failures + 1
+    for task_file, task in tasks:
+        name = f"task {task_file.parent.name}/{task_file.stem} ({task.get('subject')})"
+        commit = restore_commit_of_task(task)
+        if commit is None:
+            out(f"FAILED: {name} has no line opening "
+                f"\"{work_snapshots.RESTORE_COMMIT_LINE_PREFIX}\", so its restore commit is "
+                f"unknown; it is left as it was")
+            failures += 1
+            continue
+        reason, git_failure = restore_commit_done_reason(repo, commit)
+        if git_failure:
+            out(f"FAILED: {name} could not be judged ({git_failure}); it is left as it was")
+            failures += 1
+            continue
+        if reason is None:
+            if not only_done:
+                out(f"{name}: kept open — a ref still holds its restore commit {commit}, "
+                    f"which origin/main lacks")
+            continue
+        if not remove:
+            out(f"{name}: would be marked completed, as {reason} — mark it with: "
+                f"scripts/clean-worktrees.py --remove")
+            continue
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        task = dict(task, status="completed", description=(
+            str(task.get("description", "")).rstrip("\n")
+            + f"\nMarked completed by scripts/clean-worktrees.py at {now}: {reason}."))
+        partial = task_file.with_name(f".{task_file.name}.partial")
+        try:
+            partial.write_text(json.dumps(task, indent=2), encoding="utf-8")
+            os.replace(partial, task_file)
+        except OSError as error:
+            out(f"FAILED: {name} could not be rewritten as completed ({type(error).__name__}: "
+                f"{error}); it is left as it was")
+            failures += 1
+        else:
+            out(f"{name}: marked completed, as {reason}")
+    return failures
+
+
 REMOVE_WORKTREE_AND_FORCE_DELETE_ITS_BRANCH_COMMAND_LINE_FLAG = "--remove-worktree-and-force-delete-its-branch"
 FORCE_DELETE_BRANCH_FLAG = "--force-delete-branch"
 # The first prompt's list tells the agent to keep the item and tell the user when a line opens so.
@@ -1409,6 +1549,7 @@ def main(argv=None):
     failures += work_snapshots.clean_leftover_work_snapshots(
         repo, remove=remove, only_due=only_done,
         handoff_directory=Path.home() / ".claude" / "handoffs")
+    failures += close_restored_branch_tasks(repo, remove=remove, only_done=only_done)
 
     # Printed only by a run that got this far, so a reader can tell a finished run from one that aborted.
     if failures:
