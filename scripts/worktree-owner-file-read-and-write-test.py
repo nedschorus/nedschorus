@@ -339,6 +339,15 @@ with tempfile.TemporaryDirectory() as scratch:
     outside = run("show", cwd=scratch)
     check("show outside any worktree exits 1 and says the directory is in no git worktree",
           outside.returncode == 1 and "is in no git worktree" in outside.stderr, outside.stderr)
+    subagent_name = "agent-a0123456789abcdef"
+    reference = scratch / "reference-checkout"
+    check("a worktree named as Claude Code names a subagent's, directly inside .claude/worktrees/ "
+          "of the reference-checkout, is a subagent's",
+          module.claude_code_subagent_worktree_check(
+              reference / ".claude" / "worktrees" / subagent_name, reference))
+    check("a worktree with a subagent's name anywhere else is not a subagent's",
+          not module.claude_code_subagent_worktree_check(
+              scratch / "agents" / "seat-a-worktrees" / subagent_name, reference))
     for arguments in ([], ["write"], ["write", "--agent-seat"], ["show", "extra"], ["--worktree"]):
         bad = run(*arguments)
         check(f"the invocation {arguments} exits 2", bad.returncode == 2, bad.stderr)
