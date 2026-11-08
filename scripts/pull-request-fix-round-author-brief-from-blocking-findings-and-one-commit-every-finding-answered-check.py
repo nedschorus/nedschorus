@@ -831,6 +831,7 @@ def failing_suites_in_scratch_worktree(commit, command_for_checkout):
     """Run the suite runner command_for_checkout(checkout) names in a scratch worktree of commit, passing
     its output through as it arrives; return each suite it reports failing, once, in its order."""
     failing = []
+    unfinished = []
     with tempfile.TemporaryDirectory(prefix="fix-round-check-suites-") as scratch:
         checkout = Path(scratch) / "checkout"
         git(["worktree", "add", "--quiet", "--detach", str(checkout), commit])
@@ -847,9 +848,21 @@ def failing_suites_in_scratch_worktree(commit, command_for_checkout):
                         suite = line[len(test_suite_runner.FAILED_SUITE_LINE_PREFIX):].split(" ", 1)[0].strip()
                         if suite not in failing:
                             failing.append(suite)
+                    elif line.startswith((test_suite_runner.NOT_RUN_SUITE_LINE_PREFIX,
+                                          test_suite_runner.NOT_RUN_TO_THE_END_LINE_PREFIX)):
+                        unfinished.append(line.strip())
             status = runner.returncode
         finally:
             git(["worktree", "remove", "--force", str(checkout)])
+    # The runner exits 1 when a suite failed even if others never ran, so a failure the
+    # frozen-head shares must not let an unfinished run through.
+    if unfinished:
+        raise StepFailed(f"the suite runner, {shlex.join(command)}, run on {commit[:12]}, did not judge every "
+                         f"suite: it printed {unfinished[0]!r}. Its output is above. Nothing was pushed.\n"
+                         "Run this --check again once, not the suite runner by itself.\n"
+                         "If the runner again prints a line opening NOT RUN or 'run-all-test-suites: not run "
+                         "to the end', tell merge-lane-2 with SendMessage, quoting each such line, and do "
+                         "not push")
     if status == test_suite_runner.EXIT_ALL_PASSED or (status == test_suite_runner.EXIT_SOME_FAILED and failing):
         return failing
     raise StepFailed(f"the suite runner, {shlex.join(command)}, run on {commit[:12]}, ended with "
