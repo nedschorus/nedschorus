@@ -120,7 +120,7 @@ def recognised_failure_texts_for_model(model: str) -> list:
     return [
         common.RecognisedFailureText(
             "account-limit", "You've hit your ", common.DETAIL_IS_REST_OF_LINE,
-            re.compile(r"(?:\S+ )*?limit\b")),
+            re.compile(r"(?:\S+ ){0,3}limit\b")),
         common.RecognisedFailureText(
             "model-limit", f"You've reached your {family} limit", family),
         common.RecognisedFailureText(
