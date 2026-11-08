@@ -194,7 +194,8 @@ def main():
               f"{'a' * 12}", f"This checkout is on branch some-other-branch, not the pull "
               f"request's branch {BRANCH}: run this again from the checkout that has {BRANCH} "
               "checked out; git worktree list names each checkout of this clone with its "
-              "branch."]),
+              f"branch. If no checkout has it, make one with git worktree add <a new directory> "
+              f"{BRANCH} and run this again there."]),
             ("a checkout on a detached HEAD",
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"), branch=answers("\n")),
              ["view", "rev-parse", "branch"],
@@ -234,9 +235,10 @@ def main():
               "If the changes belong in the pull request: commit them, run the test suites and "
               "the mutation pass that CLAUDE.md asks for before a push, push with git push origin "
               f"HEAD:{BRANCH}, then run this again.",
-              "If they do not: set them aside with git stash push -u -m <a name of your own>, "
-              "then run this again. Once this command has marked the pull request ready, bring "
-              "them back: find your entry's commit, the "
+              "If they do not: set them aside with git stash push -u -m <a name no entry in git "
+              "stash list has>, then run this again. Keep them stashed until this command has "
+              "marked the pull request ready, even if it refuses again for another reason; then "
+              "bring them back: find your entry's commit, the "
               "first word of the line that ends with the name you gave with -m, with git stash list "
               "--format='%H %gs', and run git stash apply <that commit>.",
               "If the apply reports a conflict: keep the stash entry, and tell the user, or the "
@@ -244,6 +246,19 @@ def main():
               "If the apply succeeds: find the entry's current stash@{<n>} on the line that "
               "ends with the name you gave with -m, with git stash list, and drop it with git stash drop "
               "stash@{<n>}."]),
+            ("a checkout with an uncommitted change, on a branch whose name the shell would "
+             "split",
+             FakeRunner(view=answers(view_answer(headRefName="odd;branch")),
+                        status=answers(" M scripts/example.py\n")),
+             ["view", "rev-parse", "status"],
+             ["push with git push origin HEAD:'odd;branch', then run this again."]),
+            ("a pushed commit whose object fails its hash check, which git rev-parse --verify "
+             "reports with exit 1 and an error",
+             FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                        has_commit=exits(1, "error: hash mismatch " + HEAD)),
+             ["view", "rev-parse", "branch", "has-commit"],
+             ["looking for the pushed nc-head-commit in this checkout failed: git rev-parse "
+              f"--verify exited with status 1: error: hash mismatch {HEAD}."]),
             ("a checkout with untracked files that are not ignored",
              FakeRunner(status=answers("?? notes.txt\n?? more.txt\n")),
              ["view", "rev-parse", "status"],
@@ -298,6 +313,17 @@ def main():
     check("a checkout ahead of the pull request is told only how to push",
           "git pull" not in errors and "git fetch" not in errors
           and "not the pull request's branch" not in errors, errors)
+    _, _, errors = run(FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                                  has_commit=exits(1, "error: hash mismatch " + HEAD)))
+    check("a pushed commit that git reports as corrupt is not read as one to fetch",
+          "git fetch" not in errors, errors)
+    runner = FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                        has_commit=lambda command: completed(command, 0, "",
+                                                             "warning: refname is ambiguous"))
+    _, _, errors = run(runner)
+    check("a yes from git that also prints a warning is still a yes",
+          runner.calls == ["view", "rev-parse", "branch", "has-commit", "ancestor", "ancestor"]
+          and "failed" not in errors, (runner.calls, errors))
 
     # A branch name the shell would split or expand is quoted in each command printed.
     odd = "it's-a-topic-branch"
