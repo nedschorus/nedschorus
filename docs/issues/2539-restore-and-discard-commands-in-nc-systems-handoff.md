@@ -40,9 +40,16 @@ The user approved this GHI-MD's plan on 2026-11-07, as item 2 of the approval-wa
 - `restore` also opens a task on the agent-seat's task list naming the restored branch, and code closes that task when the branch's pull request merges or the branch is deleted.
 - The new text of the design's § 3 comes to the user, its old and new text side by side, as an approval-walk item of its own, before the build.
 
+The user approved the new text of the design's § 3 on 2026-11-07, as item 1 of the approval-walk `handoff-uncommitted-work-snapshots-design-section-3-restore-and-discard-commands-approval-walk-2026-11-07`, whose walk-minutes are `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/handoff-uncommitted-work-snapshots-design-section-3-restore-and-discard-commands-approval-walk-2026-11-07-minutes.md`, answering "A". The approved text is the file the walk presented, `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/fleet-restart-at-login/ghi-2539-design-section-3-draft-2026-11-08.md`; the date in its name is the drafter's. Decided:
+
+- The design's § 3 is replaced with the approved text, and the build follows it; where What to build above and the approved text differ, the approved text holds.
+- `scripts/clean-worktrees.py` is the code that closes the task `restore` opens, at its runs with `--remove`.
+- The task follows the commit `restore` made, not the branch's name: after `git fetch --prune origin`, the cleaner marks the task completed when that commit is reachable from `origin/main`, or when no ref holds it.
+- `restore` writes the new worktree's owner file, naming the agent-seat, so that `scripts/clean-worktrees.py` and the agent-seat's list of worktrees handle the restored worktree.
+
 ## Next action
 
-An agent-seat that takes up this GHI builds it, once the user has approved the new text of the design's § 3 in its own approval-walk item: one pull request carrying the two commands, the task `restore` opens and the code that closes it, their tests, the shortened `RESTORE_STEPS`, and the design's § 3.
+An agent-seat that takes up this GHI builds it, as the design's approved § 3 says: one pull request carrying the two commands, the task `restore` opens and the code that closes it, their tests, the shortened `RESTORE_STEPS`, and the design's § 3.
 
 ## Where this came from
 
