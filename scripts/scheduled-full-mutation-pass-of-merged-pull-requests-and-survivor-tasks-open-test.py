@@ -261,10 +261,15 @@ def run_every_exit_but_0_6_7_9_opens_a_job_failure_task_cases():
               and job.JOB_LOG_FILE in tasks[0]["description"]
               and f"JOB FAILURE TASK: opened task #{tasks[0]['id']}" in completed.stderr,
               (completed.returncode, completed.stderr, tasks))
+        task_file = (fixture.tasks / f"nedschorus-{job.JOB_FAILURE_TASK_AGENT_SEAT}-tasks"
+                     / f"{tasks[0]['id']}.json")
+        task_file.write_text(json.dumps({**tasks[0], "description": "an older night's"}))
         completed = fixture.run()
-        check("a second run whose record cannot be written opens no second task",
+        check("a second run whose record cannot be written opens no second task, and rewrites "
+              "the open task's description",
               completed.returncode == job.EXIT_RECORD_NOT_WRITTEN
               and len(job_failure_tasks(fixture)) == 1
+              and "FileExistsError" in job_failure_tasks(fixture)[0]["description"]
               and "already open, so none opened" in completed.stderr,
               (completed.returncode, completed.stderr, job_failure_tasks(fixture)))
 
