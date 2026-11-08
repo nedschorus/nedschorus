@@ -1072,13 +1072,7 @@ def run_line_copying_cases(workspace: Path):
           and len(outcome.completed.stderr.splitlines()) == 2001,
           outcome if isinstance(outcome, str) else repr(outcome.completed.returncode))
 
-    # A runner that would print for a minute, so only an interrupt ends it early.
-    pid_file = workspace / "line-copying" / "runner-pid"
-    noisy_child = ("import os, pathlib, sys, time\n"
-                   f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
-                   "deadline = time.monotonic() + 60\n"
-                   "while time.monotonic() < deadline:\n"
-                   "    print('x' * 200, flush=True)\n")
+    interrupt_sent = threading.Event()
 
     class StreamThatInterruptsThisProgram:
         def __init__(self):
@@ -1088,22 +1082,57 @@ def run_line_copying_cases(workspace: Path):
             if not self.sent:
                 self.sent = True
                 os.kill(os.getpid(), signal.SIGINT)
+                interrupt_sent.set()
 
         def flush(self):
             pass
 
+    def interrupted_runner_outcome_and_pid_file(pid_file_name):
+        # A runner that would print for a minute, so only an interrupt ends it early.
+        pid_file = workspace / "line-copying" / pid_file_name
+        noisy_child = ("import os, pathlib, sys, time\n"
+                       f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+                       "deadline = time.monotonic() + 60\n"
+                       "while time.monotonic() < deadline:\n"
+                       "    print('x' * 200, flush=True)\n")
+        interrupt_sent.clear()
+        try:
+            program.subprocess_run_copying_each_output_line_as_it_arrives(
+                [sys.executable, "-c", noisy_child], workspace, os.environ.copy(),
+                StreamThatInterruptsThisProgram())
+            outcome = "returned"
+        except KeyboardInterrupt:
+            outcome = "interrupted"
+        return outcome, pid_file
+
+    def check_runner_stopped(case_name, outcome, pid_file):
+        check(case_name,
+              outcome == "interrupted" and pid_file.is_file()
+              and not pid_is_running(int(pid_file.read_text())),
+              f"{outcome} {pid_file.read_text() if pid_file.is_file() else 'no pid file'}")
+
+    outcome, pid_file = interrupted_runner_outcome_and_pid_file("runner-pid")
+    check_runner_stopped("an interrupt while waiting for the runner is passed on, and the "
+                         "runner is stopped and reaped, not left running with nothing "
+                         "reading its output", outcome, pid_file)
+
+    # The first copier's start returns only once its line has raised the interrupt, so
+    # the interrupt always lands while the copiers are being started, however loaded
+    # the machine is.
+    class CopierWhoseStartWaitsForTheInterrupt(threading.Thread):
+        def start(self):
+            super().start()
+            interrupt_sent.wait(60)
+
+    real_thread = program.threading.Thread
+    program.threading.Thread = CopierWhoseStartWaitsForTheInterrupt
     try:
-        program.subprocess_run_copying_each_output_line_as_it_arrives(
-            [sys.executable, "-c", noisy_child], workspace, os.environ.copy(),
-            StreamThatInterruptsThisProgram())
-        outcome = "returned"
-    except KeyboardInterrupt:
-        outcome = "interrupted"
-    check("an interrupt while waiting for the runner is passed on, and the runner is "
-          "stopped and reaped, not left running with nothing reading its output",
-          outcome == "interrupted" and pid_file.is_file()
-          and not pid_is_running(int(pid_file.read_text())),
-          f"{outcome} {pid_file.read_text() if pid_file.is_file() else 'no pid file'}")
+        outcome, pid_file = interrupted_runner_outcome_and_pid_file("runner-pid-2")
+    finally:
+        program.threading.Thread = real_thread
+    check_runner_stopped("an interrupt that arrives while the copiers are being started "
+                         "is passed on, and the runner is stopped and reaped",
+                         outcome, pid_file)
 
 
 def run_not_run_suite_record_cases():
