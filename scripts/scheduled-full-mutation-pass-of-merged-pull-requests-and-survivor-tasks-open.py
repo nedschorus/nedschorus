@@ -304,9 +304,6 @@ git_redirecting_removal = module_loaded_by_path(
     "git_redirecting_environment_variables_removal_common",
     REPOSITORY_ROOT / "nc-systems" / "general-tools"
     / "git-redirecting-environment-variables-removal-common.py")
-daily_full_test_run_of_main = module_loaded_by_path(
-    "daily_full_test_run_of_main", Path(__file__).resolve().with_name(
-        "daily-full-test-run-of-main.py"))
 
 
 class StepFailed(Exception):
@@ -573,10 +570,7 @@ def task_file_rewrite(task_file, task):
 
 def program_run_with_limit(command, timeout_seconds):
     """Return (exit code or None when it ran past the limit, stdout, stderr)."""
-    environment = daily_full_test_run_of_main.\
-        environment_with_user_runtime_directory_when_the_user_session_bus_exists(
-            dict(os.environ))
-    process = subprocess.Popen(command, env=environment, stdin=subprocess.DEVNULL,
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                errors="replace")
     try:

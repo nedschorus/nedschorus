@@ -291,9 +291,12 @@ def agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreacha
     """Return (prefix, failure): the systemd-run words that start the seat's tmux server in a
     transient scope of the user's systemd manager, or ([], why the manager cannot be reached).
 
-    Probes the manager with a scope that runs `true` first, because systemd-run and tmux both
-    exit 1, so a failed wrapped launch could not say which of them failed.
+    Sets XDG_RUNTIME_DIR in environment to /run/user/<uid> when it is missing, as under cron,
+    since without it systemd-run --user cannot find the manager. Probes the manager with a
+    scope that runs `true` first, because systemd-run and tmux both exit 1, so a failed
+    wrapped launch could not say which of them failed.
     """
+    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
     if shutil.which("systemd-run") is None:
         return [], "systemd-run is not installed"
     probe = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "true"]
@@ -823,8 +826,6 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
     )
     if first_prompt_file is not None:
         supervisor_command += f" --first-prompt-file {shlex.quote(str(first_prompt_file))}"
-    # Cron gives no XDG_RUNTIME_DIR, without which systemd-run --user cannot find the manager.
-    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
     command_prefix, scope_failure = (
         agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason(
             name, environment))

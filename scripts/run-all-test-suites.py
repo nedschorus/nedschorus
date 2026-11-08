@@ -326,7 +326,10 @@ reports what its suites wait for. A failure to decide, such as a machine
 reading that fails or a slot file that cannot be opened, stops the run with
 exit 2. Every suite runs at nice 10, in a cgroup scope of its own
 (`systemd-run --user --scope`), whose counters give the suite's CPU seconds
-and peak memory, every process it starts included. Every scope is in one
+and peak memory, every process it starts included. systemd-run reaches the
+user's systemd through $XDG_RUNTIME_DIR/bus; when the run is started without
+XDG_RUNTIME_DIR, as cron and an agent-seat cron started start it, the run sets
+it to /run/user/<uid> if /run/user/<uid>/bus exists. Every scope is in one
 slice of the user's systemd, TEST_SUITE_CGROUP_SLICE, at CPU weight 10, a
 sibling of app.slice and of the tmux-spawn scopes tmux puts agent-seats in,
 whose weight is 100: while an agent-seat in such a scope wants the CPU, the
@@ -334,9 +337,11 @@ suites together get a tenth of its share. Nice orders a process only against
 processes in the same cgroup, here the suite's own scope, so nice 10 gives an
 agent-seat no priority over any suite: only the slice's weight does. That
 weight counts only within user@1000.service, so an agent-seat whose tmux
-server runs in system.slice, such as one cron started, competes with the
-suites at the weight of user.slice against system.slice, which only root can
-change.
+server runs in system.slice, such as one cron started without systemd-run,
+competes with the suites at the weight of user.slice against system.slice,
+which only root can change; one in an ssh login's session scope, as
+scripts/launch-claude-ubuntu starts it, competes at the weight of that scope
+against all of user@1000.service.
 
 MEMORY CEILING, where suites run in cgroup scopes. A suite's scope may hold
 TEST_SUITE_MEMORY_CEILING_BYTES, 4 GB, or what
@@ -847,6 +852,9 @@ SUITES_RUN_WITHOUT_ANY_SANDBOX = {
         "it builds nc-test-sandboxes itself with bwrap, which cannot start inside bwrap",
     "scripts/run-all-test-suites-overlapping-runs-real-process-test.py":
         "it starts this program, whose suites run in bwrap, which cannot start inside bwrap",
+    "scripts/recover-crashed-seats-started-tmux-server-lands-in-user-systemd-manager-cgroup-without-xdg-runtime-dir-real-process-test.py":
+        "it starts a tmux server in a scope of the user's systemd, whose session bus "
+        "the nc-test-sandbox's empty /run hides",
     "scripts/mac-request-from-ned-box-forced-command-test.py":
         "it runs the real ssh, which refuses its root-owned config files because "
         "inside the sandbox's user namespace they show as owned by nobody",
@@ -2117,12 +2125,36 @@ def psutil_imported_or_why_not():
     return psutil, None
 
 
+def environment_with_user_runtime_directory_when_the_user_session_bus_exists(
+        environment, platform=None, uid=None, path_exists=os.path.exists):
+    """Return the environment, with XDG_RUNTIME_DIR added when the user's session bus is there.
+
+    systemd-run --user and systemctl --user find the user manager's bus at
+    $XDG_RUNTIME_DIR/bus, and cron, an agent-seat cron started and an agent's hook give
+    no XDG_RUNTIME_DIR. The variable is added only on Linux, only when it is missing,
+    and only when /run/user/<uid>/bus exists."""
+    platform = sys.platform if platform is None else platform
+    uid = os.getuid() if uid is None else uid
+    runtime_directory = f"/run/user/{uid}"
+    if (platform.startswith("linux") and "XDG_RUNTIME_DIR" not in environment
+            and path_exists(f"{runtime_directory}/bus")):
+        return {**environment, "XDG_RUNTIME_DIR": runtime_directory}
+    return environment
+
+
 def why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(which=shutil.which,
-                                                                        runner=subprocess.run):
+                                                                        runner=subprocess.run,
+                                                                        environment=None):
     """None when each suite can run in a cgroup scope of its own, or why it cannot.
 
-    It first sets TEST_SUITE_CGROUP_SLICE's CPU weight, which lasts until the user's
+    It first adds XDG_RUNTIME_DIR to environment, default this process's, as
+    environment_with_user_runtime_directory_when_the_user_session_bus_exists adds it, so
+    every suite started after it reaches the user manager whoever started this program.
+    Then it sets TEST_SUITE_CGROUP_SLICE's CPU weight, which lasts until the user's
     systemd restarts, so every run sets it again."""
+    environment = os.environ if environment is None else environment
+    environment.update(
+        environment_with_user_runtime_directory_when_the_user_session_bus_exists(dict(environment)))
     for program in ("systemd-run", "systemctl", "setpriv", "bash"):
         if which(program) is None:
             return f"{program} is not on PATH"
