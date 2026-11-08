@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import fcntl
 import hashlib
 import json
 import os
@@ -866,6 +867,21 @@ def run_model_chain(
     return 0
 
 
+def record_directory_being_written_lock_hold_unless_passed_or_held(record_dir: pathlib.Path) -> None:
+    """Hold record_dir's being-written lock until this process exits, unless the program that started
+    this cell passed it a descriptor on record_dir, as the cold-read-grid does, or another process holds
+    the lock. A cell run directly is then not shipped, by the pre-remove hook or anyone, while its
+    reviewer still writes the report; the reviewer is passed the descriptor in run_model_chain."""
+    if record_names.record_directory_being_written_lock_pass_fds_for_child_writers(record_dir):
+        return
+    # Left open on purpose: the kernel releases the lock when this process exits, however it ends.
+    descriptor = os.open(record_dir, os.O_RDONLY)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(descriptor)
+
+
 def run_cell(
     *, program: str, runtime: str, description: str, model_help: str,
     tier_to_model_chain: dict, tier_to_effort: dict, invocation_builder,
@@ -900,6 +916,7 @@ def run_cell(
         print(f"{program}: {refusal}", file=sys.stderr)
         report_stray_writes(program, baseline, report)
         return refusal.exit_code
+    record_directory_being_written_lock_hold_unless_passed_or_held(report.parent)
 
     # The staging directory is made after every refusal, so no refusal leaves one behind.
     # The Codex reviewer can write only inside the checkout, the temporary directories on
