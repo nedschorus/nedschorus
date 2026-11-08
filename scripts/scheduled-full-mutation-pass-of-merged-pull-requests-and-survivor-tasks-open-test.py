@@ -258,6 +258,13 @@ def run_carry_on_and_job_failure_task_cases():
               and "systemd-run --user --unit=mutation-hand-run-" in tasks[0]["description"]
               and f"JOB FAILURE TASK: opened task #1 on {job.JOB_FAILURE_TASK_AGENT_SEAT}'s task "
                   f"list" in record, (tasks, record))
+        workers = call[call.index("--parallel-mutant-workers") + 1] if call else None
+        check("the hand run the task gives runs the merge as the nightly run did: in the same "
+              "clone, with as many workers, resuming the merge's kept sessions",
+              bool(tasks) and f"--checkout {fixture.clone.resolve()} " in tasks[0]["description"]
+              and f"--parallel-mutant-workers {workers} " in tasks[0]["description"]
+              and f"--cosmic-ray-sessions-directory-kept-to-resume {sessions}"
+                  in tasks[0]["description"], tasks)
         completed = fixture.run({merge: {"sleep": 30}}, timeout_seconds=1)
         record = fixture.records()[-1].read_text()
         check("the next run with no progress opens no second task while the first is open",
@@ -339,7 +346,8 @@ def run_carry_on_and_job_failure_task_cases():
               and tasks[0]["subject"].startswith(
                   "Nightly full mutation pass stopped at a failed step: the kept cosmic-ray "
                   "session")
-              and "Delete that file" in tasks[0]["description"],
+              and f"Delete the session file {sessions / 'garbage.sqlite'} on ned-box, and no other "
+                  f"file" in tasks[0]["description"],
               f"rc={completed.returncode} tasks={tasks} err={completed.stderr}")
 
     # A failed step opens a job failure task; the same failure again opens no second one.
@@ -451,6 +459,40 @@ def run_carry_on_and_job_failure_task_cases():
               and "judged no new mutant" in failed[0] and "three days" in failed[1]
               and "2 task(s) for a failure of this run could not be opened" in completed.stderr,
               f"rc={completed.returncode} failed={failed} err={completed.stderr}")
+
+    # A step that fails before any merge is tested still has the merges three days untested
+    # reported.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        start = git(fixture.work, "rev-parse", "HEAD")
+        days_ago = int(time.time()) - job.MERGE_STILL_UNTESTED_TASK_OPENED_AFTER_SECONDS_SINCE_MERGE - 60
+        (fixture.work / "scripts" / "other.py").parent.mkdir(parents=True, exist_ok=True)
+        (fixture.work / "scripts" / "other.py").write_text("VALUE = 2\n")
+        git(fixture.work, "add", "-A")
+        subprocess.run(["git", "-C", str(fixture.work), "commit", "-q", "-m", "older"],
+                       env={**os.environ, "GIT_COMMITTER_DATE": f"{days_ago} +0000",
+                            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+                            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"},
+                       check=True)
+        git(fixture.work, "push", "-q", "origin", "HEAD:main")
+        three_days_old = git(fixture.work, "rev-parse", "HEAD")
+        fixture.state.mkdir(parents=True)
+        # A state naming a survivor task with no agent-seat makes the step after the merges
+        # are listed fail.
+        (fixture.state / job.STATE_FILE_NAME).write_text(json.dumps({
+            "last_tested_main_commit": start, "tasks_opened": {"k": {}}}))
+        completed = fixture.run()
+        subjects = [task["subject"] for task in job_failure_tasks(fixture)]
+        warnings = [task for task in job_failure_tasks(fixture) if task["subject"]
+                    == job.MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT]
+        check("a step that fails before any merge is tested: exit 4, its task, and the "
+              "untested-merges task naming the merge three days untested",
+              completed.returncode == job.EXIT_STEP_FAILED and len(subjects) == 2
+              and subjects[0].startswith("Nightly full mutation pass stopped at a failed step")
+              and len(warnings) == 1
+              and f"The oldest is merge {three_days_old}," in warnings[0]["description"],
+              f"rc={completed.returncode} subjects={subjects} err={completed.stderr}")
 
     # A session whose writer was killed part-way through a write leaves a hot journal; the
     # count rolls it back and counts what was committed.
