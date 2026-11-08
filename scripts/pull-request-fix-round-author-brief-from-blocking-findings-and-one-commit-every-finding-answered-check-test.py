@@ -1702,6 +1702,39 @@ def replaces_cases(root, repository, base, frozen_head):
     check("replaces: a replaced round answered without a commit, as its round record says, carries no "
           "finding", code == 0 and "Blocking findings (2)" in out and "old.py" not in out, err + out)
 
+    second_round = replaced_routes(frozen_head, REPLACED_SECOND_HEAD, REPLACED_TWO_ROUNDS, REPLACED_COMMENTS)
+    second_round[REVIEWS] = {"stdout": lines([review(review_id=10, commit_id="earlier-head-10"),
+                                              review(commit_id=frozen_head)])}
+    code, out, err = run(root, repository, second_round)
+    check("replaces: once this pull request's first round was answered by a fix commit, its next round "
+          "carries no finding but counts the replaced rounds",
+          code == 0 and "Blocking findings (2)" in out and "old.py" not in out and "old.txt" not in out
+          and ADVISOR_SENTENCE not in out, err + out)
+
+    recorded_round = replaced_routes(frozen_head, REPLACED_SECOND_HEAD, REPLACED_TWO_ROUNDS, REPLACED_COMMENTS)
+    recorded_round[REVIEWS] = {"stdout": lines([review(review_id=10, commit_id=frozen_head),
+                                                review(commit_id=frozen_head)])}
+    recorded_round[ISSUE_COMMENTS] = {"stdout": lines([round_record(frozen_head, [10])])}
+    code, out, err = run(root, repository, recorded_round)
+    check("replaces: once this pull request's first round was answered without a commit, as its round "
+          "record says, its next round on the same head carries no finding",
+          code == 0 and "Blocking findings (2)" in out and "old.py" not in out, err + out)
+
+    restated_finding = comment("old.py", "**Blocks.** old.py loses the record.", line=30, comment_id=4)
+    restated_nit = comment("old.txt", "**fix-in-maintenance, nit** old.txt misspells it.", line=4, comment_id=5)
+    restated = replaced_routes(frozen_head, REPLACED_SECOND_HEAD, REPLACED_TWO_ROUNDS, REPLACED_COMMENTS)
+    restated[REVIEWS] = {"stdout": lines([review(commit_id=frozen_head,
+                                                 body="REQUEST_CHANGES\n\n**Blocking: 3**\n\nAll inline.")])}
+    restated[f"api --paginate repos/{{owner}}/{{repo}}/pulls/{NUMBER}/reviews/11/comments --jq .[]"] = {
+        "stdout": lines([*BLOCKING_COMMENTS, restated_finding, restated_nit])}
+    code, out, err = run(root, repository, restated)
+    check("replaces: a carried finding and nit restated on this pull request are listed once, as this pull "
+          "request's own",
+          code == 0 and "Blocking findings (3)" in out and "Nits to fix in this round too (1)" in out
+          and out.count("old.py loses the record.") == 1 and out.count("old.txt misspells it.") == 1
+          and f"3. old.py:30 ({URL}#discussion_r4)" in out and f"4. old.txt:4 ({URL}#discussion_r5)" in out
+          and "carried over" not in out, err + out)
+
     code, out, err = run(root, repository, replaced_routes(frozen_head, REPLACED_SECOND_HEAD, []))
     check("replaces: a replaced pull request merge-lane-2 never reviewed adds no round and no finding",
           code == 0 and ADVISOR_SENTENCE not in out and "Blocking findings (2)" in out, err + out)
