@@ -56,11 +56,15 @@ pull request was merged or closed at least 24 hours ago, once the lock,
 prune, in-progress operation and vacancy checks above pass. It is kept, with
 the reason, when its name holds no such part or more than one, as main and
 main-green-<commit> do, when the pull request is open, finished less than 24
-hours ago, while merge-lane-2's merge program may still be removing its
-checkouts or testing main in pr<n>-merge-commit-on-main-worktree, or missing
-from gh's listing, or when gh fails or gives no closing time it can read. Its
-uncommitted, untracked and ignored files are named and discarded with it,
-with no work-snapshot, since no agent-seat owns them and the pull request is
+hours ago, or missing from gh's listing, or when gh fails or gives a closing
+time this program cannot read. The 24 hours are a margin, not a check: after a merge,
+merge-lane-2's merge program removes the pull request's checkouts and tests
+main in pr<n>-merge-commit-on-main-worktree, and between its steps no process
+has a working directory there for the vacancy check to see. Its walks and its
+cold-read and sanity-check records ship to the log-store before removal, as
+for every worktree, and a record that does not ship keeps it. Its uncommitted,
+untracked and ignored files are then named and discarded with it, with no
+work-snapshot, since no agent-seat owns them and the pull request is
 finished; commits on its detached HEAD get no branch, since a review
 checkout's own commits, such as pr<n>-merged's local merge commit, are not
 work anyone carries on.
@@ -104,9 +108,10 @@ prints the command beside each entry. Unlike --remove,
 because the agent-seat that owns it runs, since that agent-seat has decided;
 an agent-session that owns it and runs still keeps it, as the next sentence
 says. --remove-worktree-and-force-delete-its-branch keeps the worktree when it
-is not a worktree of the clone other than its main checkout, has no owner file
-or one that cannot be read, is locked, would be pruned, has a rebase, merge,
-cherry-pick or revert in progress or git cannot say where to look for the
+is not a worktree of the clone other than its main checkout, has no owner file,
+which a merge-lane review checkout always lacks, or one that cannot be read,
+is locked, would be pruned, has a rebase, merge, cherry-pick or revert in
+progress or git cannot say where to look for the
 files that show one, is owned by an agent-session whose `claude` process runs or
 whose state cannot be read, cannot be checked against the pull requests, has
 an open pull request whose head branch is its branch or whose head commit is
@@ -862,8 +867,8 @@ def removal_records_and_discarded_files_text(worktree, discarded):
     text = ""
     records = log_store_records_in(worktree)
     if records:
-        text += (f"; --remove first ships its {len(records)} record(s) to the log-store "
-                 f"and keeps it if one does not ship: "
+        text += (f"; --remove first ships its {len(records)} record(s) to the log-store and "
+                 f"keeps the worktree if one does not ship; the records it ships: "
                  + ", ".join(str(record_path.relative_to(worktree)) for _, record_path in records))
     if discarded:
         text += (f"; removing it discards {len(discarded)} uncommitted, untracked or ignored "
@@ -917,7 +922,8 @@ def merge_lane_review_checkout_verdict(worktree, pull_requests):
         return Verdict(False, f"it is a merge-lane review checkout of "
                               f"{pull_request_text(pull_request)}, finished less than "
                               f"{MERGE_LANE_REVIEW_CHECKOUT_KEPT_AFTER_ITS_PULL_REQUEST_FINISHED_HOURS} "
-                              f"hours ago, while merge-lane-2's merge program may still use it",
+                              f"hours ago; the cleaner waits that long because merge-lane-2's merge "
+                              f"program may still be using it, unseen by the vacancy check",
                        KEPT_IN_USE)
     keep_reason = worktree_vacancy_keep_reason(worktree)
     if keep_reason is not None:

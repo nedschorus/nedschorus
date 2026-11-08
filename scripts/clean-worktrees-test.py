@@ -1608,7 +1608,8 @@ with tempfile.TemporaryDirectory() as scratch:
     reported_walk_wt = worktree_holding_a_walk("reported-walk-wt")
     reported = run_clean_shipping_to(str(walk_store / "cold-read-records")).stdout
     check("the report names a done worktree's walk and says --remove ships it first",
-          f"--remove first ships its 1 record(s) to the log-store and keeps it if one does not ship: "
+          f"--remove first ships its 1 record(s) to the log-store and keeps the worktree if one "
+          f"does not ship; the records it ships: "
           f"docs/walk/{walk_name}.md" in reported, reported)
     check("the report ships no walk", not (walk_store / "walk").exists())
     remove_worktree_for_next_case(reported_walk_wt)
@@ -2440,8 +2441,9 @@ with tempfile.TemporaryDirectory() as scratch:
               recently_merged_checkout.exists()
               and review_line(removal.stdout, "pr17-merge-commit-on-main-worktree")
               == "pr17-merge-commit-on-main-worktree: kept — it is a merge-lane review checkout of "
-                 "pull request #17 (merged), finished less than 24 hours ago, while merge-lane-2's "
-                 "merge program may still use it", removal.stdout)
+                 "pull request #17 (merged), finished less than 24 hours ago; the cleaner waits that "
+                 "long because merge-lane-2's merge program may still be using it, unseen by the "
+                 "vacancy check", removal.stdout)
         check("a merge-lane review checkout whose pull request gh gives no closing time for is kept",
               no_closing_time_checkout.exists()
               and "whose closing time gh did not give in a form this program reads: KeyError"
