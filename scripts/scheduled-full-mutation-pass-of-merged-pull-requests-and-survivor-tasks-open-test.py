@@ -15,6 +15,7 @@ import importlib.util
 import json
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -47,7 +48,7 @@ def load_script_module():
 job = load_script_module()
 
 FAKE_MUTATION_TESTING_PROGRAM = f'''#!/usr/bin/env python3
-import json, os, pathlib, signal, sys, time
+import json, os, pathlib, signal, sqlite3, sys, time
 plan_file = pathlib.Path(os.environ["{PLAN_VARIABLE}"])
 plan = json.loads(plan_file.read_text())
 arguments = sys.argv[1:]
@@ -60,6 +61,21 @@ def stopped(number, frame):
     (plan_file.parent / "stopped-by-sigterm").write_text(head)
     sys.exit(143)
 signal.signal(signal.SIGTERM, stopped)
+if "judged_in_kept_session" in step:
+    # As cosmic-ray 8.7.0 keeps a session: a row of work_results per mutant with a result.
+    sessions = pathlib.Path(arguments[arguments.index(
+        "--cosmic-ray-sessions-directory-kept-to-resume") + 1])
+    sessions.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(sessions / "kept.sqlite")
+    if step.get("kept_session_started_again"):
+        connection.execute("DROP TABLE IF EXISTS work_results")
+    connection.execute("CREATE TABLE IF NOT EXISTS work_results (job_id, worker_outcome)")
+    connection.executemany("INSERT INTO work_results VALUES (?, ?)",
+                           [(str(number), "NORMAL") for number in
+                            range(step["judged_in_kept_session"])]
+                           + [("skipped", "SKIPPED")])
+    connection.commit()
+    connection.close()
 time.sleep(step.get("sleep", 0))
 if rechecking:
     diff_files = arguments[arguments.index("--recorded-mutant-killed-check") + 1:
@@ -195,6 +211,284 @@ def verdict(survived=(), errored=(), no_suite=()):
 
 def task_files(list_directory):
     return sorted(path.name for path in list_directory.glob("*.json"))
+
+
+def job_failure_tasks(fixture):
+    directory = fixture.tasks / f"nedschorus-{job.JOB_FAILURE_TASK_AGENT_SEAT}-tasks"
+    return [json.loads(path.read_text()) for path in sorted(directory.glob("*.json"))]
+
+
+def run_carry_on_and_job_failure_task_cases():
+    # A merge past the limit with no mutant judged: carried on, not recorded as tested, and
+    # one job failure task, not a second on the next run.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        merge = fixture.commit("scripts/thing.py", "VALUE = 1\n")
+        fixture.commit("scripts/other.py", "VALUE = 2\n")
+        completed = fixture.run({merge: {"sleep": 30}}, timeout_seconds=1)
+        record = fixture.records()[0].read_text() if fixture.records() else ""
+        tasks = job_failure_tasks(fixture)
+        sessions = fixture.state / job.COSMIC_RAY_SESSIONS_KEPT_FOR_UNFINISHED_MERGES_DIRECTORY_NAME / merge
+        call = fixture.calls()[0] if fixture.calls() else []
+        check("a merge past the limit is carried on: exit 9, the state not advanced, no later "
+              "merge run, and the record says so",
+              completed.returncode == job.EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN
+              and fixture.state_json()["last_tested_main_commit"] == start
+              and len(fixture.calls()) == 1
+              and f"CARRIED ON: merge {merge[:12]} (change scripts/thing.py) ran past the limit "
+                  f"of 1 s with 0 mutant(s) judged" in record
+              and "merges tested: 0 of 2" in record,
+              f"rc={completed.returncode} calls={fixture.calls()} record={record} "
+              f"err={completed.stderr}")
+        check("the program is stopped with SIGTERM, so it can remove its worktrees",
+              (fixture.root / "stopped-by-sigterm").exists())
+        check("each merge's run is given a worker count and the merge's own kept sessions "
+              "directory",
+              call[call.index("--cosmic-ray-sessions-directory-kept-to-resume") + 1]
+              == str(sessions)
+              and int(call[call.index("--parallel-mutant-workers") + 1]) >= 1, call)
+        check("a carried-on merge that judged no new mutant opens one job failure task saying "
+              "what failed and what to do, named in the record",
+              len(tasks) == 1 and tasks[0]["subject"]
+              == f"Nightly full mutation pass judged no new mutant of merge {merge[:12]} in a "
+                 f"night, before the per-merge time limit"
+              and "systemd-run --user --unit=mutation-hand-run-" in tasks[0]["description"]
+              and f"JOB FAILURE TASK: opened task #1 on {job.JOB_FAILURE_TASK_AGENT_SEAT}'s task "
+                  f"list" in record, (tasks, record))
+        completed = fixture.run({merge: {"sleep": 30}}, timeout_seconds=1)
+        record = fixture.records()[-1].read_text()
+        check("the next run with no progress opens no second task while the first is open",
+              len(job_failure_tasks(fixture)) == 1
+              and "already open, so none opened: task #1" in record, record)
+        task_file = fixture.tasks / f"nedschorus-{job.JOB_FAILURE_TASK_AGENT_SEAT}-tasks" / "1.json"
+        task_file.write_text(json.dumps(dict(json.loads(task_file.read_text()),
+                                             status="completed")))
+        fixture.run({merge: {"sleep": 30}}, timeout_seconds=1)
+        check("once that task is completed, the same failure opens a new task",
+              [task["status"] for task in job_failure_tasks(fixture)] == ["completed", "pending"],
+              job_failure_tasks(fixture))
+
+    # A carried-on merge that judged new mutants opens no task; once tested, its kept sessions
+    # are removed by the next run.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        merge = fixture.commit("scripts/thing.py", "VALUE = 1\n")
+        completed = fixture.run({merge: {"sleep": 30, "judged_in_kept_session": 3}},
+                                timeout_seconds=2)
+        record = fixture.records()[0].read_text() if fixture.records() else ""
+        check("a carried-on merge with new mutants judged: exit 9, no job failure task, and the "
+              "record counts them, the skipped ones left out",
+              completed.returncode == job.EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN
+              and job_failure_tasks(fixture) == []
+              and "with 3 mutant(s) judged, 3 of them in this run" in record,
+              f"rc={completed.returncode} record={record} err={completed.stderr}")
+        completed = fixture.run({merge: {"sleep": 30, "judged_in_kept_session": 2}},
+                                timeout_seconds=2)
+        record = fixture.records()[-1].read_text()
+        check("a second night counts the mutants judged before it apart from its own",
+              completed.returncode == job.EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN
+              and job_failure_tasks(fixture) == []
+              and "with 5 mutant(s) judged, 2 of them in this run" in record,
+              f"rc={completed.returncode} record={record}")
+        fixture.run({merge: {"sleep": 30, "judged_in_kept_session": 1,
+                             "kept_session_started_again": True}}, timeout_seconds=2)
+        check("a night that ends with fewer mutants judged than it began with judged no new "
+              "one, and gets a task",
+              [task["subject"] for task in job_failure_tasks(fixture)]
+              == [f"Nightly full mutation pass judged no new mutant of merge {merge[:12]} in a "
+                  f"night, before the per-merge time limit"], job_failure_tasks(fixture))
+        completed = fixture.run({merge: {"json": verdict()}})
+        record = fixture.records()[-1].read_text()
+        sessions = fixture.state / job.COSMIC_RAY_SESSIONS_KEPT_FOR_UNFINISHED_MERGES_DIRECTORY_NAME
+        check("the next run says how many mutants its kept sessions held, and records the merge "
+              "as tested",
+              completed.returncode == 0
+              and f"merge {merge[:12]}: " in record
+              and "1 mutant(s) already judged in its kept sessions" in record
+              and fixture.state_json()["last_tested_main_commit"] == merge,
+              f"rc={completed.returncode} record={record} err={completed.stderr}")
+        fixture.run()
+        check("a run removes the kept sessions of a merge no longer waiting to be tested",
+              not (sessions / merge).exists(), list(sessions.iterdir()))
+
+    # A kept session that cannot be read stops the run.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        merge = fixture.commit("scripts/thing.py", "VALUE = 1\n")
+        sessions = (fixture.state / job.COSMIC_RAY_SESSIONS_KEPT_FOR_UNFINISHED_MERGES_DIRECTORY_NAME
+                    / merge)
+        sessions.mkdir(parents=True)
+        (sessions / "garbage.sqlite").write_text("not a database")
+        completed = fixture.run({merge: {"json": verdict()}})
+        tasks = job_failure_tasks(fixture)
+        check("a kept session that cannot be read: exit 4, a job failure task with the failure, "
+              "and the merge not recorded as tested",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and fixture.calls() == []
+              and fixture.state_json()["last_tested_main_commit"] == start
+              and len(tasks) == 1
+              and tasks[0]["subject"].startswith(
+                  "Nightly full mutation pass stopped at a failed step: the kept cosmic-ray "
+                  "session")
+              and "Delete that file" in tasks[0]["description"],
+              f"rc={completed.returncode} tasks={tasks} err={completed.stderr}")
+
+    # A failed step opens a job failure task; the same failure again opens no second one.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        merge = fixture.commit("scripts/thing.py", "VALUE = 1\n")
+        step = {merge: {"exit": 2, "stderr": "mutation-testing: not run — cosmic-ray is missing"}}
+        completed = fixture.run(step)
+        tasks = job_failure_tasks(fixture)
+        check("a failed step: exit 4 and one job failure task whose subject is the failure's "
+              "first line and whose description holds the whole failure and the record",
+              completed.returncode == job.EXIT_STEP_FAILED and len(tasks) == 1
+              and tasks[0]["subject"] == f"Nightly full mutation pass stopped at a failed step: "
+                                         f"merge {merge[:12]} (change scripts/thing.py): the "
+                                         f"mutation testing program exited 2 without saying "
+                                         f"whether each mutant was killed: mutation-testing: not "
+                                         f"run — cosmic-ray is missing. The next run tries this "
+                                         f"merge again."[:len("Nightly full mutation pass stopped "
+                                                               "at a failed step: ") + 200]
+              and "If it fails the same way again" in tasks[0]["description"]
+              and str(fixture.records()[0]) in tasks[0]["description"],
+              f"rc={completed.returncode} tasks={tasks}")
+        fixture.run(step)
+        check("the same failed step again opens no second task", len(job_failure_tasks(fixture))
+              == 1, job_failure_tasks(fixture))
+
+    # An error the program does not handle still writes the record, opens a task with its
+    # traceback, and exits 4.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.state.mkdir(parents=True)
+        (fixture.state / job.STATE_FILE_NAME).write_text(json.dumps({
+            "last_tested_main_commit": start, "tasks_opened": {"k": {}}}))
+        completed = fixture.run()
+        record = fixture.records()[0].read_text() if fixture.records() else ""
+        tasks = job_failure_tasks(fixture)
+        check("an error the program does not handle: exit 4, the record and a job failure task "
+              "carry its traceback",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and "FAILED: the run raised KeyError: 'agent_seat', which this program does not "
+                  "handle" in record and "Traceback (most recent call last)" in record
+              and len(tasks) == 1 and "Traceback" in tasks[0]["description"],
+              f"rc={completed.returncode} record={record} err={completed.stderr}")
+
+    # Merges still untested three days after their merge commits share one task, whose
+    # description each run rewrites with the count and the oldest.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        old = fixture.commit("scripts/thing.py", "VALUE = 1\n")
+        days_ago = int(time.time()) - job.MERGE_STILL_UNTESTED_TASK_OPENED_AFTER_SECONDS_SINCE_MERGE - 60
+        (fixture.work / "scripts" / "other.py").write_text("VALUE = 2\n")
+        git(fixture.work, "add", "-A")
+        subprocess.run(["git", "-C", str(fixture.work), "commit", "-q", "-m", "older"],
+                       env={**os.environ, "GIT_COMMITTER_DATE": f"{days_ago} +0000",
+                            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+                            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"},
+                       check=True)
+        git(fixture.work, "push", "-q", "origin", "HEAD:main")
+        three_days_old = git(fixture.work, "rev-parse", "HEAD")
+        completed = fixture.run({old: {"sleep": 30, "judged_in_kept_session": 1}},
+                                timeout_seconds=2)
+        tasks = job_failure_tasks(fixture)
+        warnings = [task for task in tasks if task["subject"]
+                    == job.MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT]
+        check("a merge waiting behind a carried-on one three days after its merge commit gets "
+              "the one untested-merges task, naming it as the oldest of 1; a newer one does not",
+              completed.returncode == job.EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN
+              and len(warnings) == 1
+              and warnings[0]["description"].startswith("1 merge(s) into main")
+              and f"The oldest is merge {three_days_old}," in warnings[0]["description"],
+              f"rc={completed.returncode} tasks={tasks} err={completed.stderr}")
+        (fixture.work / "scripts" / "third.py").write_text("VALUE = 3\n")
+        git(fixture.work, "add", "-A")
+        subprocess.run(["git", "-C", str(fixture.work), "commit", "-q", "-m", "older too"],
+                       env={**os.environ, "GIT_COMMITTER_DATE": f"{days_ago + 1} +0000",
+                            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+                            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"},
+                       check=True)
+        git(fixture.work, "push", "-q", "origin", "HEAD:main")
+        completed = fixture.run({old: {"sleep": 30, "judged_in_kept_session": 1}},
+                                timeout_seconds=2)
+        tasks = job_failure_tasks(fixture)
+        warnings = [task for task in tasks if task["subject"]
+                    == job.MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT]
+        check("a second three-day-old merge opens no second task: the one open task's "
+              "description now counts 2, the oldest unchanged",
+              len(warnings) == 1
+              and warnings[0]["description"].startswith("2 merge(s) into main")
+              and f"The oldest is merge {three_days_old}," in warnings[0]["description"],
+              f"rc={completed.returncode} tasks={tasks} err={completed.stderr}")
+        # With the task list gone, neither of this run's two tasks can be opened.
+        for path in (fixture.tasks / f"nedschorus-{job.JOB_FAILURE_TASK_AGENT_SEAT}-tasks").iterdir():
+            path.unlink()
+        (fixture.tasks / f"nedschorus-{job.JOB_FAILURE_TASK_AGENT_SEAT}-tasks").rmdir()
+        completed = fixture.run({old: {"sleep": 30}}, timeout_seconds=1)
+        record = fixture.records()[-1].read_text()
+        failed = [line for line in record.splitlines()
+                  if line.startswith("FAILED: no job failure task could be opened")]
+        check("each task that cannot be opened is named in the record, and the run exits 4",
+              completed.returncode == job.EXIT_STEP_FAILED and len(failed) == 2
+              and "judged no new mutant" in failed[0] and "three days" in failed[1]
+              and "2 task(s) for a failure of this run could not be opened" in completed.stderr,
+              f"rc={completed.returncode} failed={failed} err={completed.stderr}")
+
+    # A session whose writer was killed part-way through a write leaves a hot journal; the
+    # count rolls it back and counts what was committed.
+    with tempfile.TemporaryDirectory() as scratch:
+        session = Path(scratch) / "kept.sqlite"
+        connection = sqlite3.connect(session)
+        connection.execute("CREATE TABLE work_results (job_id, worker_outcome)")
+        connection.executemany("INSERT INTO work_results VALUES (?, ?)",
+                               [("a", "NORMAL"), ("b", "SKIPPED"), ("c", "EXCEPTION")])
+        connection.commit()
+        connection.close()
+        ready = Path(scratch) / "ready"
+        writer = subprocess.Popen([sys.executable, "-c", (
+            "import pathlib, sqlite3, sys, time\n"
+            "connection = sqlite3.connect(sys.argv[1], isolation_level=None)\n"
+            "connection.execute('PRAGMA cache_size=5')\n"
+            "connection.execute('BEGIN IMMEDIATE')\n"
+            "for number in range(50000):\n"
+            "    connection.execute('INSERT INTO work_results VALUES (?, ?)', "
+            "('x' * 50 + str(number), 'NORMAL'))\n"
+            "pathlib.Path(sys.argv[2]).write_text('')\n"
+            "time.sleep(60)\n"), str(session), str(ready)])
+        deadline = time.monotonic() + 60
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        writer.kill()
+        writer.wait()
+        journal_left = session.with_name(session.name + "-journal").exists()
+        count = job.count_of_mutants_judged_in_kept_cosmic_ray_sessions(Path(scratch))
+        check("a kept session left with a hot journal by a writer killed part-way is rolled back "
+              "and counted, its skipped mutants left out",
+              journal_left and count == 2, (journal_left, count))
+
+    # mutant_worker_count_for_free_cores: the cores less the load, from 1 to the cores.
+    counts = [job.mutant_worker_count_for_free_cores(cores, load)
+              for cores, load in ((16, 3.5), (16, 40.0), (16, 0.0), (1, 0.0))]
+    check("the worker count is the cores less the 1-minute load average, at least 1, at most "
+          "the cores", counts == [12, 1, 16, 1], counts)
 
 
 def run_cases():
@@ -335,10 +629,6 @@ def run_cases():
          {"exit": 2, "stderr": "mutation-testing: not run — cosmic-ray is missing"}, None,
          "exited 2 without saying whether each mutant was killed: mutation-testing: not run — "
          "cosmic-ray is missing"),
-        ("the mutation testing program runs past the limit",
-         {"sleep": 30, "json": verdict()}, 1, "ran past the limit of 1 s and was stopped"),
-        ("a merge that runs past the limit says how to skip it",
-         {"sleep": 30, "json": verdict()}, 1, "stop it and skip this merge: in the JSON file "),
         ("the mutation testing program writes no JSON file",
          {"exit": 0}, None, "but its JSON file"),
         ("the JSON file lacks a key",
@@ -359,9 +649,14 @@ def run_cases():
                   and "The next run tries this merge again" in record
                   and fixture.state_json()["last_tested_main_commit"] == start,
                   f"rc={completed.returncode} record={record} err={completed.stderr}")
-            if timeout_seconds is not None:
-                check(f"{case_name}: the program is stopped with SIGTERM, so it can remove its "
-                      f"worktree", (fixture.root / "stopped-by-sigterm").exists())
+            crash_tasks = [json.loads(path.read_text()) for path in
+                           (fixture.tasks / f"nedschorus-{job.JOB_FAILURE_TASK_AGENT_SEAT}-tasks"
+                            ).glob("*.json")]
+            check(f"{case_name}: no job failure task list, so the task is named on stderr "
+                  f"as not opened", "could not be opened on fleet-restart-at-login's task list"
+                  in completed.stderr and not crash_tasks, (completed.stderr, crash_tasks))
+
+    run_carry_on_and_job_failure_task_cases()
 
     # No task list for the survivor at all: the merge is not recorded as tested.
     with tempfile.TemporaryDirectory() as scratch:
@@ -1133,7 +1428,8 @@ def run_cases():
         job.SECONDS_FOR_MUTATION_TESTING_PROGRAM_TO_CLEAN_UP_AFTER_SIGTERM = 1
         result = []
         runner = threading.Thread(target=lambda: result.append(job.run_mutation_testing(
-            arguments, "a" * 40, "b" * 40, Path(scratch) / "out.json")), daemon=True)
+            arguments, "a" * 40, "b" * 40, Path(scratch) / "out.json", 1,
+            Path(scratch) / "sessions")), daemon=True)
         try:
             runner.start()
             runner.join(timeout=60)
