@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Write an owner file, once, into each existing worktree of this machine's clone that lacks one,
-so that scripts/clean-worktrees.py can judge it; run it once on each machine after the git
+"""Write an owner file, once, into each existing worktree of this machine's clone that lacks one
+and whose owner this program can tell, as WHICH WORKTREES below says, so that
+scripts/clean-worktrees.py can judge the worktree. Run this program once on each machine after the git
 post-checkout hook scripts/git-client-side-hooks/post-checkout, which writes the owner file of
 every new worktree, has landed.
 
 Without --write it prints what it would do and changes nothing. With --write it writes the owner
-files, through scripts/worktree-owner-file-read-and-write.py, which never replaces one.
+files, through scripts/worktree-owner-file-read-and-write.py, which never replaces one. --repo
+PATH names the clone by any of its checkouts; without it, the program handles the clone it is in.
 
 WHICH WORKTREES. The owner file is worktree-owner.json, the record that
 scripts/worktree-owner-file-read-and-write.py describes. The agents root is ~/agents, or
@@ -29,18 +31,17 @@ Each worktree of the clone with no owner file is handled as follows:
     key of that agent-session's ended `claude` process, as
     scripts/worktree-owner-file-read-and-write.py defines it, and no record kept on the
     machine holds that process's id and start, so this program cannot write it.
-  - Given an owner file naming an agent-seat: a worktree that is, or lies anywhere beneath, a
-    directory directly under the agents root named either as an agent-seat or as an
+  - Given an owner file naming an agent-seat: a worktree, other than an agent-home, that is,
+    or lies anywhere beneath, a directory directly under the agents root named either as an agent-seat or as an
     agent-seat's name followed by a hyphen and more. When several agent-seats' names fit, the
     owner is the agent-seat with the longest name. Examples: prime-intellect for
     ~/agents/prime-intellect-worktrees/<name>, reboot-test for ~/agents/reboot-test-d2m-wording.
-  - Given no owner file, and listed for the user to keep or delete: a worktree outside the
-    agents root; one whose directory under the agents root no agent-seat's name fits as above;
-    and any other worktree inside the reference-checkout's .claude/worktrees/, such as
-    restored-<name>.
+  - Given no owner file, and listed for the user to keep or delete: any other worktree outside
+    the agents root, such as restored-<name> inside the reference-checkout's .claude/worktrees/;
+    and one whose directory under the agents root no agent-seat's name fits as above.
 
 A worktree whose owner file cannot be read, or cannot be written, is named on a FAILED line,
-and the program exits 1 after the others.
+and the program exits 1 once it has handled every other worktree.
 
 Usage:
   scripts/worktree-owner-file-one-time-backfill-for-existing-worktrees-with-none.py [--write] [--repo PATH]
