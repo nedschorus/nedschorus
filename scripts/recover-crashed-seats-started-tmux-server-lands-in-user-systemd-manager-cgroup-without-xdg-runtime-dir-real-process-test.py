@@ -5,7 +5,8 @@ Starts a throwaway tmux server, on a socket of its own and running only `sleep`,
 recover-crashed-seats.py's own systemd-run prefix and run_tmux, from an environment
 holding neither XDG_RUNTIME_DIR nor DBUS_SESSION_BUS_ADDRESS, as cron gives, and checks
 that the server's cgroup is under user@<uid>.service, beside the test suites' slice. The
-server is ended with kill-server on its own socket; no other tmux server is touched.
+server is ended with kill-server on its own socket, and that socket's file is removed; no
+other tmux server is touched.
 
 Linux with the user's session bus, systemd-run and tmux only; elsewhere every case is
 skipped. The nc-test-sandbox hides /run/user/<uid>, so the runner runs this suite
@@ -83,6 +84,9 @@ if failure is None:
               (server_cgroup, answered and (answered.returncode, answered.stdout, answered.stderr)))
     finally:
         recovery.run_tmux("kill-server", socket_name=socket_name, environment=cron_environment)
+        # kill-server leaves the socket file behind, and each run's name is new.
+        (Path(cron_environment.get("TMUX_TMPDIR") or "/tmp") / f"tmux-{os.getuid()}"
+         / socket_name).unlink(missing_ok=True)
 
 print(f"{len(failures)} failed" if failures else "all cases passed")
 sys.exit(1 if failures else 0)
