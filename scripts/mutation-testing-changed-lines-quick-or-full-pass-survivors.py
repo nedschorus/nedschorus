@@ -258,7 +258,7 @@ TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX = f"{PROGRAM}: stopped t
 PARALLEL_MUTANT_WORKERS_FLAG = "--parallel-mutant-workers"
 COSMIC_RAY_SESSIONS_DIRECTORY_KEPT_TO_RESUME_FLAG = "--cosmic-ray-sessions-directory-kept-to-resume"
 COSMIC_RAY_SESSION_PENDING_MUTANTS_RUN_BY_PARALLEL_WORKERS_FLAG = "--cosmic-ray-session-pending-mutants-run-by-parallel-workers"
-COSMIC_RAY_SESSION_MUTANTS_WITH_NO_RESULT_QUERY = (
+COSMIC_RAY_SESSION_PENDING_MUTANTS_COUNT_SQL_QUERY = (
     "SELECT COUNT(*) FROM work_items WHERE job_id NOT IN (SELECT job_id FROM work_results)")
 COSMIC_RAY_ONE_WORK_ITEM_MUTATE_AND_TEST_FLAG = "--cosmic-ray-one-work-item-mutate-and-test"
 
@@ -764,7 +764,8 @@ def scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(*paths):
     return hashlib.sha256("\0".join(paths).encode()).hexdigest()
 
 
-def kept_cosmic_ray_session_file(directory, head, merge_base, path, quick_mutation_pass):
+def cosmic_ray_session_kept_to_resume_path_for_one_file_head_base_and_quick_or_full_mutation_pass(
+        directory, head, merge_base, path, quick_mutation_pass):
     """The session file kept in `directory` for one file of one head and base. The quick
     pass's name differs from the full pass's, since the quick pass leaves the mutants outside
     the failure-handling lines out of its session; the full pass's name is the one earlier runs
@@ -774,14 +775,14 @@ def kept_cosmic_ray_session_file(directory, head, merge_base, path, quick_mutati
             / f"{scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(*keyed)}.sqlite")
 
 
-def cosmic_ray_session_has_mutants_with_no_result(session):
+def cosmic_ray_session_kept_to_resume_has_pending_mutants_or_is_unreadable(session):
     """True when the session holds a mutant with no result, or cannot be read as one: cosmic-ray
     then runs it, or reports why it cannot."""
     try:
         connection = sqlite3.connect(f"{session.as_uri()}?mode=ro", uri=True)
         try:
             with_no_result = connection.execute(
-                COSMIC_RAY_SESSION_MUTANTS_WITH_NO_RESULT_QUERY).fetchone()[0]
+                COSMIC_RAY_SESSION_PENDING_MUTANTS_COUNT_SQL_QUERY).fetchone()[0]
             return with_no_result > 0
         finally:
             connection.close()
@@ -840,9 +841,10 @@ def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_
     config = scratch / f"{name}.toml"
     session = scratch / f"{name}.sqlite"
     if arguments.cosmic_ray_sessions_directory_kept_to_resume is not None:
-        session = kept_cosmic_ray_session_file(
-            arguments.cosmic_ray_sessions_directory_kept_to_resume, head, merge_base, path,
-            arguments.quick_mutation_pass)
+        session = \
+            cosmic_ray_session_kept_to_resume_path_for_one_file_head_base_and_quick_or_full_mutation_pass(
+                arguments.cosmic_ray_sessions_directory_kept_to_resume, head, merge_base, path,
+                arguments.quick_mutation_pass)
     baseline_session = scratch / f"{name}.baseline.sqlite"
     mutant_timeout_seconds = (
         arguments.mutant_timeout_seconds if arguments.mutant_timeout_seconds is not None
@@ -851,7 +853,8 @@ def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_
     cosmic_ray = [tools["cosmic-ray"]]
     # A file an earlier run finished needs no baseline: running one would spend the merge's
     # time limit, night after night, on files with nothing left to judge.
-    if session.is_file() and not cosmic_ray_session_has_mutants_with_no_result(session):
+    if session.is_file() \
+            and not cosmic_ray_session_kept_to_resume_has_pending_mutants_or_is_unreadable(session):
         print(f"RESUMED  {path}: its cosmic-ray session {session} is kept from an earlier run "
               f"and has a result for every mutant, so neither its baseline nor any mutant runs: "
               f"those results are counted in the SUMMARY line", flush=True)

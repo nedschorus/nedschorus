@@ -1370,12 +1370,15 @@ def run_parallel_mutants_and_kept_sessions_cases():
                   f"rc={completed.returncode} steps={steps} out={completed.stdout} "
                   f"err={completed.stderr}")
     script = load_script_module()
-    full = script.kept_cosmic_ray_session_file("/sessions", "h", "b", "scripts/thing.py", False)
-    quick = script.kept_cosmic_ray_session_file("/sessions", "h", "b", "scripts/thing.py", True)
+    kept_path = \
+        script.cosmic_ray_session_kept_to_resume_path_for_one_file_head_base_and_quick_or_full_mutation_pass
+    full = kept_path("/sessions", "h", "b", "scripts/thing.py", False)
+    quick = kept_path("/sessions", "h", "b", "scripts/thing.py", True)
+    earlier_name = script.scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(
+        "h", "b", "scripts/thing.py") + ".sqlite"
     check("the quick and the full pass keep a file's session under different names, the full "
           "pass's the name earlier runs kept it under",
-          full != quick and full.name == script.scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(
-              "h", "b", "scripts/thing.py") + ".sqlite", (full, quick))
+          full != quick and full.name == earlier_name, (full, quick))
     for case_name, plan, flags, setup, wanted in [
         ("a parallel worker run that fails", {"parallel_exit": 2}, [flag, "2"], None,
          "the 2 parallel mutant workers for scripts/thing.py failed (exit 2): a parallel "
