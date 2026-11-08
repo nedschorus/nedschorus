@@ -630,8 +630,9 @@ def main():
                   "--only-suites-whose-recorded-inputs-changed-since", merged]
               and tree_of(scratch, name, merged)
               == tree_of(scratch, name, origin_commit(scratch, name))
-              and f"selecting since {merged[:12]}, the pr10-merged commit the head test run "
-                  f"passed on" in output
+              and f"selecting since {merged[:12]}, the commit the head test run passed on: "
+                  f"pull request 10's head merged with main as main was when that run started"
+                  in output
               and f"changed since {merged[:12]}" in output
               and "selecting since the head commit" not in output,
               f"exit {exit_code}\n{output}\n{json.dumps(calls)}")
