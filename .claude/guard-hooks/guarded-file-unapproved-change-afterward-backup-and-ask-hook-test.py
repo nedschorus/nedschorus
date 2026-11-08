@@ -174,14 +174,15 @@ class World:
 
 def bash_allow_rule_matches(rule, command):
     """Whether a permissions.allow entry lets Claude Code run command without a prompt: an exact
-    Bash(command), Bash(prefix:*) for a command that starts with prefix, or a Bash(...) pattern
-    whose each * stands for any run of characters."""
+    Bash(command), Bash(prefix:*) for a command that is prefix or starts with prefix and a space,
+    or a Bash(...) pattern whose each * stands for any run of characters."""
     match = re.fullmatch(r"Bash\((.*)\)", rule, re.DOTALL)
     if not match:
         return False
     pattern = match.group(1)
     if pattern.endswith(":*"):
-        return command.startswith(pattern[:-2])
+        prefix = pattern[:-2]
+        return command == prefix or command.startswith(prefix + " ")
     return re.fullmatch(".*".join(map(re.escape, pattern.split("*"))), command,
                         re.DOTALL) is not None
 
@@ -243,6 +244,13 @@ def cases(scratch):
           "command through",
           commands and not any(bash_allow_rule_matches(old_rule, command) for command in commands),
           commands)
+    check("a Bash(python:*) rule, which names only part of the python3 executable, lets no "
+          "--approve command through",
+          commands and not any(bash_allow_rule_matches("Bash(python:*)", command)
+                               for command in commands), commands)
+    check("a Bash(python3:*) rule lets each --approve command through",
+          commands and all(bash_allow_rule_matches("Bash(python3:*)", command)
+                           for command in commands), commands)
 
     # -- reminders repeat in the asking session, once in another, and stop once settled
     reminder = world.run()
