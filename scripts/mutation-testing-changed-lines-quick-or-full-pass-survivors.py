@@ -103,13 +103,15 @@ the machine's lock, so an N above 1 exits 2 before making a worktree.
 Without the flag, mutants run one at a time, by `cosmic-ray exec`.
 
 KEPT SESSIONS. --cosmic-ray-sessions-directory-kept-to-resume DIR keeps each
-changed file's cosmic-ray session in DIR, named by the head, the merge base
-and the file, so that a run stopped part-way, as by SIGTERM, keeps the result
-of every mutant it finished. A session is put in place only once cosmic-ray's
-filters have run on it. A later run with the same head and base finds the
-session, prints RESUMED for the file, and runs only its mutants with no
-result; the SUMMARY line and the JSON file still cover all of its mutants. A
-session that cannot be put in place exits 2. Without the flag, each session
+changed file's cosmic-ray session in DIR, named by the head, the merge base,
+the file and, for the quick pass, the pass, so that a run stopped part-way, as
+by SIGTERM, keeps the result of every mutant it finished, and a quick and a
+full pass never share a session. A session is put in place only once
+cosmic-ray's filters have run on it. A later run of the same pass with the
+same head and base finds the session, prints RESUMED for the file, and runs
+only its mutants with no result, with no baseline when every mutant has one;
+the SUMMARY line and the JSON file still cover all of its mutants. A session
+that cannot be put in place exits 2. Without the flag, each session
 is in the scratch directory and is removed with it.
 
 A renamed file is mutated under its new name. A mutant cosmic-ray could not
@@ -200,6 +202,7 @@ import queue
 import re
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -255,6 +258,8 @@ TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX = f"{PROGRAM}: stopped t
 PARALLEL_MUTANT_WORKERS_FLAG = "--parallel-mutant-workers"
 COSMIC_RAY_SESSIONS_DIRECTORY_KEPT_TO_RESUME_FLAG = "--cosmic-ray-sessions-directory-kept-to-resume"
 COSMIC_RAY_SESSION_PENDING_MUTANTS_RUN_BY_PARALLEL_WORKERS_FLAG = "--cosmic-ray-session-pending-mutants-run-by-parallel-workers"
+COSMIC_RAY_SESSION_MUTANTS_WITH_NO_RESULT_QUERY = (
+    "SELECT COUNT(*) FROM work_items WHERE job_id NOT IN (SELECT job_id FROM work_results)")
 COSMIC_RAY_ONE_WORK_ITEM_MUTATE_AND_TEST_FLAG = "--cosmic-ray-one-work-item-mutate-and-test"
 
 TEST_SUITE_RUNNER_PATH = Path(__file__).resolve().with_name("run-all-test-suites.py")
@@ -759,6 +764,31 @@ def scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(*paths):
     return hashlib.sha256("\0".join(paths).encode()).hexdigest()
 
 
+def kept_cosmic_ray_session_file(directory, head, merge_base, path, quick_mutation_pass):
+    """The session file kept in `directory` for one file of one head and base. The quick
+    pass's name differs from the full pass's, since the quick pass leaves the mutants outside
+    the failure-handling lines out of its session; the full pass's name is the one earlier runs
+    kept their sessions under."""
+    keyed = (head, merge_base, path, "quick") if quick_mutation_pass else (head, merge_base, path)
+    return (Path(directory).resolve()
+            / f"{scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(*keyed)}.sqlite")
+
+
+def cosmic_ray_session_has_mutants_with_no_result(session):
+    """True when the session holds a mutant with no result, or cannot be read as one: cosmic-ray
+    then runs it, or reports why it cannot."""
+    try:
+        connection = sqlite3.connect(f"{session.as_uri()}?mode=ro", uri=True)
+        try:
+            with_no_result = connection.execute(
+                COSMIC_RAY_SESSION_MUTANTS_WITH_NO_RESULT_QUERY).fetchone()[0]
+            return with_no_result > 0
+        finally:
+            connection.close()
+    except sqlite3.Error:
+        return True
+
+
 def baseline_refusal(path, suites, baseline, baseline_results, mutant_timeout_seconds,
                      runner):
     """The message for a baseline cosmic-ray exited nonzero on: a timeout, or failing suites."""
@@ -810,13 +840,23 @@ def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_
     config = scratch / f"{name}.toml"
     session = scratch / f"{name}.sqlite"
     if arguments.cosmic_ray_sessions_directory_kept_to_resume is not None:
-        session = (Path(arguments.cosmic_ray_sessions_directory_kept_to_resume).resolve()
-                   / f"{scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(head, merge_base, path)}.sqlite")
+        session = kept_cosmic_ray_session_file(
+            arguments.cosmic_ray_sessions_directory_kept_to_resume, head, merge_base, path,
+            arguments.quick_mutation_pass)
     baseline_session = scratch / f"{name}.baseline.sqlite"
     mutant_timeout_seconds = (
         arguments.mutant_timeout_seconds if arguments.mutant_timeout_seconds is not None
         else default_mutant_timeout_seconds_from_test_suites_own_time_limits(
             suites, recordings_directory, runner, in_test_sandboxes))
+    cosmic_ray = [tools["cosmic-ray"]]
+    # A file an earlier run finished needs no baseline: running one would spend the merge's
+    # time limit, night after night, on files with nothing left to judge.
+    if session.is_file() and not cosmic_ray_session_has_mutants_with_no_result(session):
+        print(f"RESUMED  {path}: its cosmic-ray session {session} is kept from an earlier run "
+              f"and has a result for every mutant, so nothing runs", flush=True)
+        return outcomes_from_dump(run_or_raise(
+            [*cosmic_ray, "dump", str(session)], worktree, environment,
+            what=f"cosmic-ray dump for {path}"), mutant_timeout_seconds, runner)
     config.write_text(cosmic_ray_config_text(
         path, test_command_for(suites, ".", arguments, recorded_inputs_directory,
                                mutant_timeout_seconds),
@@ -824,7 +864,6 @@ def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_
         mutant_timeout_seconds
         + MUTANT_TIMEOUT_EXTRA_SECONDS_FOR_TEST_SUITE_RUNNER_TO_STOP_ITS_SUITES,
         failure_handling_ranges))
-    cosmic_ray = [tools["cosmic-ray"]]
     baseline = run([*cosmic_ray, "baseline", "--session-file",
                     str(baseline_session), str(config)], worktree, environment)
     if baseline.returncode != 0:

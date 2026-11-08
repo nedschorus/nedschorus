@@ -17,6 +17,7 @@ import io
 import json
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -128,7 +129,7 @@ if command == "exec":
     time.sleep(plan.get("exec_sleep_seconds", 0))
     sys.exit(plan.get("exec_exit", 0))
 if command == "dump":
-    if pathlib.Path(arguments[1]).read_text() == "baseline":
+    if pathlib.Path(arguments[1]).read_bytes() == b"baseline":
         if plan.get("baseline_dump_exit"):
             print("Traceback (most recent call last): the session cannot be read")
             sys.exit(plan["baseline_dump_exit"])
@@ -1344,6 +1345,37 @@ def run_parallel_mutants_and_kept_sessions_cases():
               and steps == ["baseline", "dump", "exec", "dump"]
               and calls(control)[2]["arguments"][2] == str(sessions.resolve() / kept[0]),
               f"rc={completed.returncode} steps={steps} out={completed.stdout}")
+        for pending, wanted_steps, wanted_out in [
+                (0, ["dump"], "has a result for every mutant, so nothing runs"),
+                (1, ["baseline", "dump", "exec", "dump"], "so only its mutants with no result run")]:
+            kept_session = sessions / kept[0]
+            kept_session.unlink()
+            connection = sqlite3.connect(kept_session)
+            connection.executescript(
+                "CREATE TABLE work_items (job_id TEXT PRIMARY KEY);"
+                "CREATE TABLE work_results (job_id TEXT PRIMARY KEY);"
+                "INSERT INTO work_items VALUES ('done'); INSERT INTO work_results VALUES ('done');"
+                + ("INSERT INTO work_items VALUES ('waiting');" if pending else ""))
+            connection.commit()
+            connection.close()
+            (control / "calls.log").write_text("")
+            completed = run_script(repository, control, "--head", head, "--base", base,
+                                   "--cosmic-ray-venv", str(venv), kept_flag, str(sessions))
+            steps = [c["tool"] if c["tool"].startswith("cr-filter") else c["arguments"][0]
+                     for c in calls(control)]
+            check(f"a kept session with {pending} mutant(s) with no result: "
+                  f"{'no baseline and nothing run, only its dump' if not pending else 'the baseline and exec run'}",
+                  completed.returncode == 0 and steps == wanted_steps
+                  and wanted_out in completed.stdout,
+                  f"rc={completed.returncode} steps={steps} out={completed.stdout} "
+                  f"err={completed.stderr}")
+    script = load_script_module()
+    full = script.kept_cosmic_ray_session_file("/sessions", "h", "b", "scripts/thing.py", False)
+    quick = script.kept_cosmic_ray_session_file("/sessions", "h", "b", "scripts/thing.py", True)
+    check("the quick and the full pass keep a file's session under different names, the full "
+          "pass's the name earlier runs kept it under",
+          full != quick and full.name == script.scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(
+              "h", "b", "scripts/thing.py") + ".sqlite", (full, quick))
     for case_name, plan, flags, setup, wanted in [
         ("a parallel worker run that fails", {"parallel_exit": 2}, [flag, "2"], None,
          "the 2 parallel mutant workers for scripts/thing.py failed (exit 2): a parallel "
