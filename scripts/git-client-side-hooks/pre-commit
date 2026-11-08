@@ -95,6 +95,31 @@
 # cites no ruling and no date. The refused identity is named in the first two
 # lines because the agent needs it to see which variable or flag put the
 # user's address or the tripwire on this commit.
+#
+# Agent-homes. Before the identity checks, and for every commit, the user's own
+# included, this hook refuses a commit in an agent-home: a worktree whose own
+# git directory holds the file agent-home-marker, which
+# scripts/launch-claude-mac, scripts/launch-claude-ubuntu and
+# scripts/agent-home-seat-branch-commits-save-to-pushed-branch-and-detach-at-origin-main.py
+# write. An agent-home rests on a detached HEAD at origin/main, so a commit
+# there is on no branch, and nothing keeps it once HEAD moves. A marker rather
+# than a path, because worktrees that are not agent-homes also sit under the
+# agents root, and the Mac's agents root can be moved.
+
+agent_home_git_directory="$(git rev-parse --absolute-git-dir)" || {
+    echo "pre-commit: git rev-parse --absolute-git-dir failed, so this hook could not tell whether this worktree is an agent-home, and refuses the commit; git's error is just above this line." >&2
+    echo "Tell the user this whole message." >&2
+    exit 1
+}
+if [ -e "$agent_home_git_directory/agent-home-marker" ]; then
+    agent_home="$(git rev-parse --show-toplevel)"
+    clone_main_checkout="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+    echo "pre-commit: this commit is refused, because $agent_home is an agent-home: an agent-home holds no work and rests on a detached HEAD at origin/main, so a commit here is on no branch, and nothing keeps it once HEAD moves." >&2
+    echo "Make the commit in a worktree of your own, on an nc-topic-branch: git -C $agent_home worktree add -b <branch name> $clone_main_checkout/.claude/worktrees/<directory name> HEAD" >&2
+    echo "If the changes you meant to commit were made here in the agent-home, carry them to that worktree: git -C $agent_home diff --binary HEAD | git -C <the new worktree> apply --index; copy across any new file that git status lists as untracked, then, once the worktree holds them all, put the agent-home back with git -C $agent_home reset --hard HEAD and delete those copied files here." >&2
+    echo "If you are the user committing by hand and mean this commit to be in the agent-home, add --no-verify to the same git commit command." >&2
+    exit 1
+fi
 
 if [ -z "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -z "${CLAUDE_CODE_BRIDGE_SESSION_ID:-}" ]; then
     exit 0
