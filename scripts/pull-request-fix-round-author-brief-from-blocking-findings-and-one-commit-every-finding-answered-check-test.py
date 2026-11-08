@@ -65,7 +65,7 @@ sys.exit(route.get("exit", 0))
 # Stands in for scripts/run-all-test-suites.py in every scratch repository's base commit. The suites that
 # fail are those failing-suites.txt names in the checkout the fake sits in, so each commit decides its own;
 # --only-suites-named narrows them. FAKE_RUNNER_EXIT makes it stop without a verdict. FAKE_RUNNER_NOT_RUN names
-# a suite printed NOT RUN, and FAKE_RUNNER_STOPPED prints the runner's "not run to the end" line; the exit
+# the suites printed NOT RUN, space-separated, and FAKE_RUNNER_STOPPED prints the runner's "not run to the end" line; the exit
 # code stays the real runner's, 1 when a suite failed.
 FAKE_SUITE_RUNNER = r'''import json, os, sys
 from pathlib import Path
@@ -89,10 +89,11 @@ if os.environ.get("FAKE_RUNNER_STOPPED"):
 print(f"{len(failing)} failed:")
 for suite in failing:
     print(f"FAIL {suite} exit 1 \u2014 log /logs/{suite}.log")
-not_run = os.environ.get("FAKE_RUNNER_NOT_RUN")
+not_run = os.environ.get("FAKE_RUNNER_NOT_RUN", "").split()
 if not_run:
-    print("1 not run, because bwrap could not build the nc-test-sandbox; each log says why and what to do:")
-    print(f"NOT RUN {not_run} did not start: bwrap failed — log /logs/{not_run}.log")
+    print(f"{len(not_run)} not run, because bwrap could not build the nc-test-sandbox; each log says why and what to do:")
+    for suite in not_run:
+        print(f"NOT RUN {suite} did not start: bwrap failed — log /logs/{suite}.log")
 print(f"SUMMARY: {len(failing)} failed")
 sys.exit(1 if failing else 2 if not_run else 0)
 '''
@@ -1671,17 +1672,18 @@ def suite_cases(root, repository, _base, _frozen_head):
     check("suites: a suite failing at the frozen-head too passes the check, which names it before the push",
           code == 0 and "Not pushed yet" in out and "at the frozen-head too, so not because of this round; the "
           "message for merge-lane-2 will name them: a-test.py" in out and len(runner_calls(root)) == 2, out + err)
-    code, out, err = check_with_head(frozen_head, {"FAKE_RUNNER_NOT_RUN": "b-test.py"})
-    check("suites: a suite NOT RUN beside a failure the frozen-head shares fails the check with exit 2, "
-          "before any push",
-          code == 2 and "did not judge every suite: it printed 'NOT RUN b-test.py" in err
+    code, out, err = check_with_head(frozen_head, {"FAKE_RUNNER_NOT_RUN": "b-test.py c-test.py"})
+    check("suites: suites NOT RUN beside a failure the frozen-head shares fail the check with exit 2, "
+          "before any push, and the refusal quotes every NOT RUN line",
+          code == 2 and "did not judge every suite: it printed\n  NOT RUN b-test.py" in err
+          and "\n  NOT RUN c-test.py did not start" in err
           and "Not pushed yet" not in out and len(git(repository, "worktree", "list").splitlines()) == 1,
           out + err)
     runner_calls(root)
     code, out, err = check_with_head(frozen_head, {"FAKE_RUNNER_STOPPED": "1"})
     check("suites: a run stopped before its end beside a failure the frozen-head shares fails the check "
           "with exit 2, before any push",
-          code == 2 and "did not judge every suite: it printed 'run-all-test-suites: not run to the end" in err
+          code == 2 and "did not judge every suite: it printed\n  run-all-test-suites: not run to the end" in err
           and "Not pushed yet" not in out, out + err)
     runner_calls(root)
     code, out, err = check_with_head(fixed)

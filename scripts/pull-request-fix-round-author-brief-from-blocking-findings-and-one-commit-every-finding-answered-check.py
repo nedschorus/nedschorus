@@ -862,7 +862,8 @@ def failing_suites_in_scratch_worktree(commit, command_for_checkout):
     # frozen-head shares must not let an unfinished run through.
     if unfinished:
         raise StepFailed(f"the suite runner, {shlex.join(command)}, run on {commit[:12]}, did not judge every "
-                         f"suite: it printed {unfinished[0]!r}. Its output is above. Nothing was pushed.\n"
+                         "suite: it printed\n" + "".join(f"  {line}\n" for line in unfinished)
+                         + "Its output is above. Nothing was pushed.\n"
                          "Run this --check again once, not the suite runner by itself.\n"
                          "If the runner again prints a line opening NOT RUN or 'run-all-test-suites: not run "
                          "to the end', tell merge-lane-2 with SendMessage, quoting each such line, and do "
