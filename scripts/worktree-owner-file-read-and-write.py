@@ -22,15 +22,20 @@ work-snapshot's owner (boot id, process id and start time on Linux; process id
 and start time on macOS). agent_seat is the agent-seat whose agent-sessions
 are told about the worktree; the launchers set GIT_AUTHOR_NAME to it.
 
-WHO WRITES IT. The program that makes a worktree, through
-worktree_owner_file_write or the `write` command below. A subagent's worktree
-is made by Claude Code, which locks it while the subagent runs with the reason
-"claude agent agent-<id> (pid N start M)", N being the dispatching
+WHO WRITES IT. The git post-checkout hook,
+scripts/git-client-side-hooks/post-checkout, as `git worktree add` makes the
+worktree: its program,
+scripts/git-client-side-hooks-post-checkout-new-worktree-owner-file-write.py,
+says which owner it names and which worktrees get none. A program that makes a
+worktree in a clone whose core.hooksPath does not name that hook writes it
+through worktree_owner_file_write or the `write` command below. A subagent's
+worktree is made by Claude Code, which locks it while the subagent runs with
+the reason "claude agent agent-<id> (pid N start M)", N being the dispatching
 agent-session's `claude` process, and unlocks it when the subagent finishes;
+when the hook wrote no owner file there,
 scripts/uncommitted-work-snapshot-hook.py writes the agent-session's owner
 file after the subagent's Edit, Write, NotebookEdit or Bash calls there,
-while that lock still names the process; a subagent that makes none of those
-calls there leaves its worktree with no owner file. The cleaner never removes a
+while that lock still names the process. The cleaner never removes a
 worktree with no owner file, except a merge-lane review checkout, a worktree in
 ~/.cache/merge-lane-review-worktrees, which it removes once its pull request has
 been merged or closed for 24 hours.
