@@ -88,7 +88,8 @@ later merge, and the next run goes on with this merge from its first mutant
 with no result. Each run first removes the kept sessions of every merge that
 is no longer waiting to be tested.
 
-A step that fails stops the run there: a failed fetch, a state file that
+A step that fails stops the run there, and steps 8 and 9 still run, to open
+the failure's task and write the record: a failed fetch, a state file that
 cannot be read or no longer names an ancestor of origin/main, a survivor task,
 diff file or state file that the recheck cannot read or write, a missing
 cosmic-ray venv, a kept session that cannot be read or removed, a mutation
@@ -592,15 +593,23 @@ def program_run_with_limit(command, timeout_seconds):
         return None, stdout, stderr
 
 
+def mutation_testing_program_command_line_options_for_one_merge(arguments, merge, parent, workers,
+                                                                sessions_directory):
+    """The mutation testing program's options for one merge, shared by this run and the hand
+    run a task gives, so the hand run resumes the same kept sessions."""
+    return ["--full-mutation-pass", "--checkout", str(arguments.clone), "--head", merge,
+            "--base", parent, "--cosmic-ray-venv", str(arguments.cosmic_ray_venv),
+            "--parallel-mutant-workers", str(workers),
+            "--cosmic-ray-sessions-directory-kept-to-resume", str(sessions_directory)]
+
+
 def run_mutation_testing(arguments, merge, parent, json_file, workers, sessions_directory):
     """Return (exit code or None when it ran past the limit, stdout, stderr)."""
     return program_run_with_limit(
-        [sys.executable, arguments.mutation_testing_program, "--full-mutation-pass",
-         "--checkout", str(arguments.clone), "--head", merge, "--base", parent,
-         "--cosmic-ray-venv", str(arguments.cosmic_ray_venv),
-         "--survived-and-errored-mutants-json-file", str(json_file),
-         "--parallel-mutant-workers", str(workers),
-         "--cosmic-ray-sessions-directory-kept-to-resume", str(sessions_directory)],
+        [sys.executable, arguments.mutation_testing_program,
+         *mutation_testing_program_command_line_options_for_one_merge(
+             arguments, merge, parent, workers, sessions_directory),
+         "--survived-and-errored-mutants-json-file", str(json_file)],
         arguments.merge_timeout_seconds)
 
 
@@ -633,21 +642,24 @@ def count_of_mutants_judged_in_kept_cosmic_ray_sessions(directory):
                 f"the kept cosmic-ray session {session} cannot be read "
                 f"({type(error).__name__}: {error}), so this run cannot tell how far its merge "
                 f"got.\n"
-                f"Delete that file: the next run tests that file of the merge again from its "
-                f"first mutant. Then run this program again on ned-box: {RUN_BY_HAND}") from error
+                f"Delete the session file {session} on ned-box, and no other file: the next run "
+                f"mutation-tests again, from its first mutant, the source file whose mutants "
+                f"that session held. Then run this program again on ned-box: {RUN_BY_HAND}") \
+                from error
     return count
 
 
-def mutation_testing_hand_run_command(arguments, merge, parent):
-    """The command that runs the mutation testing program on one merge, outliving the shell
-    it is typed in, with its output in the log-store."""
+def mutation_testing_hand_run_command(arguments, merge, parent, workers, sessions_directory):
+    """The command that runs the mutation testing program on one merge as this run does,
+    resuming its kept sessions with as many workers, outliving the shell it is typed in, with
+    its output in the log-store."""
     log = (Path(arguments.log_store_root) / HAND_RUNS_DIRECTORY_NAME
            / f"merge-{merge[:8]}-hand-run.log")
     return (f"systemd-run --user --unit=mutation-hand-run-{merge[:8]} --collect "
             f"-p StandardOutput=append:{log} -p StandardError=append:{log} "
-            f"/usr/bin/python3 {arguments.mutation_testing_program} --full-mutation-pass "
-            f"--head {merge} --base {parent} --cosmic-ray-venv "
-            f"{shlex.quote(str(arguments.cosmic_ray_venv))}")
+            f"/usr/bin/python3 {shlex.quote(str(arguments.mutation_testing_program))} "
+            + shlex.join(mutation_testing_program_command_line_options_for_one_merge(
+                arguments, merge, parent, workers, sessions_directory)))
 
 
 def job_failure_task_opened_unless_open(subject, description, arguments,
@@ -784,7 +796,8 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
                   f"already judged in its kept sessions")
     exit_code, stdout, stderr = run_mutation_testing(arguments, merge, parent, json_file,
                                                      workers, sessions_directory)
-    command_shown = mutation_testing_hand_run_command(arguments, merge, parent)
+    command_shown = mutation_testing_hand_run_command(arguments, merge, parent, workers,
+                                                      sessions_directory)
     said = last_line_said(stdout, stderr)
     if exit_code is None:
         judged = count_of_mutants_judged_in_kept_cosmic_ray_sessions(sessions_directory)
@@ -1011,6 +1024,16 @@ def main_under_lock(arguments):
         else:
             last = state["last_tested_main_commit"]
             record.append(f"after: {last}")
+            last_is_an_ancestor = not git(arguments.clone, "merge-base", "--is-ancestor", last,
+                                          main_commit).returncode
+            # Listed before the steps that can fail, so that a failure of one of them still has
+            # the merges three days untested reported.
+            if last_is_an_ancestor:
+                untested_merges_and_times = [
+                    (merge, int(merged_at)) for merge, merged_at in (
+                        line.split() for line in git_or_raise(
+                            arguments.clone, "log", "--first-parent", "--reverse",
+                            "--format=%H %ct", f"{last}..{main_commit}").splitlines())]
             tasks_before = dict(state["tasks_opened"])
             lost = lost_tasks_reported(state, arguments, record)
             # A run killed later writes no record, so the lost tasks reach one before the
@@ -1032,18 +1055,12 @@ def main_under_lock(arguments):
             with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as scratch:
                 not_rechecked = survivor_tasks_rechecked(state, state_file, arguments, main_commit,
                                                          record, record_citation, Path(scratch))
-            if git(arguments.clone, "merge-base", "--is-ancestor", last,
-                   main_commit).returncode:
+            if not last_is_an_ancestor:
                 raise StepFailed(
                     f"the last tested commit {last}, from {state_file}, is not an ancestor of "
                     f"origin/main {main_commit}, so the merges since it cannot be listed.\n"
                     f"Set last_tested_main_commit in that file to the last commit on origin/main "
                     f"already mutation-tested; the next run tests the merges after it. Then run this program again on ned-box: {RUN_BY_HAND}")
-            untested_merges_and_times = [
-                (merge, int(merged_at)) for merge, merged_at in (
-                    line.split() for line in git_or_raise(
-                        arguments.clone, "log", "--first-parent", "--reverse", "--format=%H %ct",
-                        f"{last}..{main_commit}").splitlines())]
             merges = [merge for merge, _ in untested_merges_and_times]
             if merges and not (arguments.cosmic_ray_venv / "bin" / "cosmic-ray").is_file():
                 venv = shlex.quote(str(arguments.cosmic_ray_venv))
