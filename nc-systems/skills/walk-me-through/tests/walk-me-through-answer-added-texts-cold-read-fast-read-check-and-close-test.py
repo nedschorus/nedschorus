@@ -3850,7 +3850,7 @@ def test_close_posts_the_ruling_on_each_open_pull_request_held_on_the_answered_i
         (106, []))
     for flags, word in (((), "approved"), (("--option", "2"), "approved"), (("--disapproved",), "disapproved"),
                         (("--deferred",), "deferred"), (("--moved-on-no-decision",), "moved_on"),
-                        (("--part-answer", "1=A", "--part-answer", "2=D"), "part_answers"),
+                        (("--part-answer", "1=A", "--part-answer", "2=D", "--part-answer", "3=A"), "part_answers"),
                         (("--already-decided", "walk x, item 3"), "approved"),
                         (("--moved-on", "it went to walk y"), "moved_on")):
         case = Case(next_to_present="item 4 of 9")
