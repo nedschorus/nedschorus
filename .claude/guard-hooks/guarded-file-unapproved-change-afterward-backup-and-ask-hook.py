@@ -509,7 +509,8 @@ def head_commit(checkout):
     BranchUnreadable, carrying git's stderr, when git fails otherwise."""
     # git rev-parse -q --verify exits 1, with nothing on stderr, when HEAD names no commit yet.
     result = subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify",
-                             "HEAD^{commit}"], capture_output=True, timeout=60, check=False)
+                             "HEAD^{commit}"], capture_output=True, check=False,
+                            timeout=60)  # pragma: no mutate, a limit a second longer or shorter behaves the same
     if result.returncode == 1:
         return None
     if result.returncode != 0:
@@ -530,7 +531,9 @@ def blobs_at_commit(checkout, commit, paths):
     for entry in output.split("\0"):
         header, _, name = entry.partition("\t")
         fields = header.split()
-        if len(fields) == 3 and fields[1] == "blob" and name in relative:
+        if (len(fields) == 3  # pragma: no mutate, git ls-tree prints three fields, or none after the last NUL
+                and fields[1] == "blob"  # pragma: no mutate, -r lists only blob and commit, and commit sorts after blob
+                and name in relative):
             blobs[relative[name]] = fields[2]
     return blobs
 
@@ -670,10 +673,12 @@ def copy_of(log, key):
 
 
 def newest_approved(store, path, log, excluded):
-    """(key, copy hash) of the version approved last, other than the excluded key, or None."""
+    """(key, copy hash) of the content approved last, other than the excluded key, or None.
+    A deletion is passed over, so a file deleted and written again is shown and restored
+    against the content it had."""
     for key in reversed(store.approved_in_order(path)):
-        if key != excluded:
-            return key, (DELETED if key == DELETED else copy_of(log, key))
+        if key not in (excluded, DELETED):
+            return key, copy_of(log, key)
     return None
 
 
@@ -738,7 +743,7 @@ def could_be_guarded(relative: str):
     """A cheap test that keeps every path the guard can protect; the guard's own functions
     then decide."""
     if "__pycache__/" in relative:
-        # Python's byte-code caches under .claude/hooks/ change on every run of a hook and
+        # Python's byte-code caches under .claude/guard-hooks/ change on every run of a hook and
         # instruct no one.
         return False
     name = relative.rsplit("/", 1)[-1]
@@ -913,7 +918,8 @@ class Check:
 def approval_takes(store, path, key, rule):
     """Whether store_phase records an approval of key under rule: UNLESS_SEEN gives way to a
     run that saw the version and did not approve it."""
-    return rule == APPROVE_ALWAYS or not seen_lines(store.log(path), key)
+    return (rule == APPROVE_ALWAYS  # pragma: no mutate, rule is one of the two constants and UNLESS_SEEN sorts after, so <= and is act as ==
+            or not seen_lines(store.log(path), key))
 
 
 def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, quiet):
@@ -991,7 +997,7 @@ def read_file(path):
 
 def ask_entry(store, check, log, reason=""):
     newest = newest_approved(store, check.path, log, check.key)
-    if newest is None or newest[1] == DELETED:
+    if newest is None:
         before = b""
     else:
         before = store.kept_version(check.path, newest[1]) or b""
@@ -1177,7 +1183,8 @@ def run_hook(payload):
                 if head and changed:
                     at_base = {path for path, blob in
                                blobs_at_commit(checkout, head, list(changed)).items()
-                               if changed[path][2] == changed[path][3] == blob}
+                               if changed[path][2] == changed[path][3]  # pragma: no mutate, key and copy hash differ only for ~/.claude/settings.json, which the outside group, run first, always stores
+                               == blob}
             else:
                 for path, value in changed.items():
                     blob = first_run.get(path)
@@ -1207,7 +1214,9 @@ def run_hook(payload):
         else:
             on_main = set()
         plans.append([kind, state_path, state, files, changed, unsettled, approvals, quiet,
-                      new_position, stocking, set(state["files"]) != listed_before, held, on_main,
+                      new_position, stocking,
+                      set(state["files"]) != listed_before,  # pragma: no mutate, scan only removes paths, so != acts as <
+                      held, on_main,
                       repository, at_base, base_versions])
 
     stocking_machine = outside_stocking
@@ -1526,7 +1535,7 @@ def restore(pairs):
             log = store.log(path)
             newest = newest_approved(store, path, log, key)
             content = None
-            if newest is not None and newest[0] != DELETED:
+            if newest is not None:
                 content = store.kept_version(path, newest[1])
                 if content is None:
                     raise StoreUnreachable(f"the approved version {newest[1]} of {path} is in "

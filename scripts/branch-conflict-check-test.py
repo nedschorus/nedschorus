@@ -60,7 +60,8 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
                 fetch_status=0, gh_head=RESOLVED_HEAD, gh_head_status=0,
                 full_refs=None, gh_base="main", gh_base_status=0,
                 missing_at_base=(), unlookable_at_base=(), current_branch=None,
-                open_pull_requests=(0, "[]"), main_side_logs=None, merges_log=(0, "")):
+                open_pull_requests=(0, "[]"), main_side_logs=None, merges_log=(0, ""),
+                ls_remote=(0, "")):
     """A runner that answers git and gh without touching either.
 
     base_resolves and head_resolves override `resolves` for one side, so a case
@@ -87,7 +88,8 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
     current_branch is what `git symbolic-ref` prints, None for a detached
     HEAD; open_pull_requests answers `gh pr list`; main_side_logs maps a path
     to the answer of the --no-merges log of the base's commits that changed it
-    (none, by default); merges_log answers the first-parent merge lookup.
+    (none, by default); merges_log answers the first-parent merge lookup;
+    ls_remote answers `git ls-remote`, by default with the branch missing.
     """
     refs = dict(full_refs or {})
     gh_queue = list(gh_results or [])
@@ -111,6 +113,8 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
             if not (base_ok if is_base else head_ok):
                 return 1, ""
             return 0, RESOLVED_BASE if is_base else RESOLVED_HEAD
+        if command[:2] == ["git", "ls-remote"]:
+            return ls_remote
         if command[:2] == ["git", "merge-tree"]:
             return merge_tree_status, merge_tree_output
         if command[:2] == ["git", "symbolic-ref"]:
@@ -685,18 +689,46 @@ def replace_lines(number, base="origin/main"):
     ]
 
 
-def rebase_lines(base="origin/main"):
+def give_up_lines(command, base="origin/main"):
     return [
-        "ANSWER: rebase -- the branch has no open pull request, so it is rebased "
-        "onto %s, even if it is already on origin." % base,
-    ] + understand_lines(base) + [
-        "Run git rebase %s, resolving each conflict so that both changes work." % base,
-        "If the branch is built on another branch, run git rebase --onto %s "
-        "<the other branch's head> instead." % base,
+        "If you cannot make both changes work, run git %s --abort, which puts the "
+        "branch back as it was, and ask the agent-seat the MAIN'S SIDE line names, "
+        "with SendMessage, naming the file and what you could not reconcile."
+        % command,
         "Run python3 scripts/run-all-test-suites.py "
         "--only-suites-whose-recorded-inputs-changed-since %s." % base,
-        "If the branch is already on origin, push it with git push "
-        "--force-with-lease; the pre-push hook saves the commit it replaces.",
+        "If a suite fails, fix the branch until every suite passes; do not push "
+        "it before then.",
+    ]
+
+
+def rebase_lines(branch="topic", base="origin/main"):
+    return [
+        "ANSWER: rebase -- branch %s has no open pull request and origin does not "
+        "have it yet, so it is rebased onto %s." % (branch, base),
+    ] + understand_lines(base) + [
+        "Run git rebase %s, resolving each conflict so that both changes work."
+        % base,
+        "If the branch was cut from another branch whose commits %s does not hold "
+        "as they were, run git log --oneline %s..HEAD instead, find the newest "
+        "commit that is the other branch's work rather than this branch's, and run "
+        "git rebase --onto %s <that commit's hash>." % (base, base, base),
+    ] + give_up_lines("rebase", base) + [
+        "Then carry on with what you were doing; if that was a push, push again.",
+    ]
+
+
+def merge_lines(branch="topic", base="origin/main", remote="origin"):
+    return [
+        "ANSWER: merge -- branch %s has no open pull request and %s already has "
+        "it, so %s is merged into it, because GitHub refuses every force-push "
+        "to this repository." % (branch, remote, base),
+    ] + understand_lines(base) + [
+        "Run git merge %s, resolving each conflict so that both changes work."
+        % base,
+    ] + give_up_lines("merge", base) + [
+        "Push it with git push, without --force, then carry on with what you "
+        "were doing.",
     ]
 
 
@@ -1869,7 +1901,7 @@ def real_repository_cases(root):
 
     # --branch, and the current branch, through the CLI and a stub gh.
     for number_answer, want in (('[{"number": 812}]', replace_lines(812)),
-                                ("[]", rebase_lines())):
+                                ("[]", rebase_lines("conflict-topic"))):
         status, lines, calls = run_here("--head", "conflict-topic", "--branch",
                                         "conflict-topic", gh=dict(NUMBER=number_answer))
         case("real: --branch with gh answering %s gives that answer" % number_answer,
@@ -1881,7 +1913,7 @@ def real_repository_cases(root):
     status, lines, calls = run_here(cwd=on_branch, gh=dict(NUMBER="[]"))
     case("real: with no --head, the checked-out branch's open pull request decides",
          status == CHECK.EXIT_CONFLICT
-         and without_main_side(lines)[1:] == rebase_lines()
+         and without_main_side(lines)[1:] == rebase_lines("conflict-topic")
          and any("--head conflict-topic" in call for call in calls))
 
     # main's side came in through a pull request's merge, by another agent-seat.
@@ -2050,7 +2082,42 @@ status, lines = run_branch(fake_runner(merge_tree_status=1, current_branch="topi
                                        open_pull_requests=(0, "[]")),
                            head=None, pull_request=None, branch="other")
 case("--branch wins over the current branch",
-     lines[1:] == rebase_lines())
+     lines[1:] == rebase_lines("other"))
+
+log = []
+status, lines = run_branch(fake_runner(
+    merge_tree_status=1, log=log,
+    ls_remote=(0, RESOLVED_HEAD + "\trefs/heads/topic")), branch="topic")
+case("--branch: no open pull request and origin has the branch: main is merged in "
+     "and pushed without --force",
+     status == CHECK.EXIT_CONFLICT and lines[1:] == merge_lines()
+     and ["git", "ls-remote", "--heads", "origin", "refs/heads/topic"] in log)
+
+def ls_remote_only_upstream_has_topic(command):
+    if command[:2] == ["git", "ls-remote"]:
+        return (0, RESOLVED_HEAD + "\trefs/heads/topic") if "upstream" in command \
+            else (0, "")
+    return fake_runner(merge_tree_status=1)(command)
+
+
+status, lines = CHECK.check("HEAD", "upstream/main", None,
+                            runner=ls_remote_only_upstream_has_topic,
+                            sleep=lambda _s: None, reads=1, sleep_seconds=0,
+                            remote="upstream", branch="topic")
+case("--fetch-remote upstream: the branch is looked up on upstream, not origin, so a "
+     "branch only upstream has gets the merge steps",
+     status == CHECK.EXIT_CONFLICT
+     and lines[1:] == merge_lines(base="upstream/main", remote="upstream"))
+
+status, lines = run_branch(fake_runner(merge_tree_status=1, ls_remote=(128, "")),
+                           branch="topic")
+case("--branch: no open pull request and origin cannot be asked: no answer, saying why",
+     status == CHECK.EXIT_CONFLICT and lines[1:] == [
+         "ANSWER: none -- branch topic has no open pull request, but whether origin "
+         "has it could not be looked up (git ls-remote exited 128), so this run "
+         "cannot say whether it is rebased or origin/main is merged into it.",
+         "If origin cannot be reached, fix that, then rerun.",
+     ])
 
 
 # --- the original defect, pinned so it cannot come back ----------------------

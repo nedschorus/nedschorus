@@ -13,8 +13,8 @@ Run it from the pull request's own checkout, with its nc-head-commit checked out
 3. refuses a description with no defect line (#root_cause, #root_cause_not_fixed or
    #no_defect_fixed), read by the same reader scripts/merge-gate.sh uses; a placeholder
    description has none;
-4. runs this checkout's test suites, with this checkout's own scripts/run-all-test-suites.py, as
-   CLAUDE.md says to before pushing, and refuses when any fails;
+4. runs this checkout's test suites whose recorded inputs changed since origin/main, with this
+   checkout's own scripts/run-all-test-suites.py, and refuses when any fails;
 5. marks the pull request ready for review with gh pr ready.
 
 It does not check what scripts/merge-gate.sh checks again before merging, such as a not-fixed
@@ -63,8 +63,9 @@ class StepFailed(Exception):
 
 
 def selective_test_run_command(checkout):
-    """The test run CLAUDE.md asks for before a push, with checkout's own runner, which tests
-    the checkout it sits in; the runner beside this program may sit in another checkout."""
+    """The run of the suites whose recorded inputs changed since origin/main, with checkout's own
+    runner, which tests the checkout it sits in; the runner beside this program may sit in another
+    checkout."""
     return ["python3", str(Path(checkout) / "scripts" / "run-all-test-suites.py"),
             "--only-suites-whose-recorded-inputs-changed-since", "origin/main"]
 
@@ -267,10 +268,10 @@ def check_and_mark_ready(number, runner, output):
             f"the test suites exited with status {status}, {stays_a_draft} The failing suites "
             "are named above.\n"
             "Fix the cause of each suite's failure and commit the fix. Before you push it, run "
-            "the test suites and the mutation pass that CLAUDE.md asks for before a push; then "
-            "push, and run this again.\n"
-            "If git or a pre-push hook refuses the push: do what its message says, then run this "
-            "again; if it names nothing to do, tell the user, or the agent that dispatched you, "
+            "the mutation pass that CLAUDE.md asks for before a push; then push, and run this "
+            "again, which runs the test suites again.\n"
+            "If git or a pre-push hook refuses the push: do what its message says, push again, then "
+            "run this again; if it names nothing to do, tell the user, or the agent that dispatched you, "
             "what it printed.")
     if status != 0:
         raise StepFailed(

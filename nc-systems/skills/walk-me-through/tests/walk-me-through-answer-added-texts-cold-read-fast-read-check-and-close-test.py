@@ -433,6 +433,10 @@ UNREADABLE_MARK_CASES = (
      '#new "Use\n`#new` to mark proposed text."\n',
      ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
       'its text joined onto it: #new "Use `#new` to mark proposed text."']),
+    ("a mark whose text runs onto a line that opens with a hashtag this program does not read",
+     '#new "The rule asks for\n#root_cause lines in each description."\n',
+     ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
+      'its text joined onto it: #new "The rule asks for #root_cause lines in each description."']),
 )
 
 
@@ -483,6 +487,15 @@ def test_marks_whose_texts_are_read_whole_are_not_refused():
     check("marks one under another with no blank line or list marker between them, and a marker line right below "
           "the last, are not refused, and each mark's line is read on its own",
           result.returncode == 0 and case.calls.read_text() == "Row one.\nRow three.\n", described(result))
+    case = Case(document=marks_document('#new "Row one."\n`#case_against weak`: the fix costs an hour.\n'))
+    result = case.run("check")
+    check("a mark with a backticked `#case_against` line right below it is not refused, and its own line is read",
+          result.returncode == 0 and case.calls.read_text() == "Row one.\n", described(result))
+    for body, read in (("#new > Keep the old logs.\n", "> Keep the old logs.\n"), ("#new >\n", ">\n")):
+        case = Case(document=marks_document(body))
+        result = case.run("check")
+        check(f"a mark whose text opens with `>` keeps the `>` in the text it reads: {body!r}",
+              result.returncode == 0 and case.calls.read_text() == read, described(result))
 
 
 def test_the_waiting_item_read_step_refuses_a_mark_whose_text_would_not_be_read_whole():
@@ -2489,14 +2502,27 @@ def refused_as_rated_none(case, *problems):
 def test_an_item_of_no_kind_settles_only_when_rated_none_and_touching_no_guarded_file():
     check("an item of no kind rated weak is refused",
           *refused_as_rated_none(rated_none_case("item 2 of 3"), "rates the case against weak; an item of none of "
-                                 "the five kinds settles without the user only when its case against is rated none"))
+                                 "the kinds settles without the user only when its case against is rated none"))
     check("an item of no kind with no touches line is refused",
           *refused_as_rated_none(rated_none_case(touches=""), "it has no `#not_asked_touches` line"))
+    for word in ("CLAUDE.md:12", "tools/counter.py.", "tools/missing.py"):
+        check(f"an item of no kind whose touches line names {word}, no path in the checkout, is refused",
+              *refused_as_rated_none(rated_none_case(touches=f"#not_asked_touches {word}\n\n"),
+                                     f"`#not_asked_touches` names {word}, which is not in the checkout"))
     for path in ("CLAUDE.md", ".claude/skills/poems/SKILL.md", "docs/nedschorus-wiki/poems.md",
                  "docs/poems-instructions.md"):
         check(f"an item of no kind that touches {path}, which the instruction-file guard protects, is refused",
               *refused_as_rated_none(rated_none_case(touches=f"#not_asked_touches tools/counter.py {path}\n\n"),
                                      f"`#not_asked_touches` names {path}, which the instruction-file guard protects"))
+
+
+def test_an_item_of_no_kind_with_an_empty_touches_line_settles_as_a_change_that_touches_no_file():
+    case = rated_none_case(touches="#not_asked_touches\n\n")
+    result = case.run("check", "--not-asked", "none")
+    check("an item of no kind rated none whose touches line is empty, such as one that recommends doing nothing, "
+          "is settled", result.returncode == 0
+          and "item 1 of 3 is recorded as settled without asking the user, case against none;" in result.stdout,
+          described(result))
 
 
 def test_a_not_asked_value_other_than_a_kind_or_none_is_refused_as_usage():

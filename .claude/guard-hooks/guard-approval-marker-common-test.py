@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Tests for .claude/hooks/guard-approval-marker-common.py, the one-use approval marker
+"""Tests for .claude/guard-hooks/guard-approval-marker-common.py, the one-use approval marker
 every write guard reads.
 
 The guards' own suites reach this module only through their callers. These
 cases pin its three functions directly, so a change that keeps one guard's
 suite passing but breaks the marker's rules for another guard fails here.
 
-Run: python3 .claude/hooks/guard-approval-marker-common-test.py
+Run: python3 .claude/guard-hooks/guard-approval-marker-common-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 

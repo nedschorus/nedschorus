@@ -112,9 +112,10 @@ and judge what code cannot before running CLOSE, which records the item as
 another weak one, or a fix that matches its design from one that does not;
 the agent judges those.
 
-`--not-asked none` settles an item of none of the five kinds, only when its
-`#case_against` line rates the case against none. It needs touches, and refuses
-when a touched file is one the instruction-file guard,
+`--not-asked none` settles an item of none of those kinds, only when its
+`#case_against` line rates the case against none. It needs a touches line,
+which may be empty for a change that touches no file, such as doing nothing;
+it refuses a touched file that is not in the checkout, and one the instruction-file guard,
 .claude/guard-hooks/instruction-file-guard.py, protects, because an item that
 adds words the user has not approved to such a file is shown to him; the
 guard's own functions decide which files those are. The minutes write the
@@ -587,8 +588,6 @@ WALK_CATEGORY_TAG = "#approval_walk_item_in_category_"
 WALK_WAITS_ON_TAG = "#approval_walk_item_waits_on"
 WALK_FIRST_ENTERED_TAG = "#approval_walk_item_first_entered"
 LINE_OPENING_MARKERS = r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*"
-# A hashtag opening a code span, as in "`#new` marks a text", is prose naming the marker, not a marker line.
-HASHTAG_MARKER_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_]*#[A-Za-z][A-Za-z0-9_]*" + MARKER_END)
 WALK_CATEGORY_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_CATEGORY_TAG))
 # Words joined by single underscores, so the closing `_` or `__` of underscore emphasis is not read into the tag.
 WALK_CATEGORY_TAGS_IN_LINE = re.compile(re.escape(WALK_CATEGORY_TAG) + r"(?:[^\W_]+(?:_[^\W_]+)*)?")
@@ -596,6 +595,10 @@ WALK_WAITS_ON_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_WAITS_ON_T
                                 + r"[*_`]*[:\s]*(.*?)[*_`\s]*$")
 WALK_FIRST_ENTERED_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_FIRST_ENTERED_TAG) + MARKER_END
                                      + r"[*_`]*[:\s]*(.*?)[*_`\s]*$")
+# A marked text ends above the first of these lines, because this program reads each on its own; a line opening
+# with any other hashtag, such as a prose `#root_cause`, is part of the text.
+MARKER_LINES_READ_ON_THEIR_OWN = (NEW_LINE, CASE_AGAINST_LINE, EVIDENCE_LINE, WALK_CATEGORY_LINE, WALK_WAITS_ON_LINE,
+                                  WALK_FIRST_ENTERED_LINE)
 WALK_ORDER_REFUSED = (
     "nothing written: {problem}\n"
     "Every item of the walk-document not yet shown to the user, headed `## <the point>` with no number, needs "
@@ -718,8 +721,7 @@ NOT_ASKED_RATING_PROBLEM = ("- its `#case_against` line rates the case against {
                             "or weak with a case against that names only cost, settles without the user.")
 NOT_ASKED_NO_LINE_PROBLEM = "- it has no `{marker}` line; {why}"
 NOT_ASKED_NOT_RATED_NONE_PROBLEM = ("- its `#case_against` line rates the case against {rating}; an item of none of "
-                                    "the five kinds settles without the user only when its case against is rated "
-                                    "none.")
+                                    "the kinds settles without the user only when its case against is rated none.")
 NOT_ASKED_GUARDED_FILE_PROBLEM = ("- `{marker}` names {path}, which the instruction-file guard protects; an item "
                                   "that adds words the user has not approved to such a file is shown to him, and "
                                   "one whose words a ruling of his gives settles as kind 1.")
@@ -967,18 +969,24 @@ def unquoted(text):
 
 
 def lines_joined(lines):
-    """Return lines as one line, each without its quotation markers, whitespace runs squeezed."""
-    return squeezed(" ".join(QUOTATION_MARKERS.sub("", line) for line in lines))
+    """Return lines as one line, whitespace runs squeezed."""
+    return squeezed(" ".join(lines))
+
+
+def unquoted_lines(lines):
+    """Return lines below a mark without their quotation markers; the mark's own text keeps a leading `>`."""
+    return [QUOTATION_MARKERS.sub("", line) for line in lines]
 
 
 def lines_until_blank_or_fence(lines, first, end):
-    """Return the lines from first up to end, stopping before a blank line or a fence delimiter."""
+    """Return the lines from first up to end, without their quotation markers, stopping before a blank line or a
+    fence delimiter."""
     taken = []
     for line in lines[first:end]:
         if not line.strip() or FENCE_DELIMITER.match(line):
             break
         taken.append(line)
-    return taken
+    return unquoted_lines(taken)
 
 
 def block_right_below(lines, first, end):
@@ -997,16 +1005,17 @@ def block_right_below(lines, first, end):
 
 NewMark = collections.namedtuple("NewMark", "mark number in_code text_lines below")
 NewMark.__doc__ = """One `#new` or `#new_if_d` mark: mark, its 0-based line number, whether it is inside fenced or
-indented code, text_lines, the mark's own text followed by every line its text runs onto, and below, for a mark
-in code or with no text, the lines it may have meant."""
+indented code, text_lines, the mark's own text as written followed by every line its text runs onto, and below,
+for a mark in code or with no text, the lines it may have meant; lines below the mark's own line lose their
+quotation markers."""
 
 
 def new_marks(text, tokens, ranges):
     """Return a NewMark for each `#new` or `#new_if_d` mark in the ranges outside an HTML comment, in order.
     This is the one place that decides where a marked text ends, so that check reads the text
     unreadable_new_marks judged: at the end of its Markdown paragraph, or before the first line below it that
-    opens with a hashtag marker, such as the next `#new` or `#case_against`, which is read on its own even when
-    Markdown keeps it in the same paragraph."""
+    this program reads on its own, such as the next `#new` or a `#case_against` line, even when Markdown keeps
+    that line in the same paragraph."""
     lines = text.split("\n")
     code, comments, paragraphs = {}, set(), []
     for token in tokens:
@@ -1034,8 +1043,10 @@ def new_marks(text, tokens, ranges):
             paragraph_end = max((paragraph[1] for paragraph in paragraphs if paragraph[0] <= number < paragraph[1]),
                                 default=number + 1)
             text_end = next((below for below in range(number + 1, paragraph_end)
-                             if HASHTAG_MARKER_LINE.match(lines[below])), paragraph_end)
-            marks.append(NewMark(match[1], number, False, [match[2]] + lines[number + 1:min(text_end, end)], []))
+                             if any(marker.match(lines[below]) for marker in MARKER_LINES_READ_ON_THEIR_OWN)),
+                            paragraph_end)
+            marks.append(NewMark(match[1], number, False,
+                                 [match[2]] + unquoted_lines(lines[number + 1:min(text_end, end)]), []))
     return marks
 
 
@@ -1183,7 +1194,8 @@ def not_asked_kind(value):
         return NOT_ASKED_RATED_NONE
     if value.strip() in {str(kind) for kind in NOT_ASKED_KINDS}:
         return int(value)
-    raise argparse.ArgumentTypeError(f"`{value}` is not a kind: give 1, 2, 3, 4, 5, 6 or none")
+    kinds = ", ".join(str(kind) for kind in NOT_ASKED_KINDS)
+    raise argparse.ArgumentTypeError(f"`{value}` is not a kind: give {kinds} or none")
 
 
 def not_asked_label(kind):
@@ -1357,9 +1369,14 @@ def not_asked_problems(kind, rating, lines, marks, top, item):
     if kind == NOT_ASKED_RATED_NONE:
         if rating != NOT_ASKED_RATED_NONE:
             problems.append(NOT_ASKED_NOT_RATED_NONE_PROBLEM.format(rating=rating))
-        if not words(found[TOUCHES]):
+        # An empty touches line is a change that touches no file; only a missing line is refused.
+        if TOUCHES not in found:
             problems.append(NOT_ASKED_NO_LINE_PROBLEM.format(marker=TOUCHES, why=NOT_ASKED_WHY[TOUCHES]))
-        for path in guarded_paths(top, words(found[TOUCHES])):
+        touched = words(found[TOUCHES])
+        for path in touched:
+            if not (top / path).exists():
+                problems.append(NOT_ASKED_MISSING_PATH_PROBLEM.format(marker=TOUCHES, path=path, top=top))
+        for path in guarded_paths(top, touched):
             problems.append(NOT_ASKED_GUARDED_FILE_PROBLEM.format(marker=TOUCHES, path=path))
         return problems
     if rating not in NOT_ASKED_RATINGS:

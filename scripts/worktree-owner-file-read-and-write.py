@@ -30,8 +30,10 @@ agent-session's `claude` process, and unlocks it when the subagent finishes;
 scripts/uncommitted-work-snapshot-hook.py writes the agent-session's owner
 file after the subagent's Edit, Write, NotebookEdit or Bash calls there,
 while that lock still names the process; a subagent that makes none of those
-calls there leaves its worktree with no owner file. A worktree with no owner file is
-never removed by the cleaner.
+calls there leaves its worktree with no owner file. The cleaner never removes a
+worktree with no owner file, except a merge-lane review checkout, a worktree in
+~/.cache/merge-lane-review-worktrees, which it removes once its pull request has
+been merged or closed for 24 hours.
 
 It refuses to write into the reference-checkout, whose git directory is the
 clone's common one, and over an existing owner file.
@@ -56,6 +58,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -68,9 +71,10 @@ RUNNING = "running"
 STOPPED = "stopped"
 UNKNOWN = "unknown"
 
-# Claude Code's lock reason on a subagent's worktree while the subagent runs.
+# Claude Code's lock reason on a subagent's worktree while the subagent runs. On Linux, start is
+# field 22 of /proc/<pid>/stat, the process's start in clock ticks after boot.
 CLAUDE_CODE_SUBAGENT_WORKTREE_LOCK_REASON = re.compile(
-    r"^claude agent agent-[0-9A-Za-z]+ \(pid (\d+) start \d+\)$")
+    r"^claude agent agent-([0-9A-Za-z]+) \(pid (\d+) start (\d+)\)$")
 
 AGENT_SEAT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -84,11 +88,13 @@ WORKTREE_OWNER_FILE_COMMAND_FAILED_NEXT_STEP_LINES = (
     "arguments.\n"
     "If it fails the same way again, give the FAILED line to the agent that dispatched you, or to "
     "the user if no agent did, and say that scripts/clean-worktrees.py never removes a worktree "
-    "that has no owner file, so the worktree stays on disk until someone runs "
+    "that has no owner file, apart from a merge-lane review checkout in "
+    "~/.cache/merge-lane-review-worktrees, so the worktree stays on disk until someone runs "
     "git worktree remove <the worktree's path>.")
 
 _work_snapshots = None
 _handoff_supervisor = None
+_recover_crashed_seats = None
 
 
 class WorktreeOwnerFileError(Exception):
@@ -122,6 +128,15 @@ def handoff_supervisor_module():
         _handoff_supervisor = load_module(
             "handoff_supervisor", REPO_ROOT / "nc-systems" / "handoff" / "handoff-supervisor.py")
     return _handoff_supervisor
+
+
+def recover_crashed_seats_module():
+    """Loaded only to list the agent-seats, for the lock exception of scripts/clean-worktrees.py."""
+    global _recover_crashed_seats
+    if _recover_crashed_seats is None:
+        _recover_crashed_seats = load_module(
+            "recover_crashed_seats", REPO_ROOT / "scripts" / "recover-crashed-seats.py")
+    return _recover_crashed_seats
 
 
 def git_directories(worktree):
@@ -247,10 +262,72 @@ def worktree_owner_running_state(record, handoff_directory=None):
     return agent_session_running_state(record["owner_key"])
 
 
-def claude_code_subagent_worktree_lock_reason_dispatching_process_id_parse(lock_reason):
-    """The dispatching `claude` process's id in Claude Code's lock reason, or None for any other."""
+@dataclass(frozen=True)
+class ClaudeCodeSubagentWorktreeLock:
+    """Claude Code's lock reason on a subagent's worktree: the subagent's id, as in agent-<id>,
+    and the dispatching `claude` process's id and start."""
+    agent_id: str
+    process_id: int
+    start_ticks: str
+
+
+def claude_code_subagent_worktree_lock_reason_parse(lock_reason):
+    """The ClaudeCodeSubagentWorktreeLock in Claude Code's lock reason, or None for any other."""
     match = CLAUDE_CODE_SUBAGENT_WORKTREE_LOCK_REASON.match((lock_reason or "").strip())
-    return int(match.group(1)) if match else None
+    if match is None:
+        return None
+    return ClaudeCodeSubagentWorktreeLock(match.group(1), int(match.group(2)), match.group(3))
+
+
+def claude_code_subagent_worktree_lock_dispatching_process_running_state(lock, proc_root="/proc",
+                                                                         platform=sys.platform):
+    """Return (state, explanation): whether the `claude` process the lock names, the process with
+    its id that started at its start, runs. UNKNOWN off Linux, where the start is not read."""
+    if not platform.startswith("linux"):
+        return UNKNOWN, (f"whether claude process {lock.process_id} runs is read only on Linux, "
+                         f"where the lock's start is the process's start in clock ticks")
+    snapshots = load_uncommitted_work_snapshots_module_once()
+    try:
+        started = snapshots.linux_start_ticks(lock.process_id, proc_root)
+    except (FileNotFoundError, ProcessLookupError):
+        started = None
+    except (OSError, IndexError) as error:
+        return UNKNOWN, (f"whether claude process {lock.process_id} runs could not be read: "
+                         f"{type(error).__name__}: {error}")
+    if started == lock.start_ticks:
+        return RUNNING, (f"Claude Code's lock names claude process {lock.process_id}, "
+                         f"started at {lock.start_ticks}, which runs")
+    return STOPPED, (f"Claude Code's lock names claude process {lock.process_id}, started at "
+                     f"{lock.start_ticks}, which has ended")
+
+
+def claude_code_subagent_worktree_lock_ended_agent_session_owner_key(lock, proc_root="/proc"):
+    """The owner key of the ended agent-session a Linux lock names, as
+    nc-systems/handoff/uncommitted-work-snapshots.py writes one; after a reboot the boot id
+    differs from the process's, and the key still reads as stopped."""
+    snapshots = load_uncommitted_work_snapshots_module_once()
+    return f"{snapshots.linux_boot_id(proc_root)}-{lock.process_id}-{lock.start_ticks}"
+
+
+def agent_seats_whose_claude_code_transcripts_name_subagent(agent_id, agents_root=None,
+                                                            handoff_directory=None,
+                                                            projects_root=None):
+    """Return, sorted, the agent-seats whose agent-home's Claude Code project directory holds
+    <session>/subagents/agent-<id>.jsonl. An agent-seat is a directory under the agents root
+    that holds handoff records, as scripts/recover-crashed-seats.py lists them."""
+    seats = recover_crashed_seats_module()
+    transcripts = load_module(
+        "claude_code_session_transcript_lookup_and_text_search_common",
+        REPO_ROOT / "scripts" / "claude-code-session-transcript-lookup-and-text-search-common.py")
+    agents_root = agents_root or seats.default_agents_root()
+    projects_root = projects_root or Path.home() / ".claude" / "projects"
+    found = []
+    for seat in seats.list_agent_seat_names_with_agent_session_records(
+            agents_root, handoff_directory or seats.default_handoff_directory()):
+        project = transcripts.project_directory_for_seat(agents_root / seat, projects_root)
+        if any(project.glob(f"*/subagents/agent-{agent_id}.jsonl")):
+            found.append(seat)
+    return found
 
 
 def worktree_lock_reason_read(worktree):

@@ -13,6 +13,7 @@ import json
 import os
 import re
 import socket
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,12 +49,12 @@ _deferred_marker_file_specification.loader.exec_module(handoff_deferred_marker_a
 HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
 
 # Compaction clears this shared marker because the session id survives.
-FIRED_MARKER_SUFFIX = "-handoff-asked"
+HANDOFF_ASKED_MARKER_SUFFIX = "-handoff-asked"
 
 
-def fired_marker_path(session_id: str) -> Path:
+def handoff_asked_marker_path(session_id: str) -> Path:
     # Read HANDOFF_DIRECTORY at call time so tests can redirect marker writes.
-    return HANDOFF_DIRECTORY / f"{session_id}{FIRED_MARKER_SUFFIX}"
+    return HANDOFF_DIRECTORY / f"{session_id}{HANDOFF_ASKED_MARKER_SUFFIX}"
 
 
 def deferred_marker_path(session_id: str) -> Path:
@@ -63,7 +64,7 @@ def deferred_marker_path(session_id: str) -> Path:
 # Caller-owned reincarnation must not replace the caller's answer with a handoff.
 REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
 
-# Unknown models use the default; a wrong window silently scales the threshold.
+# Unknown models use the default, and the handoff instruction names the model id so the table gets updated.
 CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX = {
     "claude-fable-5": 1_000_000,
     "claude-mythos-5": 1_000_000,
@@ -86,6 +87,18 @@ HANDOFF_INSTRUCTION = (
     "This session has used {share} of its context window, which has "
     "reached the reincarnation threshold. Run the /handoff skill now."
 )
+
+MODEL_ID_NOT_IN_CONTEXT_WINDOW_TABLE_LINE = (
+    "The model id {model} is not in the threshold hook's context-window table, so the share "
+    "above assumes a {default_window_thousands}K window; tell the user, so the table can be updated."
+)
+
+BACKGROUND_TASKS_LIST_MISSING_SENTENCE = (
+    "Claude Code sent no background_tasks list, so the threshold-hook could not see running "
+    "subagents or background tasks, and this session-handoff stops any still running; tell the "
+    "user that claude {claude_version} may be too old to send that list."
+)
+CLAUDE_VERSION_TIMEOUT_SECONDS = 10
 
 # The approved ban on new work; the wait no longer counts work started after the deferral began.
 NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION = (
@@ -200,6 +213,21 @@ TASK_NOTIFICATION_PATTERN = re.compile(r"<task-notification>(.*?)</task-notifica
 TASK_NOTIFICATION_TASK_ID_PATTERN = re.compile(r"<task-id>([^<]+)</task-id>")
 
 
+def claude_version_or_why_unread() -> str:
+    """Return what `claude --version` prints, or a parenthesis saying why it could not be read."""
+    try:
+        completed = subprocess.run(["claude", "--version"], capture_output=True, text=True,
+                                   timeout=CLAUDE_VERSION_TIMEOUT_SECONDS, check=False)
+    except (OSError, subprocess.SubprocessError) as problem:
+        return f"(version unknown: running claude --version failed: {problem})"
+    version = completed.stdout.strip()
+    if completed.returncode != 0 or not version:
+        output = (completed.stdout + completed.stderr).strip()
+        return (f"(version unknown: claude --version exited {completed.returncode} "
+                f"with output {output!r})")
+    return version
+
+
 def hook_payload_from_stdin() -> dict:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -214,6 +242,10 @@ def context_window_for(model: str) -> int:
         if model.startswith(prefix):
             return window
     return DEFAULT_CONTEXT_WINDOW_TOKENS
+
+
+def model_id_is_in_context_window_table(model: str) -> bool:
+    return any(model.startswith(prefix) for prefix in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX)
 
 
 def newest_assistant_message(path: Path):
@@ -250,8 +282,8 @@ def newest_assistant_message(path: Path):
         window *= 2
 
 
-def context_used_tokens_and_window_from_transcript(transcript_path: str):
-    """Return (used context tokens, context window tokens), or None when unavailable."""
+def context_used_tokens_window_and_model_from_transcript(transcript_path: str):
+    """Return (used context tokens, context window tokens, model id), or None when unavailable."""
     if not transcript_path:
         return None
     path = Path(transcript_path).expanduser()
@@ -265,15 +297,16 @@ def context_used_tokens_and_window_from_transcript(transcript_path: str):
     if message is None:
         return None
 
-    return used_tokens_of(message["usage"]), context_window_for(message.get("model", ""))
+    model = message.get("model", "")
+    return used_tokens_of(message["usage"]), context_window_for(model), model
 
 
 def context_used_percentage_from_transcript(transcript_path: str):
     """Return used context as a percentage, or None when unavailable."""
-    reading = context_used_tokens_and_window_from_transcript(transcript_path)
+    reading = context_used_tokens_window_and_model_from_transcript(transcript_path)
     if reading is None:
         return None
-    used_tokens, window = reading
+    used_tokens, window, _model = reading
     return 100.0 * used_tokens / window
 
 
@@ -647,10 +680,12 @@ def main(argv=None) -> int:
         return 0
 
     transcript_path = payload.get("transcript_path", "")
-    reading = context_used_tokens_and_window_from_transcript(transcript_path)
+    background_tasks = payload.get(BACKGROUND_TASKS_PAYLOAD_KEY)
+    background_tasks_list_is_missing = not isinstance(background_tasks, list)
+    reading = context_used_tokens_window_and_model_from_transcript(transcript_path)
     if reading is None:
         return 0
-    used_tokens, window = reading
+    used_tokens, window, model = reading
     used = 100.0 * used_tokens / window
     share = f"{used:.0f}%"
     # A compaction can drop the share below the threshold after a deferral; the deferred marker
@@ -658,23 +693,18 @@ def main(argv=None) -> int:
     if used < arguments.threshold_used_percentage and not deferred_marker_path(session_id).exists():
         return 0
 
-    fired_marker = fired_marker_path(session_id)
+    fired_marker = handoff_asked_marker_path(session_id)
     if fired_marker.exists():
         return 0
 
     # Reincarnation kills in-process work; defer below the ceiling so work can finish.
     if used < arguments.ceiling_used_percentage:
         # An incomplete scan is not an all-clear; defer only as far as the context ceiling.
-        background_tasks = payload.get(BACKGROUND_TASKS_PAYLOAD_KEY)
         try:
-            # A claude without the list, such as an older one, is read from the transcript instead.
-            if isinstance(background_tasks, list):
-                flight = work_in_flight_from_background_tasks(
-                    background_tasks, transcript_path,
-                    arguments.background_task_wait_minutes * 60)
-            else:
-                flight = work_in_flight(
-                    transcript_path, arguments.background_task_wait_minutes * 60)
+            flight = (WorkInFlight([], []) if background_tasks_list_is_missing
+                      else work_in_flight_from_background_tasks(
+                          background_tasks, transcript_path,
+                          arguments.background_task_wait_minutes * 60))
             count_is_known = True
         except TranscriptCouldNotBeFullyRead:
             flight = None
@@ -701,10 +731,11 @@ def main(argv=None) -> int:
     except OSError:
         pass
 
-    print(
-        HANDOFF_INSTRUCTION.format(share=share),
-        file=sys.stderr,
-    )
+    print(HANDOFF_INSTRUCTION.format(share=share), file=sys.stderr)
+    if background_tasks_list_is_missing:
+        print(BACKGROUND_TASKS_LIST_MISSING_SENTENCE.format(
+                  claude_version=claude_version_or_why_unread()),
+              file=sys.stderr)
     # The deferral's promise is kept; left in place, the marker would refire the
     # instruction below the threshold after every later compaction. It is moved, not
     # deleted, because the handoff writer still needs the deferral's start time.
@@ -715,6 +746,11 @@ def main(argv=None) -> int:
     except OSError as error:
         print(HANDOFF_DEFERRED_MARKER_NOT_DELETED.format(
                   path=deferred_marker, host=socket.gethostname(), error=error),
+              file=sys.stderr)
+    # Printed last: the marker message above refers to the instruction just before it.
+    if not model_id_is_in_context_window_table(model):
+        print(MODEL_ID_NOT_IN_CONTEXT_WINDOW_TABLE_LINE.format(
+                  model=model, default_window_thousands=DEFAULT_CONTEXT_WINDOW_TOKENS // 1000),
               file=sys.stderr)
     return 2
 

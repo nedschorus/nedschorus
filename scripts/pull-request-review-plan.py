@@ -5,8 +5,7 @@ Rule 1: tiers follow content. Tests, fenced Markdown code, and Python changes
 limited to docstrings, comments and string constants get codex-review-and-head-tests-tier.
 Python behaviour changes and other code get claude-and-codex-review-and-head-tests-tier. Prose gets
 no-reviewer-tier. Settings, Bash guards and registered hooks always get
-claude-and-codex-review-and-head-tests-tier; all of .claude/hooks/ and
-.claude/guard-hooks/ does too,
+claude-and-codex-review-and-head-tests-tier; all of .claude/guard-hooks/ does too,
 including test files there. A pull request gets the strictest tier that any of
 its changed files gets; from least to most strict, the tiers are
 no-reviewer-tier, codex-review-and-head-tests-tier and
@@ -17,7 +16,7 @@ commits need, and the merge-lane, not this program, runs again on the new head
 each check whose result made the earlier round request changes. The round
 number is one more than the number of distinct heads reviewed before the
 current head, so a review already posted on the current head does not start
-another round, plus, for each pull request this one replaces, by its
+another round. To it is added, for each pull request this one replaces, by its
 description's #replaces lines followed through replacements of replacements as
 scripts/pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py
 reads them, the number of distinct heads reviewed on that pull request. A
@@ -94,7 +93,7 @@ no-reviewer-tier because prose outside code is outside the review scope.
 
 Reads the pull request, reviews, inline comments and live base tip through
 four read-only gh calls, and each replaced pull request and its reviews through
-two more, commits, refs and diffs from the local repository,
+two more. Reads commits, refs and diffs from the local repository,
 and, under rule 4, the claim-check reports.
 Never fetches, pushes or writes refs. git merge-tree --write-tree may write
 tree objects. Writes no file except the cold-read-fast-read target files and
@@ -451,9 +450,8 @@ def registered_hook_paths_at_revision(repository, revision):
 
 
 def hook_path_rule_reason(path, registered_paths):
-    for directory in (".claude/hooks/", ".claude/guard-hooks/"):
-        if path.startswith(directory):
-            return f"{path} is under {directory}; every file there always gets claude-and-codex-review-and-head-tests-tier"
+    if path.startswith(".claude/guard-hooks/"):
+        return f"{path} is under .claude/guard-hooks/; every file there always gets claude-and-codex-review-and-head-tests-tier"
     if path in registered_paths:
         return f"{path} is registered as a hook in .claude/settings.json; a change to it always gets claude-and-codex-review-and-head-tests-tier"
     return None
@@ -545,7 +543,7 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
     for changed_file in changed_files:
         path = changed_file["path"]
         if (not path.endswith(".py") or path_is_test_file(path)
-                or not path.startswith(("scripts/", ".claude/hooks/", ".claude/guard-hooks/", "nc-systems/"))
+                or not path.startswith(("scripts/", ".claude/guard-hooks/", "nc-systems/"))
                 or changed_file["status"] == "D"):
             continue
         new_nodes = agent_facing_string_nodes_in_source(read_revision_blob_or_none(repository, new_revision, path))

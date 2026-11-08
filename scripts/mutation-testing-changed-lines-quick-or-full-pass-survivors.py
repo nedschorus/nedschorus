@@ -8,10 +8,12 @@ Usage:
       [--checkout DIR] [--cosmic-ray-venv DIR] [--python INTERPRETER]
       [--recorded-inputs-directory DIR] [--mutant-timeout-seconds S]
       [--lock-file PATH] [--survived-and-errored-mutants-json-file PATH]
+      [--parallel-mutant-workers N] [--cosmic-ray-sessions-directory-kept-to-resume DIR]
   scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py
-      --recorded-mutant-killed-check DIFF_FILE [--head COMMIT]
+      --recorded-mutant-killed-check DIFF_FILE [DIFF_FILE ...] [--head COMMIT]
       [--checkout DIR] [--python INTERPRETER]
       [--recorded-inputs-directory DIR] [--lock-file PATH]
+      [--recorded-mutant-killed-check-verdicts-json-file-to-write PATH]
 
 The head is checked out in a detached scratch worktree, because cosmic-ray
 edits each mutant into the file on disk; the worktree is removed afterwards,
@@ -49,7 +51,8 @@ for each mutant, is this script, given
 this script writes into cosmic-ray's config and no caller gives, which runs
 scripts/run-all-test-suites.py, the one beside this file, once, with its standard error sent to its standard
 output, the only stream cosmic-ray records, so the runner's refusals reach this
-script. That run is on the scratch worktree, given --only-suites-named with the file's
+script. That run is on the worktree the mutant is in, the test command's working
+directory, given --only-suites-named with the file's
 suites, --leave-recorded-inputs-and-failure-history-unchanged, so a mutant
 changes no suite's recording, and --stop-at-first-failing-suite, so a mutant
 one suite kills does not wait for the rest. The runner runs the suites in
@@ -82,6 +85,33 @@ later,
 since a suite runs in a session of its own and, outside an nc-test-sandbox,
 outlives a runner killed with SIGKILL.
 
+PARALLEL MUTANTS. --parallel-mutant-workers N runs N mutants at once, each in a
+scratch worktree of its own at the head, since each worker edits its mutant into
+the file on disk; it needs --cosmic-ray-venv, whose python runs the workers.
+This script runs itself under that python with
+--cosmic-ray-session-pending-mutants-run-by-parallel-workers, a flag no caller
+gives, in place of `cosmic-ray exec`: it hands each mutant of the session with
+no result to the next free worker, a process of its own started with
+--cosmic-ray-one-work-item-mutate-and-test in that worker's worktree, which
+mutates, tests and restores the file as cosmic-ray's own worker does, and it
+records each result in the session. A mutant whose worker gives no result
+stays without one, and the script exits 2 naming it. The baseline runs once,
+in the first worktree. The suites of every worker still wait for the
+runner's ADMISSION, so N above the machine's free cores only queues them.
+Where suites do not run in nc-test-sandboxes, every run of the runner takes
+the machine's lock, so an N above 1 exits 2 before making a worktree.
+Without the flag, mutants run one at a time, by `cosmic-ray exec`.
+
+KEPT SESSIONS. --cosmic-ray-sessions-directory-kept-to-resume DIR keeps each
+changed file's cosmic-ray session in DIR, named by the head, the merge base
+and the file, so that a run stopped part-way, as by SIGTERM, keeps the result
+of every mutant it finished. A session is put in place only once cosmic-ray's
+filters have run on it. A later run with the same head and base finds the
+session, prints RESUMED for the file, and runs only its mutants with no
+result; the SUMMARY line and the JSON file still cover all of its mutants. A
+session that cannot be put in place exits 2. Without the flag, each session
+is in the scratch directory and is removed with it.
+
 A renamed file is mutated under its new name. A mutant cosmic-ray could not
 judge, because its worker raised, its suites could not be launched, a suite
 ran past its own time limit, which the runner's TIMEOUT line names, the
@@ -103,31 +133,50 @@ script writes after its SUMMARY line, as one JSON object: "head" and
 of mutants with "module_path", "line", "operator", "diff" and "reason", where
 "line" is the line that must end with a `# pragma: no mutate` comment to skip
 that mutant; and "files_with_no_suite", a list of paths. A file that cannot be
-written exits 2.
+written exits 2. A run that exits 2 because it could not run prints no SUMMARY
+line and writes no such file.
 
-THE RECORDED MUTANT KILLED CHECK, --recorded-mutant-killed-check DIFF_FILE,
-judges one mutant a full mutation pass recorded: DIFF_FILE holds only that
-mutant's "diff" text, as the JSON file above gives it, not the JSON file; it is
-the file
+THE RECORDED MUTANT KILLED CHECK, --recorded-mutant-killed-check DIFF_FILE
+[DIFF_FILE ...], judges mutants a full mutation pass recorded: each DIFF_FILE
+holds only one mutant's "diff" text, as the JSON file above gives it, not the
+JSON file; it is the file
 scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py
-writes for each surviving mutant. In a detached scratch worktree at --head, by
-default the HEAD of --checkout, so a change not yet committed is left out, it
-runs the mutated file's suites, chosen as the full mutation pass chooses them,
-on the unmutated code; applies the diff to the file, reading it as cosmic-ray
-wrote it, at the diff's own line or, when the branch moved it, wherever its
-replaced lines appear exactly once; and runs them again,
-stopping at the first failing suite. It needs no cosmic-ray. When a suite
-fails with the mutant applied, its last line starts MUTANT KILLED; when every
-suite passes with it, it prints a line starting MUTANT SURVIVED. It exits 0 killed, 1 survived, and 2
-when it cannot judge the mutant: the diff file cannot be read or names no
-file, the file has no suite, a suite fails without the mutant, the diff does
-not apply at the head, or the runner judged no suite with the mutant applied,
-as when a suite ran past its own time limit or the runner was refused; the
-scratch worktree is removed whatever happens. When the diff does not apply at
-the head, it also reads origin/main's copy of the file, without fetching, and
-says whether the replaced lines are gone from main, so the mutant is gone and
-its survivor task is to be marked completed, or are still on main, so the
-branch changed them.
+writes for each surviving mutant. It needs no cosmic-ray. In one detached
+scratch worktree at --head, by default the HEAD of --checkout, so a change not
+yet committed is left out, it runs once, on the unmutated code, every suite
+the full mutation pass would choose for the mutated files. Then, for each
+mutant in turn, it applies the diff to its file, reading the diff as
+cosmic-ray wrote it: at the diff's own line; when the branch moved the line,
+wherever the diff's lines appear exactly once; and when a later change edited
+a context line, wherever the lines the diff replaces appear exactly once. It
+runs that file's suites, stopping at the first failing suite, and puts the
+file back. It prints one line per mutant, in the order given, starting with
+its verdict and naming its diff file: MUTANT KILLED when a suite fails with
+the mutant applied; MUTANT SURVIVED when every suite passes with it; MUTANT
+NO LONGER EXISTS when there is nothing to kill, because the line it changes ends with a
+`# pragma: no mutate` comment at the head, or the diff does not apply at the
+head and origin/main, read without fetching, lacks the lines it replaces; and
+MUTANT COULD NOT BE JUDGED, with what to do, when the diff file cannot be read or
+names no file, the file has no suite while the mutant still applies at the
+head, the diff does not apply at the head
+while origin/main has those lines or cannot tell, the lines it replaces appear
+more than once at the head when a `# pragma: no mutate` comment is not counted,
+some with the comment and some without, or the runner judged no
+suite with the mutant applied, as when a suite ran past its own time limit or
+the runner was refused. Whether a mutant still exists is decided before
+whether its file has a suite, so the mutant of a deleted file no longer exists
+once origin/main lacks the file too. A line starting RECORDED MUTANTS counts each verdict.
+--recorded-mutant-killed-check-verdicts-json-file-to-write, when given, names a file it then writes
+as one JSON object: "head", the commit judged at, and "verdicts", which maps
+each DIFF_FILE, as given, to its "verdict" ("killed", "survived", "no longer exists"
+or "could not be judged") and "why", the rest of its line; a file that cannot be written
+exits 2. It exits 0 when every mutant is killed or no longer exists, 1 when a
+mutant survived and every other is killed or no longer exists, and 2 when a
+mutant could not be judged, with the JSON file written. It also exits 2,
+printing no verdict line and writing no JSON file, when it cannot run at all:
+when a suite fails without a mutant, or when the suite runner judges no suite
+without a mutant, as when another test run holds the machine's lock, its
+refusal printed. The scratch worktree is removed whatever happens.
 
 Exit codes: 0 every mutant was killed, 1 a mutant survived, errored or was
 not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
@@ -147,12 +196,14 @@ import importlib.util
 import json
 import math
 import os
+import queue
 import re
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 PROGRAM = "mutation-testing-changed-lines-quick-or-full-pass-survivors"
@@ -168,6 +219,14 @@ FULL_MUTATION_PASS_COMMAND_LINE_FLAG = "--full-mutation-pass"
 RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG = "--recorded-mutant-killed-check"
 MUTANT_KILLED_LINE_PREFIX = "MUTANT KILLED"
 MUTANT_SURVIVED_LINE_PREFIX = "MUTANT SURVIVED"
+MUTANT_NO_LONGER_EXISTS_LINE_PREFIX = "MUTANT NO LONGER EXISTS"
+MUTANT_COULD_NOT_BE_JUDGED_LINE_PREFIX = "MUTANT COULD NOT BE JUDGED"
+RECORDED_MUTANT_VERDICT_LINE_PREFIXES = {
+    "killed": MUTANT_KILLED_LINE_PREFIX, "survived": MUTANT_SURVIVED_LINE_PREFIX,
+    "no longer exists": MUTANT_NO_LONGER_EXISTS_LINE_PREFIX,
+    "could not be judged": MUTANT_COULD_NOT_BE_JUDGED_LINE_PREFIX}
+# cosmic-ray's cr-filter-pragma skips a line whose comment says `pragma: no mutate`.
+PRAGMA_NO_MUTATE_COMMENT = re.compile(r"\s*#.*pragma: no mutate.*")
 
 # Each checks one rule across a whole class of the repository's files, so its recording reads
 # nearly every module; the quick mutation pass leaves it out.
@@ -193,6 +252,10 @@ TEST_SUITE_RUNNER_START_UP_SECONDS = 5
 MUTANT_TIMEOUT_EXTRA_SECONDS_FOR_TEST_SUITE_RUNNER_TO_STOP_ITS_SUITES = 30
 COSMIC_RAY_TEST_COMMAND_RUN_TEST_SUITE_RUNNER_STOPPED_AFTER_SECONDS_FLAG = "--cosmic-ray-test-command-run-test-suite-runner-stopped-after-seconds"
 TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX = f"{PROGRAM}: stopped the suite runner with SIGTERM"
+PARALLEL_MUTANT_WORKERS_FLAG = "--parallel-mutant-workers"
+COSMIC_RAY_SESSIONS_DIRECTORY_KEPT_TO_RESUME_FLAG = "--cosmic-ray-sessions-directory-kept-to-resume"
+COSMIC_RAY_SESSION_PENDING_MUTANTS_RUN_BY_PARALLEL_WORKERS_FLAG = "--cosmic-ray-session-pending-mutants-run-by-parallel-workers"
+COSMIC_RAY_ONE_WORK_ITEM_MUTATE_AND_TEST_FLAG = "--cosmic-ray-one-work-item-mutate-and-test"
 
 TEST_SUITE_RUNNER_PATH = Path(__file__).resolve().with_name("run-all-test-suites.py")
 
@@ -396,6 +459,117 @@ def run_test_suite_runner_with_its_stderr_on_stdout_stopped_before_cosmic_ray_li
         test_suite_runner.terminate()
         exit_code = test_suite_runner.wait()
     return exit_code
+
+
+def cosmic_ray_session_pending_mutants_run_by_parallel_workers(config_file, session_file,
+                                                               worktrees):
+    """Run under the cosmic-ray venv's python: run every work item of the session that has no
+    result, one worker per worktree at once, each in its own process with that worktree as its
+    working directory, and record each result in the session as `cosmic-ray exec` does.
+
+    Return 0, or 2 after naming each work item whose worker gave no result; that work item stays
+    without a result, so a later run of the session runs it again.
+
+    cosmic-ray 8.7.0's own http distributor cannot serve here: it calls asyncio.get_event_loop()
+    with no loop running, which raises on Python 3.14, and its client gives up on a mutant after
+    aiohttp's default 300 s, shorter than a mutant's limit."""
+    from cosmic_ray.config import load_config
+    from cosmic_ray.work_db import WorkDB
+    from cosmic_ray.work_item import TestOutcome, WorkerOutcome, WorkResult
+    config = load_config(config_file)
+    work_db = WorkDB(session_file, WorkDB.Mode.open)
+    try:
+        pending = queue.SimpleQueue()
+        count = 0
+        for work_item in work_db.pending_work_items:
+            pending.put(work_item)
+            count += 1
+        # One None per worker, each ending the worker that takes it.
+        for _ in worktrees:
+            pending.put(None)
+        results = queue.SimpleQueue()
+
+        def work(worktree):
+            while True:
+                work_item = pending.get()
+                if work_item is None:
+                    return
+                request = {"test_command": config.test_command, "timeout": config.timeout,
+                           "mutations": [{
+                               "module_path": str(mutation.module_path),
+                               "operator_name": mutation.operator_name,
+                               "operator_args": mutation.operator_args,
+                               "occurrence": mutation.occurrence,
+                               "start_pos": list(mutation.start_pos),
+                               "end_pos": list(mutation.end_pos),
+                               "definition_name": mutation.definition_name}
+                               for mutation in work_item.mutations]}
+                try:
+                    completed = subprocess.run(
+                        [sys.executable, str(Path(__file__).resolve()),
+                         COSMIC_RAY_ONE_WORK_ITEM_MUTATE_AND_TEST_FLAG],
+                        input=json.dumps(request), cwd=worktree, capture_output=True, text=True,
+                        errors="replace", check=False)
+                except OSError as error:
+                    completed = error
+                results.put((work_item.job_id, completed))
+
+        workers = [threading.Thread(target=work, args=(worktree,), daemon=True)
+                   for worktree in worktrees]
+        for worker in workers:
+            worker.start()
+        no_result = []
+        # Only this thread writes the session: a result is recorded only by a worker that
+        # finished its mutant, never by one stopped part-way.
+        for _ in range(count):
+            job_id, completed = results.get()
+            if isinstance(completed, OSError):
+                no_result.append(f"work item {job_id}: its worker could not be started "
+                                 f"({type(completed).__name__}: {completed})")
+                continue
+            try:
+                if completed.returncode:
+                    raise ValueError(f"the worker exited {completed.returncode}")
+                said = json.loads(completed.stdout)
+                work_db.set_result(job_id, WorkResult(
+                    worker_outcome=WorkerOutcome(said["worker_outcome"]), output=said["output"],
+                    test_outcome=(None if said["test_outcome"] is None
+                                  else TestOutcome(said["test_outcome"])),
+                    diff=said["diff"]))
+            except (ValueError, KeyError, TypeError) as error:
+                last = (completed.stderr.strip() or "nothing").splitlines()[-1]
+                no_result.append(f"work item {job_id}: {error}; its last line on standard "
+                                 f"error: {last}")
+        for worker in workers:
+            worker.join()
+    finally:
+        work_db.close()
+    if no_result:
+        print(f"{PROGRAM}: {len(no_result)} of {count} mutant(s) of {session_file} got no "
+              f"result, so they stay unrun in the session:\n"
+              + "".join(f"  {line}\n" for line in no_result), file=sys.stderr, end="")
+        return EXIT_COULD_NOT_RUN
+    return 0
+
+
+def cosmic_ray_one_work_item_mutate_and_test():
+    """Run under the cosmic-ray venv's python, in a worker's worktree: apply the mutations the
+    request on standard input names, run its test command, put the file back, and print the
+    result as JSON, all as cosmic-ray's own worker does."""
+    from cosmic_ray.mutating import mutate_and_test
+    from cosmic_ray.work_item import MutationSpec
+    request = json.load(sys.stdin)
+    result = mutate_and_test([MutationSpec(
+        module_path=Path(mutation["module_path"]), operator_name=mutation["operator_name"],
+        occurrence=mutation["occurrence"], start_pos=tuple(mutation["start_pos"]),
+        end_pos=tuple(mutation["end_pos"]), operator_args=mutation["operator_args"],
+        definition_name=mutation["definition_name"]) for mutation in request["mutations"]],
+        request["test_command"], request["timeout"])
+    print(json.dumps({
+        "worker_outcome": result.worker_outcome.value, "output": result.output,
+        "test_outcome": None if result.test_outcome is None else result.test_outcome.value,
+        "diff": result.diff}))
+    return 0
 
 
 def test_suite_runner_command(suites, worktree, arguments, recorded_inputs_directory):
@@ -615,23 +789,36 @@ def baseline_refusal(path, suites, baseline, baseline_results, mutant_timeout_se
             f"{' '.join(suites)}\n{(baseline.stderr or baseline.stdout).strip()}")
 
 
-def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
+def cosmic_ray_session_not_kept_refusal(path, session_file, error):
+    return (f"{PROGRAM}: not run — the cosmic-ray session of {path} could not be kept at "
+            f"{session_file} ({type(error).__name__}: {error}), so its mutants cannot be run.\n"
+            f"Fix what the error names, or give {COSMIC_RAY_SESSIONS_DIRECTORY_KEPT_TO_RESUME_FLAG} "
+            f"a directory you can write to, then run this again with the same options.")
+
+
+def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_base,
                            arguments, environment, runner, recorded_inputs_directory,
                            recordings_directory, in_test_sandboxes,
                            failure_handling_ranges=None):
     """Run cosmic-ray on one file's changed lines; return (counts, survivors, errored).
 
-    With failure_handling_ranges, only the changed lines inside them are mutated."""
+    The baseline and cosmic-ray's own steps run in worktrees[0]; with --parallel-mutant-workers,
+    each worktree gets one worker. With failure_handling_ranges, only the changed lines inside
+    them are mutated."""
+    worktree = worktrees[0]
     name = scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(path)
     config = scratch / f"{name}.toml"
     session = scratch / f"{name}.sqlite"
+    if arguments.cosmic_ray_sessions_directory_kept_to_resume is not None:
+        session = (Path(arguments.cosmic_ray_sessions_directory_kept_to_resume).resolve()
+                   / f"{scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(head, merge_base, path)}.sqlite")
     baseline_session = scratch / f"{name}.baseline.sqlite"
     mutant_timeout_seconds = (
         arguments.mutant_timeout_seconds if arguments.mutant_timeout_seconds is not None
         else default_mutant_timeout_seconds_from_test_suites_own_time_limits(
             suites, recordings_directory, runner, in_test_sandboxes))
     config.write_text(cosmic_ray_config_text(
-        path, test_command_for(suites, worktree, arguments, recorded_inputs_directory,
+        path, test_command_for(suites, ".", arguments, recorded_inputs_directory,
                                mutant_timeout_seconds),
         merge_base,
         mutant_timeout_seconds
@@ -662,17 +849,41 @@ def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
             f"{' '.join(suites)}\n"
             + "\n".join((result or {}).get("output") or ""
                         for _, result in baseline_results).strip())
-    run_or_raise([*cosmic_ray, "init", str(config), str(session)], worktree,
-                 environment, what=f"cosmic-ray init for {path}")
-    run_or_raise([tools["cr-filter-git"], "--config", str(config), str(session)],
-                 worktree, environment, what=f"cr-filter-git for {path}")
-    run_or_raise([tools["cr-filter-pragma"], str(session)],
-                 worktree, environment, what=f"cr-filter-pragma for {path}")
-    if failure_handling_ranges is not None:
-        run_or_raise([tools["cr-filter-lines"], "--config", str(config), str(session)],
-                     worktree, environment, what=f"cr-filter-lines for {path}")
-    run_or_raise([*cosmic_ray, "exec", str(config), str(session)], worktree,
-                 environment, what=f"cosmic-ray exec for {path}")
+    if session.is_file():
+        print(f"RESUMED  {path}: its cosmic-ray session {session} is kept from an earlier run, "
+              f"so only its mutants with no result run", flush=True)
+    else:
+        # Renamed into place only once filtered, so a run stopped before then leaves no
+        # session that a later run would resume with its filtered mutants unfiltered.
+        unfiltered = session.with_name(session.name + ".partial")
+        try:
+            unfiltered.parent.mkdir(parents=True, exist_ok=True)
+            unfiltered.unlink(missing_ok=True)
+        except OSError as error:
+            raise CouldNotRun(cosmic_ray_session_not_kept_refusal(path, unfiltered, error)) \
+                from error
+        run_or_raise([*cosmic_ray, "init", str(config), str(unfiltered)], worktree,
+                     environment, what=f"cosmic-ray init for {path}")
+        run_or_raise([tools["cr-filter-git"], "--config", str(config), str(unfiltered)],
+                     worktree, environment, what=f"cr-filter-git for {path}")
+        run_or_raise([tools["cr-filter-pragma"], str(unfiltered)],
+                     worktree, environment, what=f"cr-filter-pragma for {path}")
+        if failure_handling_ranges is not None:
+            run_or_raise([tools["cr-filter-lines"], "--config", str(config), str(unfiltered)],
+                         worktree, environment, what=f"cr-filter-lines for {path}")
+        try:
+            os.replace(unfiltered, session)
+        except OSError as error:
+            raise CouldNotRun(cosmic_ray_session_not_kept_refusal(path, session, error)) \
+                from error
+    if arguments.parallel_mutant_workers is None:
+        run_or_raise([*cosmic_ray, "exec", str(config), str(session)], worktree,
+                     environment, what=f"cosmic-ray exec for {path}")
+    else:
+        run_or_raise([tools["python"], str(Path(__file__).resolve()),
+                      COSMIC_RAY_SESSION_PENDING_MUTANTS_RUN_BY_PARALLEL_WORKERS_FLAG,
+                      str(config), str(session), *map(str, worktrees)], worktree, environment,
+                     what=f"the {len(worktrees)} parallel mutant workers for {path}")
     return outcomes_from_dump(run_or_raise(
         [*cosmic_ray, "dump", str(session)], worktree, environment,
         what=f"cosmic-ray dump for {path}"), mutant_timeout_seconds, runner)
@@ -715,28 +926,61 @@ def recorded_mutant_module_path_and_hunks(diff_text):
     return path, hunks
 
 
+def lines_equal(line, wanted):
+    return line == wanted
+
+
+def line_equal_or_with_pragma_no_mutate_after(line, wanted):
+    return line == wanted or (line.startswith(wanted)
+                              and PRAGMA_NO_MUTATE_COMMENT.fullmatch(line[len(wanted):]))
+
+
+def places_of_lines(lines, wanted, same=lines_equal):
+    return [place for place in range(len(lines) - len(wanted) + 1)
+            if all(same(line, want) for line, want in zip(lines[place:place + len(wanted)], wanted))]
+
+
+def recorded_mutant_hunk_place(lines, old_start, old, new, same=lines_equal):
+    """(where the hunk applies, its old lines, its new lines), the lines cut to the replaced
+    lines when only those were found, or None when the hunk is not found once.
+
+    A hunk is looked for at its own line first, then anywhere, since the branch may have moved
+    the line; then, since a later change may have edited a context line, its replaced lines
+    alone are looked for anywhere. same(line, wanted) says whether a source line matches a
+    hunk's line."""
+    at = old_start - 1 if old else old_start
+    if len(lines[at:at + len(old)]) == len(old) and all(
+            same(line, want) for line, want in zip(lines[at:at + len(old)], old)):
+        return at, old, new
+    places = places_of_lines(lines, old, same)
+    if len(places) == 1:
+        return places[0], old, new
+    start, end = hunk_shared_context_line_counts(old, new)
+    replaced = old[start:len(old) - end]
+    places = places_of_lines(lines, replaced, same) if replaced else []
+    if len(places) != 1:
+        return None
+    return places[0], replaced, new[start:len(new) - end]
+
+
 def source_with_recorded_mutant_applied(source, hunks):
-    """The source with the hunks applied, or None when a hunk's old lines are not found once.
+    """The source with the hunks applied, or None when a hunk is not found once.
 
     The source is split on "\\n", as cosmic-ray splits it to make the diff, so a file ending in
-    a newline has the empty last line the diff's last context line stands for. A hunk is looked
-    for at its own line first, then anywhere, since the branch may have moved the line."""
+    a newline has the empty last line the diff's last context line stands for. Each hunk is
+    found as recorded_mutant_hunk_place finds it."""
     lines = source.split("\n")
     for old_start, old, new in sorted(hunks, reverse=True):
-        at = old_start - 1 if old else old_start
-        if lines[at:at + len(old)] != old:
-            places = [place for place in range(len(lines) - len(old) + 1)
-                      if lines[place:place + len(old)] == old]
-            if len(places) != 1:
-                return None
-            at = places[0]
+        place = recorded_mutant_hunk_place(lines, old_start, old, new)
+        if place is None:
+            return None
+        at, old, new = place
         lines[at:at + len(old)] = new
     return "\n".join(lines)
 
 
-def hunk_replaced_lines(old, new):
-    """The lines a hunk replaces: its old lines without the context lines it shares with its
-    new lines at the start and the end."""
+def hunk_shared_context_line_counts(old, new):
+    """(lines at the start, lines at the end) that a hunk's old and new lines share."""
     start = 0
     while start < min(len(old), len(new)) and old[start] == new[start]:
         start += 1
@@ -744,15 +988,22 @@ def hunk_replaced_lines(old, new):
     while (end < min(len(old), len(new)) - start
            and old[len(old) - 1 - end] == new[len(new) - 1 - end]):
         end += 1
+    return start, end
+
+
+def hunk_replaced_lines(old, new):
+    """The lines a hunk replaces: its old lines without the context lines it shares with its
+    new lines at the start and the end."""
+    start, end = hunk_shared_context_line_counts(old, new)
     return old[start:len(old) - end]
 
 
 def recorded_mutant_lines_on_main(checkout, path, hunks, environment):
     """"applies" when origin/main's file takes the mutant, "gone" when the file is not in
     origin/main's tree or some hunk's replaced lines are nowhere in it, None when it cannot
-    tell: no origin/main, git fails to read the tree or the file, or only context lines
-    changed. Context lines alone never make "gone", since a change beside the mutated lines
-    leaves the survivor live."""
+    tell: no origin/main, git fails to read the tree or the file, or a hunk's replaced lines
+    appear in it more than once. Context lines alone never make "gone", since a change beside
+    the mutated lines leaves the survivor live."""
     if run(["git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/main^{commit}"],
            checkout, environment).returncode:
         return None
@@ -791,25 +1042,100 @@ def recorded_mutant_run_verdict(exit_code, output, runner):
                   f"{runner_output_described(output, runner)}")
 
 
+def recorded_mutant_line_ends_with_pragma(source, hunks):
+    """True when, at the place some hunk applies, the last line it replaces has a
+    `# pragma: no mutate` comment after it, so no mutation pass makes the mutant any more; None
+    when no hunk does and some hunk's place is not found once; else False. The place is found
+    as recorded_mutant_hunk_place finds it, reading a line with the comment as the line without
+    it, so the same line elsewhere in the file, with or without the comment, does not decide.
+    None is how a place that the comment makes ambiguous shows: read as exact lines, the hunk
+    could still be found once, at a twin of the mutant's own line."""
+    found_every_place = True
+    lines = source.split("\n")
+    for old_start, old, new in hunks:
+        place = recorded_mutant_hunk_place(lines, old_start, old, new,
+                                           line_equal_or_with_pragma_no_mutate_after)
+        if place is None:
+            found_every_place = False
+            continue
+        at, old, new = place
+        start, end = hunk_shared_context_line_counts(old, new)
+        if len(old) - end > start and lines[at + len(old) - end - 1] != old[len(old) - end - 1]:
+            return True
+    return False if found_every_place else None
+
+
+def recorded_mutant_verdict_without_a_suite_run(checkout, path, hunks, head, source,
+                                                why_source_unreadable, environment):
+    """((verdict, why), None) when the mutant is judged without running a suite: its file
+    cannot be read at the head (source None), its line ends with a `# pragma: no mutate`
+    comment, its place is ambiguous, or it does not apply; else (None, the mutated source)."""
+    if source is None:
+        return recorded_mutant_not_applied_verdict(
+            checkout, path, hunks, head, why_source_unreadable, environment), None
+    ends_with_pragma = recorded_mutant_line_ends_with_pragma(source, hunks)
+    if ends_with_pragma:
+        return ("no longer exists", (
+            f"the line it changes in {path} ends with a `# pragma: no mutate` comment at head "
+            f"{head[:12]}, so no mutation pass makes it; the nightly mutation pass drops it from "
+            f"its task once that is on main.")), None
+    mutated_source = source_with_recorded_mutant_applied(source, hunks)
+    if mutated_source is None:
+        return recorded_mutant_not_applied_verdict(
+            checkout, path, hunks, head,
+            "the lines it replaces are missing from the file or appear in it more than once",
+            environment), None
+    if ends_with_pragma is None:
+        return ("could not be judged", (
+            f"in {path} at head {head[:12]}, the lines this diff file replaces appear more than "
+            f"once when each line's trailing `# pragma: no mutate` comment is stripped before "
+            f"comparing: some copies end with that comment and some do not, so which copy is "
+            f"the mutant's own line cannot be told, and no suite was run. The diff's `@@` line "
+            f"gives the line number the mutant had when it was recorded; read the copies "
+            f"around that number to tell which is the mutant's.\n"
+            f"If the mutant's own line ends with the comment on origin/main: no mutation pass "
+            f"makes the mutant any more; mark the survivor task that names this diff file "
+            f"completed, saying why in the task's description.\n"
+            f"Otherwise: write a test that fails when the diff's change is made on the mutant's "
+            f"own line; check that by making the change by hand, running the test, and putting "
+            f"the line back before you commit; say so in your pull request; and mark the "
+            f"survivor task completed once that pull request merges, since every rerun of this "
+            f"command gives this same verdict.")), None
+    return None, mutated_source
+
+
+def recorded_mutant_not_applied_verdict(checkout, path, hunks, head, why_not_applied,
+                                        environment):
+    """(verdict, why) for a recorded mutant that does not apply to its file at the head."""
+    on_main = recorded_mutant_lines_on_main(checkout, path, hunks, environment)
+    if on_main == "gone":
+        return "no longer exists", (
+            f"the lines it replaces in {path} are gone from origin/main too, so there is "
+            f"nothing to kill; the nightly mutation pass drops it from its task.")
+    if on_main == "applies":
+        return "could not be judged", (
+            f"it does not apply to {path} at head {head[:12]}: {why_not_applied}. origin/main "
+            f"still has the lines it replaces, so your branch changed them.\n"
+            f"If your branch changed them on purpose, the mutant is gone from your branch: once "
+            f"your branch is merged, the nightly mutation pass drops it from its task.\n"
+            f"Otherwise, put {path} back as origin/main has it, with git checkout origin/main -- "
+            f"{shlex.quote(path)}, keep your test in another file, commit both, and run this "
+            f"command again.")
+    return "could not be judged", (
+        f"it does not apply to {path} at head {head[:12]}: {why_not_applied}, and whether "
+        f"origin/main still has the lines it replaces cannot be told: there is no local "
+        f"origin/main, git could not read {path} there, or the lines appear there more than "
+        f"once.\n"
+        f"If your branch changed those lines on purpose, the mutant is gone from your branch: "
+        f"once your branch is merged, the nightly mutation pass drops it from its task.\n"
+        f"Otherwise, make sure your branch's head has {path} as origin/main has it, commit your "
+        f"test in another file, and run this command again.")
+
+
 def recorded_mutant_killed_check(arguments, checkout, environment, runner):
-    """Judge one recorded mutant against the suites at --head; return the exit code."""
-    diff_file = Path(arguments.recorded_mutant_killed_check)
-    rerun = (f"Then run scripts/{PROGRAM}.py {RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG} "
-             f"{shlex.quote(str(diff_file))} again.")
-    try:
-        path, hunks = recorded_mutant_module_path_and_hunks(diff_file.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError) as error:
-        raise CouldNotRun(
-            f"{PROGRAM}: not run — the mutant's diff file {diff_file} cannot be read ({error}), "
-            f"so there is no mutant to apply.\n"
-            f"Give {RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG} the diff file the task "
-            f"names, on the machine the task names.") from error
-    if path is None or not hunks:
-        raise CouldNotRun(
-            f"{PROGRAM}: not run — {diff_file} holds no line starting `+++ b/` or no line "
-            f"starting `@@`, so it names no file to mutate or no change to make in it.\n"
-            f"Give {RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG} the diff file the task "
-            f"names, unchanged.")
+    """Judge each recorded mutant against the suites at --head, print a line for each, and
+    write the verdicts JSON file when asked; return the exit code."""
+    diff_files = list(dict.fromkeys(arguments.recorded_mutant_killed_check))
     head = run_or_raise(["git", "rev-parse", "--verify", f"{arguments.head}^{{commit}}"],
                         checkout, environment, what=f"git rev-parse {arguments.head}").strip()
     recorded_inputs_directory = (arguments.recorded_inputs_directory
@@ -820,102 +1146,176 @@ def recorded_mutant_killed_check(arguments, checkout, environment, runner):
         raise CouldNotRun(str(refusal).splitlines()[0].replace(
             f"{runner.PROGRAM}:", f"{PROGRAM}:", 1) + "\n"
             + runner.git_failure_next_step_lines(Path(__file__).name)) from refusal
-    suites = suites_for_file(path, suites_at_head(checkout, head, environment),
-                             recordings_directory, runner)
-    if not suites:
-        raise CouldNotRun(
-            f"{PROGRAM}: not run — at head {head[:12]} no recorded suite reads {path} and it has "
-            f"no sibling suite, so no suite can kill the mutant.\n"
-            f"If your new test is in a suite whose recording does not yet read {path}, such as "
-            f"a new suite, run that suite once with python3 "
-            f"scripts/run-all-test-suites.py --only-suites-named <the suite's path>, which "
-            f"records what it reads, so this program finds it.\n"
-            + rerun)
+    suites_at = suites_at_head(checkout, head, environment)
+    verdicts = {}
+    to_run = []
+    for diff_file in diff_files:
+        try:
+            path, hunks = recorded_mutant_module_path_and_hunks(
+                Path(diff_file).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError) as error:
+            verdicts[diff_file] = ("could not be judged", (
+                f"the diff file cannot be read ({error}), so there is no mutant to apply.\n"
+                f"Give {RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG} the diff files the task "
+                f"names, on ned-box, where they are kept."))
+            continue
+        if path is None or not hunks:
+            verdicts[diff_file] = ("could not be judged", (
+                "the diff file holds no line starting `+++ b/` or no line starting `@@`, so it "
+                "names no file to mutate or no change to make in it.\n"
+                f"Give {RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG} the diff files the task "
+                f"names, unchanged."))
+            continue
+        suites = suites_for_file(path, suites_at, recordings_directory, runner)
+        if not suites:
+            # A deleted module leaves no suite reading it, yet its mutant no longer exists.
+            shown = run(["git", "show", f"{head}:{path}"], checkout, environment)
+            verdict, _ = recorded_mutant_verdict_without_a_suite_run(
+                checkout, path, hunks, head, None if shown.returncode else shown.stdout,
+                "the file is not there, or git cannot read it", environment)
+            if verdict is not None:
+                verdicts[diff_file] = verdict
+                continue
+            verdicts[diff_file] = ("could not be judged", (
+                f"at head {head[:12]} no recorded suite reads {path} and it has no sibling suite "
+                f"(a {path[:-len('.py')]}-test.py or -test.sh), so no suite can kill the mutant.\n"
+                f"If your new test is in a suite whose recording does not yet read {path}, such "
+                f"as a new suite, run that suite once with python3 "
+                f"scripts/run-all-test-suites.py --only-suites-named <the suite's path>, which "
+                f"records what it reads, and run this command again."))
+            continue
+        to_run.append((diff_file, path, hunks, suites))
+    if to_run:
+        verdicts.update(recorded_mutants_judged_in_one_worktree(
+            to_run, head, arguments, checkout, environment, runner, recorded_inputs_directory))
+    counts = {verdict: 0 for verdict in RECORDED_MUTANT_VERDICT_LINE_PREFIXES}
+    for diff_file in diff_files:
+        verdict, why = verdicts[diff_file]
+        counts[verdict] += 1
+        print(f"{RECORDED_MUTANT_VERDICT_LINE_PREFIXES[verdict]}: {diff_file}: {why}")
+    print(f"RECORDED MUTANTS at head {head[:12]}: {counts['killed']} killed, "
+          f"{counts['survived']} survived, {counts['no longer exists']} no longer exist, "
+          f"{counts['could not be judged']} could not be judged")
+    if counts["survived"]:
+        print("Write or change a test that fails with each surviving mutant and passes without "
+              "it, commit the test as a new commit, and run this command again.")
+    verdicts_json_file = arguments.recorded_mutant_killed_check_verdicts_json_file_to_write
+    if verdicts_json_file is not None:
+        try:
+            Path(verdicts_json_file).write_text(json.dumps({
+                "head": head, "verdicts": {diff_file: {"verdict": verdicts[diff_file][0],
+                                                       "why": verdicts[diff_file][1]}
+                                           for diff_file in diff_files}}, indent=1) + "\n",
+                encoding="utf-8")
+        except OSError as error:
+            print(f"{PROGRAM}: the verdicts were not written to {verdicts_json_file}: {error}. "
+                  f"The lines above are this command's whole result.\n"
+                  f"Run it again with --recorded-mutant-killed-check-verdicts-json-file-to-write "
+                  f"naming a path in a directory you can write to, or without that option if you "
+                  f"need no JSON file.",
+                  file=sys.stderr)
+            return EXIT_COULD_NOT_RUN
+    if counts["could not be judged"]:
+        return EXIT_COULD_NOT_RUN
+    if counts["survived"]:
+        return EXIT_SURVIVORS_OR_UNTESTED_FILES
+    return EXIT_EVERY_MUTANT_KILLED
+
+
+def recorded_mutants_judged_in_one_worktree(to_run, head, arguments, checkout, environment, runner,
+                                            recorded_inputs_directory):
+    """{diff file: (verdict, why)} for each (diff file, path, hunks, suites), judged in one
+    scratch worktree at the head, after one run of all their suites without a mutant."""
     # An inherited PYTHONPYCACHEPREFIX, as the signal-sandbox runner's --mutant run sets, would
     # put the suites' bytecode where removing the worktree's __pycache__ cannot reach it.
     environment = {name: value for name, value in environment.items()
                    if name != "PYTHONPYCACHEPREFIX"}
+    all_suites = list(dict.fromkeys(suite for _, _, _, suites in to_run for suite in suites))
+    verdicts = {}
     with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as scratch_name:
         worktree = Path(scratch_name).resolve() / "worktree"
         try:
             run_or_raise(["git", "worktree", "add", "--detach", str(worktree), head], checkout,
                          environment, what=f"git worktree add at {head}")
-            command = test_suite_runner_command(suites, worktree, arguments,
-                                                recorded_inputs_directory)
-            unmutated = subprocess.run(command, cwd=str(worktree), env=environment, text=True,
-                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                       check=False)
+            unmutated = subprocess.run(
+                test_suite_runner_command(all_suites, worktree, arguments,
+                                          recorded_inputs_directory),
+                cwd=str(worktree), env=environment, text=True, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, check=False)
+            if unmutated.returncode == runner.EXIT_LOCKED:  # pragma: no mutate, `is` matches a small int as `==` does, and the runner exits no higher than EXIT_LOCKED but by a signal, which is negative
+                raise CouldNotRun(
+                    f"{PROGRAM}: not run — the suite runner scripts/run-all-test-suites.py, run "
+                    f"at head {head[:12]} without a mutant, exited {runner.EXIT_LOCKED}, which "
+                    f"means it ran no suite: another test run holds a lock the runner takes (the "
+                    f"machine's lock, or the lock on the runner's log directory), so no mutant "
+                    f"can be judged. The runner's refusal, which names the lock and the process "
+                    f"holding it:\n"
+                    f"{unmutated.stdout.strip()}\n"
+                    f"Run scripts/{PROGRAM}.py again, with the same options, once that process "
+                    f"has ended.")
+            if unmutated.returncode and not runner.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(
+                    unmutated.stdout):
+                raise CouldNotRun(
+                    f"{PROGRAM}: not run — the suite runner scripts/run-all-test-suites.py, run "
+                    f"at head {head[:12]} without a mutant, exited {unmutated.returncode} "
+                    f"without reporting any suite as failed, so no mutant can be judged; the "
+                    f"runner's output {runner_output_described(unmutated.stdout, runner)}\n"
+                    f"{unmutated.stdout.strip()}\n"
+                    f"If that output names a cause, fix it, then run scripts/{PROGRAM}.py again "
+                    f"with the same options.\n"
+                    f"If it names none, as when it is empty, run scripts/{PROGRAM}.py once more "
+                    f"with the same options; if that run fails the same way, put both outputs in "
+                    f"the description of the pull request you are checking.")
             if unmutated.returncode != 0:
                 raise CouldNotRun(
-                    f"{PROGRAM}: not run — the suites for {path} do not pass at head "
-                    f"{head[:12]} without the mutant (the suite runner exited "
-                    f"{unmutated.returncode}), so no failure with it can be the mutant's: "
-                    f"{' '.join(suites)}\n{unmutated.stdout.strip()}\n"
-                    f"Make those suites pass at your branch's head and commit.\n" + rerun)
-            try:
-                mutated_source = source_with_recorded_mutant_applied(
-                    (worktree / path).read_text(encoding="utf-8"), hunks)
-                why_not_applied = ("the lines the diff replaces are missing from the file or appear in it more than once"
-                                   if mutated_source is None else None)
-            except (OSError, UnicodeDecodeError) as error:
-                why_not_applied = f"the file cannot be read ({error})"
-            if why_not_applied is not None:
-                on_main = recorded_mutant_lines_on_main(checkout, path, hunks, environment)
-                if on_main == "gone":
-                    next_step = (
-                        f"origin/main does not have the lines the diff replaces in {path} "
-                        f"either, so the mutant is gone from main and there is nothing to "
-                        f"kill: mark the survivor task that names {diff_file}, on your task "
-                        f"list, completed.\n")
-                elif on_main == "applies":
-                    next_step = (
-                        f"origin/main still has the lines the diff replaces in {path}, so your "
-                        f"branch changed them.\n"
-                        f"If your branch changed them on purpose, the mutant no longer exists "
-                        f"on it: once your branch is merged, mark the survivor task that names "
-                        f"{diff_file} completed.\n"
-                        f"Otherwise, put {path} back as origin/main has it, with git checkout "
-                        f"origin/main -- {shlex.quote(path)}, keep your test in another file, "
-                        f"and commit both.\n" + rerun)
+                    f"{PROGRAM}: not run — the suites for the mutated files do not pass at head "
+                    f"{head[:12]} without a mutant (the suite runner exited "
+                    f"{unmutated.returncode}), so no failure with a mutant can be the mutant's: "
+                    f"{' '.join(all_suites)}\n{unmutated.stdout.strip()}\n"
+                    f"Make those suites pass at your branch's head, commit, and run this command "
+                    f"again.")
+            for diff_file, path, hunks, suites in to_run:
+                source_file = worktree / path
+                try:
+                    source, why_unreadable = source_file.read_text(encoding="utf-8"), None
+                except (OSError, UnicodeDecodeError) as error:
+                    source, why_unreadable = None, f"the file cannot be read ({error})"
+                verdict, mutated_source = recorded_mutant_verdict_without_a_suite_run(
+                    checkout, path, hunks, head, source, why_unreadable, environment)
+                if verdict is not None:
+                    verdicts[diff_file] = verdict
+                    continue
+                source_file.write_text(mutated_source, encoding="utf-8")
+                # Python checks cached bytecode by the source's size and whole-second mtime,
+                # which a mutant such as + to * written within the second leaves the same.
+                for cache in list(worktree.rglob("__pycache__")):
+                    shutil.rmtree(cache)
+                mutated = subprocess.run(
+                    test_suite_runner_command(suites, worktree, arguments,
+                                              recorded_inputs_directory),
+                    cwd=str(worktree), env=environment, text=True, stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT, check=False)
+                source_file.write_text(source, encoding="utf-8")
+                verdict, why = recorded_mutant_run_verdict(mutated.returncode, mutated.stdout,
+                                                           runner)
+                if verdict == "killed":
+                    verdicts[diff_file] = ("killed", (
+                        f"at head {head[:12]}, the suites for {path} ({' '.join(suites)}) pass "
+                        f"without the mutant, and one of them fails with it applied."))
+                elif verdict == "survived":
+                    verdicts[diff_file] = ("survived", (
+                        f"at head {head[:12]}, every suite for {path} passes with the mutant "
+                        f"applied: {' '.join(suites)}"))
                 else:
-                    next_step = (
-                        f"If the line the diff changes is no longer at your head as the diff "
-                        f"shows it, there is no mutant to kill: mark the survivor task "
-                        f"completed instead of running this.\n"
-                        f"Otherwise, make sure your branch's head has {path} as main has it, "
-                        f"and commit your test in another file.\n" + rerun)
-                raise CouldNotRun(
-                    f"{PROGRAM}: not run — the mutant in {diff_file} does not apply to {path} at "
-                    f"head {head[:12]}: {why_not_applied}.\n" + next_step)
-            (worktree / path).write_text(mutated_source, encoding="utf-8")
-            # Python checks cached bytecode by the source's size and whole-second mtime, which a
-            # mutant such as + to * written within the second leaves the same.
-            for cache in list(worktree.rglob("__pycache__")):
-                shutil.rmtree(cache)
-            mutated = subprocess.run(command, cwd=str(worktree), env=environment, text=True,
-                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                     check=False)
+                    verdicts[diff_file] = ("could not be judged", (
+                        f"with the mutant applied at head {head[:12]}, {why}, so the mutant "
+                        f"could not be judged.\n"
+                        f"Run this command again once. If the mutant still cannot be judged, put "
+                        f"that second output in the description of the pull request with your "
+                        f"test."))
         finally:
             remove_worktree(checkout, worktree, environment)
-    verdict, why = recorded_mutant_run_verdict(mutated.returncode, mutated.stdout, runner)
-    if verdict == "survived":
-        print(mutated.stdout, end="")
-        print(f"{MUTANT_SURVIVED_LINE_PREFIX}: at head {head[:12]}, every suite for {path} "
-              f"passes with the mutant in {diff_file} applied: {' '.join(suites)}\n"
-              f"Write or change a test that fails with the mutant and passes without it, and "
-              f"commit the test as a new commit.\n" + rerun)
-        return EXIT_SURVIVORS_OR_UNTESTED_FILES
-    if verdict is None:
-        raise CouldNotRun(
-            f"{PROGRAM}: not run to a verdict — with the mutant in {diff_file} applied at head "
-            f"{head[:12]}, {why}, so the mutant was not judged.\n"
-            f"Run this again once. If the second run also ends without a verdict, put its first "
-            f"line in the pull request's description instead of a MUTANT KILLED line.")
-    print(mutated.stdout, end="")
-    print(f"{MUTANT_KILLED_LINE_PREFIX}: at head {head[:12]}, the suites for {path} "
-          f"({' '.join(suites)}) pass without the mutant in {diff_file}, and one of them fails "
-          f"with it applied.")
-    return EXIT_EVERY_MUTANT_KILLED
+    return verdicts
 
 
 def parse_arguments(argv):
@@ -928,8 +1328,8 @@ def parse_arguments(argv):
                             help="mutate every changed line, with every suite that reads the "
                                  "file; the pass the daily maintenance-job runs")
     which_pass.add_argument(RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG, metavar="DIFF_FILE",
-                            default=None,
-                            help="apply one recorded mutant's diff at --head, by default HEAD, "
+                            nargs="+", default=None,
+                            help="apply each recorded mutant's diff at --head, by default HEAD, "
                                  "and say whether a suite kills it")
     which = parser.add_mutually_exclusive_group()
     which.add_argument("--pull-request", type=int,
@@ -951,8 +1351,19 @@ def parse_arguments(argv):
                         help="the limit on one run of a file's suites; default, the "
                              "longest suite's own limit times the runner's rounds, plus its "
                              "start-up")
+    parser.add_argument(PARALLEL_MUTANT_WORKERS_FLAG, type=int, default=None, metavar="N",
+                        help="run N mutants at once, each in a scratch worktree of its own, "
+                             "with the python of --cosmic-ray-venv; default, one at a time, "
+                             "by cosmic-ray exec")
+    parser.add_argument(COSMIC_RAY_SESSIONS_DIRECTORY_KEPT_TO_RESUME_FLAG, default=None,
+                        metavar="DIR",
+                        help="keep each file's cosmic-ray session in DIR, and resume a session "
+                             "already there, running only its mutants with no result")
     parser.add_argument("--survived-and-errored-mutants-json-file", default=None,
                         help="a file to write the survived and errored mutants to, as JSON")
+    parser.add_argument("--recorded-mutant-killed-check-verdicts-json-file-to-write", default=None,
+                        help=f"with {RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG}, a file to "
+                             f"write each recorded mutant's verdict to, as JSON")
     arguments = parser.parse_args(argv)
     if arguments.recorded_mutant_killed_check is not None:
         if arguments.pull_request is not None or arguments.base is not None:
@@ -961,6 +1372,12 @@ def parse_arguments(argv):
         if arguments.head is None:
             arguments.head = "HEAD"
         return arguments
+    if arguments.parallel_mutant_workers is not None:
+        if arguments.parallel_mutant_workers < 1:
+            parser.error(f"{PARALLEL_MUTANT_WORKERS_FLAG} needs a count of 1 or more")
+        if arguments.cosmic_ray_venv is None:
+            parser.error(f"{PARALLEL_MUTANT_WORKERS_FLAG} needs --cosmic-ray-venv, whose python "
+                         f"runs the workers")
     if arguments.pull_request is None and arguments.head is None:
         parser.error("one of the arguments --pull-request --head is required")
     if arguments.head is not None and arguments.base is None:
@@ -975,6 +1392,11 @@ def main(argv=None):
     if argv[:1] == [COSMIC_RAY_TEST_COMMAND_RUN_TEST_SUITE_RUNNER_STOPPED_AFTER_SECONDS_FLAG]:
         return run_test_suite_runner_with_its_stderr_on_stdout_stopped_before_cosmic_ray_limit(
             float(argv[1]), argv[2:])
+    if argv[:1] == [COSMIC_RAY_SESSION_PENDING_MUTANTS_RUN_BY_PARALLEL_WORKERS_FLAG]:
+        return cosmic_ray_session_pending_mutants_run_by_parallel_workers(argv[1], argv[2],
+                                                                          argv[3:])
+    if argv[:1] == [COSMIC_RAY_ONE_WORK_ITEM_MUTATE_AND_TEST_FLAG]:
+        return cosmic_ray_one_work_item_mutate_and_test()
     # A Bash tool timeout or TaskStop sends SIGTERM; raised as SystemExit, the stop still runs the
     # finally that removes the scratch worktree, and the TemporaryDirectory's exit.
     with stop_signals.stop_signals_raise_system_exit_so_cleanup_runs():
@@ -992,6 +1414,18 @@ def main_with_stop_signals_raising_system_exit(argv):
         if arguments.recorded_mutant_killed_check is not None:
             return recorded_mutant_killed_check(arguments, checkout, environment, runner)
         tools = cosmic_ray_tool_paths(arguments.cosmic_ray_venv)
+        if arguments.parallel_mutant_workers is not None:
+            # Not resolved: the venv's python is a link, and only run by that name does it
+            # import the venv's cosmic-ray.
+            tools["python"] = str(Path(arguments.cosmic_ray_venv).expanduser().resolve()
+                                  / "bin" / "python")
+            if not Path(tools["python"]).is_file():
+                raise CouldNotRun(
+                    f"{PROGRAM}: not run — {tools['python']} is not there, and "
+                    f"{PARALLEL_MUTANT_WORKERS_FLAG} runs its workers with the python of "
+                    f"the cosmic-ray venv, the one that imports cosmic-ray.\n"
+                    f"Give --cosmic-ray-venv the venv cosmic-ray was installed into with pip, "
+                    f"or run this again without {PARALLEL_MUTANT_WORKERS_FLAG}.")
         if arguments.pull_request is not None:
             # gh needs the credential that the suites' environment leaves out.
             head, base = head_and_base_of_pull_request(
@@ -1049,6 +1483,13 @@ def main_with_stop_signals_raising_system_exit(argv):
         in_test_sandboxes = sys.platform.startswith("linux") and \
             runner.does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(
                 sandbox_prefix)
+        if (arguments.parallel_mutant_workers or 1) > 1 and not in_test_sandboxes:
+            raise CouldNotRun(
+                f"{PROGRAM}: not run — {PARALLEL_MUTANT_WORKERS_FLAG} "
+                f"{arguments.parallel_mutant_workers} needs the suites to run in "
+                f"nc-test-sandboxes, which they do not here, so each run of the suite runner "
+                f"takes the machine's lock and every worker but one would be refused it.\n"
+                f"Run this again with {PARALLEL_MUTANT_WORKERS_FLAG} 1, or without it.")
         if in_test_sandboxes:
             # The runner needs psutil there; refused here once, not once per mutant.
             psutil, refusal = runner.psutil_imported_or_why_not()
@@ -1061,10 +1502,13 @@ def main_with_stop_signals_raising_system_exit(argv):
             # directory is under /var, a symbolic link to /private/var.
             scratch = Path(scratch_name).resolve()
             worktree = scratch / "worktree"
+            worktrees = [worktree] + [scratch / f"worktree-of-mutant-worker-{number}" for number
+                                      in range(2, (arguments.parallel_mutant_workers or 1) + 1)]
             try:
-                run_or_raise(["git", "worktree", "add", "--detach", str(worktree),
-                              head], checkout, environment,
-                             what=f"git worktree add at {head}")
+                for each in worktrees:
+                    run_or_raise(["git", "worktree", "add", "--detach", str(each),
+                                  head], checkout, environment,
+                                 what=f"git worktree add at {head}")
                 for path in files:
                     suites = suites_for_file(path, suites_listed_at_head,
                                              recordings_directory, runner)
@@ -1111,7 +1555,7 @@ def main_with_stop_signals_raising_system_exit(argv):
                             print(f"NO SANDBOX  {suite} runs WITHOUT the signal "
                                   f"sandbox: {outside[suite]}", flush=True)
                     counts, survivors, errored = mutation_test_one_file(
-                        path, suites, worktree, scratch, tools, merge_base, arguments,
+                        path, suites, worktrees, scratch, tools, head, merge_base, arguments,
                         environment, runner, recorded_inputs_directory, recordings_directory,
                         in_test_sandboxes, failure_handling_ranges)
                     all_survivors += survivors
@@ -1127,7 +1571,8 @@ def main_with_stop_signals_raising_system_exit(argv):
                             for diff_line in mutant["diff"].splitlines():
                                 print(f"    {diff_line}")
             finally:
-                remove_worktree(checkout, worktree, environment)
+                for each in worktrees:
+                    remove_worktree(checkout, each, environment)
     except CouldNotRun as failure:
         print(str(failure), file=sys.stderr)
         return EXIT_COULD_NOT_RUN

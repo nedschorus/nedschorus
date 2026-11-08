@@ -55,7 +55,7 @@ check("each call returns a new list, so a caller appending to one changes no oth
 
 own = {"advisorModel": "fable", "disableAllHooks": True, "permissions": {"deny": ["Read(secret)"]}}
 before = copy.deepcopy(own)
-with_own = command_line_prefix.claude_code_headless_run_command_line_prefix_build("dontAsk", own_settings=own)
+with_own = command_line_prefix.claude_code_headless_run_command_line_prefix_build("dontAsk", caller_claude_code_session_settings=own)
 check("the caller's own settings ride in the one --settings, and the advisor setting wins",
       with_own.count("--settings") == 1
       and json.loads(with_own[with_own.index("--settings") + 1]) == {**own, "advisorModel": ""},

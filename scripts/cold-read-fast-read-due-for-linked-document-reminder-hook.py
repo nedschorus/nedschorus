@@ -17,18 +17,20 @@ cold-read-records directory, and docs/walk/<name>-cold-read-fast-read.md, which 
 fast read's own report.
 
 ONLY DOCUMENTS THIS AGENT-SESSION WROTE. A linked document is checked further
-only when a Write or Edit tool call on its path, which ended without an error,
-appears anywhere in the agent-session's transcript or in a transcript under
-<transcript without .jsonl>/subagents/, where Claude Code keeps its subagents'
-transcripts. A reply that only cites a document, or names it as where
-something will go, therefore asks nothing, even for a git-ignored file such
-as a seat-brief, which the git test below would always call changed. A call
-a hook refused is recorded as a tool_result with is_error true, so it counts
-as no write. Not seen, and so never asked about: a document written by a shell
-command, such as cp or a heredoc, and one written in an earlier agent-session
-that a session-handoff replaced. Only lines holding "file_path" or an
-is_error true are parsed, since a transcript can pass 40 MB; such a line that
-is not JSON is a fault.
+only when a Write or Edit tool call on its path, whose tool_result has arrived
+without an error, appears anywhere in the agent-session's transcript or in a
+transcript under <transcript without .jsonl>/subagents/, where Claude Code
+keeps its subagents' transcripts. A reply that only cites a document, or names
+it as where something will go, therefore asks nothing, even for a git-ignored
+file such as a seat-brief, which the git test below would always call changed.
+A call a hook refused is recorded as a tool_result with is_error true, so it
+counts as no write; so does a call with no tool_result yet, such as one still
+waiting on a hook or a permission decision. Not seen, and so never asked
+about: a document written by a shell command, such as cp or a heredoc, and one
+written in an earlier agent-session that a session-handoff replaced. Only
+lines holding "file_path" or the tool_use_id of a Write or Edit call already
+seen are parsed, since a transcript can pass 40 MB; such a line that is not
+JSON, as a line still being written is, is skipped.
 
 WHEN A DOCUMENT IS DUE. A document in a git checkout is due only when that
 checkout changed it from main: the document is not in the merge-base of the
@@ -199,7 +201,7 @@ TRANSCRIPT_UNREADABLE_LINES = (
 
 WRITE_AND_EDIT_TOOL_NAMES = ("Write", "Edit")
 TOOL_CALL_FILE_PATH_MARK = b'"file_path"'
-TOOL_RESULT_ERROR_PATTERN = re.compile(rb'"is_error"\s*:\s*true')
+TOOL_RESULT_CALL_ID_PATTERN = re.compile(rb'"tool_use_id"\s*:\s*"([^"]+)"')
 SUBAGENT_TRANSCRIPTS_DIRECTORY_NAME = "subagents"
 
 TRANSCRIPT_READER_FILE = Path(__file__).with_name("absence-claim-locator-reminder-hook.py")
@@ -275,19 +277,25 @@ def last_reply_text(transcript_path):
 
 
 def find_files_written_by_agent_session_and_its_subagents(transcript_path):
-    """The resolved paths of every Edit or Write call in the transcript and its subagents' that ended without an error."""
+    """The resolved paths of every Edit or Write call in the transcript and its subagents' whose result arrived without an error."""
     transcripts = [transcript_path, *sorted(
         (transcript_path.with_suffix("") / SUBAGENT_TRANSCRIPTS_DIRECTORY_NAME).rglob("*.jsonl"))]
     paths_by_call = {}
+    succeeded_calls = set()
     failed_calls = set()
     for transcript in transcripts:
         with open(transcript, "rb") as lines:
             for line in lines:
                 # Only these lines are parsed: a transcript can pass 40 MB, and the hook runs on every Stop.
                 if (TOOL_CALL_FILE_PATH_MARK not in line
-                        and TOOL_RESULT_ERROR_PATTERN.search(line) is None):
+                        and not any(match[1].decode(errors="replace") in paths_by_call
+                                    for match in TOOL_RESULT_CALL_ID_PATTERN.finditer(line))):
                     continue
-                record = json.loads(line)
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    # A line still being written, as a running subagent's last line can be.
+                    continue
                 content = (record.get("message") or {}).get("content")
                 if not isinstance(content, list):
                     continue
@@ -300,12 +308,12 @@ def find_files_written_by_agent_session_and_its_subagents(transcript_path):
                         file_path = (block.get("input") or {}).get("file_path")
                         if file_path:
                             paths_by_call[block.get("id")] = file_path
-                    elif (block.get("type") == "tool_result"
-                          and block.get("is_error") is True):
-                        # A hook's refusal, such as the instruction-file guard's, is recorded this way.
-                        failed_calls.add(block.get("tool_use_id"))
+                    elif block.get("type") == "tool_result":
+                        # A hook's refusal, such as the instruction-file guard's, is recorded with is_error true.
+                        (failed_calls if block.get("is_error") is True
+                         else succeeded_calls).add(block.get("tool_use_id"))
     return {Path(file_path).resolve() for call, file_path in paths_by_call.items()
-            if call not in failed_calls}
+            if call in succeeded_calls and call not in failed_calls}
 
 
 class GitComparisonFailure(Exception):
