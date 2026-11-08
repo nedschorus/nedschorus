@@ -65,7 +65,9 @@ goes to a changed prompt whose old and new text, as the agent receives it, are
 identical once whitespace at line ends is removed, each run of blank lines
 becomes one, and blank lines at the start or end are dropped; for an f-string,
 each field's source must also match exactly. A prompt that is an f-string on one
-side only gets the needs-approval label. Every other prompt gets the
+side only gets the needs-approval label, and so does one whose placeholders, the
+f-string fields and non-literal operands of a + chain, differ in source or order:
+a literal {path} that becomes a field is a change the agent receives. Every other prompt gets the
 needs-approval label, with needs_user_approval set in --json, including an added
 prompt and one the plan lists with no old text, such as a prompt moved into
 another string.
@@ -583,7 +585,12 @@ def prompt_text_lines_without_trailing_whitespace_or_extra_blank_lines(text):
     return lines
 
 
-def prompt_texts_differ_only_in_trailing_whitespace_or_blank_lines(old_text, new_text):
+def prompt_texts_differ_only_in_trailing_whitespace_or_blank_lines(old_text, new_text, old_placeholders=(),
+                                                                   new_placeholders=()):
+    """A + chain's text shows a placeholder as {source}, as a plain literal shows its own braces, so the
+    placeholders the collector found are compared too: a literal {path} that becomes a field is not cosmetic."""
+    if old_placeholders != new_placeholders:
+        return False
     old_is_f_string, old_prose, old_fields = prompt_text_handed_to_agent(old_text)
     new_is_f_string, new_prose, new_fields = prompt_text_handed_to_agent(new_text)
     if old_is_f_string != new_is_f_string or old_fields != new_fields:
@@ -592,10 +599,18 @@ def prompt_texts_differ_only_in_trailing_whitespace_or_blank_lines(old_text, new
             == prompt_text_lines_without_trailing_whitespace_or_extra_blank_lines(new_prose))
 
 
-def approval_fields_for_agent_text(kind, old_text, new_text):
+def approval_fields_for_agent_text(kind, old_node, new_node):
+    old_text = old_node["text"] if old_node else None
     cosmetic = (kind == "prompt" and old_text is not None
-                and prompt_texts_differ_only_in_trailing_whitespace_or_blank_lines(old_text, new_text))
+                and prompt_texts_differ_only_in_trailing_whitespace_or_blank_lines(
+                    old_text, new_node["text"], old_node["placeholders"],
+                    new_node["placeholders"]))
     return {"needs_user_approval": kind == "prompt" and not cosmetic, "cosmetic_change_needs_no_approval": cosmetic}
+
+
+def same_text_and_placeholders(old_node, new_node):
+    return (old_node["text"] == new_node["text"]
+            and old_node["placeholders"] == new_node["placeholders"])
 
 
 def changed_agent_facing_text_entries(repository, old_revision, new_revision, changed_files):
@@ -610,7 +625,7 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
         if changed_file["status"] == "A":
             entries.extend({"path": path, "line": node["line"], "label": node["label"],
                             "old_text": None, "new_text": node["text"],
-                            **approval_fields_for_agent_text(node["kind"], None, node["text"])} for node in new_nodes)
+                            **approval_fields_for_agent_text(node["kind"], None, node)} for node in new_nodes)
             continue
         old_nodes = agent_facing_string_nodes_in_source(read_revision_blob_or_none(repository, old_revision, path))
         diff_text = required_git_output(repository, "diff", "-U0", "--no-ext-diff", "--no-textconv", "--no-color",
@@ -624,18 +639,19 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
                 if new_index in listed_new_nodes or not line_span_intersects_hunk_side(
                         new_node["line"], new_node["end_line"], new_start, new_count):
                     continue
-                if any(node["text"] == new_node["text"] for _, node in old_candidates):
+                if any(same_text_and_placeholders(node, new_node) for _, node in old_candidates):
                     continue
                 old_match = next(((index, node) for index, node in old_candidates
                                   if index not in used_old_nodes and node["label"] == new_node["label"]
-                                  and node["text"] != new_node["text"]), None)
+                                  and not same_text_and_placeholders(node, new_node)), None)
                 if old_match:
                     used_old_nodes.add(old_match[0])
                 listed_new_nodes.add(new_index)
                 old_text = old_match[1]["text"] if old_match else None
                 entries.append({"path": path, "line": new_node["line"], "label": new_node["label"],
                                 "old_text": old_text, "new_text": new_node["text"],
-                                **approval_fields_for_agent_text(new_node["kind"], old_text, new_node["text"])})
+                                **approval_fields_for_agent_text(new_node["kind"], old_match[1] if old_match else None,
+                                                                 new_node)})
     return sorted(entries, key=lambda entry: (entry["path"], entry["line"], entry["label"]))
 
 

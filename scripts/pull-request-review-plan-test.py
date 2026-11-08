@@ -708,14 +708,23 @@ def run_agent_text_cases(fixture):
           review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in skeleton, skeleton)
     prompt_program_before = ('def compose(path):\n    prompt = f"# Task\\n\\nRead the **whole** file {path},\\nthen report.'
                              '\\n\\n```sh\\nls  -l\\n```\\n"\n    return prompt\n')
-    for name, prompt_program_after, expected_cosmetic in [
-            ("a prompt whose only change is trailing spaces", prompt_program_before.replace(",\\nthen", ",  \\nthen"), True),
-            ("a prompt whose only change is an extra blank line", prompt_program_before.replace("# Task\\n\\n", "# Task\\n\\n\\n"), True),
-            ("a prompt whose only change is dropped bold marks", prompt_program_before.replace("**whole**", "whole"), False),
-            ("a prompt with a changed word", prompt_program_before.replace("then report", "then summarize"), False),
-            ("a prompt with a changed code block", prompt_program_before.replace("ls  -l", "ls -la"), False)]:
+    literal_brace_prompt = 'def compose(path):\n    prompt = "Read {path}.\\n"\n    return prompt\n'
+    field_in_chain_prompt = 'def compose(path):\n    prompt = "Read " + f"{path}.  \\n"\n    return prompt\n'
+    literal_chain_prompt = 'def compose(path):\n    prompt = "Read " + "the file.\\n"\n    return prompt\n'
+    for name, program_before, prompt_program_after, expected_cosmetic in [
+            ("a prompt whose only change is trailing spaces", prompt_program_before, prompt_program_before.replace(",\\nthen", ",  \\nthen"), True),
+            ("a prompt whose only change is an extra blank line", prompt_program_before, prompt_program_before.replace("# Task\\n\\n", "# Task\\n\\n\\n"), True),
+            ("a prompt whose only change is dropped bold marks", prompt_program_before, prompt_program_before.replace("**whole**", "whole"), False),
+            ("a prompt with a changed word", prompt_program_before, prompt_program_before.replace("then report", "then summarize"), False),
+            ("a prompt with a changed code block", prompt_program_before, prompt_program_before.replace("ls  -l", "ls -la"), False),
+            ("a literal {path} that becomes an f-string field in a + chain", literal_brace_prompt, field_in_chain_prompt, False),
+            ("an f-string field in a + chain that becomes a literal {path}", field_in_chain_prompt, literal_brace_prompt, False),
+            ("a literal {path} that becomes a field, the flattened texts equal",
+             literal_brace_prompt, field_in_chain_prompt.replace(".  \\n", ".\\n"), False),
+            ("a + chain of plain literals whose only change is trailing spaces",
+             literal_chain_prompt, literal_chain_prompt.replace("file.\\n", "file.  \\n"), True)]:
         fixture.reset_fixture_to_base()
-        fixture.write_fixture_file("nc-systems/handoff/cosmetic-prompt-program.py", prompt_program_before)
+        fixture.write_fixture_file("nc-systems/handoff/cosmetic-prompt-program.py", program_before)
         earlier = fixture.commit_fixture_changes("prompt before")
         # On the merge base too, so that the whole pull request's list pairs the prompt with its old text.
         fixture.git_command("update-ref", "refs/remotes/origin/main", earlier)

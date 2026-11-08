@@ -187,6 +187,20 @@ def text_of_string_node(node):
     return ast.unparse(node) if isinstance(node, ast.JoinedStr) else node.value
 
 
+def placeholder_sources_of_string_node(node):
+    """The source of each {...} placeholder the agent receives as a value, left to right: an f-string's
+    fields and a + chain's operands that are not string literals; empty for a plain string literal, whose
+    braces, if any, reach the agent as written."""
+    operands = addition_chain_operands(node) if isinstance(node, ast.BinOp) else [node]
+    sources = []
+    for operand in operands:
+        if isinstance(operand, ast.JoinedStr):
+            sources.extend(f_string_field_text(part) for part in operand.values if not isinstance(part, ast.Constant))
+        elif not (isinstance(operand, ast.Constant) and isinstance(operand.value, str)):
+            sources.append("{" + ast.unparse(operand) + "}")
+    return tuple(sources)
+
+
 def literal_text_of_string_node(node):
     """The node's literal words alone, outside every {...} placeholder."""
     if isinstance(node, ast.BinOp):
@@ -336,6 +350,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
                 continue
             entry = {"line": node.lineno, "end_line": node.end_lineno, "label": label,
                      "text": text_of_string_node(node), "literal_text": literal_text_of_string_node(node),
+                     "placeholders": placeholder_sources_of_string_node(node),
                      "kind": kind}
             self.entries_by_node_context[identity] = entry
             self.string_entries.append(entry)
