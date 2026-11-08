@@ -1204,9 +1204,8 @@ def main_under_lock(arguments):
     except OSError as error:
         print("\n".join(record) + "\n", end="")
         print(f"{PROGRAM}: the record above was not written to {record_citation} "
-              f"({type(error).__name__}: {error}).\n"
-              f"Fix what the error names; the next run writes its own record, and this one "
-              f"stays only in this output.", file=sys.stderr)
+              f"({type(error).__name__}: {error}); the record stays only in this run's "
+              f"output.", file=sys.stderr)
         try:
             task_id, opened = job_failure_task_opened_unless_open(
                 RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT,
@@ -1221,19 +1220,24 @@ def main_under_lock(arguments):
                 arguments, True)
         except OSError as task_error:
             print(f"{PROGRAM}: the task that tells an agent this run's record was not written "
-                  f"could not be opened on {JOB_FAILURE_TASK_AGENT_SEAT}'s task list either "
+                  f"could not be opened on {JOB_FAILURE_TASK_AGENT_SEAT}'s task list "
                   f"({type(task_error).__name__}: {task_error}), so only this job's log, "
                   f"{LOG_STORE_HOST}:{JOB_LOG_FILE}, shows that the record was not written.\n"
-                  f"Fix what both errors name: the record's, in the line before this one, and "
-                  f"the task's, here, such as the task list directory "
+                  f"Fix what both errors name: the record's, in the line that begins "
+                  f"\"{PROGRAM}: the record above was not written\", and the task's, in the "
+                  f"line that begins \"{PROGRAM}: the task that tells an agent\", such as the "
+                  f"task list directory "
                   f"{arguments.task_lists_directory / f'nedschorus-{JOB_FAILURE_TASK_AGENT_SEAT}-tasks'} "
-                  f"not existing. The next nightly run writes its own record and, if that fails "
-                  f"again, tries again to open this task.", file=sys.stderr)
+                  f"not existing.\n"
+                  f"No hand run is needed: the job's next scheduled run, the next night, "
+                  f"writes its own record and, if that record cannot be written either, tries "
+                  f"again to open this task.", file=sys.stderr)
         else:
             print(f"{PROGRAM}: JOB FAILURE TASK: "
                   f"{'opened' if opened else 'already open, so none opened:'} task #{task_id} on "
                   f"{JOB_FAILURE_TASK_AGENT_SEAT}'s task list, "
-                  f"{RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT}", file=sys.stderr)
+                  f"{RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT}. That task says what to do; this "
+                  f"line only records it.", file=sys.stderr)
         return EXIT_RECORD_NOT_WRITTEN
     print(f"{PROGRAM}: record written to {record_citation}")
     if failure is not None or tasks_not_written:
