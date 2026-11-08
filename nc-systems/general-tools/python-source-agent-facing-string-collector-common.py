@@ -350,7 +350,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
                 continue
             entry = {"line": node.lineno, "end_line": node.end_lineno, "label": label,
                      "text": text_of_string_node(node), "literal_text": literal_text_of_string_node(node),
-                     "placeholders": placeholder_sources_of_string_node(node),
+                     "placeholder_value_source_code_texts": placeholder_sources_of_string_node(node),
                      "kind": kind}
             self.entries_by_node_context[identity] = entry
             self.string_entries.append(entry)

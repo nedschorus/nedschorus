@@ -603,14 +603,16 @@ def approval_fields_for_agent_text(kind, old_node, new_node):
     old_text = old_node["text"] if old_node else None
     cosmetic = (kind == "prompt" and old_text is not None
                 and prompt_texts_differ_only_in_trailing_whitespace_or_blank_lines(
-                    old_text, new_node["text"], old_node["placeholders"],
-                    new_node["placeholders"]))
+                    old_text, new_node["text"],
+                    old_node["placeholder_value_source_code_texts"],
+                    new_node["placeholder_value_source_code_texts"]))
     return {"needs_user_approval": kind == "prompt" and not cosmetic, "cosmetic_change_needs_no_approval": cosmetic}
 
 
 def same_text_and_placeholders(old_node, new_node):
     return (old_node["text"] == new_node["text"]
-            and old_node["placeholders"] == new_node["placeholders"])
+            and old_node["placeholder_value_source_code_texts"]
+            == new_node["placeholder_value_source_code_texts"])
 
 
 def changed_agent_facing_text_entries(repository, old_revision, new_revision, changed_files):
@@ -1095,7 +1097,7 @@ def changed_lines_for_agent_text_entry(entry):
     return list(difflib.unified_diff(old_lines, new_lines, lineterm="", n=2))[2:]
 
 
-PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE = "needs the user's approval unless it is a cosmetic-change, as `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` defines one: this is a prompt, text the program hands an agent as its instructions"
+PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE = "needs the user's approval unless it is a cosmetic-change, as `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` defines one: this is a prompt, text the program hands an agent as its instructions"
 PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE = "cosmetic-change, needs no approval: this prompt changed only in whitespace at line ends or in the number of blank lines between its paragraphs"
 
 
@@ -1103,7 +1105,7 @@ def approval_label_for_agent_text_entry(entry):
     if entry["cosmetic_change_needs_no_approval"]:
         return PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE
     if entry["needs_user_approval"]:
-        return PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE
+        return PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE
     return None
 
 
