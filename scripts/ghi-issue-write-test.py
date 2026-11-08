@@ -500,6 +500,24 @@ def run_cases(scratch: Path):
     check("a link whose address holds parentheses gives its text alone",
           parenthesised_url_slug == "see-the-page-first",
           repr(parenthesised_url_slug))
+    balanced_address_slug = tool.slug(
+        "See [the page](https://example.com/a_(b)_tail) first")
+    check("a link whose address holds a balanced pair of parentheses with "
+          "more address after it gives its text alone",
+          balanced_address_slug == "see-the-page-first",
+          repr(balanced_address_slug))
+    escaped_address_slug = tool.slug(
+        "See [the page](https://example.com/a\\(b) first")
+    check("a backslash-escaped parenthesis in a link's address is text, "
+          "so the link still gives its text alone",
+          escaped_address_slug == "see-the-page-first",
+          repr(escaped_address_slug))
+    nested_link_slug = tool.slug(
+        "Notes on [see [GHI 5](https://example.com/5) first]"
+        "(https://example.com/notes)")
+    check("a link inside a link's text gives its text too, not its address",
+          nested_link_slug == "notes-on-see-ghi-5-first",
+          repr(nested_link_slug))
     check("a bracket that opens no link is kept as text",
           tool.slug("Match [a-z] (letters) only") == "match-a-z-letters-only",
           repr(tool.slug("Match [a-z] (letters) only")))
