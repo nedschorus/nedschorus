@@ -853,7 +853,8 @@ def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_
     # time limit, night after night, on files with nothing left to judge.
     if session.is_file() and not cosmic_ray_session_has_mutants_with_no_result(session):
         print(f"RESUMED  {path}: its cosmic-ray session {session} is kept from an earlier run "
-              f"and has a result for every mutant, so nothing runs", flush=True)
+              f"and has a result for every mutant, so neither its baseline nor any mutant runs: "
+              f"those results are counted in the SUMMARY line", flush=True)
         return outcomes_from_dump(run_or_raise(
             [*cosmic_ray, "dump", str(session)], worktree, environment,
             what=f"cosmic-ray dump for {path}"), mutant_timeout_seconds, runner)

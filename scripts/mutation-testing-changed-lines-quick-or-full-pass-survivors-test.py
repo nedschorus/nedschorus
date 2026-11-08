@@ -1346,7 +1346,7 @@ def run_parallel_mutants_and_kept_sessions_cases():
               and calls(control)[2]["arguments"][2] == str(sessions.resolve() / kept[0]),
               f"rc={completed.returncode} steps={steps} out={completed.stdout}")
         for pending, wanted_steps, wanted_out in [
-                (0, ["dump"], "has a result for every mutant, so nothing runs"),
+                (0, ["dump"], "so neither its baseline nor any mutant runs"),
                 (1, ["baseline", "dump", "exec", "dump"], "so only its mutants with no result run")]:
             kept_session = sessions / kept[0]
             kept_session.unlink()
