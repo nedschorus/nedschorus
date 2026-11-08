@@ -597,6 +597,80 @@ def run_recorded_mutant_killed_check_cases():
               and no_longer_exists_line not in "\n" + completed.stdout,
               f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
+    # A later change edited the context line, so only the replaced line is looked for; read
+    # without the pragma it is in both functions, read exactly only in twice(), which no suite
+    # tests, so applying it there would make the mutant survive.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**killing_files, "scripts/thing.py":
+                           "def double(x):\n    # doubled\n    return x + x  # pragma: no mutate\n"
+                           "\n\ndef twice(x):\n    return x + x\n"},
+            SURVIVOR_DIFF)
+        check("a recorded mutant whose replaced line appears at the head both with and without "
+              "a `# pragma: no mutate` comment, its context line edited, could not be judged, "
+              "exit 2, and is not applied at the untagged twin",
+              completed.returncode == 2
+              and f"{could_not_be_judged_line}{Path(scratch_name) / 'mutant.diff'}: in "
+                  f"scripts/thing.py at head" in "\n" + completed.stdout
+              and "which copy is the mutant's own line cannot be told" in completed.stdout
+              and survived_line not in "\n" + completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    # Neither scripts/gone.py nor a suite for it is at the head, as after a deletion.
+    for case_name, origin_main_files, wanted_line, wanted_exit in [
+        ("origin/main lacks it too, so the mutant no longer exists, exit 0", {"OTHER": "x\n"},
+         no_longer_exists_line, 0),
+        ("origin/main still has it, so it could not be judged, exit 2",
+         {"scripts/gone.py": HEAD_FILES["scripts/thing.py"]}, could_not_be_judged_line, 2),
+    ]:
+        with tempfile.TemporaryDirectory() as scratch_name:
+            completed, _, _, _ = run_recorded_mutant_killed_check(
+                scratch_name, killing_files, SURVIVOR_DIFF.replace("thing.py", "gone.py"),
+                origin_main_files=origin_main_files)
+            check(f"a recorded mutant whose file and suites are gone from the head is judged by "
+                  f"whether it still exists before whether a suite reads it: {case_name}",
+                  completed.returncode == wanted_exit
+                  and f"{wanted_line}{Path(scratch_name) / 'mutant.diff'}: " in "\n" + completed.stdout
+                  and "no recorded suite reads" not in completed.stdout,
+                  f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        import fcntl
+        lock_file = Path(scratch_name) / "machine.lock"
+        with open(lock_file, "a+") as holder:
+            fcntl.flock(holder, fcntl.LOCK_EX)
+            holder.write("pid 7, the holder in this test\n")
+            holder.flush()
+            completed, repository, worktrees_before, head = run_recorded_mutant_killed_check(
+                scratch_name, killing_files, SURVIVOR_DIFF, "--lock-file", str(lock_file),
+                extra_environment={runner.SIGNAL_SANDBOX_INSIDE_VARIABLE: "1"})
+        check("the recorded mutant killed check exits 2 when the suite runner, run without a "
+              "mutant, is refused the machine's lock: it says the runner judged no suite and "
+              "prints the refusal, not that the suites fail, and removes its worktree",
+              completed.returncode == 2
+              and f"the suite runner, run at head {head[:12]} without a mutant, exited "
+                  f"{runner.EXIT_LOCKED}, which means it ran no suite" in completed.stderr
+              and "pid 7, the holder in this test" in completed.stderr
+              and "do not pass" not in completed.stderr
+              and "MUTANT " not in completed.stdout
+              and worktrees_of(repository) == worktrees_before,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, repository, worktrees_before, head = run_recorded_mutant_killed_check(
+            scratch_name, killing_files, SURVIVOR_DIFF,
+            "--python", str(Path(scratch_name) / "no-such-python"))
+        check("the recorded mutant killed check exits 2 when the suite runner, run without a "
+              "mutant, ends nonzero without reporting a suite as failed: it says so and prints "
+              "the runner's output, not that the suites fail",
+              completed.returncode == 2
+              and f"the suite runner, run at head {head[:12]} without a mutant, exited "
+                  in completed.stderr
+              and "without reporting any suite as failed" in completed.stderr
+              and "do not pass" not in completed.stderr
+              and worktrees_of(repository) == worktrees_before,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
     # scripts/gone.py is not at the head, but its sibling suite is, so its mutant gets as far as
     # reading the file.
     with tempfile.TemporaryDirectory() as scratch_name:
