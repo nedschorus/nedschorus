@@ -895,17 +895,17 @@ def head_merged_with_base_commit_make_or_raise_on_conflict(repository, base_comm
             "--head-ref set to the head of the pull request that report's steps leave open: this pull request's "
             "new head, or, when the report had you replace this pull request, the head of the new one.\n"
             f"When you are not the author, such as merge-lane-2: the head's commit names {head_author} as its author. "
-            f"Send {head_author} the head, the base and the conflicted files above with SendMessage, and ask it to run "
-            "python3 scripts/branch-conflict-check.py in the pull request's checkout and do what its report says. "
-            f"When ListAgents does not list {head_author}, give the same to the user instead. The pull request cannot "
-            "merge while its head conflicts with the base.")
+            f"When ListAgents lists {head_author}, use SendMessage to send {head_author} the head, the base and the "
+            "conflicted files above, and ask it to run python3 scripts/branch-conflict-check.py in the checkout of the pull request "
+            "whose head is that commit, and to do what its report says. Otherwise, tell the user the same head, base, "
+            "files and request. The pull request cannot merge while its head conflicts with the base.")
     if completed.returncode:
         reason = completed.stderr.strip() or "git printed no reason"
         if "refusing to merge unrelated histories" in reason:
             next_step = (
                 f"Run this check, {this_check}, from the repository's top directory again, with --base-ref and "
-                "--head-ref naming commits that share history, such as --base-ref origin/main and --head-ref the pull "
-                "request's head commit, and your other options unchanged. Two commits share history when git "
+                "--head-ref naming commits that share history, such as --base-ref origin/main and --head-ref <the pull "
+                "request's head commit>, and your other options unchanged. Two commits share history when git "
                 "merge-base, given both commits in either order, prints a commit.")
         else:
             next_step = (
