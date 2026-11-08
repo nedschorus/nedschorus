@@ -284,16 +284,23 @@ def main():
                       message_name)
                   and approvals(scratch) == [] and scratch.merge_calls() == []
                   and scratch.record() == {"9": HEAD}, f"exit {code}\n{output}")
+        handled = scratch.state / "needs-a-look" / "handled"
+        check("the message tells merge-lane-2 to move it into needs-a-look/handled/ once read",
+              f"Move this file into {handled.resolve()} as soon as you have read it"
+              in scratch.message(message_name), scratch.message(message_name))
         calls_before = len(scratch.gh_calls())
-        (scratch.state / "needs-a-look" / message_name).unlink()
+        handled.mkdir()
+        (scratch.state / "needs-a-look" / message_name).rename(handled / message_name)
         code, output = scratch.run()
-        check("a pull request reported at its nc-head-commit is not read or reported again",
-              code == 0 and scratch.messages() == [] and len(scratch.gh_calls()) == calls_before + 1
+        check("a pull request reported at its nc-head-commit, its message moved into handled/, "
+              "is not read or reported again",
+              code == 0 and scratch.messages() == ["handled"]
+              and len(scratch.gh_calls()) == calls_before + 1
               and output == "", f"exit {code}\n{output}")
         scratch.routes(routes_for(head=NEW_HEAD, diff=PASSING_DIFF + "+## Another heading\n"))
         code, output = scratch.run()
         check("a reported pull request with a new nc-head-commit is reported again",
-              code == 0 and scratch.messages() == [f"pr9-{NEW_HEAD[:12]}.txt"]
+              code == 0 and scratch.messages() == ["handled", f"pr9-{NEW_HEAD[:12]}.txt"]
               and scratch.record() == {"9": NEW_HEAD}, f"exit {code}\n{output}")
         scratch.routes({"pr list": {"out": "[]"}})
         code, output = scratch.run()
@@ -318,7 +325,12 @@ def main():
         check("a malformed held list stops the invocation before any gh call, exit 2, and tells "
               "merge-lane-2",
               code == 2 and "line 2 of the held list" in output and len(scratch.gh_calls()) == 1
-              and "line 2 of the held list" in scratch.message("invocation-stopped.txt"),
+              and "line 2 of the held list" in scratch.message("invocation-stopped.txt")
+              and f"Move this file into {(scratch.state / 'needs-a-look').resolve() / 'handled'} "
+              "as soon as "
+              in scratch.message("invocation-stopped.txt")
+              and "line 2 of the held list" in scratch.message("invocation-stopped.txt")
+              .splitlines()[0],
               f"exit {code}\n{output}")
         (scratch.state / "held-pull-requests.txt").unlink()
         (scratch.state / "held-pull-requests.txt").mkdir()

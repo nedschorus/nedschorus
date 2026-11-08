@@ -41,10 +41,14 @@ one message for merge-lane-2: a file
 needs-a-look/pr<number>-<first 12 characters of the nc-head-commit>.txt under
 the state directory, <merge-lane-worktrees-and-outputs-directory>/merge-lane-ghi-md-edit-pull-requests-check-approve-and-merge-hold-list-reported-heads-and-needs-a-look-messages,
 by default /home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/merge-lane-ghi-md-edit-pull-requests-check-approve-and-merge-hold-list-reported-heads-and-needs-a-look-messages.
-No program in the repository can hand a message to an agent-session
-without a model, so the message is this file, which merge-lane-2's running
-watcher, or its next agent-session, reads; merge-lane-2 deletes the file once
-it has handled the pull request. reported-nc-head-commits.json in the state
+merge-lane-2's watcher, scripts/watch-open-pull-requests-nbd.py, prints one
+event line for each file in needs-a-look/, taking the directory from
+needs_a_look_directory() here, at every start until the file is moved;
+merge-lane-2 moves the file into needs-a-look/handled/ as soon as it has
+read it, and handles the pull request after. Whether a pull
+request was reported is read from reported-nc-head-commits.json alone, never
+from the files, so moving a file does not report its pull request again.
+reported-nc-head-commits.json in the state
 directory records the nc-head-commit each message was written for: a
 reported pull request is left alone, never approved, merged or reported
 again, until its nc-head-commit changes. A pull request that is no longer
@@ -110,6 +114,7 @@ REVIEW_TOOLS_WORKTREE_NAME = "merge-lane-ghi-md-edit-pull-requests-check-approve
 HELD_LIST_NAME = "held-pull-requests.txt"
 RECORD_NAME = "reported-nc-head-commits.json"
 MESSAGES_DIRECTORY_NAME = "needs-a-look"
+HANDLED_MESSAGES_DIRECTORY_NAME = "handled"
 STOPPED_MESSAGE_NAME = "invocation-stopped.txt"
 # gh pr list returns 30 pull requests unless told otherwise.
 OPEN_PULL_REQUEST_LIST_LIMIT = 1000
@@ -120,6 +125,13 @@ MERGE_OUTPUT_LINES_IN_MESSAGE = 15
 EXIT_HANDLED = 0
 EXIT_APPROVAL_OR_MERGE_FAILED = 1
 EXIT_STOPPED = 2
+
+
+def needs_a_look_directory(
+        merge_lane_worktrees_and_outputs_directory=common.DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY):
+    """Return the directory of merge-lane-2's messages, which watch-open-pull-requests-nbd.py lists too."""
+    return (Path(merge_lane_worktrees_and_outputs_directory) / STATE_DIRECTORY_NAME
+            / MESSAGES_DIRECTORY_NAME)
 
 
 class Stopped(Exception):
@@ -311,7 +323,7 @@ class Invocation:
     def report(self, pull_request, why, details=""):
         """Write merge-lane-2's message for this nc-head-commit, then record it."""
         number, head = pull_request["number"], pull_request["headRefOid"]
-        messages = self.state_directory / MESSAGES_DIRECTORY_NAME
+        messages = needs_a_look_directory(self.arguments.merge_lane_worktrees_and_outputs_directory)
         message = messages / f"pr{number}-{head[:12]}.txt"
         text = (f"GHI-MD edit pull request {number} needs a look: "
                 f"https://github.com/{REPOSITORY}/pull/{number}\n"
@@ -321,7 +333,9 @@ class Invocation:
                 + (f"\n{details.rstrip()}\n" if details else "")
                 + f"\n{PROGRAM} leaves this pull request alone until its nc-head-commit changes.\n"
                   f"Review and merge it, or close it, as any other pull request.\n"
-                  f"Delete this file once you have handled it.\n")
+                  f"Move this file into {messages / HANDLED_MESSAGES_DIRECTORY_NAME} as soon as you "
+                  f"have read it: until then the watcher reports it again at each start, before "
+                  f"any pull request event.\n")
         try:
             messages.mkdir(parents=True, exist_ok=True)
             message.write_text(text, encoding="utf-8")
@@ -401,16 +415,18 @@ class Invocation:
         return EXIT_APPROVAL_OR_MERGE_FAILED if self.failed else EXIT_HANDLED
 
 
-def stopped_message_write(state_directory, error):
+def stopped_message_write(merge_lane_worktrees_and_outputs_directory, error):
     """Tell merge-lane-2 why the latest invocation stopped, in one file each stop replaces."""
-    message = state_directory / MESSAGES_DIRECTORY_NAME / STOPPED_MESSAGE_NAME
+    message = (needs_a_look_directory(merge_lane_worktrees_and_outputs_directory)
+               / STOPPED_MESSAGE_NAME)
     try:
         message.parent.mkdir(parents=True, exist_ok=True)
         message.write_text(
             f"{PROGRAM} stopped at {datetime.now(timezone.utc).isoformat(timespec='seconds')} "
-            f"before handling every open GHI-MD edit pull request:\n{error}\n\n"
-            f"Each later invocation that stops replaces this file. Fix the cause, then delete "
-            f"this file.\n", encoding="utf-8")
+            f"before handling every open GHI-MD edit pull request: {error}\n\n"
+            f"Each later invocation that stops replaces this file. Move this file into "
+            f"{message.parent / HANDLED_MESSAGES_DIRECTORY_NAME} as soon as you have read it, "
+            f"then fix the cause.\n", encoding="utf-8")
     except OSError as write_error:
         say(f"could not write merge-lane-2's message {message}: {write_error}")
 
@@ -436,7 +452,7 @@ def main(argv=None):
             return Invocation(arguments, environment).run()
         except (Stopped, common.MergeAccountTokenUnusable) as error:
             say(f"STOPPED: {error}")
-            stopped_message_write(state_directory, error)
+            stopped_message_write(arguments.merge_lane_worktrees_and_outputs_directory, error)
             return EXIT_STOPPED
 
 
