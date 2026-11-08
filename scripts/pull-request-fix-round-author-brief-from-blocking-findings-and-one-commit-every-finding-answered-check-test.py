@@ -62,6 +62,41 @@ sys.stderr.write(route.get("stderr", ""))
 sys.exit(route.get("exit", 0))
 '''
 
+# Stands in for scripts/run-all-test-suites.py in every scratch repository's base commit. The suites that
+# fail are those failing-suites.txt names in the checkout the fake sits in, so each commit decides its own;
+# --only-suites-named narrows them. FAKE_RUNNER_EXIT makes it stop without a verdict. FAKE_RUNNER_NOT_RUN names
+# a suite printed NOT RUN, and FAKE_RUNNER_STOPPED prints the runner's "not run to the end" line; the exit
+# code stays the real runner's, 1 when a suite failed.
+FAKE_SUITE_RUNNER = r'''import json, os, sys
+from pathlib import Path
+checkout = Path(__file__).resolve().parents[1]
+arguments = sys.argv[1:]
+if os.environ.get("FAKE_RUNNER_CALLS"):
+    with open(os.environ["FAKE_RUNNER_CALLS"], "a") as calls:
+        calls.write(json.dumps({"checkout": str(checkout), "arguments": arguments}) + "\n")
+if os.environ.get("FAKE_RUNNER_EXIT"):
+    print("run-all-test-suites: could not run")
+    sys.exit(int(os.environ["FAKE_RUNNER_EXIT"]))
+listed = checkout / "failing-suites.txt"
+failing = listed.read_text().split() if listed.exists() else []
+if "--only-suites-named" in arguments:
+    failing = [suite for suite in failing if suite in arguments[arguments.index("--only-suites-named") + 1:]]
+for suite in failing:
+    print(f"FAIL {suite} exit 1 (0.1s)")
+if os.environ.get("FAKE_RUNNER_STOPPED"):
+    print("run-all-test-suites: not run to the end — stopped by SIGTERM.")
+    sys.exit(1 if failing else 2)
+print(f"{len(failing)} failed:")
+for suite in failing:
+    print(f"FAIL {suite} exit 1 \u2014 log /logs/{suite}.log")
+not_run = os.environ.get("FAKE_RUNNER_NOT_RUN")
+if not_run:
+    print("1 not run, because bwrap could not build the nc-test-sandbox; each log says why and what to do:")
+    print(f"NOT RUN {not_run} did not start: bwrap failed — log /logs/{not_run}.log")
+print(f"SUMMARY: {len(failing)} failed")
+sys.exit(1 if failing else 2 if not_run else 0)
+'''
+
 failures = []
 
 
@@ -92,7 +127,9 @@ def scratch_repository(root):
     git(repository, "config", "user.email", "test@example.invalid")
     git(repository, "config", "user.name", "test")
     (repository / ".gitignore").write_text(PROJECT_GITIGNORE.read_text())
-    git(repository, "add", ".gitignore")
+    (repository / "scripts").mkdir()
+    (repository / "scripts" / "run-all-test-suites.py").write_text(FAKE_SUITE_RUNNER)
+    git(repository, "add", ".gitignore", "scripts/run-all-test-suites.py")
     base = commit_file(repository, "base.txt", "base\n", "base")
     git(repository, "branch", "main-line")
     frozen_head = commit_file(repository, "hook.py", "one\n", "topic work")
@@ -217,12 +254,13 @@ def brief_cases(root, repository, base, frozen_head):
     check("brief: names no absolute path, so nothing in it points into the author's checkout",
           str(root) not in out and str(repository) not in out and "/.git/" not in out, out)
     check("brief: the check command has no --answers, so it reads the file at its own worktree's root",
-          f"7. Run the check: python3 scripts/{PROGRAM.name} {NUMBER} --check\n" in out
+          f"6. Run the check: python3 scripts/{PROGRAM.name} {NUMBER} --check\n" in out
           and "--answers" not in out, out)
-    check("brief: names the conflict check, the pre-push test run and the check command, in order",
-          out.index(f"branch-conflict-check.py --pull-request {NUMBER}")
-          < out.index("run-all-test-suites.py --only-suites-whose-recorded-inputs-changed-since origin/main")
-          < out.index(f"{NUMBER} --check"), out)
+    check("brief: names the conflict check and then the check command, and no test run of its own, since "
+          "the check runs the suites",
+          out.index(f"branch-conflict-check.py --pull-request {NUMBER}") < out.index(f"{NUMBER} --check")
+          and "run-all-test-suites" not in out and "Run the affected nc-test-suites" not in out
+          and "Before the push, the check runs the nc-test-suites" in out, out)
     check("brief: says what to do when the check refuses and when a step fails after the push",
           "git commit --amend is allowed before the push" in out
           and "do not push again or rewrite the branch" in out, out)
@@ -243,9 +281,9 @@ def brief_cases(root, repository, base, frozen_head):
           "If it reports VERDICT: CONFLICT, do what its report says." in out
           and "merge origin/main as its report says" not in out and "merge nothing" not in out
           and "had you merge origin/main" not in out and "--after-conflict-merge" not in out, out)
-    check("brief: says what to do when a suite fails and when the push itself fails",
-          "fix it in the same commit; if it fails for another cause, tell merge-lane-2 with "
-          "SendMessage before pushing" in out
+    check("brief: says what to do when the push itself fails, and numbers the steps after the check on",
+          "7. When it passes with a commit not yet pushed" in out and "8. If anything fails after the push" in out
+          and "9. " not in out and "step 7" not in out
           and "If the push itself fails, do not retry it by force or rewrite the branch: tell "
           "merge-lane-2 with SendMessage what git printed." in out, out)
 
@@ -292,7 +330,7 @@ def brief_cases(root, repository, base, frozen_head):
     check("brief: the write guard lets the subagent Write the answers file at its worktree's root",
           run_write_guard(worktree, str(answers_in_worktree), tool_name="Write") == 0)
     answers_in_worktree.write_text(GOOD_ANSWERS)
-    check_line = next((line for line in out.splitlines() if line.startswith("7. Run the check: ")), "")
+    check_line = next((line for line in out.splitlines() if line.startswith("6. Run the check: ")), "")
     printed_arguments = check_line.split(f"{PROGRAM.name} ", 1)[-1].split()[1:]
     code, check_out, err = run(root, worktree, routes_for(frozen_head, [review(commit_id=frozen_head)]),
                                *printed_arguments)
@@ -1580,6 +1618,105 @@ def move_pre_push_hook_output_cases(root, _repository, _base, _frozen_head):
           and "printed the lines below on stderr during the push" in err, out + err)
 
 
+def runner_calls(root):
+    path = root / "runner-calls.jsonl"
+    calls = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+    path.write_text("")
+    return calls
+
+
+def suite_cases(root, repository, _base, _frozen_head):
+    """At the frozen-head a-test.py fails and b-test.py passes; c-test.py does not exist there."""
+    for name in ("a-test.py", "b-test.py"):
+        (repository / name).write_text("suite\n")
+        git(repository, "add", name)
+    frozen_head = commit_file(repository, "failing-suites.txt", "a-test.py\n", "frozen-head")
+    reviews = [review(commit_id=frozen_head)]
+    answers = answers_file(root, GOOD_ANSWERS)
+    environment = {"FAKE_RUNNER_CALLS": str(root / "runner-calls.jsonl")}
+
+    def check_with_head(head, extra=None):
+        return run(root, repository, routes_for(head, reviews), "--check", "--answers", answers,
+                   environment_extra=dict(environment, **(extra or {})))
+
+    code, out, err = check_with_head(frozen_head)
+    check("suites: a round with no commit runs no suite", code == 0 and runner_calls(root) == [], out + err)
+
+    (repository / "c-test.py").write_text("suite\n")
+    git(repository, "add", "c-test.py")
+    broken = commit_file(repository, "failing-suites.txt", "a-test.py b-test.py c-test.py\n", "round breaks two")
+    code, out, err = check_with_head(frozen_head)
+    calls = runner_calls(root)
+    check("suites: a suite failing at the round's commit and passing at the frozen-head refuses, naming it, "
+          "and a suite the frozen-head lacks counts as the round's",
+          code == 1 and "so the round's change broke them: b-test.py, c-test.py." in err
+          and "These fail at the frozen-head too, so they are not the round's doing: a-test.py." in err
+          and "Not pushed yet" not in out, out + err)
+    check("suites: the round's commit runs the suites the ready command runs, and the frozen-head only its "
+          "failing suites the frozen-head has, recording nothing, each in a scratch worktree",
+          [call["arguments"] for call in calls] == [
+              ["--only-suites-whose-recorded-inputs-changed-since", "origin/main"],
+              ["--leave-recorded-inputs-and-failure-history-unchanged", "--only-suites-named", "a-test.py",
+               "b-test.py"]]
+          and all(call["checkout"] != str(repository) for call in calls)
+          and "FAIL b-test.py exit 1" in out, json.dumps(calls) + out)
+    check("suites: the scratch worktrees are removed", len(git(repository, "worktree", "list").splitlines()) == 1,
+          git(repository, "worktree", "list"))
+
+    (repository / "failing-suites.txt").write_text("a-test.py\n")
+    git(repository, "add", "failing-suites.txt")
+    git(repository, "commit", "-q", "--amend", "--no-edit")
+    fixed = git(repository, "rev-parse", "HEAD")
+    code, out, err = check_with_head(frozen_head)
+    check("suites: a suite failing at the frozen-head too passes the check, which names it before the push",
+          code == 0 and "Not pushed yet" in out and "at the frozen-head too, so not because of this round; the "
+          "message for merge-lane-2 will name them: a-test.py" in out and len(runner_calls(root)) == 2, out + err)
+    code, out, err = check_with_head(frozen_head, {"FAKE_RUNNER_NOT_RUN": "b-test.py"})
+    check("suites: a suite NOT RUN beside a failure the frozen-head shares fails the check with exit 2, "
+          "before any push",
+          code == 2 and "did not judge every suite: it printed 'NOT RUN b-test.py" in err
+          and "Not pushed yet" not in out and len(git(repository, "worktree", "list").splitlines()) == 1,
+          out + err)
+    runner_calls(root)
+    code, out, err = check_with_head(frozen_head, {"FAKE_RUNNER_STOPPED": "1"})
+    check("suites: a run stopped before its end beside a failure the frozen-head shares fails the check "
+          "with exit 2, before any push",
+          code == 2 and "did not judge every suite: it printed 'run-all-test-suites: not run to the end" in err
+          and "Not pushed yet" not in out, out + err)
+    runner_calls(root)
+    code, out, err = check_with_head(fixed)
+    check("suites: after the push the message for merge-lane-2 names that suite, and no suite runs",
+          code == 0 and "nc-test-suites that fail at the frozen-head too, so not because of this round: "
+          "a-test.py." in out and runner_calls(root) == [], out + err)
+
+    (repository / "other.txt").write_text("other\n")
+    git(repository, "add", "other.txt")
+    git(repository, "commit", "-q", "--amend", "--no-edit")
+    unchecked = git(repository, "rev-parse", "HEAD")
+    code, out, err = check_with_head(unchecked)
+    check("suites: the suites recorded for one commit are not named for another",
+          code == 0 and "fail at the frozen-head too" not in out, out + err)
+
+    (repository / "failing-suites.txt").write_text("")
+    git(repository, "add", "failing-suites.txt")
+    git(repository, "commit", "-q", "--amend", "--no-edit")
+    passing = git(repository, "rev-parse", "HEAD")
+    code, out, err = check_with_head(frozen_head)
+    calls = runner_calls(root)
+    check("suites: when every suite passes at the round's commit, the frozen-head runs none",
+          code == 0 and "Not pushed yet" in out and len(calls) == 1 and "fail at the frozen-head too" not in out,
+          json.dumps(calls) + out + err)
+    code, out, err = check_with_head(passing)
+    check("suites: after the push, a round whose suites all passed names no suite",
+          code == 0 and "fail at the frozen-head too" not in out, out + err)
+
+    code, out, err = check_with_head(frozen_head, {"FAKE_RUNNER_EXIT": "2"})
+    check("suites: a runner that stops without a verdict fails the check with exit 2, before any push",
+          code == 2 and "ended with exit 2 and named no failing suite" in err and "Not pushed yet" not in out
+          and len(git(repository, "worktree", "list").splitlines()) == 1, out + err)
+    runner_calls(root)
+
+
 def nit_cases(root, repository, base, frozen_head):
     """merge-lane-2's nits, posted opening with the nit mark beside its blocking findings, ride in the fix-round."""
     nit = comment("nit.txt", " **fix-in-maintenance, nit** nit.txt misspells the name.", line=20, comment_id=6)
@@ -1758,6 +1895,7 @@ def replaces_cases(root, repository, base, frozen_head):
 
 
 gh_timeout_case()
+case("suites", suite_cases)
 case("nits", nit_cases)
 case("move", move_cases)
 case("move hand commit", move_hand_commit_cases)
