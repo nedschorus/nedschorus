@@ -765,14 +765,18 @@ NOT_ASKED_REFUSED = (
     "If the item fits and only its evidence lines are missing or wrong, fix them in {document} and run "
     "`python3 {program} check --not-asked {kind}` again.")
 NOT_ASKED_GIVE_A_NUMBER = (
-    "Give the number of the exception the item's change is, from the numbered list on {page}; or give `none` when "
-    "the change is none of them and its case against is rated none.")
+    "The numbers --not-asked takes, each with the words its exception on {page} opens with:\n{exceptions}\n"
+    "If the item's change is one of these exceptions: run check again with `--not-asked <its number>`.\n"
+    "If the change is none of them and the item's `#case_against` line rates the case against none: run check "
+    "again with `--not-asked none`.\n"
+    "Otherwise: show the item to the user, and run check with the flag for his answer, as `--help` lists it.")
 NOT_ASKED_NOT_AN_EXCEPTION_REFUSED = (
-    "nothing written: `{value}` is not the number of an exception on {page}, and --not-asked takes only those "
-    "numbers, {numbers}, or `none`.\n" + NOT_ASKED_GIVE_A_NUMBER)
+    "nothing written: `{value}` is not a number --not-asked takes. It takes the number of an exception on {page}, "
+    "any but {settled_by_walk}, or `none`.\n" + NOT_ASKED_GIVE_A_NUMBER)
 NOT_ASKED_SETTLED_BY_APPROVAL_WALK_REFUSED = (
-    "nothing written: exception {number} on {page} is the one for an item an approval-walk settles without "
-    "asking the user, which is what --not-asked records, not a kind of change.\n" + NOT_ASKED_GIVE_A_NUMBER)
+    "nothing written: --not-asked takes no {settled_by_walk}. Exception {settled_by_walk} on {page} is the rule "
+    "that lets an approval-walk settle an item without asking the user, which every --not-asked run carries out; "
+    "it is not a kind of change an item makes.\n" + NOT_ASKED_GIVE_A_NUMBER)
 NOT_ASKED_RATING_PROBLEM = ("- its `#case_against` line rates the case against {rating}; only an item rated none, "
                             "or weak with a case against that names only cost, settles without the user.")
 NOT_ASKED_NO_LINE_PROBLEM = "- it has no `{marker}` line; {why}"
@@ -1278,13 +1282,14 @@ def not_asked_kind(value):
     is none of them and whose case against is rated none."""
     if value.strip().lower() == NOT_ASKED_RATED_NONE:
         return NOT_ASKED_RATED_NONE
-    if value.strip() == str(SETTLED_BY_APPROVAL_WALK):
-        raise argparse.ArgumentTypeError(NOT_ASKED_SETTLED_BY_APPROVAL_WALK_REFUSED.format(
-            number=SETTLED_BY_APPROVAL_WALK, page=APPROVAL_PAGE_PATH))
     if value.strip() in {str(number) for number in NOT_ASKED_EXCEPTIONS}:
         return int(value)
-    raise argparse.ArgumentTypeError(NOT_ASKED_NOT_AN_EXCEPTION_REFUSED.format(
-        value=value, page=APPROVAL_PAGE_PATH, numbers=", ".join(str(number) for number in NOT_ASKED_EXCEPTIONS)))
+    refusal = (NOT_ASKED_SETTLED_BY_APPROVAL_WALK_REFUSED if value.strip() == str(SETTLED_BY_APPROVAL_WALK)
+               else NOT_ASKED_NOT_AN_EXCEPTION_REFUSED)
+    exceptions = "\n".join(f"  {number}: {NO_APPROVAL_NEEDED_EXCEPTION_OPENING_WORDS_BY_NUMBER[number]}"
+                           for number in NOT_ASKED_EXCEPTIONS)
+    raise argparse.ArgumentTypeError(refusal.format(value=value, page=APPROVAL_PAGE_PATH, exceptions=exceptions,
+                                                    settled_by_walk=SETTLED_BY_APPROVAL_WALK))
 
 
 def not_asked_label(kind):
