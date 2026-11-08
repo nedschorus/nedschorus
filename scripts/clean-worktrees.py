@@ -56,8 +56,8 @@ pull request was merged or closed at least 24 hours ago, once the lock,
 prune, in-progress operation and vacancy checks above pass. It is kept, with
 the reason, when its name holds no such part or more than one, as main and
 main-green-<commit> do, when the pull request is open, finished less than 24
-hours ago, or missing from gh's listing, or when gh fails or gives a closing
-time this program cannot read. The 24 hours are a margin, not a check: after a merge,
+hours ago, or missing from gh's listing, or when gh fails or gives no closing
+time this program can read. The 24 hours are a margin, not a check: after a merge,
 merge-lane-2's merge program removes the pull request's checkouts and tests
 main in pr<n>-merge-commit-on-main-worktree, and between its steps no process
 has a working directory there for the vacancy check to see. Its walks and its
@@ -868,7 +868,7 @@ def removal_records_and_discarded_files_text(worktree, discarded):
     records = log_store_records_in(worktree)
     if records:
         text += (f"; --remove first ships its {len(records)} record(s) to the log-store and "
-                 f"keeps the worktree if one does not ship; the records it ships: "
+                 f"keeps the worktree if a record does not ship; the records it ships: "
                  + ", ".join(str(record_path.relative_to(worktree)) for _, record_path in records))
     if discarded:
         text += (f"; removing it discards {len(discarded)} uncommitted, untracked or ignored "
