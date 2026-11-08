@@ -125,7 +125,8 @@ def subagent_worktree_owner_file_write_message(worktree, owner_process, owner_ke
     try:
         owner_file = load_worktree_owner_file_read_and_write_module()
         lock_reason = owner_file.worktree_lock_reason_read(worktree)
-        if owner_file.claude_code_subagent_worktree_lock_reason_dispatching_process_id_parse(lock_reason) != owner_process:
+        lock = owner_file.claude_code_subagent_worktree_lock_reason_parse(lock_reason)
+        if lock is None or lock.process_id != owner_process:
             return None
         if owner_file.worktree_owner_file_read(worktree) is not None:
             return None
