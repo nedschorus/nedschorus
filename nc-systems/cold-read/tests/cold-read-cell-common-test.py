@@ -305,6 +305,19 @@ if "dump_record_directory_descriptor_count" in step:
             continue
         count += (opened.st_dev, opened.st_ino) == (record_directory.st_dev, record_directory.st_ino)
     pathlib.Path(step["dump_record_directory_descriptor_count"]).write_text(str(count), encoding="utf-8")
+if "dump_record_directory_lock_held" in step:
+    # What the shipper's lock test sees while the reviewer runs: "held" when any process holds the
+    # record's being-written lock, so a shipment now would print FAILED and copy nothing.
+    import fcntl
+    probe = os.open(report_path.parent, os.O_RDONLY)
+    try:
+        fcntl.flock(probe, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        held = "free"
+    except BlockingIOError:
+        held = "held"
+    finally:
+        os.close(probe)
+    pathlib.Path(step["dump_record_directory_lock_held"]).write_text(held, encoding="utf-8")
 if "stderr" in step:
     sys.stderr.write(step["stderr"])
 if "stdout" in step:
@@ -539,6 +552,42 @@ with tempfile.TemporaryDirectory() as scratch:
           reviewer_descriptor_count == "1",
           f"descriptors on the record directory: {reviewer_descriptor_count}; exit {result.returncode}; "
           f"stderr={result.stderr[-2000:]!r}")
+
+    # A cell run directly, by no program holding the record's lock, holds the lock itself while its
+    # reviewer writes, so no shipment copies the record half-written.
+    report = repository / "cold-read-records" / "run-direct-lock" / "claude-defect-hunt-second-strongest-model.md"
+    report.parent.mkdir(parents=True)
+    lock_held_file = scratch / "direct-cell-record-directory-lock-held"
+    descriptor_count_file.unlink(missing_ok=True)
+    result = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one finding\n",
+               "dump_record_directory_lock_held": str(lock_held_file),
+               "dump_record_directory_descriptor_count": str(descriptor_count_file)}},
+        report,
+    )
+    lock_seen = lock_held_file.read_text(encoding="utf-8") if lock_held_file.exists() else "not written"
+    reviewer_descriptor_count = (descriptor_count_file.read_text(encoding="utf-8")
+                                 if descriptor_count_file.exists() else "not written")
+    check("a cell run directly holds its record's being-written lock while its reviewer writes",
+          lock_seen == "held" and reviewer_descriptor_count == "1" and result.returncode == 0,
+          f"lock {lock_seen}; descriptors {reviewer_descriptor_count}; exit {result.returncode}; "
+          f"stderr={result.stderr[-2000:]!r}")
+    check("a cell run directly leaves its record's lock free once it exits",
+          not shipper_module.record_directory_being_written_lock_is_held_by_any_process(report.parent))
+
+    # A cell run while another process holds the record's lock without passing it on runs as usual:
+    # that process is a writer, which ships the record itself once it releases the lock.
+    report = repository / "cold-read-records" / "run-held-elsewhere" / "claude-defect-hunt-second-strongest-model.md"
+    report.parent.mkdir(parents=True)
+    shipper_module.record_directory_being_written_lock_take(report.parent)
+    try:
+        result = run_claude_cell(repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}}, report)
+    finally:
+        shipper_module.record_directory_being_written_lock_release(report.parent)
+    check("a cell run while another process holds its record's lock writes its report and succeeds",
+          result.returncode == 0 and report.is_file(),
+          f"exit {result.returncode}; stderr={result.stderr[-2000:]!r}")
 
     # --- And it does not cry wolf ------------------------------------------
     # The tree is dirty and the reviewer touched nothing but its report. A
