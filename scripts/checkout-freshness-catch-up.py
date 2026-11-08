@@ -139,6 +139,13 @@ _stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_locat
 stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
 _stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
 
+_rebase_or_replace_spec = importlib.util.spec_from_file_location(
+    "pull_request_conflict_with_main_rebase_or_replace_answer_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "pull-request-conflict-with-main-rebase-or-replace-answer-common.py")
+rebase_or_replace = importlib.util.module_from_spec(_rebase_or_replace_spec)
+_rebase_or_replace_spec.loader.exec_module(rebase_or_replace)
+
 STAMP_FILE_NAME = "checkout-freshness-stamp.json"
 
 # A git that never ran reports a code git itself cannot return, so "no answer"
@@ -180,11 +187,9 @@ GIT_IN_PROGRESS_MARKERS = tuple(GIT_IN_PROGRESS_OPERATION_BY_MARKER)
 # itself, so REBASE_ADVICE is what the agent gets only when the hook could
 # not — a dirty tree, or a conflict it aborted. A pushed branch is never
 # moved by anyone but its author, and then only forward.
-# A pushed branch that conflicts with main is the one exception: no commit on
-# top can clear a conflict, so it is cleared by the hand-merge that
-# the VERDICT: CONFLICT report of scripts/branch-conflict-check.py describes.
-# Forbidding every merge here would send an agent with a conflict away from
-# the one move that clears it.
+# No commit on top can clear a conflict with main, so a pushed branch that
+# conflicts is sent to scripts/branch-conflict-check.py, whose report says
+# whether it is rebased or its pull request replaced.
 # The runner selects the suites a change can affect, so no agent picks them by hand.
 SELECTIVE_TEST_RUN_COMMAND = (
     "python3 scripts/run-all-test-suites.py "
@@ -209,8 +214,7 @@ REBASE_ADVICE = (
 LEAVE_IT_ADVICE = (
     "This branch is pushed, so its review may be running. Do not rebase or "
     "amend it. A fix for this topic is a new commit on top, pushed once. If it "
-    "conflicts with main, clear the conflict with the hand-merge that "
-    "scripts/branch-conflict-check.py describes. "
+    "conflicts with main, do what scripts/branch-conflict-check.py reports. "
     "Start your next topic with `git checkout -b <name> origin/main`."
 )
 # A branch whose own commits are already on a remote branch, under another
@@ -223,8 +227,8 @@ PUSHED_HISTORY_ADVICE = (
     "This branch's commits are already on GitHub under another branch name, so the "
     "branch is treated as pushed and is not rebased: a pushed head may be under "
     "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
-    "fix is a new commit on top. If it conflicts with main, clear the conflict with "
-    "the hand-merge that scripts/branch-conflict-check.py describes."
+    "fix is a new commit on top. If it conflicts with main, do what "
+    "scripts/branch-conflict-check.py reports."
 )
 # A detached HEAD with no work of its own is moved forward by this hook; these
 # are what the agent is told after a move (A) or when it could not be made (B).
@@ -320,7 +324,7 @@ DRIFT_PATH_CATEGORIES = (
     ("skills you run under",
      lambda path: path.startswith(".claude/skills/")),
     ("hooks and wiring that run on your work",
-     lambda path: path.startswith((".claude/hooks/", ".claude/guard-hooks/"))
+     lambda path: path.startswith(".claude/guard-hooks/")
      or path == ".claude/settings.json"),
     ("systems you build on, code and design of record",
      lambda path: path.startswith("nc-systems/")),
@@ -917,8 +921,8 @@ def head_state(checkout: Path, branch: str):
         return "unknown", f"head state unknowable ({failure('rev-parse', head)})"
     if remote.stdout.strip() == head.stdout.strip():
         return "pushed", (f"head pushed and equal to origin/{branch} (frozen: a fix is a "
-                          "new commit on top, never an amend; a conflict with main is "
-                          "cleared by a hand-merge)")
+                          "new commit on top, never an amend; for a conflict with main, "
+                          "do what scripts/branch-conflict-check.py reports)")
     local = run_git(["rev-list", "--count", f"origin/{branch}..HEAD"], checkout, timeout=30)
     if local.returncode != 0:
         return "unknown", f"head state unknowable ({failure('rev-list', local)})"
@@ -1448,7 +1452,10 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     # files just changed under the agent, and that is never deduplicated. A
     # skip or a conflict is told once per key, but ATTEMPTED every turn end,
     # so the moment the tree is clean it goes.
-    if state_key == "unpushed":
+    # A never-pushed branch has no pull request on origin.
+    if state_key == "unpushed" and (
+            rebase_or_replace.pull_request_conflict_with_main_rebase_or_replace_answer(False)
+            == rebase_or_replace.REBASE_ONTO_MAIN):
         outcome, detail = rebase_never_pushed_branch(checkout, git_dir)
         if outcome == "rebased":
             stamp["behind"], stamp["ahead"] = 0, stamp.get("own")

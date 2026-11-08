@@ -97,7 +97,7 @@ def run_exit_handoff_cases(workspace: Path):
     )
 
 
-def run_dont_restart_without_a_terminal_case(workspace: Path):
+def run_ask_user_before_restart_without_a_terminal_case(workspace: Path):
     """A supervisor whose stdin is redirected has no terminal. Asking `restart? y/n`
     there raises EOFError before the consumed counter is recorded, so the next
     supervisor re-fires on the stale handoff — launching a session and killing
@@ -108,7 +108,7 @@ def run_dont_restart_without_a_terminal_case(workspace: Path):
         "written-at: 2026-08-06T12:00:00Z\n"
         "next-step: should not relaunch\n"
         "session-handoff-sequence-number: 1\n"
-        "dont-restart: the user asked to be consulted\n",
+        "ask-user-before-restart: the user asked to be consulted\n",
         encoding="utf-8",
     )
     stub_agent = handoff_directory / "stub-agent"
@@ -120,31 +120,61 @@ def run_dont_restart_without_a_terminal_case(workspace: Path):
          "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
         capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
     )
-    check("dont-restart without a terminal exits cleanly, not on EOFError",
+    check("ask-user-before-restart without a terminal exits cleanly, not on EOFError",
           result.returncode == 0 and "EOFError" not in result.stderr, result.stderr[-300:])
-    check("dont-restart without a terminal says why it stopped",
+    check("ask-user-before-restart without a terminal says why it stopped",
           "no terminal to ask on" in result.stdout, result.stdout[-300:])
 
     state = supervisor.read_supervisor_state(handoff_directory / "noterm-supervisor-state.json")
     check("the consumed counter is recorded before stopping",
           state.get("consumed_counter") == 1, str(state))
-    # nedschorus#242 change 2: a seat stood down on dont-restart carries an exit
+    # nedschorus#242 change 2: a seat stood down on ask-user-before-restart carries an exit
     # record, so recovery offers it rather than resuming a session that asked
     # not to be relaunched. This stop is boot-ignition's, before any launch, so
     # the code is unknown — and present all the same.
-    check("dont-restart at boot records the agent's exit, its code unknown",
+    check("ask-user-before-restart at boot records the agent's exit, its code unknown",
           supervisor.agent_exit_record_from_supervisor_state(state) is not None
           and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY, "absent") is None,
           str(state))
-    check("dont-restart at boot records that the stop was at a dont-restart handoff",
-          supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state), str(state))
+    check("ask-user-before-restart at boot records that the stop was at an ask-user-before-restart handoff",
+          supervisor.agent_exit_record_is_a_stop_at_an_ask_user_before_restart_handoff(state), str(state))
+
+
+def run_old_field_name_dont_restart_case(workspace: Path):
+    """A session-handoff written before the rename carries only dont-restart, and a
+    handoff-supervisor running code from before the rename records the old exit reason;
+    both must still mean "ask the user before a relaunch"."""
+    handoff_directory = workspace / "notermold"
+    handoff_directory.mkdir(parents=True, exist_ok=True)
+    (handoff_directory / "notermold-handoff.md").write_text(
+        "written-at: 2026-08-06T12:00:00Z\n"
+        "next-step: should not relaunch\n"
+        "session-handoff-sequence-number: 1\n"
+        "dont-restart: the user asked to be consulted\n",
+        encoding="utf-8",
+    )
+    stub_agent = handoff_directory / "stub-agent"
+    stub_agent.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
+    stub_agent.chmod(0o755)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "notermold", "--cd", str(workspace),
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
+        capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
+    )
+    check("a handoff carrying only the old name dont-restart stops without a terminal, as "
+          "ask-user-before-restart does",
+          result.returncode == 0 and "no terminal to ask on" in result.stdout, result.stdout[-300:])
+    check("a stop recorded with the old exit reason dont-restart is still a stop at an "
+          "ask-user-before-restart handoff",
+          supervisor.agent_exit_record_is_a_stop_at_an_ask_user_before_restart_handoff(
+              {supervisor.AGENT_EXIT_REASON_STATE_KEY: "dont-restart"}), "")
 
 
 def run_no_seat_recycle_refusal_case(workspace: Path):
     """A handoff arriving at a supervisor with no terminal must not reincarnate:
     the successor would inherit this stdio and die at its first need for
-    input (observed 2026-08-14 — an adopted console session was killed and
-    its successor reported into a log file). The session stays up and the
+    input (observed 2026-08-14 — a console session was killed and its
+    successor reported into a log file). The session stays up and the
     handoff stays unconsumed for a seated supervisor."""
     handoff_directory = workspace / "noseat"
     handoff_directory.mkdir(parents=True, exist_ok=True)
@@ -190,7 +220,7 @@ def run_agent_exit_record_cases(workspace: Path):
     2026-09-02: record how the agent exited). Every stop after a session's end
     that launches no successor records the agent's exit code and the time in
     the state file; recover-crashed-seats.py offers such a seat instead of
-    resuming it. The record is cleared before every launch or adoption, so a
+    resuming it. The record is cleared before every launch, so a
     seat that once exited cleanly and later crashed does not read as clean."""
     # --- End to end: the real exit code of a real session -----------------
     name = "exitrecord"
@@ -228,7 +258,7 @@ def run_agent_exit_record_cases(workspace: Path):
               and before <= recorded_at <= datetime.now(timezone.utc),
               str(state))
 
-    # The in-cycle dont-restart stop, with no terminal to ask on: the session
+    # The in-cycle ask-user-before-restart stop, with no terminal to ask on: the session
     # wrote its handoff and stayed up, so the supervisor terminated it before
     # standing the seat down — and records that termination's code as-is.
     name = "exitrecorddontrestart"
@@ -239,7 +269,7 @@ def run_agent_exit_record_cases(workspace: Path):
         "#!/bin/sh\n"
         "exec >/dev/null 2>&1\n"
         "printf 'written-at: 2026-09-17T00:00:00Z\\nnext-step: stand down\\n"
-        "session-handoff-sequence-number: 1\\ndont-restart: the user closes this seat\\n' "
+        "session-handoff-sequence-number: 1\\nask-user-before-restart: the user closes this seat\\n' "
         f"> '{handoff_directory}/{name}-handoff.md'\n"
         "exec sleep 30\n",
         encoding="utf-8",
@@ -251,22 +281,22 @@ def run_agent_exit_record_cases(workspace: Path):
         capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=90,
     )
     state = supervisor.read_supervisor_state(handoff_directory / f"{name}-supervisor-state.json")
-    check("EXIT RECORD: the in-cycle dont-restart stop records the terminated session's code",
+    check("EXIT RECORD: the in-cycle ask-user-before-restart stop records the terminated session's code",
           result.returncode == 0 and "no terminal to ask on; stopping" in result.stdout
           and state.get("consumed_counter") == 1
           and supervisor.agent_exit_record_from_supervisor_state(state) is not None
           and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15
-          and supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state),
+          and supervisor.agent_exit_record_is_a_stop_at_an_ask_user_before_restart_handoff(state),
           f"{state} {result.stdout[-300:]} {result.stderr[-300:]}")
 
     # --- In process: the paths a subprocess cannot reach -------------------
-    def settings_for(case: str, adopted_session=None):
+    def settings_for(case: str):
         directory = workspace / f"exitrecord-in-process-{case}"
         directory.mkdir(parents=True, exist_ok=True)
         return supervisor.SupervisorSettings(
             agent=f"exitrecord{case}", working_directory=workspace,
             handoff_directory=directory, agent_command="unused-stub-agent",
-            first_prompt="", adopted_session=adopted_session)
+            first_prompt="")
 
     def launch_recording(sessions, launched_state_snapshots, settings):
         def launch(agent_command, session_id, working_directory, prompt, **_):
@@ -285,7 +315,7 @@ def run_agent_exit_record_cases(workspace: Path):
         "consumed_counter": None, "launched_session_id": "earlier-session", "generation": 2,
         supervisor.AGENT_EXIT_CODE_STATE_KEY: 0,
         supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY: "2026-01-01T00:00:00+00:00",
-        supervisor.AGENT_EXIT_REASON_STATE_KEY: supervisor.AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF})
+        supervisor.AGENT_EXIT_REASON_STATE_KEY: supervisor.AGENT_EXIT_REASON_STOPPED_AT_AN_ASK_USER_BEFORE_RESTART_HANDOFF})
     snapshots = []
     # No terminal, stated rather than inherited: exit code 9 is a death the
     # 2026-09-21 ruling resumes, and the no-terminal refusal is what
@@ -308,33 +338,7 @@ def run_agent_exit_record_cases(workspace: Path):
           supervisor.agent_exit_record_from_supervisor_state(state) is not None
           and state[supervisor.AGENT_EXIT_CODE_STATE_KEY] == 9
           and state[supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY] != "2026-01-01T00:00:00+00:00"
-          and not supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state),
-          str(state))
-
-    # Cleared at adoption too, and an adopted session's code is unknown — its
-    # poll() says 0 for any process that is merely gone — so it is recorded as
-    # null rather than skipped.
-    settings = settings_for("adopted", supervisor.AdoptedSession("adopted-session", 99999999))
-    supervisor.write_supervisor_state(settings.state_path, {
-        supervisor.AGENT_EXIT_CODE_STATE_KEY: 0,
-        supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY: "2026-01-01T00:00:00+00:00"})
-    written_states = []
-    real_write_supervisor_state = supervisor.write_supervisor_state
-
-    def write_recording(state_path, state):
-        written_states.append(dict(state))
-        real_write_supervisor_state(state_path, state)
-
-    with supervisor_names_replaced(write_supervisor_state=write_recording), \
-            contextlib.redirect_stdout(io.StringIO()):
-        supervisor.supervise_sessions(settings)
-    state = supervisor.read_supervisor_state(settings.state_path)
-    check("EXIT RECORD: an earlier record is cleared before an adopted session is watched",
-          written_states and supervisor.AGENT_EXIT_CODE_STATE_KEY not in written_states[0],
-          str(written_states))
-    check("EXIT RECORD: an adopted session's end is recorded with its code unknown",
-          supervisor.agent_exit_record_from_supervisor_state(state) is not None
-          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY, "absent") is None,
+          and not supervisor.agent_exit_record_is_a_stop_at_an_ask_user_before_restart_handoff(state),
           str(state))
 
     # A handoff arrives with a terminal to ask on. The session is still running
@@ -345,31 +349,31 @@ def run_agent_exit_record_cases(workspace: Path):
             return session
         return launch
 
-    # dont-restart answered n at the terminal.
+    # ask-user-before-restart answered n at the terminal.
     settings = settings_for("answeredn")
     supervisor.write_supervisor_state(settings.state_path, {"consumed_counter": 1})
     with supervisor_names_replaced(
             launch_agent_session=launch_writing_a_handoff(
                 settings, StubLaunchedSession(-15, ended=False),
-                "session-handoff-sequence-number: 2\nnext-step: stand down\ndont-restart: closing\n"),
+                "session-handoff-sequence-number: 2\nnext-step: stand down\nask-user-before-restart: closing\n"),
             launch_time_git_sync=no_launch_time_git_sync,
             input=lambda prompt: "n", stdin_isatty=True), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
     state = supervisor.read_supervisor_state(settings.state_path)
-    check("EXIT RECORD: dont-restart answered n records the stopped session's code",
+    check("EXIT RECORD: ask-user-before-restart answered n records the stopped session's code",
           state.get("consumed_counter") == 2
           and supervisor.agent_exit_record_from_supervisor_state(state) is not None
           and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15
-          and supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state),
+          and supervisor.agent_exit_record_is_a_stop_at_an_ask_user_before_restart_handoff(state),
           str(state))
 
-    # dont-restart waiting at boot, answered n at the terminal: nothing launches, and
-    # the stop is recorded as one at a dont-restart handoff.
+    # ask-user-before-restart waiting at boot, answered n at the terminal: nothing launches, and
+    # the stop is recorded as one at an ask-user-before-restart handoff.
     settings = settings_for("bootanswerednonlaunch")
     supervisor.write_supervisor_state(settings.state_path, {"consumed_counter": 1})
     settings.handoff_path.write_text(
-        "session-handoff-sequence-number: 2\nnext-step: stand down\ndont-restart: closing\n", encoding="utf-8")
+        "session-handoff-sequence-number: 2\nnext-step: stand down\nask-user-before-restart: closing\n", encoding="utf-8")
     launched = []
     with supervisor_names_replaced(
             launch_agent_session=lambda *arguments, **keywords: launched.append(1),
@@ -378,11 +382,11 @@ def run_agent_exit_record_cases(workspace: Path):
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
     state = supervisor.read_supervisor_state(settings.state_path)
-    check("EXIT RECORD: dont-restart at boot answered n launches nothing and records a "
-          "dont-restart stop",
+    check("EXIT RECORD: ask-user-before-restart at boot answered n launches nothing and records an "
+          "ask-user-before-restart stop",
           launched == [] and state.get("consumed_counter") == 2
           and supervisor.agent_exit_record_from_supervisor_state(state) is not None
-          and supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state),
+          and supervisor.agent_exit_record_is_a_stop_at_an_ask_user_before_restart_handoff(state),
           str(state))
 
     # Extracting the dialog fails, so the successor starts from the next step:
@@ -1111,8 +1115,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
             (-15, True, "SIGTERM", "exit code -15 (SIGTERM, as subprocess reports it)"),
             (137, True, "SIGKILL", "exit code 137 (SIGKILL, as a shell reports it)"),
             (-9, True, "SIGKILL", "exit code -9 (SIGKILL, as subprocess reports it)"),
-            (3, True, "error status", "exit code 3 (another non-zero status)"),
-            (None, False, "adopted session", "exit code None (an adopted session)")):
+            (3, True, "error status", "exit code 3 (another non-zero status)")):
         decision = supervisor.resume_or_stop_after_a_death_without_a_handoff(exit_code)
         check(f"RULING TABLE: {row} -> {'resume' if expect_resume else 'stop'}",
               decision.resume is expect_resume and reason_fragment in decision.reason,
@@ -1154,7 +1157,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     first_prompt = "You are the seat. Do the work."
 
     def supervise_a_seat_whose_sessions_die(case: str, deaths, stdin_isatty=True,
-                                            adopted_session=None, handoffs_after_launches=(),
+                                            handoffs_after_launches=(),
                                             resume_session_id="", seat_first_prompt=None,
                                             transcripts_before_the_supervisor=None,
                                             transcripts_unreadable_after_launches=()):
@@ -1188,7 +1191,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
             agent=f"death{case}", working_directory=workspace,
             handoff_directory=case_directory, agent_command="unused-stub-agent",
             first_prompt=first_prompt if seat_first_prompt is None else seat_first_prompt,
-            adopted_session=adopted_session, resume_session_id=resume_session_id)
+            resume_session_id=resume_session_id)
         launches, state_at_each_launch = [], []
         for earlier_session_id, earlier_turns in (transcripts_before_the_supervisor or {}).items():
             with (case_projects / f"{earlier_session_id}.jsonl").open("w", encoding="utf-8") as stream:
@@ -1282,20 +1285,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
               and died.launches[0][1] == supervisor.first_prompt_from_launch_command_marked_not_typed_by_the_user(first_prompt),
               str(died.launches))
 
-    # 3. An adopted session's code is None — this supervisor never owned it —
-    # so its death stops the seat, and nothing is launched over it.
-    adopted = supervise_a_seat_whose_sessions_die(
-        "adopted", [(0, 0)], adopted_session=supervisor.AdoptedSession("adopted-session", 99999999))
-    check("TABLE IN THE LOOP: an adopted session's death stops without launching anything",
-          adopted.launches == [] and not adopted.overran
-          and "exit code is unknown" in adopted.printed,
-          f"{adopted.launches} {adopted.printed[-300:]}")
-    check("TABLE IN THE LOOP: the adopted stop still writes the exit record, code unknown",
-          adopted.record is not None
-          and adopted.state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY, "absent") is None,
-          str(adopted.state))
-
-    # 4. THE BUDGET STOPS A LOOP. A session that dies again and again without
+    # 3. THE BUDGET STOPS A LOOP. A session that dies again and again without
     # adding a single turn gets its launch and one resume, and no more. The
     # script holds four deaths, so a third launch would be taken rather than
     # raising: the count below is the assertion, not merely that it stopped.
@@ -1322,7 +1312,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
               for launched_state in looping.state_at_each_launch),
           str(looping.state_at_each_launch))
 
-    # 5. THE BUDGET RESETS. The second session does real work before dying, so
+    # 4. THE BUDGET RESETS. The second session does real work before dying, so
     # the resume that produced it is not a workless one and the budget comes
     # back whole: this seat gets three launches where the looping seat got
     # two. Without the reset a long-lived seat would eventually refuse to
@@ -1483,7 +1473,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     check("CUT TRANSCRIPT: a transcript cut mid-character counts its whole turns, not a crash",
           cut_count == 1, repr(cut_count))
 
-    # 6. The no-terminal refusal holds for a resume exactly as for a successor:
+    # 5. The no-terminal refusal holds for a resume exactly as for a successor:
     # a resumed session inherits this supervisor's stdio, and without a
     # terminal it reads EOF at its first need for input (observed 2026-08-14).
     seatless = supervise_a_seat_whose_sessions_die("noterminal", [(-15, 0), (-15, 0)],
@@ -1916,7 +1906,8 @@ def run_state_file_written_to_disk_before_rename_case(workspace: Path):
 
 with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_exit_handoff_cases(workspace)
-    run_dont_restart_without_a_terminal_case(workspace)
+    run_ask_user_before_restart_without_a_terminal_case(workspace)
+    run_old_field_name_dont_restart_case(workspace)
     run_no_seat_recycle_refusal_case(workspace)
     run_agent_exit_record_cases(workspace)
     run_failed_extraction_at_a_handoff_case(workspace)

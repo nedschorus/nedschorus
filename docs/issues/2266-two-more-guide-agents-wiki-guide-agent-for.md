@@ -81,8 +81,13 @@ Each guide-agent is code-prompt-code. The judgment steps, done by the agent: cho
 
 ## Next action
 
-1. Build wiki-guide-agent as one pull request: the shared module, `scripts/ghi-guide-agent-ask.py` moved onto it with its tests still passing, the guide-agent table, `scripts/wiki-guide-agent-ask.py` with its schema, cold-start prompt and tests, and the `CLAUDE.md` sentence and hook messages of § Who asks them. Right after it merges, the builder makes wiki-guide-agent's checkout on ned-box and runs one ask to show it works. The build can start now.
-2. Build agent-instructions-and-hooks-guide-agent, as a second pull request, when the pull request that puts GHI 1849's techniques page on main has merged. agent-instructions-editor holds this on its task list.
+1. Build wiki-guide-agent as one pull request: the shared module, `scripts/ghi-guide-agent-ask.py` moved onto it with its tests still passing, the guide-agent table, `scripts/wiki-guide-agent-ask.py` with its schema, cold-start prompt and tests, the `CLAUDE.md` sentence and hook messages of § Who asks them, and the first glossary entry below. Right after it merges, the builder makes wiki-guide-agent's checkout on ned-box and runs one ask to show it works. The build can start now.
+2. Build agent-instructions-and-hooks-guide-agent, as a second pull request, when the pull request that puts GHI 1849's techniques page on main has merged, with the second glossary entry below. agent-instructions-editor holds this on its task list.
+
+Each build pull request adds its guide-agent's entry to `docs/nedschorus-wiki/nedschorus-glossary.md`, in its alphabetical place, word for word as below; neither entry goes in before its build, because until then its ask script does not exist. The user approved both entries' wording on 2026-11-05 ("A approved."), as item 3 of 10 of agent-instructions-editor's approval-walk agent-instructions-editor-backlog-decisions-2026-11-05, whose walk-minutes are `nedlern@ned-box:/home/nedlern/agents/agent-instructions-editor/docs/walk/agent-instructions-editor-backlog-decisions-2026-11-05-minutes.md`.
+
+- **wiki-guide-agent** — the guide-agent that an agent asks, with `scripts/wiki-guide-agent-ask.py`, about the wiki: what a rule there means for the asker's case, and which glossary term names a thing.
+- **agent-instructions-and-hooks-guide-agent** — the guide-agent that an agent asks, with `scripts/agent-instructions-and-hooks-guide-agent-ask.py`, about how the project instructs and controls its agents, such as whether a hook, a skill step or a line in `CLAUDE.md` should stop a mistake agents repeat.
 
 ## Deferred-decisions
 

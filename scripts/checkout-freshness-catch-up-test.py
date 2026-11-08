@@ -404,15 +404,14 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "Do not rebase or amend it" in agent_text(result)
           and "git checkout -b <name> origin/main" in agent_text(result), agent_text(result))
     # A conflict with main is the one case a commit on top cannot clear; the
-    # pushed-branch advice sends it to the hand-merge that the VERDICT: CONFLICT
-    # report of scripts/branch-conflict-check.py describes.
+    # pushed-branch advice sends it to scripts/branch-conflict-check.py's report.
     check("a pushed branch is told how to clear a conflict with main, byte for byte",
-          "If it conflicts with main, clear the conflict with the hand-merge that "
-          "scripts/branch-conflict-check.py describes." in agent_text(result),
-          agent_text(result))
+          "If it conflicts with main, do what scripts/branch-conflict-check.py "
+          "reports." in agent_text(result), agent_text(result))
     check("the pushed head's status says how a conflict is cleared, byte for byte",
-          "(frozen: a fix is a new commit on top, never an amend; a conflict with "
-          "main is cleared by a hand-merge)" in agent_text(result), agent_text(result))
+          "(frozen: a fix is a new commit on top, never an amend; for a conflict with "
+          "main, do what scripts/branch-conflict-check.py reports)" in agent_text(result),
+          agent_text(result))
     check("the pushed-branch note ends by saying it is not for the user, byte for byte",
           agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
     check("the user hears nothing", display_text(result) == "", display_text(result))
@@ -516,8 +515,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "This branch's commits are already on GitHub under another branch name, so the "
           "branch is treated as pushed and is not rebased: a pushed head may be under "
           "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
-          "fix is a new commit on top. If it conflicts with main, clear the conflict with "
-          "the hand-merge that scripts/branch-conflict-check.py describes."
+          "fix is a new commit on top. If it conflicts with main, do what "
+          "scripts/branch-conflict-check.py reports."
           in agent_text(result), agent_text(result))
     check("the pushed-history note never tells the agent to rebase",
           "git rebase origin/main" not in agent_text(result), agent_text(result))
@@ -1242,7 +1241,7 @@ with tempfile.TemporaryDirectory() as naming_scratch:
           named())
     check("hooks and their wiring share one category, having one reason",
           "hooks and wiring that run on your work (2)"
-          in named((".claude/hooks/a-guard.py", "a hook"),
+          in named((".claude/guard-hooks/a-hook.py", "a hook"),
                    (".claude/settings.json", "wiring")), named())
     guard_listing = named((".claude/guard-hooks/a-guard.py", "a guard hook"))
     check("a guard under .claude/guard-hooks/ is named with the hooks",
@@ -2570,6 +2569,31 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
             raised = error
     check("a failed branch read in merge_blockers raises instead of reporting detached HEAD",
           raised is not None and INJECTED_STDERR in str(raised), str(raised))
+
+    # The never-pushed rebase is the shared rebase-or-replace answer's: a replace answer
+    # leaves the branch where it is, and the rebase answer moves it.
+    shared_answer = catch_up_module.rebase_or_replace
+    real_answer = shared_answer.pull_request_conflict_with_main_rebase_or_replace_answer
+    asked = []
+    for answer in (shared_answer.REPLACE_WITH_NEW_PULL_REQUEST, shared_answer.REBASE_ONTO_MAIN):
+        _, answered_seat = seat_behind_main(own_commit=True)
+        before = tip(answered_seat)
+
+        def injected_answer(open_pull_request_found, ever_marked_ready_read=None,
+                            answer=answer):
+            asked.append(open_pull_request_found)
+            return answer
+        shared_answer.pull_request_conflict_with_main_rebase_or_replace_answer = injected_answer
+        try:
+            catch_up_module.catch_up_session_checkout(answered_seat, 0)
+        finally:
+            shared_answer.pull_request_conflict_with_main_rebase_or_replace_answer = real_answer
+        moved = tip(answered_seat) != before
+        check(f"a never-pushed branch the shared answer gives '{answer}' is "
+              f"{'rebased' if answer == shared_answer.REBASE_ONTO_MAIN else 'left where it is'}",
+              moved == (answer == shared_answer.REBASE_ONTO_MAIN), f"{before} {tip(answered_seat)}")
+    check("checkout-freshness asks the shared answer for a branch with no open pull request",
+          asked == [False, False], repr(asked))
 
     # merges_from_main: a merge commit from main on the seat.
     _, merged_seat = seat_behind_main(own_commit=True)

@@ -144,15 +144,23 @@ def run_hook(hook_script, stdin_text, environment_extra=None):
                           capture_output=True, text=True, env=environment, timeout=60)
 
 
-def file_writing_tool_call_records(paths, tool_name="Write", refused=False):
-    """A tool call writing each path and its result, shaped as Claude Code records them."""
+def file_writing_tool_call_records(paths, tool_name="Write", refused=False, answered=True,
+                                   blocks_before_call=()):
+    """A tool call writing each path and its result, shaped as Claude Code records them.
+
+    answered False leaves out each result, as for a call still waiting on a hook or a permission decision.
+    blocks_before_call go before the call in the same message's content.
+    """
     records = [{"type": "user", "message": {"role": "user", "content": "write the documents"}}]
     for number, path in enumerate(paths):
         call = f"toolu_{tool_name}_{number}"
         records.append({"type": "assistant", "message": {
             "id": f"msg_write_{number}", "role": "assistant",
-            "content": [{"type": "tool_use", "id": call, "name": tool_name,
+            "content": [*blocks_before_call,
+                        {"type": "tool_use", "id": call, "name": tool_name,
                          "input": {"file_path": str(path), "content": "x"}}]}})
+        if not answered:
+            continue
         records.append({"type": "user", "message": {"role": "user", "content": [
             {"tool_use_id": call, "type": "tool_result",
              "content": "PreToolUse:Write hook error: refused" if refused else "written",
@@ -275,6 +283,38 @@ def main():
                      file_writing_tool_call_records([seat_brief]))
     expect("a document a subagent of the agent-session wrote is reported",
            case.run(reply, written=[]), [seat_brief])
+    with open(case.transcript.with_suffix("") / "subagents" / "agent-a1.jsonl", "a") as transcript:
+        transcript.write('{"type":"assistant","message":{"content":[{"type":"tool_use","input":{"file_path":"/x')
+    expect("a subagent transcript whose last line, holding file_path, is still being written does not stop the check",
+           case.run(reply, written=[]), [seat_brief])
+
+    case = Case()
+    document = case.document("docs/plan-of-record.md")
+    records = file_writing_tool_call_records([document], answered=False)
+    records += [{"type": "assistant", "message": {"id": "msg_1", "role": "assistant", "content": [
+        {"type": "text", "text": "I wrote docs/plan-of-record.md for you."}]}}]
+    write_transcript(case.transcript, records)
+    expect("a document whose write has no result yet, as one waiting on a permission decision, is silent",
+           case.run_on_written_transcript(), None)
+
+    case = Case()
+    document = case.document("docs/plan-of-record.md")
+    records = [{"type": "user", "toolUseResult": {"file_path": str(document)},
+                "message": {"role": "user", "content": "a plain-text message"}}]
+    records += file_writing_tool_call_records([document], blocks_before_call=["plain text"])
+    records += [{"type": "assistant", "message": {"id": "msg_1", "role": "assistant", "content": [
+        {"type": "text", "text": "I wrote docs/plan-of-record.md for you."}]}}]
+    write_transcript(case.transcript, records)
+    case.transcript.write_text('{"file_path":"/x" not json\n' + case.transcript.read_text())
+    expect("a write after a line holding file_path that is not JSON, a plain-text record holding file_path, "
+           "and a block that is not a dict, is reported",
+           case.run_on_written_transcript(), [document])
+
+    case = Case()
+    case.document("docs/cited-only.md")
+    document = case.document("docs/plan-of-record.md")
+    expect("a written document linked after a document the agent-session did not write is reported",
+           case.run("See docs/cited-only.md and docs/plan-of-record.md.", written=[document]), [document])
 
     case = Case()
     document = case.document("docs/plan-of-record.md", modified=1_000_000)

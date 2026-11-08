@@ -24,7 +24,9 @@ fresh machine; that is the same defect seen from its quiet side.
 Run: python3 scripts/handoff-context-threshold-hook-test.py
 """
 
+import argparse
 import atexit
+import ast
 import contextlib
 import importlib.util
 import io
@@ -74,6 +76,27 @@ DO_NOT_RUN_HANDOFF_SKILL_YET_INSTRUCTION = (
     "system message will tell you when to run it.")
 
 
+for notice in (hook.HANDOFF_DEFERRED_NOTICE, hook.HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE):
+    check("the deferral timeout counts a task as finished without stopping the task",
+          "even if it still runs" in notice,
+          notice)
+    check("the deferral says the handoff stops remaining work when the handoff comes",
+          "when the handoff comes, it stops whatever is still running." in notice, notice)
+
+guard_source = HOOK_SCRIPT.parent.parent / ".claude/guard-hooks/handoff-deferral-cold-read-full-run-launch-refusal-hook.py"
+for statement in ast.parse(guard_source.read_text(encoding="utf-8")).body:
+    if isinstance(statement, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "COLD_READ_FULL_RUN_REFUSED_AND_SAVED_REASON"
+            for target in statement.targets):
+        reason = ast.literal_eval(statement.value)
+        check("the refusal says the handoff writer adds the command without agent action",
+              "The handoff writer adds the command to your session-handoff, so you need not." in reason,
+              reason)
+        break
+else:
+    check("the refusal reason exists", False)
+
+
 def opens_a_line_with_do_not_run_handoff_skill_yet(stderr):
     return any(line.startswith(DO_NOT_RUN_HANDOFF_SKILL_YET_INSTRUCTION)
                for line in stderr.splitlines())
@@ -84,10 +107,27 @@ def is_handoff_instruction(stderr):
     return HANDOFF_INSTRUCTION_PATTERN.fullmatch(stderr.strip()) is not None
 
 
-def run_hook(stdin_payload, extra_arguments=(), extra_environment=None):
+def with_background_tasks_list(stdin_payload, background_tasks_list_is_missing):
+    """Claude Code sends the list at every Stop; a payload without one gets an empty list,
+    unless the case is about a payload that lacks it."""
+    if background_tasks_list_is_missing or hook.BACKGROUND_TASKS_PAYLOAD_KEY in stdin_payload:
+        return stdin_payload
+    return {**stdin_payload, hook.BACKGROUND_TASKS_PAYLOAD_KEY: []}
+
+
+def list_entry(task_id, task_type, status="running"):
+    """One entry of Claude Code's background_tasks list, trimmed from real Stop hook input."""
+    return {"id": task_id, "type": task_type, "status": status,
+            "description": f"a {task_type}"}
+
+
+def run_hook(stdin_payload, extra_arguments=(), extra_environment=None,
+             background_tasks_list_is_missing=False):
     return subprocess.run(
         [sys.executable, str(HOOK_SCRIPT), *extra_arguments],
-        input=json.dumps(stdin_payload), capture_output=True, text=True, check=False,
+        input=json.dumps(with_background_tasks_list(stdin_payload,
+                                                    background_tasks_list_is_missing)),
+        capture_output=True, text=True, check=False,
         env={**os.environ, **(extra_environment or {})},
     )
 
@@ -106,15 +146,15 @@ def run_hook_in_process(stdin_payload, scan_replacement=None, extra_arguments=()
     of answering — which is the behaviour under test here. That the real scan
     raises on a real unreadable file is pinned separately, above.
     """
-    # main() calls work_in_flight, the one-pass scan for subagents and
-    # background tasks alike; replacing anything else here would leave main()
-    # running the real scan and these cases testing nothing.
-    real_scan = hook.work_in_flight
+    # main() counts running work with work_in_flight_from_background_tasks alone;
+    # replacing anything else here would leave main() running the real reader and
+    # these cases testing nothing.
+    real_scan = hook.work_in_flight_from_background_tasks
     if scan_replacement is not None:
-        hook.work_in_flight = scan_replacement
+        hook.work_in_flight_from_background_tasks = scan_replacement
     captured_stderr = io.StringIO()
     real_stdin = sys.stdin
-    sys.stdin = io.StringIO(json.dumps(stdin_payload))
+    sys.stdin = io.StringIO(json.dumps(with_background_tasks_list(stdin_payload, False)))
     try:
         with contextlib.redirect_stderr(captured_stderr):
             code = hook.main(list(extra_arguments))
@@ -125,7 +165,7 @@ def run_hook_in_process(stdin_payload, scan_replacement=None, extra_arguments=()
         code, captured_stderr = -1, io.StringIO(f"main() raised {escaped!r}")
     finally:
         sys.stdin = real_stdin
-        hook.work_in_flight = real_scan
+        hook.work_in_flight_from_background_tasks = real_scan
     return code, captured_stderr.getvalue()
 
 
@@ -792,6 +832,25 @@ with tempfile.TemporaryDirectory() as workspace:
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(loud)})
         check("hook fires only once per session", result.returncode == 0, f"code {result.returncode}")
 
+        # 70,000 of the 200,000-token default is 35%, past the threshold.
+        unlisted_model = transcript_with_usage(workspace, "unlisted-model.jsonl", 70_000,
+                                               model="claude-something-unreleased")
+        marker_file.unlink(missing_ok=True)
+        result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(unlisted_model)})
+        message_lines = result.stderr.strip().splitlines()
+        check("for a model id not in the table, the hook fires with the instruction and then "
+              "names the model id and the default window it assumed",
+              result.returncode == 2 and len(message_lines) == 2
+              and HANDOFF_INSTRUCTION_PATTERN.fullmatch(message_lines[0]) is not None
+              and message_lines[1] == (
+                  "The model id claude-something-unreleased is not in the threshold hook's "
+                  "context-window table, so the share above assumes a 200K window; tell the "
+                  "user, so the table can be updated."),
+              f"code {result.returncode}, stderr {result.stderr!r}")
+        check("a model id matching a table prefix is in the table, and an unlisted one is not",
+              hook.model_id_is_in_context_window_table("claude-haiku-4-5-20251001")
+              and not hook.model_id_is_in_context_window_table("claude-something-unreleased"))
+
         marker_file.unlink(missing_ok=True)
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(loud)},
                           ("--threshold-used-percentage", "75"))
@@ -851,9 +910,13 @@ with tempfile.TemporaryDirectory() as workspace:
             usage_record(100_000, cache_read=600_000),  # 70% — over the ceiling
             subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool"),
         ])
+        # Claude Code's list at the "running" moment: the list shows the monitor as a shell task.
+        subagent_listed = [list_entry("a2573a7737ae643dc", "subagent")]
+        subagent_and_monitor_listed = [*subagent_listed, list_entry("b45e25tz2", "shell")]
 
         result = run_hook({"session_id": DEFERRAL_PROBE_SESSION_ID,
-                           "transcript_path": str(running)})
+                           "transcript_path": str(running),
+                           "background_tasks": subagent_and_monitor_listed})
         check("hook defers instead of firing while a subagent runs",
               result.returncode == 2 and "handoff deferred" in result.stderr,
               f"code {result.returncode}, stderr {result.stderr[:200]}")
@@ -863,8 +926,15 @@ with tempfile.TemporaryDirectory() as workspace:
               "1 subagent(s) run" in result.stderr, result.stderr[:200])
         check("the deferral says how full the context is",
               "Context at 55%" in result.stderr, result.stderr[:200])
-        check("the deferral tells the agent to spawn no more subagents",
-              "Spawn no new subagents" in result.stderr, result.stderr[:200])
+        check("the deferral gives the approved instruction on new work, on a line of its own",
+              hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION in result.stderr.splitlines(),
+              result.stderr[-600:])
+        check("the deferral names the work it waits for",
+              "(subagent a2573a7737ae643dc)" in result.stderr, result.stderr[:600])
+        check("the instruction on new work says the handoff writer, not the agent, adds stopped work to the session-handoff",
+              "the handoff writer adds it to your session-handoff for your successor, so you need not."
+              in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
+              hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION)
         # Agents read "handoff" in the notice and ran the skill anyway.
         check("the deferral tells the agent, on a line of its own, not to run the skill yet",
               opens_a_line_with_do_not_run_handoff_skill_yet(result.stderr),
@@ -873,8 +943,11 @@ with tempfile.TemporaryDirectory() as workspace:
               "65% ceiling" in result.stderr, result.stderr[:500])
         # A reader could not tell whether the time limit bounds subagents too.
         check("the deferral says the time limit bounds background tasks, not subagents",
-              "once every subagent and workflow has finished, and every background task has "
-              "either finished or run for" in result.stderr, result.stderr[:600])
+              "a background task, though not a subagent, counted as finished 75 minutes after its launch"
+              in result.stderr, result.stderr[:600])
+        check("the deferral says work started from now on does not delay the handoff",
+              "Work you start from now on does not delay that message" in result.stderr,
+              result.stderr[:700])
         # The notice used to promise the handoff waits until the subagents
         # finish, full stop. The ceiling overrides that, and an agent reading
         # a guarantee its work is safe should be told the one thing that cuts
@@ -891,7 +964,8 @@ with tempfile.TemporaryDirectory() as workspace:
         # short turns for as long as the subagent runs; the completion
         # notification wakes it without any help from this hook.
         result = run_hook({"session_id": DEFERRAL_PROBE_SESSION_ID,
-                           "transcript_path": str(running)})
+                           "transcript_path": str(running),
+                           "background_tasks": subagent_and_monitor_listed})
         check("a second deferred turn is silent, so the session can go idle",
               result.returncode == 0 and not result.stderr.strip(),
               f"code {result.returncode}, stderr {result.stderr[:200]}")
@@ -907,21 +981,31 @@ with tempfile.TemporaryDirectory() as workspace:
               deferral_marker_file.exists(), str(deferral_marker_file))
         # Left in place, it would hold the session past the below-threshold
         # return after every later compaction, refiring the instruction.
-        check("firing deletes the deferral marker",
+        check("firing removes the deferral marker",
               not deferred_marker_file.exists(), str(deferred_marker_file))
+        # The handoff writer reads the deferral's start time after the fire.
+        moved_deferred_marker_file = (
+            hook.HANDOFF_DIRECTORY / f"{DEFERRAL_PROBE_SESSION_ID}-handoff-deferred-fired")
+        check("firing keeps the deferral's record, moved aside, for the handoff writer",
+              moved_deferred_marker_file.exists()
+              and "deferral_began_at" in moved_deferred_marker_file.read_text(encoding="utf-8"),
+              str(moved_deferred_marker_file))
         deferral_marker_file.unlink(missing_ok=True)
         deferred_marker_file.unlink(missing_ok=True)
+        moved_deferred_marker_file.unlink(missing_ok=True)
 
         # The ceiling overrides a deferral already in progress: this session
         # deferred at 55%, kept working, and arrived at 70% with the subagent
         # still running.
         result = run_hook({"session_id": CEILING_PROBE_SESSION_ID,
-                           "transcript_path": str(running)})
+                           "transcript_path": str(running),
+                           "background_tasks": subagent_and_monitor_listed})
         check("the ceiling session defers first, as the deferral session did",
               result.returncode == 2 and "handoff deferred" in result.stderr,
               f"code {result.returncode}, stderr {result.stderr[:200]}")
         result = run_hook({"session_id": CEILING_PROBE_SESSION_ID,
-                           "transcript_path": str(past_ceiling)})
+                           "transcript_path": str(past_ceiling),
+                           "background_tasks": subagent_listed})
         check("above the ceiling the handoff fires with a subagent still running",
               result.returncode == 2 and is_handoff_instruction(result.stderr),
               f"code {result.returncode}, stderr {result.stderr[:200]}")
@@ -931,7 +1015,8 @@ with tempfile.TemporaryDirectory() as workspace:
         ceiling_deferred_marker_file.unlink(missing_ok=True)
 
         result = run_hook({"session_id": CEILING_PROBE_SESSION_ID,
-                           "transcript_path": str(running)},
+                           "transcript_path": str(running),
+                           "background_tasks": subagent_and_monitor_listed},
                           ("--ceiling-used-percentage", "50"))
         check("a lowered ceiling fires at a share that would otherwise defer",
               result.returncode == 2 and is_handoff_instruction(result.stderr),
@@ -939,74 +1024,24 @@ with tempfile.TemporaryDirectory() as workspace:
         ceiling_marker_file.unlink(missing_ok=True)
         ceiling_deferred_marker_file.unlink(missing_ok=True)
 
-        # A subagent whose last notification is interim holds the handoff below
-        # the ceiling, and the ceiling still fires it if the subagent never ends.
-        INTERIM_PROBE_SESSION_ID = "handoff-threshold-hook-test-interim-session"
-        interim_marker_file = hook.HANDOFF_DIRECTORY / f"{INTERIM_PROBE_SESSION_ID}-handoff-asked"
-        interim_deferred_marker_file = (
-            hook.HANDOFF_DIRECTORY / f"{INTERIM_PROBE_SESSION_ID}-handoff-deferred")
-        interim_below_ceiling = transcript_of(workspace, "interim-below-ceiling.jsonl", [
-            usage_record(100_000, cache_read=450_000),  # 55%
-            subagent_spawn_record(INCIDENT_SUBAGENT_ID, "Fix-round for PR 2045"),
-            *notification_records(INCIDENT_INTERIM_NOTIFICATION),
-        ])
-        # An interim subagent holds the handoff only while its own transcript shows work.
-        interim_subagent_directory = Path(workspace) / "interim-below-ceiling" / "subagents"
-        interim_subagent_directory.mkdir(parents=True)
-        transcript_of(interim_subagent_directory, f"agent-{INCIDENT_SUBAGENT_ID}.jsonl", [
-            {"type": "assistant", "timestamp": utc_iso(datetime.now(timezone.utc))}])
-        final_below_ceiling = transcript_of(workspace, "final-below-ceiling.jsonl", [
-            usage_record(100_000, cache_read=450_000),  # 55%
-            subagent_spawn_record(INCIDENT_SUBAGENT_ID, "Fix-round for PR 2045"),
-            *notification_records(INCIDENT_INTERIM_NOTIFICATION),
-            *notification_records(FINAL_NOTIFICATION_AFTER_INTERIM, "2026-10-27T21:45:00.000Z"),
-        ])
-        interim_past_ceiling = transcript_of(workspace, "interim-past-ceiling.jsonl", [
-            usage_record(100_000, cache_read=600_000),  # 70%
-            subagent_spawn_record(INCIDENT_SUBAGENT_ID, "Fix-round for PR 2045"),
-            *notification_records(INCIDENT_INTERIM_NOTIFICATION),
-        ])
-        try:
-            result = run_hook({"session_id": INTERIM_PROBE_SESSION_ID,
-                               "transcript_path": str(interim_below_ceiling)})
-            check("the hook defers while a subagent's last notification is interim",
-                  result.returncode == 2 and "handoff deferred" in result.stderr
-                  and "1 subagent(s) run" in result.stderr
-                  and not interim_marker_file.exists(),
-                  f"code {result.returncode}, stderr {result.stderr[:200]}")
-            interim_deferred_marker_file.unlink(missing_ok=True)
-            result = run_hook({"session_id": INTERIM_PROBE_SESSION_ID,
-                               "transcript_path": str(final_below_ceiling)})
-            check("the hook fires once the subagent's last notification is its report",
-                  result.returncode == 2 and is_handoff_instruction(result.stderr),
-                  f"code {result.returncode}, stderr {result.stderr[:200]}")
-            interim_marker_file.unlink(missing_ok=True)
-            result = run_hook({"session_id": INTERIM_PROBE_SESSION_ID,
-                               "transcript_path": str(interim_past_ceiling)})
-            check("above the ceiling the handoff fires though the last notification is interim",
-                  result.returncode == 2 and is_handoff_instruction(result.stderr),
-                  f"code {result.returncode}, stderr {result.stderr[:200]}")
-        finally:
-            interim_marker_file.unlink(missing_ok=True)
-            interim_deferred_marker_file.unlink(missing_ok=True)
-
-        # --- A scan that could not finish defers, and says the count is
+        # --- A read that could not finish defers, and says the count is
         # unknown (merge-lane review of #180, 2026-08-28). Firing here would
-        # kill the very subagent whose spawn record could not be read.
-        truncated_at_threshold = Path(workspace) / "deferral-truncated-spawn.jsonl"
+        # kill the very task whose launch record could not be read.
+        truncated_at_threshold = Path(workspace) / "deferral-truncated-launch.jsonl"
         truncated_at_threshold.write_text(
             json.dumps(usage_record(100_000, cache_read=450_000)) + "\n"  # 55%
-            + half_written_spawn_line(),
+            + '{"toolUseResult": {"backgroundTaskId": "bshelltorn"\n',
             encoding="utf-8")
         result = run_hook({"session_id": UNKNOWN_PROBE_SESSION_ID,
-                           "transcript_path": str(truncated_at_threshold)})
-        check("a truncated spawn record defers instead of firing",
+                           "transcript_path": str(truncated_at_threshold),
+                           "background_tasks": [list_entry("bshelltorn", "shell")]})
+        check("a listed shell task whose launch record is cut off defers instead of firing",
               result.returncode == 2 and "handoff deferred" in result.stderr,
               f"code {result.returncode}, stderr {result.stderr[:200]}")
         check("the deferral says the count is unknown, and does not invent one",
-              "unknown" in result.stderr and "subagent(s) run" not in result.stderr,
+              "unknown" in result.stderr and "background task(s) run" not in result.stderr,
               result.stderr[:250])
-        check("a truncated spawn record does not tell the agent to hand off",
+        check("a cut-off launch record does not tell the agent to hand off",
               "Run the /handoff skill now." not in result.stderr, result.stderr[:200])
         check("the unknown-count deferral tells the agent, on a line of its own, "
               "not to run the skill yet",
@@ -1023,7 +1058,7 @@ with tempfile.TemporaryDirectory() as workspace:
 
         # The read-error path, reached where it can be reached: main() in
         # front of a scan that raises. See run_hook_in_process.
-        def scan_that_cannot_read(_transcript_path, *_arguments, **_keywords):
+        def scan_that_cannot_read(*_arguments, **_keywords):
             raise hook.TranscriptCouldNotBeFullyRead("unreadable in this test")
 
         code, stderr = run_hook_in_process(
@@ -1055,7 +1090,8 @@ with tempfile.TemporaryDirectory() as workspace:
             subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool"),
         ])
         result = run_hook({"session_id": DEFERRAL_PROBE_SESSION_ID,
-                           "transcript_path": str(below_threshold)})
+                           "transcript_path": str(below_threshold),
+                           "background_tasks": subagent_listed})
         check("below the threshold a running subagent draws no message at all",
               result.returncode == 0 and not result.stderr.strip(),
               f"code {result.returncode}, stderr {result.stderr[:200]}")
@@ -1075,13 +1111,15 @@ with tempfile.TemporaryDirectory() as workspace:
             subagent_completion_record("a2573a7737ae643dc"),
         ])
         try:
-            result = run_hook({**compacted_payload, "transcript_path": str(running)})
+            result = run_hook({**compacted_payload, "transcript_path": str(running),
+                               "background_tasks": subagent_and_monitor_listed})
             check("the compacted-deferral session defers first, at 55%",
                   result.returncode == 2 and "handoff deferred" in result.stderr
                   and compacted_deferred_marker_file.exists(),
                   f"code {result.returncode}, stderr {result.stderr[:200]}")
 
-            result = run_hook({**compacted_payload, "transcript_path": str(below_threshold)})
+            result = run_hook({**compacted_payload, "transcript_path": str(below_threshold),
+                               "background_tasks": subagent_listed})
             check("below the threshold after a deferral, a running subagent still holds the handoff",
                   result.returncode == 0 and not result.stderr.strip()
                   and not compacted_marker_file.exists(),
@@ -1112,9 +1150,13 @@ with tempfile.TemporaryDirectory() as workspace:
             compacted_marker_file.unlink(missing_ok=True)
             compacted_deferred_marker_file.unlink(missing_ok=True)
 
-            # A deferred marker the hook cannot delete: a directory in its place makes
-            # the unlink raise, so the hook must say so and still send the instruction.
+            # A deferred marker the hook cannot remove: a directory in its place, with a
+            # file where it would be moved, makes the move raise, so the hook must say so
+            # and still send the instruction.
             compacted_deferred_marker_file.mkdir()
+            compacted_moved_marker_file = (
+                hook.HANDOFF_DIRECTORY / f"{COMPACTED_PROBE_SESSION_ID}-handoff-deferred-fired")
+            compacted_moved_marker_file.write_text("in the way\n", encoding="utf-8")
             try:
                 result = run_hook({**compacted_payload, "transcript_path": str(compacted_finished)})
                 instruction, _, rest = result.stderr.partition("\n")
@@ -1136,6 +1178,7 @@ with tempfile.TemporaryDirectory() as workspace:
                       f"stderr {result.stderr[:600]}")
             finally:
                 compacted_deferred_marker_file.rmdir()
+                compacted_moved_marker_file.unlink(missing_ok=True)
                 compacted_marker_file.unlink(missing_ok=True)
 
             # The unknown-count deferral: the transcript first could not be read,
@@ -1197,6 +1240,11 @@ with tempfile.TemporaryDirectory() as workspace:
             usage_record(100_000, cache_read=600_000),  # 70% — over the ceiling
             background_task_launch_record("b27dndn4c", launched_at=ten_minutes_ago),
         ])
+        # Claude Code's list at each moment; grid_done's is empty.
+        grid_young_listed = [list_entry("b27dndn4c", "shell"), list_entry("bwk7aucu8", "shell")]
+        grid_old_listed = grid_past_ceiling_listed = [list_entry("b27dndn4c", "shell")]
+        both_running_listed = [list_entry("a2573a7737ae643dc", "subagent"),
+                               list_entry("b27dndn4c", "shell")]
         both_running = transcript_of(workspace, "subagent-and-background-task-running.jsonl", [
             usage_record(100_000, cache_read=450_000),
             subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool"),
@@ -1205,18 +1253,17 @@ with tempfile.TemporaryDirectory() as workspace:
 
         try:
             result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
-                               "transcript_path": str(grid_young)})
+                               "transcript_path": str(grid_young),
+                               "background_tasks": grid_young_listed})
             check("hook defers instead of firing while a background task runs",
                   result.returncode == 2 and "handoff deferred" in result.stderr,
                   f"code {result.returncode}, stderr {result.stderr[:200]}")
             check("the background-task deferral counts the task and not the monitor",
                   "1 background task(s) run" in result.stderr
-                  and "subagent(s)" not in result.stderr.split("Spawn")[0],
+                  and "subagent" not in result.stderr.splitlines()[0],
                   result.stderr[:250])
-            check("the deferral tells the agent to start no new background tasks",
-                  "start no new background tasks" in result.stderr, result.stderr[:250])
-            check("the deferral tells the agent to start no new workflows",
-                  "start no new workflows" in result.stderr, result.stderr[-300:])
+            check("the background-task deferral names the task it waits for",
+                  "(background task b27dndn4c)" in result.stderr, result.stderr[:600])
             check("the deferral names the wait as a way the handoff fires",
                   "75 minute" in result.stderr, result.stderr[:300])
             check("a background-task deferral writes the deferral marker and not the fired one",
@@ -1225,7 +1272,8 @@ with tempfile.TemporaryDirectory() as workspace:
                   f"fired={background_marker_file.exists()}")
 
             result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
-                               "transcript_path": str(grid_young)})
+                               "transcript_path": str(grid_young),
+                               "background_tasks": grid_young_listed})
             check("a second deferred turn behind a background task is silent",
                   result.returncode == 0 and not result.stderr.strip(),
                   f"code {result.returncode}, stderr {result.stderr[:200]}")
@@ -1239,7 +1287,8 @@ with tempfile.TemporaryDirectory() as workspace:
             background_deferred_marker_file.unlink(missing_ok=True)
 
             result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
-                               "transcript_path": str(grid_old)})
+                               "transcript_path": str(grid_old),
+                               "background_tasks": grid_old_listed})
             check("a background task older than the wait does not hold the handoff",
                   result.returncode == 2 and is_handoff_instruction(result.stderr),
                   f"code {result.returncode}, stderr {result.stderr[:200]}")
@@ -1254,13 +1303,15 @@ with tempfile.TemporaryDirectory() as workspace:
             # marker must not keep it quiet then — the marker only stops the
             # notice repeating, and an empty flight fires whatever it says.
             result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
-                               "transcript_path": str(grid_young)})
+                               "transcript_path": str(grid_young),
+                               "background_tasks": grid_young_listed})
             check("the outlived-wait session defers first, as the young-task session did",
                   result.returncode == 2 and "handoff deferred" in result.stderr
                   and background_deferred_marker_file.exists(),
                   f"code {result.returncode}, stderr {result.stderr[:200]}")
             result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
-                               "transcript_path": str(grid_old)})
+                               "transcript_path": str(grid_old),
+                               "background_tasks": grid_old_listed})
             check("a session that deferred fires once its background task outlives the wait",
                   result.returncode == 2 and is_handoff_instruction(result.stderr)
                   and background_marker_file.exists(),
@@ -1269,7 +1320,8 @@ with tempfile.TemporaryDirectory() as workspace:
             background_deferred_marker_file.unlink(missing_ok=True)
 
             result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
-                               "transcript_path": str(grid_young)},
+                               "transcript_path": str(grid_young),
+                               "background_tasks": grid_young_listed},
                               ("--background-task-wait-minutes", "5"))
             check("the wait is configurable: a five-minute wait fires on a ten-minute-old task",
                   result.returncode == 2 and is_handoff_instruction(result.stderr),
@@ -1278,7 +1330,8 @@ with tempfile.TemporaryDirectory() as workspace:
             background_deferred_marker_file.unlink(missing_ok=True)
 
             result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
-                               "transcript_path": str(grid_past_ceiling)})
+                               "transcript_path": str(grid_past_ceiling),
+                               "background_tasks": grid_past_ceiling_listed})
             check("above the ceiling the handoff fires with a background task still running",
                   result.returncode == 2 and is_handoff_instruction(result.stderr),
                   f"code {result.returncode}, stderr {result.stderr[:200]}")
@@ -1286,7 +1339,8 @@ with tempfile.TemporaryDirectory() as workspace:
             background_deferred_marker_file.unlink(missing_ok=True)
 
             result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
-                               "transcript_path": str(both_running)})
+                               "transcript_path": str(both_running),
+                               "background_tasks": both_running_listed})
             check("a deferral behind both kinds names both",
                   "1 subagent(s) and 1 background task(s) run" in result.stderr,
                   result.stderr[:250])
@@ -1299,12 +1353,8 @@ with tempfile.TemporaryDirectory() as workspace:
         # Monitor as a shell task, and a subagent waiting on its own shell task
         # leaves the list while that task stays on it.
         LIST_PROBE_SESSION_ID = "handoff-threshold-hook-test-background-tasks-list-session"
-        list_fired_marker_file = hook.fired_marker_path(LIST_PROBE_SESSION_ID)
+        list_fired_marker_file = hook.handoff_asked_marker_path(LIST_PROBE_SESSION_ID)
         list_deferred_marker_file = hook.deferred_marker_path(LIST_PROBE_SESSION_ID)
-
-        def list_entry(task_id, task_type, status="running"):
-            return {"id": task_id, "type": task_type, "status": status,
-                    "description": f"a {task_type}"}
 
         def clear_list_markers():
             list_fired_marker_file.unlink(missing_ok=True)
@@ -1355,6 +1405,13 @@ with tempfile.TemporaryDirectory() as workspace:
         check("a subagent's own shell task within the wait holds the handoff, dated from the"
               " subagent's transcript", flight.background_task_ids == ["bsubyoung"],
               str(flight.background_task_ids))
+        check("a subagent's own shell task is tied to the subagent whose transcript launched it",
+              flight.launching_subagent_id_by_task_id == {"bsubyoung": "a2573a7737ae643dc"},
+              str(flight.launching_subagent_id_by_task_id))
+        flight = flight_of([list_entry("bshellyoung", "shell")])
+        check("the session's own shell task is tied to no subagent",
+              flight.launching_subagent_id_by_task_id == {},
+              str(flight.launching_subagent_id_by_task_id))
         flight = flight_of([list_entry("bsubold", "shell")])
         check("a subagent's own shell task past the wait holds nothing", not flight,
               str(flight.background_task_ids))
@@ -1425,18 +1482,146 @@ with tempfile.TemporaryDirectory() as workspace:
                   result.returncode == 2
                   and "1 workflow(s) and 1 background task(s) run" in result.stderr,
                   f"code {result.returncode}, stderr {result.stderr[:250]}")
+            saved = json.loads(list_deferred_marker_file.read_text(encoding="utf-8"))
+            check("a deferral behind a listed workflow saves it as awaited work and names it",
+                  saved.get("awaited_workflow_ids") == ["w1"] and "workflow w1" in result.stderr,
+                  f"marker {saved}, stderr {result.stderr[:400]}")
+            result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
+                               "transcript_path": str(list_session),
+                               "background_tasks": [list_entry("w1", "workflow"),
+                                                    list_entry("w2", "workflow")]})
+            check("while an awaited workflow runs, a later turn stays silent",
+                  result.returncode == 0 and not result.stderr.strip(),
+                  f"code {result.returncode}, stderr {result.stderr[:250]}")
+            result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
+                               "transcript_path": str(list_session),
+                               "background_tasks": [list_entry("w2", "workflow")]})
+            check("a workflow started after the deferral began does not hold the handoff",
+                  result.returncode == 2 and is_handoff_instruction(result.stderr),
+                  f"code {result.returncode}, stderr {result.stderr[:250]}")
+            clear_list_markers()
+            result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
+                               "transcript_path": str(list_session),
+                               "background_tasks": [list_entry("a2573a7737ae643dc", "subagent")]})
+            check("the hook defers behind a listed subagent",
+                  result.returncode == 2 and "handoff deferred" in result.stderr,
+                  f"code {result.returncode}, stderr {result.stderr[:250]}")
+            # Claude Code's list drops a subagent while it waits on its own shell task.
+            result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
+                               "transcript_path": str(list_session),
+                               "background_tasks": [list_entry("bsubyoung", "shell")]})
+            check("an awaited subagent's own shell task holds the handoff while the subagent waits"
+                  " off the list", result.returncode == 0 and not result.stderr.strip(),
+                  f"code {result.returncode}, stderr {result.stderr[:250]}")
+            result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
+                               "transcript_path": str(list_session),
+                               "background_tasks": [list_entry("bshellyoung", "shell")]})
+            check("a shell task neither awaited nor launched by an awaited subagent does not hold it",
+                  result.returncode == 2 and is_handoff_instruction(result.stderr),
+                  f"code {result.returncode}, stderr {result.stderr[:250]}")
             clear_list_markers()
             result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
                                "transcript_path": str(list_session), "background_tasks": []})
             check("the hook fires on an empty list though the transcript shows an unfinished"
                   " subagent", result.returncode == 2 and is_handoff_instruction(result.stderr),
                   f"code {result.returncode}, stderr {result.stderr[:250]}")
+            # Without the list nothing counts as running, whatever the transcript shows; the
+            # message names the claude whose version the hook read.
+            fake_claude_directory = Path(workspace) / "fake-claude-bin"
+            fake_claude_directory.mkdir(exist_ok=True)
+            fake_claude = fake_claude_directory / "claude"
+
+            def missing_list_run(fake_claude_script, expected_version_text):
+                clear_list_markers()
+                if fake_claude_script is None:
+                    fake_claude.unlink(missing_ok=True)
+                else:
+                    fake_claude.write_text(fake_claude_script, encoding="utf-8")
+                    fake_claude.chmod(0o755)
+                result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
+                                   "transcript_path": str(list_session)},
+                                  extra_environment={"PATH": str(fake_claude_directory)},
+                                  background_tasks_list_is_missing=True)
+                instruction, _, rest = result.stderr.partition("\n")
+                expected = hook.BACKGROUND_TASKS_LIST_MISSING_SENTENCE.format(
+                    claude_version=expected_version_text)
+                return result, instruction, rest.strip(), expected
+
+            result, instruction, rest, expected = missing_list_run(
+                "#!/bin/sh\necho '9.9.9 (Claude Code)'\n", "9.9.9 (Claude Code)")
+            check("without the list the hook hands off at the threshold though the transcript "
+                  "shows an unfinished subagent",
+                  result.returncode == 2 and is_handoff_instruction(instruction)
+                  and list_fired_marker_file.exists() and not list_deferred_marker_file.exists(),
+                  f"code {result.returncode}, stderr {result.stderr[:300]}")
+            check("without the list the handoff message adds the missing-list sentence with the "
+                  "version claude --version printed", rest == expected,
+                  f"got {rest!r}, expected {expected!r}")
+            check("the missing-list sentence is the approved text",
+                  expected == "Claude Code sent no background_tasks list, so the threshold-hook "
+                  "could not see running subagents or background tasks, and this session-handoff "
+                  "stops any still running; tell the user that claude 9.9.9 (Claude Code) may be "
+                  "too old to send that list.", expected)
+
+            result, instruction, rest, _ = missing_list_run(None, "")
+            check("when claude cannot be run, the missing-list sentence says so in place of the "
+                  "version",
+                  result.returncode == 2 and is_handoff_instruction(instruction)
+                  and "tell the user that claude (version unknown: running claude --version "
+                  "failed: " in rest and rest.endswith(") may be too old to send that list."),
+                  rest)
+
+            result, instruction, rest, expected = missing_list_run(
+                "#!/bin/sh\necho 'not logged in' >&2\nexit 3\n",
+                "(version unknown: claude --version exited 3 with output 'not logged in')")
+            check("when claude --version fails, the missing-list sentence gives its exit status "
+                  "and output in place of the version",
+                  result.returncode == 2 and rest == expected,
+                  f"got {rest!r}, expected {expected!r}")
+
+            result, instruction, rest, expected = missing_list_run(
+                "#!/bin/sh\necho '9.9.9 (Claude Code)'\nexit 3\n",
+                "(version unknown: claude --version exited 3 with output '9.9.9 (Claude Code)')")
+            check("when claude --version prints a version but exits nonzero, the missing-list "
+                  "sentence gives its exit status in place of the version",
+                  rest == expected, f"got {rest!r}, expected {expected!r}")
+
+            result, instruction, rest, expected = missing_list_run(
+                "#!/bin/sh\necho '9.9.9 (Claude Code)'\nkill -TERM $$\n",
+                "(version unknown: claude --version exited -15 with output '9.9.9 (Claude Code)')")
+            check("when claude --version is killed by a signal, the missing-list sentence says so "
+                  "in place of the version", rest == expected, f"got {rest!r}, expected {expected!r}")
+
+            result, instruction, rest, expected = missing_list_run(
+                "#!/bin/sh\nexit 0\n",
+                "(version unknown: claude --version exited 0 with output '')")
+            check("when claude --version prints nothing, the missing-list sentence says so in "
+                  "place of the version", rest == expected, f"got {rest!r}, expected {expected!r}")
+
+            # A deferral already in progress ends when a later Stop's input lacks the list.
+            clear_list_markers()
+            run_hook({"session_id": LIST_PROBE_SESSION_ID, "transcript_path": str(list_session),
+                      "background_tasks": [list_entry("a2573a7737ae643dc", "subagent")]})
+            fake_claude.write_text("#!/bin/sh\necho '9.9.9 (Claude Code)'\n", encoding="utf-8")
+            result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
+                               "transcript_path": str(list_session)},
+                              extra_environment={"PATH": str(fake_claude_directory)},
+                              background_tasks_list_is_missing=True)
+            check("a deferral in progress hands off at the next Stop whose input lacks the list",
+                  result.returncode == 2 and result.stderr.startswith("This session has used ")
+                  and "Claude Code sent no background_tasks list" in result.stderr
+                  and list_fired_marker_file.exists(),
+                  f"code {result.returncode}, stderr {result.stderr[:300]}")
+
+            # Above the ceiling the hook needs no list, but the handoff still stops what runs.
             clear_list_markers()
             result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
-                               "transcript_path": str(list_session)})
-            check("without the list the hook reads the transcript, and defers behind its subagent",
-                  result.returncode == 2 and "1 subagent(s)" in result.stderr,
-                  f"code {result.returncode}, stderr {result.stderr[:250]}")
+                               "transcript_path": str(grid_past_ceiling)},
+                              extra_environment={"PATH": str(fake_claude_directory)},
+                              background_tasks_list_is_missing=True)
+            check("above the ceiling a Stop without the list also carries the missing-list sentence",
+                  result.returncode == 2 and "Claude Code sent no background_tasks list" in result.stderr,
+                  f"code {result.returncode}, stderr {result.stderr[:300]}")
             clear_list_markers()
             result = run_hook({"session_id": LIST_PROBE_SESSION_ID,
                                "transcript_path": str(torn),
@@ -1449,7 +1634,7 @@ with tempfile.TemporaryDirectory() as workspace:
 
         # --- Below the threshold, nothing fires ------------------------------
         SHARE_PROBE_SESSION_ID = "handoff-threshold-hook-test-share-session"
-        share_fired_marker_file = hook.fired_marker_path(SHARE_PROBE_SESSION_ID)
+        share_fired_marker_file = hook.handoff_asked_marker_path(SHARE_PROBE_SESSION_ID)
         share_payload = {"session_id": SHARE_PROBE_SESSION_ID}
         # Live sessions keep walk-closed markers written before the lower threshold was removed.
         share_walk_closed_marker_file = hook.HANDOFF_DIRECTORY / (
@@ -1485,6 +1670,219 @@ with tempfile.TemporaryDirectory() as workspace:
         unknown_marker_file.unlink(missing_ok=True)
         unknown_deferred_marker_file.unlink(missing_ok=True)
         caller_owned_marker_file.unlink(missing_ok=True)
+
+# --- The deferral waits only for the work in flight when it began ---
+# Work started later must not hold it, or a session that keeps working is held to the ceiling.
+with tempfile.TemporaryDirectory() as wait_set_workspace:
+    hook.HANDOFF_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    clock = datetime.now(timezone.utc)
+
+    def spawned_at(agent_id, moment):
+        return {**subagent_spawn_record(agent_id), "timestamp": utc_iso(moment)}
+
+    def probe(name, records):
+        return transcript_of(wait_set_workspace, f"{name}.jsonl",
+                             [usage_record(100_000, cache_read=450_000), *records])  # 55%
+
+    def markers_of(session_id):
+        return (hook.handoff_asked_marker_path(session_id),
+                hook.handoff_deferred_marker_and_refused_commands_files_common.handoff_deferred_marker_path(
+                    hook.HANDOFF_DIRECTORY, session_id))
+
+    def clear(session_id):
+        for marker in markers_of(session_id):
+            if marker.is_dir():
+                marker.rmdir()
+            else:
+                marker.unlink(missing_ok=True)
+
+    def scan_that_cannot_read_the_transcript(*_arguments, **_keywords):
+        raise hook.TranscriptCouldNotBeFullyRead("unreadable in this test")
+
+    first, late = "a1111111111111111", "a2222222222222222"
+    only_first_running = probe("wait-set-first-running",
+                               [spawned_at(first, clock - timedelta(minutes=3))])
+    first_and_late_running = probe("wait-set-first-and-late-running", [
+        spawned_at(first, clock - timedelta(minutes=3)),
+        spawned_at(late, clock + timedelta(seconds=30))])
+    first_done_late_running = probe("wait-set-first-done-late-running", [
+        spawned_at(first, clock - timedelta(minutes=3)),
+        spawned_at(late, clock + timedelta(seconds=30)),
+        subagent_completion_record(first)])
+    nothing_running = probe("wait-set-nothing-running", [
+        spawned_at(first, clock - timedelta(minutes=3)), subagent_completion_record(first)])
+
+    WAIT_SET_SESSION_ID = "handoff-threshold-hook-test-wait-set-session"
+    fired, deferred = markers_of(WAIT_SET_SESSION_ID)
+    clear(WAIT_SET_SESSION_ID)
+    try:
+        result = run_hook({"session_id": WAIT_SET_SESSION_ID,
+                           "transcript_path": str(only_first_running),
+                           "background_tasks": [list_entry(first, "subagent")]})
+        saved = json.loads(deferred.read_text(encoding="utf-8")) if deferred.is_file() else {}
+        check("the first deferral saves the work then in flight in the deferred marker file",
+              result.returncode == 2 and saved.get("awaited_subagent_ids") == [first]
+              and saved.get("awaited_background_task_ids") == []
+              and saved.get("awaited_work_is_unknown") is False
+              and isinstance(saved.get("deferral_began_at"), str),
+              f"code {result.returncode}, marker {saved}")
+
+        result = run_hook({"session_id": WAIT_SET_SESSION_ID,
+                           "transcript_path": str(first_and_late_running),
+                           "background_tasks": [list_entry(first, "subagent"), list_entry(late, "subagent")]})
+        check("while saved work runs, a later turn stays silent though new work also runs",
+              result.returncode == 0 and not result.stderr.strip() and not fired.exists(),
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+        saved_again = json.loads(deferred.read_text(encoding="utf-8"))
+        check("a later turn leaves the saved work as it was",
+              saved_again.get("awaited_subagent_ids") == [first], saved_again)
+
+        result = run_hook({"session_id": WAIT_SET_SESSION_ID,
+                           "transcript_path": str(first_done_late_running),
+                           "background_tasks": [list_entry(late, "subagent")]})
+        check("the handoff fires once the saved work has finished, though work started later "
+              "still runs",
+              result.returncode == 2 and is_handoff_instruction(result.stderr) and fired.exists(),
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+    finally:
+        clear(WAIT_SET_SESSION_ID)
+
+    # A deferral whose first read could not finish saved no list. The background_tasks list
+    # carries no launch time, so every listed piece of work holds it until the list is empty.
+    UNKNOWN_SET_SESSION_ID = "handoff-threshold-hook-test-unknown-wait-set-session"
+    fired, deferred = markers_of(UNKNOWN_SET_SESSION_ID)
+    clear(UNKNOWN_SET_SESSION_ID)
+    try:
+        code, stderr = run_hook_in_process(
+            {"session_id": UNKNOWN_SET_SESSION_ID, "transcript_path": str(only_first_running),
+             "background_tasks": [list_entry(first, "subagent")]},
+            scan_replacement=scan_that_cannot_read_the_transcript)
+        saved = json.loads(deferred.read_text(encoding="utf-8")) if deferred.is_file() else {}
+        check("an unknown-count deferral saves that its awaited work is unknown",
+              code == 2 and saved.get("awaited_work_is_unknown") is True
+              and hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION in stderr.splitlines(),
+              f"code {code}, marker {saved}, stderr {stderr[-300:]}")
+        result = run_hook({"session_id": UNKNOWN_SET_SESSION_ID,
+                           "transcript_path": str(first_and_late_running),
+                           "background_tasks": [list_entry(first, "subagent"), list_entry(late, "subagent")]})
+        check("after an unknown-count deferral, listed work holds the handoff",
+              result.returncode == 0 and not result.stderr.strip() and not fired.exists(),
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+        result = run_hook({"session_id": UNKNOWN_SET_SESSION_ID,
+                           "transcript_path": str(nothing_running)})
+        check("after an unknown-count deferral, the handoff fires once the list is empty",
+              result.returncode == 2 and is_handoff_instruction(result.stderr),
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+    finally:
+        clear(UNKNOWN_SET_SESSION_ID)
+
+    # A marker file the hook cannot read, such as one written before the saved list existed,
+    # is reported and replaced, not taken as no deferral and not taken as an all-clear.
+    LEGACY_MARKER_SESSION_ID = "handoff-threshold-hook-test-legacy-marker-session"
+    fired, deferred = markers_of(LEGACY_MARKER_SESSION_ID)
+    clear(LEGACY_MARKER_SESSION_ID)
+    try:
+        deferred.write_text("55.0\n", encoding="utf-8")
+        result = run_hook({"session_id": LEGACY_MARKER_SESSION_ID,
+                           "transcript_path": str(first_and_late_running),
+                           "background_tasks": [list_entry(first, "subagent"), list_entry(late, "subagent")]})
+        saved = json.loads(deferred.read_text(encoding="utf-8"))
+        check("a marker file without the saved list is reported and replaced by the work "
+              "running now",
+              result.returncode == 2 and "could not read this session's earlier" in result.stderr
+              and "the hook replaced that record with a new one" in result.stderr
+              and "the work the hook now waits for is the work running now" in result.stderr
+              and sorted(saved.get("awaited_subagent_ids", [])) == sorted([first, late]),
+              f"code {result.returncode}, marker {saved}, stderr {result.stderr[-400:]}")
+        clear(LEGACY_MARKER_SESSION_ID)
+
+        deferred.write_text("55.0\n", encoding="utf-8")
+        result = run_hook({"session_id": LEGACY_MARKER_SESSION_ID,
+                           "transcript_path": str(nothing_running)})
+        check("a marker file without the saved list, with nothing running, lets the handoff fire",
+              result.returncode == 2 and is_handoff_instruction(result.stderr),
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+        clear(LEGACY_MARKER_SESSION_ID)
+
+        deferred.write_text("{}", encoding="utf-8")
+        os.chmod(deferred, 0o000)
+        try:
+            result = run_hook({"session_id": LEGACY_MARKER_SESSION_ID,
+                               "transcript_path": str(only_first_running),
+                           "background_tasks": [list_entry(first, "subagent")]})
+        finally:
+            os.chmod(deferred, 0o600)
+        check("a marker file that cannot be opened is reported and replaced",
+              result.returncode == 2 and "could not read this session's earlier" in result.stderr
+              and "Permission denied" in result.stderr
+              and json.loads(deferred.read_text(encoding="utf-8")).get("awaited_subagent_ids")
+              == [first],
+              f"code {result.returncode}, stderr {result.stderr[-400:]}")
+        clear(LEGACY_MARKER_SESSION_ID)
+
+        # A directory where the marker file goes can be neither read nor replaced.
+        deferred.mkdir()
+        result = run_hook({"session_id": LEGACY_MARKER_SESSION_ID,
+                           "transcript_path": str(only_first_running),
+                           "background_tasks": [list_entry(first, "subagent")]})
+        check("a deferral whose list cannot be saved says so, and says the notice will repeat",
+              result.returncode == 2 and "handoff deferred" in result.stderr
+              and "could not save the list of work it waits for" in result.stderr
+              and str(deferred) in result.stderr
+              and "The second time you see this line about the list, tell the user, once:" in result.stderr
+              and "could not read this session's earlier" not in result.stderr,
+              f"code {result.returncode}, stderr {result.stderr[-500:]}")
+    finally:
+        clear(LEGACY_MARKER_SESSION_ID)
+
+    # With no saved list, work launched at the very moment the deferral began still counts.
+    began = datetime(2026, 10, 28, 20, 12, tzinfo=timezone.utc)
+    unknown_marker = hook.handoff_deferred_marker_and_refused_commands_files_common.HandoffDeferredMarker(
+        used_percentage=40.0, deferral_began_at=began, awaited_subagent_ids=[],
+        awaited_background_task_ids=[], awaited_work_is_unknown=True)
+    check("with no saved list, work launched as the deferral began holds the handoff",
+          hook.awaited_work_still_in_flight(
+              unknown_marker, hook.WorkInFlight([], ["b1"], launched_at_by_id={"b1": began})))
+    check("with no saved list, work whose launch time is unknown holds the handoff",
+          hook.awaited_work_still_in_flight(
+              unknown_marker, hook.WorkInFlight(["a1"], [], launched_at_by_id={"a1": None})))
+    check("with no saved list, work launched after the deferral began does not hold it",
+          not hook.awaited_work_still_in_flight(
+              unknown_marker, hook.WorkInFlight(["a1"], [], launched_at_by_id={"a1": began + timedelta(seconds=1)})))
+    workflow_marker = hook.handoff_deferred_marker_and_refused_commands_files_common.HandoffDeferredMarker(
+        used_percentage=40.0, deferral_began_at=began, awaited_subagent_ids=[],
+        awaited_background_task_ids=[], awaited_work_is_unknown=False, awaited_workflow_ids=["w1"])
+    check("an awaited workflow still running holds the handoff",
+          hook.awaited_work_still_in_flight(workflow_marker, hook.WorkInFlight([], [], ["w1"])))
+    check("with no saved list, a workflow whose launch time is unknown holds the handoff",
+          hook.awaited_work_still_in_flight(unknown_marker, hook.WorkInFlight([], [], ["w9"])))
+    # A deferral that begins while a subagent waits off the list on its own shell task must still
+    # wait for that subagent once the task ends and the subagent is back on the list.
+    with tempfile.TemporaryDirectory() as owner_workspace:
+        saved_handoff_directory = hook.HANDOFF_DIRECTORY
+        hook.HANDOFF_DIRECTORY = Path(owner_workspace)
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                hook.defer("owner-off-list", 40.0, "40%",
+                           hook.WorkInFlight([], ["T"], launching_subagent_id_by_task_id={"T": "A"}),
+                           argparse.Namespace(background_task_wait_minutes=30.0,
+                                              ceiling_used_percentage=65.0),
+                           now=began)
+            owner_marker = hook.handoff_deferred_marker_and_refused_commands_files_common.handoff_deferred_marker_read(
+                Path(owner_workspace), "owner-off-list")
+        finally:
+            hook.HANDOFF_DIRECTORY = saved_handoff_directory
+    check("a deferral begun while a subagent waits off the list on its own shell task waits for"
+          " that subagent once it is back on the list",
+          hook.awaited_work_still_in_flight(owner_marker, hook.WorkInFlight(["A"], [])),
+          owner_marker)
+    # A launch record whose time carries no zone is read as UTC, so it compares with the deferral's start.
+    check("a launch time with no time zone is read as UTC",
+          hook.record_time({"timestamp": "2026-10-28T20:12:00"}) == began,
+          hook.record_time({"timestamp": "2026-10-28T20:12:00"}))
+    check("a launch time with a zone keeps it",
+          hook.record_time({"timestamp": "2026-10-28T21:12:00+01:00"}) == began,
+          hook.record_time({"timestamp": "2026-10-28T21:12:00+01:00"}))
 
 print()
 if failures:

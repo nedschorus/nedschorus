@@ -525,6 +525,11 @@ def read_tmux_kill(guard, command, working_directory, search_file_directory):
     return "refused" if reason else "passed", reason
 
 
+def read_pkill_pattern_kill(guard, command, working_directory, search_file_directory):
+    reason = guard.refusal_for(command)
+    return "refused" if reason else "passed", reason
+
+
 def read_search_file(guard, command, working_directory, search_file_directory):
     reason = guard.analyze_command_text(command, search_file_directory, time.monotonic)
     return "refused" if reason else "passed", reason
@@ -539,6 +544,12 @@ def read_ghi_md_whole_file_replacement(guard, command, working_directory, search
     # The marker file is never read here: replaying a command must not consume an agent's reason.
     replaced = guard.ghi_md_replaced_by_command(command, working_directory)
     return ("refused", f"replaces {replaced}") if replaced else ("passed", None)
+
+
+def read_handoff_deferral_cold_read_full_run_launch(guard, command, working_directory, search_file_directory):
+    # Read as if a handoff-deferral were on: the marker file is per agent-session and absent here.
+    runs_grid = guard.command_runs_cold_read_grid_script(command)
+    return ("refused", guard.COLD_READ_FULL_RUN_REFUSED_AND_SAVED_REASON) if runs_grid else ("passed", None)
 
 
 def read_git_worktree_remove_records_ship_first(guard, command, working_directory, search_file_directory):
@@ -608,11 +619,14 @@ GUARDS = {
     ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py": read_force_push,
     ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py": read_issue_write,
     ".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py": read_tmux_kill,
+    ".claude/guard-hooks/pkill-killall-and-process-name-pattern-kill-refusal-hook.py": read_pkill_pattern_kill,
     ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py": read_search_file,
     ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py": read_codex_exec,
     "nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py":
         read_markdown_push_reminder,
     ".claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py": read_ghi_md_whole_file_replacement,
+    ".claude/guard-hooks/handoff-deferral-cold-read-full-run-launch-refusal-hook.py":
+        read_handoff_deferral_cold_read_full_run_launch,
     ".claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py":
         read_git_worktree_remove_records_ship_first,
 }

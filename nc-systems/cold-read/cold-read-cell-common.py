@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import fcntl
 import hashlib
 import json
 import os
@@ -387,11 +388,13 @@ LEADING_TRACING_LOGGER_TIMESTAMP = re.compile(
 
 
 class RecognisedFailureText(typing.NamedTuple):
-    """A runtime failure prefix, cause class, and rule for extracting the detail."""
+    """A runtime failure prefix, cause class, rule for extracting the detail, and an
+    optional pattern the rest of the line after the prefix must start with."""
 
     cause_class: str
     line_prefix: str
     detail: str
+    rest_of_line_pattern: typing.Optional[re.Pattern] = None
 
 
 def classify_failed_attempt(
@@ -403,7 +406,9 @@ def classify_failed_attempt(
         timestamp = LEADING_TRACING_LOGGER_TIMESTAMP.match(stripped)
         untimestamped = stripped[timestamp.end():] if timestamp else stripped
         for text in recognised_texts or ():
-            if untimestamped.startswith(text.line_prefix):
+            if untimestamped.startswith(text.line_prefix) and (
+                    text.rest_of_line_pattern is None
+                    or text.rest_of_line_pattern.match(untimestamped[len(text.line_prefix):])):
                 if text.detail == DETAIL_IS_REST_OF_LINE:
                     detail = untimestamped[len(text.line_prefix):].lstrip(" \t·")
                 elif text.detail == DETAIL_IS_WHOLE_LINE:
@@ -699,7 +704,7 @@ def exit_on_sigterm(signal_number, _frame):
 
 
 def run_reviewer_program_in_own_process_group_until_timeout(
-    command: list, stdin_text, child_environment, timeout_seconds: float,
+    command: list, stdin_text, child_environment, timeout_seconds: float, pass_fds: tuple = (),
 ) -> subprocess.CompletedProcess:
     """Run `command` in a session of its own and return its result; when it
     runs past `timeout_seconds`, kill its whole process group and return a
@@ -713,7 +718,7 @@ def run_reviewer_program_in_own_process_group_until_timeout(
         command,
         # communicate closes stdin after writing stdin_text, or at once when it is None.
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        cwd=REPO_ROOT, env=child_environment, text=True, start_new_session=True)
+        cwd=REPO_ROOT, env=child_environment, text=True, start_new_session=True, pass_fds=pass_fds)
     try:
         try:
             stdout, stderr = process.communicate(stdin_text, timeout=timeout_seconds)
@@ -753,6 +758,9 @@ def run_model_chain(
             {"input": stdin_text} if stdin_text is not None
             else {"stdin": subprocess.DEVNULL}
         )
+        # The reviewer program holds the record's being-written lock too, so a cell killed while its
+        # reviewer still writes the report leaves the record unshipped until the reviewer exits.
+        pass_fds = record_names.record_directory_being_written_lock_pass_fds_for_child_writers(report.parent)
         # Both streams carry failure diagnostics; stderr also carries the runtime's token total.
         try:
             if per_model_run_timeout_seconds is None:
@@ -764,11 +772,12 @@ def run_model_chain(
                     env=child_environment,
                     text=True,
                     check=False,
+                    pass_fds=pass_fds,
                     **stdin_arguments,
                 )
             else:
                 completed = run_reviewer_program_in_own_process_group_until_timeout(
-                    command, stdin_text, child_environment, per_model_run_timeout_seconds)
+                    command, stdin_text, child_environment, per_model_run_timeout_seconds, pass_fds)
         except OSError as error:
             failed_attempts.append(f"{model}({type(error).__name__})")
             print(f"{program}: {model} could not be run: {error}", file=sys.stderr)
@@ -862,6 +871,23 @@ def run_model_chain(
     return 0
 
 
+def record_directory_being_written_lock_hold_unless_passed_or_held(record_dir: pathlib.Path) -> None:
+    """Hold record_dir's being-written lock, shared, until this process exits, so the record is not
+    shipped, by the pre-remove hook or anyone, while this cell's reviewer still writes the report; the
+    reviewer is passed the descriptor in run_model_chain. The lock is shared so that two cells run
+    directly on one record directory both hold it, and the record stays held until the last one exits.
+    Holds nothing when a program holds the lock exclusively, as the cold-read-grid does: that program
+    ships the record itself once it releases the lock, and passes its own descriptor to the cells it
+    starts. A cell run directly into a directory such a program holds, but not started by it, is then
+    unprotected once that program exits."""
+    # Left open on purpose: the kernel releases the lock when this process exits, however it ends.
+    descriptor = os.open(record_dir, os.O_RDONLY)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(descriptor)
+
+
 def run_cell(
     *, program: str, runtime: str, description: str, model_help: str,
     tier_to_model_chain: dict, tier_to_effort: dict, invocation_builder,
@@ -896,6 +922,7 @@ def run_cell(
         print(f"{program}: {refusal}", file=sys.stderr)
         report_stray_writes(program, baseline, report)
         return refusal.exit_code
+    record_directory_being_written_lock_hold_unless_passed_or_held(report.parent)
 
     # The staging directory is made after every refusal, so no refusal leaves one behind.
     # The Codex reviewer can write only inside the checkout, the temporary directories on

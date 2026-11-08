@@ -2,9 +2,9 @@
 """Tests for handoff-supervisor.py: a supervisor's hold on its seat, and the
 session it launches.
 
-The supervisor lock and the process-identity check behind it; adopting a
-session already running; the appended system prompt and the seat environment
-a launched session gets; and the agent-binary update before each launch,
+The supervisor lock and the process-identity check behind it; the refusal to
+start without a pinned task list; the appended system prompt and the seat
+environment a launched session gets; and the agent-binary update before each launch,
 under the machine-wide update lock. The supervisor's other cases are in
 handoff-supervisor-successor-prompt-test.py and
 handoff-supervisor-session-end-and-resume-test.py, beside this file.
@@ -53,21 +53,15 @@ a_process_that_looks_like_a_supervisor = fixture.a_process_that_looks_like_a_sup
 sandboxed_update_lock_path = fixture.sandboxed_update_lock_path
 
 
-def run_adoption_cases(workspace: Path):
-    """Adopting a running session is what lets a hand-started agent reincarnate:
-    a supervisor normally owns only the process it launched itself."""
-    # A process that has already exited: if the startup check stopped firing,
-    # adopting it ends the supervisor at once instead of watching a live process.
-    exited = subprocess.Popen(["true"])  # pylint: disable=consider-using-with
-    exited.wait(timeout=10)
+def run_unpinned_task_list_startup_refusal_cases(workspace: Path):
+    """A supervisor not started by a launcher that pins its task list refuses
+    to start; the read-only --check needs no pin."""
     for value in (None, "", "   "):
         environment = dict(os.environ)
         environment.pop("CLAUDE_CODE_TASK_LIST_ID", None)
         if value is not None:
             environment["CLAUDE_CODE_TASK_LIST_ID"] = value
-        for arguments in ([], ["--resume-session-id", "retiring-session"],
-                          ["--adopt-session-id", "live-session",
-                           "--adopt-process-id", str(exited.pid)]):
+        for arguments in ([], ["--resume-session-id", "retiring-session"]):
             result = subprocess.run(
                 [sys.executable, str(SCRIPT_PATH), "--agent", "unpinned",
                  "--cd", str(workspace), "--handoff-dir", str(workspace / "unpinned"),
@@ -94,42 +88,6 @@ def run_adoption_cases(workspace: Path):
         check(f"read-only check needs no task-list pin: {value!r}",
               result.returncode == 1 and "startup stopped" not in result.stderr,
               result.stderr)
-
-    # Not a context manager: the point is a process this test does NOT own a
-    # handle to in the supervisor, which is what adoption exists for.
-    sleeper = subprocess.Popen(  # pylint: disable=consider-using-with
-        [sys.executable, "-c", "import time; time.sleep(30)"])
-    try:
-        adopted = supervisor.AdoptedSession("some-session-id", sleeper.pid)
-        check("an adopted live process reads as running", adopted.poll() is None)
-        adopted.terminate()
-        sleeper.wait(timeout=10)
-        check("an adopted process can be terminated", adopted.poll() == 0)
-        check("terminating an already-gone process is not an error",
-              adopted.terminate() is None)
-    finally:
-        if sleeper.poll() is None:
-            sleeper.kill()
-            sleeper.wait()
-
-    gone = supervisor.AdoptedSession("some-session-id", 99999999)
-    check("a process id that does not exist reads as gone", gone.poll() == 0)
-
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--agent", "adopter",
-         "--handoff-dir", str(workspace), "--adopt-session-id", "an-id"],
-        capture_output=True, text=True, check=False,
-    )
-    check("adopting without a process id is refused", result.returncode == 2, result.stderr)
-
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--agent", "adopter", "--cd", str(workspace),
-         "--handoff-dir", str(workspace), "--adopt-session-id", "an-id",
-         "--adopt-process-id", "99999999"],
-        capture_output=True, text=True, check=False,
-    )
-    check("adopting a process that is already gone is refused",
-          result.returncode == 2 and "already gone" in result.stderr, result.stderr)
 
 
 def run_process_identity_cases(workspace: Path):
@@ -996,7 +954,7 @@ def run_launched_session_claude_code_tmpdir_cases(workspace: Path):
 
 
 with fixture.handoff_supervisor_suite_workspace() as workspace:
-    run_adoption_cases(workspace)
+    run_unpinned_task_list_startup_refusal_cases(workspace)
     run_appended_system_prompt_cases(workspace)
     run_appended_system_prompt_agent_part_cases(workspace)
     run_launched_session_seat_environment_cases(workspace)
@@ -1098,9 +1056,7 @@ with tempfile.TemporaryDirectory() as update_workspace:
     # The wiring. launch_agent_session is the ONE site every restart path
     # reaches a session through: the supervisor's relaunch after a handoff,
     # recover-crashed-seats.py, and the login restart, which goes through
-    # recovery. An adopted session never passes through here, which is what
-    # keeps the update off the adopted path structurally rather than by
-    # where the call happens to sit.
+    # recovery.
     agent = an_agent_recording_its_invocations(update_workspace)
     supervisor.launch_agent_session(
         str(agent), "session-without-update", Path(update_workspace), "prompt",

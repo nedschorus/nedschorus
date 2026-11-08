@@ -293,6 +293,40 @@ if "dump_argv" in step:
     # Bash are one pair, and a joined string could not tell that from a
     # single argument that happens to contain both.
     pathlib.Path(step["dump_argv"]).write_text(json.dumps(argv), encoding="utf-8")
+if "dump_record_directory_descriptor_count" in step:
+    # How many of the stub's descriptors are open on the record directory: one when the cell passed
+    # its being-written lock on to the reviewer program, none when the cell closed it.
+    record_directory = os.stat(report_path.parent)
+    count = 0
+    for name in os.listdir("/dev/fd"):
+        try:
+            opened = os.fstat(int(name))
+        except OSError:
+            continue
+        count += (opened.st_dev, opened.st_ino) == (record_directory.st_dev, record_directory.st_ino)
+    pathlib.Path(step["dump_record_directory_descriptor_count"]).write_text(str(count), encoding="utf-8")
+if "signal_file" in step:
+    # Tells the case this reviewer is running, so it can order two cells' steps.
+    pathlib.Path(step["signal_file"]).write_text("running", encoding="utf-8")
+if "wait_for_file" in step:
+    # Waits, at most 60 seconds, until the case creates this file.
+    import time
+    waited_until = time.monotonic() + 60
+    while not pathlib.Path(step["wait_for_file"]).exists() and time.monotonic() < waited_until:
+        time.sleep(0.05)
+if "dump_record_directory_lock_held" in step:
+    # What the shipper's lock test sees while the reviewer runs: "held" when any process holds the
+    # record's being-written lock, shared or exclusive, so a shipment now would print FAILED and copy nothing.
+    import fcntl
+    probe = os.open(report_path.parent, os.O_RDONLY)
+    try:
+        fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held = "free"
+    except BlockingIOError:
+        held = "held"
+    finally:
+        os.close(probe)
+    pathlib.Path(step["dump_record_directory_lock_held"]).write_text(held, encoding="utf-8")
 if "stderr" in step:
     sys.stderr.write(step["stderr"])
 if "stdout" in step:
@@ -311,6 +345,15 @@ def check(case_name, condition, detail=""):
     else:
         print(f"FAIL  {case_name}: {detail}")
         failures.append(case_name)
+
+
+def wait_for_path(path, seconds=60):
+    """Wait until path exists; raise when it does not within seconds, so a stuck case fails loudly."""
+    waited_until = time.monotonic() + seconds
+    while not path.exists():
+        if time.monotonic() > waited_until:
+            raise TimeoutError(f"{path} did not appear within {seconds} seconds")
+        time.sleep(0.05)
 
 
 def stray_write_warning(stderr_text):
@@ -357,7 +400,8 @@ def dirty_the_target(repository):
 
 
 def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
-                      runtime="claude", environment_overrides=None, cell="defect-hunt"):
+                      runtime="claude", environment_overrides=None, cell="defect-hunt", pass_fds=(),
+                      background=False):
     """One cell launcher, run against a stub standing in for its runtime.
 
     The stub is installed under the runtime's own name, because that is how
@@ -381,20 +425,24 @@ def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
     environment["COLD_READ_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["COLD_READ_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
     environment.update(environment_overrides or {})
-    return subprocess.run(
-        [sys.executable, str(repository / "nc-systems" / "cold-read" / f"cold-read-{runtime}-cell.py"),
-         "--cell", cell, "--tier", "second-strongest-model",
-         "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
-         *arguments],
-        capture_output=True, text=True, check=False, env=environment, cwd=repository,
-    )
+    command = [sys.executable, str(repository / "nc-systems" / "cold-read" / f"cold-read-{runtime}-cell.py"),
+               "--cell", cell, "--tier", "second-strongest-model",
+               "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
+               *arguments]
+    if background:
+        # The case waits on the returned process and reads its streams with communicate().
+        return subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                env=environment, cwd=repository, pass_fds=pass_fds)
+    return subprocess.run(command, capture_output=True, text=True, check=False, env=environment,
+                          cwd=repository, pass_fds=pass_fds)
 
 
 def run_claude_cell(repository, stub_directory, plan, report_path, *arguments,
-                    environment_overrides=None, cell="defect-hunt"):
+                    environment_overrides=None, cell="defect-hunt", pass_fds=(), background=False):
     return run_cell_launcher(repository, stub_directory, plan, report_path,
                              *arguments, runtime="claude",
-                             environment_overrides=environment_overrides, cell=cell)
+                             environment_overrides=environment_overrides, cell=cell, pass_fds=pass_fds,
+                             background=background)
 
 
 def run_codex_cell(repository, stub_directory, plan, report_path, *arguments,
@@ -498,6 +546,110 @@ with tempfile.TemporaryDirectory() as scratch:
     )
     check("a file the reviewer newly creates is reported as a stray write",
           created_relative_path in stray_write_warning(result.stderr), repr(result.stderr))
+
+    # A cell started by a grid holding the record's being-written lock passes the lock on to the
+    # reviewer program it runs, so a cell killed while its reviewer still writes the report leaves the
+    # record unshipped until the reviewer exits too.
+    shipper_spec = importlib.util.spec_from_file_location(
+        "cold_read_record_ship_under_test", SYSTEM_DIRECTORY / "cold-read-record-ship.py")
+    shipper_module = importlib.util.module_from_spec(shipper_spec)
+    shipper_spec.loader.exec_module(shipper_module)
+    report = repository / "cold-read-records" / "run-lock" / "claude-defect-hunt-second-strongest-model.md"
+    report.parent.mkdir(parents=True)
+    descriptor_count_file = scratch / "reviewer-record-directory-descriptor-count"
+    shipper_module.record_directory_being_written_lock_take(report.parent)
+    try:
+        result = run_claude_cell(
+            repository, stubs,
+            {"*": {"report": "STUB REVIEW: one finding\n",
+                   "dump_record_directory_descriptor_count": str(descriptor_count_file)}},
+            report,
+            pass_fds=shipper_module.record_names.record_directory_being_written_lock_pass_fds_for_child_writers(report.parent),
+        )
+    finally:
+        shipper_module.record_directory_being_written_lock_release(report.parent)
+    reviewer_descriptor_count = (descriptor_count_file.read_text(encoding="utf-8")
+                                 if descriptor_count_file.exists() else "not written")
+    check("the reviewer program a cell runs holds the record's being-written lock the cell was passed",
+          reviewer_descriptor_count == "1",
+          f"descriptors on the record directory: {reviewer_descriptor_count}; exit {result.returncode}; "
+          f"stderr={result.stderr[-2000:]!r}")
+
+    # A cell run directly, by no program holding the record's lock, holds the lock itself while its
+    # reviewer writes, so no shipment copies the record half-written.
+    report = repository / "cold-read-records" / "run-direct-lock" / "claude-defect-hunt-second-strongest-model.md"
+    report.parent.mkdir(parents=True)
+    lock_held_file = scratch / "direct-cell-record-directory-lock-held"
+    descriptor_count_file.unlink(missing_ok=True)
+    result = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one finding\n",
+               "dump_record_directory_lock_held": str(lock_held_file),
+               "dump_record_directory_descriptor_count": str(descriptor_count_file)}},
+        report,
+    )
+    lock_seen = lock_held_file.read_text(encoding="utf-8") if lock_held_file.exists() else "not written"
+    reviewer_descriptor_count = (descriptor_count_file.read_text(encoding="utf-8")
+                                 if descriptor_count_file.exists() else "not written")
+    check("a cell run directly holds its record's being-written lock while its reviewer writes",
+          lock_seen == "held" and reviewer_descriptor_count == "1" and result.returncode == 0,
+          f"lock {lock_seen}; descriptors {reviewer_descriptor_count}; exit {result.returncode}; "
+          f"stderr={result.stderr[-2000:]!r}")
+    check("a cell run directly leaves its record's lock free once it exits",
+          not shipper_module.record_directory_being_written_lock_is_held_by_any_process(report.parent))
+
+    # Two cells run directly on one record directory both hold its lock, so when the first exits
+    # while the second's reviewer still writes, the record stays held until the second exits too.
+    record_directory = repository / "cold-read-records" / "run-two-direct-cells"
+    record_directory.mkdir(parents=True)
+    first_running, first_may_exit = scratch / "first-direct-cell-running", scratch / "first-direct-cell-may-exit"
+    second_running, second_may_probe = scratch / "second-direct-cell-running", scratch / "second-direct-cell-may-probe"
+    lock_held_file = scratch / "second-direct-cell-record-directory-lock-held"
+    first_stderr = second_stderr = ""
+    first = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: first\n", "signal_file": str(first_running),
+               "wait_for_file": str(first_may_exit)}},
+        record_directory / "claude-defect-hunt-second-strongest-model.md", background=True)
+    second = None
+    try:
+        wait_for_path(first_running)
+        second = run_claude_cell(
+            repository, stubs,
+            {"*": {"report": "STUB REVIEW: second\n", "signal_file": str(second_running),
+                   "wait_for_file": str(second_may_probe),
+                   "dump_record_directory_lock_held": str(lock_held_file)}},
+            record_directory / "claude-defect-hunt-second-direct-run.md", background=True)
+        wait_for_path(second_running)
+        first_may_exit.write_text("go", encoding="utf-8")
+        _, first_stderr = first.communicate(timeout=120)
+        second_may_probe.write_text("go", encoding="utf-8")
+        _, second_stderr = second.communicate(timeout=120)
+    finally:
+        for process in (first, second):
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.communicate()
+    lock_seen = lock_held_file.read_text(encoding="utf-8") if lock_held_file.exists() else "not written"
+    check("a second cell run directly on one record keeps its lock held after the first exits",
+          lock_seen == "held" and first.returncode == 0 and second.returncode == 0,
+          f"lock {lock_seen}; exits {first.returncode}, {second.returncode}; "
+          f"stderr={first_stderr[-1000:]!r} {second_stderr[-1000:]!r}")
+    check("the record's lock is free once both cells run directly have exited",
+          not shipper_module.record_directory_being_written_lock_is_held_by_any_process(record_directory))
+
+    # A cell run while another process holds the record's lock without passing it on runs as usual:
+    # that process is a writer, which ships the record itself once it releases the lock.
+    report = repository / "cold-read-records" / "run-held-elsewhere" / "claude-defect-hunt-second-strongest-model.md"
+    report.parent.mkdir(parents=True)
+    shipper_module.record_directory_being_written_lock_take(report.parent)
+    try:
+        result = run_claude_cell(repository, stubs, {"*": {"report": "STUB REVIEW: one finding\n"}}, report)
+    finally:
+        shipper_module.record_directory_being_written_lock_release(report.parent)
+    check("a cell run while another process holds its record's lock writes its report and succeeds",
+          result.returncode == 0 and report.is_file(),
+          f"exit {result.returncode}; stderr={result.stderr[-2000:]!r}")
 
     # --- And it does not cry wolf ------------------------------------------
     # The tree is dirty and the reviewer touched nothing but its report. A
@@ -615,11 +767,11 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- Every failed attempt names its cause (nedschorus#413) ---------------
     # The classifier's fixtures are real lines (the fixture rule,
-    # nedschorus#18): the session limit is line 2 of
-    # nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-10-design-to-main-test-writing-agent-instructions/2026-09-10-design-to-main-test-writing-agent-instructions--claude-hunt-good.md.stderr.log
-    # and the Fable limit line 2 of
+    # nedschorus#18): the weekly limit is line 1 of
+    # nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2384-each-round-of-a-pull-request-runs-its-2026-11-02-2/claude-hunt-deep.md.attempt-1.stderr.log,
+    # from the grid launching the Claude cell on ned-box; the Fable limit is line 2 of
     # nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-11-SKILL-2/2026-09-11-SKILL-2--claude-hunt-floor.md.stderr.log,
-    # both from the grid launching the Claude cell on the Mac; the logged-out
+    # from the grid launching the Claude cell on the Mac; the logged-out
     # line is the 2026-09-18 capture on ned-box, Claude Code 2.1.272,
     # `CLAUDE_CONFIG_DIR=$(mktemp -d) claude -p "say hi"` from a scratch
     # directory, exit 1, that line on stdout; and the Codex logged-out line
@@ -697,7 +849,7 @@ with tempfile.TemporaryDirectory() as scratch:
         "cold_read_codex_cell_under_test", SYSTEM_DIRECTORY / "cold-read-codex-cell.py")
     codex_module = importlib.util.module_from_spec(codex_spec)
     codex_spec.loader.exec_module(codex_module)
-    SESSION_LIMIT_LINE = "You've hit your session limit · resets 8:50pm (America/Los_Angeles)"
+    WEEKLY_LIMIT_LINE = "You've hit your weekly limit · resets Nov 7, 3am (America/Los_Angeles)"
     FABLE_LIMIT_LINE = ("You've reached your Fable limit. Switch to another model, or manage "
                         "usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, "
                         "to continue.")
@@ -716,10 +868,13 @@ with tempfile.TemporaryDirectory() as scratch:
             recognised_texts=claude_module.recognised_failure_texts_for_model(model),
             start_error=start_error)
 
-    check("the session limit line is account-limit with the reset as its detail",
-          classify(stdout=PERMISSION_NOISE + SESSION_LIMIT_LINE + "\n")
-          == ("account-limit", "resets 8:50pm (America/Los_Angeles)"),
-          repr(classify(stdout=PERMISSION_NOISE + SESSION_LIMIT_LINE + "\n")))
+    check("the weekly limit line is account-limit, the limit and its reset as detail",
+          classify(stdout=PERMISSION_NOISE + WEEKLY_LIMIT_LINE + "\n")
+          == ("account-limit", "weekly limit · resets Nov 7, 3am (America/Los_Angeles)"),
+          repr(classify(stdout=PERMISSION_NOISE + WEEKLY_LIMIT_LINE + "\n")))
+    check("a line starting \"You've hit your \" whose next words do not end in limit is exit-N",
+          classify(stdout="You've hit your limitless quota · resets Nov 7\n")[0] == "exit-1",
+          repr(classify(stdout="You've hit your limitless quota · resets Nov 7\n")))
     check("the Fable limit line is model-limit for a Fable attempt, the family as detail",
           classify(stdout=PERMISSION_NOISE + FABLE_LIMIT_LINE + "\n") == ("model-limit", "Fable"),
           repr(classify(stdout=PERMISSION_NOISE + FABLE_LIMIT_LINE + "\n")))
@@ -730,8 +885,8 @@ with tempfile.TemporaryDirectory() as scratch:
           classify(stdout=LOGGED_OUT_LINE + "\n") == ("logged-out", LOGGED_OUT_LINE),
           repr(classify(stdout=LOGGED_OUT_LINE + "\n")))
     check("a limit text inside a line, not at its start, is not recognised",
-          classify(stdout=f"The document quotes: {SESSION_LIMIT_LINE}\n")[0] == "exit-1",
-          repr(classify(stdout=f"The document quotes: {SESSION_LIMIT_LINE}\n")))
+          classify(stdout=f"The document quotes: {WEEKLY_LIMIT_LINE}\n")[0] == "exit-1",
+          repr(classify(stdout=f"The document quotes: {WEEKLY_LIMIT_LINE}\n")))
     check("an agent-binary that could not be started is agent-binary-missing with the error",
           classify(exit_code=None, start_error="[Errno 2] No such file or directory: 'claude'")
           == ("agent-binary-missing", "[Errno 2] No such file or directory: 'claude'"))
@@ -753,8 +908,8 @@ with tempfile.TemporaryDirectory() as scratch:
           and classify(exit_code=-9) == ("exit--9", "no output"))
     check("a Codex attempt recognises no text, so the Claude limit line is exit-1 there",
           common_module.classify_failed_attempt(
-              stdout=SESSION_LIMIT_LINE + "\n", stderr="", exit_code=1, recognised_texts=[])
-          == ("exit-1", SESSION_LIMIT_LINE))
+              stdout=WEEKLY_LIMIT_LINE + "\n", stderr="", exit_code=1, recognised_texts=[])
+          == ("exit-1", WEEKLY_LIMIT_LINE))
 
     # The Codex logged-out line carries the tracing logger's timestamp, which
     # the classifier skips before matching by how the line starts; the
@@ -778,9 +933,9 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(classify_codex(
               stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} the doc says: {CODEX_LOGGED_OUT_TEXT}\n")))
     check("a timestamp then an unrecognised text falls through to exit-N, detail untouched",
-          classify_codex(stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} {SESSION_LIMIT_LINE}\n")
-          == ("exit-1", f"{CODEX_LOGGED_OUT_TIMESTAMP} {SESSION_LIMIT_LINE}"),
-          repr(classify_codex(stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} {SESSION_LIMIT_LINE}\n")))
+          classify_codex(stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} {WEEKLY_LIMIT_LINE}\n")
+          == ("exit-1", f"{CODEX_LOGGED_OUT_TIMESTAMP} {WEEKLY_LIMIT_LINE}"),
+          repr(classify_codex(stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} {WEEKLY_LIMIT_LINE}\n")))
     check("the Claude logged-out line still matches at column 0 with no timestamp",
           classify(stdout=LOGGED_OUT_LINE + "\n") == ("logged-out", LOGGED_OUT_LINE))
     check("the family name is the model id's second word, capitalised",
@@ -812,11 +967,11 @@ with tempfile.TemporaryDirectory() as scratch:
     report = repository / "cold-read-records" / "run-cause-b" / "codex-defect-hunt-second-strongest-model.md"
     result = run_codex_cell(
         repository, stubs,
-        {"*": {"exit": 1, "stdout": SESSION_LIMIT_LINE + "\n"}},
+        {"*": {"exit": 1, "stdout": WEEKLY_LIMIT_LINE + "\n"}},
         report,
     )
     check("a Codex cell printing the Claude limit text names exit-1, the line as detail",
-          f"cold-read-codex-cell: cause: exit-1 — {SESSION_LIMIT_LINE}" in result.stderr,
+          f"cold-read-codex-cell: cause: exit-1 — {WEEKLY_LIMIT_LINE}" in result.stderr,
           repr(result.stderr))
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)

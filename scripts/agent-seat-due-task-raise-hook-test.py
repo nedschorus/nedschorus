@@ -802,10 +802,14 @@ class IdleSeat(Seat):
     def minutes(self, name, text):
         (self.walk_directory / f"{name}-minutes.md").write_text(text)
 
-    def stop(self, session_id="idle-session"):
-        return self.run(stdin_text=json.dumps({
+    def stop(self, session_id="idle-session", background_tasks=()):
+        """background_tasks=None sends no list, as a claude that predates the list would."""
+        payload = {
             "session_id": session_id, "transcript_path": str(self.transcript),
-            "cwd": str(self.checkout), "hook_event_name": "Stop", "stop_hook_active": False}))
+            "cwd": str(self.checkout), "hook_event_name": "Stop", "stop_hook_active": False}
+        if background_tasks is not None:
+            payload["background_tasks"] = list(background_tasks)
+        return self.run(stdin_text=json.dumps(payload))
 
 
 seat = IdleSeat()
@@ -970,14 +974,28 @@ check("one GitHub budget for the whole run: each condition gh could not answer i
 
 
 seat = IdleSeat()
+check("next-action: silent while the background_tasks list holds a running subagent",
+      silent(seat.stop(background_tasks=[{"id": "a1", "type": "subagent",
+                                          "status": "running"}])))
+
+# The transcript shows a subagent launched and never finished; only the list counts.
+seat = IdleSeat()
 seat.append({"type": "user", "timestamp": "2026-11-02T00:00:01Z",
              "toolUseResult": {"status": "async_launched", "agentId": "a1"}})
-check("next-action: silent while a subagent runs", silent(seat.stop()))
+text = context_of(seat.stop()) or ""
+check("next-action: an empty background_tasks list gets the prompt, whatever the transcript "
+      "shows", text.startswith(NEXT_ACTION_FIRST_LINE), text)
+seat = IdleSeat()
+seat.append({"type": "user", "timestamp": "2026-11-02T00:00:01Z",
+             "toolUseResult": {"status": "async_launched", "agentId": "a1"}})
+text = context_of(seat.stop(background_tasks=None)) or ""
+check("next-action: a payload without the background_tasks list counts no work running and "
+      "gets the prompt", text.startswith(NEXT_ACTION_FIRST_LINE), text)
 
 seat = IdleSeat()
 with seat.transcript.open("a") as handle:
-    handle.write('{"toolUseResult": {"status": "async_launched", broken\n')
-result = seat.stop()
+    handle.write('{"toolUseResult": {"backgroundTaskId": "b1", broken\n')
+result = seat.stop(background_tasks=[{"id": "b1", "type": "shell", "status": "running"}])
 check("next-action: silent, with no fault, when the work in flight cannot be counted",
       silent(result) and not seat.state_path.exists(), result)
 

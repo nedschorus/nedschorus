@@ -416,7 +416,10 @@ RECONSIDERED_MARKER_NAME = ".ghi-issue-write-reconsidered"
 # What gh's stderr carries when the number names no issue, lowercased for
 # the comparison. Measured 2026-09-21; see `read_issue`.
 GH_NO_SUCH_ISSUE_STDERR_FRAGMENT = "could not resolve to an issue"
-SLUG_WORD_LIMIT = 8
+# A file name may be 255 bytes. The longest name built on a slug is the
+# log-store's `<number>-<slug>-proposed-improvements-or-changes-ghi-guide-agent-
+# <YYYY-MM-DD>-<n>.md`, whose other parts take up to 73 characters.
+GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT = 180
 GH_TIMEOUT_SECONDS = 120
 # Beyond the pre-push conflict check's own limit: the hook's other checks and
 # git sending the branch.
@@ -729,9 +732,68 @@ def refuse_heading_with_date(heading: str):
             f"matters, put it in the text below the heading.\n"
             "Then rerun the same command.", 64)
 
+
+def balanced_close(text: str, start: int, opening: str, closing: str) -> int:
+    """The index of the `closing` that balances the `opening` at `start`,
+    or -1 when the text ends first."""
+    depth = 0
+    for index in range(start, len(text)):
+        if text[index] == opening:
+            depth += 1
+        elif text[index] == closing:
+            depth -= 1
+            if depth == 0:
+                return index
+    return -1
+
+
+def markdown_links_reduced_to_their_text(text: str) -> str:
+    """Each Markdown link `[text](address)` replaced by its text, with
+    brackets inside the text and parentheses inside the address balanced, as
+    in "[the `[a-z]` parser](https://example.com/scope)". A bracket not
+    followed by a balanced `(...)` opens no link and stays."""
+    out = []
+    index = 0
+    while index < len(text):
+        label_end = (balanced_close(text, index, "[", "]")
+                     if text[index] == "[" else -1)
+        if (label_end != -1 and label_end + 1 < len(text)
+                and text[label_end + 1] == "("):
+            address_end = balanced_close(text, label_end + 1, "(", ")")
+            if address_end != -1:
+                out.append(markdown_links_reduced_to_their_text(
+                    text[index + 1:label_end]))
+                index = address_end + 1
+                continue
+        out.append(text[index])
+        index += 1
+    return "".join(out)
+
+
 def slug(title: str) -> str:
-    words = re.sub(r"[^a-z0-9]+", " ", title.lower()).split()
-    return "-".join(words[:SLUG_WORD_LIMIT]) or "issue"
+    """The title's words, lowercased and joined by hyphens, with every 's
+    at a word's end dropped, a contraction's as well as a possessive's, any
+    other apostrophe closed up and a Markdown link reduced to its text, so
+    "collector's" gives "collector", "Let's" gives "let", "don't" gives
+    "dont" and "[GHI 5](https://...)" gives "ghi-5". Every word is
+    kept up to GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT characters; a longer
+    slug is cut at the last hyphen before the limit.
+
+    The slug names a filing's branch and its file, so a change to this
+    function renames what a resumed `create` looks for: a filing stopped
+    after pushing its branch, or waiting on its pull request, is then not
+    found, and the rerun lands the file a second time under the new name.
+    `edit` is unaffected: it keeps the file's path and names its branch by
+    the file's content."""
+    text = markdown_links_reduced_to_their_text(title.lower())
+    text = re.sub(r"['\u2019]s\b", "", text)
+    text = re.sub(r"['\u2019]", "", text)
+    joined = "-".join(re.sub(r"[^a-z0-9]+", " ", text).split())
+    if len(joined) > GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT:
+        head = joined[:GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT + 1]
+        joined = (head.rsplit("-", 1)[0] if "-" in head
+                  else joined[:GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT])
+    return joined or "issue"
 
 
 def placeholder_body(key: str) -> str:

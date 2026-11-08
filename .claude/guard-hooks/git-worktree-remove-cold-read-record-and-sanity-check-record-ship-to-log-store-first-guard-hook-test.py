@@ -565,6 +565,122 @@ check("when the shell reader cannot run, the command is let through with the nex
       code == 0 and "permissionDecision" not in specific
       and hook.PARSER_UNAVAILABLE_NEXT_STEP_LINES in specific.get("additionalContext", ""), output)
 
+# Every shipper the hook loads can tell a record still being written: an AttributeError here would be
+# reported for every record as "could not check or ship it" and refuse every removal.
+for kind in hook.record_kinds():
+    check(f"the store logic for {kind[0]} can tell a record still being written",
+          callable(getattr(kind[2], "record_directory_being_written_lock_is_held_by_any_process", None)))
+
+# A record a running program is still writing, such as a cold-read-grid's, is never shipped by the hook:
+# the program rewrites files it has written, and ships the record itself when it finishes. Its lock is held
+# here by a second process through the shipper's own function, as the grid takes it.
+COLD_READ_RECORD_BEING_WRITTEN_LOCK_HOLDER_UNTIL_STDIN_CLOSES_PYTHON_SOURCE = """
+import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location("shipper", sys.argv[1])
+shipper = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(shipper)
+shipper.record_directory_being_written_lock_take(pathlib.Path(sys.argv[2]))
+print("held", flush=True)
+sys.stdin.read()
+"""
+checkout, worktree = checkout_with_worktree("beingwritten")
+being_written = worktree / "cold-read-records" / "beingwritten-doc-2026-11-03"
+other_worktree = checkout.parent / "beingwritten-other-worktree"
+git(checkout, "worktree", "add", "-q", "--detach", str(other_worktree))
+writer = subprocess.Popen(
+    [sys.executable, "-c", COLD_READ_RECORD_BEING_WRITTEN_LOCK_HOLDER_UNTIL_STDIN_CLOSES_PYTHON_SOURCE,
+     str(hook.REPOSITORY_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py"), str(being_written)],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+being_written_in_store = STORE / "cold-read-records" / being_written.name
+removes_worktree_refusal_start = ("Refused on purpose: this command removes a worktree in which a running "
+                                  "program, such as the cold-read-grid, is still writing a record.")
+unresolved_refusal_start = "Refused on purpose: this hook could not tell which worktree this command removes ("
+try:
+    check("the writer holds its record's being-written lock", writer.stdout.readline() == "held\n")
+    code, output = run_hook(payload_for(f"git worktree remove {other_worktree}", checkout))
+    check("removing another worktree is let through while a record is being written, and the record is not "
+          "shipped, while the other records are",
+          code == 0 and output is None and not being_written_in_store.exists()
+          and (STORE / "sanity-check-records" / "2026-11-03-beingwritten-doc" / "finding-dispositions.md").is_file(),
+          (code, output))
+    for label, command, cwd in (
+            ("by its absolute path", f"git worktree remove --force {worktree}", checkout),
+            ("by a path relative to the cwd", "git worktree remove ../beingwritten-worktree", checkout),
+            ("by the end of its path alone, as git allows", "git worktree remove beingwritten-worktree", checkout),
+            ("by a path relative to a -C directory", "git -C .. worktree remove ./beingwritten-worktree", checkout),
+            ("inside bash -c", f"bash -c 'git worktree remove {worktree}'", checkout),
+            ("after another command", f"ls && git worktree remove -f -- {worktree}", checkout)):
+        code, output = run_hook(payload_for(command, cwd))
+        reason = refusal(output) or ""
+        check(f"removing the worktree a record is being written in, named {label}, is refused, naming the record",
+              code == 0 and reason.startswith(removes_worktree_refusal_start)
+              and f"Record {being_written} (worktree {worktree})\n" in reason
+              and not being_written_in_store.exists(),
+              (code, output))
+    reason = refusal(run_hook(payload_for(f"git worktree remove {worktree}", checkout))[1]) or ""
+    for line in ("If the program writing a record above is yours, wait until it prints its `record:` line, then "
+                 "run your command again.",
+                 "If it is not yours, leave the worktree in place, stop, and "
+                 f"{hook.TELL_THE_USER_OR_DISPATCHING_AGENT} that `git worktree remove` is refused while a "
+                 "program writes a record in that worktree, quoting each Record line above word for word."):
+        check(f"the refusal carries the instruction {line[:50]!r}...", line in reason, reason)
+    for label, command, why in (
+            ("a variable", 'git worktree remove "$WORKTREE"', "holds a variable, a glob or a substitution"),
+            ("a -C holding a variable", "git -C $HOME worktree remove x", "holds a variable, a glob or a substitution"),
+            ("an option the hook does not read", "git worktree remove --frobnicate x", "is given the option --frobnicate"),
+            ("a relative path after cd", "cd .. && git worktree remove ./beingwritten-worktree",
+             "the command changes directory")):
+        code, output = run_hook(payload_for(command, checkout))
+        reason = refusal(output) or ""
+        check(f"a removal the hook cannot place, by {label}, is refused while a record is being written",
+              code == 0 and reason.startswith(unresolved_refusal_start) and why in reason
+              and f"Record {being_written} (worktree {worktree})\n" in reason
+              and "Run the removal again as `git worktree remove <path>`, with the worktree's path written out "
+                  "in full, as an absolute path with no variable, in a command that does not change directory."
+                  in reason,
+              (code, output))
+    code, output = run_hook(payload_for(f"cd .. && git worktree remove {other_worktree}", checkout))
+    check("an absolute path after cd still names its worktree, and another worktree's removal is let through",
+          code == 0 and output is None, (code, output))
+finally:
+    writer.communicate("")
+code, output = run_hook(payload_for(f"git worktree remove {worktree}", checkout))
+check("once its writer has exited, the record ships and the removal is let through",
+      code == 0 and output is None and (being_written_in_store / "fast-read.md").is_file(), (code, output))
+
+# Which worktree a removal names, read as git's find_worktree reads it.
+worktrees = [Path("/a/b/one"), Path("/a/c/one"), Path("/a/b/two")]
+check("a path suffix shared by two worktrees names neither by suffix",
+      hook.worktree_named_by_path_suffix("one", worktrees) is None
+      and hook.worktree_named_by_path_suffix("b/one", worktrees) == Path("/a/b/one"))
+check("a suffix must start at a directory boundary",
+      hook.worktree_named_by_path_suffix("wo", worktrees) is None)
+check("two paths given to one removal leave the hook unable to tell",
+      hook.worktrees_removed_or_unresolved_reason("git worktree remove /a/b/one /a/b/two", "/", worktrees)
+      == (None, "`worktree remove` is given 2 paths"))
+check("a removal naming no worktree removes none",
+      hook.worktrees_removed_or_unresolved_reason("git worktree remove /a/nowhere", "/", worktrees) == (set(), None))
+
+# A removal the shell or a wrapper resolves in another directory than the hook's cwd is unresolved, not let through.
+repository_worktrees = [Path("/r"), Path("/r/.claude/worktrees/A"), Path("/r/.claude/worktrees/B")]
+for label, command in (
+        ("a relative path in bash -c after cd", "cd .claude/worktrees && bash -c 'git worktree remove ./A'"),
+        ("a relative path climbing out in bash -c after cd", "cd docs && bash -c 'git worktree remove ../../writer'"),
+        ("env -C", "env -C /a git worktree remove writer"),
+        ("env -C with its directory attached", "env -C/a git worktree remove writer"),
+        ("env --chdir=", "env --chdir=/a git worktree remove writer"),
+        ("sudo -D", "sudo -D /a git worktree remove writer")):
+    removed, reason = hook.worktrees_removed_or_unresolved_reason(command, "/r", repository_worktrees)
+    check(f"{label} leaves the hook unable to tell which worktree is removed",
+          removed is None and reason is not None and "changes directory" in reason, (removed, reason))
+check("a bracket glob in the path leaves the hook unable to tell",
+      hook.worktrees_removed_or_unresolved_reason("git worktree remove /a/wri[t]er", "/", worktrees)
+      == (None, "the path /a/wri[t]er holds a variable, a glob or a substitution"))
+check("env without a directory option still resolves the path against the cwd",
+      hook.worktrees_removed_or_unresolved_reason("env -u X git worktree remove .claude/worktrees/A", "/r",
+                                                  repository_worktrees)
+      == ({Path("/r/.claude/worktrees/A")}, None))
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

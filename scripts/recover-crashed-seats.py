@@ -47,7 +47,7 @@ What it does, per seat:
      correct there — the supervisor's boot-ignition consumes it (that path
      landed with PR #106) — so this script hands over to the launcher
      rather than duplicating that logic. Unless that handoff asks to be
-     consulted before a relaunch (dont-restart): then nothing is launched,
+     consulted before a relaunch (ask-user-before-restart): then nothing is launched,
      and the seat is reported NOT RELAUNCHED, AT ITS OWN REQUEST, which
      counts as not recovered — unless an operator says yes to the
      leftover-shell question in 1a, which relaunches it plain (ruled
@@ -1230,7 +1230,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     if verdict == "seat-asked-to-be-consulted":
         counter, reason = detail
         if restart_at_the_operators_word:
-            # A plain launch preserves dont-restart for the supervisor’s own question, even when detached.
+            # A plain launch preserves ask-user-before-restart for the supervisor’s own question, even when detached.
             # Do not offer the --fresh-session-from-conversation-tail fallback: it would bypass that request.
             launch_exit_code = launch(name, seat_directory, handoff_directory, "")
             if launch_exit_code != 0:

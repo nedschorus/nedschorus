@@ -9,7 +9,8 @@
   },
   "permissions": {
     "allow": [
-      "Bash(gh pr merge *)"
+      "Bash(gh pr merge *)",
+      "Bash(python3 */.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py --approve *)"
     ]
   },
   "hooks": {
@@ -93,7 +94,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/walk-me-through/walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/walk-me-through/walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py",
             "timeout": 30
           },
           {
@@ -146,6 +147,11 @@
           },
           {
             "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/pkill-killall-and-process-name-pattern-kill-refusal-hook.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py",
             "timeout": 30
           },
@@ -157,6 +163,11 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/handoff-deferral-cold-read-full-run-launch-refusal-hook.py",
             "timeout": 30
           },
           {
@@ -189,16 +200,6 @@
         ]
       },
       {
-        "matcher": "Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/claude-code-agent-tool-subagent-scratch-folder-make-and-prompt-write-scratch-only-here-line-add-hook.py",
-            "timeout": 30
-          }
-        ]
-      },
-      {
         "matcher": "Artifact",
         "hooks": [
           {
@@ -210,16 +211,6 @@
       }
     ],
     "PostToolUse": [
-      {
-        "matcher": "Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/claude-code-agent-tool-subagent-scratch-folder-path-to-launching-agent-hook.py",
-            "timeout": 30
-          }
-        ]
-      },
       {
         "matcher": "Edit|Write",
         "hooks": [
@@ -294,7 +285,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
             "timeout": 30
           }
         ]
@@ -306,7 +297,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
             "timeout": 30
           }
         ]
