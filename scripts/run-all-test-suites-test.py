@@ -2950,6 +2950,63 @@ with tempfile.TemporaryDirectory() as scratch:
           deep.exists())
 
 with tempfile.TemporaryDirectory() as scratch:
+    temp = pathlib.Path(scratch)
+    prefix = module.SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX
+    left_by_killed_runner = temp / f"{prefix}ab_cd123"
+    still_in_use = temp / f"{prefix}xy_z9876"
+    not_mkdtemp_shaped = temp / f"{prefix}another-program"
+    for directory in (left_by_killed_runner, still_in_use, not_mkdtemp_shaped):
+        (directory / "made-by-the-suite").mkdir(parents=True)
+        (directory / "made-by-the-suite" / "file").write_text("x")
+    now = time.time() + module.FINISHED_RUN_LOG_RETENTION_SECONDS + 60
+    os.utime(still_in_use / "made-by-the-suite" / "file", (now, now))
+    removed, removal_failures = module.remove_old_suite_temporary_directories_left_by_killed_runners(
+        now=now, temp_dir=temp)
+    check("a per-suite TMPDIR a killed runner left is removed once unchanged for two days",
+          removed == [left_by_killed_runner] and not left_by_killed_runner.exists()
+          and removal_failures == [], (removed, removal_failures))
+    check("but not one a suite changed recently, nor one whose name mkdtemp did not make",
+          still_in_use.exists() and not_mkdtemp_shaped.exists())
+    # Root reads and removes a directory whatever its mode, so neither failure can be made.
+    if os.geteuid() != 0:
+        unreadable = temp / f"{prefix}unread01"
+        unremovable = temp / f"{prefix}unremov1"
+        (unreadable / "closed").mkdir(parents=True)
+        (unremovable / "locked").mkdir(parents=True)
+        (unremovable / "locked" / "file").write_text("x")
+        (unremovable / "locked").chmod(0o500)
+        (unreadable / "closed").chmod(0o000)
+        try:
+            removed, removal_failures = (
+                module.remove_old_suite_temporary_directories_left_by_killed_runners(
+                    now=now, temp_dir=temp))
+        finally:
+            (unreadable / "closed").chmod(0o700)
+            (unremovable / "locked").chmod(0o700)
+        check("a per-suite TMPDIR whose tree cannot be read is kept, not reported as removed",
+              unreadable.exists() and unreadable not in removed
+              and unreadable not in [directory for directory, _ in removal_failures],
+              (removed, removal_failures))
+        check("a per-suite TMPDIR that cannot be removed is reported with the reason",
+              [directory for directory, _ in removal_failures] == [unremovable]
+              and removal_failures[0][1], removal_failures)
+
+swept = []
+real_sweep = module.remove_old_suite_temporary_directories_left_by_killed_runners
+module.remove_old_suite_temporary_directories_left_by_killed_runners = (
+    lambda: swept.append("swept") or ([pathlib.Path("/tmp/rts-ab_cd123")], []))
+with tempfile.TemporaryDirectory() as scratch:
+    lines = module.clean_up_after_earlier_runs(module.DEFAULT_LOCK_FILE, "", platform="darwin")
+    check("a run with the default lock file sweeps killed runners' per-suite TMPDIRs on macOS too, "
+          "and names each one it removed",
+          swept == ["swept"] and any("/tmp/rts-ab_cd123" in line for line in lines), lines)
+    swept.clear()
+    module.clean_up_after_earlier_runs(pathlib.Path(scratch) / "own.lock", "", platform="darwin")
+    check("a run with a lock file of its own leaves the shared temp directory alone",
+          swept == [], swept)
+module.remove_old_suite_temporary_directories_left_by_killed_runners = real_sweep
+
+with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
     left = root / "logs" / "recorded-inputs" / "a-test.py.strace"
     left.mkdir(parents=True)
