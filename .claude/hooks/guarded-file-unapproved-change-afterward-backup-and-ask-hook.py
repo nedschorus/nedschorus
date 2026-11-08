@@ -531,7 +531,9 @@ def blobs_at_commit(checkout, commit, paths):
     for entry in output.split("\0"):
         header, _, name = entry.partition("\t")
         fields = header.split()
-        if len(fields) == 3 and fields[1] == "blob" and name in relative:
+        if (len(fields) == 3  # pragma: no mutate, git ls-tree prints three fields, or none after the last NUL
+                and fields[1] == "blob"  # pragma: no mutate, -r lists only blob and commit, and commit sorts after blob
+                and name in relative):
             blobs[relative[name]] = fields[2]
     return blobs
 
@@ -1179,7 +1181,8 @@ def run_hook(payload):
                 if head and changed:
                     at_base = {path for path, blob in
                                blobs_at_commit(checkout, head, list(changed)).items()
-                               if changed[path][2] == changed[path][3] == blob}
+                               if changed[path][2] == changed[path][3]  # pragma: no mutate, key and copy hash differ only for ~/.claude/settings.json, which the outside group, run first, always stores
+                               == blob}
             else:
                 for path, value in changed.items():
                     blob = first_run.get(path)
@@ -1209,7 +1212,9 @@ def run_hook(payload):
         else:
             on_main = set()
         plans.append([kind, state_path, state, files, changed, unsettled, approvals, quiet,
-                      new_position, stocking, set(state["files"]) != listed_before, held, on_main,
+                      new_position, stocking,
+                      set(state["files"]) != listed_before,  # pragma: no mutate, scan only removes paths, so != acts as <
+                      held, on_main,
                       repository, at_base, base_versions])
 
     stocking_machine = outside_stocking
