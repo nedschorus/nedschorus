@@ -1620,7 +1620,7 @@ with tempfile.TemporaryDirectory() as scratch:
     reported_walk_wt = worktree_holding_a_walk("reported-walk-wt")
     reported = run_clean_shipping_to(str(walk_store / "cold-read-records")).stdout
     check("the report names a done worktree's walk and says --remove ships it first",
-          f"--remove first ships its 1 record(s) to the log-store and keeps the worktree if one "
+          f"--remove first ships its 1 record(s) to the log-store and keeps the worktree if a record "
           f"does not ship; the records it ships: "
           f"docs/walk/{walk_name}.md" in reported, reported)
     check("the report ships no walk", not (walk_store / "walk").exists())
