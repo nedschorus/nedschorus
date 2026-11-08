@@ -187,17 +187,30 @@ if __name__ == "__main__":
           "'Agent seat' in b-glossary.md" in detail and "'cpc' in b-glossary.md" in detail,
           detail)
 
-    with tempfile.TemporaryDirectory() as scratch:
-        scratch_root = Path(scratch)
-        project_glossary = scratch_root / PROJECT_GLOSSARY_RELATIVE_PATH
-        project_glossary.parent.mkdir(parents=True)
-        project_glossary.write_text((REPO_ROOT / PROJECT_GLOSSARY_RELATIVE_PATH)
-                                    .read_text(encoding="utf-8"), encoding="utf-8")
-        _, scratch_missing, scratch_fault = listed_glossary_paths(scratch_root)
-        check("a listed glossary whose file is missing is reported, not dropped",
-              not scratch_fault and len(scratch_missing) == len(paths) - 1,
-              f"with no system glossary in the checkout, {scratch_missing} were reported "
-              f"missing, not the {len(paths) - 1} the project glossary lists"
-              + (f"; {scratch_fault}" if scratch_fault else ""))
+    real_page = (REPO_ROOT / PROJECT_GLOSSARY_RELATIVE_PATH).read_text(encoding="utf-8")
+    real_listing, _ = GLOSSARIES_LISTED.system_glossary_paragraph(real_page)
+    first_written = next((written for written, _ in
+                          GLOSSARIES_LISTED.glossary_paths_named_in(real_listing or "")
+                          if "/" in written), None)
+    # A link whose label and target are both paths writes one glossary twice.
+    linked_page = real_page if first_written is None else real_page.replace(
+        f"`{first_written}`", f"[{first_written}](../../{first_written})", 1)
+    for case, page in (("as written", real_page), ("with a glossary written as a link", linked_page)):
+        with tempfile.TemporaryDirectory() as scratch:
+            scratch_root = Path(scratch)
+            project_glossary = scratch_root / PROJECT_GLOSSARY_RELATIVE_PATH
+            project_glossary.parent.mkdir(parents=True)
+            project_glossary.write_text(page, encoding="utf-8")
+            _, scratch_missing, scratch_fault = listed_glossary_paths(scratch_root)
+            listing, _ = GLOSSARIES_LISTED.system_glossary_paragraph(page)
+            written_paths = set() if listing is None else {
+                written for written, _ in GLOSSARIES_LISTED.glossary_paths_named_in(listing)
+                if "/" in written}
+            check(f"a listed glossary whose file is missing is reported, not dropped ({case})",
+                  not scratch_fault and bool(written_paths)
+                  and set(scratch_missing) == written_paths,
+                  f"with no system glossary in the checkout, {scratch_missing} were reported "
+                  f"missing, not the paths the project glossary lists, {sorted(written_paths)}"
+                  + (f"; {scratch_fault}" if scratch_fault else ""))
 
     sys.exit(1 if failures else 0)
