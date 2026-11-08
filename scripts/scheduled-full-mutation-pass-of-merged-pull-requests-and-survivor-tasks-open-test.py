@@ -220,6 +220,78 @@ def job_failure_tasks(fixture):
     return [json.loads(path.read_text()) for path in sorted(directory.glob("*.json"))]
 
 
+def run_every_exit_but_0_6_7_9_opens_a_job_failure_task_cases():
+    # Exit 7 opens none, because the job cannot tell a task a handoff deleted after it was
+    # finished from a lost one.
+    opened_for_exit = {}
+
+    def ran(fixture, completed):
+        opened_for_exit.setdefault(completed.returncode, []).append(job_failure_tasks(fixture))
+
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        fixture.state.mkdir()
+        (fixture.state / job.STATE_FILE_NAME).write_text("{not json")
+        ran(fixture, fixture.run())
+
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                               author="alpha")
+        fixture.run({merge: {"json": verdict(survived=[survivor()])}})
+        ran(fixture, fixture.run({"recheck": {"no_verdicts": True, "exit": 2}}))
+
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        fixture.log_store.mkdir()
+        (fixture.log_store / job.RECORDS_DIRECTORY_NAME).write_text("a file, not a directory")
+        completed = fixture.run()
+        ran(fixture, completed)
+        tasks = job_failure_tasks(fixture)
+        check("a record that cannot be written opens one job failure task, giving the error and "
+              "where the record went instead, and says so on standard error",
+              completed.returncode == job.EXIT_RECORD_NOT_WRITTEN
+              and [task["subject"] for task in tasks] == [job.RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT]
+              and "FileExistsError" in tasks[0]["description"]
+              and job.JOB_LOG_FILE in tasks[0]["description"]
+              and f"JOB FAILURE TASK: opened task #{tasks[0]['id']}" in completed.stderr,
+              (completed.returncode, completed.stderr, tasks))
+        completed = fixture.run()
+        check("a second run whose record cannot be written opens no second task",
+              completed.returncode == job.EXIT_RECORD_NOT_WRITTEN
+              and len(job_failure_tasks(fixture)) == 1
+              and "already open, so none opened" in completed.stderr,
+              (completed.returncode, completed.stderr, job_failure_tasks(fixture)))
+
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.log_store.mkdir()
+        (fixture.log_store / job.RECORDS_DIRECTORY_NAME).write_text("a file, not a directory")
+        completed = fixture.run()
+        check("a record that cannot be written, whose task cannot be opened either, names both "
+              "failures on standard error and still exits 5",
+              completed.returncode == job.EXIT_RECORD_NOT_WRITTEN
+              and "was not written to" in completed.stderr
+              and "no job failure task could be opened" in completed.stderr
+              and "for the record not written" in completed.stderr,
+              (completed.returncode, completed.stderr))
+
+    exits = {value for name, value in vars(job).items() if name.startswith("EXIT_")
+             and isinstance(value, int)} - {job.EXIT_ALL_DONE, job.EXIT_ANOTHER_RUN_HOLDS_THE_LOCK,
+                                            job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR,
+                                            job.EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN}
+    check("every exit code other than 0, 6, 7 and 9 is reached by a case here, and each such "
+          "run opens a job failure task",
+          set(opened_for_exit) == exits
+          and all(tasks for runs in opened_for_exit.values() for tasks in runs),
+          (sorted(exits), opened_for_exit))
+
+
 def run_carry_on_and_job_failure_task_cases():
     # A merge past the limit with no mutant judged: carried on, not recorded as tested, and
     # one job failure task, not a second on the next run.
@@ -954,6 +1026,7 @@ def run_cases():
     with tempfile.TemporaryDirectory() as scratch:
         fixture = Fixture(scratch)
         alpha_list = fixture.seat("alpha")
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
         fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
         merge = fixture.commit("scripts/thing.py",
                                "def double(x):\n    return x + x\nVALUE = 1\n", author="alpha")
@@ -1320,6 +1393,7 @@ def run_cases():
         with tempfile.TemporaryDirectory() as scratch:
             fixture = Fixture(scratch)
             alpha_list = fixture.seat("alpha")
+            fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
             fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
             merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
                                    author="alpha")
@@ -1331,9 +1405,16 @@ def run_cases():
             completed = fixture.run({"recheck": {**plan_step, "verdicts": {
                 job.mutant_key(survivor()): "killed"}}, later: {"json": verdict()}}, *flags)
             record = fixture.records()[-1].read_text()
+            opened = [task for task in job_failure_tasks(fixture) if task["subject"]
+                      == job.SURVIVOR_TASKS_NOT_RECHECKED_TASK_SUBJECT]
             check(f"{case_name}: each of two tasks and the state are left as they were, the "
-                  f"record and standard error name both tasks, the merges are still tested, and "
-                  f"the run exits 8",
+                  f"record, standard error and one job failure task name both tasks, the merges "
+                  f"are still tested, and the run exits 8",
+                  len(opened) == 1
+                  and "task #1 on alpha's task list" in opened[0]["description"]
+                  and "task #2 on alpha's task list" in opened[0]["description"]
+                  and f"JOB FAILURE TASK: opened task #{opened[0]['id']}" in record
+                  and
                   completed.returncode
                   == job.EXIT_SURVIVOR_TASK_MUTANTS_NOT_JUDGED_TASK_LEFT_AS_IT_WAS
                   and (alpha_list / "1.json").read_text() == before
@@ -1486,6 +1567,8 @@ def run_cases():
               and "first run: no state file" in completed.stdout
               and "was not written to" in completed.stderr,
               f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    run_every_exit_but_0_6_7_9_opens_a_job_failure_task_cases()
 
     # A state file that cannot be opened at all.
     with tempfile.TemporaryDirectory() as scratch:
