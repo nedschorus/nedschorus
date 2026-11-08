@@ -81,6 +81,20 @@ UNKNOWN = "unknown"
 CLAUDE_CODE_SUBAGENT_WORKTREE_LOCK_REASON = re.compile(
     r"^claude agent agent-([0-9A-Za-z]+) \(pid (\d+) start (\d+)\)$")
 
+# Claude Code makes a subagent's worktree directly inside .claude/worktrees/ of the reference-checkout and
+# names its directory agent-a followed by 16 lowercase hex digits; other worktrees there, such as an
+# agent's own topic worktree or a restored-<name> one, are not a subagent's.
+CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY = Path(".claude") / "worktrees"
+CLAUDE_CODE_SUBAGENT_WORKTREE_DIRECTORY_NAME = re.compile(r"agent-a[0-9a-f]{16}")
+
+
+def claude_code_subagent_worktree_check(worktree, main_checkout):
+    """True when worktree is where, and named as, Claude Code makes a subagent's worktree."""
+    worktree = Path(worktree).resolve()
+    return (worktree.parent == (Path(main_checkout) / CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY).resolve()
+            and CLAUDE_CODE_SUBAGENT_WORKTREE_DIRECTORY_NAME.fullmatch(worktree.name) is not None)
+
+
 AGENT_SEAT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"

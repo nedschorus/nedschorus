@@ -1,31 +1,43 @@
 #!/usr/bin/env python3
-"""Give each existing worktree of this machine's clone that has no owner file one, once, so that
-scripts/clean-worktrees.py can judge it; run it once on each machine after the git post-checkout
-hook that writes the owner file of every new worktree has landed.
+"""Write an owner file, once, into each existing worktree of this machine's clone that lacks one,
+so that scripts/clean-worktrees.py can judge it; run it once on each machine after the git
+post-checkout hook scripts/git-client-side-hooks/post-checkout, which writes the owner file of
+every new worktree, has landed.
 
 Without --write it prints what it would do and changes nothing. With --write it writes the owner
 files, through scripts/worktree-owner-file-read-and-write.py, which never replaces one.
 
-WHICH WORKTREES. Every worktree of the clone with no owner file, apart from:
+WHICH WORKTREES. The owner file is worktree-owner.json, the record that
+scripts/worktree-owner-file-read-and-write.py describes. The agents root is ~/agents, or
+$NEDSCHORUS_AGENTS_ROOT on a machine whose launcher reads it, the Mac. The agent-seats are
+those whose agent-home is a directory directly under the agents root and that have a
+supervisor state file or a session-handoff file in ~/.claude/handoffs/, as
+scripts/recover-crashed-seats.py lists them.
 
-  - the reference-checkout, the agent-homes, <agents root>/<agent-seat>, and the merge-lane
-    review checkouts directly inside ~/.cache/merge-lane-review-worktrees, which the cleaner
-    judges by their pull request: skipped silently;
-  - a Claude Code subagent's worktree, directly inside .claude/worktrees/ of the reference-
-    checkout and named agent-a followed by 16 lowercase hex digits, Claude Code's name for it:
-    given none, and named on a line of its own. While Claude Code's lock is on it,
-    scripts/clean-worktrees.py --remove gives it one once the lock's claude process has ended.
-    Without the lock, the owner file would have to name the agent-session that dispatched the
-    subagent, as the owner key of that agent-session's ended `claude` process, and no record
-    kept on the machine holds that process's id and start, so this program cannot write it.
+Each worktree of the clone with no owner file is handled as follows:
 
-Each other worktree is given the agent-seat whose name begins the name of its directory directly
-under the agents root, the longest such name when several do, as prime-intellect for
-~/agents/prime-intellect-worktrees/<name> and reboot-test for ~/agents/reboot-test-d2m-wording.
-An agent-seat is a directory under the agents root holding handoff records, as
-scripts/recover-crashed-seats.py lists them. A worktree outside the agents root, or whose
-directory there no agent-seat's name begins, is given none and listed for the user to keep or
-delete; so is any other worktree inside .claude/worktrees/, such as restored-<name>.
+  - Skipped silently: the reference-checkout; each agent-home, <agents root>/<agent-seat>; and
+    each merge-lane review checkout directly inside ~/.cache/merge-lane-review-worktrees.
+    scripts/clean-worktrees.py removes a review checkout once its pull request has merged or
+    closed, so a review checkout needs no owner file.
+  - Given no owner file, and named on a line of its own: a Claude Code subagent's worktree,
+    directly inside .claude/worktrees/ of the reference-checkout and named agent-a followed by
+    16 lowercase hex digits, Claude Code's name for it. While the `git worktree lock` that
+    Claude Code puts on such a worktree is there, scripts/clean-worktrees.py --remove gives the
+    worktree an owner file once the lock's claude process has ended. Without the lock, the
+    owner file would have to name the agent-session that dispatched the subagent, by the owner
+    key of that agent-session's ended `claude` process, as
+    scripts/worktree-owner-file-read-and-write.py defines it, and no record kept on the
+    machine holds that process's id and start, so this program cannot write it.
+  - Given an owner file naming an agent-seat: a worktree that is, or lies anywhere beneath, a
+    directory directly under the agents root named either as an agent-seat or as an
+    agent-seat's name followed by a hyphen and more. When several agent-seats' names fit, the
+    owner is the agent-seat with the longest name. Examples: prime-intellect for
+    ~/agents/prime-intellect-worktrees/<name>, reboot-test for ~/agents/reboot-test-d2m-wording.
+  - Given no owner file, and listed for the user to keep or delete: a worktree outside the
+    agents root; one whose directory under the agents root no agent-seat's name fits as above;
+    and any other worktree inside the reference-checkout's .claude/worktrees/, such as
+    restored-<name>.
 
 A worktree whose owner file cannot be read, or cannot be written, is named on a FAILED line,
 and the program exits 1 after the others.
@@ -38,7 +50,6 @@ git could not list the worktrees.
 """
 
 import importlib.util
-import re
 import sys
 from pathlib import Path
 
@@ -56,8 +67,6 @@ cleaner = load_module("clean_worktrees", "scripts/clean-worktrees.py")
 owner_file = cleaner.owner_file
 recover_crashed_seats = owner_file.recover_crashed_seats_module()
 
-CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY = Path(".claude") / "worktrees"
-CLAUDE_CODE_SUBAGENT_WORKTREE_DIRECTORY_NAME = re.compile(r"agent-a[0-9a-f]{16}")
 
 
 def agent_seat_whose_name_begins(directory_name, agent_seats):
@@ -73,8 +82,7 @@ def backfill_action(worktree, main_checkout, agents_root, agent_seats, review_wo
     worktree = worktree.resolve()
     if worktree.parent == review_worktrees_directory.resolve():
         return "skip", None, "a merge-lane review checkout"
-    if (worktree.parent == (main_checkout / CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY).resolve()
-            and CLAUDE_CODE_SUBAGENT_WORKTREE_DIRECTORY_NAME.fullmatch(worktree.name)):
+    if owner_file.claude_code_subagent_worktree_check(worktree, main_checkout):
         return "subagent", None, "a Claude Code subagent's worktree"
     agents_root = agents_root.resolve()
     if worktree.parent == agents_root and worktree.name in agent_seats:
