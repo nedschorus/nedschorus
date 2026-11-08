@@ -8,8 +8,7 @@ a program so that no step depends on an agent remembering it:
 1. Reads the overview as --revision holds it (HEAD by default), and the commit
    its **Checked against:** line names.
 2. Makes a detached worktree at that commit, in a temporary directory, and puts
-   the overview's text at its path there, with the overview's
-   proposed-improvements-or-changes-file as --revision holds it, if it holds one.
+   the overview's text at its path there.
 3. Stage 1: runs that commit's scripts/md-drift-lint.py on the overview. A
    finding stops the program before any model runs.
 4. Stage 2: runs one fresh-agent, `claude -p` with hooks disabled and only
@@ -548,7 +547,6 @@ def check_overview_claims(arguments):
     proposals_path = architecture_overview_proposed_improvements_or_changes_file_path(overview_path)
     fix_later_for_regular_maintenance = bool(claims_in_proposed_improvements_or_changes_file(
         text_at_revision_or_empty(repository, "refs/remotes/origin/main", proposals_path)))
-    proposals_text_at_revision = text_at_revision_or_empty(repository, revision, proposals_path)
     report_directory = Path(arguments.report_directory)
     if not report_directory.parent.is_dir():
         raise ClaimCheckRefusal(
@@ -568,9 +566,6 @@ def check_overview_claims(arguments):
         try:
             (worktree / overview_path).parent.mkdir(parents=True, exist_ok=True)
             (worktree / overview_path).write_text(text, encoding="utf-8")
-            if proposals_text_at_revision:
-                (worktree / proposals_path).parent.mkdir(parents=True, exist_ok=True)
-                (worktree / proposals_path).write_text(proposals_text_at_revision, encoding="utf-8")
             try:
                 lint = subprocess.run([sys.executable, str(worktree / "scripts" / "md-drift-lint.py"),
                                        str(worktree / overview_path)], cwd=worktree, capture_output=True, text=True,

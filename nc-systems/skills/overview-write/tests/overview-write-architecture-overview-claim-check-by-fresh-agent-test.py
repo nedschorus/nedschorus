@@ -49,9 +49,7 @@ control = pathlib.Path(os.environ[{CONTROL_VARIABLE!r}])
 prompt = sys.stdin.read()
 with (control / "claude-calls.jsonl").open("a", encoding="utf-8") as log:
     log.write(json.dumps({{"argv": sys.argv[1:], "stdin": prompt, "cwd": os.getcwd(), "started": __import__("time").time(),
-                          "overview_there": pathlib.Path({OVERVIEW!r}).read_text(encoding="utf-8"),
-                          "proposals_there": pathlib.Path({PROPOSALS!r}).read_text(encoding="utf-8")
-                          if pathlib.Path({PROPOSALS!r}).exists() else None}}) + "\\n")
+                          "overview_there": pathlib.Path({OVERVIEW!r}).read_text(encoding="utf-8")}}) + "\\n")
 answer = json.loads((control / "claude.json").read_text(encoding="utf-8"))
 for assertion, recheck in answer.get("rechecks", {{}}).items():
     if f"The assertion: {{assertion}}\\n" in prompt:
@@ -414,7 +412,6 @@ def run_ranked_claim_cases(fixture, blob):
                                  "COUNTS supported=0 contradicted=0 unsupported=1\n")
     result = fixture.run()
     appended = (fixture.repository / PROPOSALS).read_text()
-    calls = fixture.claude_calls()
     check("when the file on origin/main holds no claim from the claim check, a follow-up pull request fixes the new "
           "claims, appended after the highest entry number",
           result.returncode == 0 and appended.startswith(entries_without_claims + "\n\n## E8 — possible problem:")
@@ -423,8 +420,6 @@ def run_ranked_claim_cases(fixture, blob):
               claim_check.NEXT_ACTION_WHEN_NO_MUST_FIX_CLAIM_REMAINS
               + claim_check.NEXT_ACTION_SUFFIX_WHEN_FIX_LATER_CLAIMS_WRITTEN_TO_PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE.format(
                   path=(fixture.repository / PROPOSALS).resolve()))), (appended, result.stdout))
-    check("the fresh-agent's worktree holds the file as the revision holds it, so the overview's pointer to it "
-          "resolves there", len(calls) == 1 and calls[0]["proposals_there"] == entries_without_claims, calls)
 
     fixture.git("update-ref", "refs/remotes/origin/main", fixture.commit("the file on main, with a claim-check entry"))
     fixture.answer(claude_stdout="VERDICT 1 unsupported fix-later: zeta claim\n"
