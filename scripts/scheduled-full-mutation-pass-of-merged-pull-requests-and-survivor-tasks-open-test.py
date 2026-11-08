@@ -160,7 +160,7 @@ class Fixture:
             (self.agents / name).mkdir(parents=True, exist_ok=True)
         return self.tasks / f"nedschorus-{name}-tasks"
 
-    def run(self, plan=None, *flags, timeout_seconds=None):
+    def run(self, plan=None, *flags, timeout_seconds=None, output=None):
         if plan is not None:
             self.plan_file.write_text(json.dumps(plan))
         command = [sys.executable, str(SCRIPT), "--clone", str(self.clone),
@@ -172,7 +172,9 @@ class Fixture:
                    "--mutation-testing-program", str(self.program)]
         if timeout_seconds is not None:
             command += ["--merge-timeout-seconds", str(timeout_seconds)]
-        return subprocess.run([*command, *flags], capture_output=True, text=True, check=False,
+        streams = ({"capture_output": True} if output is None
+                   else {"stdout": output, "stderr": subprocess.STDOUT})
+        return subprocess.run([*command, *flags], **streams, text=True, check=False,
                               env={**os.environ, PLAN_VARIABLE: str(self.plan_file)},
                               timeout=300)
 
@@ -259,7 +261,8 @@ def run_every_exit_but_0_6_7_9_opens_a_job_failure_task_cases():
               and [task["subject"] for task in tasks] == [job.RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT]
               and "FileExistsError" in tasks[0]["description"]
               and job.JOB_LOG_FILE in tasks[0]["description"]
-              and f"JOB FAILURE TASK: opened task #{tasks[0]['id']}" in completed.stderr,
+              and f"JOB FAILURE TASK: task #{tasks[0]['id']} on " in completed.stderr
+              and f"\"{job.RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT}\", opened." in completed.stderr,
               (completed.returncode, completed.stderr, tasks))
         task_file = (fixture.tasks / f"nedschorus-{job.JOB_FAILURE_TASK_AGENT_SEAT}-tasks"
                      / f"{tasks[0]['id']}.json")
@@ -270,7 +273,8 @@ def run_every_exit_but_0_6_7_9_opens_a_job_failure_task_cases():
               completed.returncode == job.EXIT_RECORD_NOT_WRITTEN
               and len(job_failure_tasks(fixture)) == 1
               and "FileExistsError" in job_failure_tasks(fixture)[0]["description"]
-              and "already open, so none opened" in completed.stderr,
+              and "was already open, so this run rewrote its description with this run's error."
+                  in completed.stderr,
               (completed.returncode, completed.stderr, job_failure_tasks(fixture)))
 
     with tempfile.TemporaryDirectory() as scratch:
@@ -287,8 +291,19 @@ def run_every_exit_but_0_6_7_9_opens_a_job_failure_task_cases():
                   in completed.stderr
               and f"the record's, in the line that begins \"{job.PROGRAM}: the record above "
                   "was not written\"" in completed.stderr
+              and f"To check your fix sooner, run on ned-box: {job.RUN_BY_HAND}"
+                  in completed.stderr
               and f"{job.PROGRAM}: the record above was not written" in completed.stderr,
               (completed.returncode, completed.stderr))
+        one_file = fixture.root / "job.log"
+        with one_file.open("w") as log:
+            fixture.run(output=log)
+        log_text = one_file.read_text()
+        record_at = log_text.find("wall-clock seconds:")
+        pointer_at = log_text.find(f"{job.PROGRAM}: the record above was not written")
+        check("with stdout and stderr in one file, as in the job log, the record comes before "
+              "the line that points above at it",
+              0 <= record_at < pointer_at, log_text)
 
     exits = {value for name, value in vars(job).items() if name.startswith("EXIT_")
              and isinstance(value, int)} - {job.EXIT_ALL_DONE, job.EXIT_ANOTHER_RUN_HOLDS_THE_LOCK,

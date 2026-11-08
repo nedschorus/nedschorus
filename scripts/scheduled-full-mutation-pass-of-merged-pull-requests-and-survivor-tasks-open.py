@@ -1000,6 +1000,9 @@ def parse_arguments(argv):
 
 
 def main(argv=None):
+    # The job log takes stdout and stderr in one file; block-buffered stdout would land there
+    # after stderr lines printed later, below the messages that point "above" at it.
+    sys.stdout.reconfigure(line_buffering=True)
     arguments = parse_arguments(argv)
     arguments.clone = arguments.clone.resolve()
     arguments.state_directory.mkdir(parents=True, exist_ok=True)
@@ -1225,19 +1228,22 @@ def main_under_lock(arguments):
                   f"{LOG_STORE_HOST}:{JOB_LOG_FILE}, shows that the record was not written.\n"
                   f"Fix what both errors name: the record's, in the line that begins "
                   f"\"{PROGRAM}: the record above was not written\", and the task's, in the "
-                  f"line that begins \"{PROGRAM}: the task that tells an agent\", such as the "
-                  f"task list directory "
+                  f"first line of this message, such as the task list directory "
                   f"{arguments.task_lists_directory / f'nedschorus-{JOB_FAILURE_TASK_AGENT_SEAT}-tasks'} "
                   f"not existing.\n"
                   f"No hand run is needed: the job's next scheduled run, the next night, "
                   f"writes its own record and, if that record cannot be written either, tries "
-                  f"again to open this task.", file=sys.stderr)
+                  f"again to open a task for it.\n"
+                  f"To check your fix sooner, run on ned-box: {RUN_BY_HAND}", file=sys.stderr)
         else:
-            print(f"{PROGRAM}: JOB FAILURE TASK: "
-                  f"{'opened' if opened else 'already open, so none opened:'} task #{task_id} on "
+            how = ("opened" if opened
+                   else "was already open, so this run rewrote its description with this run's "
+                        "error")
+            print(f"{PROGRAM}: JOB FAILURE TASK: task #{task_id} on "
                   f"{JOB_FAILURE_TASK_AGENT_SEAT}'s task list, "
-                  f"{RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT}. That task says what to do; this "
-                  f"line only records it.", file=sys.stderr)
+                  f"\"{RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT}\", {how}. "
+                  f"The agent-seat {JOB_FAILURE_TASK_AGENT_SEAT} acts on that task; no one needs to act on "
+                  f"this log line.", file=sys.stderr)
         return EXIT_RECORD_NOT_WRITTEN
     print(f"{PROGRAM}: record written to {record_citation}")
     if failure is not None or tasks_not_written:
