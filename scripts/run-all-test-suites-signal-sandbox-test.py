@@ -638,9 +638,18 @@ with tempfile.TemporaryDirectory() as scratch_name:
           killed.get("stopped by") == "the test's stop" and made is not None
           and not made.exists() and not made.parent.exists()
           and made.parent.parent == pathlib.Path(tempfile.gettempdir())
-          and made.parent.name.startswith("run-all-test-suites-suite-tmpdir-")
+          and made.parent.name.startswith(
+              runner.SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX)
           and killed["output_note"] is None,
           (killed, made))
+    # On the Mac, restart-live-seats-at-login-test.py binds a socket at
+    # <TMPDIR>/lstXXXXXXXX/tmux-501/fleet-anchor; with the Mac's 48-character temp directory the
+    # path stays under macOS's 104-byte limit only while the runner adds at most 13 characters.
+    check("the TMPDIR given to a suite outside an nc-test-sandbox is at most 13 characters longer "
+          "than the shared temp directory",
+          made is not None
+          and len(str(made.parent)) - len(str(pathlib.Path(tempfile.gettempdir()))) <= 13,
+          made)
 
     (scratch / "leaves-an-unremovable-directory-test.py").write_text(
         "import os, pathlib\n"
@@ -651,7 +660,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
     unremovable = runner.run_one_suite(scratch, sys.executable,
                                        "leaves-an-unremovable-directory-test.py", scratch)
     left = [path for path in pathlib.Path(tempfile.gettempdir()).glob(
-        "run-all-test-suites-suite-tmpdir-*") if (path / "locked").is_dir()]
+        f"{runner.SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX}*")
+        if (path / "locked").is_dir()]
     check("a TMPDIR the runner cannot remove is named, with the command that removes it, "
           "in the suite's output note",
           unremovable["exit"] == 0 and len(left) == 1

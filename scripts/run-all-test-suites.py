@@ -897,6 +897,9 @@ TEST_SUITE_ADMISSION_SLOT_FILE_PREFIX = "slot-"
 # The file keeps its earlier name because runners of different versions share the lock.
 SUITES_RUN_WITHOUT_ANY_SANDBOX_LOCK_FILE_NAME = "suites-run-outside-the-signal-sandbox.lock"
 TEST_SUITE_NICE_INCREMENT = 10
+# Short, because a suite binds AF_UNIX sockets under its TMPDIR and macOS caps a socket path at
+# 104 bytes; mkdtemp adds 8 characters to it.
+SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX = "rts-"
 MACHINE_READINGS_INTERVAL_SECONDS = 1
 MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME = "machine-cpu-and-memory-readings.tsv"
 TEST_SUITE_RESOURCE_USE_FILE_NAME = "test-suite-resource-use.tsv"
@@ -2969,7 +2972,8 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
     if not does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix):
         # Outside an nc-test-sandbox's private /tmp, a suite killed with SIGKILL leaves what it
         # made in the shared temp directory, so it gets a directory this function removes.
-        suite_temporary_directory = tempfile.mkdtemp(prefix=f"{PROGRAM}-suite-tmpdir-")
+        suite_temporary_directory = tempfile.mkdtemp(
+            prefix=SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX)
         environment["TMPDIR"] = suite_temporary_directory
     status_read = status_write = None
     if sandbox_prefix and note_suite_process is not None:
