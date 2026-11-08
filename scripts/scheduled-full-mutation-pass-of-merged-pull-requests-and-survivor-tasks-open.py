@@ -1225,11 +1225,13 @@ def main_under_lock(arguments):
         except OSError as task_error:
             print(f"{PROGRAM}: the task that tells an agent this run's record was not written "
                   f"could not be opened on {JOB_FAILURE_TASK_AGENT_SEAT}'s task list either "
-                  f"({type(task_error).__name__}: {task_error}), so only this log shows that "
-                  f"the record was not written.\n"
-                  f"Fix what both errors name, the record's above and the task's here, such as "
-                  f"a task list directory that does not exist. The next nightly run tries both "
-                  f"again.", file=sys.stderr)
+                  f"({type(task_error).__name__}: {task_error}), so only this job's log, "
+                  f"{LOG_STORE_HOST}:{JOB_LOG_FILE}, shows that the record was not written.\n"
+                  f"Fix what both errors name: the record's, in the line before this one, and "
+                  f"the task's, here, such as the task list directory "
+                  f"{arguments.task_lists_directory / f'nedschorus-{JOB_FAILURE_TASK_AGENT_SEAT}-tasks'} "
+                  f"not existing. The next nightly run writes its own record and, if that fails "
+                  f"again, tries again to open this task.", file=sys.stderr)
         else:
             print(f"{PROGRAM}: JOB FAILURE TASK: "
                   f"{'opened' if opened else 'already open, so none opened:'} task #{task_id} on "
