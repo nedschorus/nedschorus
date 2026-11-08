@@ -73,7 +73,7 @@ Each run that reaches step 6 writes one record to the log-store, at `nedlern@ned
 
 ### 3. The fixed-time run is the daily full test run of main
 
-`scripts/daily-full-test-run-of-main.py` already starts every day at 03:30 ned-box time, America/Los_Angeles, and runs every suite on main, the no-sandbox suites included. That covers point 4: the suites run every day at a fixed time, whether or not they ran in a quiet gap that day. So the design adds no second fixed-time job. The daily run can still end late on a busy ned-box, or test nothing on a day its fetch fails, as that day's record says. It leaves part 2's state file alone.
+`scripts/daily-full-test-run-of-main.py` already starts every day at 00:00 ned-box time, America/Los_Angeles, and runs every suite on main, the no-sandbox suites included. That covers point 4: the suites run every day at a fixed time, whether or not they ran in a quiet gap that day. So the design adds no second fixed-time job. The daily run can still end late on a busy ned-box, or test nothing on a day its fetch fails, as that day's record says. It leaves part 2's state file alone.
 
 ### 4. Where a failure goes
 
