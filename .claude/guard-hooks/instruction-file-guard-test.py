@@ -155,8 +155,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a subagent's memory refusal sends the edit and the question to the agent that "
           "dispatched it, and never to the user",
           "propose to the agent that dispatched you the exact edit" in result.stderr
-          and "tell the agent that dispatched you in one sentence what you meant to remember, "
-              "and ask that agent where to save it" in result.stderr
+          and "If you cannot tell where it belongs, tell the agent that dispatched you"
+              in result.stderr
+          and "one sentence what you meant to remember, and ask that agent where to save it"
+              in result.stderr
           and "If it matters only to this conversation, drop it." in result.stderr
           and "the user" not in result.stderr and " him " not in result.stderr, result.stderr)
 
