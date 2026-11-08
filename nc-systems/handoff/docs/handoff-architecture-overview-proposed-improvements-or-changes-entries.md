@@ -226,3 +226,25 @@ The claim check's evidence:
 > - The launchers' `git worktree add` (launch-claude-mac:253, launch-claude-ubuntu:308) writes no owner file. The module's docstring :25-26 describes the intended writer, but none exists.
 > - Files read: worktree-owner-file-read-and-write.py, uncommitted-work-snapshot-hook.py, clean-worktrees.py, both launchers.
 State: open
+
+## E23 — possible problem: an assertion of the overview is contradicted
+
+Claim: `<session>-handoff-asked` and `<session>-handoff-deferred` are written by handoff-context-threshold-hook.py and read by it and by scripts/agent-seat-due-task-raise-hook.py.
+Found by: the overview claim check of 2026-11-08 against commit d08dc058fd63a331f346678ce36f067e533aa856; its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/e4e0413d9567614cd111da020834e83fb6c826f1-2026-11-08T09-00-03-176432Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> - The list of readers is incomplete. scripts/agent-seat-idle-sweep-verdicts-print.py:531-533 also reads the deferred marker: "marker = paths.handoff_directory / f\"{session_id}{HANDOFF_DEFERRED_SUFFIX}\" ... put_off_at = datetime.fromtimestamp(marker.stat().st_mtime, timezone.utc)" (with HANDOFF_DEFERRED_SUFFIX = "-handoff-deferred" at line 82).
+> - The rest of the row is supported: the writers are at handoff-context-threshold-hook.py:565 and 585; the post-compaction hook deletes the first marker; the threshold hook deletes the second at lines 595-597.
+State: open
+
+## E24 — possible problem: an assertion of the overview is contradicted
+
+Claim: `<seat>-leftovers-prompt-listing-counts.json` is written and read by the handoff-supervisor at each launch, keeping only the entries listed that time.
+Found by: the overview claim check of 2026-11-08 against commit d08dc058fd63a331f346678ce36f067e533aa856; its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/e4e0413d9567614cd111da020834e83fb6c826f1-2026-11-08T09-00-03-176432Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> - nc-systems/handoff/handoff-supervisor.py:1626-1627 "if not leftovers: return prompt". The counts file is read and written only inside leftovers_with_prompt_listing_counts (lines 1606-1612), which is called only when something is listed (lines 1628-1629).
+> - So a launch that lists nothing neither reads nor writes the file, and earlier entries stay. "At each launch" and "keeping only the entries listed that time" are true only for launches that list leftovers.
+State: open
