@@ -13,6 +13,7 @@ import json
 import os
 import re
 import socket
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -91,6 +92,13 @@ MODEL_ID_NOT_IN_CONTEXT_WINDOW_TABLE_LINE = (
     "The model id {model} is not in the threshold hook's context-window table, so the share "
     "above assumes a {default_window_thousands}K window; tell the user, so the table can be updated."
 )
+
+BACKGROUND_TASKS_LIST_MISSING_SENTENCE = (
+    "Claude Code sent no background_tasks list, so the threshold-hook could not see running "
+    "subagents or background tasks, and this session-handoff stops any still running; tell the "
+    "user that claude {claude_version} may be too old to send that list."
+)
+CLAUDE_VERSION_TIMEOUT_SECONDS = 10
 
 # The approved ban on new work; the wait no longer counts work started after the deferral began.
 NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION = (
@@ -203,6 +211,21 @@ BACKGROUND_TASK_LAUNCH_KEY = "backgroundTaskId"
 # Completion notifications use these tags across several record types.
 TASK_NOTIFICATION_PATTERN = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
 TASK_NOTIFICATION_TASK_ID_PATTERN = re.compile(r"<task-id>([^<]+)</task-id>")
+
+
+def claude_version_or_why_unread() -> str:
+    """Return what `claude --version` prints, or a parenthesis saying why it could not be read."""
+    try:
+        completed = subprocess.run(["claude", "--version"], capture_output=True, text=True,
+                                   timeout=CLAUDE_VERSION_TIMEOUT_SECONDS, check=False)
+    except (OSError, subprocess.SubprocessError) as problem:
+        return f"(version unknown: running claude --version failed: {problem})"
+    version = completed.stdout.strip()
+    if completed.returncode != 0 or not version:
+        output = (completed.stdout + completed.stderr).strip()
+        return (f"(version unknown: claude --version exited {completed.returncode} "
+                f"with output {output!r})")
+    return version
 
 
 def hook_payload_from_stdin() -> dict:
@@ -657,6 +680,8 @@ def main(argv=None) -> int:
         return 0
 
     transcript_path = payload.get("transcript_path", "")
+    background_tasks = payload.get(BACKGROUND_TASKS_PAYLOAD_KEY)
+    background_tasks_list_is_missing = not isinstance(background_tasks, list)
     reading = context_used_tokens_window_and_model_from_transcript(transcript_path)
     if reading is None:
         return 0
@@ -675,16 +700,11 @@ def main(argv=None) -> int:
     # Reincarnation kills in-process work; defer below the ceiling so work can finish.
     if used < arguments.ceiling_used_percentage:
         # An incomplete scan is not an all-clear; defer only as far as the context ceiling.
-        background_tasks = payload.get(BACKGROUND_TASKS_PAYLOAD_KEY)
         try:
-            # A claude without the list, such as an older one, is read from the transcript instead.
-            if isinstance(background_tasks, list):
-                flight = work_in_flight_from_background_tasks(
-                    background_tasks, transcript_path,
-                    arguments.background_task_wait_minutes * 60)
-            else:
-                flight = work_in_flight(
-                    transcript_path, arguments.background_task_wait_minutes * 60)
+            flight = (WorkInFlight([], []) if background_tasks_list_is_missing
+                      else work_in_flight_from_background_tasks(
+                          background_tasks, transcript_path,
+                          arguments.background_task_wait_minutes * 60))
             count_is_known = True
         except TranscriptCouldNotBeFullyRead:
             flight = None
@@ -711,10 +731,11 @@ def main(argv=None) -> int:
     except OSError:
         pass
 
-    print(
-        HANDOFF_INSTRUCTION.format(share=share),
-        file=sys.stderr,
-    )
+    print(HANDOFF_INSTRUCTION.format(share=share), file=sys.stderr)
+    if background_tasks_list_is_missing:
+        print(BACKGROUND_TASKS_LIST_MISSING_SENTENCE.format(
+                  claude_version=claude_version_or_why_unread()),
+              file=sys.stderr)
     # The deferral's promise is kept; left in place, the marker would refire the
     # instruction below the threshold after every later compaction. It is moved, not
     # deleted, because the handoff writer still needs the deferral's start time.

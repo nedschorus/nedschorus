@@ -1910,19 +1910,23 @@ def run_threshold_hook_defer_then_fire_then_writer_case(workspace: Path):
         transcript.write_text("".join(json.dumps(record) + "\n" for record in records),
                               encoding="utf-8")
 
-    def run_hook():
+    def run_hook(running_shell_task_ids):
+        """running_shell_task_ids: the background_tasks list Claude Code would send."""
         environment = {key: value for key, value in os.environ.items()
                        if key != "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"}
         environment["HOME"] = str(home)
+        background_tasks = [{"id": task_id, "type": "shell", "status": "running"}
+                            for task_id in running_shell_task_ids]
         return subprocess.run(
             [sys.executable, str(THRESHOLD_HOOK_SCRIPT)],
-            input=json.dumps({"session_id": session_id, "transcript_path": str(transcript)}),
+            input=json.dumps({"session_id": session_id, "transcript_path": str(transcript),
+                              "background_tasks": background_tasks}),
             capture_output=True, text=True, check=False, env=environment)
 
     awaited = background_bash_launch_records("bawait0001", "Awaited test run", "python3 slow.py",
                                              stamp(10))
     write_transcript([*awaited, usage])
-    deferred = run_hook()
+    deferred = run_hook(["bawait0001"])
     check("the threshold hook defers while the awaited task runs",
           deferred.returncode == 2 and "handoff deferred" in deferred.stderr
           and writer.deferred_marker_files.handoff_deferred_marker_path(handoffs, session_id).exists(),
@@ -1932,7 +1936,7 @@ def run_threshold_hook_defer_then_fire_then_writer_case(workspace: Path):
                                           "python3 late.py", stamp(0))
     write_transcript([*awaited, *late, background_bash_completion_record("bawait0001", stamp(0)),
                       usage])
-    fired = run_hook()
+    fired = run_hook(["blatefire1"])
     check("the threshold hook fires once the awaited task has finished",
           fired.returncode == 2 and "Run the /handoff skill now" in fired.stderr
           and not writer.deferred_marker_files.handoff_deferred_marker_path(handoffs, session_id).exists(),
