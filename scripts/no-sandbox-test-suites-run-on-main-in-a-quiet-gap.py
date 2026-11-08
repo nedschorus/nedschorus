@@ -30,11 +30,12 @@ WHAT ONE RUN DOES, in order:
      when either fails, the run stops, recorded with commit null.
   4. Exits 0 when no run is due. A run is due when there is no last run, the
      last run was at another commit, the last run stopped, or it failed more
-     than RETRY_FAILED_RUN_AFTER_SECONDS ago. That name and the two in step 6
-     are constants below, in seconds.
-  5. Takes the no-sandbox suites' lock without waiting and releases it at once:
-     the file run-all-test-suites.py's SUITES_RUN_WITHOUT_ANY_SANDBOX_LOCK_FILE_NAME
-     names, in the admission directory, the --runner-lock-file path with
+     than RETRY_FAILED_RUN_AFTER_SECONDS (3600) ago. That constant and the two
+     in step 6 are in seconds, set with the program's other constants.
+  5. Takes the no-sandbox suites' lock without waiting and releases it at once.
+     That lock is the file named by run-all-test-suites.py's
+     SUITES_RUN_WITHOUT_ANY_SANDBOX_LOCK_FILE_NAME, inside the admission
+     directory, whose path is the --runner-lock-file path with
      .test-suite-admission added. When another run holds it, ned-box is not
      quiet, and this exits 0.
   6. Makes a detached worktree of that commit at
@@ -43,13 +44,14 @@ WHAT ONE RUN DOES, in order:
      worktree's runner once with --only-suites-named and the
      no-sandbox suites that worktree's runner lists, plus
      --only-suites-whose-recorded-inputs-changed-since <passing commit> when
-     there is one. The runner gets RUNNER_TIMEOUT_SECONDS; past it, its
-     process group gets SIGTERM, then SIGKILL after RUNNER_STOP_GRACE_SECONDS.
+     there is one. The runner gets RUNNER_TIMEOUT_SECONDS (3600); past it, its
+     process group gets SIGTERM, then SIGKILL after RUNNER_STOP_GRACE_SECONDS (60).
   7. Removes the worktree, writes the run's record to the log-store and the
      state file; a record that cannot be written stops the run. Runner exit 0
      is passed, and the commit becomes the passing commit; exit 1 is failed,
      with each suite the runner's FAIL lines name and its log copied beside the
-     record; anything else is stopped, with the reason.
+     record, and an empty failing_suites list when it prints no FAIL line;
+     anything else is stopped, with the reason.
 
 THE STATE FILE, a JSON object written whole to a temporary file renamed into
 place, with these keys:
@@ -82,9 +84,11 @@ adds it, because cron gives this program no user session bus.
 puts on its stderr: nothing when the state file is missing or the last run
 passed; for a failed run each failing suite, its log, the commit range and the
 pull requests merged in it, read from the clone's first-parent merge commits,
-or "range: none" when no run has passed yet; for a stopped run its reason and
-record; for an unreadable state file, that it cannot be read and why. After a
-follow-up was recorded, one line naming when. It always exits 0.
+or "range: none" when no run has passed yet; for a stopped run its reason, and
+its record when last_run.record is not null, so a run that stopped before
+step 6 gets no record line; for an unreadable state file, that it cannot be
+read and why. After a follow-up was recorded, one line naming when. It always
+exits 0.
 
 EXIT. 0 the run finished, whatever the suites did, or no run was due, or
 another run or a no-sandbox suite held its lock; 2 bad invocation or a refused
