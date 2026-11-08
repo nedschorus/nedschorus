@@ -106,7 +106,13 @@ NEAR_MISS_RECOVERY_PHRASE = cell_common.NEAR_MISS_RECOVERY_PHRASE
 
 # A review-length chat answer and a remark-length one, either side of the
 # launcher's 120-word threshold.
-LONG_CHAT_REVIEW = " ".join(f"word{index}" for index in range(150)) + "\n"
+# The headings a fast-clarify report must hold, which every stub report and chat answer here
+# carries after its own text, so a case fails or passes on what it plans, not on the heading check.
+FAST_CLARIFY_REQUIRED_HEADINGS_TEXT = "".join(
+    f"\n{heading}\n"
+    for heading in cell_common.COLD_READ_CELL_TO_REQUIRED_REPORT_SECTION_HEADINGS["fast-clarify"])
+LONG_CHAT_REVIEW = (" ".join(f"word{index}" for index in range(150)) + "\n"
+                    + FAST_CLARIFY_REQUIRED_HEADINGS_TEXT)
 SHORT_CHAT_REMARK = "I have written the report to the path you gave me.\n"
 
 # A stand-in for the `agy` CLI. It reads the model from --model and the
@@ -138,11 +144,12 @@ if "dump_prompt" in step:
     pathlib.Path(step["dump_prompt"]).write_text(prompt, encoding="utf-8")
 if "report" in step:
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(step["report"], encoding="utf-8")
+    report_path.write_text(step["report"] + FAST_CLARIFY_REQUIRED_HEADINGS_TEXT, encoding="utf-8")
 if "near_miss" in step:
     sibling = report_path.parent.parent / (report_path.parent.name[:-1] + "X")
     sibling.mkdir(parents=True, exist_ok=True)
-    (sibling / report_path.name).write_text(step["near_miss"], encoding="utf-8")
+    (sibling / report_path.name).write_text(step["near_miss"] + FAST_CLARIFY_REQUIRED_HEADINGS_TEXT,
+                                            encoding="utf-8")
 if "read_paths" in step:
     reads = {}
     for path in step["read_paths"]:
@@ -183,7 +190,7 @@ if "exit_leaving_child_writing_pid_to" in step:
     with open(step["exit_leaving_child_writing_pid_to"] + ".stub", "a", encoding="utf-8") as handle:
         handle.write("%d\\n" % os.getpid())
 sys.exit(step.get("exit", 0))
-"""
+""".replace("FAST_CLARIFY_REQUIRED_HEADINGS_TEXT", repr(FAST_CLARIFY_REQUIRED_HEADINGS_TEXT))
 
 failures = []
 

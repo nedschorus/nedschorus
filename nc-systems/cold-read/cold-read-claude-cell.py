@@ -72,8 +72,10 @@ TIER_TO_REASONING_EFFORT = {
     "fast": "low",
 }
 
-# Write is needed for the report; WebFetch lets the reviewer inspect linked pages.
-ALLOWED_TOOLS = "Read,Grep,Glob,Write,WebFetch"
+# Write and Edit are needed for the report: a reviewer that writes part of its report and then edits the rest in,
+# with Edit refused, stops with the report incomplete. Edit reaches no file Write cannot.
+# WebFetch lets the reviewer inspect linked pages.
+ALLOWED_TOOLS = "Read,Grep,Glob,Write,Edit,WebFetch"
 
 # --allowedTools adds to the user's own allow rules, which may allow some Bash commands; explicitly
 # deny both Bash and Monitor to remove shell access, including access to keychain credentials.

@@ -43,6 +43,16 @@ CELL_CHOICES = sorted(path.name[:-len("-prompt.md")] for path in PROMPTS_DIR.glo
 # The judge reads four files per case and needs its own prompt and fixed tier.
 TIER_CHOICES = ["deep", "second-strongest-model", "fast"]
 
+# A report lacking one of its cell's prompt-required headings is a run that stopped early, not a review that found nothing
+# under that heading. Each heading is matched as a whole line, so a heading quoted inside another section does not count.
+COLD_READ_CELL_TO_REQUIRED_REPORT_SECTION_HEADINGS = {
+    "fast-clarify": (
+        "## Question 1: What it says",
+        "## Question 2: Where you struggled",
+        "## Question 3: What it does not cover that it implies it should",
+    ),
+}
+
 # Draft prompts need free labels; labels become report filename tokens.
 PROMPT_FILE_CELL_LABEL_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
@@ -54,9 +64,11 @@ EXIT_BAD_INVOCATION = 64
 class CellRefusal(Exception):
     """A refusal carrying its remedy and exit code."""
 
-    def __init__(self, message: str, exit_code: int = EXIT_BAD_INVOCATION):
+    def __init__(self, message: str, exit_code: int = EXIT_BAD_INVOCATION, cause=None):
         super().__init__(message)
         self.exit_code = exit_code
+        # (cause class, detail) when the refusal knows its cause better than the classifier of its output would.
+        self.cause = cause
 
 
 # The keychain remains accessible because masking it logs the agent-binaries out.
@@ -380,6 +392,8 @@ AGENT_BINARY_WIDE_CAUSE_CLASSES = frozenset(
 USER_CLEARABLE_CAUSE_CLASSES = frozenset(
     {"logged-out", "agent-binary-missing", "account-limit", "model-limit"})
 CAUSE_DETAIL_MAX_CHARACTERS = 120
+# A report was written but lacks a heading its cell requires; "no-report" would say no report was written.
+REPORT_MISSING_REQUIRED_HEADING_CAUSE_CLASS = "report-missing-required-heading"
 # Drop per-attempt timestamps from details that the grid reports for an entire agent-binary.
 DETAIL_IS_REST_OF_LINE = "rest-of-line"
 DETAIL_IS_WHOLE_LINE = "whole-line"
@@ -580,8 +594,8 @@ def recover_near_miss_report(
     return False
 
 
-def verify_report(program: str, report: pathlib.Path) -> None:
-    """Reject absent or blank reports and remove blank stubs."""
+def verify_report(program: str, report: pathlib.Path, required_headings=()) -> None:
+    """Reject absent or blank reports, removing blank stubs, and reject a report missing a required heading."""
     # A stub must not be mistaken for a completed review by callers checking only existence.
     if not report.is_file():
         raise CellRefusal(
@@ -598,6 +612,21 @@ def verify_report(program: str, report: pathlib.Path) -> None:
             "The empty file has been removed so it cannot read as a clean "
             "review; treat this as failed and re-run.",
             exit_code=1,
+        )
+    report_lines = {line.rstrip() for line in report.read_text(encoding="utf-8").splitlines()}
+    missing = [heading for heading in required_headings if heading not in report_lines]
+    if missing:
+        raise CellRefusal(
+            f"{program}: the model wrote {report} without "
+            + "; ".join(f"the line `{heading}`" for heading in missing)
+            + ", which the prompt requires, so the report is incomplete. "
+            "A missing section is not a section with no findings; the "
+            "incomplete report is removed, so treat this run as failed and "
+            "re-run. The model's own words, printed above this line when it "
+            "gave any, may say why it stopped.",
+            exit_code=1,
+            cause=(REPORT_MISSING_REQUIRED_HEADING_CAUSE_CLASS,
+                   ("report written without " + "; ".join(missing))[:CAUSE_DETAIL_MAX_CHARACTERS]),
         )
 
 
@@ -740,9 +769,9 @@ def run_model_chain(
     baseline, cell_started_at: float, prompt_file_argument: str = "",
     recover_report_from_stdout=None, model_to_effort=None,
     recognised_failure_texts_for_model=None, child_environment=None,
-    per_model_run_timeout_seconds=None,
+    per_model_run_timeout_seconds=None, required_report_headings=(),
 ) -> int:
-    """Try models until one produces a report, then stamp the report."""
+    """Try models until one produces a report holding every required heading, then stamp the report."""
     # build_invocation must apply the same per-model effort mapping used by the stamp.
     failed_attempts: list[str] = []
     produced_by = ""
@@ -818,16 +847,17 @@ def run_model_chain(
             recover_report_from_runtime_stdout(
                 program, report, completed.stdout, recover_report_from_stdout)
         try:
-            verify_report(program, report)
+            verify_report(program, report, required_report_headings)
         except CellRefusal as refusal:
             # stdout may explain why a successful exit produced no report.
-            failed_attempts.append(f"{model}(no-report)")
+            cause = refusal.cause or classify_failed_attempt(
+                stdout=completed.stdout or "", stderr=completed.stderr or "",
+                exit_code=0, recognised_texts=recognised_texts)
+            failed_attempts.append(f"{model}({cause[0]})")
             if completed.stdout:
                 print(completed.stdout, file=sys.stderr)
             print(str(refusal), file=sys.stderr)
-            print(cause_line(program, *classify_failed_attempt(
-                stdout=completed.stdout or "", stderr=completed.stderr or "",
-                exit_code=0, recognised_texts=recognised_texts)), file=sys.stderr)
+            print(cause_line(program, *cause), file=sys.stderr)
             continue
         produced_by = model
         # Use only this attempt's stderr: stdout may quote token counts, and earlier attempts cost other models.
@@ -957,6 +987,8 @@ def run_cell(
             recognised_failure_texts_for_model=recognised_failure_texts_for_model,
             child_environment=child_environment,
             per_model_run_timeout_seconds=per_model_run_timeout_seconds,
+            required_report_headings=COLD_READ_CELL_TO_REQUIRED_REPORT_SECTION_HEADINGS.get(
+                args.cell, ()),
         )
         if exit_code == 0 and staging_directory is not None:
             exit_code = move_staged_report(program, reviewer_report, report)

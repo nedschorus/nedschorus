@@ -81,9 +81,12 @@ TELL_HIM_LAUNCHER_INSTRUCTION = ("Tell the user what the cell launcher's lines a
 # A sentence that appears in the fixture's Question 1 section only, and one
 # that appears in its Question 2 section only; checked against the fixture
 # below so a changed fixture cannot make the cases pass vacuously.
-QUESTION_1_ONLY_TEXT = "## Question 1: What it says"
-QUESTION_2_HEADING = "## Question 2: Where you struggled"
-QUESTION_3_HEADING = "## Question 3: What it does not cover that it implies it should"
+_cold_read_cell_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common", COLD_READ_DIRECTORY / "cold-read-cell-common.py")
+cold_read_cell_common = importlib.util.module_from_spec(_cold_read_cell_common_spec)
+_cold_read_cell_common_spec.loader.exec_module(cold_read_cell_common)
+QUESTION_1_ONLY_TEXT, QUESTION_2_HEADING, QUESTION_3_HEADING = (
+    cold_read_cell_common.COLD_READ_CELL_TO_REQUIRED_REPORT_SECTION_HEADINGS["fast-clarify"])
 COVERAGE_HEADING = "## Sentence coverage (added by cold-read-fast-read)"
 
 GOOD_INPUT = (
