@@ -888,16 +888,16 @@ def failing_suites_in_scratch_worktree(commit, command_for_checkout):
                          "suite: it printed\n" + "".join(f"  {line}\n" for line in unfinished)
                          + "Its output is above. Nothing was pushed.\n"
                          "Run this --check again once, not the suite runner by itself.\n"
-                         "If the runner again prints a line opening NOT RUN or 'run-all-test-suites: not run "
-                         "to the end', tell merge-lane-2 with SendMessage, quoting each such line, and do "
-                         "not push")
+                         "If the runner again prints a line opening 'NOT RUN' or 'run-all-test-suites: not "
+                         "run to the end', tell merge-lane-2 with SendMessage, quoting each such line, and do "
+                         "not push.")
     if status == test_suite_runner.EXIT_ALL_PASSED or (status == test_suite_runner.EXIT_SOME_FAILED and failing):
         return failing
     raise StepFailed(f"the suite runner, {shlex.join(command)}, run on {commit[:12]}, ended with "
                      f"{test_suite_runner.describe_exit(status)} and named no failing suite, so it stopped "
                      "before judging every suite; its output is above. Nothing was pushed.\n"
                      "Run the check again once. If the runner stops the same way, tell merge-lane-2 with "
-                     "SendMessage what it printed, and do not push")
+                     "SendMessage what it printed, and do not push.")
 
 
 def suites_the_round_broke_and_suites_failing_at_frozen_head_too(frozen_head, commit):
