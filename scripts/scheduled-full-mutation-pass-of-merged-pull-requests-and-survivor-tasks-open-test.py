@@ -283,8 +283,11 @@ def run_every_exit_but_0_6_7_9_opens_a_job_failure_task_cases():
               completed.returncode == job.EXIT_RECORD_NOT_WRITTEN
               and "was not written to" in completed.stderr
               and "this run's record was not written could not be opened on "
-                  f"{job.JOB_FAILURE_TASK_AGENT_SEAT}'s task list either (FileNotFoundError"
-                  in completed.stderr,
+                  f"{job.JOB_FAILURE_TASK_AGENT_SEAT}'s task list (FileNotFoundError"
+                  in completed.stderr
+              and f"the record's, in the line that begins \"{job.PROGRAM}: the record above "
+                  "was not written\"" in completed.stderr
+              and f"{job.PROGRAM}: the record above was not written" in completed.stderr,
               (completed.returncode, completed.stderr))
 
     exits = {value for name, value in vars(job).items() if name.startswith("EXIT_")
