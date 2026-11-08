@@ -129,6 +129,10 @@ def main() -> int:
         epsilon = fleet.seat_home("epsilon", own_commits=0, recorded=True)
         fleet.git(epsilon, "checkout", "--quiet", "--detach")
         fleet.commit(epsilon, "orphan.txt", "A commit on no branch")
+        theta = fleet.seat_home("theta", own_commits=1, recorded=True)
+        fleet.git(theta, "push", "--quiet", "origin", "HEAD:refs/heads/theta-closed-pull-request")
+        fleet.git(fleet.clone, "fetch", "--quiet", "origin")
+        fleet.git(fleet.origin, "update-ref", "-d", "refs/heads/theta-closed-pull-request")
         topic = fleet.agents_root / "alpha-topic-worktree"
         fleet.git(fleet.clone, "worktree", "add", "--quiet", "-b", "some-topic", str(topic),
                   "origin/main")
@@ -159,6 +163,10 @@ def main() -> int:
               and fleet.git(delta, "symbolic-ref", "--short", "HEAD") == "delta"
               and f"{delta}: left as it was, because saving its seat-branch failed" in report
               and "refusing delta" in report, report)
+        check("commits whose only remote branch was deleted on origin, its remote-tracking ref "
+              "left behind, are pushed under the saved-branch name",
+              f"theta-seat-branch-commits-saved-{TODAY}" in branches
+              and fleet.is_moved_and_marked(theta), report)
         check("a detached HEAD holding commits on no branch is left",
               not fleet.is_moved_and_marked(epsilon)
               and "commit(s) no branch holds" in report, report)
@@ -178,16 +186,17 @@ def main() -> int:
         check("a second run pushes no seat-branch twice",
               f"alpha-seat-branch-commits-saved-{TODAY}-2" not in branches_after
               and f"gamma-seat-branch-commits-saved-{TODAY}-3" not in branches_after
-              and "all already on a remote branch" in second.stdout, second.stdout)
+              and "all already on a branch on origin" in second.stdout, second.stdout)
         check("a second run, with nothing left in the way, moves every agent-home and exits 0",
               second.returncode == 0
               and all(fleet.is_moved_and_marked(home)
-                      for home in (alpha, beta, gamma, delta, epsilon)),
+                      for home in (alpha, beta, gamma, delta, epsilon, theta)),
               f"exit {second.returncode}: {second.stdout}{second.stderr}")
 
         empty_root = Path(temporary) / "no-agents"
         empty_root.mkdir()
-        none = subprocess.run([sys.executable, str(PROGRAM), "--agents-root", str(empty_root),
+        (empty_root / "plain-directory-not-a-checkout").mkdir()
+        none =subprocess.run([sys.executable, str(PROGRAM), "--agents-root", str(empty_root),
                                "--handoff-directory", str(fleet.handoffs)],
                               env=fleet.environment(), capture_output=True, text=True, timeout=60)
         check("an agents root with no agent-home is nothing to do",
@@ -197,10 +206,13 @@ def main() -> int:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
+    real_load_recover_crashed_seats = module.load_recover_crashed_seats
+
     def listing_fails():
         raise OSError("the seat list could not be read")
     module.load_recover_crashed_seats = listing_fails
     exit_status = module.main(["--agents-root", "/nonexistent"])
+    module.load_recover_crashed_seats = real_load_recover_crashed_seats
     check("when the agent-homes cannot be listed, the run moves nothing and exits 2",
           exit_status == 2, str(exit_status))
 
@@ -217,14 +229,28 @@ def main() -> int:
         module.subprocess.run = run_that_times_out
         try:
             moved, line = module.move_agent_home(zeta, today)
-            checkout_answer = module.is_checkout(zeta)
         finally:
             module.subprocess.run = real_run
         check("a git step that cannot run leaves the agent-home and says which step",
-              not moved and "saving its seat-branch failed: git fetch --quiet origin" in line
-              and "did not run" in line, line)
-        check("a directory git cannot be asked about is not taken for a checkout",
-              checkout_answer is False, str(checkout_answer))
+              not moved and "saving its seat-branch failed: git fetch --quiet --prune origin"
+              in line and "did not run" in line, line)
+
+        for failure_name, failure in (
+                ("times out", lambda command: subprocess.TimeoutExpired(command, 1)),
+                ("cannot start", lambda command: FileNotFoundError(2, "no git", "git"))):
+            def run_whose_checkout_question_fails(*arguments, **options):
+                if "--show-toplevel" in arguments[0]:
+                    raise failure(arguments[0])
+                return real_run(*arguments, **options)
+            module.subprocess.run = run_whose_checkout_question_fails
+            try:
+                exit_status = module.main(["--agents-root", str(fleet.agents_root),
+                                           "--handoff-directory", str(fleet.handoffs)])
+            finally:
+                module.subprocess.run = real_run
+            check(f"when git, asked whether a directory is a checkout, {failure_name}, the run "
+                  "moves nothing and exits 2",
+                  exit_status == 2 and not fleet.is_moved_and_marked(zeta), str(exit_status))
 
         real_git = module.git
 
@@ -237,10 +263,11 @@ def main() -> int:
             moved, line = module.move_agent_home(zeta, today)
         finally:
             module.git = real_git
-        check("a failed detach leaves the agent-home unmarked and says so",
-              not moved and "not moved and marked: git checkout failed in the test" in line
-              and not fleet.is_moved_and_marked(zeta), line)
+        check("a failed detach leaves the agent-home on its seat-branch and says so",
+              not moved and "not moved: git checkout failed in the test" in line
+              and fleet.git(zeta, "symbolic-ref", "--short", "HEAD") == "zeta", line)
 
+        eta = fleet.seat_home("eta", own_commits=0, recorded=False)
         real_output = module.output
 
         def output_naming_a_missing_git_directory(directory, *arguments, **options):
@@ -249,11 +276,20 @@ def main() -> int:
             return real_output(directory, *arguments, **options)
         module.output = output_naming_a_missing_git_directory
         try:
-            moved, line = module.move_agent_home(zeta, today)
+            moved, line = module.move_agent_home(eta, today)
         finally:
             module.output = real_output
-        check("a marker that cannot be written is reported, not counted as moved",
-              not moved and "not moved and marked:" in line and "No such file" in line, line)
+        check("a marker that cannot be written is reported, and the agent-home stays on its "
+              "seat-branch",
+              not moved and "not moved:" in line and "No such file" in line
+              and fleet.git(eta, "symbolic-ref", "--short", "HEAD") == "eta", line)
+
+        exit_status = module.main(["--agents-root", str(fleet.agents_root),
+                                   "--handoff-directory", str(fleet.handoffs)])
+        check("a rerun after a failed marker or detach finds each agent-home, even one with no "
+              "handoff record, and moves and marks it",
+              exit_status == 0 and fleet.is_moved_and_marked(eta)
+              and fleet.is_moved_and_marked(zeta), str(exit_status))
 
     print(f"\n{len(failures)} failure(s)" if failures else "\nall cases passed")
     return 1 if failures else 0

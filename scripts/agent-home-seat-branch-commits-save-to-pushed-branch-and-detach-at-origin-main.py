@@ -13,9 +13,9 @@ is how a seat-branch was made. The agents root and the handoff directory default
 scripts/recover-crashed-seats.py uses on this machine.
 
 For each agent-home, in order:
-  1. fetches origin;
+  1. fetches origin, pruning the remote-tracking refs of branches origin no longer has;
   2. when the local branch named for the agent-seat, its seat-branch, holds commits origin/main
-     lacks and some of them are on no remote branch, pushes its tip to origin as
+     lacks and some of them are on no branch on origin, pushes its tip to origin as
      <agent-seat>-seat-branch-commits-saved-<YYYY-MM-DD>, with -2, -3 and so on added when a
      local branch or a branch on origin already has that name. The push skips the clone's
      pre-push hook, whose conflict check would refuse a stale seat-branch: the pushed branch is
@@ -24,22 +24,24 @@ For each agent-home, in order:
      scripts/checkout-freshness-catch-up.py knows is in progress there,
      when `git status` lists any change, untracked files included, or when its HEAD is detached
      and holds commits no branch or remote branch holds;
-  4. otherwise runs `git checkout --detach origin/main` there, then writes the file
-     agent-home-marker into the agent-home's own git directory, which makes
-     scripts/git-client-side-hooks/pre-commit refuse commits in it.
+  4. otherwise writes the file agent-home-marker into the agent-home's own git directory, which
+     makes scripts/git-client-side-hooks/pre-commit refuse commits in it, then runs
+     `git checkout --detach origin/main` there. The detach comes last so that, when either
+     fails, the agent-home is still on the branch it was on, so a rerun finds it as this run
+     did and finishes.
 It deletes nothing: the seat-branch, any other branch the agent-home was on, and every untracked
 or ignored file stay. It prints one line per agent-home, and with it the branch a step 2 pushed,
 or a branch other than the seat-branch that the agent-home was on, holds commits origin/main
-lacks and no remote branch holds.
+lacks and no branch on origin holds.
 
 What it does not handle: an agent-home whose agent-session is running is moved under it, as the
 freshness hook moves a detached checkout; the agent-session's CLAUDE.md and skills may then be
-out of date until it reads them again. A seat-branch whose commits are all on a remote branch
-already is not pushed again, so running it twice pushes nothing new.
+out of date until it reads them again. A seat-branch whose commits are all on a branch on
+origin already is not pushed again, so running it twice pushes nothing new.
 
 How it fails: a git step that fails is printed with git's error and the agent-home is left as
-that step found it; a failed push leaves the agent-home unmoved. The other agent-homes are still
-handled. Exit status: 0 when every agent-home now rests detached at origin/main and is marked; 1
+that step found it, apart from a marker step 4 wrote before its detach failed; a failed push
+leaves the agent-home unmoved. The other agent-homes are still handled. Exit status: 0 when every agent-home now rests detached at origin/main and is marked; 1
 when any was left or a step failed; 2 when the agent-homes could not be listed.
 """
 
@@ -92,12 +94,8 @@ def current_branch(directory: Path) -> str:
 
 
 def is_checkout(directory: Path) -> bool:
-    try:
-        top = subprocess.run(["git", "-C", str(directory), "rev-parse", "--show-toplevel"],
-                             capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                             timeout=GIT_TIMEOUT_SECONDS)
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+    # rev-parse exits 128 outside a git checkout; git raises GitStepFailed when it cannot run.
+    top = git(directory, "rev-parse", "--show-toplevel", accepted=(0, 128))
     return top.returncode == 0 and Path(top.stdout.strip()).resolve() == directory.resolve()
 
 
@@ -122,22 +120,23 @@ def free_saved_branch_name(home: Path, seat: str, today: datetime.date) -> str:
     return name
 
 
-def commits_on_no_remote(home: Path, ref: str) -> int:
-    return len(output(home, "rev-list", ref, "--not", "--remotes").split())
+def commits_on_no_origin_branch(home: Path, ref: str) -> int:
+    # Only origin's remote-tracking refs are pruned by the fetch; another remote's may be stale.
+    return len(output(home, "rev-list", ref, "--not", "--remotes=origin").split())
 
 
 def save_seat_branch(home: Path, seat: str, today: datetime.date) -> str:
     """Push the seat-branch's tip when it holds commits origin/main lacks and some are on no
-    remote branch; return what was done, as part of the agent-home's line."""
+    branch on origin; return what was done, as part of the agent-home's line."""
     seat_ref = f"refs/heads/{seat}"
     if not ref_exists(home, seat_ref):
         return "no seat-branch"
     not_on_main = int(output(home, "rev-list", "--count", f"origin/main..{seat_ref}"))
     if not_on_main == 0:
         return f"seat-branch {seat} holds no commit origin/main lacks"
-    if commits_on_no_remote(home, seat_ref) == 0:
+    if commits_on_no_origin_branch(home, seat_ref) == 0:
         return (f"seat-branch {seat} holds {not_on_main} commit(s) origin/main lacks, all already "
-                "on a remote branch")
+                "on a branch on origin")
     saved = free_saved_branch_name(home, seat, today)
     git(home, "push", "--no-verify", "origin", f"{seat_ref}:refs/heads/{saved}")
     return (f"seat-branch {seat} holds {not_on_main} commit(s) origin/main lacks; its tip is "
@@ -166,19 +165,19 @@ def other_branch_note(home: Path, seat: str) -> str:
     branch = current_branch(home)
     if not branch or branch == seat:
         return ""
-    unpushed = commits_on_no_remote(home, f"refs/heads/{branch}")
+    unpushed = commits_on_no_origin_branch(home, f"refs/heads/{branch}")
     not_on_main = int(output(home, "rev-list", "--count", f"origin/main..refs/heads/{branch}"))
     if not (unpushed and not_on_main):
         return ""
     return (f"; it was on the branch {branch}, which is kept and holds {unpushed} commit(s) no "
-            "remote branch holds")
+            "branch on origin holds")
 
 
 def move_agent_home(home: Path, today: datetime.date):
     """Return (moved, line) for one agent-home."""
     seat = home.name
     try:
-        git(home, "fetch", "--quiet", "origin")
+        git(home, "fetch", "--quiet", "--prune", "origin")
         saved = save_seat_branch(home, seat, today)
     except GitStepFailed as error:
         return False, f"{home}: left as it was, because saving its seat-branch failed: {error}"
@@ -187,11 +186,11 @@ def move_agent_home(home: Path, today: datetime.date):
         if reasons:
             return False, f"{home}: left as it was, because {'; '.join(reasons)}; {saved}"
         note = other_branch_note(home, seat)
-        git(home, "checkout", "--quiet", "--detach", "origin/main")
         marker = Path(output(home, "rev-parse", "--absolute-git-dir")) / AGENT_HOME_MARKER_NAME
         marker.touch()
+        git(home, "checkout", "--quiet", "--detach", "origin/main")
     except (GitStepFailed, OSError) as error:
-        return False, f"{home}: not moved and marked: {error}; {saved}"
+        return False, f"{home}: not moved: {error}; {saved}"
     return True, f"{home}: now detached at origin/main and marked as an agent-home; {saved}{note}"
 
 
