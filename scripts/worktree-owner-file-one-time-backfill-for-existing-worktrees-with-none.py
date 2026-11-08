@@ -7,38 +7,39 @@ every new worktree, has landed.
 
 Without --write it prints what it would do and changes nothing. With --write it writes the owner
 files, through scripts/worktree-owner-file-read-and-write.py, which never replaces one. --repo
-PATH names the clone by any of its checkouts; without it, the program handles the clone it is in.
+PATH names the clone by any of its checkouts; without it, the program handles the clone that
+holds this program.
 
 WHICH WORKTREES. The owner file is worktree-owner.json, the record that
 scripts/worktree-owner-file-read-and-write.py describes. The agents root is ~/agents, or
-$NEDSCHORUS_AGENTS_ROOT on a machine whose launcher reads it, the Mac. The agent-seats are
-those whose agent-home is a directory directly under the agents root and that have a
-supervisor state file or a session-handoff file in ~/.claude/handoffs/, as
-scripts/recover-crashed-seats.py lists them.
+$NEDSCHORUS_AGENTS_ROOT when set on the Mac. The agent-seats are those whose agent-home is a
+directory directly under the agents root and that have a handoff-supervisor state file or a
+session-handoff file in ~/.claude/handoffs/, as scripts/recover-crashed-seats.py lists them.
 
 Each worktree of the clone with no owner file is handled as follows:
 
   - Skipped silently: the reference-checkout; each agent-home, <agents root>/<agent-seat>; and
     each merge-lane review checkout directly inside ~/.cache/merge-lane-review-worktrees.
-    scripts/clean-worktrees.py removes a review checkout once its pull request has merged or
+    scripts/clean-worktrees.py removes a review checkout after its pull request has merged or
     closed, so a review checkout needs no owner file.
-  - Given no owner file, and named on a line of its own: a Claude Code subagent's worktree,
-    directly inside .claude/worktrees/ of the reference-checkout and named agent-a followed by
-    16 lowercase hex digits, Claude Code's name for it. While the `git worktree lock` that
+  - Given no owner file, and named on a line of its own but not listed for the user to keep or
+    delete: a Claude Code subagent's worktree, directly inside .claude/worktrees/ of the
+    reference-checkout and named agent-a followed by 16 lowercase hex digits, Claude Code's name
+    for it. While the `git worktree lock` that
     Claude Code puts on such a worktree is there, scripts/clean-worktrees.py --remove gives the
     worktree an owner file once the lock's claude process has ended. Without the lock, the
     owner file would have to name the agent-session that dispatched the subagent, by the owner
     key of that agent-session's ended `claude` process, as
     scripts/worktree-owner-file-read-and-write.py defines it, and no record kept on the
     machine holds that process's id and start, so this program cannot write it.
-  - Given an owner file naming an agent-seat: a worktree, other than an agent-home, that is,
-    or lies anywhere beneath, a directory directly under the agents root named either as an agent-seat or as an
-    agent-seat's name followed by a hyphen and more. When several agent-seats' names fit, the
+  - Given an owner file naming an agent-seat: a worktree nested beneath an agent-home, or one
+    that is, or lies beneath, a directory directly under the agents root named as an agent-seat's
+    name followed by a hyphen and more. When several agent-seats' names fit, the
     owner is the agent-seat with the longest name. Examples: prime-intellect for
     ~/agents/prime-intellect-worktrees/<name>, reboot-test for ~/agents/reboot-test-d2m-wording.
-  - Given no owner file, and listed for the user to keep or delete: any other worktree outside
-    the agents root, such as restored-<name> inside the reference-checkout's .claude/worktrees/;
-    and one whose directory under the agents root no agent-seat's name fits as above.
+  - Given no owner file, and listed for the user to keep or delete: every worktree the bullets
+    above leave out, such as restored-<name> inside the reference-checkout's .claude/worktrees/,
+    or <agents root>/<name> when no agent-seat's name fits <name>.
 
 A worktree whose owner file cannot be read, or cannot be written, is named on a FAILED line,
 and the program exits 1 once it has handled every other worktree.
@@ -83,7 +84,7 @@ def backfill_action(worktree, main_checkout, agents_root, agent_seats, review_wo
     worktree = worktree.resolve()
     if worktree.parent == review_worktrees_directory.resolve():
         return "skip", None, "a merge-lane review checkout"
-    if owner_file.claude_code_subagent_worktree_check(worktree, main_checkout):
+    if owner_file.worktree_is_claude_code_subagent_worktree_by_location_and_directory_name(worktree, main_checkout):
         return "subagent", None, "a Claude Code subagent's worktree"
     agents_root = agents_root.resolve()
     if worktree.parent == agents_root and worktree.name in agent_seats:

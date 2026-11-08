@@ -343,10 +343,10 @@ with tempfile.TemporaryDirectory() as scratch:
     reference = scratch / "reference-checkout"
     check("a worktree named as Claude Code names a subagent's, directly inside .claude/worktrees/ "
           "of the reference-checkout, is a subagent's",
-          module.claude_code_subagent_worktree_check(
+          module.worktree_is_claude_code_subagent_worktree_by_location_and_directory_name(
               reference / ".claude" / "worktrees" / subagent_name, reference))
     check("a worktree with a subagent's name anywhere else is not a subagent's",
-          not module.claude_code_subagent_worktree_check(
+          not module.worktree_is_claude_code_subagent_worktree_by_location_and_directory_name(
               scratch / "agents" / "seat-a-worktrees" / subagent_name, reference))
     for arguments in ([], ["write"], ["write", "--agent-seat"], ["show", "extra"], ["--worktree"]):
         bad = run(*arguments)
