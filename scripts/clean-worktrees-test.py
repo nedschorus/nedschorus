@@ -2816,12 +2816,63 @@ with tempfile.TemporaryDirectory() as scratch:
     gitdir_file = Path(git(unreadable_first, "rev-parse", "--absolute-git-dir").strip()) / "gitdir"
     gitdir_file.chmod(0o000)
     try:
-        found = load_clean_worktrees_module().registration_directory_of(checkout, sought)
+        found = load_clean_worktrees_module().worktree_own_git_directory_find_even_with_its_dot_git_file_gone(checkout, sought)
     finally:
         gitdir_file.chmod(0o644)
     check("a registration whose gitdir file cannot be read is passed over, and the search goes on",
           found is not None and (found / "gitdir").read_text(encoding="utf-8").strip()
           == str((sought / ".git").resolve()), str(found))
+
+    relative = managed / "relative-gitdir-wt"
+    git(checkout, "worktree", "add", "-b", "relative-gitdir-wt-branch", str(relative), "origin/main")
+    relative_registration = Path(git(relative, "rev-parse", "--absolute-git-dir").strip())
+    (relative_registration / "gitdir").write_text(
+        os.path.relpath(relative / ".git", relative_registration) + "\n", encoding="utf-8")
+    module = load_clean_worktrees_module()
+    found_relative = module.worktree_own_git_directory_find_even_with_its_dot_git_file_gone(
+        checkout, relative)
+    check("a registration whose gitdir is relative, as --relative-paths writes it, is found",
+          found_relative == relative_registration, f"{found_relative} {relative_registration}")
+
+    undecodable = Path(git(checkout, "rev-parse", "--path-format=absolute",
+                           "--git-common-dir").strip()) / "worktrees" / "aa-undecodable-gitdir"
+    undecodable.mkdir()
+    (undecodable / "gitdir").write_bytes(b"/tmp/not-utf-8-\xff/.git\n")
+    try:
+        found_past_undecodable = module.worktree_own_git_directory_find_even_with_its_dot_git_file_gone(
+            checkout, sought)
+    finally:
+        shutil.rmtree(undecodable)
+    check("a registration whose gitdir is not valid UTF-8 is read, and the search goes on",
+          found_past_undecodable is not None
+          and (found_past_undecodable / "gitdir").read_text(encoding="utf-8").strip()
+          == str((sought / ".git").resolve()), str(found_past_undecodable))
+
+    held, _ = stopped_partway("stopped-partway-registration-held-wt")
+    held_registration = module.worktree_own_git_directory_find_even_with_its_dot_git_file_gone(
+        checkout, held)
+    (held_registration / "logs").mkdir(exist_ok=True)
+    (held_registration / "logs" / "HEAD").write_text("x\n", encoding="utf-8")
+    (held_registration / "logs").chmod(0o500)
+    try:
+        held_run = run_clean(checkout, "--remove")
+    finally:
+        (held_registration / "logs").chmod(0o755)
+    check("a finish that cannot delete all of the registration keeps its gitdir and marker",
+          held_run.returncode == 1 and (held_registration / "gitdir").exists()
+          and (held_registration / module.REMOVAL_STARTED_MARKER_FILE_NAME).exists(),
+          held_run.stdout + held_run.stderr)
+    held_log = scratch / "held-removals-log.txt"
+    held_environment = dict(os.environ)
+    held_environment[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(held_log)
+    held_again = subprocess.run(
+        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), "--remove"],
+        capture_output=True, text=True, check=False, env=held_environment)
+    held_logged = held_log.read_text(encoding="utf-8") if held_log.is_file() else ""
+    check("the next --remove then finishes it, logging the files deleted with it as unknown",
+          held_again.returncode == 0 and not held_registration.exists() and not registered(held)
+          and f"path={held}\t" in held_logged and "discarded-files=unknown" in held_logged,
+          held_again.stdout + held_again.stderr + held_logged)
 
     unwritable = managed / "removal-file-unwritable-wt"
     git(checkout, "worktree", "add", "-b", "removal-file-unwritable-wt-branch", str(unwritable),
