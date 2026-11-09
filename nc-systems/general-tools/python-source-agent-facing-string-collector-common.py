@@ -30,8 +30,8 @@ field in the chain keeps its conversion and format spec, {x!r} and {x:.1f}, as a
 the field of a standalone f-string. Each entry also holds literal_text, the message's literal
 pieces alone, outside every {...} placeholder, and text_as_agent_reads_it_with_placeholder_stand_ins,
 the message as the agent reads it, with each placeholder shown as <its source>, or as its value
-when it names a module-level string constant, as
-render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins says. A message held in a local name
+when it names a module-level string constant whose one assignment is the only binding of that
+name anywhere in the file, as module_string_values_bound_nowhere_else says. A message held in a local name
 is found when its own function's body binds the name, with =, an annotation or +=, to a
 non-empty string literal, an f-string, a + chain holding a string literal, a string literal
 % something or a string literal's join, or to a conditional expression with such a branch,
@@ -208,17 +208,17 @@ def placeholder_sources_of_string_node(node):
 
 
 def render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(node, module_string_values,
-                                                                       shadowing_names=frozenset(),
                                                                        names_being_expanded=frozenset()):
     """The text as the agent reads it, without Python's quotes and prefixes: a name that
-    module_level_string_values maps, given as a + operand or an f-string field with no conversion or
-    format spec, becomes its value, rendered the same way in module scope; any other f-string field or
-    non-literal operand becomes <its source>, as {path} becomes <path>. So does a name in
-    shadowing_names, the names the node's own scope binds, which hide the module's, and a name whose
-    value is being expanded already, so that A = f"more {A}" or two constants naming each other end."""
+    module_string_values maps, given as a + operand or an f-string field with no conversion or format
+    spec, becomes its value, rendered the same way; any other f-string field or non-literal operand
+    becomes <its source>, as {path} becomes <path>. So does a name whose value is being expanded
+    already, so that two constants naming each other end. module_string_values holds only the names
+    module_string_values_bound_nowhere_else keeps, so where a name stands in the file never changes
+    what it renders as."""
     def render(part):
         return render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(
-            part, module_string_values, shadowing_names, names_being_expanded)
+            part, module_string_values, names_being_expanded)
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     if isinstance(node, ast.JoinedStr):
@@ -229,10 +229,9 @@ def render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(node, m
                        for part in node.values)
     if is_addition_chain_holding_string_literal(node):
         return "".join(render(operand) for operand in addition_chain_operands(node))
-    if (isinstance(node, ast.Name) and node.id in module_string_values
-            and node.id not in shadowing_names and node.id not in names_being_expanded):
+    if isinstance(node, ast.Name) and node.id in module_string_values and node.id not in names_being_expanded:
         return render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(
-            module_string_values[node.id], module_string_values, frozenset(), names_being_expanded | {node.id})
+            module_string_values[node.id], module_string_values, names_being_expanded | {node.id})
     return "<" + ast.unparse(node) + ">"
 
 
@@ -355,7 +354,8 @@ def helper_printers_in_tree(tree):
 class AgentFacingStringNodeCollector(ast.NodeVisitor):
     """Record string spans and their call, assignment or exception context."""
 
-    def __init__(self, module_string_values=None, helper_printers=None, text_returning_function_names=()):
+    def __init__(self, module_string_values=None, helper_printers=None, text_returning_function_names=(),
+                 rendered_module_string_values=None):
         self.enclosing_names = []
         # The parameter names of each enclosing function, which hide a helper printer's name.
         self.enclosing_parameter_names = []
@@ -371,18 +371,11 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
         # Functions whose returned strings are collected, and those this pass found called for text.
         self.text_returning_function_names = set(text_returning_function_names)
         self.function_names_called_for_text = set()
-        # For each enclosing scope, (the names it binds, whether it is a class body): a name bound
-        # there hides the module constant of that name, a class body's only in its own body.
-        self.enclosing_scope_bound_names = []
+        # The module constants a placeholder renders as their values.
+        self.rendered_module_string_values = (self.module_string_values if rendered_module_string_values is None
+                                              else rendered_module_string_values)
 
-    def names_shadowing_module_constants(self):
-        names = set()
-        for index, (bound, is_class_body) in enumerate(self.enclosing_scope_bound_names):
-            if not is_class_body or index == len(self.enclosing_scope_bound_names) - 1:
-                names |= bound
-        return frozenset(names)
-
-    def collect_expression_strings(self, expression, label, kind="message", in_module_scope=False):
+    def collect_expression_strings(self, expression, label, kind="message"):
         if expression is None:
             return
         if self.enclosing_names:
@@ -398,8 +391,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
                      "placeholder_value_source_code_texts": placeholder_sources_of_string_node(node),
                      "text_as_agent_reads_it_with_placeholder_stand_ins":
                          render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(
-                             node, self.module_string_values,
-                             frozenset() if in_module_scope else self.names_shadowing_module_constants()),
+                             node, self.rendered_module_string_values),
                      "kind": kind}
             self.entries_by_node_context[identity] = entry
             self.string_entries.append(entry)
@@ -430,8 +422,6 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
             bindings = local_string_bindings(node)
         self.enclosing_parameter_names.append(parameters)
         self.enclosing_local_string_bindings.append(bindings)
-        self.enclosing_scope_bound_names.append(
-            ((parameters | scope_assigned_names(node)) - scope_global_names(node), isinstance(node, ast.ClassDef)))
         if isinstance(node, ast.Lambda):
             self.visit(node.body)
         else:
@@ -439,7 +429,6 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
             for statement in node.body:
                 self.visit(statement)
             self.enclosing_names.pop()
-        self.enclosing_scope_bound_names.pop()
         self.enclosing_local_string_bindings.pop()
         self.enclosing_parameter_names.pop()
 
@@ -449,13 +438,11 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
     visit_ClassDef = visit_scope
 
     def visit_with_names_hidden(self, nodes, hidden):
-        """Visit the nodes with the innermost function's locals of the hidden names not followed, and
-        the module constants of those names not rendered as their values."""
+        """Visit the nodes with the innermost function's locals of the hidden names not followed."""
         if not hidden:
             for node in nodes:
                 self.visit(node)
             return
-        self.enclosing_scope_bound_names.append((set(hidden), False))
         has_locals = bool(self.enclosing_local_string_bindings)
         if has_locals:
             outer = self.enclosing_local_string_bindings[-1]
@@ -465,7 +452,6 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
             self.visit(node)
         if has_locals:
             self.enclosing_local_string_bindings.pop()
-        self.enclosing_scope_bound_names.pop()
 
     def visit_comprehension_parts(self, node):
         """Visit a comprehension's parts, each with the targets bound before it hiding the
@@ -547,8 +533,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
                     self.collect_local_strings_reaching(value)
                 # A name ending in a suffix is collected already, at its assignment.
                 elif value.id in self.module_string_values and not variable_name_has_agent_facing_message_suffix(value.id):
-                    self.collect_expression_strings(self.module_string_values[value.id],
-                                                    f"{label} {value.id} =", in_module_scope=True)
+                    self.collect_expression_strings(self.module_string_values[value.id], f"{label} {value.id} =")
             elif string_building_parts(value):
                 self.collect_sink_expression(value, label)
         self.generic_visit(node)
@@ -730,11 +715,6 @@ def scope_assigned_names(scope):
     return (names | {definition.name for definition in scope_direct_definitions(scope)}) - nonlocal_names
 
 
-def scope_global_names(scope):
-    """The names a function's, lambda's or class's own body declares global."""
-    return {name for node in nodes_in_own_scope(scope) if isinstance(node, ast.Global) for name in node.names}
-
-
 def scope_body_nodes(scope):
     """A function's or class's body statements, or a lambda's body expression, as a list."""
     return [scope.body] if isinstance(scope, ast.Lambda) else list(scope.body)
@@ -801,6 +781,45 @@ def module_level_string_values(tree):
             if len(values) == 1 and values[0] is not None and is_string_expression(values[0])}
 
 
+def names_bound_anywhere_in_the_file(tree):
+    """Each name, with how many times the file binds it: assignment and every other store, including a
+    loop's, a comprehension's and a := target; deletion; a parameter of any function or lambda; an
+    import; except ... as; a match capture; a function or class definition's name; a type parameter;
+    and a global or nonlocal declaration, which counts as a binding of its own."""
+    counts = {}
+    def count(name):
+        counts[name] = counts.get(name, 0) + 1
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            count(node.id)
+        elif isinstance(node, ast.arg):
+            count(node.arg)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                count(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
+            count(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            count(node.rest)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            count(node.name)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for name in node.names:
+                count(name)
+        elif isinstance(node, (ast.TypeVar, ast.ParamSpec, ast.TypeVarTuple)):
+            count(node.name)
+    return counts
+
+
+def module_string_values_bound_nowhere_else(tree, module_string_values):
+    """The module constants whose one module-level assignment is the only binding of their name
+    anywhere in the file, so a placeholder naming one means that constant wherever it stands. A
+    name a function also binds, takes as a parameter, declares global or loops over keeps its
+    <source> stand-in, which may hide a value Python would use, but never shows a wrong one."""
+    counts = names_bound_anywhere_in_the_file(tree)
+    return {name: value for name, value in module_string_values.items() if counts.get(name) == 1}
+
+
 def agent_facing_string_nodes_in_source(source):
     """Each entry holds line and end_line, counted from 1, label, text, literal_text,
     placeholder_value_source_code_texts, text_as_agent_reads_it_with_placeholder_stand_ins and kind,
@@ -813,12 +832,14 @@ def agent_facing_string_nodes_in_source(source):
     except (SyntaxError, ValueError):
         return []
     module_string_values = module_level_string_values(tree)
+    rendered_module_string_values = module_string_values_bound_nowhere_else(tree, module_string_values)
     helper_printers = helper_printers_in_tree(tree)
     # A pass can find a function called for text only after visiting its definition, and a
     # followed function's return can name another, so passes repeat until none is new.
     followed = set()
     while True:
-        collector = AgentFacingStringNodeCollector(module_string_values, helper_printers, followed)
+        collector = AgentFacingStringNodeCollector(module_string_values, helper_printers, followed,
+                                                   rendered_module_string_values)
         if ("__doc__" in source and tree.body and isinstance(tree.body[0], ast.Expr)
                 and isinstance(tree.body[0].value, ast.Constant)
                 and isinstance(tree.body[0].value.value, str)):
