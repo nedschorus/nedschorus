@@ -103,7 +103,8 @@ CLAUDE_VERSION_TIMEOUT_SECONDS = 10
 # The approved ban on new work; the wait no longer counts work started after the deferral began.
 NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION = (
     "Carry on, open approval-walks included. Short work, which usually ends "
-    "within 10 minutes, such as a cold-read-fast-read, may start; if that work "
+    "within 10 minutes, such as a cold-read-fast-read, may start; run such work "
+    "as a subagent or a background Bash task. If that work "
     "is still running when the session-handoff ends this agent-session, the work "
     "stops, and the handoff writer script, "
     "nc-systems/handoff/handoff-write-and-check-supervisor.py, names each "
@@ -591,7 +592,7 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
                             f"Claude Code's background_tasks list and the text {BACKGROUND_TASK_LAUNCH_KEY!r} or "
                             f"{MONITOR_LAUNCH_KEY!r}, which mark the record of a background task's launch, "
                             f"but is not valid JSON ({problem}); the transcript is not read past this line; "
-                            f"its first 200 characters: {line[:200].rstrip()!r}"
+                            f"the line's first 200 characters: {line[:200].rstrip()!r}"
                         ) from problem
                     tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
                     if not isinstance(tool_result, dict):
