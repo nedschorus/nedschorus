@@ -731,7 +731,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
         "work-snapshot refs/work-snapshots/k/c: kept — owner process gone, written 1 day(s) "
         "ago, never listed in a first prompt (agent-seat seat, worktree /w/c, files: M y.txt)",
         "work-snapshot refs/work-snapshots/k/d: deleted, a duplicate of the newer leftover "
-        "refs/work-snapshots/k/f, same HEAD and same content "
+        "refs/work-snapshots/k/f, same changed files and same content "
         "(agent-seat seat, worktree /w/d, files: M z.txt)",
         "work-snapshot refs/work-snapshots/k/e: could not be checked, kept: git status failed",
     ])
