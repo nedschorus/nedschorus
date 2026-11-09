@@ -332,8 +332,8 @@ def monitor_start_record(task_id="b45e25tz2"):
 
 
 def task_stop_record(task_id, task_type):
-    """A TaskStop tool_result that stopped the task, read off cold-read-improvement's session
-    21792509 of 2026-11-09 and trimmed to the fields the hook reads."""
+    """A TaskStop tool_result that stopped the task, read off a real transcript and trimmed to
+    the fields the hook reads."""
     message = f"Successfully stopped task: {task_id} (Sweep this seat's leftover worktrees)"
     result = {"message": message, "task_id": task_id, "task_type": task_type,
               "command": "Sweep this seat's leftover worktrees"}
@@ -831,9 +831,8 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a background task TaskStop stopped is not in flight; one it did not stop still is",
           flight.background_task_ids == ["bzzzzzzzz"], str(flight.background_task_ids))
 
-    # Real case, cold-read-improvement 2026-11-09: subagent a01d1eb8fe1e4066a reported interim
-    # while its own background command bdrdn0t9k ran; the parent then stopped the subagent with
-    # TaskStop, which killed bdrdn0t9k with it, and the idle sweep still reported it running.
+    # A subagent reports interim while its own background command runs; the parent then stops the
+    # subagent with TaskStop, which kills the command with it and writes no notification for either.
     subagent_stopped = transcript_of(workspace, "subagent-stopped.jsonl", [
         usage_record(100_000, cache_read=450_000),
         subagent_spawn_record("a01d1eb8fe1e4066a"),

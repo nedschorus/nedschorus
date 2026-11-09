@@ -1003,7 +1003,7 @@ def run_spawned_subagent_roster_cases(workspace: Path):
           str(final_roster))
 
     # Claude Code writes no task-notification for a subagent TaskStop stops, only this result,
-    # trimmed from cold-read-improvement's session 21792509 of 2026-11-09.
+    # trimmed from a real transcript.
     stop_result = {"message": f"Successfully stopped task: {incident_agent} (Fix-round for PR 2045)",
                    "task_id": incident_agent, "task_type": "local_agent",
                    "command": "Fix-round for PR 2045"}
