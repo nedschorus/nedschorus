@@ -1813,23 +1813,30 @@ def run_revert_check_cases(scratch):
           repr(scenario.fake_check_calls()))
 
 
-ORIGIN_MAIN_HAND_CHECK_COMMAND = (
-    "git fetch --quiet origin main && git worktree add --quiet --detach "
-    "/tmp/origin-main-copy-for-hand-check-%(head)s origin/main && python3 "
-    "/tmp/origin-main-copy-for-hand-check-%(head)s/scripts/%(check)s --head %(head)s; "
-    "git worktree remove --force /tmp/origin-main-copy-for-hand-check-%(head)s")
-FAKE_ORIGIN_MAIN_CHECK = ("import sys\n"
-                          "print(\"VERDICT: CLEAN -- origin/main's copy of %s ran with \" "
-                          "+ \" \".join(sys.argv[1:]))\n")
+REFERENCE_CHECKOUT_CHECK_RUN_BY_HAND_COMMAND = "python3 %s --head %s"
+NO_COPY_TO_RUN_TEXT = ("no copy of the check exists to run, as your worktree has no scripts/%s "
+                       "and %s is missing too; tell the user")
+# Gives no verdict when the hook runs it, which passes --branch, and a clean one when run by hand.
+FAKE_CHECK_NO_VERDICT_FROM_HOOK_CLEAN_BY_HAND = FAKE_CHECK_PREAMBLE + """\
+if "--branch" in sys.argv:
+    sys.exit(7)
+print("VERDICT: CLEAN -- " + os.path.abspath(__file__) + " ran with " + " ".join(sys.argv[1:]))
+"""
 FAKE_CHECK_ALWAYS_CLEAN = FAKE_CHECK_PREAMBLE + """\
 print("VERDICT: CLEAN -- fake clean verdict for the test.")
 sys.exit(0)
 """
+HAND_CONFLICT_CHECK_LINE = "Check clean by hand from your worktree: %s"
+HAND_REVERT_CHECK_AFTER_CONFLICT_CHECK_LINE = (
+    "Once the hand conflict check of clean prints VERDICT: CLEAN, check it for files set back "
+    "too: %s")
+HAND_REVERT_CHECK_LINE = "Check it by hand from your worktree: %s"
 
 
 def run_worktree_without_checks_cases(scratch):
-    """A worktree with no copy of a check is given a hand-check command that runs origin/main's
-    copy, and that command runs it; a command naming the worktree's scripts/ could not."""
+    """A worktree with no copy of a check is given a hand-check command that runs the reference
+    checkout's copy, and that command runs it; when the reference checkout's copy is the missing
+    file too, the line says no copy exists, instead of naming a command that cannot run."""
     runner = load_runner_module()
     empty_directory = scratch / "no-scripts-directory"
     empty_directory.mkdir()
@@ -1841,64 +1848,72 @@ def run_worktree_without_checks_cases(scratch):
     finally:
         os.chdir(started_in)
     check("an error before the pushed refs were read, in a worktree with no checks: both "
-          "commands run origin/main's copies",
-          ORIGIN_MAIN_HAND_CHECK_COMMAND % {"check": REAL_CONFLICT_CHECK.name,
-                                            "head": "<branch name>"}
+          "commands run the reference checkout's copies",
+          REFERENCE_CHECKOUT_CHECK_RUN_BY_HAND_COMMAND % (REAL_CONFLICT_CHECK, "<branch name>")
           in stream.getvalue()
-          and ORIGIN_MAIN_HAND_CHECK_COMMAND % {"check": REAL_REVERT_CHECK.name,
-                                                "head": "<branch name>"}
+          and REFERENCE_CHECKOUT_CHECK_RUN_BY_HAND_COMMAND % (REAL_REVERT_CHECK, "<branch name>")
           in stream.getvalue()
           and "python3 scripts/" not in stream.getvalue(), stream.getvalue())
 
-    for case_number, (label, layout_arguments, missing_text, hand_lines) in enumerate((
-            ("the conflict check is missing", {"conflict_check": None},
-             "branch-conflict-check.py is missing",
-             ("Check clean by hand from your worktree: %s",
-              "Once the hand conflict check of clean prints VERDICT: CLEAN, check it for files "
-              "set back too: %s")),
-            ("the Python file is missing", {"include_runner": False},
-             "git-client-side-hooks-pre-push-conflict-check.py is missing",
-             ("Check clean by hand from your worktree: %s",
-              "Once the hand conflict check of clean prints VERDICT: CLEAN, check it for files "
-              "set back too: %s")),
-            ("the revert check is missing",
+    def hook_copy_command(hooks, check_file, short):
+        return REFERENCE_CHECKOUT_CHECK_RUN_BY_HAND_COMMAND % (hooks.parent / check_file.name,
+                                                               short)
+
+    def no_copy_text(hooks, check_file, short):
+        return NO_COPY_TO_RUN_TEXT % (check_file.name, hooks.parent / check_file.name)
+
+    fake = FAKE_CHECK_NO_VERDICT_FROM_HOOK_CLEAN_BY_HAND
+    for case_number, (label, layout_arguments, expected_lines) in enumerate((
+            ("the Python file is missing",
+             {"include_runner": False, "conflict_check": fake, "revert_check": fake},
+             ((HAND_CONFLICT_CHECK_LINE, REAL_CONFLICT_CHECK, hook_copy_command),
+              (HAND_REVERT_CHECK_AFTER_CONFLICT_CHECK_LINE, REAL_REVERT_CHECK,
+               hook_copy_command))),
+            ("the conflict check gives no verdict",
+             {"conflict_check": fake, "revert_check": fake},
+             ((HAND_CONFLICT_CHECK_LINE, REAL_CONFLICT_CHECK, hook_copy_command),
+              (HAND_REVERT_CHECK_AFTER_CONFLICT_CHECK_LINE, REAL_REVERT_CHECK,
+               hook_copy_command))),
+            ("the reference checkout's conflict check is missing",
+             {"conflict_check": None, "revert_check": fake},
+             ((HAND_CONFLICT_CHECK_LINE, REAL_CONFLICT_CHECK, no_copy_text),
+              (HAND_REVERT_CHECK_AFTER_CONFLICT_CHECK_LINE, REAL_REVERT_CHECK,
+               hook_copy_command))),
+            ("the Python file and the reference checkout's checks are missing",
+             {"include_runner": False, "conflict_check": None, "revert_check": None},
+             ((HAND_CONFLICT_CHECK_LINE, REAL_CONFLICT_CHECK, no_copy_text),
+              (HAND_REVERT_CHECK_AFTER_CONFLICT_CHECK_LINE, REAL_REVERT_CHECK, no_copy_text))),
+            ("the reference checkout's revert check is missing",
              {"conflict_check": FAKE_CHECK_ALWAYS_CLEAN, "revert_check": None},
-             "branch-reverts-a-file-to-an-older-main-version-check.py is missing",
-             (None, "Check it by hand from your worktree: %s")))):
+             ((HAND_REVERT_CHECK_LINE, REAL_REVERT_CHECK, no_copy_text),)))):
         name = "worktree-without-checks-%d" % case_number
         hooks = make_layout(scratch, "layout-" + name, **layout_arguments)
         scenario = Scenario(scratch, name, hooks, worktree_has_checks=False)
-        (scenario.clone / "scripts").mkdir()
-        for check_file in (REAL_CONFLICT_CHECK, REAL_REVERT_CHECK):
-            scenario.commit("scripts/" + check_file.name,
-                            FAKE_ORIGIN_MAIN_CHECK % check_file.name, "Checks on main")
-        scenario.git(scenario.clone, "push", "--quiet", "--no-verify", "origin", "main")
         scenario.git(scenario.clone, "switch", "--quiet", "clean")
         short = scenario.head("clean")[:SHORT_COMMIT_LENGTH]
         outcome = scenario.push("origin", "clean")
-        check("%s, and so is the worktree's copy: the push goes through and says so" % label,
-              went_through(outcome) and missing_text in outcome.stderr, outcome.describe())
-        check("%s, and so is the worktree's copy: no command runs the worktree's missing copy"
-              % label, "python3 scripts/" not in outcome.stderr, outcome.describe())
+        label = "worktree without the checks, " + label
+        check("%s: the push goes through" % label, went_through(outcome), outcome.describe())
+        check("%s: no command runs the worktree's missing copy" % label,
+              "python3 scripts/" not in outcome.stderr, outcome.describe())
         lines = outcome.stderr.splitlines()
-        for line_text, check_file in zip(hand_lines, (REAL_CONFLICT_CHECK, REAL_REVERT_CHECK)):
-            if line_text is None:
+        for line_text, check_file, fill in expected_lines:
+            fill_text = fill(hooks, check_file, short)
+            check("%s: the hand check of %s %s" % (
+                      label, check_file.name, "runs the reference checkout's copy"
+                      if fill is hook_copy_command else "says no copy exists"),
+                  line_text % fill_text in lines, outcome.describe())
+            if fill is not hook_copy_command:
                 continue
-            command = ORIGIN_MAIN_HAND_CHECK_COMMAND % {"check": check_file.name, "head": short}
-            check("%s: the hand check of %s runs origin/main's copy" % (label, check_file.name),
-                  line_text % command in lines, outcome.describe())
-            ran = subprocess.run(["sh", "-c", command], cwd=str(scenario.clone),
+            ran = subprocess.run(fill_text, shell=True, cwd=str(scenario.clone),
                                  env=scenario.environment(), capture_output=True, text=True,
                                  timeout=60)
-            worktrees = scenario.git(scenario.clone, "worktree", "list").splitlines()
-            check("%s: that command runs origin/main's %s on the commit, and removes the "
-                  "worktree it adds" % (label, check_file.name),
+            check("%s: that command runs the reference checkout's %s on the commit"
+                  % (label, check_file.name),
                   ran.returncode == 0
-                  and ran.stdout.strip() == "VERDICT: CLEAN -- origin/main's copy of %s ran "
-                  "with --head %s" % (check_file.name, short)
-                  and len(worktrees) == 1,
-                  "exit %s; stdout %r; stderr %r; worktrees %r"
-                  % (ran.returncode, ran.stdout, ran.stderr, worktrees))
+                  and ran.stdout.strip() == "VERDICT: CLEAN -- %s ran with --head %s"
+                  % (hooks.parent / check_file.name, short),
+                  "exit %s; stdout %r; stderr %r" % (ran.returncode, ran.stdout, ran.stderr))
 
 
 def main():

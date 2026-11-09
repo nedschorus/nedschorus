@@ -47,14 +47,16 @@ open_pull_request_branch_check="$scripts_directory/git-client-side-hooks-pre-pus
 refuse_push_status=10
 checked_remote=origin
 # Prints the command that runs a check by hand from a copy of it that exists, as
-# hand_check_command in the Python file does. Git runs a hook from the top of the
-# worktree being pushed, so scripts/ is the worktree's.
-hand_check_command() {
+# pre_push_check_run_by_hand_command in the Python file does: the worktree's, else
+# the reference checkout's. Git runs a hook from the top of the worktree being
+# pushed, so scripts/ is the worktree's.
+pre_push_check_run_by_hand_command() {
     if [ -f "scripts/$1" ]; then
         printf 'python3 scripts/%s --head %s' "$1" "$2"
+    elif [ -f "$scripts_directory/$1" ]; then
+        printf 'python3 %s --head %s' "$scripts_directory/$1" "$2"
     else
-        copy="/tmp/origin-main-copy-for-hand-check-$2"
-        printf 'git fetch --quiet origin main && git worktree add --quiet --detach %s origin/main && python3 %s/scripts/%s --head %s; git worktree remove --force %s' "$copy" "$copy" "$1" "$2" "$copy"
+        printf 'no copy of the check exists to run, as your worktree has no scripts/%s and %s is missing too; tell the user' "$1" "$scripts_directory/$1"
     fi
 }
 tell_user_line="Tell the user this whole message, including any error printed just above it: the next push on this machine may go unchecked the same way."
@@ -95,8 +97,8 @@ if [ "$remote_name" = "$checked_remote" ]; then
             branch_list="$branch_list, "
         fi
         branch_list="$branch_list$branch ($commit)"
-        unchecked_lines="${unchecked_lines}Check $branch by hand from your worktree: $(hand_check_command branch-conflict-check.py "$commit")$newline"
-        revert_lines="${revert_lines}Once the hand conflict check of $branch prints VERDICT: CLEAN, check it for files set back too: $(hand_check_command branch-reverts-a-file-to-an-older-main-version-check.py "$commit")$newline"
+        unchecked_lines="${unchecked_lines}Check $branch by hand from your worktree: $(pre_push_check_run_by_hand_command branch-conflict-check.py "$commit")$newline"
+        revert_lines="${revert_lines}Once the hand conflict check of $branch prints VERDICT: CLEAN, check it for files set back too: $(pre_push_check_run_by_hand_command branch-reverts-a-file-to-an-older-main-version-check.py "$commit")$newline"
     done
     set +f
     IFS=$old_ifs

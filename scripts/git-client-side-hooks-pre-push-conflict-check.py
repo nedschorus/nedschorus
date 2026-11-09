@@ -43,16 +43,11 @@ TERMINATE_GRACE_SECONDS = 3.0
 
 MESSAGE_PREFIX = "pre-push: "
 SHORT_COMMIT_LENGTH = 12
-# Git runs a hook from the top of the worktree being pushed, so these paths are the worktree's.
+# Git runs a hook from the top of the worktree being pushed, so scripts/ is the worktree's.
 WORKTREE_HAND_CHECK_COMMAND = "python3 scripts/%s --head %s"
-# For a worktree without the check; a copy run from a bare `git show` cannot load its modules.
-# A literal path, not a variable: a project guard refuses `git worktree remove` of a
-# path it cannot read.
-ORIGIN_MAIN_HAND_CHECK_COMMAND = (
-    "git fetch --quiet origin main && git worktree add --quiet --detach "
-    "/tmp/origin-main-copy-for-hand-check-%(head)s origin/main && python3 "
-    "/tmp/origin-main-copy-for-hand-check-%(head)s/scripts/%(check)s --head %(head)s; "
-    "git worktree remove --force /tmp/origin-main-copy-for-hand-check-%(head)s")
+REFERENCE_CHECKOUT_CHECK_RUN_BY_HAND_COMMAND = "python3 %s --head %s"
+NO_COPY_TO_RUN_TEXT = ("no copy of the check exists to run, as your worktree has no scripts/%s "
+                       "and %s is missing too; tell the user")
 TELL_USER_LINE = ("Tell the user this whole message, including any error printed just "
                   "above it: the next push on this machine may go unchecked the same way.")
 REVERT_AFTER_HAND_CONFLICT_CHECK_LINE = ("Once the hand conflict check of %s prints VERDICT: "
@@ -189,21 +184,32 @@ def branch_list(branches):
                      for branch, object_id in branches)
 
 
-def hand_check_command(check_file_name, head):
-    """The command that runs a check by hand, from a copy of it that exists."""
+def hook_copy_path(check_file_name):
+    """The copy of a check this file runs: the one beside it, in the reference checkout."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), check_file_name)
+
+
+def pre_push_check_run_by_hand_command(check_file_name, head):
+    """The command that runs a check by hand from a copy of it that exists: the worktree's,
+    else the reference checkout's; NO_COPY_TO_RUN_TEXT when neither exists."""
     if os.path.isfile(os.path.join("scripts", check_file_name)):
         return WORKTREE_HAND_CHECK_COMMAND % (check_file_name, head)
-    return ORIGIN_MAIN_HAND_CHECK_COMMAND % {"check": check_file_name, "head": head}
+    hook_copy = hook_copy_path(check_file_name)
+    if os.path.isfile(hook_copy):
+        return REFERENCE_CHECKOUT_CHECK_RUN_BY_HAND_COMMAND % (hook_copy, head)
+    return NO_COPY_TO_RUN_TEXT % (check_file_name, hook_copy)
 
 
 def hand_check_line(branch, object_id):
     return "Check %s by hand from your worktree: %s" % (
-        branch, hand_check_command(CONFLICT_CHECK_FILE_NAME, short_commit(object_id)))
+        branch, pre_push_check_run_by_hand_command(CONFLICT_CHECK_FILE_NAME,
+                                                   short_commit(object_id)))
 
 
 def revert_after_hand_conflict_check_line(branch, object_id):
     return REVERT_AFTER_HAND_CONFLICT_CHECK_LINE % (
-        branch, hand_check_command(REVERT_CHECK_FILE_NAME, short_commit(object_id)))
+        branch, pre_push_check_run_by_hand_command(REVERT_CHECK_FILE_NAME,
+                                                   short_commit(object_id)))
 
 
 def say_branch_not_checked(stream, branch, because):
@@ -246,13 +252,13 @@ def say_error_before_branches_read(stream, error_text):
         "reading which branches this push sends, so none of them was checked for "
         "conflicts with %s." % (error_text, BASE_NAME_FOR_MESSAGES))
     say(stream, "For each branch this push sends to %s, other than main, run from your "
-        "worktree: %s" % (CHECKED_REMOTE_NAME,
-                           hand_check_command(CONFLICT_CHECK_FILE_NAME, "<branch name>")))
+        "worktree: %s" % (CHECKED_REMOTE_NAME, pre_push_check_run_by_hand_command(
+            CONFLICT_CHECK_FILE_NAME, "<branch name>")))
     say(stream, "Nor was any branch checked for files set back to a version that %s has "
         "replaced. For each branch this push sends to %s, other than main, once that conflict "
         "check prints VERDICT: CLEAN, also run: %s"
         % (BASE_NAME_FOR_MESSAGES, CHECKED_REMOTE_NAME,
-           hand_check_command(REVERT_CHECK_FILE_NAME, "<branch name>")))
+           pre_push_check_run_by_hand_command(REVERT_CHECK_FILE_NAME, "<branch name>")))
     say(stream, PUSH_GOES_ON_LINE % "any of its branches")
     say(stream, TELL_USER_LINE)
 
@@ -266,8 +272,7 @@ def main(argv, pushed_refs_text, stderr, environment):
     if not branches:
         return EXIT_ALLOW_PUSH
 
-    check_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), CONFLICT_CHECK_FILE_NAME)
+    check_path = hook_copy_path(CONFLICT_CHECK_FILE_NAME)
     if not os.path.isfile(check_path):
         say_no_branch_checked(
             stderr, "the pre-push conflict check did not run, because %s is missing"
@@ -300,8 +305,8 @@ def main(argv, pushed_refs_text, stderr, environment):
             for line in result.lines:
                 say(stderr, line)
             say(stderr, "Follow the report, then check %s again by hand from your "
-                "worktree: %s" % (branch, hand_check_command(CONFLICT_CHECK_FILE_NAME,
-                                                             short_commit(local_object_id))))
+                "worktree: %s" % (branch, pre_push_check_run_by_hand_command(
+                    CONFLICT_CHECK_FILE_NAME, short_commit(local_object_id))))
             say_revert_check_not_run(stderr, branch, local_object_id)
             say(stderr, RERUN_VERDICT_LINE)
         elif result.kind == "timed out":
@@ -350,8 +355,7 @@ def check_reverts(branches, deadline, budget, stderr):
     setting a file back, and (branch, local object ID) for each it gave no verdict on.
 
     Any other outcome lets the branch through, with one message."""
-    check_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), REVERT_CHECK_FILE_NAME)
+    check_path = hook_copy_path(REVERT_CHECK_FILE_NAME)
     reverts = []
     unchecked = []
     for branch, local_object_id in branches:
@@ -376,7 +380,8 @@ def check_reverts(branches, deadline, budget, stderr):
             % (branch, BASE_NAME_FOR_MESSAGES, reason))
         unchecked.append((branch, local_object_id))
         say(stderr, "Check it by hand from your worktree: %s"
-            % hand_check_command(REVERT_CHECK_FILE_NAME, short_commit(local_object_id)))
+            % pre_push_check_run_by_hand_command(REVERT_CHECK_FILE_NAME,
+                                                 short_commit(local_object_id)))
         say(stderr, "If that run prints no VERDICT line, tell the user this whole message "
             "and what that run printed.")
     return reverts, unchecked
