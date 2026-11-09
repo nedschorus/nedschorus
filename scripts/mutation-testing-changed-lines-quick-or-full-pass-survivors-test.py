@@ -138,6 +138,13 @@ if command == "dump":
                                               "test_outcome": "survived", "diff": None}}]])
     else:
         lines = plan.get("dump", [])
+        for _, result in lines:
+            if result and "{{LOG_DIR}}" in (result.get("output") or ""):
+                import tempfile
+                words = json.loads((control / "test-command.json").read_text())
+                log_dir = tempfile.mkdtemp(dir=words[4])
+                pathlib.Path(log_dir, "test-run-report.txt").write_text(result["output"])
+                result["output"] = result["output"].replace("{{LOG_DIR}}", log_dir)
     for line in lines:
         print(json.dumps(line))
     sys.exit(0)
@@ -240,6 +247,11 @@ def script_command_and_environment(repository, control, *flags, path_override=No
         environment[inside_variable] = "1"
     if path_override is not None:
         environment["PATH"] = path_override
+    # A temporary directory of the case's own, so what the script leaves there is the case's to
+    # see, and is removed with the case.
+    temporary_directory = control / "temporary-directory"
+    temporary_directory.mkdir(exist_ok=True)
+    environment["TMPDIR"] = str(temporary_directory)
     environment.update(extra_environment or {})
     # The full mutation pass, unless the case names a pass: it mutates every changed line.
     passes = (load_script_module().QUICK_MUTATION_PASS_COMMAND_LINE_FLAG,
@@ -344,7 +356,7 @@ def test_command_output_when_the_machine_lock_is_held(scratch):
         holder.flush()
         return subprocess.run(
             [sys.executable, str(SCRIPT), load_script_module().COSMIC_RAY_TEST_COMMAND_RUN_TEST_SUITE_RUNNER_STOPPED_AFTER_SECONDS_FLAG,
-             "60.0", sys.executable, str(SCRIPT.with_name("run-all-test-suites.py")),
+             "60.0", str(scratch), sys.executable, str(SCRIPT.with_name("run-all-test-suites.py")),
              "--checkout", str(repository), "--lock-file", str(lock_file),
              "--recorded-inputs-directory", str(Path(scratch) / "recordings"),
              "--only-suites-named", "scripts/thing-test.py"],
@@ -869,6 +881,82 @@ def run_recorded_mutant_killed_check_cases():
     check("a pass with neither --pull-request nor --head exits 2 and says one is required",
           completed.returncode == 2 and "--pull-request --head is required" in completed.stderr,
           completed.stderr)
+
+
+def log_directories_left_in(control):
+    """(the suite runner's own log directories, this script's log directories parents) left in
+    the case's temporary directory, resolved as the script resolves the paths it prints."""
+    temporary_directory = (control / "temporary-directory").resolve()
+    return (sorted(temporary_directory.glob(f"{load_test_suite_runner().PROGRAM}-*")),
+            sorted(temporary_directory.glob(
+                f"{load_script_module().TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_PREFIX}*")))
+
+
+def run_test_suite_runner_log_directories_cases():
+    survivors = load_script_module()
+    killing_test = ("import importlib.util, sys\n"
+                    "spec = importlib.util.spec_from_file_location('thing', 'scripts/thing.py')\n"
+                    "thing = importlib.util.module_from_spec(spec)\n"
+                    "spec.loader.exec_module(thing)\n"
+                    "sys.exit(0 if thing.double(3) == 6 else 1)\n")
+    # double(2) is 4 under x + x and x * x alike, so this mutant survives and x - x is killed.
+    surviving_or_killing_test = killing_test.replace("double(3) == 6", "double(2) == 4")
+    subtracting_diff = SURVIVOR_DIFF.replace("x * x", "x - x")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**HEAD_FILES, "scripts/thing-test.py": surviving_or_killing_test},
+            SURVIVOR_DIFF, more_diff_texts=[subtracting_diff])
+        runner_log_directories, parents = log_directories_left_in(Path(scratch_name) / "control")
+        check("the recorded mutant killed check, judging one mutant killed and one survived, "
+              "leaves no log directory of the suite runner's runs in the temporary directory",
+              completed.returncode == 1
+              and f"\n{survivors.MUTANT_SURVIVED_LINE_PREFIX}: " in "\n" + completed.stdout
+              and f"\n{survivors.MUTANT_KILLED_LINE_PREFIX}: " in "\n" + completed.stdout
+              and runner_log_directories == [] and parents == []
+              and "are kept in" not in completed.stderr,
+              f"left={runner_log_directories + parents} rc={completed.returncode} "
+              f"out={completed.stdout} err={completed.stderr}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**HEAD_FILES, "scripts/thing-test.py": "import sys\nsys.exit(1)\n"},
+            SURVIVOR_DIFF)
+        runner_log_directories, parents = log_directories_left_in(Path(scratch_name) / "control")
+        kept = sorted(parents[0].iterdir()) if len(parents) == 1 else []
+        check("when the suites fail without a mutant, the recorded mutant killed check keeps "
+              "that run's log directory, which holds the failing suite's log the refusal "
+              "names, and names the directory it is kept in",
+              completed.returncode == 2 and runner_log_directories == [] and len(kept) == 1
+              and f" — log {kept[0]}/" in completed.stderr
+              and f"are kept in {parents[0]}." in completed.stderr,
+              f"left={runner_log_directories + parents} kept={kept} err={completed.stderr}")
+
+    # The fake cosmic-ray's baseline runs the test command, so the suite runner runs for real.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"run_test_command": True, "dump": [
+            [work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+             killed_with_output("run-all-test-suites: worktree; logs in {LOG_DIR}\n"
+                                + SUITE_FAILED_RUNNER_OUTPUT)],
+            [work_item("scripts/thing.py", 2, "core/ReplaceBinaryOperator_Add_Mul", "b"),
+             killed_with_output("run-all-test-suites: worktree; logs in {LOG_DIR}\n"
+                                "run-all-test-suites: not run to the end — stopped by SIGTERM\n")],
+        ]})
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv))
+        runner_log_directories, parents = log_directories_left_in(control)
+        kept = sorted(parents[0].iterdir()) if len(parents) == 1 else []
+        check("a pass whose baseline the suite runner ran, with one mutant killed and one "
+              "errored, leaves no log directory of the runner's own, keeps only the errored "
+              "mutant's log directory, and names the directory it is kept in",
+              completed.returncode == 1 and "1 killed" in completed.stdout
+              and "1 errored" in completed.stdout and runner_log_directories == []
+              and len(kept) == 1
+              and "not run to the end" in (kept[0] / "test-run-report.txt").read_text()
+              and f"are kept in {parents[0]}." in completed.stderr,
+              f"left={runner_log_directories + parents} kept={kept} "
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
 
 def run_quick_mutation_pass_cases():
@@ -1464,8 +1552,12 @@ def run_cases():
               "one run of the suite runner beside the script, on the "
               "worktree it runs in, of the sibling suite only, recording nothing and stopping at "
               "the first failing suite, with the given interpreter, recordings and lock",
-              test_command_words == [
-                  *cosmic_ray_timeout_line_and_test_command_words_for_limit(45)[1],
+              test_command_words[:4]
+              == cosmic_ray_timeout_line_and_test_command_words_for_limit(45)[1]
+              and Path(test_command_words[4]).parent == temporary_directory.resolve()
+              and Path(test_command_words[4]).name.startswith(
+                  load_script_module().TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_PREFIX)
+              and test_command_words[5:] == [
                   sys.executable, str(SCRIPT.resolve().with_name("run-all-test-suites.py")),
                   "--checkout", ".", "--python", "/usr/bin/python3",
                   "--recorded-inputs-directory", str(control / "recordings"),
@@ -2364,6 +2456,7 @@ def run_cases():
                   f"left={list(temporary_directory.iterdir())} out={out} err={err}")
 
     run_recorded_mutant_killed_check_cases()
+    run_test_suite_runner_log_directories_cases()
     run_parallel_mutants_and_kept_sessions_cases()
     run_parallel_mutant_workers_cases_with_fake_cosmic_ray_package()
     run_parallel_mutant_workers_case_with_real_cosmic_ray()
