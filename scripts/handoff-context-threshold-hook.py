@@ -106,8 +106,10 @@ NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION = (
     "within 10 minutes, such as a cold-read-fast-read, may start; if that work "
     "is still running when the session-handoff ends this agent-session, the work "
     "stops, and the handoff writer script, "
-    "nc-systems/handoff/handoff-write-and-check-supervisor.py, adds it to your "
-    "session-handoff for your successor, so you need not. Do not start long "
+    "nc-systems/handoff/handoff-write-and-check-supervisor.py, names each "
+    "subagent and each background Bash task still running in your "
+    "session-handoff for your successor, so you need not add that work to your "
+    "task list. Do not start long "
     "work, such as a cold-read-full-run or a pull-request review: add it to "
     "your task list for your successor."
 )
@@ -541,8 +543,9 @@ def subagent_launched_at_by_id_from_transcript_spawn_records(transcript_path: st
                     record = json.loads(line)
                 except json.JSONDecodeError as problem:
                     raise TranscriptCouldNotBeFullyRead(
-                        f"{path}, line {line_number}: this line names a subagent on Claude Code's "
-                        f"background_tasks list but is not valid JSON ({problem})") from problem
+                        f"{path}, line {line_number}: this line holds the id of a subagent on Claude "
+                        f"Code's background_tasks list and the text {SPAWNED_SUBAGENT_STATUS!r}, "
+                        f"but is not valid JSON ({problem})") from problem
                 tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
                 if isinstance(tool_result, dict) \
                         and tool_result.get("status") == SPAWNED_SUBAGENT_STATUS \
@@ -580,8 +583,8 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
                         record = json.loads(line)
                     except json.JSONDecodeError as problem:
                         raise TranscriptCouldNotBeFullyRead(
-                            f"{path}, line {line_number}: this line names a shell task on "
-                            f"Claude Code's background_tasks list but is not valid JSON "
+                            f"{path}, line {line_number}: this line holds the id of a shell task on "
+                            f"Claude Code's background_tasks list and a launch key, but is not valid JSON "
                             f"({problem}); its first 200 characters: {line[:200].rstrip()!r}"
                         ) from problem
                     tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
