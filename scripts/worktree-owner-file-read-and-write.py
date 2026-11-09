@@ -315,7 +315,9 @@ def claude_code_subagent_worktree_lock_dispatching_process_running_state(lock, p
                                                                          macos_start_seconds=None):
     """Return (state, explanation): whether the `claude` process the lock names, the process with
     its id that started at its start, runs; UNKNOWN when that cannot be read, and on any platform
-    but Linux and macOS."""
+    but Linux and macOS. On macOS both starts are local times, so a time-zone change between
+    the lock's writing and this check, or a TZ that differs between claude and this program,
+    reads a live claude process as STOPPED."""
     snapshots = load_uncommitted_work_snapshots_module_once()
     if platform == "darwin":
         try:
