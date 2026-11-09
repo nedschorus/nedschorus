@@ -520,7 +520,10 @@ def test_a_mark_whose_text_would_not_be_read_whole_is_refused_for_every_answer_t
               result.returncode == 1 and "- line 5: `#new_if_d` has no text after it on its line." in result.stderr
               and case.minutes.read_text() == before, described(result))
     for flags in (("--deferred",), ("--moved-on-no-decision",), ("--moved-on", "no decision needed")):
-        case = Case(document=marks_document("#new\n"))
+        document = marks_document("#new\n")
+        if flags[0] == "--moved-on-no-decision":
+            document = document.replace("Recommendation: change it.\n", "")
+        case = Case(document=document)
         result = case.run("check", *flags)
         check(f"check {flags[0]}, which adds no text, records the answer to an item with a mark that has no text",
               result.returncode == 0 and "item 3 of 9: " in case.minutes.read_text(), described(result))
@@ -3009,6 +3012,51 @@ def test_moving_on_from_an_item_that_asks_no_decision_records_it_and_presents_th
           described(checked) + described(closed) + minutes)
 
 
+SUB_STEPS_DOCUMENT = """# A walk
+
+## Item 1 of 2: the opening sentence
+
+### Item 1.1 of 2: what the sentence says now
+
+The sentence names one poem. No decision here; type N or next to continue.
+
+### Item 1.2 of 2: the change
+
+#case_against none.
+
+Recommendation: change the sentence.
+
+## Item 2 of 2: summary
+
+The walk asked one thing.
+"""
+
+
+def test_moving_on_is_refused_writing_nothing_while_the_item_holds_a_recommendation():
+    for reply in ("next", "skip this one"):
+        case = Case(next_to_present="item 3 of 3", document=SUMMARY_FIRST_DOCUMENT)
+        case.minutes.write_text(f"# Minutes\n\n{approved_line('item 2 of 3')}#next_to_present item 3 of 3\n")
+        before = case.minutes.read_text()
+        checked = case.run("check", "--moved-on-no-decision", reply=reply)
+        check(f"check --moved-on-no-decision on the reply {reply!r} to an item that ends with a recommendation is "
+              "refused, writing nothing, and asks for an answer to it",
+              checked.returncode == 1 and case.minutes.read_text() == before and case.calls.read_text() == ""
+              and 'nothing written: item 3 of 3 holds the line "Recommendation: change the sentence.", so it asks '
+                  "for a decision" in checked.stderr
+              and "Ask the user to answer item 3 of 3 with A, AO, Aa, D or Z" in checked.stderr,
+              described(checked))
+
+
+def test_moving_on_from_a_sub_step_that_asks_no_decision_is_not_refused_for_a_later_sub_steps_recommendation():
+    case = Case(next_to_present="item 1.1 of 2", document=SUB_STEPS_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n#next_to_present item 1.1 of 2\n")
+    checked = case.run("check", "--moved-on-no-decision", reply="next")
+    check("check --moved-on-no-decision on sub-step 1.1, which asks no decision, records the move on although "
+          "sub-step 1.2 under the same item ends with a recommendation",
+          checked.returncode == 0 and "item 1.1 of 2: the user answered moved on, no decision" in case.minutes.read_text(),
+          described(checked) + case.minutes.read_text())
+
+
 def test_the_users_reply_is_written_beside_his_answer_and_close_still_reads_the_answer():
     reply = 'a trivial - a bit longer\n doesn\'t matter (see #2: "x"), which makes no change.'
     written = 'a trivial - a bit longer doesn\'t matter (see #2: "x"), which makes no change.'
@@ -3754,7 +3802,10 @@ def test_close_posts_the_ruling_on_each_open_pull_request_held_on_the_answered_i
                         (("--part-answer", "1=A", "--part-answer", "2=D"), "part_answers"),
                         (("--already-decided", "walk x, item 3"), "approved"),
                         (("--moved-on", "it went to walk y"), "moved_on")):
-        case = Case(next_to_present="item 4 of 9")
+        # check refuses --moved-on-no-decision for an item that holds a recommendation.
+        document = (WALK_DOCUMENT.replace(" Recommendation: leave it.", "") if "--moved-on-no-decision" in flags
+                    else WALK_DOCUMENT)
+        case = Case(next_to_present="item 4 of 9", document=document)
         case.run("check", *flags)
         closed = case.run("close", environment=gh_environment(pull_requests))
         body = f"#ruling_given {WALK_NAME} item 4 {word}"
