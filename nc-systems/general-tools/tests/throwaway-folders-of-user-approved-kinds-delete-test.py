@@ -338,15 +338,15 @@ def run_unreadable_cases():
           "x" * 200 in result.stderr and "x" * 201 not in result.stderr, result.stderr)
 
     s = Scene()
-    used = s.test_folder("tmpab12cd34")
-    # Pid 100 has no working directory, root, executable or memory map to read; pid 200 uses the folder.
+    by_fd, by_cwd = s.test_folder("tmpab12cd34"), s.test_folder("tmpab12cd35")
+    # Pid 100 has no working directory, root, executable or memory map to read, only an open file.
     (s.proc / "100" / "fd").mkdir(parents=True)
-    os.symlink(str(used / "stub-bin"), s.proc / "100" / "fd" / "0")
-    s.process(200, cwd=used)
+    os.symlink(str(by_fd / "stub-bin"), s.proc / "100" / "fd" / "0")
+    s.process(200, cwd=by_cwd)
     result = s.run()
     check("a process whose links or memory map cannot be read is passed over, and its other links and "
-          "the processes after it are still read", used.is_dir() and "kept because a process uses them: 1;"
-          in result.stdout, result.stdout + result.stderr)
+          "the processes after it are still read", by_fd.is_dir() and by_cwd.is_dir()
+          and "kept because a process uses them: 2;" in result.stdout, result.stdout + result.stderr)
 
     s = Scene()
     folder = s.test_folder()
