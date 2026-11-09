@@ -151,7 +151,10 @@ WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT = "waiting on its own background work"
 STILL_WORKING_SUBAGENT_LAST_EVENTS = ("spawned", "resumed", WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT)
 
 # Prefilter megabytes of tool output before parsing possible subagent events.
-SUBAGENT_EVENT_RECORD_MARKERS = ("async_launched", "resumedAgentId", "<task-notification>")
+SUBAGENT_EVENT_RECORD_MARKERS = ("async_launched", "resumedAgentId", "<task-notification>",
+                                 threshold_hook.TASK_STOP_RESULT_KEY)
+# The last event of a subagent a TaskStop call stopped, which gets no task-notification.
+STOPPED_BY_TASK_STOP_EVENT = "stopped"
 
 
 def collapse_to_one_line(text: str) -> str:
@@ -273,7 +276,8 @@ def task_notification_text(record: dict):
 
 def spawned_subagent_roster(transcript_path: Path) -> list:
     """Return this session's spawned subagents in spawn order with their last events."""
-    # Agent results acknowledge spawn, not completion; terminal events arrive in notifications.
+    # Agent results acknowledge spawn, not completion; terminal events arrive in notifications,
+    # or, for a subagent TaskStop stopped, in the TaskStop result alone.
     # Predecessor rosters are not inherited; deferred work must remain in next-step.
     roster = []
     by_agent_id = {}
@@ -309,6 +313,11 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
                 if resumed is not None:
                     resumed["last_event"] = "resumed"
                     resumed["last_event_at"] = stamp
+                    continue
+                stopped = by_agent_id.get(result.get("task_id"))
+                if stopped is not None and threshold_hook.TASK_STOP_RESULT_KEY in result:
+                    stopped["last_event"] = STOPPED_BY_TASK_STOP_EVENT
+                    stopped["last_event_at"] = stamp
                     continue
 
             notification = task_notification_text(record)
