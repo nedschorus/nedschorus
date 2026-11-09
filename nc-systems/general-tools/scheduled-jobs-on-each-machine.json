@@ -161,7 +161,8 @@
     {
       "name": "claude-code-temp-folders-of-exited-agent-sessions-delete",
       "program": "nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py",
-      "arguments": [],
+      "arguments": ["--then-throwaway-folders-of-user-approved-kinds-delete",
+                    "nc-systems/general-tools/throwaway-folder-kinds-the-user-approved-for-deletion.json"],
       "output": ".claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log",
       "on": {
         "ned-box": {"scheduler": "cron", "schedule": "30 7 * * *"}

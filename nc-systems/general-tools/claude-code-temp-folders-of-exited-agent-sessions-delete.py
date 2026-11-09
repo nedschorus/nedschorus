@@ -50,6 +50,11 @@ log names every folder a run stopped part way may have deleted, then a summary l
 prints "would delete" and deletes nothing. A parent with no claude-<uid>/ folder is not a
 failure: /home/nedlern/.cache/claude-code-tmp has none until an agent-session launched with it writes.
 
+SECOND STEP. Given --then-throwaway-folders-of-user-approved-kinds-delete APPROVED_KINDS_FILE,
+the program then runs throwaway-folders-of-user-approved-kinds-delete.py, beside this file, with
+that file and with --dry-run when it was given, whatever its own step found; that program's
+output goes to the same streams. The exit status is 1 when either step failed.
+
 SCHEDULE. Once a day at 07:30 on ned-box, installed by
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the table beside it,
 scheduled-jobs-on-each-machine.json, where a change to the schedule is made. Linux only: it
@@ -57,7 +62,7 @@ reads /proc.
 
   ned-box: one cron line.
 
-    30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py >> /home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1
+    30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py --then-throwaway-folders-of-user-approved-kinds-delete nc-systems/general-tools/throwaway-folder-kinds-the-user-approved-for-deletion.json >> /home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1
 
 
 Exit status: 0 when done; 1 when a failure stopped a deletion or the whole run. When the live set
@@ -75,7 +80,9 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -94,7 +101,15 @@ FAILURES_INSTRUCTION = (
     "which folder is kept and why, since ned-box's /tmp can fill up and stop every agent-session's "
     "shell commands; a subagent tells the agent that dispatched it instead.")
 
-DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES = ["/tmp", "/home/nedlern/.cache/claude-code-tmp"]
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+THROWAWAY_FOLDERS_PROGRAM = Path(__file__).resolve().parent / "throwaway-folders-of-user-approved-kinds-delete.py"
+THROWAWAY_FOLDERS_STEP_NOT_STARTED_TEMPLATE = (
+    "The second step, `{command}`, could not be started: {error}. No throwaway folder was "
+    "deleted or shown today.\n"
+    "Fix the cause the error names, then on ned-box run that command with --dry-run, and then "
+    "without it.")
+
+DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES =["/tmp", "/home/nedlern/.cache/claude-code-tmp"]
 SESSION_FOLDER_NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 EXIT_DONE = 0
 EXIT_FAILED = 1
@@ -255,6 +270,11 @@ def main(arguments=None):
                         help="where Claude Code keeps each project's transcripts")
     parser.add_argument("--minimum-age-seconds", type=float, default=3600,
                         help="keep a folder changed more recently than this")
+    parser.add_argument("--then-throwaway-folders-of-user-approved-kinds-delete", type=Path,
+                        metavar="APPROVED_KINDS_FILE",
+                        help="after this program's own work, run " + THROWAWAY_FOLDERS_PROGRAM.name
+                             + " with this approved-kinds file, a relative path being read from "
+                             "the repository's root; --dry-run is passed on")
     options = parser.parse_args(arguments)
     result = claude_code_temp_folders_of_exited_agent_sessions_delete(
         options.claude_code_temp_folder_parents or DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES,
@@ -272,7 +292,20 @@ def main(arguments=None):
           f"{result['kept_resumable']}; "
           f"folders kept because they changed in the last {options.minimum_age_seconds:g} "
           f"seconds: {result['kept_recent']}; failures: {len(result['failures'])}", flush=True)
-    return EXIT_FAILED if result["failures"] else EXIT_DONE
+    exit_status = EXIT_FAILED if result["failures"] else EXIT_DONE
+    if options.then_throwaway_folders_of_user_approved_kinds_delete is not None:
+        command = [sys.executable, str(THROWAWAY_FOLDERS_PROGRAM), "--approved-kinds-file",
+                   str(REPOSITORY_ROOT / options.then_throwaway_folders_of_user_approved_kinds_delete)]
+        command += ["--dry-run"] if options.dry_run else []
+        try:
+            step = subprocess.run(command, check=False).returncode
+        except OSError as error:
+            print(THROWAWAY_FOLDERS_STEP_NOT_STARTED_TEMPLATE.format(command=shlex.join(command),
+                                                                    error=error), file=sys.stderr)
+            step = EXIT_FAILED
+        if step != EXIT_DONE:
+            exit_status = EXIT_FAILED
+    return exit_status
 
 
 if __name__ == "__main__":

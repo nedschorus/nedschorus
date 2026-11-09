@@ -384,6 +384,61 @@ def run_per_folder_failure_cases():
           result.stderr)
 
 
+def run_throwaway_folders_step_cases():
+    s = scene()
+    home, place = s.base / "home", s.base / "throwaway-place"
+    home.mkdir()
+    folder = place / "tmpab12cd34" / "stub-bin"
+    folder.mkdir(parents=True)
+    for path in (folder, folder.parent):
+        os.utime(path, (DAY_AGO - 3600, DAY_AGO - 3600))
+    kinds_file = s.base / "approved-kinds.json"
+    kinds_file.write_text(json.dumps({"kinds": [
+        {"kind": "test-scratch", "place": str(place), "name": "tmp[a-z0-9_]{8}", "holding": "stub-bin",
+         "only_once_its_pull_request_is_merged_or_closed": False, "approved": "the user, in this test"}]}))
+    flag = "--then-throwaway-folders-of-user-approved-kinds-delete"
+
+    def run(*extra):
+        arguments = [sys.executable, str(PROGRAM), "--session-records-directory", str(s.sessions),
+                     "--proc-filesystem-directory", str(s.proc), "--projects-directory", str(s.projects),
+                     "--claude-code-temp-folder-parent", str(s.parents[0])]
+        return subprocess.run(arguments + list(extra), capture_output=True, text=True, timeout=120,
+                              env=dict(os.environ, HOME=str(home)))
+    result = run()
+    check("without the second step's flag, no throwaway folder is looked at",
+          folder.is_dir() and "throwaway folders" not in result.stdout, result.stdout)
+    result = run(flag, str(kinds_file), "--dry-run")
+    check("the second step is given --dry-run when the program is",
+          folder.is_dir() and f"would delete {folder.parent}" in result.stdout and result.returncode == 0,
+          result.stdout + result.stderr)
+    result = run(flag, str(kinds_file))
+    check("the second step runs after the first, with the approved-kinds file given",
+          not folder.parent.exists() and result.stdout.index("folders of exited agent-sessions deleted")
+          < result.stdout.index("throwaway folders deleted: 1") and result.returncode == 0,
+          result.stdout + result.stderr)
+    kinds_file.write_text("{")
+    result = run(flag, str(kinds_file))
+    check("a second step that fails makes the program exit 1", result.returncode == 1
+          and "nothing was deleted: the approved-kinds file" in result.stderr, result.stderr)
+    check("a relative approved-kinds file is read from the repository's root",
+          program.REPOSITORY_ROOT == PROGRAM.parents[2]
+          and (program.REPOSITORY_ROOT / Path("nc-systems/general-tools/"
+                                              "throwaway-folder-kinds-the-user-approved-for-deletion.json")).is_file())
+
+    def cannot_start(*arguments, **keywords):
+        raise FileNotFoundError(2, "No such file or directory", "python3")
+    run_subprocess = program.subprocess.run
+    program.subprocess.run = cannot_start
+    try:
+        status = program.main(["--session-records-directory", str(s.sessions),
+                               "--proc-filesystem-directory", str(s.proc),
+                               "--projects-directory", str(s.projects),
+                               "--claude-code-temp-folder-parent", str(s.parents[0]), flag, str(kinds_file)])
+    finally:
+        program.subprocess.run = run_subprocess
+    check("a second step that cannot be started makes the program exit 1", status == 1)
+
+
 def run_recheck_cases():
     s = scene()
     s.session(LIVE_PID, LIVE)
@@ -430,6 +485,7 @@ try:
     run_live_set_failure_cases()
     run_per_folder_failure_cases()
     run_recheck_cases()
+    run_throwaway_folders_step_cases()
 finally:
     for directory, subdirectories, _ in os.walk(WORKSPACE):
         for name in subdirectories:
