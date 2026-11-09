@@ -173,10 +173,12 @@ fake_process("51", {"0": ("/elsewhere", "flags:\t0102001\n"), "1": (target, "pos
 fake_process("52", {"1": (target, None)})
 fake_process("53", {"3": (target, "pos:\t0\nflags:\t0102001\n")})
 fake_process("54", {"4": (target, "flags:\t0100002\n")})
+# Process 56's descriptor 1, whose fdinfo has vanished, is scanned before its writing descriptor 2.
+fake_process("56", {"1": (target, None), "2": (target, "flags:\t0102001\n")})
 check("in /proc, writers are the processes holding the file write-only or read-write; a read-only "
       "holder, a link elsewhere, a process with no fd directory, a vanished fdinfo and a name that is "
-      "no process id are skipped",
-      wait.linux_processes_writing_file(target, proc_root=fake_proc) == {53, 54},
+      "no process id are skipped, and the scan goes on after each",
+      wait.linux_processes_writing_file(target, proc_root=fake_proc) == {53, 54, 56},
       wait.linux_processes_writing_file(target, proc_root=fake_proc))
 fake_process("55", {"1": (target, "pos:\t0\n")})
 try:

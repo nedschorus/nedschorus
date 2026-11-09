@@ -58,7 +58,7 @@ def linux_processes_writing_file(path, proc_root=Path("/proc")):
     except OSError as error:
         raise WritersCannotBeListed(f"{proc_root} cannot be read: {error}") from error
     writers = set()
-    for entry in entries:
+    for entry in sorted(entries):
         if not entry.isdigit():
             continue
         process = Path(proc_root) / entry
@@ -66,7 +66,7 @@ def linux_processes_writing_file(path, proc_root=Path("/proc")):
             descriptors = os.listdir(process / "fd")
         except OSError:
             continue
-        for descriptor in descriptors:
+        for descriptor in sorted(descriptors):
             try:
                 if os.readlink(process / "fd" / descriptor) != path:
                     continue
