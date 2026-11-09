@@ -604,6 +604,42 @@ check("text as the agent reads it: a module constant built with + resolves, thro
       found[-2:] == ["head text; <HEAD_LINE>; <HEAD_LINE>; <SEPARATOR>; <path>",
                      "plain {path}<SEPARATOR>"], found)
 
+for case_name, source in (
+        ("a constant naming itself after an import", 'from labels import A\nA = f"more {A}"\nprint(f"x {A}")\n'),
+        ("two constants naming each other", 'A = f"a {B}"\nB = f"b {A}"\nprint(f"x {A}")\n'),
+        ("a constant naming itself after a conditional binding",
+         'if flag:\n    LABEL = "one"\nLABEL = f"{LABEL} suffix"\nprint(f"x {LABEL}")\n')):
+    try:
+        found = texts_as_agent_reads_them(source)
+    except RecursionError as error:
+        found = error
+    check(f"text as the agent reads it: {case_name} renders, the name being expanded staying <source>",
+          isinstance(found, list) and len(found) == 1 and found[0].startswith("x ") and "<" in found[0], found)
+check("text as the agent reads it: two constants naming each other stop at the first name repeated",
+      texts_as_agent_reads_them('A = f"a {B}"\nB = f"b {A}"\nprint(f"x {A}")\n') == ["x a b <A>"])
+
+found = texts_as_agent_reads_them(
+    'message = "default"\n'
+    'def refuse(message):\n'
+    '    print(f"Stopped: {message}")\n'
+    'def local():\n'
+    '    message = reason()\n'
+    '    print(f"Local: {message}")\n'
+    'def module_one():\n'
+    '    global message\n'
+    '    message = "other"\n'
+    '    print(f"Global: {message}")\n'
+    'class Holder:\n'
+    '    message = "class value"\n'
+    '    print(f"Class: {message}")\n'
+    '    def method(self):\n'
+    '        print(f"Method: {message}")\n'
+    'print(f"Top: {message}")\n')
+check("text as the agent reads it: a parameter, a local or a class body's name hides the module constant, a "
+      "global declaration and a method of the class do not",
+      found == ["Stopped: <message>", "Local: <message>", "other", "Global: default", "Class: <message>",
+                "Method: default", "Top: default"], found)
+
 check("source that does not parse yields no entries", texts('print("unclosed\n') == [])
 check("no source yields no entries", texts(None) == [])
 

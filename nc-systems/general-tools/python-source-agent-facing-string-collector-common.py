@@ -207,24 +207,32 @@ def placeholder_sources_of_string_node(node):
     return tuple(sources)
 
 
-def render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(node, module_string_values):
+def render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(node, module_string_values,
+                                                                       shadowing_names=frozenset(),
+                                                                       names_being_expanded=frozenset()):
     """The text as the agent reads it, without Python's quotes and prefixes: a name that
     module_level_string_values maps, given as a + operand or an f-string field with no conversion or
-    format spec, becomes its value, rendered the same way; any other f-string field or non-literal
-    operand becomes <its source>, as {path} becomes <path>."""
-    render = render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins
+    format spec, becomes its value, rendered the same way in module scope; any other f-string field or
+    non-literal operand becomes <its source>, as {path} becomes <path>. So does a name in
+    shadowing_names, the names the node's own scope binds, which hide the module's, and a name whose
+    value is being expanded already, so that A = f"more {A}" or two constants naming each other end."""
+    def render(part):
+        return render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(
+            part, module_string_values, shadowing_names, names_being_expanded)
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     if isinstance(node, ast.JoinedStr):
         return "".join(part.value if isinstance(part, ast.Constant)
-                       else render(part.value, module_string_values)
+                       else render(part.value)
                        if part.conversion == -1 and part.format_spec is None
                        else "<" + ast.unparse(part.value) + ">"
                        for part in node.values)
     if is_addition_chain_holding_string_literal(node):
-        return "".join(render(operand, module_string_values) for operand in addition_chain_operands(node))
-    if isinstance(node, ast.Name) and node.id in module_string_values:
-        return render(module_string_values[node.id], module_string_values)
+        return "".join(render(operand) for operand in addition_chain_operands(node))
+    if (isinstance(node, ast.Name) and node.id in module_string_values
+            and node.id not in shadowing_names and node.id not in names_being_expanded):
+        return render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(
+            module_string_values[node.id], module_string_values, frozenset(), names_being_expanded | {node.id})
     return "<" + ast.unparse(node) + ">"
 
 
@@ -363,8 +371,18 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
         # Functions whose returned strings are collected, and those this pass found called for text.
         self.text_returning_function_names = set(text_returning_function_names)
         self.function_names_called_for_text = set()
+        # For each enclosing scope, (the names it binds, whether it is a class body): a name bound
+        # there hides the module constant of that name, a class body's only in its own body.
+        self.enclosing_scope_bound_names = []
 
-    def collect_expression_strings(self, expression, label, kind="message"):
+    def names_shadowing_module_constants(self):
+        names = set()
+        for index, (bound, is_class_body) in enumerate(self.enclosing_scope_bound_names):
+            if not is_class_body or index == len(self.enclosing_scope_bound_names) - 1:
+                names |= bound
+        return frozenset(names)
+
+    def collect_expression_strings(self, expression, label, kind="message", in_module_scope=False):
         if expression is None:
             return
         if self.enclosing_names:
@@ -379,7 +397,9 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
                      "text": text_of_string_node(node), "literal_text": literal_text_of_string_node(node),
                      "placeholder_value_source_code_texts": placeholder_sources_of_string_node(node),
                      "text_as_agent_reads_it_with_placeholder_stand_ins":
-                         render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(node, self.module_string_values),
+                         render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(
+                             node, self.module_string_values,
+                             frozenset() if in_module_scope else self.names_shadowing_module_constants()),
                      "kind": kind}
             self.entries_by_node_context[identity] = entry
             self.string_entries.append(entry)
@@ -410,6 +430,8 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
             bindings = local_string_bindings(node)
         self.enclosing_parameter_names.append(parameters)
         self.enclosing_local_string_bindings.append(bindings)
+        self.enclosing_scope_bound_names.append(
+            ((parameters | scope_assigned_names(node)) - scope_global_names(node), isinstance(node, ast.ClassDef)))
         if isinstance(node, ast.Lambda):
             self.visit(node.body)
         else:
@@ -417,6 +439,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
             for statement in node.body:
                 self.visit(statement)
             self.enclosing_names.pop()
+        self.enclosing_scope_bound_names.pop()
         self.enclosing_local_string_bindings.pop()
         self.enclosing_parameter_names.pop()
 
@@ -426,17 +449,23 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
     visit_ClassDef = visit_scope
 
     def visit_with_names_hidden(self, nodes, hidden):
-        """Visit the nodes with the innermost function's locals of the hidden names not followed."""
-        if not hidden or not self.enclosing_local_string_bindings:
+        """Visit the nodes with the innermost function's locals of the hidden names not followed, and
+        the module constants of those names not rendered as their values."""
+        if not hidden:
             for node in nodes:
                 self.visit(node)
             return
-        outer = self.enclosing_local_string_bindings[-1]
-        self.enclosing_local_string_bindings.append(
-            {name: values for name, values in outer.items() if name not in hidden})
+        self.enclosing_scope_bound_names.append((set(hidden), False))
+        has_locals = bool(self.enclosing_local_string_bindings)
+        if has_locals:
+            outer = self.enclosing_local_string_bindings[-1]
+            self.enclosing_local_string_bindings.append(
+                {name: values for name, values in outer.items() if name not in hidden})
         for node in nodes:
             self.visit(node)
-        self.enclosing_local_string_bindings.pop()
+        if has_locals:
+            self.enclosing_local_string_bindings.pop()
+        self.enclosing_scope_bound_names.pop()
 
     def visit_comprehension_parts(self, node):
         """Visit a comprehension's parts, each with the targets bound before it hiding the
@@ -519,7 +548,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
                 # A name ending in a suffix is collected already, at its assignment.
                 elif value.id in self.module_string_values and not variable_name_has_agent_facing_message_suffix(value.id):
                     self.collect_expression_strings(self.module_string_values[value.id],
-                                                    f"{label} {value.id} =")
+                                                    f"{label} {value.id} =", in_module_scope=True)
             elif string_building_parts(value):
                 self.collect_sink_expression(value, label)
         self.generic_visit(node)
@@ -699,6 +728,11 @@ def scope_assigned_names(scope):
         elif isinstance(node, ast.Global):
             names.update(node.names)
     return (names | {definition.name for definition in scope_direct_definitions(scope)}) - nonlocal_names
+
+
+def scope_global_names(scope):
+    """The names a function's, lambda's or class's own body declares global."""
+    return {name for node in nodes_in_own_scope(scope) if isinstance(node, ast.Global) for name in node.names}
 
 
 def scope_body_nodes(scope):

@@ -401,6 +401,12 @@ with tempfile.TemporaryDirectory() as temporary:
           [file_text(target) for target in targets]
           == ["Nothing was changed.\n", "Not on <branch>. Nothing was changed.\nRun git switch <branch>\n"], targets)
 
+    targets = fast_read_targets(agent_text(write_then_run(
+        repository, repository / "scripts" / "same-text-tool.py",
+        'print("Hello " + name)\nprint("Hello {name}")\n')))
+    check("two messages with the same text that the agent reads differently each get the file of their own text",
+          sorted(file_text(target) for target in targets) == ["Hello <name>\n", "Hello {name}\n"], targets)
+
     result = write_then_run(repository, program,
                             COMMITTED_SOURCE.replace("second message to the agent", "second, reworded"))
     text = agent_text(result)
