@@ -364,6 +364,61 @@ def test_bash_commit_deletes_and_other_worktrees_follow():
     claude.end()
 
 
+def commit_objects_in(main):
+    return git(main, "cat-file", "--batch-all-objects", "--batch-check=%(objecttype)").split(
+        "\n").count("commit")
+
+
+def test_unchanged_worktree_writes_no_commit():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "same", "same-branch")
+    claude = FakeProcessTreeClaude(main)
+    ref = snapshots.work_snapshot_ref(claude.owner_key, worktree)
+    (worktree / "tracked.txt").write_text("draft\n")
+    (worktree / "new.txt").write_text("new\n")
+    claude.run_hook(edit(worktree / "tracked.txt"))
+    first = git(main, "rev-parse", ref)
+    commits = commit_objects_in(main)
+    # Each run a second later, as on a real machine, where an unchanged worktree would
+    # otherwise give a commit with a new date and so a new object.
+    for seconds, payload in enumerate((bash(worktree), edit(worktree / "tracked.txt"),
+                                       bash(worktree)), start=1):
+        claude.environment = {"GIT_AUTHOR_DATE": f"@{2_000_000_000 + seconds} +0000",
+                              "GIT_COMMITTER_DATE": f"@{2_000_000_000 + seconds} +0000"}
+        message = claude.run_hook(payload)
+        check(message is None, "a hook run on an unchanged worktree reports nothing", message)
+    check(git(main, "rev-parse", ref) == first and commit_objects_in(main) == commits,
+          "hook runs on an unchanged worktree leave the ref as it was and write no commit",
+          (first, git(main, "rev-parse", ref), commits, commit_objects_in(main)))
+    claude.environment = {}
+    check(snapshots.refresh_work_snapshot(
+        worktree, claude.owner_key,
+        os.environ.get(snapshots.AGENT_SEAT_ENVIRONMENT_VARIABLE, ""),
+        str(SCRATCH / "transcript.jsonl")) == "unchanged",
+          "refresh_work_snapshot says unchanged when it wrote nothing")
+    git(worktree, "add", "new.txt")
+    git(worktree, "commit", "-q", "-m", "part")
+    claude.run_hook(bash(worktree))
+    head = git(worktree, "rev-parse", "HEAD")
+    check(git(main, "rev-parse", f"{ref}^") == head
+          and files_in_snapshot(main, ref) == files_in_snapshot(main, first),
+          "a commit of part of the work, which leaves the tree the same, moves the "
+          "work-snapshot's parent to the new HEAD")
+    after_commit = git(main, "rev-parse", ref)
+    claude.run_hook(dict(bash(worktree), transcript_path=str(SCRATCH / "other.jsonl")))
+    check(git(main, "rev-parse", ref) != after_commit,
+          "the same tree and parent with another transcript writes a new work-snapshot")
+    (worktree / "tracked.txt").write_text("more\n")
+    claude.run_hook(edit(worktree / "tracked.txt"))
+    check(git(main, "show", f"{ref}:tracked.txt") == "more",
+          "an edit after unchanged runs is held")
+    git(worktree, "checkout", "-q", "--", "tracked.txt")
+    claude.run_hook(bash(worktree))
+    check(ref not in refs_of(main), "once nothing is uncommitted the ref is deleted",
+          refs_of(main))
+    claude.end()
+
+
 def test_overlapping_runs_end_on_the_final_state():
     name = "overlapping runs leave the ref on a work-snapshot of the final state"
     main = new_clone()
@@ -374,8 +429,8 @@ def test_overlapping_runs_end_on_the_final_state():
     real_build = snapshots.build_work_snapshot_commit
     interleaved = []
 
-    def build_while_another_run_lands(*arguments):
-        commit = real_build(*arguments)
+    def build_while_another_run_lands(*arguments, **keywords):
+        commit = real_build(*arguments, **keywords)
         if not interleaved:
             interleaved.append(True)
             (worktree / "tracked.txt").write_text("final\n")
@@ -1512,6 +1567,7 @@ def main():
                      test_overlapping_runs_end_on_the_final_state, test_operation_trailer,
                      test_each_operation_is_read_from_its_own_marker,
                      test_git_path_line_count_other_than_five_is_reported,
+                     test_unchanged_worktree_writes_no_commit,
                      test_hook_failure_is_reported, test_other_repository_is_untouched,
                      test_worktree_discovery_failure_is_reported,
                      test_names_read_from_git_are_the_files_as_stored,

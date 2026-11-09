@@ -1109,7 +1109,7 @@ def keep_what_removal_would_lose(worktree, repo, verdict, one_named=False):
                 owner_key = work_snapshots.owner_key_of_process(os.getpid())
                 outcome = work_snapshots.refresh_work_snapshot(worktree, owner_key, agent_seat, "")
                 existing = (work_snapshots.work_snapshot_ref(owner_key, worktree)
-                            if outcome == "written" else None)
+                            if outcome in ("written", "unchanged") else None)
         except Exception as error:
             print(f"{worktree.name}: work-snapshot FAILED, worktree kept — its uncommitted and "
                   f"untracked files could not be copied: {type(error).__name__}: {error}")
