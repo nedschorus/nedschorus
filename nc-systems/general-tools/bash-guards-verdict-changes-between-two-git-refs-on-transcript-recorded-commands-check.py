@@ -544,6 +544,11 @@ def read_codex_exec(guard, command, working_directory, search_file_directory):
     return "refused" if reason else "passed", reason
 
 
+def read_hand_typed_git_worktree_add(guard, command, working_directory, search_file_directory):
+    reason = guard.refusal_for_command(command)
+    return "refused" if reason else "passed", reason
+
+
 def read_ghi_md_whole_file_replacement(guard, command, working_directory, search_file_directory):
     # The marker file is never read here: replaying a command must not consume an agent's reason.
     replaced = guard.ghi_md_replaced_by_command(command, working_directory)
@@ -626,6 +631,7 @@ GUARDS = {
     ".claude/guard-hooks/pkill-killall-and-process-name-pattern-kill-refusal-hook.py": read_pkill_pattern_kill,
     ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py": read_search_file,
     ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py": read_codex_exec,
+    ".claude/guard-hooks/hand-typed-git-worktree-add-refusal-hook.py": read_hand_typed_git_worktree_add,
     "nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py":
         read_markdown_push_reminder,
     ".claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py": read_ghi_md_whole_file_replacement,
