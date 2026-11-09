@@ -661,9 +661,9 @@ def clearing_lines(pull_request, branch, head, base, remote, runner=run):
 def branch_on_remote(branch, remote, runner=run):
     """Return (True or False, None) for whether the remote has the branch, or
     (None, why) when git cannot ask it."""
-    status, out = runner(["git", "ls-remote", "--heads", remote, "refs/heads/" + branch])
-    if status != 0:
-        return None, "git ls-remote exited %d" % status
+    exit_status, out = runner(["git", "ls-remote", "--heads", remote, "refs/heads/" + branch])
+    if exit_status != 0:
+        return None, "git ls-remote exited %d" % exit_status
     return bool(out.strip()), None
 
 
