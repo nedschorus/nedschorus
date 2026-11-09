@@ -353,9 +353,14 @@ class Scenario:
     `conflicting` conflicts with origin/main and the other two do not.
     Every setup push uses --no-verify, so the setup never depends on the hook
     under test.
+
+    Unless worktree_has_checks is False, the clone holds untracked empty files at
+    scripts/branch-conflict-check.py and at the revert check's path, as a seat's
+    worktree holds both checks, so the hooks give the hand-check commands that run
+    the worktree's copies.
     """
 
-    def __init__(self, parent, name, hooks, path_override=None):
+    def __init__(self, parent, name, hooks, path_override=None, worktree_has_checks=True):
         self.parent = parent
         self.name = name
         self.origin = parent / (name + "-origin.git")
@@ -390,6 +395,10 @@ class Scenario:
         self.commit("shared.txt", "main's line\n", "Main side")
         self.git(self.clone, "push", "--quiet", "--no-verify", "origin", "main")
         self.git(self.clone, "fetch", "--quiet", "origin")
+        if worktree_has_checks:
+            (self.clone / "scripts").mkdir()
+            for check_file in (REAL_CONFLICT_CHECK, REAL_REVERT_CHECK):
+                (self.clone / "scripts" / check_file.name).write_text("")
 
     def environment(self):
         env = {key: value for key, value in os.environ.items()
@@ -1804,8 +1813,103 @@ def run_revert_check_cases(scratch):
           repr(scenario.fake_check_calls()))
 
 
+ORIGIN_MAIN_HAND_CHECK_COMMAND = (
+    "git fetch --quiet origin main && git worktree add --quiet --detach "
+    "/tmp/origin-main-copy-for-hand-check-%(head)s origin/main && python3 "
+    "/tmp/origin-main-copy-for-hand-check-%(head)s/scripts/%(check)s --head %(head)s; "
+    "git worktree remove --force /tmp/origin-main-copy-for-hand-check-%(head)s")
+FAKE_ORIGIN_MAIN_CHECK = ("import sys\n"
+                          "print(\"VERDICT: CLEAN -- origin/main's copy of %s ran with \" "
+                          "+ \" \".join(sys.argv[1:]))\n")
+FAKE_CHECK_ALWAYS_CLEAN = FAKE_CHECK_PREAMBLE + """\
+print("VERDICT: CLEAN -- fake clean verdict for the test.")
+sys.exit(0)
+"""
+
+
+def run_worktree_without_checks_cases(scratch):
+    """A worktree with no copy of a check is given a hand-check command that runs origin/main's
+    copy, and that command runs it; a command naming the worktree's scripts/ could not."""
+    runner = load_runner_module()
+    empty_directory = scratch / "no-scripts-directory"
+    empty_directory.mkdir()
+    started_in = os.getcwd()
+    os.chdir(empty_directory)
+    try:
+        stream = io.StringIO()
+        runner.report_unexpected_error(stream, RuntimeError("boom"), ["origin", "url"], None)
+    finally:
+        os.chdir(started_in)
+    check("an error before the pushed refs were read, in a worktree with no checks: both "
+          "commands run origin/main's copies",
+          ORIGIN_MAIN_HAND_CHECK_COMMAND % {"check": REAL_CONFLICT_CHECK.name,
+                                            "head": "<branch name>"}
+          in stream.getvalue()
+          and ORIGIN_MAIN_HAND_CHECK_COMMAND % {"check": REAL_REVERT_CHECK.name,
+                                                "head": "<branch name>"}
+          in stream.getvalue()
+          and "python3 scripts/" not in stream.getvalue(), stream.getvalue())
+
+    for case_number, (label, layout_arguments, missing_text, hand_lines) in enumerate((
+            ("the conflict check is missing", {"conflict_check": None},
+             "branch-conflict-check.py is missing",
+             ("Check clean by hand from your worktree: %s",
+              "Once the hand conflict check of clean prints VERDICT: CLEAN, check it for files "
+              "set back too: %s")),
+            ("the Python file is missing", {"include_runner": False},
+             "git-client-side-hooks-pre-push-conflict-check.py is missing",
+             ("Check clean by hand from your worktree: %s",
+              "Once the hand conflict check of clean prints VERDICT: CLEAN, check it for files "
+              "set back too: %s")),
+            ("the revert check is missing",
+             {"conflict_check": FAKE_CHECK_ALWAYS_CLEAN, "revert_check": None},
+             "branch-reverts-a-file-to-an-older-main-version-check.py is missing",
+             (None, "Check it by hand from your worktree: %s")))):
+        name = "worktree-without-checks-%d" % case_number
+        hooks = make_layout(scratch, "layout-" + name, **layout_arguments)
+        scenario = Scenario(scratch, name, hooks, worktree_has_checks=False)
+        (scenario.clone / "scripts").mkdir()
+        for check_file in (REAL_CONFLICT_CHECK, REAL_REVERT_CHECK):
+            scenario.commit("scripts/" + check_file.name,
+                            FAKE_ORIGIN_MAIN_CHECK % check_file.name, "Checks on main")
+        scenario.git(scenario.clone, "push", "--quiet", "--no-verify", "origin", "main")
+        scenario.git(scenario.clone, "switch", "--quiet", "clean")
+        short = scenario.head("clean")[:SHORT_COMMIT_LENGTH]
+        outcome = scenario.push("origin", "clean")
+        check("%s, and so is the worktree's copy: the push goes through and says so" % label,
+              went_through(outcome) and missing_text in outcome.stderr, outcome.describe())
+        check("%s, and so is the worktree's copy: no command runs the worktree's missing copy"
+              % label, "python3 scripts/" not in outcome.stderr, outcome.describe())
+        lines = outcome.stderr.splitlines()
+        for line_text, check_file in zip(hand_lines, (REAL_CONFLICT_CHECK, REAL_REVERT_CHECK)):
+            if line_text is None:
+                continue
+            command = ORIGIN_MAIN_HAND_CHECK_COMMAND % {"check": check_file.name, "head": short}
+            check("%s: the hand check of %s runs origin/main's copy" % (label, check_file.name),
+                  line_text % command in lines, outcome.describe())
+            ran = subprocess.run(["sh", "-c", command], cwd=str(scenario.clone),
+                                 env=scenario.environment(), capture_output=True, text=True,
+                                 timeout=60)
+            worktrees = scenario.git(scenario.clone, "worktree", "list").splitlines()
+            check("%s: that command runs origin/main's %s on the commit, and removes the "
+                  "worktree it adds" % (label, check_file.name),
+                  ran.returncode == 0
+                  and ran.stdout.strip() == "VERDICT: CLEAN -- origin/main's copy of %s ran "
+                  "with --head %s" % (check_file.name, short)
+                  and len(worktrees) == 1,
+                  "exit %s; stdout %r; stderr %r; worktrees %r"
+                  % (ran.returncode, ran.stdout, ran.stderr, worktrees))
+
+
 def main():
-    run_unit_cases()
+    # The unit cases run the hook code in this process and the shell part in its working
+    # directory, as git runs a hook in the worktree being pushed; this checkout is that worktree.
+    started_in = os.getcwd()
+    os.chdir(SCRIPTS_DIRECTORY.parent)
+    try:
+        run_unit_cases()
+    finally:
+        os.chdir(started_in)
     # Resolved, because git and the hooks print resolved paths: on macOS the temporary
     # directory is under /var, a symlink to /private/var.
     scratch = Path(tempfile.mkdtemp(prefix="pre-push-test-")).resolve()
@@ -1815,6 +1919,7 @@ def main():
         run_mutation_testing_worktree_cases(scratch)
         run_open_pull_request_branch_cases(scratch)
         run_revert_check_cases(scratch)
+        run_worktree_without_checks_cases(scratch)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     if failures:
