@@ -444,13 +444,15 @@ IN_PLACE = "in place"
 def leftover_state(repo, snapshot):
     """LOST or IN_PLACE: whether a leftover's worktree still holds its changes.
 
-    IN_PLACE: the worktree exists and still has the work-snapshot's parent as
-    HEAD and its tree, as after a session-handoff, a quota stop or a logout;
-    it is kept, unlisted, so it is still there if the worktree is removed
-    later. LOST: anything else, including a worktree that is gone, holds other
-    changes, or had the changes committed or discarded; the work-snapshot may
-    be the only copy, so it is listed. Raises WorkSnapshotError when the
-    worktree or the work-snapshot cannot be read.
+    IN_PLACE: the worktree exists and holds every file the work-snapshot
+    changed with the same content and mode, and has none it deleted, whatever
+    its HEAD is now, as after a session-handoff, a quota stop or a logout, or
+    after HEAD moved under those files; it is kept, unlisted, so it is still
+    there if the worktree is removed later. LOST: anything else, including a
+    worktree that is gone, or one where a file it changed now differs or was
+    discarded; the work-snapshot may be the only copy, so it is listed. Raises
+    WorkSnapshotError when the worktree, its HEAD or the work-snapshot cannot
+    be read.
     """
     worktree = snapshot["worktree"]
     if not worktree or not worktree_resolves_to_itself(worktree):
@@ -492,12 +494,30 @@ def tree_and_parents(repo, commit, cache):
     return cache[commit]
 
 
+def files_held(directory, treeish):
+    """path -> (mode, object id) of every file treeish holds."""
+    output = git_output(directory, "ls-tree", "-r", "-z", treeish)
+    return {entry.path: (entry.mode, entry.object_name)
+            for entry in git_machine_readable_output.tree_entries(output)}
+
+
+def changes_held(repo, commit, cache):
+    """path -> (mode, object id) for each path the work-snapshot commit changed against its
+    parent, None for a path it deleted; read once per commit."""
+    if commit not in cache:
+        held = files_held(repo, commit)
+        cache[commit] = {path: held.get(path) for _status, path in changed_files(repo, commit)}
+    return cache[commit]
+
+
 def newer_duplicate(repo, snapshot, leftovers, cache):
-    """A later leftover of the same agent-seat and worktree with the same tree and parents, or None.
+    """A later leftover of the same agent-seat and worktree that changed the same paths to the
+    same content, whatever either one's parent, or None.
 
     Such a pair is what each session-handoff leaves: the same unchanged files
-    written again by the next owner. The later one holds every byte the
-    earlier one holds, compared by git object id. Only leftovers count, never
+    written again by the next owner, often on a HEAD that moved in between. The
+    later one holds every byte of the earlier one's changes, compared by git
+    object id. Only leftovers count, never
     a live owner's work-snapshot, which its own hook may delete. Only the same
     agent-seat counts, because a leftover is listed only to its own
     agent-seat: a copy kept under another agent-seat, or under `unknown`,
@@ -505,13 +525,13 @@ def newer_duplicate(repo, snapshot, leftovers, cache):
     """
     if not snapshot["worktree"]:
         return None
-    mine = tree_and_parents(repo, snapshot["commit"], cache)
+    mine = changes_held(repo, snapshot["commit"], cache)
     order = (snapshot["time"], snapshot["ref"])
     for other in leftovers:
         if (other["worktree"] == snapshot["worktree"]
                 and other["agent_seat"] == snapshot["agent_seat"]
                 and (other["time"], other["ref"]) > order
-                and tree_and_parents(repo, other["commit"], cache) == mine):
+                and changes_held(repo, other["commit"], cache) == mine):
             return other
     return None
 
@@ -716,8 +736,8 @@ def clean_leftover_work_snapshots(repo, remove, only_due, handoff_directory, now
                                         and now - first_listed > threshold)
         if due and remove:
             result = run_git(repo, "update-ref", "-d", ref, snapshot["commit"])
-            reason = (f"a duplicate of the newer leftover {duplicate['ref']}, same HEAD and "
-                      "same content" if duplicate else
+            reason = (f"a duplicate of the newer leftover {duplicate['ref']}, same changed files "
+                      "and same content" if duplicate else
                       f"first listed {utc_text(first_listed)} and not restored")
             if result.returncode == 0:
                 out(f"work-snapshot {ref}: deleted, {reason} ({where})")
@@ -746,7 +766,8 @@ def clean_leftover_work_snapshots(repo, remove, only_due, handoff_directory, now
 
 
 def snapshot_matches_worktree(repo, snapshot):
-    """Whether the worktree still has the work-snapshot's parent as HEAD and its tree.
+    """Whether the worktree holds each path the work-snapshot changed as the work-snapshot does,
+    whatever its HEAD.
 
     Raises WorkSnapshotError when HEAD or a tree cannot be read, so a failed
     comparison is reported, not taken for a mismatch.
@@ -754,10 +775,11 @@ def snapshot_matches_worktree(repo, snapshot):
     worktree = Path(snapshot["worktree"])
     if not worktree.is_dir():
         return False
-    tree, parents = tree_and_parents(repo, snapshot["commit"], {})
-    if head_commit_or_raise(worktree) != (parents or None):
-        return False
-    return tree_of_worktree_now(worktree) == tree
+    changes = changes_held(repo, snapshot["commit"], {})
+    # HEAD is not compared, but one git cannot read makes the comparison untrustworthy.
+    head_commit_or_raise(worktree)
+    now = files_held(worktree, tree_of_worktree_now(worktree))
+    return all(now.get(path) == held for path, held in changes.items())
 
 
 def head_commit_or_raise(worktree):

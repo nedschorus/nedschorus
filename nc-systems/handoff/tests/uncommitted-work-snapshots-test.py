@@ -991,8 +991,27 @@ def test_restore_a_subset():
     (worktree / "new.txt").write_text("work\n")
     git(worktree, "add", "-A")
     git(worktree, "commit", "-q", "-m", "the same changes, committed")
+    check(snapshots.snapshot_matches_worktree(main, snapshot),
+          "a worktree whose HEAD moved onto the same changes still matches")
+    (worktree / "new.txt").unlink()
     check(not snapshots.snapshot_matches_worktree(main, snapshot),
-          "a worktree whose HEAD moved no longer matches, though the tree is the same")
+          "a worktree that no longer has a file the work-snapshot added no longer matches")
+    git(worktree, "checkout", "-q", "--", "new.txt")
+    git(worktree, "rm", "-q", "tracked.txt")
+    git(worktree, "commit", "-q", "-m", "tracked.txt deleted")
+    (worktree / "deleting.txt").write_text("a file the next work-snapshot deletes\n")
+    git(worktree, "add", "deleting.txt")
+    git(worktree, "commit", "-q", "-m", "deleting.txt added")
+    (worktree / "deleting.txt").unlink()
+    snapshots.refresh_work_snapshot(worktree, "8-9", "seat", "")
+    deleting = next(s for s in snapshots.all_work_snapshots(main)
+                    if s["ref"] == snapshots.work_snapshot_ref("8-9", worktree))
+    git(worktree, "commit", "-q", "--allow-empty", "-m", "HEAD moves")
+    check(snapshots.snapshot_matches_worktree(main, deleting),
+          "a worktree that still lacks a file the work-snapshot deleted matches after HEAD moved")
+    (worktree / "deleting.txt").write_text("a file the next work-snapshot deletes\n")
+    check(not snapshots.snapshot_matches_worktree(main, deleting),
+          "a worktree that has a file back the work-snapshot deleted no longer matches")
 
 
 # ---------------------------------------------------------------- cleaner
@@ -1102,9 +1121,9 @@ def test_in_place_and_duplicate_leftovers():
     snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
                                             handoff_directory=handoffs, now=2000,
                                             is_alive=dead, out=report.append)
-    check(third in text and third in refs_of(main),
-          "a leftover whose changes were committed is listed and kept, an accepted cost: "
-          "the restore diff shows the agent the work is committed", (text[:300], report))
+    check(third not in text and third in refs_of(main),
+          "a leftover whose changes were committed, so its worktree still holds them, is kept, "
+          "unlisted", (text[:300], report))
     gone = add_worktree(main, main / ".claude" / "worktrees" / "gone", "gone-branch")
     (gone / "work.txt").write_text("work\n")
     older = snapshot_at(gone, "23-1", 1000, "seat-eight")
@@ -1131,22 +1150,36 @@ def test_in_place_and_duplicate_leftovers():
           report)
 
 
-def test_same_tree_on_another_head_is_not_a_duplicate():
+def test_untracked_draft_kept_across_a_head_move_is_in_place_and_duplicated():
+    """The 2026-11-05 MD-skills case: untracked drafts, HEAD fast-forwarded between two
+    session-handoffs, each leaving a work-snapshot of the same files."""
     main = new_clone()
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "moved", "moved-branch")
     (worktree / "draft.md").write_text("draft\n")
     older = snapshot_at(worktree, "41-1", 1000, "seat-eleven")
-    git(worktree, "commit", "-q", "--allow-empty", "-m", "HEAD moves, the tree does not")
-    newer = snapshot_at(worktree, "42-1", 1500, "seat-eleven")
-    tree = lambda ref: git(main, "rev-parse", f"{ref}^{{tree}}")
+    (worktree / "upstream.txt").write_text("a commit from main the branch fast-forwards to\n")
+    git(worktree, "add", "upstream.txt")
+    git(worktree, "commit", "-q", "-m", "HEAD moves under the untracked draft")
     handoffs = SCRATCH / "handoffs-moved"
     handoffs.mkdir()
+    dead = lambda key: False
+    text = snapshots.first_prompt_text(main, "seat-eleven", handoffs, is_alive=dead)
+    check(text == "" and older in refs_of(main),
+          "a work-snapshot of an untracked file whose HEAD then moved is not listed while the "
+          "worktree holds the file unchanged", text[:300])
+    newer = snapshot_at(worktree, "42-1", 1500, "seat-eleven")
     report = []
     snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
                                             handoff_directory=handoffs, now=2000,
-                                            is_alive=lambda key: False, out=report.append)
-    check(tree(older) == tree(newer) and {older, newer} <= set(refs_of(main)),
-          "two leftovers with the same tree but different parents are both kept", report)
+                                            is_alive=dead, out=report.append)
+    check(older not in refs_of(main) and newer in refs_of(main)
+          and any(older in line and "deleted, a duplicate" in line for line in report),
+          "of two leftovers holding the same changed files on different parents, the cleaner "
+          "deletes the older and keeps the newer", report)
+    git(main, "worktree", "remove", "--force", str(worktree))
+    text = snapshots.first_prompt_text(main, "seat-eleven", handoffs, is_alive=dead)
+    check(newer in text and "(is gone)" in text,
+          "once the worktree is removed, the kept work-snapshot is listed", text[:300])
 
 
 def test_unreadable_head_is_reported():
@@ -1610,7 +1643,7 @@ def main():
                      test_live_and_dead_owners_listed, test_list_caps_and_failure,
                      test_supervisor_appends_the_list, test_restore_a_subset, test_cleaner,
                      test_in_place_and_duplicate_leftovers,
-                     test_same_tree_on_another_head_is_not_a_duplicate,
+                     test_untracked_draft_kept_across_a_head_move_is_in_place_and_duplicated,
                      test_unreadable_head_is_reported,
                      test_git_failures_are_not_read_as_answers,
                      test_branch_ref_naming_a_missing_object_is_reported,
