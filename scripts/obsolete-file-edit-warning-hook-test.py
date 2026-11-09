@@ -925,7 +925,25 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         check(f"detached: when the git log that names the removing commit {case_name}, "
               "the same line at the next edit is said again, never held back as a repeat",
               repeated == warning, repeated)
+    gone_file.write_text("the agent edited this, deleting-log-erring-git\n", encoding="utf-8")
+    warning = agent_text(run_hook(
+        hook_payload(detached, gone_file),
+        path_prefix=git_shimmed_when("deleting-log-erring-git", deleting_lookup,
+                                     'printf "fatal: shimmed log\\n" >&2; exit 128')))
+    check("detached: when the git log that names the removing commit fails with an "
+          "error, the could-not-tell line carries git's text",
+          "could not tell whether main moved or deleted it (fatal: shimmed log). "
+          in warning, warning)
     removing_commit_show = '[ "$1" = "show" ] && [ "$2" = "-z" ]'
+    gone_file.write_text("the agent edited this, removing-show-killed-git\n", encoding="utf-8")
+    warning = agent_text(run_hook(
+        hook_payload(detached, gone_file),
+        path_prefix=git_shimmed_when("removing-show-killed-git", removing_commit_show,
+                                     "kill -KILL $$")))
+    check("detached: when the show of the removing commit is killed by a signal, the "
+          "line names the signal as a negative exit code",
+          "could not tell whether main moved or deleted it (git show exited -9). "
+          in warning, warning)
     gone_file.write_text("the agent edited this, removing-show-failing-git\n",
                          encoding="utf-8")
     show_failing_directory = git_shimmed_when(
