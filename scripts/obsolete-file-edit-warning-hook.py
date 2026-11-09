@@ -151,9 +151,8 @@ BEHIND_REMOTE_ADVICE = (
     "this checkout has them. Commit your edit, then run `git pull --rebase origin "
     "{branch}`: it moves only your new commit, which is on no remote yet, onto "
     "origin/{branch}, and leaves the pushed commits as they are. Then push once. If "
-    "the branch conflicts with main, clear the conflict with the hand-merge that "
-    "`python3 scripts/branch-conflict-check.py` describes; never rebase the pushed "
-    "commits."
+    "the branch conflicts with main, do what `python3 scripts/branch-conflict-check.py` "
+    "reports; never rebase the pushed commits."
 )
 DIVERGED_FROM_REMOTE_ADVICE = (
     "This branch has diverged from origin/{branch}: each side has commits the other "
@@ -221,9 +220,8 @@ PUSHED_NO_OVERLAP_LINE = (
 )
 PUSHED_OVERLAP_LINE = (
     "main's changes to {path} overlap this checkout's copy, so the pull request will "
-    "conflict with main on this file. Commit your edit on top first; then clear the "
-    "conflict with the hand-merge that `python3 scripts/branch-conflict-check.py` "
-    "describes, never with a rebase."
+    "conflict with main on this file. Commit your edit on top first, and do not "
+    "rebase; then do what `python3 scripts/branch-conflict-check.py` reports."
 )
 # git's rename detection carries an edit at the old path to the new one, in a
 # rebase and in a merge alike, so a moved file needs no hand-carrying.
@@ -236,7 +234,7 @@ MAIN_MOVED_FILE_PUSHED_LINE = (
     "main moved {path} to {new_path}. Commit your edit on top at {path}, and do not "
     "rebase: when the pull request merges, git follows the move and carries your edit "
     "to {new_path}. If `python3 scripts/branch-conflict-check.py` reports a conflict, "
-    "clear it with the hand-merge it describes."
+    "do what its report says."
 )
 MAIN_DELETED_FILE_LINE = (
     "main deleted {path}{deleted_in}, so your edit has no file to land in. Read why "

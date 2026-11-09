@@ -1045,12 +1045,12 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "and do not rebase to pick them up."), "\n".join(lines))
     shared_file.write_text("".join(edited_same_line), encoding="utf-8")
     warning = detached_warning(shared_file)
-    check("detached at a pushed head: an overlap is sent to the hand-merge, never a rebase",
+    check("detached at a pushed head: an overlap is sent to scripts/branch-conflict-check.py, never a rebase",
           warning.split("\n")[-1] == (
               "main's changes to lib/shared.py overlap this checkout's copy, so the pull "
               "request will conflict with main on this file. Commit your edit on top "
-              "first; then clear the conflict with the hand-merge that `python3 "
-              "scripts/branch-conflict-check.py` describes, never with a rebase.")
+              "first, and do not rebase; then do what `python3 "
+              "scripts/branch-conflict-check.py` reports.")
           and "git rebase origin/main" not in warning, warning)
     moved_file.write_text("".join(edited_far_away), encoding="utf-8")
     warning = detached_warning(moved_file)
@@ -1059,8 +1059,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "main moved lib/moved.py to lib/renamed.py. Commit your edit on top at "
               "lib/moved.py, and do not rebase: when the pull request merges, git follows "
               "the move and carries your edit to lib/renamed.py. If `python3 "
-              "scripts/branch-conflict-check.py` reports a conflict, clear it with the "
-              "hand-merge it describes."), warning)
+              "scripts/branch-conflict-check.py` reports a conflict, do what its report "
+              "says."), warning)
     git(["checkout", "-q", "--", "lib/moved.py"], detached)
 
     own_commits_failing_git_directory = git_failing_when(
