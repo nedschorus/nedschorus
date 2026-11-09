@@ -15,7 +15,8 @@ hyphens, underscores, dots and lower-to-upper case changes, and, given
 --sent-name, that the name sent to be checked is one of the three. It then gives each
 candidate to six readers at once, eighteen calls in all, each a new process
 in its own empty temporary folder, given the name alone: Claude Sonnet 5.5 and
-Opus 5.5 (`claude -p`, no tools, no settings, so no CLAUDE.md), Gemini
+Opus 5.5 (`claude -p` behind the shared headless prefix, so no connectors, in
+dontAsk mode, with no tools and no settings files, so no CLAUDE.md), Gemini
 gemini-3.8-flash-low and gemini-4-argon-medium (through
 nc-systems/general-tools/agy-print-prompt-run-in-empty-home-sandbox.py), and
 gpt-6.1-terra and gpt-6.1-sol (`codex exec`, read-only, ephemeral). Each
@@ -61,6 +62,7 @@ passing candidate, a retry of a retry). Model calls cost quota: eighteen per
 
 import argparse
 import concurrent.futures
+import importlib.util
 import json
 import os
 import pathlib
@@ -76,6 +78,12 @@ import time
 PROGRAM = "new-name-full-medium-short-candidates-checked-by-name-only-model-readers"
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 AGY_RUNNER = REPO_ROOT / "nc-systems" / "general-tools" / "agy-print-prompt-run-in-empty-home-sandbox.py"
+_command_line_prefix_spec = importlib.util.spec_from_file_location(
+    "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
+_command_line_prefix_spec.loader.exec_module(command_line_prefix)
 LOG_STORE_HOSTNAME = "ned-box"
 LOG_STORE_SSH_HOST = "nedlern@ned-box"
 READER_RESULTS_LOG = "/home/nedlern/nedschorus-logs/name-checks/new-name-name-only-model-reader-results.jsonl"
@@ -130,7 +138,8 @@ def candidate_length_problem(candidates: dict):
 def reader_command(runtime: str, model: str, effort, prompt: str, folder: pathlib.Path):
     """(argv, stdin text or None, file the answer is written to or None) for one reader."""
     if runtime == "claude":
-        return (["claude", "-p", "--model", model, "--effort", effort, "--tools", "",
+        return ([*command_line_prefix.claude_code_headless_run_command_line_prefix_build("dontAsk"),
+                 "--model", model, "--effort", effort, "--tools", "",
                  "--setting-sources", "", "--no-session-persistence", "--output-format", "text"],
                 prompt, None)
     if runtime == "agy":
@@ -152,7 +161,7 @@ def run_ssh(ssh_host: str, remote_command: str, input_text: str = None):
     """(stdout, error text or None) of one batch-mode ssh call; never raises."""
     try:
         completed = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", ssh_host, remote_command],
-                                   input=input_text, capture_output=True, text=True, timeout=SSH_TIMEOUT_SECONDS)
+                                   input=input_text or "", capture_output=True, text=True, timeout=SSH_TIMEOUT_SECONDS)
     except (OSError, subprocess.TimeoutExpired) as error:
         return None, f"ssh did not run: {error}"
     if completed.returncode:

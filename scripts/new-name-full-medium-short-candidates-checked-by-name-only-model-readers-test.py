@@ -333,7 +333,9 @@ def test_reader_command_gives_each_runtime_nothing_but_the_name():
     folder = pathlib.Path("/tmp/x")
     argv, stdin_text, _ = check.reader_command("claude", "claude-sonnet-5-5", "medium", "P", folder)
     expect("--tools" in argv and argv[argv.index("--tools") + 1] == "" and argv[argv.index("--setting-sources") + 1] == ""
-           and stdin_text == "P", "claude reader has no tools and no settings, prompt on stdin")
+           and stdin_text == "P" and argv[:3] == ["claude", "-p", "--strict-mcp-config"]
+           and argv[argv.index("--permission-mode") + 1] == "dontAsk",
+           "claude reader has no connectors, no tools and no settings, prompt on stdin")
     argv, _, answer = check.reader_command("codex", "gpt-6.1-terra", "medium", "P", folder)
     expect(argv[argv.index("-s") + 1] == "read-only" and "--ephemeral" in argv and argv[-1] == "P"
            and answer == folder / "answer.txt", "codex reader is read-only, ephemeral, in the empty folder")
