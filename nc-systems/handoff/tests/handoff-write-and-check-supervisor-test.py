@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 # This suite sits at nc-systems/handoff/tests/; the system it tests is one
@@ -880,7 +881,7 @@ def run_spawned_subagent_roster_cases(workspace: Path):
     # The still-working filter (ruled 2026-08-29). Of the three spawned, two
     # completed — junk to the successor — and only the silent one, which the
     # reincarnation itself would kill mid-job, is handoff material.
-    still_working = writer.still_working_subagent_entries(roster)
+    still_working = writer.still_working_subagent_entries(roster, transcript_path)
     check("only a subagent still working at write time is handoff material",
           [entry["agent_id"] for entry in still_working] == [FIXTURE_SILENT_AGENT],
           str([entry["agent_id"] for entry in still_working]))
@@ -903,7 +904,7 @@ def run_spawned_subagent_roster_cases(workspace: Path):
     resumed_roster = writer.spawned_subagent_roster(resumed_after_completion_path)
     check("a subagent resumed after completing counts as still working",
           [entry["agent_id"] for entry in
-           writer.still_working_subagent_entries(resumed_roster)]
+           writer.still_working_subagent_entries(resumed_roster, resumed_after_completion_path)]
           == [FIXTURE_IDLE_AGENT],
           str(resumed_roster))
 
@@ -944,7 +945,7 @@ def run_spawned_subagent_roster_cases(workspace: Path):
     # polarity cuts any status that is not a spawn or a resume — ended
     # subagents are not carried (ruled 2026-08-29).
     check("stopped and killed subagents are not handoff material",
-          writer.still_working_subagent_entries(list(multi.values())) == [],
+          writer.still_working_subagent_entries(list(multi.values()), workspace / "unused.jsonl") == [],
           str(multi))
 
     # An interim notification arrives with <status>completed</status> while the
@@ -986,10 +987,37 @@ def run_spawned_subagent_roster_cases(workspace: Path):
         incident_spawn, *delivered(interim_body, "2026-10-27T21:31:58.572Z"),
     ]) + "\n", encoding="utf-8")
     interim_roster = writer.spawned_subagent_roster(interim_last_path)
-    check("a subagent whose last notification is interim counts as still working",
-          [entry["agent_id"] for entry in writer.still_working_subagent_entries(interim_roster)]
-          == [incident_agent],
-          str(interim_roster))
+    own_transcript_path = writer.threshold_hook.subagent_transcript_path(interim_last_path,
+                                                                         incident_agent)
+    own_transcript_path.parent.mkdir(parents=True)
+
+    def own_transcript(*records):
+        own_transcript_path.write_text("\n".join(json.dumps(record) for record in records) + "\n",
+                                       encoding="utf-8")
+
+    def still_working_at(now_text):
+        now = datetime.fromisoformat(now_text.replace("Z", "+00:00"))
+        return [entry["agent_id"] for entry in
+                writer.still_working_subagent_entries(interim_roster, interim_last_path, now)]
+
+    own_transcript({"type": "assistant", "timestamp": "2026-10-27T21:31:50.000Z"})
+    check("a subagent whose last notification is interim counts as still working while its own "
+          "transcript was written in the last 5 minutes",
+          still_working_at("2026-10-27T21:35:00Z") == [incident_agent], str(interim_roster))
+    check("a subagent whose last notification is interim, and whose own transcript was last "
+          "written over 5 minutes ago and shows no background task, is not still working",
+          still_working_at("2026-10-27T21:40:00Z") == [], str(interim_roster))
+    own_transcript(*background_bash_launch_records("b1interim", "run the suite", "python3 t.py",
+                                                   "2026-10-27T21:31:50.000Z"))
+    check("a subagent whose last notification is interim counts as still working while its own "
+          "transcript shows a background task of its own within the wait",
+          still_working_at("2026-10-27T22:30:00Z") == [incident_agent], str(interim_roster))
+    check("that background task holds it only within the threshold hook's default 75-minute wait",
+          still_working_at("2026-10-27T22:50:00Z") == [], str(interim_roster))
+    own_transcript_path.unlink()
+    check("a subagent whose last notification is interim and that has no own transcript is not "
+          "still working",
+          still_working_at("2026-10-27T21:35:00Z") == [], str(interim_roster))
     final_last_path = workspace / "roster-final-notification-after-interim.jsonl"
     final_last_path.write_text("\n".join(json.dumps(record) for record in [
         incident_spawn, *delivered(interim_body, "2026-10-27T21:31:58.572Z"),
@@ -997,7 +1025,7 @@ def run_spawned_subagent_roster_cases(workspace: Path):
     ]) + "\n", encoding="utf-8")
     final_roster = writer.spawned_subagent_roster(final_last_path)
     check("a final notification after an interim one ends the subagent",
-          writer.still_working_subagent_entries(final_roster) == []
+          writer.still_working_subagent_entries(final_roster, final_last_path) == []
           and final_roster[0]["last_event"] == "completed"
           and final_roster[0]["last_event_at"] == "2026-10-27T21:45:00Z",
           str(final_roster))
@@ -1106,6 +1134,57 @@ def run_roster_never_blocks_a_handoff_cases(workspace: Path):
     check("a transcript in two project folders tells the agent no single transcript was found",
           "no single transcript found" in two_folders.stdout and "by hand" in two_folders.stdout,
           two_folders.stdout)
+
+    # The 2026-11-05 MD-skills case: of two subagents whose last notice is interim, one had
+    # finished long before the handoff and one was still writing its own transcript.
+    interim_session_id = "00000000-0000-4000-8000-0000000011e7"
+    finished_agent, running_agent = "a9defd861f660c577", "a96fd3fd74301ccce"
+    interim_transcript_path = projects / f"{interim_session_id}.jsonl"
+    interim_records = []
+    for agent_id, description in ((finished_agent, "Move .claude/hooks leftovers"),
+                                  (running_agent, "Drop deferral-only handoff field")):
+        interim_records.append(spawn_record(agent_id, description, "2026-11-05T21:00:00.000Z"))
+        body = notification_body(agent_id, "completed", "waiting on its own background work")
+        interim_records.append({"type": "user", "timestamp": "2026-11-05T21:10:00.000Z",
+                                "message": {"role": "user", "content": body.replace(
+                                    "<result>", "<note>the result below may be interim.</note>\n"
+                                    "<result>")}})
+    interim_transcript_path.write_text(
+        "\n".join(json.dumps(record) for record in interim_records) + "\n", encoding="utf-8")
+    subagents_directory = interim_transcript_path.with_suffix("") / "subagents"
+    subagents_directory.mkdir(parents=True)
+    (subagents_directory / f"agent-{finished_agent}.jsonl").write_text(
+        json.dumps({"type": "assistant", "timestamp": "2026-11-05T21:09:00.000Z"}) + "\n",
+        encoding="utf-8")
+    running_own_transcript_path = subagents_directory / f"agent-{running_agent}.jsonl"
+    running_own_transcript_path.write_text(
+        json.dumps({"type": "assistant",
+                    "timestamp": datetime.now().astimezone().isoformat()}) + "\n",
+        encoding="utf-8")
+    interim = run_writer(
+        handoffs, "carry on\n", "--agent", "rosterinterimcase",
+        environment_overrides={"HOME": str(home), "CLAUDE_CODE_SESSION_ID": interim_session_id},
+    )
+    interim_body = handoff_text(handoffs, "rosterinterimcase")
+    check("a subagent whose last notice is interim and whose own transcript shows no work is "
+          "left out of the handoff, and a still-writing one is listed",
+          f'spawned-subagent-1: {running_agent} "Drop deferral-only handoff field"'
+          in interim_body.splitlines() and finished_agent not in interim_body
+          and "spawned-subagent-2" not in interim_body,
+          interim_body + interim.stdout)
+
+    running_own_transcript_path.unlink()
+    running_own_transcript_path.mkdir()
+    unreadable = run_writer(
+        handoffs, "carry on\n", "--agent", "rosterunreadableowncase",
+        environment_overrides={"HOME": str(home), "CLAUDE_CODE_SESSION_ID": interim_session_id},
+    )
+    unreadable_body = handoff_text(handoffs, "rosterunreadableowncase")
+    check("a subagent's own transcript that cannot be read still writes the handoff, with no "
+          "roster field, and tells the agent to name its subagents by hand",
+          "next-step: carry on" in unreadable_body and "spawned-subagent-" not in unreadable_body
+          and "TranscriptCouldNotBeFullyRead" in unreadable.stdout and "by hand" in unreadable.stdout,
+          unreadable_body + unreadable.stdout)
 
     # No session id at all — the case every existing test already runs under.
     unidentified = run_writer(handoffs, "carry on\n", "--agent", "rosterunidentifiedcase")
