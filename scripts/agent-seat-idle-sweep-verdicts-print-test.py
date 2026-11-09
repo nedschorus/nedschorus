@@ -546,6 +546,23 @@ check("a subagent that spent a token after its interim report has resumed: repor
       verdicts["alpha"]["running"]["subagents"] == [
           {"id": "a1b2", "started": "2026-11-02T09:00:00Z"}], verdicts["alpha"])
 
+# Real case, cold-read-improvement 2026-11-09: the parent stopped such a subagent with TaskStop,
+# which killed its background command too, and Claude Code wrote no task-notification for either.
+machine = Machine()
+subagent_with_own_background_command(machine, last_spend_at="2026-11-02T09:19:59Z")
+_, transcript = machine.seat("alpha", None)
+stop_result = {"message": "Successfully stopped task: a1b2 (Fix-round)", "task_id": "a1b2",
+               "task_type": "local_agent", "command": "Fix-round"}
+with transcript.open("a") as handle:
+    for record in (user("", at="2026-11-02T09:30:00Z", tool_result=stop_result),
+                   assistant("Stopped it."), turn_end()):
+        handle.write(json.dumps(record) + "\n")
+_, verdicts, _ = machine.run()
+check("a subagent the parent stopped with TaskStop after its interim report is not running, "
+      "nor is its own background command",
+      verdicts["alpha"]["running"] == {"subagents": [], "background_commands": []}
+      and verdicts["alpha"]["rule"] == 4, verdicts["alpha"])
+
 # Claude Code delivers a notification queued while the session was busy as a queued_command
 # attachment, not as a user record.
 machine = Machine()
