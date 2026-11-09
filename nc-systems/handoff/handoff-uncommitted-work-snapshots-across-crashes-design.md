@@ -38,7 +38,7 @@ The hook is a Claude Code PostToolUse hook. It runs after every Edit, Write and 
 
 **What a work-snapshot holds.** Every change `git add -A` would stage: modified and deleted tracked files, and new files that git's ignore rules (`.gitignore` files, `.git/info/exclude` and the user's global excludes file) do not exclude. Ignored files, such as cold-read-records, are not held. The hook builds it without changing the worktree's index, branch or files, running every git command with `git -C <worktree>`:
 1. `git --no-optional-locks status --porcelain --untracked-files=all` checks whether anything is uncommitted. `--no-optional-locks` keeps git from rewriting the index, and `--untracked-files=all` overrides any setting that hides new files.
-2. If something is, the hook copies the worktree's index (`git rev-parse --git-path index`) to a temporary file, runs `git add -A` with `GIT_INDEX_FILE` set to the copy, writes the tree with `git write-tree`, makes a commit with `git commit-tree`, whose parent is the worktree's HEAD, and deletes the temporary index. No git hooks run, and no branch moves.
+2. If something is, the hook copies the worktree's index (`git rev-parse --git-path index`) to a temporary file, runs `git add -A` with `GIT_INDEX_FILE` set to the copy, writes the tree with `git write-tree`, and deletes the temporary index. When the work-snapshot the ref holds already has that tree, the worktree's HEAD as its parent and the message below, the hook stops there and leaves the ref as it is, so a run on an unchanged worktree writes no object; otherwise it makes a commit with `git commit-tree`, whose parent is the worktree's HEAD. No git hooks run, and no branch moves.
 3. It sets the ref with `git update-ref <ref> <new commit> <old value>`, where the old value is what the ref held when the hook read it, or 40 zeros when it did not exist. That succeeds only if no overlapping hook run changed the ref in between; on that conflict it builds the work-snapshot again once.
 
 **The work-snapshot's message** is a summary line and git trailers, which the module reads with `git interpret-trailers --parse`:
@@ -48,7 +48,7 @@ The hook is a Claude Code PostToolUse hook. It runs after every Edit, Write and 
 - `Work-snapshot-transcript:` the `transcript_path` field of the hook's input.
 - `Work-snapshot-operation:` `merge`, `rebase`, `cherry-pick`, `revert` or `am` when git shows that operation in progress (`MERGE_HEAD`, a `rebase-merge` or `rebase-apply` directory, `CHERRY_PICK_HEAD`, `REVERT_HEAD`); absent otherwise.
 
-The commit's author date is the work-snapshot's time.
+The commit's author date is the work-snapshot's time: when the hook first saw the worktree in the state it holds.
 
 **When nothing is uncommitted**, the hook deletes that worktree's ref for this owner, if there is one. The hook runs after the Bash call that makes a commit, so a work-snapshot of work that has since been committed is deleted when that call returns.
 
