@@ -8,10 +8,10 @@ not restarted on; that a checkout which cannot fast-forward, or an os.execv
 that raises or returns, leaves the supervisor running its loaded code and tells the
 successor why; that a reference-checkout which cannot fast-forward is put back on
 main by the back-on-main program, run by the supervisor itself, after which the
-supervisor restarts, passing on the leftovers branch, or, when the program fails,
-does not restart and gives the successor the notice with the program's output, each
-case driven through the supervisor's loop with the program stubbed; that the restarted
-process tells its first successor, and only that one, the leftovers branch; that the restarted process starts the successor from the
+supervisor restarts and tells the successor nothing of the leftovers branch, or, when
+the program fails, does not restart and gives the successor the notice with the
+program's output, each case driven through the supervisor's loop with the program
+stubbed; that the restarted process starts the successor from the
 unconsumed handoff and restarts again at the next one; that a retiring
 session without a transcript, at a handoff the supervisor could not restart
 on or in the restarted process, gives a successor started from the next
@@ -192,24 +192,16 @@ def back_on_main_program_failed_ending(command: str, output: str) -> str:
     return ("That checkout would not fast-forward to main, so the handoff-supervisor ran the "
             "program that saves the checkout's leftovers to a pushed branch and puts it back on "
             f"main, and that program failed, printing: \"{output}\". Work out the cause from what "
-            f"it printed, fix the cause, and run the program again as {command}, the form that "
-            "works from this agent-session; when the cause is not one you can fix, tell the user "
-            "what the program printed. The handoff-supervisor does not run the program again once "
-            "the checkout is on main, which it can be even after a failed push, so a leftovers "
-            "branch the program could not push stays only in that checkout until you run the "
-            "program again. Once the checkout is on main, the handoff-supervisor restarts itself "
-            "at the next session-handoff at which it starts the successor without stopping to ask "
-            "the user.")
-
-
-def leftovers_pushed_notice(branches: str, reference_checkout=None) -> str:
-    reference_checkout = reference_checkout or supervisor.REFERENCE_CHECKOUT
-    return (f"At this session-handoff the reference-checkout {reference_checkout} would "
-            "not fast-forward to main, so the handoff-supervisor saved what was left over in it "
-            f"to the git branch {branches}, pushed to origin, and put the checkout back on main. "
-            f"Name {branches} "
-            "to the user: what it holds was left in that checkout, where no agent works, and may "
-            "be someone's lost work.")
+            "it printed, asking an advisor if you have one, fix it without losing anything the "
+            f"checkout holds, and run the program again as {command}, the form that works from "
+            "this agent-session. Afterwards, tell the user what you found and did, and name any "
+            "branch a run of the program printed; when the cause is not one you can fix, quote "
+            "him what the program printed. The handoff-supervisor does not run the program again "
+            "once the checkout is on main, which it can be even after a failed push, so a "
+            "leftovers branch the program could not push stays only in that checkout until you "
+            "run the program again. Once the checkout is on main, the handoff-supervisor restarts "
+            "itself at the next session-handoff at which it starts the successor without stopping "
+            "to ask the user.")
 
 
 def run_not_restarted_notice_names_the_tool_cases(workspace: Path):
@@ -316,12 +308,12 @@ def run_reference_checkout_back_on_main_program_cases(workspace: Path):
     branch = "reference-checkout-leftovers-2026-11-05"
     run = supervise_one_handoff_from_the_reference_checkout(
         workspace, "backonmainpushes", lambda checkout: ("abc1234", [branch]))
-    flag = "--reference-checkout-leftovers-branch-pushed-before-this-restart"
-    check("BACK ON MAIN SUCCEEDS: the supervisor restarts, passing the leftovers branch to the "
-          "restarted process before the restart flag",
+    check("BACK ON MAIN SUCCEEDS: the supervisor restarts, passing the restarted process no "
+          "leftovers branch",
           run.replaced and run.events == ["launch", "stop", "cleanup", "sync own checkout",
                                           "sync own checkout", "exec"]
-          and run.exec_argv is not None and run.exec_argv[-3:] == [flag, branch, RESTART_FLAG],
+          and run.exec_argv is not None and run.exec_argv[-1] == RESTART_FLAG
+          and not any(branch in argument for argument in run.exec_argv),
           f"{run.events} {run.exec_argv}")
     check("BACK ON MAIN SUCCEEDS: the console carries the program's success line",
           f"is on main at origin/main abc1234; its leftovers are saved on {branch}" in run.console,
@@ -332,12 +324,12 @@ def run_reference_checkout_back_on_main_program_cases(workspace: Path):
         exec_raises=PermissionError(13, "Permission denied"))
     successor_prompt = run.prompts[-1] if len(run.prompts) == 2 else ""
     check("BACK ON MAIN SUCCEEDS, EXEC FAILS: the successor is told why it did not restart, "
-          "and the leftovers branch",
+          "and nothing of the leftovers branch",
           not run.replaced and 'reason: "os.execv failed: PermissionError: [Errno 13] '
           'Permission denied"' in successor_prompt
-          # Inside the run the reference-checkout was the supervisor's own checkout.
-          and successor_prompt.endswith(
-              " " + leftovers_pushed_notice(branch, supervisor.REPOSITORY_ROOT)), successor_prompt)
+          and successor_prompt.endswith("then do what the docstring says the agent-seat does "
+                                        "after.")
+          and branch not in successor_prompt, successor_prompt)
 
 
 def run_restart_failure_cases(workspace: Path):
@@ -449,53 +441,6 @@ def run_restarted_process_cases(workspace: Path):
           f"{events} {states_at_launch[:1]}")
     check("RESTARTED PROCESS: at the next handoff it restarts again",
           replaced and events[2:] == ["sync own checkout", "exec"], str(events))
-
-
-def run_restarted_process_told_leftovers_branch_case(workspace: Path):
-    handoff_directory = workspace / "restartedleftovers"
-    handoff_directory.mkdir()
-    branch = "reference-checkout-leftovers-2026-11-05-2"
-    settings = supervisor.SupervisorSettings(
-        agent="restartedleftovers", working_directory=workspace,
-        handoff_directory=handoff_directory, agent_command="unused-stub-agent", first_prompt="",
-        restarts_itself_on_main_code_at_each_session_handoff=True,
-        started_by_handoff_supervisor_restarting_itself_on_main_code=True,
-        reference_checkout_leftovers_branches_pushed_before_this_restart=(branch,))
-    supervisor.write_supervisor_state(settings.state_path, {
-        supervisor.LAUNCHED_SESSION_ID_STATE_KEY: "retiring-session", "generation": 3})
-    settings.handoff_path.write_text("session-handoff-sequence-number: 1\nnext-step: carry on\n",
-                                     encoding="utf-8")
-    prompts, exec_argv = [], []
-
-    def launch(agent_command, session_id, working_directory, prompt, **_):
-        prompts.append(prompt)
-        settings.handoff_path.write_text("session-handoff-sequence-number: 2\nnext-step: again\n",
-                                         encoding="utf-8")
-        return StubLaunchedSession(-15, ended=False)
-
-    def replace(arguments):
-        exec_argv.extend(arguments)
-        raise ProcessReplaced()
-
-    with supervisor_names_replaced(
-            launch_agent_session=launch, stop_session=lambda process: process.terminate(),
-            remove_finished_worktrees_at_handoff=lambda directory: "worktree cleanup: stubbed",
-            launch_time_git_sync=lambda directory: "launch-time-git-sync: main is current with main",
-            replace_this_process_with=replace,
-            carry_over_to_successor=lambda s, retiring, fields, generation: (
-                f"successor-{generation}", StubIgnitionPlan()),
-            stdin_isatty=True), \
-            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-        try:
-            supervisor.supervise_sessions(settings)
-        except ProcessReplaced:
-            pass
-    check("RESTARTED PROCESS, LEFTOVERS: its first successor is told the leftovers branch",
-          prompts == ["SUCCESSOR PROMPT " + leftovers_pushed_notice(branch)], str(prompts))
-    check("RESTARTED PROCESS, LEFTOVERS: its own restart at the next handoff does not pass the "
-          "branch on again",
-          exec_argv and "--reference-checkout-leftovers-branch-pushed-before-this-restart"
-          not in exec_argv, str(exec_argv))
 
 
 def recovery_note_for_a_missing_transcript(occasion: str, session_id: str, workspace: Path) -> str:
@@ -710,15 +655,6 @@ def run_restart_arguments_cases(workspace: Path):
               and missing_prompt_argv[-3:-1] == ["--agent-append-system-prompt-file",
                                                  missing_prompt_file],
               str(missing_prompt_argv))
-        exit_code, settings_with_leftovers = settings_main_builds(
-            ["--agent", "recoverystarted", "--cd", str(workspace), "--handoff-dir", str(handoffs),
-             "--reference-checkout-leftovers-branch-pushed-before-this-restart", "one",
-             "--reference-checkout-leftovers-branch-pushed-before-this-restart", "two",
-             RESTART_FLAG])
-        check("ARGV: each leftovers branch flag is read into the settings, in order",
-              exit_code == 0 and settings_with_leftovers is not None
-              and settings_with_leftovers.reference_checkout_leftovers_branches_pushed_before_this_restart
-              == ("one", "two"), str(settings_with_leftovers))
         check("ARGV: the restart flag is read into the settings, and passed on once",
               settings is not None
               and settings.started_by_handoff_supervisor_restarting_itself_on_main_code
@@ -734,16 +670,15 @@ def run_restart_flag_names_stay_accepted_case(workspace: Path):
             "--handoff-dir", str(workspace / "flagnames"),
             "--agent-command", "claude", "--agent-update-timeout-seconds", "0",
             "--agent-append-system-prompt-file", str(prompt_file),
-            "--reference-checkout-leftovers-branch-pushed-before-this-restart",
-            "reference-checkout-leftovers-2026-11-05", RESTART_FLAG, "--check"]
+            RESTART_FLAG, "--check"]
     try:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             exit_code = supervisor.main(argv)
     except SystemExit as stopped:
         exit_code = f"SystemExit({stopped.code})"
     check("FLAG NAMES: main() accepts --agent, --cd, --handoff-dir, --agent-command, "
-          "--agent-update-timeout-seconds, --agent-append-system-prompt-file, "
-          "--reference-checkout-leftovers-branch-pushed-before-this-restart and the restart flag",
+          "--agent-update-timeout-seconds, --agent-append-system-prompt-file and the restart "
+          "flag",
           exit_code in (0, 1), str(exit_code))
 
 
@@ -886,7 +821,6 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_not_restarted_notice_names_the_tool_cases(workspace)
     run_reference_checkout_back_on_main_program_cases(workspace)
     run_restarted_process_cases(workspace)
-    run_restarted_process_told_leftovers_branch_case(workspace)
     run_missing_transcript_cases(workspace)
     run_restart_arguments_cases(workspace)
     run_restart_flag_names_stay_accepted_case(workspace)

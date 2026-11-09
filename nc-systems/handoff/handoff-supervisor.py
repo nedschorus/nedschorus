@@ -25,10 +25,8 @@ The cycle, per reincarnation:
      reference-checkout and cannot be fast-forwarded, this process first
      puts it back on main with put_reference_checkout_back_on_main, of
      handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py,
-     which pushes the checkout's leftovers to a branch; it passes each such
-     branch to the fresh process with
-     --reference-checkout-leftovers-branch-pushed-before-this-restart, and
-     the successor is told it. When the checkout cannot be fast-forwarded,
+     which pushes the checkout's leftovers to a branch; neither the
+     successor nor the user is told of such a branch. When the checkout cannot be fast-forwarded,
      when that program fails, or when os.execv fails, this process prints
      why, carries on with the code it started with, and the successor's
      initial agent instructions say why too, with what the program printed.
@@ -2165,7 +2163,6 @@ class SupervisorSettings:
     # Only main() sets this: os.execv would replace any other caller's process, such as a test's.
     restarts_itself_on_main_code_at_each_session_handoff: bool = False
     started_by_handoff_supervisor_restarting_itself_on_main_code: bool = False
-    reference_checkout_leftovers_branches_pushed_before_this_restart: tuple = ()
 
     @property
     def handoff_path(self) -> Path:
@@ -2251,29 +2248,23 @@ REFERENCE_CHECKOUT_BACK_ON_MAIN_PROGRAM_PATH_FROM_HOME = (
     "handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py")
 HANDOFF_SUPERVISOR_NOT_RESTARTED_BECAUSE_REFERENCE_CHECKOUT_BACK_ON_MAIN_PROGRAM_FAILED_TAIL = (
     "That checkout would not fast-forward to main, so the handoff-supervisor ran the program "
-    "that saves the checkout's leftovers to a pushed branch and puts it back on main, and that "
-    "program failed, printing: \"{output}\". Work out the cause from what it printed, fix the "
-    "cause, and run the program again as `{command}`, the form that works from this "
-    "agent-session; when the cause is not one you can fix, tell the user what the program "
+    "that saves the checkout's leftovers to a pushed branch and puts it back on main, and "
+    "that program failed, printing: \"{output}\". Work out the cause from what it printed, "
+    "asking an advisor if you have one, fix it without losing anything the checkout holds, "
+    "and run the program again as `{command}`, the form that works from this agent-session. "
+    "Afterwards, tell the user what you found and did, and name any branch a run of the "
+    "program printed; when the cause is not one you can fix, quote him what the program "
     "printed. The handoff-supervisor does not run the program again once the checkout is on "
     "main, which it can be even after a failed push, so a leftovers branch the program could "
-    "not push stays only in that checkout until you run the program again. Once the checkout is "
-    "on main, the handoff-supervisor restarts itself at the next session-handoff at which it "
-    "starts the successor without stopping to ask the user."
+    "not push stays only in that checkout until you run the program again. Once the checkout "
+    "is on main, the handoff-supervisor restarts itself at the next session-handoff at which "
+    "it starts the successor without stopping to ask the user."
 )
 HANDOFF_SUPERVISOR_NOT_RESTARTED_RESTART_PROGRAM_TAIL = (
     "The restart program restarts it from the reference-checkout {reference_checkout}. Once "
     "you have done what that program's docstring says the agent-seat does before running it, "
     "run `{command}`, and then do what the docstring says the agent-seat does after."
 )
-REFERENCE_CHECKOUT_LEFTOVERS_PUSHED_BEFORE_THIS_RESTART_NOTICE_TEMPLATE = (
-    "At this session-handoff the reference-checkout {checkout} would not fast-forward to main, "
-    "so the handoff-supervisor saved what was left over in it to the git branch {branches}, "
-    "pushed to origin, and put the checkout back on main. Name {branches} to the user: what it "
-    "holds was left in that checkout, where no agent works, and may be someone's lost work."
-)
-REFERENCE_CHECKOUT_LEFTOVERS_BRANCH_PUSHED_BEFORE_THIS_RESTART_FLAG = (
-    "--reference-checkout-leftovers-branch-pushed-before-this-restart")
 REFERENCE_CHECKOUT = reference_checkout_steps.REFERENCE_CHECKOUT
 OS_EXECV_FAILURE_REPORT_PREFIX = "os.execv "
 
@@ -2306,15 +2297,7 @@ def handoff_supervisor_not_restarted_on_main_code_notice(
             f"{RESTART_PROGRAM_PATH_FROM_HOME} {seat}", on_the_mac))
 
 
-def reference_checkout_leftovers_pushed_before_this_restart_notice(branches) -> str:
-    if not branches:
-        return ""
-    return REFERENCE_CHECKOUT_LEFTOVERS_PUSHED_BEFORE_THIS_RESTART_NOTICE_TEMPLATE.format(
-        checkout=REFERENCE_CHECKOUT, branches=", ".join(branches))
-
-
-def handoff_supervisor_restart_arguments_build(settings: SupervisorSettings,
-                                               leftovers_branches=()) -> list:
+def handoff_supervisor_restart_arguments_build(settings: SupervisorSettings) -> list:
     """The argv of the restarted handoff-supervisor, built from the settings so that
     flags describing only the first start, such as --resume-session-id, are left out."""
     # Main's code parses this argv, so each flag name here must stay accepted by main().
@@ -2330,8 +2313,6 @@ def handoff_supervisor_restart_arguments_build(settings: SupervisorSettings,
     if settings.appended_system_prompt_file_as_given_by_flag != str(DEFAULT_APPENDED_SYSTEM_PROMPT_PATH):
         arguments += ["--agent-append-system-prompt-file",
                       settings.appended_system_prompt_file_as_given_by_flag]
-    for branch in leftovers_branches:
-        arguments += [REFERENCE_CHECKOUT_LEFTOVERS_BRANCH_PUSHED_BEFORE_THIS_RESTART_FLAG, branch]
     return arguments + [STARTED_BY_HANDOFF_SUPERVISOR_RESTARTING_ITSELF_ON_MAIN_CODE_FLAG]
 
 
@@ -2352,14 +2333,11 @@ def launch_time_git_sync_of_own_checkout_first_line_if_not_on_main() -> str:
 
 
 def handoff_supervisor_not_restarted_notice_and_console_line(
-        report: str, seat: str, leftovers_branches=(),
-        back_on_main_program_failure_output: str = "") -> str:
+        report: str, seat: str, back_on_main_program_failure_output: str = "") -> str:
     print("handoff-supervisor: not restarted on main's code, carrying on with the code "
           f"this process started with: {report}")
-    return " ".join(filter(None, (
-        handoff_supervisor_not_restarted_on_main_code_notice(
-            report, seat, back_on_main_program_failure_output=back_on_main_program_failure_output),
-        reference_checkout_leftovers_pushed_before_this_restart_notice(leftovers_branches))))
+    return handoff_supervisor_not_restarted_on_main_code_notice(
+        report, seat, back_on_main_program_failure_output=back_on_main_program_failure_output)
 
 
 def handoff_supervisor_restart_itself_on_main_code_after_putting_reference_checkout_back_on_main_or_return_successor_notice(
@@ -2367,11 +2345,9 @@ def handoff_supervisor_restart_itself_on_main_code_after_putting_reference_check
     """Fast-forward the checkout holding this program to origin/main and replace this
     process, keeping its process ID, with a fresh start of the program from there. When
     that checkout is the reference-checkout and will not fast-forward, first put it back
-    on main with the reference-checkout back-on-main program, and pass the restarted
-    process the leftovers branches that program pushed.
+    on main with the reference-checkout back-on-main program.
     Return, without raising, the successor's notice saying why it did not restart."""
     report = launch_time_git_sync_of_own_checkout_first_line_if_not_on_main()
-    leftovers_branches = []
     if report and REPOSITORY_ROOT == REFERENCE_CHECKOUT:
         print("handoff-supervisor: putting the reference-checkout back on main, saving its "
               "leftovers to a pushed branch")
@@ -2390,9 +2366,8 @@ def handoff_supervisor_restart_itself_on_main_code_after_putting_reference_check
                   REFERENCE_CHECKOUT, main_commit, leftovers_branches))
         report = launch_time_git_sync_of_own_checkout_first_line_if_not_on_main()
     if report:
-        return handoff_supervisor_not_restarted_notice_and_console_line(
-            report, settings.agent, leftovers_branches)
-    arguments = handoff_supervisor_restart_arguments_build(settings, leftovers_branches)
+        return handoff_supervisor_not_restarted_notice_and_console_line(report, settings.agent)
+    arguments = handoff_supervisor_restart_arguments_build(settings)
     print(f"handoff-supervisor: restarting on main's code as process {os.getpid()}: "
           f"{shlex.join(arguments)}")
     # Exec discards what the buffers still hold.
@@ -2403,8 +2378,7 @@ def handoff_supervisor_restart_itself_on_main_code_after_putting_reference_check
         report = f"{OS_EXECV_FAILURE_REPORT_PREFIX}returned without replacing the process"
     except OSError as error:
         report = f"{OS_EXECV_FAILURE_REPORT_PREFIX}failed: {type(error).__name__}: {error}"
-    return handoff_supervisor_not_restarted_notice_and_console_line(
-        report, settings.agent, leftovers_branches)
+    return handoff_supervisor_not_restarted_notice_and_console_line(report, settings.agent)
 
 
 def successor_session_id_and_ignition_plan_without_conversation_tail(
@@ -2466,9 +2440,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     if settings.started_by_handoff_supervisor_restarting_itself_on_main_code:
         print(f"handoff-supervisor: restarted on main's code as process {os.getpid()}, "
               f"from {HANDOFF_SUPERVISOR_SCRIPT_PATH}")
-    # Said to the next successor this process launches, once.
-    successor_notice = reference_checkout_leftovers_pushed_before_this_restart_notice(
-        settings.reference_checkout_leftovers_branches_pushed_before_this_restart)
+    successor_notice = ""
 
     # Consume a waiting handoff before resume, or the wait loop would kill the resumed session for an old handoff.
     if next_launch_resumes_the_session and settings.handoff_path.is_file():
@@ -2784,13 +2756,6 @@ def main(argv=None) -> int:
         help="set only by a handoff-supervisor restarting itself on main's code at a "
              "session-handoff; prints at startup that the restart worked",
     )
-    parser.add_argument(
-        REFERENCE_CHECKOUT_LEFTOVERS_BRANCH_PUSHED_BEFORE_THIS_RESTART_FLAG, action="append",
-        default=[], metavar="BRANCH",
-        help="set only by a handoff-supervisor restarting itself on main's code, once per branch "
-             "to which it pushed the reference-checkout's leftovers before the restart; the "
-             "successor launched at startup is told each branch",
-    )
     arguments = parser.parse_args(argv)
 
     if arguments.check:
@@ -2870,8 +2835,6 @@ def main(argv=None) -> int:
         restarts_itself_on_main_code_at_each_session_handoff=True,
         started_by_handoff_supervisor_restarting_itself_on_main_code=(
             arguments.started_by_handoff_supervisor_restarting_itself_on_main_code),
-        reference_checkout_leftovers_branches_pushed_before_this_restart=tuple(
-            arguments.reference_checkout_leftovers_branch_pushed_before_this_restart),
     )
 
     try:
