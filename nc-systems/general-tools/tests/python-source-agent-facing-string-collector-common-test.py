@@ -684,7 +684,12 @@ for case_name, binding in (("a for loop's target", "for NAME in items:\n    pass
                            ("a := target", "if (NAME := read()):\n    pass\n"),
                            ("a function's name", "def NAME():\n    pass\n"),
                            ("a type parameter", "def first[NAME](items):\n    pass\n"),
-                           ("a match capture", "match value:\n    case [NAME]:\n        pass\n")):
+                           ("a match capture", "match value:\n    case [NAME]:\n        pass\n"),
+                           ("a match star capture", "match value:\n    case [*NAME]:\n        pass\n"),
+                           ("a mapping pattern's **rest", "match value:\n    case {**NAME}:\n        pass\n"),
+                           ("a class's name", "class NAME:\n    pass\n"),
+                           ("a ParamSpec type parameter", "def first[**NAME](items):\n    pass\n"),
+                           ("a TypeVarTuple type parameter", "def first[*NAME](items):\n    pass\n")):
     found = texts_as_agent_reads_them(f'NAME = "module"\n{binding}print(f"x {{NAME}}")\n')
     check(f"text as the agent reads it: a module constant also bound by {case_name} stays <source>",
           found == ["x <NAME>"], found)

@@ -31,8 +31,8 @@ the field of a standalone f-string. Each entry also holds literal_text, the mess
 pieces alone, outside every {...} placeholder, and text_as_agent_reads_it_with_placeholder_stand_ins,
 the message as the agent reads it, with each placeholder shown as <its source>, or as its value
 when it names a module-level string constant whose one assignment is the only binding of that
-name anywhere in the file, as module_string_values_bound_nowhere_else says. A message held in a local name
-is found when its own function's body binds the name, with =, an annotation or +=, to a
+name anywhere in the file, as module_level_string_values_whose_name_the_file_binds_only_once says.
+A message held in a local name is found when its own function's body binds the name, with =, an annotation or +=, to a
 non-empty string literal, an f-string, a + chain holding a string literal, a string literal
 % something or a string literal's join, or to a conditional expression with such a branch,
 and the name reaches one of the forms above, or a return statement that returns the name or
@@ -214,8 +214,8 @@ def render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(node, m
     spec, becomes its value, rendered the same way; any other f-string field or non-literal operand
     becomes <its source>, as {path} becomes <path>. So does a name whose value is being expanded
     already, so that two constants naming each other end. module_string_values holds only the names
-    module_string_values_bound_nowhere_else keeps, so where a name stands in the file never changes
-    what it renders as."""
+    module_level_string_values_whose_name_the_file_binds_only_once keeps, so where a name stands in
+    the file never changes what it renders as."""
     def render(part):
         return render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(
             part, module_string_values, names_being_expanded)
@@ -781,7 +781,7 @@ def module_level_string_values(tree):
             if len(values) == 1 and values[0] is not None and is_string_expression(values[0])}
 
 
-def names_bound_anywhere_in_the_file(tree):
+def binding_count_of_each_name_anywhere_in_the_file(tree):
     """Each name, with how many times the file binds it: assignment and every other store, including a
     loop's, a comprehension's and a := target; deletion; a parameter of any function or lambda; an
     import; except ... as; a match capture; a function or class definition's name; a type parameter;
@@ -811,12 +811,12 @@ def names_bound_anywhere_in_the_file(tree):
     return counts
 
 
-def module_string_values_bound_nowhere_else(tree, module_string_values):
+def module_level_string_values_whose_name_the_file_binds_only_once(tree, module_string_values):
     """The module constants whose one module-level assignment is the only binding of their name
     anywhere in the file, so a placeholder naming one means that constant wherever it stands. A
     name a function also binds, takes as a parameter, declares global or loops over keeps its
     <source> stand-in, which may hide a value Python would use, but never shows a wrong one."""
-    counts = names_bound_anywhere_in_the_file(tree)
+    counts = binding_count_of_each_name_anywhere_in_the_file(tree)
     return {name: value for name, value in module_string_values.items() if counts.get(name) == 1}
 
 
@@ -832,7 +832,8 @@ def agent_facing_string_nodes_in_source(source):
     except (SyntaxError, ValueError):
         return []
     module_string_values = module_level_string_values(tree)
-    rendered_module_string_values = module_string_values_bound_nowhere_else(tree, module_string_values)
+    rendered_module_string_values = module_level_string_values_whose_name_the_file_binds_only_once(
+        tree, module_string_values)
     helper_printers = helper_printers_in_tree(tree)
     # A pass can find a function called for text only after visiting its definition, and a
     # followed function's return can name another, so passes repeat until none is new.
