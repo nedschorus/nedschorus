@@ -35,6 +35,15 @@ _spec = importlib.util.spec_from_file_location(
     "handoff_agent_seat_remote_control_lost_at_claude_login_reconnect_by_tmux_typing_watcher", SCRIPT_PATH)
 watcher = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(watcher)
+_forced_command_spec = importlib.util.spec_from_file_location(
+    "mac_request_from_ned_box_forced_command",
+    SYSTEM_DIRECTORY.parent.parent / "scripts" / "mac-request-from-ned-box-forced-command.py")
+mac_forced_command = importlib.util.module_from_spec(_forced_command_spec)
+_forced_command_spec.loader.exec_module(mac_forced_command)
+# The program's own path is a word of the request to the Mac, which refuses a word over its length limit;
+# a checkout's path can push it over, the deployed clone's path does not.
+DEPLOYED_LENGTH_PROGRAM_PATH = Path("/home/nedlern/Projects/nedschorus/nc-systems/handoff") / SCRIPT_PATH.name
+watcher.REMOTE_CONTROL_RECONNECT_WATCHER_SCRIPT_PATH = DEPLOYED_LENGTH_PROGRAM_PATH
 
 failures = []
 
@@ -883,6 +892,20 @@ def case_notice_failing(namespace):
               exit_code == 1 and fixture.decisions() == ["failure", "failure", "user told"]
               and len(fixture.ssh_requests()) == 2, (exit_code, errors, fixture.entries()))
     finally:
+        fixture.close()
+    fixture = lost_seat("notice-word-too-long", namespace, pane=False)
+    limit = mac_forced_command.MAXIMUM_WORD_LENGTH
+    long_path = Path("/" + "d" * limit) / SCRIPT_PATH.name
+    watcher.REMOTE_CONTROL_RECONNECT_WATCHER_SCRIPT_PATH = long_path
+    try:
+        exit_code, errors = fixture.run()
+        check("a program path over the Mac's word limit: the opener refuses before any ssh, said on stderr, "
+              "exit 1, not logged as told",
+              exit_code == 1 and f"word 2 is {len(str(long_path))} characters, over the limit of {limit}" in errors
+              and fixture.ssh_requests() == [] and fixture.decisions() == ["failure"],
+              (exit_code, errors, fixture.entries(), fixture.ssh_requests()))
+    finally:
+        watcher.REMOTE_CONTROL_RECONNECT_WATCHER_SCRIPT_PATH = DEPLOYED_LENGTH_PROGRAM_PATH
         fixture.close()
 
 

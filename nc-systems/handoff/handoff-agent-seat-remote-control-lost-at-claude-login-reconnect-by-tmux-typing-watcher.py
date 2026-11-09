@@ -97,7 +97,8 @@ from pathlib import Path
 
 PROGRAM = "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher"
 
-REPOSITORY = Path(__file__).resolve().parent.parent.parent
+REMOTE_CONTROL_RECONNECT_WATCHER_SCRIPT_PATH = Path(__file__).resolve()
+REPOSITORY = REMOTE_CONTROL_RECONNECT_WATCHER_SCRIPT_PATH.parent.parent.parent
 MAC_WINDOW_OPENER_PROGRAM = REPOSITORY / "scripts" / "open-mac-window-from-ned-box.py"
 MAC_LOCAL_WINDOW_OPENER_PROGRAM = REPOSITORY / "scripts" / "open-iterm-window-running-command"
 MACHINE_NAMES_BY_PLATFORM = {"linux": "ned-box", "darwin": "the Mac"}
@@ -254,7 +255,7 @@ def outcome(exit_code):
 
 
 def show_notice_words(path):
-    return [sys.executable, str(Path(__file__).resolve()), "--show-notice", str(path)]
+    return [sys.executable, str(REMOTE_CONTROL_RECONNECT_WATCHER_SCRIPT_PATH), "--show-notice", str(path)]
 
 
 def this_machine_name():
