@@ -199,7 +199,7 @@ def tree_measure(folder: Path):
 def paths_processes_use(proc: Path) -> list:
     """Return every working directory, root, executable and open file of the readable processes."""
     try:
-        pids = [name for name in os.listdir(proc) if name.isdigit()]
+        pids = sorted(name for name in os.listdir(proc) if name.isdigit())
     except OSError as error:
         raise Unusable(f"the process table {proc} could not be listed: {error.strerror}")
     used = []

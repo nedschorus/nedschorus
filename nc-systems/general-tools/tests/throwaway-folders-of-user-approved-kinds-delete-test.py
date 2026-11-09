@@ -297,12 +297,56 @@ def run_unreadable_cases():
           f"{folder} could not be deleted in full" in result.stderr and result.returncode == 1, result.stderr)
 
     s = Scene()
-    folder = s.test_folder()
-    s.reviewers.rmdir()
+    folder = s.reviewer_folder("rv100r1")
+    s.tmp.rmdir()
     result = s.run()
-    check("a place that cannot be listed is named as not checked, and the other places go on",
-          f"{s.reviewers} was not checked: it could not be listed" in result.stderr and not folder.exists()
+    check("a place that cannot be listed is named as not checked, and the places after it go on",
+          f"{s.tmp} was not checked: it could not be listed" in result.stderr and not folder.exists()
           and result.returncode == 1, result.stderr)
+
+    s = Scene()
+    vanishing, after = s.test_folder("tmpab12cd34"), s.test_folder("tmpab12cd35")
+    tree_measure = program.tree_measure
+
+    def gone_during_the_run(folder):
+        if folder == vanishing:
+            raise FileNotFoundError(2, "No such file or directory", str(folder))
+        return tree_measure(folder)
+    program.tree_measure = gone_during_the_run
+    try:
+        result = program.throwaway_folders_of_user_approved_kinds_delete(
+            s.kinds_file, s.base / "shown.json", s.proc, dry_run=False)
+    finally:
+        program.tree_measure = tree_measure
+    check("a folder that disappears during the run is passed over, and the folders after it go on",
+          vanishing.is_dir() and not after.exists() and result["failures"] == [] and result["deleted"] == 1,
+          str(result))
+
+    s = Scene()
+    s.gh("[]", 1)
+    (s.bin / "gh").write_text("#!/bin/sh\nkill -9 $$\n")
+    folder = s.reviewer_folder("rv100r1")
+    result = s.run()
+    check("a gh killed by a signal keeps the reviewer scratch directory and is a failure",
+          folder.is_dir() and "exited -9" in result.stderr and result.returncode == 1, result.stderr)
+
+    s = Scene()
+    (s.bin / "gh").write_text("#!/bin/sh\nprintf 'x%.0s' $(seq 300) >&2\nexit 1\n")
+    s.reviewer_folder("rv100r1")
+    result = s.run()
+    check("gh's error text is quoted up to 200 characters",
+          "x" * 200 in result.stderr and "x" * 201 not in result.stderr, result.stderr)
+
+    s = Scene()
+    used = s.test_folder("tmpab12cd34")
+    # Pid 100 has no working directory, root, executable or memory map to read; pid 200 uses the folder.
+    (s.proc / "100" / "fd").mkdir(parents=True)
+    os.symlink(str(used / "stub-bin"), s.proc / "100" / "fd" / "0")
+    s.process(200, cwd=used)
+    result = s.run()
+    check("a process whose links or memory map cannot be read is passed over, and its other links and "
+          "the processes after it are still read", used.is_dir() and "kept because a process uses them: 1;"
+          in result.stdout, result.stdout + result.stderr)
 
     s = Scene()
     folder = s.test_folder()
