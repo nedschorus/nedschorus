@@ -22,7 +22,8 @@ NOT_CHECKED = "not_checked"
 SUPERVISOR_LAST_POLL_AT = "supervisor_last_poll_at"
 LAST_ACTIVITY = "last_activity"            # {"time": ISO time or null, "source": path or null}
 TURN_ENDED = "turn_ended"
-WALK_ITEMS_WAITING = "walk_items_waiting"  # [{"walk_minutes": path, "next_to_present": value}]
+# [{"walk_minutes": path, "next_to_present": value}]
+APPROVAL_WALK_ITEMS_WAITING_ON_THE_USER = "approval_walk_items_waiting_on_the_user"
 IDLE = "idle"
 NOT_IDLE_BECAUSE = "not_idle_because"      # [reason]
 RUNNING = "running"  # {"subagents": [{"id", "started"}], "background_commands": [{"id", "started"}]}
@@ -45,7 +46,8 @@ OPEN_TASKS_WITH_PREREQUISITES_OR_BLOCKED_BY = "open_tasks_with_prerequisites_or_
 
 ALWAYS_PRESENT = (AGENT_SEAT, SESSION_ID, TRANSCRIPT_PATH, CHECKED_AT, ERRORS, RULE)
 OPTIONAL = (DECISION, NOT_CHECKED, SUPERVISOR_LAST_POLL_AT, LAST_ACTIVITY, TURN_ENDED,
-            WALK_ITEMS_WAITING, IDLE, NOT_IDLE_BECAUSE, RUNNING, HANDOFF_DEFERRED_MARKER,
+            APPROVAL_WALK_ITEMS_WAITING_ON_THE_USER, IDLE, NOT_IDLE_BECAUSE, RUNNING,
+            HANDOFF_DEFERRED_MARKER,
             USAGE_LIMIT, SENTENCES, OPEN_TASKS_NOTHING_HOLDS, TEXT, IF_EVERY_SENTENCE_BACKED,
             LAST_TURN_ENDING_MESSAGE,
             TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE,

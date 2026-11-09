@@ -699,7 +699,8 @@ class Sweep:
                 "last_turn_ending_message": last_message or None,
                 "open_tasks_nothing_holds": verdict.get(fields.OPEN_TASKS_NOTHING_HOLDS),
                 "handoff_deferral_marker_file": verdict.get(fields.HANDOFF_DEFERRED_MARKER),
-                "approval_walk_items_waiting_on_the_user": verdict.get(fields.WALK_ITEMS_WAITING),
+                "approval_walk_items_waiting_on_the_user":
+                    verdict.get(fields.APPROVAL_WALK_ITEMS_WAITING_ON_THE_USER),
                 "running_subagents": with_minutes(running.get("subagents", [])),
                 "running_background_commands": with_minutes(running.get("background_commands", []))}
 

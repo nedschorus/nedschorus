@@ -375,7 +375,7 @@ def newest_token_spend_in(path):
 
 # --- Other files ---
 
-def walk_items_waiting(seat_directory, parser):
+def approval_walk_items_waiting_on_the_user(seat_directory, parser):
     """Walk-minutes files in the agent-seat's docs/walk/ whose last #next_to_present marker, as the
     walk-me-through hooks read it, names an item, with no pause recorded after it."""
     waiting = []
@@ -568,9 +568,10 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         last = facts.last_model_turn_record or {}
         limit = is_usage_limit(last)
         turn_ended = facts.turn_ended_after_last_model_turn_record or limit
-        walk_waiting = walk_items_waiting(seat_directory, parser)
+        walk_waiting = approval_walk_items_waiting_on_the_user(seat_directory, parser)
         quiet = last_spend is None or (now - last_spend).total_seconds() >= IDLE_AFTER_SECONDS
-        verdict.update(turn_ended=turn_ended, walk_items_waiting=walk_waiting)
+        verdict.update(turn_ended=turn_ended,
+                       approval_walk_items_waiting_on_the_user=walk_waiting)
         verdict["idle"] = quiet and turn_ended
         # The read above refused every complete line that does not parse and every byte that is
         # not UTF-8, so this read can fail only on the last line, still being written.
