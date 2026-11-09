@@ -5,11 +5,17 @@ and add them to his approval-walk as items right after the waiting item.
 Wired as a UserPromptSubmit hook in .claude/settings.json. Off Linux, that is on the Mac, it exits 0 at once:
 Mac agent-sessions take no alerts until a renaming test over /Volumes/nedhome says they can.
 
-ONLY A PROMPT THE USER TYPED claims. Claude Code also starts this hook for a background-task notice and for
-another agent-session's message. The transcript's newest record carrying `turnOrigin` decides, `human` for his
-own, when that record's text is the payload's prompt; Claude Code may not have written the prompt's record yet
-when this hook runs, and the newest record is then the previous turn's. Otherwise the prompt itself decides: one
-that opens as NOT_TYPED_PROMPT_OPENINGS lists is not his.
+ONLY A PROMPT THE USER TYPED claims, so only an agent-session he can see claims. A headless `claude -p`
+agent-session claims nothing: Claude Code sets CLAUDE_CODE_SESSION_ATTENDED to "0" for its hooks, even when it
+inherited "1" from the agent-seat that started it, and a caller's headless child may also carry
+NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER; either silences the hook, as in
+scripts/agent-seat-due-task-raise-hook.py. A missing CLAUDE_CODE_SESSION_ATTENDED does not. The transcript cannot
+tell: on a session's first prompt Claude Code may not have written the prompt's record when this hook runs.
+In an attended agent-session Claude Code also starts this hook for a background-task notice and for another
+agent-session's message. The transcript's newest record carrying `turnOrigin` decides, `human` for his own, when
+that record's text is the payload's prompt; Claude Code may not have written the prompt's record yet when this
+hook runs, and the newest record is then the previous turn's, or there is none. Otherwise the prompt itself
+decides: one that opens as NOT_TYPED_PROMPT_OPENINGS lists is not his.
 
 ON A TYPED PROMPT the hook calls, from ALERTS_MODULE_FILE, user_alerts_claimed_delete_if_recorded_in_approval_walk_minutes_else_release_to_pending_after_30_minutes,
 then user_alerts_claim_every_pending_by_rename_into_claimed, whose docstrings say what each moves. When it claimed nothing it prints nothing.
@@ -51,6 +57,9 @@ TRANSCRIPT_READER_FILE = CHECKOUT / "scripts" / "claude-code-session-transcript-
 # the hook after the alerts are claimed; a test checks.
 INSERT_TIMEOUT_SECONDS = 5
 USER_TURN_ORIGIN = "human"
+REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
+SESSION_ATTENDED_VARIABLE = "CLAUDE_CODE_SESSION_ATTENDED"
+SESSION_UNATTENDED_VALUE = "0"
 # How Claude Code opens a background-task notice, another agent-session's message and a subagent's hand-back.
 NOT_TYPED_PROMPT_OPENINGS = ("<task-notification>", "<cross-session-message", "<agent-message",
                              "Another Claude session sent a message", "A peer session sent a message")
@@ -181,9 +190,14 @@ def insert_lines(walk, cwd, alert_ids):
     return [line.format(walk=walk, code=code, error=error_text, command=command) for line in INSERT_FAILED_LINES]
 
 
-def output_for(payload, user_alerts=None):
+def headless(environment):
+    return bool(environment.get(REINCARNATION_OWNED_BY_CALLER_VARIABLE)
+                or environment.get(SESSION_ATTENDED_VARIABLE) == SESSION_UNATTENDED_VALUE)
+
+
+def output_for(payload, environment, user_alerts=None):
     """Return the hook's output for the payload as a dict, or None."""
-    if sys.platform != "linux" or not typed_by_user(payload):
+    if sys.platform != "linux" or headless(environment) or not typed_by_user(payload):
         return None
     user_alerts = user_alerts or load_module(
         "user_alerts_pending_and_claimed_files_write_claim_release_and_delete_common", ALERTS_MODULE_FILE)
@@ -206,7 +220,7 @@ def output_for(payload, user_alerts=None):
 
 def main():
     try:
-        output = output_for(json.loads(sys.stdin.read()))
+        output = output_for(json.loads(sys.stdin.read()), os.environ)
     except Exception as error:  # noqa: BLE001
         print(f"walk-me-through-pending-user-alerts-claim-and-insert-as-approval-walk-items-user-prompt-submit-hook: the "
               f"hook failed, so no alert was claimed or offered on this prompt: {error!r}", file=sys.stderr)
