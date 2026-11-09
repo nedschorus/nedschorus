@@ -397,7 +397,7 @@ def running_subagent_entry(agent_id, facts, transcript, newest_spend_by_subagent
                                         background_task_wait_seconds=float("inf"), now=now,
                                         should_raise_on_undecodable_bytes=True)
     entry[fields.SUBAGENT_STOPPED_AT] = iso(stopped_at)
-    entry[fields.SUBAGENT_OWN_BACKGROUND_COMMANDS_RUNNING] = [
+    entry[fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS] = [
         {"id": task_id, "started": iso(own.launched_at_by_id.get(task_id))}
         for task_id in own.background_task_ids]
     return entry

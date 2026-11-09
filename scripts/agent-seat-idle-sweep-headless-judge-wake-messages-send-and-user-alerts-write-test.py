@@ -384,7 +384,7 @@ check("rule 5: a subagent stopped with a background command of its own still run
       "to the judge with its stop time, and that command with its minutes",
       judge_facts.get("running_subagents") == [{
           "id": "a1b2", "started": at(-60), "minutes_running": 60, "stopped_at": at(-40),
-          "own_background_commands_running": [
+          "own_running_background_commands": [
               {"id": "b3c4", "started": at(-50), "minutes_running": 50}]}], calls)
 
 # --- rule 2: promises and announced actions -------------------------------------------------------

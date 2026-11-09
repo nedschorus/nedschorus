@@ -30,7 +30,7 @@ RUNNING = "running"  # {"subagents": [{"id", "started"}], "background_commands":
 # counted only because background commands it launched still run: when it stopped (ISO time), and
 # those commands, [{"id", "started"}].
 SUBAGENT_STOPPED_AT = "stopped_at"
-SUBAGENT_OWN_BACKGROUND_COMMANDS_RUNNING = "own_background_commands_running"
+SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS = "own_running_background_commands"
 HANDOFF_DEFERRED_MARKER = "handoff_deferred_marker"  # path or null
 USAGE_LIMIT = "usage_limit"
 SENTENCES = "sentences"

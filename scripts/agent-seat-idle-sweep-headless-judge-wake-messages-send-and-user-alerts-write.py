@@ -194,7 +194,7 @@ saying what you saw. Name each background command and subagent that has not fini
 with how long it has run, and ask whether it is taking longer than expected, such as "Your \
 test-suite run started 25 minutes ago and has not finished. Is it taking longer than expected?". \
 A subagent with stopped_at has stopped and reported: it is not running, and only the background \
-commands it launched, under own_background_commands_running, still run. Say so, and name each of \
+commands it launched, under own_running_background_commands, still run. Say so, and name each of \
 those commands with how long it has run, such as "Your subagent ae10c20d94ca876c9 reported 124 \
 minutes ago, but background command bgyicuvln, which it started 131 minutes ago, has not \
 finished. Is it still needed?". \
@@ -694,7 +694,7 @@ class Sweep:
     def facts(self, seat, verdict):
         running = verdict.get(fields.RUNNING) or {}
         def with_minutes(items):
-            own = fields.SUBAGENT_OWN_BACKGROUND_COMMANDS_RUNNING
+            own = fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS
             return [{**item, "minutes_running": int(seconds_between(item["started"], self.now) // 60)
                      if item.get("started") else None,
                      **({own: with_minutes(item[own])} if own in item else {})} for item in items]

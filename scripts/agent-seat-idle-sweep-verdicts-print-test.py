@@ -515,7 +515,7 @@ check("a subagent whose final report is marked interim, with a background comman
       verdicts["alpha"]["running"]["subagents"] == [{
           "id": "a1b2", "started": "2026-11-02T09:00:00Z",
           fields.SUBAGENT_STOPPED_AT: "2026-11-02T09:20:00Z",
-          fields.SUBAGENT_OWN_BACKGROUND_COMMANDS_RUNNING: [
+          fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS: [
               {"id": "bash-9", "started": "2026-11-02T09:05:00Z"}]}]
       and verdicts["alpha"]["rule"] == 5, verdicts["alpha"])
 machine = Machine()
