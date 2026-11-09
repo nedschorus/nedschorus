@@ -195,6 +195,11 @@ Judge whether the agent-seat could act now. If it could, send it one short messa
 saying what you saw. Name each background command and subagent that has not finished or reported, \
 with how long it has run, and ask whether it is taking longer than expected, such as "Your \
 test-suite run started 25 minutes ago and has not finished. Is it taking longer than expected?". \
+A subagent with stopped_at has stopped and reported: it is not running, and only the background \
+commands it launched, under own_running_background_commands, still run. Say so, and name each of \
+those commands with how long it has run, such as "Your subagent ae10c20d94ca876c9 reported 124 \
+minutes ago, but background command bgyicuvln, which it started 131 minutes ago, has not \
+finished. Is it still needed?". \
 With nothing running, ask what is going on, such as "You said "I'm starting the PR 1633 work now" 6 \
 minutes ago and have made no tool call since. What's going on?". If it could not act now, send \
 nothing.
@@ -724,8 +729,10 @@ class Sweep:
     def facts(self, seat, verdict):
         running = verdict.get(fields.RUNNING) or {}
         def with_minutes(items):
+            own = fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS
             return [{**item, "minutes_running": int(seconds_between(item["started"], self.now) // 60)
-                     if item.get("started") else None} for item in items]
+                     if item.get("started") else None,
+                     **({own: with_minutes(item[own])} if own in item else {})} for item in items]
         last_message = dict(verdict.get(fields.LAST_TURN_ENDING_MESSAGE) or {})
         if last_message.get("text"):
             last_message["text"] = last_message["text"][-JUDGED_TEXT_CHARACTERS:]

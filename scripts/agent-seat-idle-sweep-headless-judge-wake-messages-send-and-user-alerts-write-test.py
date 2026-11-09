@@ -362,6 +362,31 @@ machine.run(8)
 check("rule 5: asked again when the agent-seat spent tokens and went idle again",
       len(machine.claude_calls()) == 1, machine.events())
 
+machine = Machine()
+transcript = machine.seat("alpha", [
+    user("go"),
+    dict(user("", when=at(-60)), toolUseResult={"status": "async_launched", "agentId": "a1b2"}),
+    user("<task-notification>\n<task-id>a1b2</task-id>\n<status>completed</status>\n<note>the "
+         "result below may be interim.</note>\n<result>Fix-round pushed.</result>\n"
+         "</task-notification>", when=at(-40)),
+    assistant("Waiting on the subagent."), turn_end()])
+(transcript.with_suffix("") / "subagents").mkdir(parents=True)
+(transcript.with_suffix("") / "subagents" / "agent-a1b2.jsonl").write_text("".join(
+    json.dumps(record) + "\n" for record in [
+        dict(user("", when=at(-50)), toolUseResult={"backgroundTaskId": "b3c4"}),
+        assistant("Fix-round pushed.", when=at(-41))]))
+machine.script({"answer": {"sent": False, "reason": "its test-suite run may be needed"}})
+machine.run(0)
+calls = machine.claude_calls()
+prompt = calls[0]["prompt"] if calls else "\n{}"
+judge_facts = json.loads(prompt[prompt.rindex("\n{") + 1:])
+check("rule 5: a subagent stopped with a background command of its own still running is handed "
+      "to the judge with its stop time, and that command with its minutes",
+      judge_facts.get("running_subagents") == [{
+          "id": "a1b2", "started": at(-60), "minutes_running": 60, "stopped_at": at(-40),
+          "own_running_background_commands": [
+              {"id": "b3c4", "started": at(-50), "minutes_running": 50}]}], calls)
+
 # --- rule 2: promises and announced actions -------------------------------------------------------
 PROMISE = "I'll report when PR 927 merges."
 machine = Machine()
