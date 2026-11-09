@@ -765,6 +765,18 @@ check("a log whose whole last line has no newline: the line is kept, and the nex
       code == 0 and machine.log.read_text().splitlines()[0] == WHOLE_LAST_LINE
       and all(json.loads(line) for line in machine.log.read_text().splitlines()),
       machine.log.read_text())
+appended = {}
+# With no account in the log, one run writes account_seen and then checked: two appends.
+for name, text in (("empty", ""), ("cut short", '{"event": "acc')):
+    machine = Machine()
+    machine.seat("alpha", DONE_TURN)
+    machine.log.parent.mkdir(parents=True)
+    machine.log.write_text(text)
+    machine.run(0)
+    appended[name] = machine.log.read_text().splitlines()
+check("a log whose last line was cut short: every event of the run is kept, not only its first",
+      len(appended["empty"]) >= 2 and len(appended["cut short"]) == len(appended["empty"])
+      and all(json.loads(line) for line in appended["cut short"]), appended)
 
 # --- the steps of a wait, worked out apart from the rule 2 send ------------------------------------
 machine = Machine()

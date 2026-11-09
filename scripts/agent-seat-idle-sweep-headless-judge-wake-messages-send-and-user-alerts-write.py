@@ -43,8 +43,9 @@ How it fails, and what the user sees: a headless agent-session that fails, is st
 JSON code cannot use, or sends to the wrong entry or the wrong text; a message missing from the
 agent-seat's transcript; and a read failure slice 1 reports for the same agent-seat with the same
 text at every run for 2 minutes or more, each become a user-alert, written once, and the invocation
-exits 1. A read failure seen once only, such as the last line of a transcript Claude Code is still
-writing, is logged and not alerted; a run that does not meet it again logs its end, so that it
+exits 1; the 2 minutes are counted from the failure's first run and go on through an invocation the
+lock made skip, since only a run that does not meet the failure ends them. A read failure seen once only, such as the last line of a transcript
+Claude Code is still writing, is logged and not alerted; a run that does not meet it again logs its end, so that it
 coming back later is dated from its return. Any other failure, such as an unwritable log, prints a
 traceback, writes one user-alert per distinct error, and exits 1. A message step is logged before
 its send, so a failed send is not retried every minute: the wait goes on to its next step.
@@ -338,9 +339,15 @@ class SweepLog:
         return first_seen
 
     def read_failures_open(self):
-        return {(event["agent_seat"], event["error"]) for event in self.events
-                if event.get("event") == "read_failure"
-                and self.read_failure_first_seen(event["agent_seat"], event["error"])}
+        open_failures = set()
+        for event in self.events:
+            if event.get("event") in ("read_failure", "read_failure_ended"):
+                key = (event["agent_seat"], event["error"])
+                if event["event"] == "read_failure":
+                    open_failures.add(key)
+                else:
+                    open_failures.discard(key)
+        return open_failures
 
     def alerted(self, key):
         return any(event.get("event") == "user_alert" and event.get("key") == key
