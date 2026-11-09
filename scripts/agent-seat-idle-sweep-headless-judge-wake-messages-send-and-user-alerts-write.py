@@ -576,9 +576,12 @@ class Sweep:
                 continue
             seat = sent["agent_seat"]
             verdict = verdicts.get(seat, {})
+            # A record written before the send's start was logged has only its "at", and stays
+            # pending in the log until it is checked.
+            send_started_at = sent.get("send_started_at", sent["at"])
             try:
                 found = message_in_transcript(Path(sent["transcript_path"]), sent["text"],
-                                              parse_time(sent["send_started_at"]))
+                                              parse_time(send_started_at))
             except verdicts_print.ReadFailure as error:
                 self.read_failure(seat, str(error))
                 continue
