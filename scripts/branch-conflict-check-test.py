@@ -2095,6 +2095,13 @@ case("--branch: no open pull request and origin cannot be asked: no answer, sayi
          "If origin cannot be reached, fix that, then rerun.",
      ])
 
+status, lines = run_branch(fake_runner(merge_tree_status=1, ls_remote=(-9, "")),
+                           branch="topic")
+case("--branch: git ls-remote killed by a signal (negative exit status): no answer, "
+     "not the rebase steps of a branch origin lacks",
+     status == CHECK.EXIT_CONFLICT
+     and "git ls-remote exited -9" in lines[1])
+
 
 # --- the original defect, pinned so it cannot come back ----------------------
 # Plain `gh pr view <n>` prints no mergeability field, so nothing may key on it.
