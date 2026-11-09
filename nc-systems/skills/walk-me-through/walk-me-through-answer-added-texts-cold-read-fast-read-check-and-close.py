@@ -293,9 +293,13 @@ the new item approved, disapproved or already decided, it also writes the
 already-decided line, with the same outcome, for each item a held-answer line
 holds for it that no close line decides yet; after a deferral, a move on or
 answers to parts, the held item stays waiting, so the walk comes back to it.
-Either way it prints the lines the agent's next message must include, the
-status lines among them, and, when an item waits, the command that gives that
-item its cold-read-fast-read before it is presented.
+Either way, for an answer the user gave, it prints the lines the agent's next
+message must include, the status lines among them; for an item settled
+without showing it, with --not-asked, --already-decided or --moved-on, it
+prints that the item is settled, and the status lines, if any, with no lines
+for that message, since the user need not hear of a settled item; and, when an
+item waits, the command that gives that item its cold-read-fast-read before it
+is presented.
 
 READ AHEAD. When CLOSE names a next item, it also starts the cold-read-fast-read
 of the item the walk would present after that one, found as CLOSE finds the
@@ -457,6 +461,7 @@ OBVIOUS_HASHTAG = " #approved_obvious"
 AFTER_ADVISOR_HASHTAG = " #approved_after_advisor"
 APPROVED, DISAPPROVED, DEFERRED, MOVED_ON = "approved", "disapproved", "deferred", "moved on, no decision"
 ALREADY_DECIDED_PREFIX, MOVED_ON_PREFIX = "already decided by ", "moved on, no decision: "
+NOT_ASKED_PREFIX = "not asked, "
 NAVIGATION_WORD_ALONE = re.compile(r"^(?:next|n|continue|go)[.!]*$", re.I)
 OUTCOMES = {APPROVED: "<accepted>", DISAPPROVED: "<rejected>"}
 PART_WORDS = {"A": APPROVED, "AO": APPROVED + OBVIOUS_HASHTAG, "D": DISAPPROVED}
@@ -866,11 +871,8 @@ NOT_ASKED_JUDGEMENT_LINES = (
 GIT_GREP_FAILED = ("`git grep` failed with exit {code} in {top} while checking {item}'s evidence: {error}\n"
                    "Run `python3 {program} check --not-asked {kind}` again once; if it fails the same way, "
                    "present {item} to the user and run check with the flag for his answer, as `--help` lists it.")
-CLOSE_NOT_SHOWN_LINES = (
-    "{item} is recorded in the minutes as settled without being shown to the user.",
-    "List it, with its number, in one line of your next message to the user.",
-)
-CLOSE_ALREADY_DECIDED_CHANGE = "Its change may now be made; the fast reads of the texts it adds:"
+CLOSE_NOT_SHOWN_LINE = "{item} is recorded in the minutes as settled without being shown to the user."
+CLOSE_NOT_SHOWN_CHANGE = "Its change may now be made; the fast reads of the texts it adds:"
 # Both line formats are agreed with merge-lane-2, whose hold command writes the first into its review and whose
 # pull request intake reads the second; change neither without changing those programs.
 HELD_ON_RULING_LINE = "#held_on_ruling {walk} item {number}"
@@ -1363,7 +1365,7 @@ def answered_word(arguments):
     if arguments.option is not None:
         return f"{APPROVED} option {arguments.option}"
     if arguments.not_asked is not None:
-        return f"not asked, {not_asked_label(arguments.not_asked)}"
+        return NOT_ASKED_PREFIX + not_asked_label(arguments.not_asked)
     if arguments.already_decided is not None:
         return ALREADY_DECIDED_PREFIX + arguments.already_decided
     if arguments.moved_on is not None:
@@ -2494,13 +2496,12 @@ def close(arguments):
     elif answered.startswith(MOVED_ON_PREFIX):
         recorded = CLOSE_MOVED_ON_MINUTES.format(item=item, reason=answered[len(MOVED_ON_PREFIX):])
         word = RULING_GIVEN_MOVED_ON
-        output = [line.format(item=item) for line in CLOSE_NOT_SHOWN_LINES]
+        output = [CLOSE_NOT_SHOWN_LINE.format(item=item)]
     elif answered.startswith(ALREADY_DECIDED_PREFIX):
         held_outcome = OUTCOMES[APPROVED]
         recorded = CLOSE_ALREADY_DECIDED_MINUTES.format(item=item, ruling=answered[len(ALREADY_DECIDED_PREFIX):],
                                                       outcome=held_outcome)
-        output = ([line.format(item=item) for line in CLOSE_NOT_SHOWN_LINES] + [CLOSE_ALREADY_DECIDED_CHANGE]
-                  + statuses + list(CLOSE_TOOK_EFFECT_NEXT))
+        output = [CLOSE_NOT_SHOWN_LINE.format(item=item), CLOSE_NOT_SHOWN_CHANGE] + statuses + list(CLOSE_TOOK_EFFECT_NEXT)
     else:
         parts = PART_IN_ANSWER.findall(answered)
         if parts:
@@ -2510,8 +2511,10 @@ def close(arguments):
         else:
             held_outcome = OUTCOMES[DISAPPROVED if answered == DISAPPROVED else APPROVED]
             recorded = CLOSE_TOOK_EFFECT_MINUTES.format(item=item, answered=answered, outcome=held_outcome)
-        output = ([line.format(item=item) for line in CLOSE_TOOK_EFFECT_LINES] + statuses
-                  + list(CLOSE_TOOK_EFFECT_NEXT))
+        shown = ([line.format(item=item) for line in CLOSE_TOOK_EFFECT_LINES]
+                 if not answered.startswith(NOT_ASKED_PREFIX)
+                 else [CLOSE_NOT_SHOWN_LINE.format(item=item), CLOSE_NOT_SHOWN_CHANGE])
+        output = shown + statuses + list(CLOSE_TOOK_EFFECT_NEXT)
     if answered != DEFERRED:
         deferred_item_heading_noted(walk_finder, minutes, answered_numbers, total, parser, noted=False)
     append_to_minutes(minutes, [recorded])
