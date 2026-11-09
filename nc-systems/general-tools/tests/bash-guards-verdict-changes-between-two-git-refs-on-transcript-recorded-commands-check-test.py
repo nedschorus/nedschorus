@@ -629,6 +629,21 @@ try:
         reading = replay.read_git_worktree_remove_records_ship_first(real_guard, command, "/c", None)
         check(f"the real worktree-removal guard's reading of {command!r} pickles", pickle.loads(pickle.dumps(reading)) == reading, reading)
 
+    grid_guard_path = ".claude/guard-hooks/handoff-deferral-cold-read-full-run-launch-refusal-hook.py"
+    check("the handoff-deferral grid-launch guard is read by its own reading function",
+          replay.GUARDS.get(grid_guard_path) is replay.read_handoff_deferral_cold_read_full_run_launch,
+          replay.GUARDS.get(grid_guard_path))
+    grid_guard_spec = importlib.util.spec_from_file_location("grid_launch_guard", REPOSITORY_ROOT / grid_guard_path)
+    grid_guard = importlib.util.module_from_spec(grid_guard_spec)
+    grid_guard_spec.loader.exec_module(grid_guard)
+    for command, expected in (
+            ("python3 nc-systems/cold-read/cold-read-grid.py --target a.md",
+             ("refused", grid_guard.COLD_READ_FULL_RUN_REFUSED_AND_SAVED_REASON)),
+            ("sed -n 1,9p nc-systems/cold-read/cold-read-grid.py", ("passed", None))):
+        reading = replay.read_handoff_deferral_cold_read_full_run_launch(grid_guard, command, "/c", None)
+        check(f"the handoff-deferral grid-launch guard's reading of {command!r}, as if a deferral were on",
+              reading == expected and pickle.loads(pickle.dumps(reading)) == reading, reading)
+
     def add_bash_hook(worktree):
         path = worktree / ".claude" / "settings.json"
         settings = json.loads(path.read_text())
