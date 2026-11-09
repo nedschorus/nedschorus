@@ -1135,8 +1135,8 @@ def run_roster_never_blocks_a_handoff_cases(workspace: Path):
           "no single transcript found" in two_folders.stdout and "by hand" in two_folders.stdout,
           two_folders.stdout)
 
-    # The 2026-11-05 MD-skills case: of two subagents whose last notice is interim, one had
-    # finished long before the handoff and one was still writing its own transcript.
+    # Of two subagents whose last notice is interim, one finished long before the handoff and
+    # one is still writing its own transcript.
     interim_session_id = "00000000-0000-4000-8000-0000000011e7"
     finished_agent, running_agent = "a9defd861f660c577", "a96fd3fd74301ccce"
     interim_transcript_path = projects / f"{interim_session_id}.jsonl"
