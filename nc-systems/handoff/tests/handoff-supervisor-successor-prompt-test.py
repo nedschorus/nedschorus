@@ -975,11 +975,17 @@ def run_launch_time_git_sync_cases(workspace: Path):
     git_in(["clone", "--quiet", str(remote), str(pushed_history_home)], root)
     git_in(["checkout", "--quiet", "-b", "fix-round-branch", "origin/agent-branch"],
            pushed_history_home)
+    # A checkout behind its own origin branch, as a fix pushed from elsewhere leaves it, is pushed.
+    behind_remote_home = root / "behind-remote-home"
+    git_in(["clone", "--quiet", str(remote), str(behind_remote_home)], root)
+    git_in(["checkout", "--quiet", "-b", "agent-branch", "origin/agent-branch~1"], behind_remote_home)
     for case, checkout, expected in (
             ("a branch on origin gets the pushed instruction", home,
              supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION),
             ("a branch whose commits are on origin under another name gets the pushed "
              "instruction, not the rebase", pushed_history_home,
+             supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION),
+            ("a branch behind its origin branch gets the pushed instruction", behind_remote_home,
              supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION),
             ("a checkout on main gets no branch-state instruction", seed, ""),
             ("a detached checkout gets no branch-state instruction", detached_home, ""),

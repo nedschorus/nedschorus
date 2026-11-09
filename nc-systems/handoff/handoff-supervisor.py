@@ -437,7 +437,7 @@ def choose_branch_state_instruction_from_working_directory_push_state(working_di
     """The one branch-state instruction that applies to the checkout's branch, or "" on
     main, on a detached HEAD, or when git cannot tell, which it prints. Call it after
     launch_time_git_sync, whose fetch brings origin's branches up to date."""
-    branch = run_git_here(["rev-parse", "--abbrev-ref", "HEAD"], working_directory, timeout=15)
+    branch = run_git_here(["rev-parse", "--abbrev-ref", "HEAD"], working_directory, timeout=15)  # pragma: no mutate, a limit a second longer or shorter behaves the same
     if branch.returncode != 0:
         command = shlex.join(["git", "-C", str(working_directory), "rev-parse", "--abbrev-ref", "HEAD"])
         print(BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE.format(
@@ -451,11 +451,11 @@ def choose_branch_state_instruction_from_working_directory_push_state(working_di
         return ""
     # The Stop hook rebases only what head_state calls unpushed, so the successor is told the same.
     key, text = checkout_freshness_catch_up.head_state(working_directory, name)
-    if key == "unpushed":
+    if key == "unpushed":  # pragma: no mutate, no key head_state returns sorts after "unpushed", so >= acts as ==
         return BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION
     if key == "detached":
         return ""
-    if key == "unknown":
+    if key == "unknown":  # pragma: no mutate, of the keys head_state returns only "unpushed", handled above, sorts after "unknown", so >= acts as ==
         print(BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE.format(
             branch=f"branch {name} in {working_directory}",
             cause=f"git could not tell whether branch {name} in {working_directory} is pushed to origin: {text}"))
