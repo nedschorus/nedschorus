@@ -716,7 +716,8 @@ def run_push_cases(scratch):
           REFUSAL_HEADER % "conflicting" in result.stderr, result.describe())
     check("and passes on the check's own verdict and instructions",
           "VERDICT: CONFLICT" in result.stderr
-          and "ANSWER: rebase -- the branch has no open pull request" in result.stderr,
+          and "ANSWER: rebase -- branch conflicting has no open pull request and "
+              "origin does not have it yet" in result.stderr,
           result.describe())
     check("and names the commit on origin/main that changed the conflicting file",
           "MAIN'S SIDE: shared.txt -- changed on origin/main by commit " in result.stderr,
@@ -749,9 +750,34 @@ def run_push_cases(scratch):
     check("and origin keeps the branch's earlier commit",
           scenario.origin_ref("pushed-then-conflicting") == early,
           repr(scenario.origin_ref("pushed-then-conflicting")))
+    check("and the refusal tells it to merge origin/main in, since origin has it",
+          "ANSWER: merge -- branch pushed-then-conflicting has no open pull request "
+          "and origin already has it" in result.stderr, result.describe())
 
-    # The remedy the refusal gives a branch with no open pull request: rebase it
-    # onto origin/main, then force-push it, which saves the commit it replaces.
+    # The refusal's remedy for a branch origin has: merge origin/main into it,
+    # then push without --force.
+    scenario.git(scenario.clone, "switch", "--quiet", "-c", "pushed-then-merged",
+                 "pushed-then-conflicting")
+    scenario.git(scenario.clone, "push", "--quiet", "--no-verify", "origin",
+                 "pushed-then-merged")
+    merge = subprocess.run(
+        ["git", "merge", "--quiet", "--no-edit", "origin/main"],
+        cwd=str(scenario.clone), env=scenario.environment(), capture_output=True,
+        text=True, timeout=60)
+    check("(setup) the merge stops on the conflict", merge.returncode != 0,
+          merge.stderr)
+    (scenario.clone / "shared.txt").write_text("main's line\nanother branch line\n")
+    scenario.git(scenario.clone, "add", "shared.txt")
+    scenario.git(scenario.clone, "commit", "--quiet", "--no-edit")
+    result = scenario.push("origin", "pushed-then-merged")
+    check("after merging origin/main in, the branch is pushed without --force",
+          went_through(result)
+          and scenario.origin_ref("pushed-then-merged") == scenario.head(),
+          result.describe())
+    scenario.git(scenario.clone, "switch", "--quiet", "pushed-then-conflicting")
+
+    # A forced update to a branch with no open pull request goes through, and the
+    # commit it replaces is saved first.
     rebase = subprocess.run(
         ["git", "rebase", "--quiet", "origin/main"], cwd=str(scenario.clone),
         env=scenario.environment(), capture_output=True, text=True, timeout=60)

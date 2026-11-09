@@ -27,16 +27,18 @@ Load it by path, under the snake_case form of its file name:
 import json
 
 CLAUDE_CODE_PROGRAM = "claude"
-ADVISOR_TURNED_OFF_SETTINGS = {"advisorModel": ""}
+CLAUDE_CODE_SETTINGS_THAT_TURN_THE_ADVISOR_TOOL_OFF = {"advisorModel": ""}
 
 
 def claude_code_headless_run_command_line_prefix_build(permission_mode, program=CLAUDE_CODE_PROGRAM,
-                                                       own_settings=None):
+                                                       caller_claude_code_session_settings=None):
     """Return [program, "-p", "--strict-mcp-config", "--permission-mode", permission_mode,
-    "--settings", <own_settings as JSON, with the advisor turned off>].
+    "--settings", <caller_claude_code_session_settings as JSON, with the advisor turned off>].
 
-    The advisor setting wins over an advisorModel in own_settings, which is left unchanged.
+    The advisor setting wins over an advisorModel in caller_claude_code_session_settings,
+    which is left unchanged.
     "-p" stays second, so a caller may put its prompt straight after the returned list.
     """
     return [program, "-p", "--strict-mcp-config", "--permission-mode", permission_mode,
-            "--settings", json.dumps({**(own_settings or {}), **ADVISOR_TURNED_OFF_SETTINGS})]
+            "--settings", json.dumps({**(caller_claude_code_session_settings or {}),
+                                      **CLAUDE_CODE_SETTINGS_THAT_TURN_THE_ADVISOR_TOOL_OFF})]

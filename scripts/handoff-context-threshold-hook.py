@@ -13,8 +13,9 @@ import json
 import os
 import re
 import socket
+import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Every Stop hook obeys this rule first: see the module's docstring.
@@ -48,12 +49,12 @@ _deferred_marker_file_specification.loader.exec_module(handoff_deferred_marker_a
 HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
 
 # Compaction clears this shared marker because the session id survives.
-FIRED_MARKER_SUFFIX = "-handoff-asked"
+HANDOFF_ASKED_MARKER_SUFFIX = "-handoff-asked"
 
 
-def fired_marker_path(session_id: str) -> Path:
+def handoff_asked_marker_path(session_id: str) -> Path:
     # Read HANDOFF_DIRECTORY at call time so tests can redirect marker writes.
-    return HANDOFF_DIRECTORY / f"{session_id}{FIRED_MARKER_SUFFIX}"
+    return HANDOFF_DIRECTORY / f"{session_id}{HANDOFF_ASKED_MARKER_SUFFIX}"
 
 
 def deferred_marker_path(session_id: str) -> Path:
@@ -92,13 +93,23 @@ MODEL_ID_NOT_IN_CONTEXT_WINDOW_TABLE_LINE = (
     "above assumes a {default_window_thousands}K window; tell the user, so the table can be updated."
 )
 
+BACKGROUND_TASKS_LIST_MISSING_SENTENCE = (
+    "Claude Code sent no background_tasks list, so the threshold-hook could not see running "
+    "subagents or background tasks, and this session-handoff stops any still running; tell the "
+    "user that claude {claude_version} may be too old to send that list."
+)
+CLAUDE_VERSION_TIMEOUT_SECONDS = 10
+
 # The approved ban on new work; the wait no longer counts work started after the deferral began.
 NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION = (
     "Carry on, open approval-walks included. Short work, which usually ends "
-    "within 10 minutes, such as a cold-read-fast-read, may start; if it is "
-    "still running when the session-handoff ends this agent-session, it stops, "
-    "and the handoff writer adds it to your session-handoff for your successor, "
-    "so you need not. Do not start long "
+    "within 10 minutes, such as a cold-read-fast-read, may start; if that work "
+    "is still running when the session-handoff ends this agent-session, the work "
+    "stops, and the handoff writer script, "
+    "nc-systems/handoff/handoff-write-and-check-supervisor.py, names each "
+    "subagent and each background Bash task still running in your "
+    "session-handoff for your successor, so you need not add that work to your "
+    "task list. Do not start long "
     "work, such as a cold-read-full-run or a pull-request review: add it to "
     "your task list for your successor."
 )
@@ -203,6 +214,21 @@ BACKGROUND_TASK_LAUNCH_KEY = "backgroundTaskId"
 # Completion notifications use these tags across several record types.
 TASK_NOTIFICATION_PATTERN = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
 TASK_NOTIFICATION_TASK_ID_PATTERN = re.compile(r"<task-id>([^<]+)</task-id>")
+
+
+def claude_version_or_why_unread() -> str:
+    """Return what `claude --version` prints, or a parenthesis saying why it could not be read."""
+    try:
+        completed = subprocess.run(["claude", "--version"], capture_output=True, text=True,
+                                   timeout=CLAUDE_VERSION_TIMEOUT_SECONDS, check=False)
+    except (OSError, subprocess.SubprocessError) as problem:
+        return f"(version unknown: running claude --version failed: {problem})"
+    version = completed.stdout.strip()
+    if completed.returncode != 0 or not version:
+        output = (completed.stdout + completed.stderr).strip()
+        return (f"(version unknown: claude --version exited {completed.returncode} "
+                f"with output {output!r})")
+    return version
 
 
 def hook_payload_from_stdin() -> dict:
@@ -459,9 +485,12 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
     The list gives no start time and shows a Monitor as a shell task, so each listed shell task's
     launch record is looked up in the session's transcript and its subagents' transcripts: a shell
     task launched by the Monitor tool holds nothing, nor does one launched longer ago than the wait;
-    one whose launch no transcript records counts as within its wait. An entry that is not a running
-    subagent, workflow or shell task holds nothing. Raises TranscriptCouldNotBeFullyRead when a
-    transcript cannot be read, or a line naming a listed shell task does not parse.
+    one whose launch no transcript records counts as within its wait. Each listed subagent and shell
+    task is dated by its launch record, for a deferral that saved no list, and so is each subagent
+    off the list whose transcript launched a listed shell task; a workflow, or work whose launch no
+    transcript records, has no date. An entry that is not a running subagent, workflow or
+    shell task holds nothing. Raises TranscriptCouldNotBeFullyRead when a transcript cannot be read,
+    or a line naming a listed shell task or subagent does not parse.
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -480,13 +509,53 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
         age = launch_ages.get(task_id)
         return age is None or age <= background_task_wait_seconds
 
+    subagent_ids = ids_of(SUBAGENT_TASK_TYPE)
+    launching_subagent_ids_off_the_list = sorted(
+        set(launching_subagent_id_by_task_id.values()) - set(subagent_ids))
+    launched_at_by_id = subagent_launched_at_by_id_from_transcript_spawn_records(
+        transcript_path, subagent_ids + launching_subagent_ids_off_the_list)
+    launched_at_by_id.update({task_id: now - timedelta(seconds=age)
+                              for task_id, age in launch_ages.items() if age is not None})
     return WorkInFlight(
-        ids_of(SUBAGENT_TASK_TYPE),
+        subagent_ids,
         [task_id for task_id in shell_ids
          if task_id not in monitor_ids and still_within_wait(task_id)],
         ids_of(WORKFLOW_TASK_TYPE),
+        launched_at_by_id=launched_at_by_id,
         launching_subagent_id_by_task_id=launching_subagent_id_by_task_id,
     )
+
+
+def subagent_launched_at_by_id_from_transcript_spawn_records(transcript_path: str, subagent_ids: list) -> dict:
+    """Return {subagent id: launch time, or None if undated} for the ids whose spawn record the
+    session transcript holds. A missing transcript holds none."""
+    launched_at_by_id = {}
+    if not subagent_ids or not transcript_path:
+        return launched_at_by_id
+    path = Path(transcript_path).expanduser()
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if SPAWNED_SUBAGENT_STATUS not in line or not any(
+                        agent_id in line for agent_id in subagent_ids):
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as problem:
+                    raise TranscriptCouldNotBeFullyRead(
+                        f"{path}, line {line_number}: this line holds the id of a subagent on Claude "
+                        f"Code's background_tasks list and the text {SPAWNED_SUBAGENT_STATUS!r}, "
+                        f"but is not valid JSON ({problem})") from problem
+                tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
+                if isinstance(tool_result, dict) \
+                        and tool_result.get("status") == SPAWNED_SUBAGENT_STATUS \
+                        and tool_result.get("agentId") in subagent_ids:
+                    launched_at_by_id.setdefault(tool_result["agentId"], record_time(record))
+    except FileNotFoundError:
+        return launched_at_by_id
+    except OSError as problem:
+        raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
+    return launched_at_by_id
 
 
 def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list, now):
@@ -514,8 +583,8 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
                         record = json.loads(line)
                     except json.JSONDecodeError as problem:
                         raise TranscriptCouldNotBeFullyRead(
-                            f"{path}, line {line_number}: this line names a shell task on "
-                            f"Claude Code's background_tasks list but is not valid JSON "
+                            f"{path}, line {line_number}: this line holds the id of a shell task on "
+                            f"Claude Code's background_tasks list and a launch key, but is not valid JSON "
                             f"({problem}); its first 200 characters: {line[:200].rstrip()!r}"
                         ) from problem
                     tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
@@ -579,7 +648,10 @@ def awaited_work_still_in_flight(marker, flight: WorkInFlight) -> bool:
     if marker.awaited_work_is_unknown:
         # No list was saved: wait for what was launched before the deferral began.
         def launched_before_deferral(work_id):
-            launched_at = flight.launched_at_by_id.get(work_id)
+            # A subagent's own shell task stands in for the subagent, which is off the list while
+            # the task runs, so it is dated by the subagent's launch.
+            launched_at = flight.launched_at_by_id.get(
+                flight.launching_subagent_id_by_task_id.get(work_id, work_id))
             return launched_at is None or launched_at <= marker.deferral_began_at
         return any(launched_before_deferral(work_id) for work_id in
                    flight.subagent_ids + flight.workflow_ids + flight.background_task_ids)
@@ -657,6 +729,8 @@ def main(argv=None) -> int:
         return 0
 
     transcript_path = payload.get("transcript_path", "")
+    background_tasks = payload.get(BACKGROUND_TASKS_PAYLOAD_KEY)
+    background_tasks_list_is_missing = not isinstance(background_tasks, list)
     reading = context_used_tokens_window_and_model_from_transcript(transcript_path)
     if reading is None:
         return 0
@@ -668,23 +742,18 @@ def main(argv=None) -> int:
     if used < arguments.threshold_used_percentage and not deferred_marker_path(session_id).exists():
         return 0
 
-    fired_marker = fired_marker_path(session_id)
+    fired_marker = handoff_asked_marker_path(session_id)
     if fired_marker.exists():
         return 0
 
     # Reincarnation kills in-process work; defer below the ceiling so work can finish.
     if used < arguments.ceiling_used_percentage:
         # An incomplete scan is not an all-clear; defer only as far as the context ceiling.
-        background_tasks = payload.get(BACKGROUND_TASKS_PAYLOAD_KEY)
         try:
-            # A claude without the list, such as an older one, is read from the transcript instead.
-            if isinstance(background_tasks, list):
-                flight = work_in_flight_from_background_tasks(
-                    background_tasks, transcript_path,
-                    arguments.background_task_wait_minutes * 60)
-            else:
-                flight = work_in_flight(
-                    transcript_path, arguments.background_task_wait_minutes * 60)
+            flight = (WorkInFlight([], []) if background_tasks_list_is_missing
+                      else work_in_flight_from_background_tasks(
+                          background_tasks, transcript_path,
+                          arguments.background_task_wait_minutes * 60))
             count_is_known = True
         except TranscriptCouldNotBeFullyRead:
             flight = None
@@ -711,10 +780,11 @@ def main(argv=None) -> int:
     except OSError:
         pass
 
-    print(
-        HANDOFF_INSTRUCTION.format(share=share),
-        file=sys.stderr,
-    )
+    print(HANDOFF_INSTRUCTION.format(share=share), file=sys.stderr)
+    if background_tasks_list_is_missing:
+        print(BACKGROUND_TASKS_LIST_MISSING_SENTENCE.format(
+                  claude_version=claude_version_or_why_unread()),
+              file=sys.stderr)
     # The deferral's promise is kept; left in place, the marker would refire the
     # instruction below the threshold after every later compaction. It is moved, not
     # deleted, because the handoff writer still needs the deferral's start time.

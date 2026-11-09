@@ -144,9 +144,12 @@ one line where it can find it, from the run-on lines, from the rest of the
 code block, or, for a mark with no text, from the lines running on right below
 it or else the one fenced block or quotation after the blank lines below it,
 and says how to rerun. A mark in an HTML comment is not refused, since the user
-is not shown it. For each text it looks for a cold-read-record holding a fast read's report and
-a file under target/ that contains the text, whitespace aside, in the
-checkout's cold-read-records/ and in the log-store's. The log-store's
+is not shown it. For each text it looks for a cold-read-record of this walk, one
+whose name starts with the walk's name and a hyphen as every fast read this
+program runs is named, holding a fast read's report and a file under target/
+that contains the text, whitespace aside, in the checkout's cold-read-records/
+and in the log-store's. Other records are not opened: the log-store holds
+thousands, and a text fast-read outside this program is read again. The log-store's
 cold-read-records directory is the path in cold-read-record-ship.py's
 LOG_STORE_RECORDS_DESTINATION, read on ned-box as it is and on the Mac through
 the Mac's mount of ned-box's home. For each text with none, it saves the text to
@@ -212,6 +215,25 @@ one, CLOSE first writes its running count into that heading, `## Item K of M:
 M the walk finder's count of the items shown and waiting, and names it with
 the same K and M. The line naming the next item gives that counted M,
 whatever M the walk-document's headings give.
+
+RULING GIVEN. Once CLOSE has written the minutes for an answer that is not
+held, it lists the open pull requests with `gh pr list`, run in the checkout,
+and, for each answered item and each item whose held answer it decides with
+it, posts on every pull request with a review holding the line
+`#held_on_ruling <walk name> item <number>` the comment `#ruling_given <walk
+name> item <number> <word>`, naming the same walk and item, so that a pull
+request held on two items gets a comment for each that tells them apart.
+The walk name is the walk-minutes' file name without `-minutes.md`; a
+review line matches only when, whitespace at its ends aside, it is that line
+exactly. The word is `approved` for an answer recorded `<accepted>`, an
+option, an already-decided item and an item settled without asking included;
+`disapproved` for one recorded `<rejected>`; `deferred` for a deferral, a
+second one included; `moved_on` for either move on; and `part_answers` for
+answers to parts. merge-lane-2's pull request intake reads the comment. Each gh
+call is stopped after GH_TIMEOUT_SECONDS. When the list cannot be had, or a
+comment cannot be posted, the minutes stay as written: CLOSE prints, after the
+rest, what failed and the gh command to run by hand, and exits 2. A held answer
+gets no comment, since it records no ruling yet.
 
 WALK ORDER. The unnumbered items, the summary item left out, are the items
 not yet shown, and only they are sorted; a numbered item keeps its number and
@@ -588,8 +610,6 @@ WALK_CATEGORY_TAG = "#approval_walk_item_in_category_"
 WALK_WAITS_ON_TAG = "#approval_walk_item_waits_on"
 WALK_FIRST_ENTERED_TAG = "#approval_walk_item_first_entered"
 LINE_OPENING_MARKERS = r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*"
-# A hashtag opening a code span, as in "`#new` marks a text", is prose naming the marker, not a marker line.
-HASHTAG_MARKER_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_]*#[A-Za-z][A-Za-z0-9_]*" + MARKER_END)
 WALK_CATEGORY_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_CATEGORY_TAG))
 # Words joined by single underscores, so the closing `_` or `__` of underscore emphasis is not read into the tag.
 WALK_CATEGORY_TAGS_IN_LINE = re.compile(re.escape(WALK_CATEGORY_TAG) + r"(?:[^\W_]+(?:_[^\W_]+)*)?")
@@ -597,6 +617,10 @@ WALK_WAITS_ON_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_WAITS_ON_T
                                 + r"[*_`]*[:\s]*(.*?)[*_`\s]*$")
 WALK_FIRST_ENTERED_LINE = re.compile(LINE_OPENING_MARKERS + re.escape(WALK_FIRST_ENTERED_TAG) + MARKER_END
                                      + r"[*_`]*[:\s]*(.*?)[*_`\s]*$")
+# A marked text ends above the first of these lines, because this program reads each on its own; a line opening
+# with any other hashtag, such as a prose `#root_cause`, is part of the text.
+MARKER_LINES_READ_ON_THEIR_OWN = (NEW_LINE, CASE_AGAINST_LINE, EVIDENCE_LINE, WALK_CATEGORY_LINE, WALK_WAITS_ON_LINE,
+                                  WALK_FIRST_ENTERED_LINE)
 WALK_ORDER_REFUSED = (
     "nothing written: {problem}\n"
     "Every item of the walk-document not yet shown to the user, headed `## <the point>` with no number, needs "
@@ -772,6 +796,34 @@ CLOSE_NOT_SHOWN_LINES = (
     "List it, with its number, in one line of your next message to the user.",
 )
 CLOSE_ALREADY_DECIDED_CHANGE = "Its change may now be made; the fast reads of the texts it adds:"
+# Both line formats are agreed with merge-lane-2, whose hold command writes the first into its review and whose
+# pull request intake reads the second; change neither without changing those programs.
+HELD_ON_RULING_LINE = "#held_on_ruling {walk} item {number}"
+RULING_GIVEN_LINE = "#ruling_given {walk} item {number} {word}"
+RULING_GIVEN_WORDS = {OUTCOMES[APPROVED]: APPROVED, OUTCOMES[DISAPPROVED]: DISAPPROVED}
+RULING_GIVEN_DEFERRED, RULING_GIVEN_MOVED_ON, RULING_GIVEN_PART_ANSWERS = "deferred", "moved_on", "part_answers"
+GH_PROGRAM = "gh"
+GH_TIMEOUT_SECONDS = 60
+HELD_PULL_REQUESTS_LIST = ("pr", "list", "--state", "open", "--limit", "1000", "--json", "number,reviews")
+HELD_PULL_REQUESTS_BY_HAND_JQ = ('.[] | select(any(.reviews[].body | split("\\n")[] | gsub("^\\\\s+|\\\\s+$"; ""); '
+                                 '. == {line})) | .number')
+RULING_GIVEN_POSTED = "The ruling on item {number} is posted as `{ruling}` on pull request {pull_request}, held on it."
+RULING_GIVEN_LOOKUP_FAILED = (
+    "The minutes record the answer to item {number}, but the open pull requests merge-lane-2 holds until that item "
+    "is answered could not be looked up, so none of them carries the ruling: `gh pr list` {error}.",
+    "Run `{list_command}` once; for each pull request number it prints, run `{comment_command}` with that number in "
+    "place of <number>, because merge-lane-2 releases or answers a hold only when it reads that comment.",
+    "If that fails too, tell the user: \"merge-lane-2 was not told that item {number} of {walk} is {word}, so the "
+    "pull requests held until that ruling stay held; gh failed.\" A subagent passes this to the agent that "
+    "dispatched it.",
+)
+RULING_GIVEN_POST_FAILED = (
+    "The minutes record the answer to item {number}, but pull request {pull_request}, which merge-lane-2 holds until "
+    "that item is answered, did not get the ruling's comment: `gh pr comment` {error}.",
+    "Run `{comment_command}` once, because merge-lane-2 releases or answers the hold only when it reads that comment.",
+    "If that fails too, tell the user: \"merge-lane-2 was not told that item {number} of {walk} is {word}, so pull "
+    "request {pull_request} stays held; gh failed.\" A subagent passes this to the agent that dispatched it.",
+)
 
 WAITING_ITEM_READ_STEP = "approval-walk-waiting-item-cold-read-fast-read"
 READ_AHEAD_WORKER_STEP = "approval-walk-item-cold-read-fast-read-review-background-worker"
@@ -967,18 +1019,24 @@ def unquoted(text):
 
 
 def lines_joined(lines):
-    """Return lines as one line, each without its quotation markers, whitespace runs squeezed."""
-    return squeezed(" ".join(QUOTATION_MARKERS.sub("", line) for line in lines))
+    """Return lines as one line, whitespace runs squeezed."""
+    return squeezed(" ".join(lines))
+
+
+def unquoted_lines(lines):
+    """Return lines below a mark without their quotation markers; the mark's own text keeps a leading `>`."""
+    return [QUOTATION_MARKERS.sub("", line) for line in lines]
 
 
 def lines_until_blank_or_fence(lines, first, end):
-    """Return the lines from first up to end, stopping before a blank line or a fence delimiter."""
+    """Return the lines from first up to end, without their quotation markers, stopping before a blank line or a
+    fence delimiter."""
     taken = []
     for line in lines[first:end]:
         if not line.strip() or FENCE_DELIMITER.match(line):
             break
         taken.append(line)
-    return taken
+    return unquoted_lines(taken)
 
 
 def block_right_below(lines, first, end):
@@ -997,16 +1055,17 @@ def block_right_below(lines, first, end):
 
 NewMark = collections.namedtuple("NewMark", "mark number in_code text_lines below")
 NewMark.__doc__ = """One `#new` or `#new_if_d` mark: mark, its 0-based line number, whether it is inside fenced or
-indented code, text_lines, the mark's own text followed by every line its text runs onto, and below, for a mark
-in code or with no text, the lines it may have meant."""
+indented code, text_lines, the mark's own text as written followed by every line its text runs onto, and below,
+for a mark in code or with no text, the lines it may have meant; lines below the mark's own line lose their
+quotation markers."""
 
 
 def new_marks(text, tokens, ranges):
     """Return a NewMark for each `#new` or `#new_if_d` mark in the ranges outside an HTML comment, in order.
     This is the one place that decides where a marked text ends, so that check reads the text
     unreadable_new_marks judged: at the end of its Markdown paragraph, or before the first line below it that
-    opens with a hashtag marker, such as the next `#new` or `#case_against`, which is read on its own even when
-    Markdown keeps it in the same paragraph."""
+    this program reads on its own, such as the next `#new` or a `#case_against` line, even when Markdown keeps
+    that line in the same paragraph."""
     lines = text.split("\n")
     code, comments, paragraphs = {}, set(), []
     for token in tokens:
@@ -1034,8 +1093,10 @@ def new_marks(text, tokens, ranges):
             paragraph_end = max((paragraph[1] for paragraph in paragraphs if paragraph[0] <= number < paragraph[1]),
                                 default=number + 1)
             text_end = next((below for below in range(number + 1, paragraph_end)
-                             if HASHTAG_MARKER_LINE.match(lines[below])), paragraph_end)
-            marks.append(NewMark(match[1], number, False, [match[2]] + lines[number + 1:min(text_end, end)], []))
+                             if any(marker.match(lines[below]) for marker in MARKER_LINES_READ_ON_THEIR_OWN)),
+                            paragraph_end)
+            marks.append(NewMark(match[1], number, False,
+                                 [match[2]] + unquoted_lines(lines[number + 1:min(text_end, end)]), []))
     return marks
 
 
@@ -1064,14 +1125,23 @@ def squeezed(text):
     return " ".join(text.split())
 
 
-def fast_read_record_holding(text, record_directories):
-    """Return the cold-read-record directory whose fast read read the text, or None."""
+def walk_fast_read_name(walk_name, *parts):
+    """The target name of a fast read this program runs for the walk, which starts its cold-read-record's name;
+    fast_read_record_holding finds the walk's records by the walk_name- prefix this gives."""
+    return "-".join([walk_name, *(file_name_part(str(part)) for part in parts)])
+
+
+def fast_read_record_holding(text, record_directories, walk_name):
+    """Return the walk's cold-read-record directory whose fast read read the text, or None."""
     wanted = squeezed(text)
     record_names = load_module("cold_read_record_names", RECORD_NAMES_FILE)
+    prefix = walk_fast_read_name(walk_name) + "-"
     for directory in record_directories:
         if not directory.is_dir():
             continue
         for record in sorted(directory.iterdir()):
+            if not record.name.startswith(prefix):
+                continue
             report = record_names.cold_read_record_file_path_prefixed_name_else_name_before_prefix(
                 record, record_names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
             if not report.is_file() or not (record / "target").is_dir():
@@ -1511,13 +1581,13 @@ def check(arguments):
     for mark, text in texts:
         counted[mark] += 1
         number = counted[mark]
-        record = fast_read_record_holding(text, record_directories)
+        record = fast_read_record_holding(text, record_directories, walk_name)
         if record is not None:
             already_done += 1
             statuses.append(STATUS_ALREADY_DONE.format(mark=mark, number=number, excerpt=excerpt(text),
                                                        record=record))
             continue
-        name = f"{walk_name}-{file_name_part(item)}-{file_name_part(mark)}-{number}"
+        name = walk_fast_read_name(walk_name, item, mark, number)
         record, notes = run_fast_read(text, name, arguments.fast_read_program)
         had_to_be_run += 1
         statuses.append(STATUS_HAD_TO_BE_RUN.format(mark=mark, number=number, excerpt=excerpt(text), record=record)
@@ -1663,7 +1733,7 @@ def start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, t
                                 named_by=f"the item after {named}")
         walk_name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
         start_read_ahead(item_reads_directory(walk_finder, minutes), after_named, text,
-                         f"{walk_name}-{file_name_part(after_named)}", fast_read_program, top)
+                         walk_fast_read_name(walk_name, after_named), fast_read_program, top)
     except Failure as problem:
         return READ_AHEAD_NOT_STARTED.format(item=named, problem=problem)
     return None
@@ -1761,7 +1831,7 @@ def waiting_item_read(arguments):
                 return 0
             why = ITEM_READ_RUN_FACTS.format(report=latest[1]["report"], facts=", ".join(facts[:FACTS_LISTED]))
         walk_name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
-        outcome = fast_read_outcome(text, f"{walk_name}-{file_name_part(item)}", arguments.fast_read_program)
+        outcome = fast_read_outcome(text, walk_fast_read_name(walk_name, item), arguments.fast_read_program)
         reads.mkdir(exist_ok=True)
         (reads / f"{key}-started.json").unlink(missing_ok=True)
         record_read(reads, key, item, text, outcome)
@@ -2197,6 +2267,70 @@ def held_items_decided_with(walk_finder, minutes, parser, answered_numbers, item
     return lines
 
 
+def gh_failure(command, top, gh_program, timeout):
+    """Run gh with command in top; return (its stdout, None), or (None, what went wrong) when it cannot be run,
+    exits nonzero or outlasts timeout."""
+    try:
+        result = subprocess.run([gh_program, *command], cwd=top, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None, f"did not end within {timeout} seconds"
+    except OSError as error:
+        return None, f"could not be run: {error}"
+    if result.returncode != 0:
+        return None, f"exited {result.returncode}: {squeezed(result.stderr.strip()) or 'it printed nothing on stderr'}"
+    return result.stdout, None
+
+
+def pull_requests_held_on(lines, top, gh_program, timeout):
+    """Return ({held line: [the open pull requests whose review holds that line on a line of its own]}, None), or
+    (None, what went wrong) when the open pull requests cannot be listed."""
+    output, error = gh_failure(HELD_PULL_REQUESTS_LIST, top, gh_program, timeout)
+    if error:
+        return None, error
+    try:
+        pull_requests = json.loads(output)
+        held = {line: [] for line in lines}
+        for pull_request in pull_requests:
+            found = {line.strip() for review in pull_request["reviews"] for line in (review["body"] or "").split("\n")}
+            for line in lines:
+                if line in found:
+                    held[line].append(pull_request["number"])
+    except (ValueError, TypeError, KeyError) as error:
+        return None, f"printed what is not a list of pull requests with their reviews: {error!r}"
+    return held, None
+
+
+def ruling_given_comments_posted(walk_name, rulings, top, gh_program, timeout):
+    """Post a `#ruling_given` comment on every open pull request held on the ruling of each item of rulings,
+    [(item number, the word)]; return the lines to print, and whether any comment
+    could not be posted."""
+    lines = {HELD_ON_RULING_LINE.format(walk=walk_name, number=number): (number, word) for number, word in rulings}
+    held, error = pull_requests_held_on(list(lines), top, gh_program, timeout)
+    in_top = f"cd {shlex.quote(str(top))} && gh "
+    output, failed = [], bool(error)
+    for line, (number, word) in lines.items():
+        body = RULING_GIVEN_LINE.format(walk=walk_name, number=number, word=word)
+        values = {"number": number, "walk": walk_name, "word": word}
+        if error:
+            list_command = (in_top + shlex.join(HELD_PULL_REQUESTS_LIST) + " --jq "
+                            + shlex.quote(HELD_PULL_REQUESTS_BY_HAND_JQ.format(line=json.dumps(line))))
+            output += [text.format(error=error, list_command=list_command, **values,
+                                   comment_command=in_top + "pr comment <number> --body " + shlex.quote(body))
+                       for text in RULING_GIVEN_LOOKUP_FAILED]
+            continue
+        for pull_request in held[line]:
+            command = ("pr", "comment", str(pull_request), "--body", body)
+            _, post_error = gh_failure(command, top, gh_program, timeout)
+            if post_error:
+                failed = True
+                output += [text.format(error=post_error, pull_request=pull_request, **values,
+                                       comment_command=in_top + shlex.join(command))
+                           for text in RULING_GIVEN_POST_FAILED]
+            else:
+                output.append(RULING_GIVEN_POSTED.format(number=number, pull_request=pull_request, ruling=body))
+    return output, failed
+
+
 def close(arguments):
     walk_finder = load_walk_finder()
     top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
@@ -2229,13 +2363,14 @@ def close(arguments):
     # they stay waiting, so the walk shows them to the user.
     held_outcome = None
     if answered == MOVED_ON:
-        recorded = CLOSE_MOVED_ON_NO_DECISION_MINUTES.format(item=item)
+        recorded, word = CLOSE_MOVED_ON_NO_DECISION_MINUTES.format(item=item), RULING_GIVEN_MOVED_ON
         output = [line.format(item=item) for line in CLOSE_MOVED_ON_LINES]
     elif answered == DEFERRED:
         _, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
         again = any(deferrals[number] for number in answered_numbers)
         recorded = (CLOSE_DEFERRED_AGAIN_MINUTES if again else CLOSE_DEFERRED_MINUTES).format(item=item)
         lines = CLOSE_DEFERRED_AGAIN_LINES if again else CLOSE_DEFERRED_LINES
+        word = RULING_GIVEN_DEFERRED
         # A walk with no summary item puts a deferred item last, where it needs no note; an item deferred again
         # leaves the walk, so the note that says where it went is taken out.
         noted = not again and summary is not None
@@ -2244,6 +2379,7 @@ def close(arguments):
                   + statuses)
     elif answered.startswith(MOVED_ON_PREFIX):
         recorded = CLOSE_MOVED_ON_MINUTES.format(item=item, reason=answered[len(MOVED_ON_PREFIX):])
+        word = RULING_GIVEN_MOVED_ON
         output = [line.format(item=item) for line in CLOSE_NOT_SHOWN_LINES]
     elif answered.startswith(ALREADY_DECIDED_PREFIX):
         held_outcome = OUTCOMES[APPROVED]
@@ -2256,6 +2392,7 @@ def close(arguments):
         if parts:
             recorded = CLOSE_PARTS_TOOK_EFFECT_MINUTES.format(item=item, parts=", ".join(
                 f"part {number} {word} {OUTCOMES[word]}" for number, word in parts))
+            word = RULING_GIVEN_PART_ANSWERS
         else:
             held_outcome = OUTCOMES[DISAPPROVED if answered == DISAPPROVED else APPROVED]
             recorded = CLOSE_TOOK_EFFECT_MINUTES.format(item=item, answered=answered, outcome=held_outcome)
@@ -2264,6 +2401,8 @@ def close(arguments):
     if answered != DEFERRED:
         deferred_item_heading_noted(walk_finder, minutes, answered_numbers, total, parser, noted=False)
     append_to_minutes(minutes, [recorded])
+    word = RULING_GIVEN_WORDS[held_outcome] if held_outcome else word
+    rulings = [(number, word) for number in answered_numbers]
     if held_outcome:
         held = held_items_decided_with(walk_finder, minutes, parser, answered_numbers, item, held_outcome)
         if held:
@@ -2272,6 +2411,8 @@ def close(arguments):
             deferred_item_heading_noted(walk_finder, minutes, walk_finder.parse_items(line.split(": ")[0])[0], total,
                                         parser, noted=False)
         output += [CLOSE_HELD_DECIDED.format(item=item, held=line.split(": ")[0]) for line in held]
+        rulings += [(number, word) for line in held
+                    for number in walk_finder.parse_items(line.split(": ")[0])[0]]
     decided, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
     numbers = next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals, placing)
     if numbers and isinstance(numbers[0], int):
@@ -2288,8 +2429,11 @@ def close(arguments):
         output += [not_started] if not_started else []
     output.append(CLOSE_READ_NEXT_ITEM.format(next_item=named, command=READ_STEP_COMMAND.format(
         program=Path(__file__).resolve(), flags="", top=shlex.quote(str(top)))) if numbers else CLOSE_NO_NEXT_ITEM)
-    print("\n".join(output))
-    return 0
+    # Last, so a gh that fails or hangs cannot keep the answer or the next item out of the minutes.
+    ruling_lines, ruling_failed = ruling_given_comments_posted(
+        minutes.name[:-len(walk_finder.MINUTES_SUFFIX)], rulings, top, arguments.gh_program, arguments.gh_timeout)
+    print("\n".join(output + ruling_lines))
+    return 2 if ruling_failed else 0
 
 
 def main(argv=None):
@@ -2334,6 +2478,8 @@ def main(argv=None):
                         help="a cold-read-records directory to search instead of the defaults; repeatable")
     parser.add_argument("--fast-read-program", type=Path, default=FAST_READ_PROGRAM)
     parser.add_argument("--counts-log", type=Path)
+    parser.add_argument("--gh-program", default=GH_PROGRAM, help=argparse.SUPPRESS)
+    parser.add_argument("--gh-timeout", type=float, default=GH_TIMEOUT_SECONDS, help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
     try:
         return {"check": check, "close": close, WAITING_ITEM_READ_STEP: waiting_item_read,

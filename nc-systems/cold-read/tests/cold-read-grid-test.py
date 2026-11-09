@@ -150,9 +150,9 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 from unittest import mock
@@ -508,8 +508,23 @@ def frozen_target_path_in_scratch_repository(repository, record_directory):
         repository / TARGET_RELATIVE_PATH, record_directory)
 
 
-with tempfile.TemporaryDirectory() as scratch:
-    scratch = Path(scratch)
+_scratch_directory_common_spec = importlib.util.spec_from_file_location(
+    "test_scratch_directory_whose_earlier_killed_runs_leftovers_are_removed_first_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "test-scratch-directory-whose-earlier-killed-runs-leftovers-are-removed-first-common.py")
+_scratch_directory_common = importlib.util.module_from_spec(_scratch_directory_common_spec)
+_scratch_directory_common_spec.loader.exec_module(_scratch_directory_common)
+SCRATCH_ROOT = _scratch_directory_common.scratch_directory_after_removing_ones_killed_runs_left(
+    "cold-read-grid-test-")
+
+
+def stopped_by_sigterm(*_):
+    raise SystemExit(1)  # So the finally below removes SCRATCH_ROOT.
+
+
+signal.signal(signal.SIGTERM, stopped_by_sigterm)
+try:
+    scratch = SCRATCH_ROOT
     stubs = scratch / "stub-bin"
 
     # --- The check that could not run ---------------------------------------
@@ -816,9 +831,9 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- Every failure case below, in the design's terms ---------------------
     # nc-systems/cold-read/cold-read-grid-cell-failure-handling-design.md, section
-    # 8. The real limit texts (section 4) are the fixtures: line 2 of the two
+    # 8. The real limit texts (section 4) are the fixtures: the lines of the
     # kept logs it cites, and the 2026-09-18 logged-out capture on ned-box.
-    SESSION_LIMIT_LINE = "You've hit your session limit · resets 8:50pm (America/Los_Angeles)"
+    WEEKLY_LIMIT_LINE = "You've hit your weekly limit · resets Nov 7, 3am (America/Los_Angeles)"
     MODEL_LIMIT_LINE = ("You've reached your {family} limit. Switch to another model, or "
                         "manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, "
                         "to continue.")
@@ -926,30 +941,30 @@ with tempfile.TemporaryDirectory() as scratch:
     # The 2026-09-10 outage, eight records of three unrelated FAILED lines.
     repository = build_scratch_repository(scratch, "checkout-claude-down")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "claude-", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
+        [{"fragment": "claude-", "attempts": 2, "stdout": WEEKLY_LIMIT_LINE}])})
     down_lines = lines_opening(result, "AGENT-BINARY DOWN:")
     check("one AGENT-BINARY DOWN line, naming claude, the class and the reset text",
-          down_lines == ["AGENT-BINARY DOWN: claude — account-limit — resets 8:50pm "
-                         "(America/Los_Angeles); 3 reports absent"],
+          down_lines == ["AGENT-BINARY DOWN: claude — account-limit — weekly limit · resets "
+                         "Nov 7, 3am (America/Los_Angeles); 3 reports absent"],
           f"down lines were {down_lines!r}; stdout={result.stdout!r}")
     failed_lines = lines_opening(result, "FAILED")
     check("an account limit is not retried: no RETRYING line, three FAILED lines naming it",
           lines_opening(result, "RETRYING:") == [] and len(failed_lines) == 3
-          and all("account-limit — resets 8:50pm (America/Los_Angeles)" in line
+          and all("account-limit — weekly limit · resets Nov 7, 3am (America/Los_Angeles)" in line
                   for line in failed_lines),
           repr(result.stdout))
     check("the first FAILED line alone tells the user, naming the attempt's log",
           [line for line in failed_lines if "Tell the user:" in line] == failed_lines[:1]
           and failed_lines[0].endswith(".md.stderr.log).")
-          and ". Tell the user: claude account-limit — resets 8:50pm (America/Los_Angeles) (log: "
+          and ". Tell the user: claude account-limit — weekly limit · resets Nov 7, 3am (America/Los_Angeles) (log: "
           in failed_lines[0], repr(failed_lines))
     check("the closing text restates the down line without the prefix, once",
-          result.stdout.count("- claude is down: account-limit — resets 8:50pm "
-                              "(America/Los_Angeles); 3 reports absent") == 1
+          result.stdout.count("- claude is down: account-limit — weekly limit · resets "
+                              "Nov 7, 3am (America/Los_Angeles); 3 reports absent") == 1
           and result.stdout.count("AGENT-BINARY DOWN:") == 1, repr(result.stdout))
     check("the closing text ends by telling the user the cause, with the log to check",
           result.stdout.rstrip().splitlines()[-1].startswith(
-              "Tell the user: claude account-limit — resets 8:50pm (America/Los_Angeles) (log: ")
+              "Tell the user: claude account-limit — weekly limit · resets Nov 7, 3am (America/Los_Angeles) (log: ")
           and result.stdout.rstrip().endswith(".md.stderr.log)."),
           repr(result.stdout.rstrip().splitlines()[-1]))
     check("four land, the some-landed text, exit 1",
@@ -957,26 +972,17 @@ with tempfile.TemporaryDirectory() as scratch:
           and "4 of 7 reports landed in" in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}")
 
-    # --- The account limit printed bare: an empty detail still names the class
-    # The agent-binary printed "You've hit your session limit" with nothing after
-    # it, so the cell's cause line ends `account-limit — ` and the grid's
-    # strip() took the separator's trailing space with it; partitioning on
-    # the full separator then found none, and the class "account-limit —"
-    # matched no class the grid knows, losing the AGENT-BINARY DOWN line and
-    # the Tell-the-user sentence. Found by the same review as the marker
-    # case above:
-    # https://github.com/nedschorus/nedschorus/pull/508#pullrequestreview-5252230189
+    # --- The account limit printed bare: the limit's own words are the detail
     repository = build_scratch_repository(scratch, "checkout-claude-down-bare-limit")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "claude-", "attempts": 2, "stdout": "You've hit your session limit"}])})
+        [{"fragment": "claude-", "attempts": 2, "stdout": "You've hit your weekly limit"}])})
     down_lines = lines_opening(result, "AGENT-BINARY DOWN:")
-    check("a bare limit text is still one AGENT-BINARY DOWN line naming account-limit",
-          len(down_lines) == 1 and result.stdout.count("AGENT-BINARY DOWN:") == 1
-          and down_lines[0].startswith("AGENT-BINARY DOWN: claude — account-limit — ")
-          and down_lines[0].endswith("; 3 reports absent"),
+    check("a bare limit text is one AGENT-BINARY DOWN line naming account-limit and the limit",
+          down_lines == ["AGENT-BINARY DOWN: claude — account-limit — weekly limit; 3 reports absent"],
           f"down lines were {down_lines!r}; stdout={result.stdout!r}")
-    check("the user is still told the bare cause",
-          "Tell the user: claude account-limit — " in result.stdout, repr(result.stdout))
+    check("the user is told the bare cause",
+          "Tell the user: claude account-limit — weekly limit (log: " in result.stdout,
+          repr(result.stdout))
 
     # --- Two Claude cells hit the account limit after the third landed -------
     # The rule as the user revised it at item 3 of the design's walk
@@ -987,12 +993,12 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch, "checkout-claude-down-after-one-landed")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
         [{"fragment": "claude-hunt-second-strongest-model.md", "attempts": 0},
-         {"fragment": "claude-", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
+         {"fragment": "claude-", "attempts": 2, "stdout": WEEKLY_LIMIT_LINE}])})
     check("one landed Claude cell and two absent with the account limit is still claude down",
           lines_opening(result, "AGENT-BINARY DOWN:")
-          == ["AGENT-BINARY DOWN: claude — account-limit — resets 8:50pm "
-              "(America/Los_Angeles); 2 reports absent"]
-          and "- claude is down: account-limit — resets 8:50pm (America/Los_Angeles); 2 reports absent"
+          == ["AGENT-BINARY DOWN: claude — account-limit — weekly limit · resets "
+              "Nov 7, 3am (America/Los_Angeles); 2 reports absent"]
+          and "- claude is down: account-limit — weekly limit · resets Nov 7, 3am (America/Los_Angeles); 2 reports absent"
           in result.stdout
           and result.returncode == 1 and len(reviews_saved_lines(result)) == 5,
           f"exit {result.returncode}; stdout={result.stdout!r}")
@@ -1020,7 +1026,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch, "checkout-mixed-causes")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
         [{"fragment": "claude-hunt-second-strongest-model.md", "attempts": 2},
-         {"fragment": "claude-", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
+         {"fragment": "claude-", "attempts": 2, "stdout": WEEKLY_LIMIT_LINE}])})
     retrying_lines = lines_opening(result, "RETRYING:")
     check("only the exit-1 cell is retried",
           len(retrying_lines) == 1
@@ -1224,7 +1230,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # line: the cause changes what is reported, never what is decided.
     repository = build_scratch_repository(scratch, "checkout-codex-quotes-limit")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "codex-terminology-deep.md", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
+        [{"fragment": "codex-terminology-deep.md", "attempts": 2, "stdout": WEEKLY_LIMIT_LINE}])})
     repository_plain = build_scratch_repository(scratch, "checkout-codex-plain-failure")
     result_plain = run_grid(repository_plain, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
         [{"fragment": "codex-terminology-deep.md", "attempts": 2}])})
@@ -1445,7 +1451,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # its FAILED line nor the closing text tells the user: nothing waits on it.
     repository = build_scratch_repository(scratch, "checkout-question-4-account-limit")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": QUESTION_4_REPORT_NAME, "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
+        [{"fragment": QUESTION_4_REPORT_NAME, "attempts": 2, "stdout": WEEKLY_LIMIT_LINE}])})
     record_directory = record_directory_of(repository)
     failed_lines = lines_opening(result, "FAILED")
     check("a Question 4 cell at its account limit is FAILED at once, not retried",
@@ -1459,8 +1465,8 @@ with tempfile.TemporaryDirectory() as scratch:
           and markers_in(record_directory, "<!-- INCOMPLETE SET:") == [],
           f"exit {result.returncode}; stdout={result.stdout!r}")
     check("the closing text gives the account limit as why Question 4 was not answered",
-          "Question 4, What should be code, was not answered: account-limit — resets 8:50pm "
-          f"(America/Los_Angeles) (log: " in result.stdout
+          "Question 4, What should be code, was not answered: account-limit — weekly limit · resets "
+          f"Nov 7, 3am (America/Los_Angeles) (log: " in result.stdout
           and f"{QUESTION_4_REPORT_NAME}.stderr.log). The other reports do not depend on it: "
           "go on without its answer." in result.stdout, repr(result.stdout))
 
@@ -2774,6 +2780,63 @@ with tempfile.TemporaryDirectory() as scratch:
           and " of 3 for " not in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
+    # Only the records whose name contains the document's file stem are
+    # opened: a record of another document is never read, so even one that
+    # cannot be read leaves the count intact.
+    repository = build_scratch_repository(scratch, "full-run-count-other-document-record-unread")
+    for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
+        seed_log_store_record(repository, f"cold-read-grid-test-target-{day}", ["claude-hunt-deep.md"])
+    seed_log_store_record(repository, "some-other-document-2026-09-01", ["claude-hunt-deep.md"],
+                          frozen_relative="docs/some-other-document.md")
+    other_record = repository / SCRATCH_LOG_STORE_RELATIVE / "some-other-document-2026-09-01"
+    other_record.chmod(0o000)
+    try:
+        result = run_grid(repository, stubs / "full-run-count-other-document-record-unread")
+    finally:
+        other_record.chmod(0o755)
+    check("another document's record is not opened when counting, so a fourth run is still refused",
+          result.returncode == 2 and "refusing cold-read-full-run 4" in result.stderr,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    # The log-store on ned-box is listed over ssh with one find that prunes
+    # the other documents' records. A stand-in ssh runs that find here; where
+    # this machine's find has no -printf, the stand-in prints each path instead.
+    remote_store = scratch / "full-run-count-remote-store"
+    for name, frozen in (("cold-read-grid-test-target-2026-09-01", TARGET_RELATIVE_PATH),
+                         ("some-other-document-2026-09-01", "docs/some-other-document.md")):
+        (remote_store / name / "target" / Path(frozen).parent).mkdir(parents=True, exist_ok=True)
+        (remote_store / name / "target" / frozen).write_text("earlier run\n", encoding="utf-8")
+        (remote_store / name / "claude-hunt-deep.md").write_text("earlier run\n", encoding="utf-8")
+    (remote_store / "some-other-document-2026-09-01").chmod(0o000)
+    find_has_printf = subprocess.run(["find", str(remote_store / "cold-read-grid-test-target-2026-09-01"),
+                                      "-printf", ""], capture_output=True).returncode == 0
+    ssh_stub = stubs / "full-run-count-remote-listing-ssh"
+    ssh_stub.write_text(
+        "#!/usr/bin/env python3\nimport shlex, subprocess, sys\n"
+        "command = shlex.split(sys.argv[-1])\n"
+        f"if not {find_has_printf}:\n"
+        "    at = command.index('-printf')\n"
+        "    command[at:at + 2] = ['-print']\n"
+        "sys.exit(subprocess.run(command).returncode)\n", encoding="utf-8")
+    ssh_stub.chmod(0o755)
+    remote_listing_grid_spec = importlib.util.spec_from_file_location(
+        "cold_read_grid_remote_listing", SYSTEM_DIRECTORY / "cold-read-grid.py")
+    remote_listing_grid = importlib.util.module_from_spec(remote_listing_grid_spec)
+    remote_listing_grid_spec.loader.exec_module(remote_listing_grid)
+    remote_listing_grid.record_shipper.SSH_COMMAND = [str(ssh_stub)]
+    try:
+        remote_lines = remote_listing_grid.record_file_listing(
+            "ned-box-stand-in", str(remote_store),
+            remote_listing_grid.record_directory_name_parts({TARGET_RELATIVE_PATH}))
+    finally:
+        (remote_store / "some-other-document-2026-09-01").chmod(0o755)
+    listed = sorted(line.split("\t")[0].removeprefix(f"{remote_store}/") for line in remote_lines)
+    check("the remote listing holds the document's records and prunes another document's unread",
+          listed == ["cold-read-grid-test-target-2026-09-01/claude-hunt-deep.md",
+                     f"cold-read-grid-test-target-2026-09-01/target/{TARGET_RELATIVE_PATH}"]
+          and (not find_has_printf or all("\t" in line for line in remote_lines)),
+          repr(remote_lines))
+
     # A log-store that cannot be listed does not stop the read, as with
     # shipping, and the run says it went uncounted rather than counting zero.
     repository = build_scratch_repository(scratch, "full-run-count-store-unreadable")
@@ -2797,6 +2860,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an unreadable git history is reported as EARLIER COLD-READ-FULL-RUNS NOT COUNTED",
           "EARLIER COLD-READ-FULL-RUNS NOT COUNTED:" in result.stdout and "git log --follow" in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+finally:
+    shutil.rmtree(SCRATCH_ROOT, ignore_errors=True)
 
 
 # The docstring is a reader's map of the run: its cell count must match the

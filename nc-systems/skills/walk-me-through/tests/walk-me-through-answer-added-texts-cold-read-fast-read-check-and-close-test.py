@@ -47,7 +47,14 @@ _cold_read_scratch_fixture_spec = importlib.util.spec_from_file_location(
     / "cold-read-scratch-repository-test-fixture.py")
 cold_read_scratch_fixture = importlib.util.module_from_spec(_cold_read_scratch_fixture_spec)
 _cold_read_scratch_fixture_spec.loader.exec_module(cold_read_scratch_fixture)
-SUITE_ROOT = Path(tempfile.mkdtemp(prefix="answer-added-texts-fast-read-check-test-")).resolve()
+_scratch_directory_common_spec = importlib.util.spec_from_file_location(
+    "test_scratch_directory_whose_earlier_killed_runs_leftovers_are_removed_first_common",
+    Path(__file__).resolve().parents[3] / "general-tools"
+    / "test-scratch-directory-whose-earlier-killed-runs-leftovers-are-removed-first-common.py")
+_scratch_directory_common = importlib.util.module_from_spec(_scratch_directory_common_spec)
+_scratch_directory_common_spec.loader.exec_module(_scratch_directory_common)
+SUITE_ROOT = _scratch_directory_common.scratch_directory_after_removing_ones_killed_runs_left(
+    "answer-added-texts-fast-read-check-test-")
 WALK_NAME = "poem-page-2026-10-12"
 FAILURE_PREFIX = "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close "
 failures = []
@@ -100,6 +107,30 @@ if mode in ("record-not-shipped", "record-not-shipped-then-exit-4", "record-not-
     sys.exit(4 if mode == "record-not-shipped-then-exit-4" else 1)
 if mode == "record-refused":
     sys.stderr.write("cold-read-fast-read: record: REFUSED: already in the store with different content.\n")
+    sys.exit(1)
+'''
+
+# Behaves as gh does for the close step's two calls: `pr list` prints GH_STAND_IN_PULL_REQUESTS, `[]` by default;
+# `pr comment` succeeds unless its number is in GH_STAND_IN_COMMENT_FAILS. Each call is appended to GH_STAND_IN_CALLS.
+GH_STAND_IN = r'''
+import json, os, sys, time
+with open(os.environ["GH_STAND_IN_CALLS"], "a") as calls:
+    calls.write(json.dumps(sys.argv[1:]) + "\n")
+mode = os.environ.get("GH_STAND_IN_MODE", "")
+if sys.argv[1:3] == ["pr", "list"]:
+    if mode == "list-fails":
+        sys.stderr.write("HTTP 502: Bad Gateway\n")
+        sys.exit(1)
+    if mode == "list-fails-silently":
+        sys.exit(1)
+    if mode == "list-killed":
+        import signal
+        os.kill(os.getpid(), signal.SIGTERM)
+    if mode == "list-hangs":
+        time.sleep(5)
+    print("not json" if mode == "list-not-json" else os.environ.get("GH_STAND_IN_PULL_REQUESTS", "[]"))
+elif sys.argv[1:3] == ["pr", "comment"] and sys.argv[3] in os.environ.get("GH_STAND_IN_COMMENT_FAILS", "").split():
+    sys.stderr.write("GraphQL: Could not add comment\n")
     sys.exit(1)
 '''
 
@@ -204,6 +235,16 @@ class Case:
         self.stand_in.write_text(STAND_IN)
         self.temporary_directory = self.root / temporary_directory_name
         self.temporary_directory.mkdir()
+        self.gh = self.root / "gh-stand-in.py"
+        self.gh.write_text(f"#!{sys.executable}\n" + GH_STAND_IN)
+        self.gh.chmod(0o755)
+        self.gh_calls = self.root / "gh-stand-in-calls.jsonl"
+        self.gh_calls.write_text("")
+
+    def gh_comments(self):
+        """[(pull request number, body)] of each comment the gh stand-in was asked to post, in order."""
+        calls = [json.loads(line) for line in self.gh_calls.read_text().splitlines()]
+        return [(call[2], call[4]) for call in calls if call[:2] == ["pr", "comment"]]
 
     def reads(self):
         """The walk's directory of item cold-read-fast-read outcomes, keyed by a hash of each text read."""
@@ -223,8 +264,8 @@ class Case:
     def left_in_temporary_directory(self):
         return sorted(path.name for path in self.temporary_directory.iterdir())
 
-    def record_holding(self, text, report_name="cold-read-fast-read.md"):
-        record = self.records / "earlier-read-2026-10-15"
+    def record_holding(self, text, report_name="cold-read-fast-read.md", name=f"{WALK_NAME}-item-3-of-9-2026-10-15"):
+        record = self.records / name
         (record / "target" / "docs" / "walk").mkdir(parents=True)
         (record / "target" / "docs" / "walk" / "item.md").write_text(f"Item 3 of 9\n\n#new \"{text}\"\n")
         (record / report_name).write_text("findings\n")
@@ -244,7 +285,8 @@ class Case:
         if step == "check" and reply is not None and not {"--not-asked", "--already-decided", "--moved-on", "--user-reply-as-typed"} & set(flags):
             flags = (*flags, "--user-reply-as-typed", reply)
         environment = dict(environment or os.environ, STAND_IN_MODE=mode, STAND_IN_CALLS=str(self.calls),
-                           STAND_IN_RECORDS=str(self.records), TMPDIR=str(self.temporary_directory))
+                           STAND_IN_RECORDS=str(self.records), TMPDIR=str(self.temporary_directory),
+                           GH_STAND_IN_CALLS=str(self.gh_calls))
 
         def stop_signal_dispositions():
             # Set explicitly: a child left to inherit would get SIG_IGN when this suite runs under nohup.
@@ -255,7 +297,7 @@ class Case:
             [sys.executable, str(PROGRAM), step, *flags, "--cwd", str(self.checkout),
              "--cold-read-records", str(self.records),
              "--fast-read-program", str(fast_read_program or self.stand_in),
-             "--counts-log", str(counts_log or self.counts_log)],
+             "--counts-log", str(counts_log or self.counts_log), "--gh-program", str(self.gh)],
             capture_output=True, text=True, env=environment, cwd=self.checkout,
             preexec_fn=stop_signal_dispositions)
 
@@ -358,6 +400,19 @@ def test_a_fast_read_already_done_is_not_run_again():
           described(result))
 
 
+def test_another_walks_record_holding_the_text_is_not_opened():
+    case = Case()
+    for name in ("earlier-read-2026-10-15", f"{WALK_NAME}0-item-3-of-9-2026-10-15"):
+        case.record_holding("The page lists one poem\n per job an agent does.", name=name)
+    result = case.run("check")
+    check("a record whose name does not start with the walk's name and a hyphen is not searched, so its text is "
+          "fast-read again",
+          result.returncode == 0
+          and '"The page lists one poem per job an agent does.": fast read had to be run' in result.stdout
+          and "The page lists one poem per job an agent does." in case.calls.read_text(),
+          described(result))
+
+
 def test_a_fast_read_already_done_before_the_cold_read_prefix_is_not_run_again():
     case = Case()
     record = case.record_holding("The page lists one poem\n per job an agent does.", report_name="fast-read.md")
@@ -433,6 +488,10 @@ UNREADABLE_MARK_CASES = (
      '#new "Use\n`#new` to mark proposed text."\n',
      ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
       'its text joined onto it: #new "Use `#new` to mark proposed text."']),
+    ("a mark whose text runs onto a line that opens with a hashtag this program does not read",
+     '#new "The rule asks for\n#root_cause lines in each description."\n',
+     ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
+      'its text joined onto it: #new "The rule asks for #root_cause lines in each description."']),
 )
 
 
@@ -483,6 +542,15 @@ def test_marks_whose_texts_are_read_whole_are_not_refused():
     check("marks one under another with no blank line or list marker between them, and a marker line right below "
           "the last, are not refused, and each mark's line is read on its own",
           result.returncode == 0 and case.calls.read_text() == "Row one.\nRow three.\n", described(result))
+    case = Case(document=marks_document('#new "Row one."\n`#case_against weak`: the fix costs an hour.\n'))
+    result = case.run("check")
+    check("a mark with a backticked `#case_against` line right below it is not refused, and its own line is read",
+          result.returncode == 0 and case.calls.read_text() == "Row one.\n", described(result))
+    for body, read in (("#new > Keep the old logs.\n", "> Keep the old logs.\n"), ("#new >\n", ">\n")):
+        case = Case(document=marks_document(body))
+        result = case.run("check")
+        check(f"a mark whose text opens with `>` keeps the `>` in the text it reads: {body!r}",
+              result.returncode == 0 and case.calls.read_text() == read, described(result))
 
 
 def test_the_waiting_item_read_step_refuses_a_mark_whose_text_would_not_be_read_whole():
@@ -3658,6 +3726,179 @@ def test_the_read_step_refuses_an_unshown_item_it_cannot_place_and_close_goes_on
     closed = case.run("close")
     check("once the item is tagged as the refusal says, close shows it",
           closed.returncode == 0 and marker(case) == "#next_to_present item 2 of 3", described(closed))
+
+
+def held_pull_requests(*held):
+    """A `gh pr list --json number,reviews` output: one pull request per (number, [review bodies])."""
+    return json.dumps([{"number": number, "reviews": [{"body": body} for body in bodies]} for number, bodies in held])
+
+
+def gh_environment(pull_requests="[]", mode="", comment_fails=""):
+    return dict(os.environ, GH_STAND_IN_PULL_REQUESTS=pull_requests, GH_STAND_IN_MODE=mode,
+                GH_STAND_IN_COMMENT_FAILS=comment_fails)
+
+
+HELD_ON_ITEM_4 = f"#held_on_ruling {WALK_NAME} item 4"
+
+
+def test_close_posts_the_ruling_on_each_open_pull_request_held_on_the_answered_item_and_on_no_other():
+    pull_requests = held_pull_requests(
+        (101, [f"Held.\n\n  {HELD_ON_ITEM_4}  \n\nIf he approves that item, this pull request merges."]),
+        (102, ["Looks fine.", None, HELD_ON_ITEM_4]),
+        (103, [f"#held_on_ruling {WALK_NAME} item 44"]),
+        (104, ["#held_on_ruling another-walk-2026-10-30 item 4"]),
+        (105, [f"Merge-lane-2 writes `{HELD_ON_ITEM_4}` in its review."]),
+        (106, []))
+    for flags, word in (((), "approved"), (("--option", "2"), "approved"), (("--disapproved",), "disapproved"),
+                        (("--deferred",), "deferred"), (("--moved-on-no-decision",), "moved_on"),
+                        (("--part-answer", "1=A", "--part-answer", "2=D"), "part_answers"),
+                        (("--already-decided", "walk x, item 3"), "approved"),
+                        (("--moved-on", "it went to walk y"), "moved_on")):
+        case = Case(next_to_present="item 4 of 9")
+        case.run("check", *flags)
+        closed = case.run("close", environment=gh_environment(pull_requests))
+        body = f"#ruling_given {WALK_NAME} item 4 {word}"
+        check(f"close after check {' '.join(flags) or '(approved)'} posts `{body}` on the two pull "
+              "requests whose review holds item 4's line on a line of its own, and on none held on another item or "
+              "walk, or quoting the line inside a sentence",
+              closed.returncode == 0 and case.gh_comments() == [("101", body), ("102", body)]
+              and closed.stdout.rstrip("\n").split("\n")[-2:] == [
+                  f"The ruling on item 4 is posted as `{body}` on pull request {number}, held on it."
+                  for number in (101, 102)],
+              described(closed) + repr(case.gh_comments()))
+
+
+def test_close_posts_the_ruling_for_each_item_an_answer_names():
+    # check refuses an answer to two items at once, so the answer line one close reads for both is written here.
+    case = Case(next_to_present="items 6 and 7 of 9")
+    with open(case.minutes, "a") as minutes:
+        minutes.write("items 6 and 7 of 9: the user answered approved #case_against_none (2026-11-05 10:00) in his "
+                      "words \"a\", which makes its change. Fast reads:\n- no proposed text marked\n")
+    closed = case.run("close", environment=gh_environment(held_pull_requests(
+        (201, [f"#held_on_ruling {WALK_NAME} item 7"]), (202, [f"#held_on_ruling {WALK_NAME} item 6"]))))
+    check("an answer to items 6 and 7 posts on the pull request held on each the ruling naming that item, so the "
+          "two comments tell the items apart",
+          closed.returncode == 0
+          and case.gh_comments() == [("202", f"#ruling_given {WALK_NAME} item 6 approved"),
+                                     ("201", f"#ruling_given {WALK_NAME} item 7 approved")],
+          described(closed) + repr(case.gh_comments()))
+
+
+def test_a_held_answer_posts_no_ruling_until_the_new_item_decides_it():
+    pull_requests = held_pull_requests((301, [f"#held_on_ruling {WALK_NAME} item 3"]),
+                                       (302, [f"#held_on_ruling {WALK_NAME} item 5"]))
+    case = Case()
+    case.run("check")
+    with open(case.minutes, "a") as minutes:
+        minutes.write("#next_to_present item 5 of 9\n")
+    held = case.run("close", environment=gh_environment(pull_requests))
+    check("a close that holds the answer for a new item asks gh nothing, since no ruling is given yet",
+          held.returncode == 0 and case.gh_calls.read_text() == "", described(held))
+    case.run("check", "--disapproved")
+    closed = case.run("close", environment=gh_environment(pull_requests))
+    comments = case.gh_comments()
+    check("closing the new item posts its ruling on the pull request held on it and on the one held on the item "
+          "whose answer was held for it",
+          closed.returncode == 0
+          and comments == [("302", f"#ruling_given {WALK_NAME} item 5 disapproved"),
+                           ("301", f"#ruling_given {WALK_NAME} item 3 disapproved")],
+          described(closed) + repr(comments))
+
+
+def test_a_lookup_that_fails_leaves_the_answer_recorded_and_prints_the_commands_to_post_it_by_hand():
+    for flags, mode, error in (
+            ((), "list-fails", "exited 1: HTTP 502: Bad Gateway."),
+            ((), "list-not-json", "printed what is not a list of pull requests with their reviews: "),
+            (("--gh-timeout", "0.5"), "list-hangs", "did not end within 0.5 seconds.")):
+        case = Case(next_to_present="item 4 of 9")
+        case.run("check")
+        closed = case.run("close", *flags, environment=gh_environment(mode=mode))
+        lines = closed.stdout.rstrip("\n").split("\n")
+        top = shlex.quote(str(case.checkout.resolve()))
+        check(f"a `gh pr list` that {mode.split('-', 1)[1].replace('-', ' ')} leaves the answer and the next item "
+              "in the minutes, prints what failed with the commands that list the held pull requests and post the "
+              "ruling, posts nothing, and exits 2",
+              closed.returncode == 2
+              and "item 4 of 9: approved; every text the change adds has had a fast read. <accepted>"
+              in case.minutes.read_text()
+              and marker(case) == f"#next_to_present item 6 of {WALK_DOCUMENT_COUNTED_M}"
+              and lines[-3].startswith("The minutes record the answer to item 4, but the open pull requests "
+                                       "merge-lane-2 holds until that item is answered could not be looked up, so none "
+                                       f"of them carries the ruling: `gh pr list` {error}")
+              and lines[-2].startswith(f"Run `cd {top} && gh pr list --state open --limit 1000 --json number,reviews "
+                                       "--jq ")
+              and f'. == "{HELD_ON_ITEM_4}"' in lines[-2]
+              and f"run `cd {top} && gh pr comment <number> --body '#ruling_given {WALK_NAME} item 4 approved'`"
+              in lines[-2]
+              and lines[-1].startswith("If that fails too, tell the user: \"merge-lane-2 was not told that item 4 of "
+                                       f"{WALK_NAME} is approved,")
+              and case.gh_comments() == [],
+              described(closed))
+
+
+def test_the_by_hand_lookup_command_lists_exactly_the_pull_requests_held_on_the_item():
+    case = Case(next_to_present="item 4 of 9")
+    case.run("check")
+    closed = case.run("close", environment=gh_environment(mode="list-fails"))
+    command = re.search(r"--jq ('[^']*')", closed.stdout)
+    jq = shlex.split(command.group(1))[0] if command else ""
+    program = shutil.which("jq")
+    if not program:
+        print("SKIP  the by-hand lookup's filter is run only where jq is installed")
+        return
+    listed = subprocess.run([program, "-r", jq], capture_output=True, text=True, input=held_pull_requests(
+        (101, [f"x\n  {HELD_ON_ITEM_4} \ny"]), (103, [f"#held_on_ruling {WALK_NAME} item 44"]), (106, [])))
+    check("the --jq filter the lookup failure prints picks the pull request whose review holds item 4's line, "
+          "and not one held on item 44",
+          listed.returncode == 0 and listed.stdout.split() == ["101"], described(listed) + jq)
+
+
+def test_a_lookup_that_prints_json_of_another_shape_or_fails_silently_is_reported():
+    for pull_requests, mode, error in (
+            ('{"number": 1}', "", "printed what is not a list of pull requests with their reviews: TypeError("),
+            ('[{"number": 1}]', "", "printed what is not a list of pull requests with their reviews: KeyError("),
+            ("[]", "list-fails-silently", "exited 1: it printed nothing on stderr."),
+            ("[]", "list-killed", "exited -15: it printed nothing on stderr.")):
+        case = Case(next_to_present="item 4 of 9")
+        case.run("check")
+        closed = case.run("close", environment=gh_environment(pull_requests, mode=mode))
+        check(f"a `gh pr list` that prints {pull_requests} in mode {mode or 'none'} is reported as the lookup failing",
+              closed.returncode == 2 and f"`gh pr list` {error}" in closed.stdout, described(closed))
+
+
+def test_a_gh_that_cannot_be_run_leaves_the_answer_recorded_and_exits_2():
+    case = Case(next_to_present="item 4 of 9")
+    case.run("check")
+    case.gh.unlink()
+    closed = case.run("close")
+    check("a gh program that cannot be run is reported as the lookup failing, and the answer stays recorded",
+          closed.returncode == 2 and "`gh pr list` could not be run: " in closed.stdout
+          and "item 4 of 9: approved; every text the change adds" in case.minutes.read_text(), described(closed))
+
+
+def test_a_comment_that_fails_is_reported_with_its_command_and_the_others_are_still_posted():
+    case = Case(next_to_present="item 4 of 9")
+    case.run("check")
+    closed = case.run("close", environment=gh_environment(
+        held_pull_requests((401, [HELD_ON_ITEM_4]), (402, [HELD_ON_ITEM_4])), comment_fails="401"))
+    lines = closed.stdout.rstrip("\n").split("\n")
+    top = shlex.quote(str(case.checkout.resolve()))
+    body = case.gh_comments()[0][1] if case.gh_comments() else ""
+    check("a comment gh fails to post is reported with the command that posts it, the next pull request still "
+          "gets its comment, the answer stays recorded, and close exits 2",
+          closed.returncode == 2 and [number for number, _ in case.gh_comments()] == ["401", "402"]
+          and lines[-4:] == [
+              "The minutes record the answer to item 4, but pull request 401, which merge-lane-2 holds until that "
+              "item is answered, did not get the ruling's comment: `gh pr comment` exited 1: GraphQL: Could not add "
+              "comment.",
+              f"Run `cd {top} && gh pr comment 401 --body {shlex.quote(body)}` once, because merge-lane-2 releases or "
+              "answers the hold only when it reads that comment.",
+              f"If that fails too, tell the user: \"merge-lane-2 was not told that item 4 of {WALK_NAME} is approved, "
+              "so pull request 401 stays held; gh failed.\" A subagent passes this to the agent that dispatched it.",
+              f"The ruling on item 4 is posted as `#ruling_given {WALK_NAME} item 4 approved` on pull request 402, "
+              "held on it."]
+          and "item 4 of 9: approved; every text the change adds" in case.minutes.read_text(),
+          described(closed))
 
 
 

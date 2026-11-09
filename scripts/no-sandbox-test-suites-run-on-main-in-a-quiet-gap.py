@@ -2,9 +2,17 @@
 """Run the test suites that cannot run in a sandbox on main, in a quiet gap, and keep their result.
 
 Usage:
-  scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py [seams below]
-  scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py --record-follow-up-request-sent
-  scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py --print-merge-gate-notice-of-last-failed-or-stopped-run
+  scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py [seams]
+  scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py --record-follow-up-request-sent [seams]
+  scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py --print-merge-gate-notice-of-last-failed-or-stopped-run [seams]
+
+The seams are flags the tests use; cron passes none, so each takes its default:
+  --clone                       the clone this program is in
+  --state-file                  ~/.local/state/nedschorus/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.json
+  --log-store-root              /home/nedlern/nedschorus-logs
+  --temporary-directory         Python's tempfile.gettempdir(), /tmp on ned-box
+  --runner-lock-file            ~/.claude/.run-all-test-suites.lock, the runner's own default
+  --test-suite-runner-program   scripts/run-all-test-suites.py in the worktree of step 6
 
 The design is GHI "Test suites that run without a sandbox leave per-change test
 runs and run apart, when their own files change or in a quiet gap",
@@ -14,54 +22,72 @@ SUITES_RUN_WITHOUT_ANY_SANDBOX, so this program is what runs them after a change
 reaches main. It runs on ned-box under cron every 10 minutes.
 
 WHAT ONE RUN DOES, in order:
-  1. Takes its own lock, the state file's path with .lock added, without
+  1. Takes its own lock, the --state-file path with .lock added, without
      waiting; when another run holds it, exits 0.
   2. Reads the state file. A file that is missing or cannot be read counts as
      having no passing commit and no last run.
-  3. Runs `git fetch origin` in the clone and resolves refs/remotes/origin/main.
+  3. Runs `git fetch origin` in --clone and resolves refs/remotes/origin/main;
+     when either fails, the run stops, recorded with commit null.
   4. Exits 0 when no run is due. A run is due when there is no last run, the
      last run was at another commit, the last run stopped, or it failed more
-     than RETRY_FAILED_RUN_AFTER_SECONDS ago.
-  5. Takes the no-sandbox suites' lock in the runner's admission directory
-     without waiting and releases it at once; when another run holds it, ned-box
-     is not quiet, and this exits 0.
-  6. Makes a detached worktree of that commit, removing first one a killed run
-     left, and runs the worktree's runner once with --only-suites-named and the
+     than RETRY_FAILED_RUN_AFTER_SECONDS (3600) ago. That constant, and
+     RUNNER_TIMEOUT_SECONDS and RUNNER_STOP_GRACE_SECONDS of step 6, are in
+     seconds, set with the program's other constants.
+  5. Takes the no-sandbox suites' lock without waiting and releases it at once.
+     That lock is the file named by run-all-test-suites.py's
+     SUITES_RUN_WITHOUT_ANY_SANDBOX_LOCK_FILE_NAME, inside the admission
+     directory, whose path is the --runner-lock-file path with
+     .test-suite-admission added. When another run holds it, ned-box is not
+     quiet, and this exits 0.
+  6. Makes a detached worktree of that commit at
+     <--temporary-directory>/no-sandbox-test-suites-run-on-main-in-a-quiet-gap/worktree-of-main,
+     removing first any worktree a killed run left at that path, and runs the
+     worktree's runner once with --only-suites-named and the
      no-sandbox suites that worktree's runner lists, plus
      --only-suites-whose-recorded-inputs-changed-since <passing commit> when
-     there is one. The runner gets RUNNER_TIMEOUT_SECONDS; past it, its
-     process group gets SIGTERM, then SIGKILL after RUNNER_STOP_GRACE_SECONDS.
+     there is one. The runner gets RUNNER_TIMEOUT_SECONDS (3600); past it, its
+     process group gets SIGTERM, then SIGKILL after RUNNER_STOP_GRACE_SECONDS (60).
   7. Removes the worktree, writes the run's record to the log-store and the
-     state file. Runner exit 0 is passed, and the commit becomes the passing
-     commit; exit 1 is failed, with each suite the runner's FAIL lines name and
-     its log copied beside the record; anything else is stopped, with the
-     reason.
+     state file; a record that cannot be written stops the run. Runner exit 0
+     is passed, and the commit becomes the passing commit; exit 1 is failed,
+     with each suite the runner's FAIL lines name and its log copied beside the
+     record, and an empty failing_suites list when it prints no FAIL line;
+     anything else is stopped, with the reason.
 
-THE STATE FILE, written whole to a temporary file renamed into place:
-  {"passing_commit": <hash or null>,
-   "last_run": {"commit", "compared_with", "started", "ended", "result"
-                ("passed", "failed" or "stopped"), "reason", "failing_suites":
-                [{"suite", "log"}], "record", "follow_up_request_sent"}}
-Times are UTC, as YYYY-MM-DDTHH:MM:SSZ.
+THE STATE FILE, a JSON object written whole to a temporary file renamed into
+place, with these keys:
+  passing_commit           the last commit whose run passed, or null
+  last_run.commit          the commit tested, or null when main was not resolved
+  last_run.compared_with   the passing commit the run was compared with, or null
+  last_run.started, .ended times, UTC, as YYYY-MM-DDTHH:MM:SSZ
+  last_run.result          "passed", "failed" or "stopped"
+  last_run.reason          why a run stopped, else null
+  last_run.failing_suites  a list of {"suite", "log"}: the log's copy beside the
+                           record, or why there is none
+  last_run.record          the record's path, or null when the run stopped before
+                           writing it
+  last_run.follow_up_request_sent  the time recorded, or null
 
 THE RECORD, one file per run that reaches step 6:
   <log-store>/no-sandbox-test-suites-runs/<YYYY-MM-DD>/<HHMMSS>Z.txt
 with each failing suite's log beside it as <HHMMSS>Z-<suite, / as __>.log.
 
 --record-follow-up-request-sent writes the time into the last run, once
-merge-lane-2 has sent the follow-up request for a failed or stopped run; it
-refuses, exit 2, when the last run passed or there is none, or while a run holds
-the program's lock, since that run rewrites the state file when it ends.
-
-The runner is started with XDG_RUNTIME_DIR added as scripts/daily-full-test-run-of-main.py
-adds it, because cron gives this program no user session bus.
+merge-lane-2 has sent the follow-up request for a failed or stopped run, and
+writes it again over the old time when run again; it refuses, exit 2, when the
+last run passed or there is none, or while a run holds the program's lock,
+since that run rewrites the state file when it ends.
 
 --print-merge-gate-notice-of-last-failed-or-stopped-run prints, on stdout, the notice scripts/merge-gate.sh
 puts on its stderr: nothing when the state file is missing or the last run
 passed; for a failed run each failing suite, its log, the commit range and the
-pull requests merged in it, read from the clone's first-parent merge commits;
-for a stopped run its reason and record; for an unreadable state file, that.
-After a follow-up was recorded, one line naming when.
+pull requests merged in it, read from the clone's first-parent merge commits,
+or "range: none" when no run has passed yet, and for a failed run whose
+failing_suites list is empty, the same lines with no suite named; for a stopped run its reason, and
+its record when last_run.record is not null, so a run that stopped before
+step 6 gets no record line; for an unreadable state file, that it cannot be
+read and why. After a follow-up was recorded, one line naming when. It always
+exits 0.
 
 EXIT. 0 the run finished, whatever the suites did, or no run was due, or
 another run or a no-sandbox suite held its lock; 2 bad invocation or a refused
@@ -76,8 +102,9 @@ table beside it, scheduled-jobs-on-each-machine.json:
 
 What it does not handle: it sees only whether a no-sandbox suite holds the lock
 at the moment it looks, not whether another run's suite is between two tries
-for it; and a worktree a still-running runner from a killed run of this program
-uses is removed under it, which can make that runner's suites fail.
+for it, nor whether one takes it before this run's runner starts; and a
+worktree a still-running runner from a killed run of this program uses is
+removed under it, which can make that runner's suites fail.
 """
 
 import argparse
@@ -252,19 +279,9 @@ def remove_worktree(clone, worktree):
     return None
 
 
-def runner_environment():
-    """This process's environment, with XDG_RUNTIME_DIR added as the daily full run adds it,
-    because cron starts this program without the user's session bus and the runner's
-    `systemd-run --user --scope` then puts no CPU weight or memory ceiling on any suite."""
-    daily = module_loaded_by_path("daily_full_test_run_of_main",
-                                  Path(__file__).resolve().with_name("daily-full-test-run-of-main.py"))
-    return daily.environment_with_user_runtime_directory_when_the_user_session_bus_exists(
-        dict(os.environ))
-
-
 def run_runner_with_time_limit(command, worktree):
     """(exit code or None when stopped at the time limit, stdout, stderr)."""
-    process = subprocess.Popen(command, cwd=str(worktree), env=runner_environment(),
+    process = subprocess.Popen(command, cwd=str(worktree),
                                stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                errors="replace", start_new_session=True)

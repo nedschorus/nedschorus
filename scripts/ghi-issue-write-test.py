@@ -490,6 +490,37 @@ def run_cases(scratch: Path):
                             "(https://github.com/nedschorus/nedschorus/issues/142)")
     check("a Markdown link in the title gives its text, not its address",
           linked_slug == "notes-from-issue-build-draft-md", repr(linked_slug))
+    bracketed_label_slug = tool.slug(
+        "Scope of [the `[a-z]` parser](https://example.com/scope) checks")
+    check("a link whose text holds brackets gives its text, not its address",
+          bracketed_label_slug == "scope-of-the-a-z-parser-checks",
+          repr(bracketed_label_slug))
+    parenthesised_url_slug = tool.slug(
+        "See [the page](https://en.wikipedia.org/wiki/Slug_(web)) first")
+    check("a link whose address holds parentheses gives its text alone",
+          parenthesised_url_slug == "see-the-page-first",
+          repr(parenthesised_url_slug))
+    balanced_address_slug = tool.slug(
+        "See [the page](https://example.com/a_(b)_tail) first")
+    check("a link whose address holds a balanced pair of parentheses with "
+          "more address after it gives its text alone",
+          balanced_address_slug == "see-the-page-first",
+          repr(balanced_address_slug))
+    escaped_address_slug = tool.slug(
+        "See [the page](https://example.com/a\\(b) first")
+    check("a backslash-escaped parenthesis in a link's address is text, "
+          "so the link still gives its text alone",
+          escaped_address_slug == "see-the-page-first",
+          repr(escaped_address_slug))
+    nested_link_slug = tool.slug(
+        "Notes on [see [GHI 5](https://example.com/5) first]"
+        "(https://example.com/notes)")
+    check("a link inside a link's text gives its text too, not its address",
+          nested_link_slug == "notes-on-see-ghi-5-first",
+          repr(nested_link_slug))
+    check("a bracket that opens no link is kept as text",
+          tool.slug("Match [a-z] (letters) only") == "match-a-z-letters-only",
+          repr(tool.slug("Match [a-z] (letters) only")))
     long_title = " ".join(["word"] * 60)
     long_slug = tool.slug(long_title)
     check("a slug over the character limit is cut at a hyphen, inside it",

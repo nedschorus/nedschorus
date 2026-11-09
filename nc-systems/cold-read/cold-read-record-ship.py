@@ -348,7 +348,7 @@ in the nedschorus repository, which this machine also clones:
   version of a guarded file, with its git blob id and the time it was seen, a
   copy of each version its checkout's branch HEAD did not hold, and the record
   of which versions the user approved, written by
-  `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`
+  `.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`
 - `bash-guards-replay-changed-verdict-or-failed-run-log-directories/` -- the
   Bash guards replay's step logs and differences files, one directory per
   replay that exited 1 or 2, written by
@@ -440,12 +440,14 @@ _RECORD_DIRECTORY_BEING_WRITTEN_LOCK_DESCRIPTORS = {}
 
 
 def record_directory_being_written_lock_take(record_dir: pathlib.Path) -> None:
-    """Hold record_dir's being-written lock until
+    """Hold record_dir's being-written lock, shared, until
     record_directory_being_written_lock_release, or until this process exits.
     Called right after the directory is created, before anything is written
-    into it, so no shipment sees a file the writer may still rewrite."""
+    into it, so no shipment sees a file the writer may still rewrite. Every
+    writer holds the lock shared, so a cell run directly into the directory
+    holds it too, and the record stays held until the last writer exits."""
     descriptor = os.open(record_dir, os.O_RDONLY)
-    fcntl.flock(descriptor, fcntl.LOCK_EX)
+    fcntl.flock(descriptor, fcntl.LOCK_SH)
     _RECORD_DIRECTORY_BEING_WRITTEN_LOCK_DESCRIPTORS[pathlib.Path(record_dir).resolve()] = descriptor
 
 
@@ -458,10 +460,11 @@ def record_directory_being_written_lock_release(record_dir: pathlib.Path) -> Non
 
 
 def record_directory_being_written_lock_is_held_by_any_process(record_dir: pathlib.Path) -> bool:
-    """True while any process holds record_dir's being-written lock, this one included."""
+    """True while any process holds record_dir's being-written lock, shared or exclusive, this one included."""
     descriptor = os.open(record_dir, os.O_RDONLY)
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        # Exclusive, since every writer holds the lock shared.
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         return True
     finally:

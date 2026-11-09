@@ -20,8 +20,8 @@ Those cases guard the reaper's central promise — ambiguity keeps, never
 reaps — which a worktree holding someone's uncommitted work depends on.
 
 The cleaner lists pull requests with gh. Every run here finds this suite's
-own gh first on PATH, which prints the JSON in FAKE_GH_PULL_REQUESTS, or an
-empty list, or fails with exit FAKE_GH_EXIT_CODE, and never reaches GitHub.
+own gh first on PATH, which prints the JSON in FAKE_GH_PULL_REQUESTS, keeping
+only the fields named after --json, or an empty list, or fails with exit FAKE_GH_EXIT_CODE, and never reaches GitHub.
 
 The classification cases run against the machine's REAL lsof, and that is the
 one way this suite can fail for a reason that is not a defect. If lsof does not
@@ -72,10 +72,13 @@ import os
 import select
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import time
+import types
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Before anything runs git: a run started with GIT_DIR set, or with another
@@ -105,15 +108,22 @@ atexit.register(shutil.rmtree, _removals_log_for_every_run, ignore_errors=True)
 os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(Path(_removals_log_for_every_run) / "log.txt")
 
 # Every run finds this gh first: it prints FAKE_GH_PULL_REQUESTS, an empty list by default, or fails
-# with exit FAKE_GH_EXIT_CODE, so no run reaches GitHub.
+# with exit FAKE_GH_EXIT_CODE, so no run reaches GitHub. Like the real gh, it prints only the fields
+# named after --json, so a field the cleaner forgets to ask for is missing from what it reads.
 _fake_gh_directory = tempfile.mkdtemp(prefix="clean-worktrees-test-fake-gh-")
 atexit.register(shutil.rmtree, _fake_gh_directory, ignore_errors=True)
 FAKE_GH = Path(_fake_gh_directory) / "gh"
 FAKE_GH.write_text(
-    "#!/bin/sh\n"
-    'if [ -n "$FAKE_GH_EXIT_CODE" ]; then echo "gh: stand-in listing failure" >&2; '
-    'exit "$FAKE_GH_EXIT_CODE"; fi\n'
-    'printf "%s\\n" "${FAKE_GH_PULL_REQUESTS:-[]}"\n', encoding="utf-8")
+    f"#!{sys.executable}\n"
+    "import json, os, sys\n"
+    "if os.environ.get('FAKE_GH_EXIT_CODE'):\n"
+    "    print('gh: stand-in listing failure', file=sys.stderr)\n"
+    "    sys.exit(int(os.environ['FAKE_GH_EXIT_CODE']))\n"
+    "pull_requests = json.loads(os.environ.get('FAKE_GH_PULL_REQUESTS') or '[]')\n"
+    "if '--json' in sys.argv:\n"
+    "    fields = sys.argv[sys.argv.index('--json') + 1].split(',')\n"
+    "    pull_requests = [{f: p[f] for f in fields if f in p} for p in pull_requests]\n"
+    "print(json.dumps(pull_requests))\n", encoding="utf-8")
 FAKE_GH.chmod(0o755)
 os.environ["PATH"] = f"{_fake_gh_directory}{os.pathsep}{os.environ.get('PATH', '')}"
 os.environ.pop("FAKE_GH_PULL_REQUESTS", None)
@@ -967,8 +977,13 @@ with tempfile.TemporaryDirectory() as scratch:
             str(unreadable_owner_wt), "origin/main")
         owner_file_path(unreadable_owner_wt).write_text("{not json\n", encoding="utf-8")
         locked_owned_wt = give_stopped_owner(owned_worktree("locked-owned-wt", running_session_owner))
+        # The lock names the running stand-in with its real start, so Claude Code's lock exception,
+        # which unlocks a lock whose process has ended, leaves it locked.
+        running_session_start = (snapshots_module.linux_start_ticks(running_session.pid)
+                                 if sys.platform.startswith("linux") else "1")
         git(checkout, "worktree", "lock", "--reason",
-            f"claude agent agent-a1 (pid {running_session.pid} start 1)", str(locked_owned_wt))
+            f"claude agent agent-a1 (pid {running_session.pid} start {running_session_start})",
+            str(locked_owned_wt))
 
         pull_requests = [
             {"number": 1, "state": "MERGED", "headRefName": "merged-wt-branch",
@@ -1607,7 +1622,8 @@ with tempfile.TemporaryDirectory() as scratch:
     reported_walk_wt = worktree_holding_a_walk("reported-walk-wt")
     reported = run_clean_shipping_to(str(walk_store / "cold-read-records")).stdout
     check("the report names a done worktree's walk and says --remove ships it first",
-          f"--remove first ships its 1 record(s) to the log-store and keeps it if one does not ship: "
+          f"--remove first ships its 1 record(s) to the log-store and keeps the worktree if a record "
+          f"does not ship; the records it ships: "
           f"docs/walk/{walk_name}.md" in reported, reported)
     check("the report ships no walk", not (walk_store / "walk").exists())
     remove_worktree_for_next_case(reported_walk_wt)
@@ -1927,6 +1943,45 @@ with tempfile.TemporaryDirectory() as scratch:
         module.subprocess.run = real_run
     check("a parent process whose command line ps cannot give is logged by its pid and unknown",
           unknown_caller == f"{os.getppid()} unknown", unknown_caller)
+
+    no_origin = scratch / "no-origin-main"
+    no_origin.mkdir()
+    git(no_origin, "init", "-b", "main")
+    git(no_origin, "-c", "user.email=test@test.invalid", "-c", "user.name=test",
+        "commit", "--allow-empty", "-m", "only commit")
+    check("a branch git cannot compare with origin/main, because there is none, never counts as "
+          "fully on origin/main, so the cleaner keeps it",
+          module.fully_on_origin_main(no_origin, "main") is False)
+
+    # The cleaner fed a real Mac lock reason, as Claude Code writes it, on macOS.
+    mac_locked = scratch / "mac-locked"
+    git(no_origin, "worktree", "add", "-b", "mac-locked", str(mac_locked))
+    owner_module = module.owner_file
+    real_running_state = owner_module.claude_code_subagent_worktree_lock_dispatching_process_running_state
+    real_owner_key = owner_module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key
+    real_seats = owner_module.agent_seats_whose_claude_code_transcripts_name_subagent
+    owner_module.claude_code_subagent_worktree_lock_dispatching_process_running_state = (
+        lambda lock: real_running_state(lock, platform="darwin", macos_start_seconds=lambda pid: None))
+    owner_module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key = (
+        lambda lock: real_owner_key(lock, platform="darwin"))
+    owner_module.agent_seats_whose_claude_code_transcripts_name_subagent = lambda agent_id: ["seat-x"]
+    try:
+        mac_verdict, mac_ended = module.claude_code_subagent_lock_verdict_or_ended_lock(
+            mac_locked, types.SimpleNamespace(locked_reason=(
+                "claude agent agent-a9e3e2fe0e79f0a2c (pid 29741 start Tue Nov  3 21:24:32 2026)")))
+    finally:
+        owner_module.claude_code_subagent_worktree_lock_dispatching_process_running_state = real_running_state
+        owner_module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key = real_owner_key
+        owner_module.agent_seats_whose_claude_code_transcripts_name_subagent = real_seats
+    mac_start_seconds = str(int(time.mktime(time.strptime("Tue Nov 3 21:24:32 2026",
+                                                          "%a %b %d %H:%M:%S %Y"))))
+    check("on macOS the cleaner unlocks a worktree whose real-form Claude Code lock names an ended "
+          "claude process, writing an owner file with the macOS owner key",
+          mac_verdict is None and mac_ended is not None
+          and mac_ended.owner_to_write == {"owner_kind": owner_module.OWNER_AGENT_SESSION,
+                                           "agent_seat": "seat-x",
+                                           "owner_key": f"29741-{mac_start_seconds}"},
+          (mac_verdict, mac_ended))
 
 # --- One named worktree or branch ---
 
@@ -2282,6 +2337,506 @@ with tempfile.TemporaryDirectory() as scratch:
         bad = run_one_named(*flags)
         check(f"a bad invocation of the one-named modes exits 2: {case}",
               bad.returncode == 2 and gh_wt.exists(), bad.stdout + bad.stderr)
+
+# --- Merge-lane review checkouts: judged by the pull request their name holds ---
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch).resolve()
+    checkout = scratch / "checkout"
+    origin = scratch / "origin.git"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
+    git(checkout, "remote", "add", "origin", str(origin))
+    git(checkout, "push", "-u", "origin", "main")
+    fake_home = scratch / "home"
+    (fake_home / ".claude" / "handoffs").mkdir(parents=True)
+    review_directory = fake_home / ".cache" / "merge-lane-review-worktrees"
+    review_directory.mkdir(parents=True)
+
+    def review_checkout(name, directory=review_directory):
+        path = directory / name
+        git(checkout, "worktree", "add", "--detach", str(path), "origin/main")
+        return path
+
+    merged_checkout = review_checkout("pr10-merged")
+    # merge-lane-2's local merge commit: on no branch, and origin/main lacks it.
+    (merged_checkout / "merged.txt").write_text("merged\n", encoding="utf-8")
+    git(merged_checkout, "add", "-A")
+    git(merged_checkout, "commit", "-m", "local merge commit")
+    (merged_checkout / "test-output.txt").write_text("left by a test run\n", encoding="utf-8")
+    closed_checkout = review_checkout("tools-main-11r2")
+    open_checkout = review_checkout("pr12-head")
+    main_checkout = review_checkout("main")
+    main_green_checkout = review_checkout("main-green-0b3364167")
+    unlisted_checkout = review_checkout("verdict-99r1")
+    two_numbers_checkout = review_checkout("head-13-12345678")
+    locked_checkout = review_checkout("pr14-head")
+    git(checkout, "worktree", "lock", "--reason", "reviewing", str(locked_checkout))
+    occupied_checkout = review_checkout("pr15-head")
+    elsewhere = scratch / "elsewhere"
+    elsewhere.mkdir()
+    outside_checkout = review_checkout("pr16-head", elsewhere)
+    # The merge program's after-merge window: merged an hour ago, its main test checkout still there.
+    recently_merged_checkout = review_checkout("pr17-merge-commit-on-main-worktree")
+    no_closing_time_checkout = review_checkout("pr18-head")
+    long_ago = "2026-01-01T00:00:00Z"
+    an_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    review_pull_requests = [
+        {"number": 10, "state": "MERGED", "headRefName": "a", "headRefOid": "1" * 40,
+         "closedAt": long_ago},
+        {"number": 11, "state": "CLOSED", "headRefName": "b", "headRefOid": "2" * 40,
+         "closedAt": long_ago},
+        {"number": 12, "state": "OPEN", "headRefName": "c", "headRefOid": "3" * 40,
+         "closedAt": None},
+        {"number": 13, "state": "MERGED", "headRefName": "d", "headRefOid": "4" * 40,
+         "closedAt": long_ago},
+        {"number": 14, "state": "MERGED", "headRefName": "e", "headRefOid": "5" * 40,
+         "closedAt": long_ago},
+        {"number": 15, "state": "MERGED", "headRefName": "f", "headRefOid": "6" * 40,
+         "closedAt": long_ago},
+        {"number": 16, "state": "MERGED", "headRefName": "g", "headRefOid": "7" * 40,
+         "closedAt": long_ago},
+        {"number": 17, "state": "MERGED", "headRefName": "h", "headRefOid": "8" * 40,
+         "closedAt": an_hour_ago},
+        {"number": 18, "state": "MERGED", "headRefName": "i", "headRefOid": "9" * 40},
+    ]
+    review_log = scratch / "removals-log.txt"
+
+    def run_review_cleanup(*flags, gh_exit=None):
+        environment = dict(os.environ, HOME=str(fake_home),
+                           FAKE_GH_PULL_REQUESTS=json.dumps(review_pull_requests))
+        environment[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(review_log)
+        if gh_exit is not None:
+            environment["FAKE_GH_EXIT_CODE"] = str(gh_exit)
+        return subprocess.run([sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), *flags],
+                              capture_output=True, text=True, check=False, env=environment)
+
+    def review_line(output, name):
+        return next((line for line in output.splitlines() if line.startswith(f"{name}:")), "")
+
+    every_checkout = (merged_checkout, closed_checkout, open_checkout, main_checkout,
+                      main_green_checkout, unlisted_checkout, two_numbers_checkout, locked_checkout,
+                      occupied_checkout, outside_checkout, recently_merged_checkout,
+                      no_closing_time_checkout)
+    # Stands in for a process working in a review checkout; lives until its stdin closes.
+    review_occupant = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"],
+                                       stdin=subprocess.PIPE, cwd=occupied_checkout)
+    try:
+        gh_failed = run_review_cleanup("--remove", gh_exit=1)
+        check("when gh cannot list the pull requests, every merge-lane review checkout is kept and "
+              "the line names gh's failure, as for other worktrees whose verdict needs a pull request",
+              gh_failed.returncode == 0 and all(path.exists() for path in every_checkout)
+              and review_line(gh_failed.stdout, "pr10-merged").startswith(
+                  "pr10-merged: kept — it is a merge-lane review checkout of pull request #10, whose "
+                  "state could not be read: `gh pr list")
+              and "gh: stand-in listing failure" in review_line(gh_failed.stdout, "pr10-merged"),
+              gh_failed.stdout + gh_failed.stderr)
+
+        report = run_review_cleanup().stdout
+        check("the report calls a merge-lane review checkout of a merged pull request done, naming "
+              "the untracked file its removal discards",
+              review_line(report, "pr10-merged").startswith(
+                  "pr10-merged: done — it is a merge-lane review checkout of pull request #10 "
+                  "(merged); removing it discards 1 uncommitted, untracked or ignored file(s): "
+                  "test-output.txt"), report)
+
+        removal = run_review_cleanup("--remove")
+        check("--remove removes the merge-lane review checkouts of a merged and a closed pull request",
+              not merged_checkout.exists() and not closed_checkout.exists()
+              and "pr10-merged: removed" in removal.stdout
+              and "tools-main-11r2: removed" in removal.stdout, removal.stdout + removal.stderr)
+        check("removing a merge-lane review checkout puts its local merge commit on no branch, and "
+              "its untracked file in no work-snapshot",
+              "worktree-cleaner-detached-commits" not in git(checkout, "branch", "--list")
+              and git(checkout, "for-each-ref", "refs/work-snapshots/") == "", removal.stdout)
+        check("each removal of a merge-lane review checkout is written to the log of removals",
+              f"path={merged_checkout}\t" in (text_or_none(review_log) or "")
+              and f"path={closed_checkout}\t" in (text_or_none(review_log) or ""),
+              text_or_none(review_log) or "no log written")
+        check("a merge-lane review checkout of an open pull request is kept",
+              open_checkout.exists() and review_line(removal.stdout, "pr12-head")
+              == "pr12-head: kept — it is a merge-lane review checkout of pull request #12 (open)",
+              removal.stdout)
+        check("main and main-green-<commit> are kept, their names holding no pull request number",
+              main_checkout.exists() and main_green_checkout.exists()
+              and "name holds no single pull request number" in review_line(removal.stdout, "main")
+              and "name holds no single pull request number"
+              in review_line(removal.stdout, "main-green-0b3364167"), removal.stdout)
+        check("a name holding two numbers is kept, though one is a merged pull request's",
+              two_numbers_checkout.exists()
+              and "name holds no single pull request number"
+              in review_line(removal.stdout, "head-13-12345678"), removal.stdout)
+        check("a pull request number gh's listing does not hold keeps the checkout",
+              unlisted_checkout.exists()
+              and "pull request #99, which gh's listing does not hold"
+              in review_line(removal.stdout, "verdict-99r1"), removal.stdout)
+        check("a locked merge-lane review checkout of a merged pull request is kept",
+              locked_checkout.exists()
+              and review_line(removal.stdout, "pr14-head").startswith(
+                  "pr14-head: kept — locked with git worktree lock (reviewing)"), removal.stdout)
+        check("a merge-lane review checkout of a merged pull request is kept while a live process "
+              "works in it",
+              occupied_checkout.exists()
+              and review_line(removal.stdout, "pr15-head")
+              == "pr15-head: kept — a live process is rooted inside it", removal.stdout)
+        check("a worktree with no owner file outside the merge-lane review checkouts directory is "
+              "kept, though its name holds a merged pull request's number",
+              outside_checkout.exists()
+              and "it has no owner file, and the cleaner removes only a worktree holding one"
+              in review_line(removal.stdout, "pr16-head"), removal.stdout)
+        check("a merge-lane review checkout of a pull request merged an hour ago is kept, while "
+              "merge-lane-2's merge program may still be testing main in it",
+              recently_merged_checkout.exists()
+              and review_line(removal.stdout, "pr17-merge-commit-on-main-worktree")
+              == "pr17-merge-commit-on-main-worktree: kept — it is a merge-lane review checkout of "
+                 "pull request #17 (merged), finished less than 24 hours ago; the cleaner waits that "
+                 "long because merge-lane-2's merge program may still be using it, unseen by the "
+                 "vacancy check", removal.stdout)
+        check("a merge-lane review checkout whose pull request gh gives no closing time for is kept",
+              no_closing_time_checkout.exists()
+              and "whose closing time gh did not give in a form this program reads: KeyError"
+              in review_line(removal.stdout, "pr18-head"), removal.stdout)
+        check("--remove exits 0 when it only removed and kept merge-lane review checkouts",
+              removal.returncode == 0, removal.stdout + removal.stderr)
+    finally:
+        review_occupant.kill()
+        review_occupant.wait()
+
+# --- Claude Code's lock exception: a lock whose claude process has ended is unlocked ---
+# Linux only: the case reads its ended process's start and the boot id from /proc.
+if sys.platform.startswith("linux"):
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch = Path(scratch).resolve()
+        checkout = scratch / "checkout"
+        origin = scratch / "origin.git"
+        checkout.mkdir()
+        git(checkout, "init", "-b", "main")
+        git(checkout, "config", "user.email", "test@test.invalid")
+        git(checkout, "config", "user.name", "clean-worktrees test")
+        (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+        git(checkout, "add", "-A")
+        git(checkout, "commit", "-m", "seed")
+        subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
+        git(checkout, "remote", "add", "origin", str(origin))
+        git(checkout, "push", "-u", "origin", "main")
+        managed = checkout / ".claude" / "worktrees"
+        managed.mkdir(parents=True)
+        lock_home = scratch / "home"
+        (lock_home / ".claude" / "handoffs").mkdir(parents=True)
+        for seat in ("seat-one", "seat-two"):
+            (lock_home / "agents" / seat).mkdir(parents=True)
+            (lock_home / ".claude" / "handoffs" / f"{seat}-handoff.md").write_text(
+                "handoff\n", encoding="utf-8")
+
+        def transcript_names_subagent(seat, agent_id):
+            project = lock_home / ".claude" / "projects" / ("-" + "-".join(
+                (lock_home / "agents" / seat).parts[1:]).replace(".", "-").replace("_", "-"))
+            directory = project / "session-1" / "subagents"
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / f"agent-{agent_id}.jsonl").write_text("{}\n", encoding="utf-8")
+
+        snapshots_module_spec = importlib.util.spec_from_file_location(
+            "uncommitted_work_snapshots_for_lock_cases",
+            CLEAN_SCRIPT.resolve().parent.parent / "nc-systems" / "handoff"
+            / "uncommitted-work-snapshots.py")
+        snapshots_module = importlib.util.module_from_spec(snapshots_module_spec)
+        snapshots_module_spec.loader.exec_module(snapshots_module)
+        ended = subprocess.Popen([sys.executable, "-c", "pass"])
+        ended_start = snapshots_module.linux_start_ticks(ended.pid)
+        ended.wait()
+        ended_owner_key = f"{snapshots_module.linux_boot_id()}-{ended.pid}-{ended_start}"
+
+        def locked_worktree(name, agent_id, owner=None):
+            path = managed / name
+            git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
+            if owner is not None:
+                give_owner(path, owner)
+            git(checkout, "worktree", "lock", "--reason",
+                f"claude agent agent-{agent_id} (pid {ended.pid} start {ended_start})", str(path))
+            return path
+
+        def is_locked(path):
+            return (owner_file_path(path).parent / "locked").exists()
+
+        owned = locked_worktree("ended-lock-owned-wt", "aowned", {
+            "owner_kind": "agent-session", "agent_seat": "seat-one", "owner_key": ended_owner_key})
+        (owned / "unsaved.txt").write_text("only here\n", encoding="utf-8")
+        named = locked_worktree("ended-lock-named-wt", "anamed")
+        transcript_names_subagent("seat-one", "anamed")
+        open_named = locked_worktree("ended-lock-open-pull-request-wt", "aopen")
+        transcript_names_subagent("seat-two", "aopen")
+        unnamed = locked_worktree("ended-lock-unnamed-wt", "aunnamed")
+        twice = locked_worktree("ended-lock-two-seats-wt", "atwice")
+        transcript_names_subagent("seat-one", "atwice")
+        transcript_names_subagent("seat-two", "atwice")
+        open_pull_requests = json.dumps([{
+            "number": 31, "state": "OPEN", "headRefName": "ended-lock-open-pull-request-wt-branch",
+            "headRefOid": git(open_named, "rev-parse", "HEAD").strip(), "closedAt": None}])
+
+        def run_with_lock_home(*flags, path_prefix=None):
+            environment = dict(os.environ, HOME=str(lock_home),
+                               FAKE_GH_PULL_REQUESTS=open_pull_requests)
+            if path_prefix is not None:
+                environment["PATH"] = f"{path_prefix}{os.pathsep}{environment['PATH']}"
+            return subprocess.run([sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout),
+                                   *flags], capture_output=True, text=True, check=False,
+                                  env=environment)
+
+        def lock_line(output, name):
+            return next((line for line in output.splitlines()
+                         if line.startswith(f"{name}: kept") or line.startswith(f"{name}: done")),
+                        "")
+
+        report = run_with_lock_home().stdout
+        check("the report says --remove unlocks a worktree whose Claude Code lock names an ended "
+              "process, then judges it by its owner file",
+              lock_line(report, "ended-lock-owned-wt").startswith(
+                  f"ended-lock-owned-wt: done — Claude Code's lock names claude process {ended.pid}")
+              and "has ended, so --remove unlocks it, then judges it: its owner, an agent-session "
+                  "of seat-one" in lock_line(report, "ended-lock-owned-wt"), report)
+        check("the report says --remove first writes the owner file naming the ended agent-session "
+              "and the agent-seat whose transcripts name the subagent",
+              f"so --remove unlocks it, writing first its owner file naming an agent-session of "
+              f"seat-one (claude process {ended_owner_key}), then judges it: its owner"
+              in lock_line(report, "ended-lock-named-wt")
+              and lock_line(report, "ended-lock-named-wt").startswith("ended-lock-named-wt: done"),
+              report)
+        check("the report changes nothing: every lock stays and no owner file is written",
+              all(is_locked(path) for path in (owned, named, open_named, unnamed, twice))
+              and not owner_file_path(named).exists(), report)
+        for path, why in ((unnamed, "no agent-seat's Claude Code transcripts name subagent "
+                                    "agent-aunnamed"),
+                          (twice, "the Claude Code transcripts of 2 agent-seats, seat-one, "
+                                  "seat-two, name subagent agent-atwice")):
+            check(f"a worktree with no owner file is kept, locked, for the user when {why}",
+                  why in lock_line(report, path.name)
+                  and lock_line(report, path.name).startswith(f"{path.name}: kept")
+                  and "the user keeps or deletes it" in lock_line(report, path.name), report)
+        check("the count lines name the worktrees for the user to keep or delete",
+              "worktrees for the user to keep or delete, locked by Claude Code for a subagent whose "
+              f"claude process has ended and which no one agent-seat's Claude Code transcripts "
+              f"name: {twice}, {unnamed}" in report, report)
+
+        failing_git = scratch / "failing-git"
+        failing_git.mkdir()
+        (failing_git / "git").write_text(
+            "#!/bin/sh\n"
+            'case " $* " in *" worktree unlock "*) printf "unlock refused%0200d" 0 >&2; kill -9 $$ ;; esac\n'
+            f'exec {shutil.which("git")} "$@"\n', encoding="utf-8")
+        (failing_git / "git").chmod(0o755)
+        refused = run_with_lock_home("--remove", path_prefix=failing_git)
+        check("an unlock that fails keeps the worktree locked, says FAILED and exits 1, after the "
+              "owner file is written",
+              refused.returncode == 1 and is_locked(named) and owner_file_path(named).exists()
+              and "ended-lock-named-wt: unlock FAILED, worktree kept — git worktree unlock exited "
+                  "-9: unlock refused" + "0" * 146 + "\n" in refused.stdout
+              and "ended-lock-named-wt: removal" not in refused.stdout,
+              refused.stdout + refused.stderr)
+
+        garbled = locked_worktree("ended-lock-unreadable-owner-wt", "agarbled")
+        owner_file_path(garbled).write_text("{not json", encoding="utf-8")
+        garbled_line = lock_line(run_with_lock_home().stdout, "ended-lock-unreadable-owner-wt")
+        check("an owner file that cannot be read keeps a worktree whose lock's process has ended",
+              garbled_line.startswith("ended-lock-unreadable-owner-wt: kept — locked with git "
+                                      "worktree lock")
+              and "whose claude process has ended, and its owner file could not be read"
+              in garbled_line, garbled_line)
+        exiting_git = scratch / "exiting-git"
+        exiting_git.mkdir()
+        (exiting_git / "git").write_text(
+            "#!/bin/sh\n"
+            'case " $* " in *" worktree unlock "*) echo "unlock refused" >&2; exit 1 ;; esac\n'
+            f'exec {shutil.which("git")} "$@"\n', encoding="utf-8")
+        (exiting_git / "git").chmod(0o755)
+        refused_again = run_with_lock_home("--remove", path_prefix=exiting_git)
+        check("an unlock that exits nonzero keeps the worktree locked and says FAILED",
+              refused_again.returncode == 1 and is_locked(named)
+              and "ended-lock-named-wt: unlock FAILED, worktree kept — git worktree unlock exited "
+                  "1: unlock refused" in refused_again.stdout,
+              refused_again.stdout + refused_again.stderr)
+        unwritable = locked_worktree("ended-lock-unwritable-owner-wt", "aunwritable")
+        transcript_names_subagent("seat-one", "aunwritable")
+        owner_file_path(unwritable).parent.chmod(0o500)
+        try:
+            removal = run_with_lock_home("--remove")
+        finally:
+            owner_file_path(unwritable).parent.chmod(0o755)
+        check("an owner file that cannot be written keeps the worktree locked, says FAILED and "
+              "exits 1",
+              removal.returncode == 1 and is_locked(unwritable)
+              and not owner_file_path(unwritable).exists()
+              and "ended-lock-unwritable-owner-wt: owner file FAILED, worktree kept locked"
+              in removal.stdout, removal.stdout + removal.stderr)
+        check("--remove unlocks a worktree whose owner has stopped and removes it, its files in a "
+              "work-snapshot",
+              not owned.exists() and "ended-lock-owned-wt: unlocked, since Claude Code's lock names "
+              f"claude process {ended.pid}" in removal.stdout
+              and "ended-lock-owned-wt: its uncommitted and untracked files are kept in the "
+                  "work-snapshot" in removal.stdout, removal.stdout + removal.stderr)
+        check("--remove removes the worktree it unlocked whose owner file it had written",
+              not named.exists() and "ended-lock-named-wt: removed" in removal.stdout,
+              removal.stdout)
+        owner_written = json.loads(text_or_none(owner_file_path(open_named)) or "null")
+        check("--remove writes the owner file naming the ended agent-session and the agent-seat "
+              "whose transcripts name the subagent, unlocks it, and an open pull request keeps it",
+              open_named.exists() and not is_locked(open_named)
+              and owner_written == {"owner_kind": "agent-session", "agent_seat": "seat-two",
+                                    "owner_key": ended_owner_key}
+              and "pull request #31 (open)" in lock_line(removal.stdout,
+                                                          "ended-lock-open-pull-request-wt"),
+              f"{owner_written} {removal.stdout}")
+        check("--remove leaves locked, with no owner file, the worktrees for the user",
+              all(path.exists() and is_locked(path) and not owner_file_path(path).exists()
+                  for path in (unnamed, twice)), removal.stdout)
+
+        (lock_home / "agents").chmod(0o000)
+        try:
+            unreadable = run_with_lock_home()
+        finally:
+            (lock_home / "agents").chmod(0o755)
+        check("an agent-seat lookup that fails keeps the worktree, as one that could not be checked",
+              "ended-lock-unnamed-wt: kept — locked with git worktree lock" in unreadable.stdout
+              and "could not be read: PermissionError" in lock_line(unreadable.stdout,
+                                                                     "ended-lock-unnamed-wt"),
+              unreadable.stdout + unreadable.stderr)
+
+# --- A removal stopped partway ---
+# A real kill cannot be timed to land inside `git worktree remove`, so a stub git does what git
+# does first, deleting the worktree's .git file and some files, then kills the cleaner that ran it.
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch).resolve()
+    checkout = scratch / "checkout"
+    origin = scratch / "origin.git"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
+    git(checkout, "remote", "add", "origin", str(origin))
+    git(checkout, "push", "-u", "origin", "main")
+    managed = checkout / ".claude" / "worktrees"
+    managed.mkdir(parents=True)
+    killing_git = scratch / "killing-git"
+    killing_git.mkdir()
+    (killing_git / "git").write_text(
+        f"#!{sys.executable}\n"
+        "import os, signal, sys\n"
+        "from pathlib import Path\n"
+        "if 'worktree' in sys.argv and 'remove' in sys.argv:\n"
+        "    left = Path(sys.argv[-1])\n"
+        "    (left / '.git').unlink()\n"
+        "    (left / 'README.md').unlink()\n"
+        "    os.kill(os.getppid(), signal.SIGKILL)\n"
+        "    sys.exit(0)\n"
+        f"os.execv({shutil.which('git')!r}, ['git'] + sys.argv[1:])\n", encoding="utf-8")
+    (killing_git / "git").chmod(0o755)
+
+    def stopped_partway(name):
+        """A done worktree whose --remove run was killed inside `git worktree remove`."""
+        path = managed / name
+        git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
+        give_stopped_owner(path)
+        (path / "untracked.txt").write_text("x\n", encoding="utf-8")
+        environment = dict(os.environ)
+        environment["PATH"] = f"{killing_git}{os.pathsep}{environment['PATH']}"
+        killed = subprocess.run(
+            [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), "--remove"],
+            capture_output=True, text=True, check=False, env=environment)
+        return path, killed
+
+    def registered(path):
+        return str(path) in git(checkout, "worktree", "list", "--porcelain")
+
+    first, killed = stopped_partway("stopped-partway-wt")
+    check("the stub git kills the cleaner inside the removal, leaving the worktree half removed",
+          killed.returncode == -signal.SIGKILL and first.exists()
+          and not (first / ".git").exists() and registered(first),
+          f"{killed.returncode} {killed.stdout}{killed.stderr}")
+    report = run_clean(checkout)
+    check("the report names a removal stopped partway as done, and not as a dead registration",
+          "stopped-partway-wt: done — an earlier scripts/clean-worktrees.py --remove was stopped "
+          "while removing this worktree"
+          in report.stdout
+          and "stopped-partway-wt" not in next((line for line in report.stdout.splitlines()
+                                                if "git worktree prune" in line), ""),
+          report.stdout)
+    finished = run_clean(checkout, "--remove")
+    check("the next --remove finishes the removal: directory, registration and branch go",
+          finished.returncode == 0 and "stopped-partway-wt: removed, branch stopped-partway-wt-"
+          "branch deleted" in finished.stdout
+          and not first.exists() and not registered(first)
+          and git(checkout, "branch", "--list", "stopped-partway-wt-branch").strip() == "",
+          finished.stdout + finished.stderr)
+
+    without_file = managed / "dotgit-deleted-by-hand-wt"
+    git(checkout, "worktree", "add", "-b", "dotgit-deleted-by-hand-wt-branch", str(without_file),
+        "origin/main")
+    give_stopped_owner(without_file)
+    (without_file / ".git").unlink()
+    by_hand = run_clean(checkout, "--remove")
+    check("a worktree whose .git file went with no removal begun is kept, as before",
+          without_file.exists() and registered(without_file)
+          and "dotgit-deleted-by-hand-wt: kept — git would prune its registration" in by_hand.stdout,
+          by_hand.stdout)
+
+    named, _ = stopped_partway("stopped-partway-named-wt")
+    named_run = run_clean(checkout, "--remove-worktree-and-force-delete-its-branch", str(named))
+    check("--remove-worktree-and-force-delete-its-branch finishes a removal stopped partway",
+          named_run.returncode == 0 and not named.exists() and not registered(named)
+          and git(checkout, "branch", "--list", "stopped-partway-named-wt-branch").strip() == "",
+          named_run.stdout + named_run.stderr)
+
+    stuck, _ = stopped_partway("stopped-partway-undeletable-wt")
+    (stuck / "kept-dir").mkdir()
+    (stuck / "kept-dir" / "file").write_text("x\n", encoding="utf-8")
+    (stuck / "kept-dir").chmod(0o500)
+    try:
+        undeletable = run_clean(checkout, "--remove")
+    finally:
+        (stuck / "kept-dir").chmod(0o755)
+    check("a finish that cannot delete what is left fails, exit 1, and keeps the registration",
+          undeletable.returncode == 1 and registered(stuck)
+          and "stopped-partway-undeletable-wt: removal FAILED — an earlier "
+              "scripts/clean-worktrees.py --remove was stopped partway" in undeletable.stdout,
+          undeletable.stdout + undeletable.stderr)
+
+    sought = managed / "zz-sought-wt"
+    git(checkout, "worktree", "add", "-b", "zz-sought-wt-branch", str(sought), "origin/main")
+    unreadable_first = managed / "aa-unreadable-gitdir-wt"
+    git(checkout, "worktree", "add", "-b", "aa-unreadable-gitdir-wt-branch", str(unreadable_first),
+        "origin/main")
+    gitdir_file = Path(git(unreadable_first, "rev-parse", "--absolute-git-dir").strip()) / "gitdir"
+    gitdir_file.chmod(0o000)
+    try:
+        found = load_clean_worktrees_module().registration_directory_of(checkout, sought)
+    finally:
+        gitdir_file.chmod(0o644)
+    check("a registration whose gitdir file cannot be read is passed over, and the search goes on",
+          found is not None and (found / "gitdir").read_text(encoding="utf-8").strip()
+          == str((sought / ".git").resolve()), str(found))
+
+    unwritable = managed / "removal-file-unwritable-wt"
+    git(checkout, "worktree", "add", "-b", "removal-file-unwritable-wt-branch", str(unwritable),
+        "origin/main")
+    give_stopped_owner(unwritable)
+    registration = Path(git(unwritable, "rev-parse", "--absolute-git-dir").strip())
+    registration.chmod(0o500)
+    try:
+        refused = run_clean(checkout, "--remove")
+    finally:
+        registration.chmod(0o755)
+    check("a removal whose removal-started file cannot be written is not begun, and fails",
+          refused.returncode == 1 and (unwritable / ".git").exists()
+          and "removal-file-unwritable-wt: removal FAILED, worktree kept" in refused.stdout,
+          refused.stdout + refused.stderr)
 
 check("no run of the suite shipped into the store every run defaults to",
       not any(Path(_ship_store_for_every_run).iterdir()),

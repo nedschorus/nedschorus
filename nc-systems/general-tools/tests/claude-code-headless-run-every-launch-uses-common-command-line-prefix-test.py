@@ -22,7 +22,7 @@ it, or to the default, unseen.
 And no file but the module holds the string literal "--settings", or one
 starting "--settings=": the prefix carries the one --settings, with the advisor
 turned off, and a second --settings added after it would drop that. A program
-passes its own settings to the prefix function as own_settings.
+passes its own settings to the prefix function as caller_claude_code_session_settings.
 
 Not caught: a command line built up piece by piece, such as ["claude"] + ["-p"];
 or one in a shell script or an f-string; or a --permission-mode or
@@ -215,7 +215,7 @@ settings_flags_by_file.pop(COMMAND_LINE_PREFIX_MODULE_PATH, None)
 check("no program adds a --settings of its own, so the prefix's advisor-off --settings stays the only one",
       not settings_flags_by_file,
       "; ".join(f"{path} line(s) {lines}" for path, lines in sorted(settings_flags_by_file.items()))
-      + f" -- pass the settings to {COMMAND_LINE_PREFIX_BUILD_FUNCTION}() as own_settings=<dict>, "
+      + f" -- pass the settings to {COMMAND_LINE_PREFIX_BUILD_FUNCTION}() as caller_claude_code_session_settings=<dict>, "
       + "and drop the --settings flag")
 
 print()

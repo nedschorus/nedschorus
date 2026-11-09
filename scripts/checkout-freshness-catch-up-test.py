@@ -556,9 +556,12 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         "CLAUDE.md, the skills and the hooks load from this checkout, so until it moves, the "
         "files listed above stay older here than on main.")
     detached_work_line = (
-        "It holds work of its own: run `git switch -c <branch name>` to put that work on a "
-        "branch, and commit any uncommitted changes there; from then on the hook's rules for a "
-        "branch apply.")
+        "It holds work of its own.\n"
+        "If this checkout is an agent-home, git refuses commits in it: carry that work to a "
+        "worktree of your own on an nc-topic-branch, as the refusal of `git commit` here says "
+        "how.\n"
+        "Otherwise run `git switch -c <branch name>` to put that work on a branch, and commit "
+        "any uncommitted changes there; from then on the hook's rules for a branch apply.")
     detached_bisect_line = (
         "A bisect is in progress: finish it or abort it; the next turn's end moves the "
         "checkout forward.")
@@ -1241,7 +1244,7 @@ with tempfile.TemporaryDirectory() as naming_scratch:
           named())
     check("hooks and their wiring share one category, having one reason",
           "hooks and wiring that run on your work (2)"
-          in named((".claude/hooks/a-guard.py", "a hook"),
+          in named((".claude/guard-hooks/a-hook.py", "a hook"),
                    (".claude/settings.json", "wiring")), named())
     guard_listing = named((".claude/guard-hooks/a-guard.py", "a guard hook"))
     check("a guard under .claude/guard-hooks/ is named with the hooks",

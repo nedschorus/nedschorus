@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import fcntl
 import hashlib
 import json
 import os
@@ -387,11 +388,13 @@ LEADING_TRACING_LOGGER_TIMESTAMP = re.compile(
 
 
 class RecognisedFailureText(typing.NamedTuple):
-    """A runtime failure prefix, cause class, and rule for extracting the detail."""
+    """A runtime failure prefix, cause class, rule for extracting the detail, and an
+    optional pattern the rest of the line after the prefix must start with."""
 
     cause_class: str
     line_prefix: str
     detail: str
+    rest_of_line_pattern: typing.Optional[re.Pattern] = None
 
 
 def classify_failed_attempt(
@@ -403,7 +406,9 @@ def classify_failed_attempt(
         timestamp = LEADING_TRACING_LOGGER_TIMESTAMP.match(stripped)
         untimestamped = stripped[timestamp.end():] if timestamp else stripped
         for text in recognised_texts or ():
-            if untimestamped.startswith(text.line_prefix):
+            if untimestamped.startswith(text.line_prefix) and (
+                    text.rest_of_line_pattern is None
+                    or text.rest_of_line_pattern.match(untimestamped[len(text.line_prefix):])):
                 if text.detail == DETAIL_IS_REST_OF_LINE:
                     detail = untimestamped[len(text.line_prefix):].lstrip(" \t·")
                 elif text.detail == DETAIL_IS_WHOLE_LINE:
@@ -866,6 +871,21 @@ def run_model_chain(
     return 0
 
 
+def record_directory_being_written_lock_hold_shared_until_exit_unless_parent_passed_descriptor(record_dir: pathlib.Path) -> None:
+    """Hold record_dir's being-written lock, shared, until this process exits, so the record is not
+    shipped, by the pre-remove hook or anyone, while this cell's reviewer still writes the report; the
+    reviewer is passed the descriptor in run_model_chain. Every writer, the cold-read-grid and other
+    cells included, holds the lock shared, so the record stays held until the last of them exits.
+    Holds nothing more when the writer that started this cell passed it a descriptor on record_dir,
+    which already holds the lock."""
+    if record_names.record_directory_being_written_lock_pass_fds_for_child_writers(record_dir):
+        return
+    # Left open on purpose: the kernel releases the lock when this process exits, however it ends.
+    descriptor = os.open(record_dir, os.O_RDONLY)
+    # Blocking: only the shipper's probe takes the lock exclusively, and only for an instant.
+    fcntl.flock(descriptor, fcntl.LOCK_SH)
+
+
 def run_cell(
     *, program: str, runtime: str, description: str, model_help: str,
     tier_to_model_chain: dict, tier_to_effort: dict, invocation_builder,
@@ -900,6 +920,7 @@ def run_cell(
         print(f"{program}: {refusal}", file=sys.stderr)
         report_stray_writes(program, baseline, report)
         return refusal.exit_code
+    record_directory_being_written_lock_hold_shared_until_exit_unless_parent_passed_descriptor(report.parent)
 
     # The staging directory is made after every refusal, so no refusal leaves one behind.
     # The Codex reviewer can write only inside the checkout, the temporary directories on

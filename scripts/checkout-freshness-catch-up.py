@@ -253,9 +253,11 @@ DETACHED_OPERATION_IN_PROGRESS_LINE = (
     "checkout forward."
 )
 DETACHED_WORK_OF_ITS_OWN_LINE = (
-    "It holds work of its own: run `git switch -c <branch name>` to put that work on a "
-    "branch, and commit any uncommitted changes there; from then on the hook's rules for a "
-    "branch apply."
+    "It holds work of its own.\n"
+    "If this checkout is an agent-home, git refuses commits in it: carry that work to a "
+    "worktree of your own on an nc-topic-branch, as the refusal of `git commit` here says how.\n"
+    "Otherwise run `git switch -c <branch name>` to put that work on a branch, and commit any "
+    "uncommitted changes there; from then on the hook's rules for a branch apply."
 )
 DETACHED_FAST_FORWARD_REFUSED_LINES = (
     "Git refused the fast-forward: {error}\n"
@@ -324,7 +326,7 @@ DRIFT_PATH_CATEGORIES = (
     ("skills you run under",
      lambda path: path.startswith(".claude/skills/")),
     ("hooks and wiring that run on your work",
-     lambda path: path.startswith((".claude/hooks/", ".claude/guard-hooks/"))
+     lambda path: path.startswith(".claude/guard-hooks/")
      or path == ".claude/settings.json"),
     ("systems you build on, code and design of record",
      lambda path: path.startswith("nc-systems/")),

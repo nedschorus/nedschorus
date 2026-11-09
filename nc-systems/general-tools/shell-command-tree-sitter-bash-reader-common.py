@@ -266,7 +266,8 @@ def simple_command_program_index_skipping_wrappers(words):
     The program is the first word after environment assignments and after
     wrappers such as sudo, timeout and xargs with their options and operands;
     a later word, such as the file of `tee /tmp/bash`, is not the program.
-    index is None when no word is left to be the program. receives_standard_input
+    index is None when no word is left to be the program, and for `command -v`
+    and `command -V`, which run nothing. receives_standard_input
     is false when a wrapper, such as xargs, keeps its standard input from the
     program.
     """
@@ -301,10 +302,19 @@ def _wrappers_read(words):
         own = []
         options.append((name, own))
         index = _index_after_options(words, index + 1, wrapper, own)
+        if name == "command" and any(_is_short_option_cluster_holding(option, "vV")
+                                     for option, _ in own):
+            # command -v and command -V only describe the next word; they run nothing.
+            return None, receives_standard_input, options
         if wrapper.operands:
             # Options may follow the operand too, as in timeout 60 --signal=KILL.
             index = _index_after_options(words, index + wrapper.operands, wrapper, own)
     return None, receives_standard_input, options
+
+
+def _is_short_option_cluster_holding(option, letters):
+    return (option.startswith("-") and not option.startswith("--")
+            and any(letter in option[1:] for letter in letters))
 
 
 def _index_after_options(words, index, wrapper, options):
