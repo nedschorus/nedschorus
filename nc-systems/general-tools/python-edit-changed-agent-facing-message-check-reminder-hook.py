@@ -296,7 +296,8 @@ def reminder_text_listing(tool_name, relative_path, entries, listed_count, targe
             more=len(entries) - listed_count, path=relative_path))
     if targets_error is None:
         fast_read = FAST_READ_MESSAGE_TEMPLATE.format(commands="\n".join(
-            "  " + cold_read_fast_read_review_command_line_for_target_file(targets[entry["text"]])
+            "  " + cold_read_fast_read_review_command_line_for_target_file(
+                targets[entry["text_as_agent_reads_it_with_placeholder_stand_ins"]])
             for entry in listed))
     else:
         fast_read = FAST_READ_FILES_NOT_WRITTEN_TEMPLATE.format(reason=targets_error)
@@ -333,7 +334,7 @@ def inspection_text(payload, relative_path: str):
     if not listed:
         return None
     try:
-        targets = {entry["text"]: fast_read_target_written(
+        targets = {entry["text_as_agent_reads_it_with_placeholder_stand_ins"]: fast_read_target_written(
                        relative_path, entry["text_as_agent_reads_it_with_placeholder_stand_ins"]) for entry in listed}
         targets_error = None
     except OSError as error:
