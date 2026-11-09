@@ -1002,6 +1002,27 @@ def run_spawned_subagent_roster_cases(workspace: Path):
           and final_roster[0]["last_event_at"] == "2026-10-27T21:45:00Z",
           str(final_roster))
 
+    # Claude Code writes no task-notification for a subagent TaskStop stops, only this result,
+    # trimmed from cold-read-improvement's session 21792509 of 2026-11-09.
+    stop_result = {"message": f"Successfully stopped task: {incident_agent} (Fix-round for PR 2045)",
+                   "task_id": incident_agent, "task_type": "local_agent",
+                   "command": "Fix-round for PR 2045"}
+    stopped_path = workspace / "roster-task-stop-after-interim.jsonl"
+    stopped_path.write_text("\n".join(json.dumps(record) for record in [
+        incident_spawn, *delivered(interim_body, "2026-10-27T21:31:58.572Z"),
+        {"type": "user", "timestamp": "2026-10-27T21:50:00.000Z",
+         "message": {"role": "user", "content": [{
+             "tool_use_id": "toolu_stop", "type": "tool_result",
+             "content": json.dumps(stop_result)}]},
+         "toolUseResult": stop_result, "sessionId": FIXTURE_SESSION_ID},
+    ]) + "\n", encoding="utf-8")
+    stopped_roster = writer.spawned_subagent_roster(stopped_path)
+    check("a TaskStop of a subagent after its interim notification ends the subagent",
+          writer.still_working_subagent_entries(stopped_roster) == []
+          and stopped_roster[0]["last_event"] == "stopped"
+          and stopped_roster[0]["last_event_at"] == "2026-10-27T21:50:00Z",
+          str(stopped_roster))
+
     # An empty transcript is not an error: a session may spawn nothing.
     empty_path = workspace / "roster-empty.jsonl"
     empty_path.write_text("", encoding="utf-8")
