@@ -2098,7 +2098,16 @@ def fake_gh_listing_no_pull_requests():
     directory = SCRATCH / "fake-gh-no-pull-requests"
     if not directory.is_dir():
         directory.mkdir()
-        (directory / "gh").write_text("#!/bin/sh\necho '[]'\n")
+        # It answers none, to a `gh pr list` or to the cleaner's `gh api graphql` query.
+        (directory / "gh").write_text(
+            f"#!{sys.executable}\n"
+            "import json, re, sys\n"
+            "if sys.argv[1:3] != ['api', 'graphql']:\n"
+            "    print('[]')\n"
+            "    sys.exit(0)\n"
+            "aliases = [a.split('=', 1)[0] for a in sys.argv[3:] if re.fullmatch(r'[bn]\\d+=.*', a)]\n"
+            "print(json.dumps({'data': {'repository': {a: None if a[0] == 'n' else\n"
+            "    {'pageInfo': {'hasNextPage': False}, 'nodes': []} for a in aliases}}}))\n")
         (directory / "gh").chmod(0o755)
     return directory
 

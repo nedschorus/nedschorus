@@ -25,11 +25,15 @@ agent-session, counts as running. A worktree is KEPT, with the reason, when:
     working directories at all.
 
 Otherwise the owner and the branch's pull request decide. The pull requests
-come from one `gh pr list --state all` per invocation; a pull request is the
+come from one `gh api graphql` query per invocation, asking only for the pull
+requests whose head branch is one of the clone's local branches, of any state,
+and for the pull request of each merge-lane review checkout; it is split into
+batches of PULL_REQUEST_QUERY_KEYS_PER_BATCH names. A pull request is the
 branch's when its head branch has the branch's name, and, for a merged or
 closed one, when its head commit is the worktree's HEAD, so a new worktree on a
-reused branch name is not judged by an old pull request. If gh fails, every
-worktree whose verdict needs a pull request is kept.
+reused branch name is not judged by an old pull request. If gh fails, or a
+branch has more pull requests than one answer holds, every worktree whose
+verdict needs a pull request is kept.
 
   WHILE ITS OWNER RUNS, a worktree is removed only when its branch's pull
   request has merged or been closed and it holds no uncommitted or untracked
@@ -72,7 +76,7 @@ pull request was merged or closed at least 24 hours ago, once the lock,
 prune, in-progress operation and vacancy checks above pass. It is kept, with
 the reason, when its name holds no such part or more than one, as main and
 main-green-<commit> do, when the pull request is open, finished less than 24
-hours ago, or missing from gh's listing, or when gh fails or gives no closing
+hours ago, or missing from GitHub, or when gh fails or gives no closing
 time this program can read. The 24 hours are a margin, not a check: after a merge,
 merge-lane-2's merge program removes the pull request's checkouts and tests
 main in pr<n>-merge-commit-on-main-worktree, and between its steps no process
@@ -378,9 +382,17 @@ DISCARDED_FILES_NAMED_AT_MOST = 10
 # Never deleted, whatever it holds.
 MAIN_BRANCH = "main"
 
-# One listing of every pull request serves the whole invocation; gh pages through them all.
+# list_all_pull_requests_grouped_by_head_branch, which the first-prompt list uses, pages through
+# every pull request ever opened.
 PULL_REQUEST_LISTING_TIMEOUT_SECONDS = 300
 PULL_REQUEST_LISTING_LIMIT = 100000
+# One gh api graphql call asks for this many head branches and numbers; 218 took 3.5 s in one call.
+PULL_REQUEST_QUERY_KEYS_PER_BATCH = 300
+# Pull requests of one head branch in one answer; a branch with more is a query failure.
+PULL_REQUESTS_PER_HEAD_BRANCH_AT_MOST = 100
+# GraphQL's Int is 32-bit: a larger number in a review checkout's name is no pull request's.
+GRAPHQL_INT_MAX = 2**31 - 1
+PULL_REQUEST_GRAPHQL_FIELDS = "number state headRefName headRefOid closedAt"
 
 # No next-step line may contain FAILED: the handoff-supervisor counts each such line as a failure.
 WORKTREE_KEPT_AFTER_FAILURE_NEXT_REMOVE_RUN_RETRIES_LINE_TEMPLATE = (
@@ -758,30 +770,143 @@ class PullRequestListingFailed(Exception):
     """gh could not list the repository's pull requests."""
 
 
-class PullRequestsByHeadBranchLazyCache:
-    """The repository's pull requests by head branch, listed once per invocation, on first need."""
+class PullRequestsOfHeadBranchesAndNumbersLazyCache:
+    """The pull requests of the head branches and numbers an invocation judges, asked for once, on
+    first need; a branch or number not given beforehand is asked for when it is first needed."""
 
-    def __init__(self, repo):
+    def __init__(self, repo, head_branches=(), numbers=()):
         self.repo = repo
-        self._by_head_branch = None
+        self._wanted_head_branches = set(head_branches)
+        self._wanted_numbers = set(numbers)
+        self._by_head_branch = {}
+        self._by_number = {}
         self._error = None
 
-    def by_head_branch(self):
-        """Return {head branch name: [pull request]}; raise PullRequestListingFailed."""
-        if self._by_head_branch is None and self._error is None:
+    def _ask_for(self, head_branches=(), numbers=()):
+        self._wanted_head_branches.update(head_branches)
+        self._wanted_numbers.update(numbers)
+        missing_branches = self._wanted_head_branches - self._by_head_branch.keys()
+        missing_numbers = self._wanted_numbers - self._by_number.keys()
+        if self._error is None and (missing_branches or missing_numbers):
             try:
-                self._by_head_branch = list_all_pull_requests_grouped_by_head_branch(self.repo)
+                by_head_branch, by_number = pull_requests_of_head_branches_and_numbers(
+                    self.repo, sorted(missing_branches), sorted(missing_numbers))
             except PullRequestListingFailed as error:
                 self._error = str(error)
+            else:
+                self._by_head_branch.update(by_head_branch)
+                self._by_number.update(by_number)
         if self._error is not None:
             raise PullRequestListingFailed(self._error)
-        return self._by_head_branch
 
-    def by_number(self):
-        """Return {pull request number: pull request}; raise PullRequestListingFailed."""
-        return {pull_request["number"]: pull_request
-                for pull_requests in self.by_head_branch().values()
-                for pull_request in pull_requests}
+    def of_head_branch(self, branch):
+        """Return the pull requests whose head branch is the branch; raise PullRequestListingFailed."""
+        self._ask_for(head_branches=[branch])
+        return self._by_head_branch[branch]
+
+    def of_head_branches(self, branches):
+        """Return {branch: [pull request]} for the branches; raise PullRequestListingFailed."""
+        branches = list(branches)
+        self._ask_for(head_branches=branches)
+        return {branch: self._by_head_branch[branch] for branch in branches}
+
+    def of_number(self, number):
+        """Return the pull request of the number, or None; raise PullRequestListingFailed."""
+        self._ask_for(numbers=[number])
+        return self._by_number[number]
+
+
+def pull_requests_of_head_branches_and_numbers(repo, head_branches, numbers,
+                                               timeout_seconds=PULL_REQUEST_LISTING_TIMEOUT_SECONDS):
+    """Return ({head branch: [{number, state, headRefName, headRefOid, closedAt}], newest first},
+    {number: pull request or None}) for the head branches and numbers given, asked of the
+    repository's GitHub remote with `gh api graphql`; raise PullRequestListingFailed when gh cannot
+    answer, does not finish within timeout_seconds, or a head branch has more pull requests than
+    PULL_REQUESTS_PER_HEAD_BRANCH_AT_MOST."""
+    by_head_branch, by_number = {}, {}
+    numbers_to_ask = []
+    for number in numbers:
+        if number > GRAPHQL_INT_MAX:
+            by_number[number] = None
+        else:
+            numbers_to_ask.append(number)
+    keys = [("b", branch) for branch in head_branches] + [("n", number) for number in numbers_to_ask]
+    for start in range(0, len(keys), PULL_REQUEST_QUERY_KEYS_PER_BATCH):
+        batch = keys[start:start + PULL_REQUEST_QUERY_KEYS_PER_BATCH]
+        answer = pull_request_graphql_batch_answer(repo, batch, timeout_seconds)
+        for index, (kind, key) in enumerate(batch):
+            alias = f"{kind}{index}"
+            try:
+                if kind == "n":
+                    by_number[key] = answer[alias]
+                    continue
+                connection = answer[alias]
+                if connection["pageInfo"]["hasNextPage"]:
+                    raise PullRequestListingFailed(
+                        f"`gh api graphql` found more than {PULL_REQUESTS_PER_HEAD_BRANCH_AT_MOST} "
+                        f"pull requests whose head branch is {key}, more than one answer holds")
+                by_head_branch[key] = list(connection["nodes"])
+            except (TypeError, KeyError) as error:
+                raise PullRequestListingFailed(
+                    f"`gh api graphql` printed something other than the pull requests asked for: "
+                    f"{type(error).__name__}: {error}") from None
+    return by_head_branch, by_number
+
+
+def pull_request_graphql_batch_answer(repo, batch, timeout_seconds):
+    """Return the `repository` object gh's GraphQL answer holds for one batch of ("b", head branch)
+    and ("n", number) keys, each under the alias of its kind and index; raise
+    PullRequestListingFailed. A number no pull request has is answered None."""
+    declarations, selections, arguments = ["$owner: String!", "$repo: String!"], [], []
+    for index, (kind, key) in enumerate(batch):
+        alias = f"{kind}{index}"
+        if kind == "b":
+            declarations.append(f"${alias}: String!")
+            selections.append(
+                f"{alias}: pullRequests(headRefName: ${alias}, "
+                f"first: {PULL_REQUESTS_PER_HEAD_BRANCH_AT_MOST}, "
+                f"orderBy: {{field: CREATED_AT, direction: DESC}}) "
+                f"{{ pageInfo {{ hasNextPage }} nodes {{ {PULL_REQUEST_GRAPHQL_FIELDS} }} }}")
+            arguments += ["-f", f"{alias}={key}"]
+        else:
+            declarations.append(f"${alias}: Int!")
+            selections.append(f"{alias}: pullRequest(number: ${alias}) {{ {PULL_REQUEST_GRAPHQL_FIELDS} }}")
+            arguments += ["-F", f"{alias}={key}"]
+    query = (f"query({', '.join(declarations)}) {{ repository(owner: $owner, name: $repo) "
+             f"{{ {' '.join(selections)} }} }}")
+    command = ["gh", "api", "graphql", "-F", "owner={owner}", "-F", "repo={repo}",
+               "-f", f"query={query}", *arguments]
+    what = (f"`gh api graphql`, asking for the pull requests of "
+            f"{sum(1 for kind, _ in batch if kind == 'b')} head branch(es) and "
+            f"{sum(1 for kind, _ in batch if kind == 'n')} number(s),")
+    try:
+        run = subprocess.run(command, cwd=repo, capture_output=True, text=True, check=False,
+                             timeout=timeout_seconds)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise PullRequestListingFailed(f"{what} could not be run: {error}") from None
+    try:
+        answer = json.loads(run.stdout)
+        repository = answer["data"]["repository"]
+        errors = answer.get("errors") or []
+        # gh exits 1 when a number is no pull request's, and still prints the rest of the answer.
+        only_numbers_not_found = all(
+            error.get("type") == "NOT_FOUND" and len(error.get("path") or []) == 2
+            and str(error["path"][1]).startswith("n") for error in errors)
+    except (ValueError, TypeError, KeyError, AttributeError):
+        repository, errors, only_numbers_not_found = None, [], False
+    if repository is None or not only_numbers_not_found or (run.returncode != 0 and not errors):
+        why = (f"exited {run.returncode}: {' '.join(run.stderr.split())[:200] or 'no error text'}"
+               if run.returncode != 0 else
+               "printed something other than the pull requests asked for")
+        raise PullRequestListingFailed(f"{what} {why}")
+    return repository
+
+
+def open_pull_requests_grouped_by_head_branch(repo,
+                                              timeout_seconds=PULL_REQUEST_LISTING_TIMEOUT_SECONDS):
+    """Return {head branch name: [{number, state, headRefName, headRefOid}]} for every open pull
+    request; raise PullRequestListingFailed as list_all_pull_requests_grouped_by_head_branch does."""
+    return pull_requests_grouped_by_head_branch(repo, "open", timeout_seconds)
 
 
 def list_all_pull_requests_grouped_by_head_branch(repo,
@@ -789,7 +914,11 @@ def list_all_pull_requests_grouped_by_head_branch(repo,
     """Return {head branch name: [{number, state, headRefName, headRefOid, closedAt}]} for every pull request
     of the repository's GitHub remote; raise PullRequestListingFailed when gh cannot list them, or
     does not finish within timeout_seconds."""
-    command = ["gh", "pr", "list", "--state", "all", "--limit", str(PULL_REQUEST_LISTING_LIMIT),
+    return pull_requests_grouped_by_head_branch(repo, "all", timeout_seconds)
+
+
+def pull_requests_grouped_by_head_branch(repo, state, timeout_seconds):
+    command = ["gh", "pr", "list", "--state", state, "--limit", str(PULL_REQUEST_LISTING_LIMIT),
                "--json", "number,state,headRefName,headRefOid,closedAt"]
     try:
         listing = subprocess.run(command, cwd=repo, capture_output=True, text=True, check=False,
@@ -984,7 +1113,7 @@ def classify_unlocked(worktree, branch, record, pull_requests, owner_to_write=No
     pull_requests_of_branch = []
     if branch is not None:
         try:
-            pull_requests_of_branch = pull_requests.by_head_branch().get(branch, [])
+            pull_requests_of_branch = pull_requests.of_head_branch(branch)
         except PullRequestListingFailed as error:
             return Verdict(False, f"the pull requests of its branch {branch} could not be read: "
                                   f"{error}", KEPT_NOT_CHECKABLE, owner, state)
@@ -1082,13 +1211,13 @@ def merge_lane_review_checkout_verdict(worktree, pull_requests):
         return Verdict(False, "it is a merge-lane review checkout with no owner file, and its "
                               "name holds no single pull request number", KEPT_NO_OWNER_FILE)
     try:
-        pull_request = pull_requests.by_number().get(number)
+        pull_request = pull_requests.of_number(number)
     except PullRequestListingFailed as error:
         return Verdict(False, f"it is a merge-lane review checkout of pull request #{number}, "
                               f"whose state could not be read: {error}", KEPT_NOT_CHECKABLE)
     if pull_request is None:
         return Verdict(False, f"it is a merge-lane review checkout of pull request #{number}, "
-                              f"which gh's listing does not hold", KEPT_NO_OWNER_FILE)
+                              f"which GitHub does not hold", KEPT_NO_OWNER_FILE)
     if pull_request["state"] not in ("MERGED", "CLOSED"):
         return Verdict(False, f"it is a merge-lane review checkout of "
                               f"{pull_request_text(pull_request)}", KEPT_OPEN_PULL_REQUEST)
@@ -1381,11 +1510,28 @@ def local_branches_with_no_pull_request_text(repo, pull_requests):
     if listing.returncode != 0:
         return f"unknown (git cannot list the branches: {listing.stderr.strip()[:80]})"
     try:
-        by_head_branch = pull_requests.by_head_branch()
+        by_head_branch = pull_requests.of_head_branches(
+            branch for branch in listing.stdout.splitlines() if branch != MAIN_BRANCH)
     except PullRequestListingFailed as error:
         return f"unknown ({error})"
-    return str(sum(1 for branch in listing.stdout.splitlines()
-                   if branch != MAIN_BRANCH and branch not in by_head_branch))
+    return str(sum(1 for pull_requests_of_branch in by_head_branch.values()
+                   if not pull_requests_of_branch))
+
+
+def local_branches_other_than_main(repo):
+    """The local branches other than main, or none when git cannot list them, so that the pull
+    request query then asks only for the branches it meets."""
+    listing = run_git(repo, "for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads/")
+    if listing.returncode != 0:
+        return []
+    return [branch for branch in listing.stdout.splitlines() if branch != MAIN_BRANCH]
+
+
+def review_checkout_pull_request_numbers(worktrees):
+    """The pull request numbers the merge-lane review checkouts' names hold."""
+    return {number for worktree, _, _ in worktrees
+            if is_merge_lane_review_checkout(worktree)
+            and (number := merge_lane_review_checkout_pull_request_number(worktree.name)) is not None}
 
 
 def work_snapshots_present_text(repo):
@@ -1422,9 +1568,11 @@ def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
     """Report or remove the worktrees and orphaned branch refs, and report dead registrations;
     return the number of failures, or raise git_output.GitCommandFailed when git cannot list them."""
     failures = 0
-    pull_requests = PullRequestsByHeadBranchLazyCache(repo)
+    worktrees = list_worktrees(repo, main_checkout)
+    pull_requests = PullRequestsOfHeadBranchesAndNumbersLazyCache(
+        repo, local_branches_other_than_main(repo), review_checkout_pull_request_numbers(worktrees))
     kept_verdicts = []
-    for worktree, branch, record in list_worktrees(repo, main_checkout):
+    for worktree, branch, record in worktrees:
         verdict = None
         if remove and record.locked_reason is not None:
             verdict, ended_lock = claude_code_subagent_lock_verdict_or_ended_lock(worktree, record)
@@ -1699,7 +1847,7 @@ def remove_one_named_worktree(repo, main_checkout, path):
         return remove_worktree(worktree, branch, repo, removal_stopped_partway_verdict(record),
                                one_named=True)
     try:
-        by_head_branch = list_all_pull_requests_grouped_by_head_branch(repo)
+        by_head_branch = open_pull_requests_grouped_by_head_branch(repo)
     except PullRequestListingFailed as error:
         print(f"{worktree.name}: kept — whether a pull request is open on it could not be read: "
               f"{error}")
@@ -1734,7 +1882,7 @@ def delete_one_named_branch(repo, branch):
                   f"its branch too")
             return False
     try:
-        by_head_branch = list_all_pull_requests_grouped_by_head_branch(repo)
+        by_head_branch = open_pull_requests_grouped_by_head_branch(repo)
     except PullRequestListingFailed as error:
         print(f"{name}: kept — whether a pull request is open on it could not be read: {error}")
         return False
