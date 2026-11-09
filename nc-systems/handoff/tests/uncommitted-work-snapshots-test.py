@@ -455,6 +455,37 @@ def test_overlapping_runs_end_on_the_final_state():
           "two concurrent runs end on the worktree's state")
 
 
+def test_unchanged_run_overlapped_by_a_run_that_moves_the_ref_ends_on_the_worktree_state():
+    name = ("a run that finds its state already held, while an overlapping run moves the ref "
+            "to another state, leaves the ref on the worktree's state")
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
+    (worktree / "tracked.txt").write_text("state A\n")
+    owner = "3-3"
+    ref = snapshots.work_snapshot_ref(owner, worktree)
+    snapshots.refresh_work_snapshot(worktree, owner, "seat", "")
+    real_build = snapshots.build_work_snapshot_commit
+    interleaved = []
+
+    def build_while_another_run_lands_state_b(*arguments, **keywords):
+        commit = real_build(*arguments, **keywords)
+        if not interleaved:
+            interleaved.append(True)
+            (worktree / "tracked.txt").write_text("state B\n")
+            other = real_build(*arguments)
+            git(main, "update-ref", ref, other)
+            (worktree / "tracked.txt").write_text("state A\n")
+        return commit
+
+    snapshots.build_work_snapshot_commit = build_while_another_run_lands_state_b
+    try:
+        outcome = snapshots.refresh_work_snapshot(worktree, owner, "seat", "")
+    finally:
+        snapshots.build_work_snapshot_commit = real_build
+    check(interleaved and git(main, "show", f"{ref}:tracked.txt") == "state A", name,
+          (outcome, git(main, "show", f"{ref}:tracked.txt")))
+
+
 def test_operation_trailer():
     name = "during a merge with conflicts the operation trailer is merge"
     main = new_clone()
@@ -1564,7 +1595,9 @@ def main():
         for case in (test_what_a_work_snapshot_holds, test_same_size_edit_in_the_index_second,
                      test_ref_names,
                      test_bash_commit_deletes_and_other_worktrees_follow,
-                     test_overlapping_runs_end_on_the_final_state, test_operation_trailer,
+                     test_overlapping_runs_end_on_the_final_state,
+                     test_unchanged_run_overlapped_by_a_run_that_moves_the_ref_ends_on_the_worktree_state,
+                     test_operation_trailer,
                      test_each_operation_is_read_from_its_own_marker,
                      test_git_path_line_count_other_than_five_is_reported,
                      test_unchanged_worktree_writes_no_commit,

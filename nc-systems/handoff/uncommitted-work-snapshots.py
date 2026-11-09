@@ -360,8 +360,8 @@ def refresh_work_snapshot(worktree, owner_key, agent_seat, transcript):
     """Write, replace or delete this owner's work-snapshot of worktree.
 
     Returns "written", "unchanged", "deleted" or "clean"; "unchanged" means the ref already
-    held a work-snapshot of this state, and was left as it was. The ref is set with
-    compare-and-swap; when an overlapping run changed it in between, the
+    held a work-snapshot of this state, and was left as it was. The ref is set, and
+    "unchanged" confirmed, with compare-and-swap; when an overlapping run changed it in between, the
     work-snapshot is built once more from the worktree's state then.
     """
     ref = work_snapshot_ref(owner_key, worktree)
@@ -374,10 +374,10 @@ def refresh_work_snapshot(worktree, owner_key, agent_seat, transcript):
             outcome = "deleted"
         else:
             new = build_work_snapshot_commit(worktree, agent_seat, transcript, replacing=old)
-            if new == old:
-                return "unchanged"
+            # When new == old this swaps the ref for itself, confirming that no overlapping
+            # run moved it since old was read.
             result = run_git(worktree, "update-ref", ref, new, old or ZERO_OBJECT_ID)
-            outcome = "written"
+            outcome = "unchanged" if new == old else "written"
         if result.returncode == 0:
             return outcome
         if attempt == 2:
