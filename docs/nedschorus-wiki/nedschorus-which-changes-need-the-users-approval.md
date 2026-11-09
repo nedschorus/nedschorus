@@ -35,6 +35,7 @@ A change is the difference an agent's work makes, from before it starts to after
 14. Changing text to state a cited user-ruling, what merged code does, or a fact a shown command checked, adding no step, check or limiting word its source lacks.
 15. A code fix, a hook's or a setting's included, that a test shows failing before and passing after, adding no hook, job, setting, retry or fallback and leaving failure handling as it is.
 16. Removing code, a file or a setting that a program shows nothing uses.
+17. Turning agent-instructions into code that does what they told an agent to do, as `CLAUDE.md`'s code-prompt-code rule asks, and cutting their prose down to what still needs judgment.
 
 The exceptions are numbered; add a new one only at the end of the list, and never renumber them, because the walk check program and the walk-minutes name them by number.
 

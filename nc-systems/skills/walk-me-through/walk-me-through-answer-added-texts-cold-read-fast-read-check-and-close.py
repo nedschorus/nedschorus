@@ -103,9 +103,11 @@ named is the term of an entry as for 7, and each marker named, `#` then
 letters, digits, `_` or `-`, is found in no file but Markdown, in any letter
 case, either whole or as a part of it that ends just before a `-` or ends with
 a `_` followed by no letter or digit, so that no program reads it, by name or
-by a pattern such as `#case_against_[a-z_]+`. Every other exception needs
-touches. For every exception but 12, every touched file but a test of 15 must
-exist. An unused or old name is searched for as written and, when it has two
+by a pattern such as `#case_against_[a-z_]+`; 17, prose instructions turned
+into code, needs touches naming at least one Markdown file and at least one
+file that is not Markdown. Every other exception needs touches. For every
+exception but 12, every touched file must exist, except a test of 15 and a
+file of 17 that is not Markdown. An unused or old name is searched for as written and, when it has two
 or more words, with its words joined by hyphens, by underscores
 and by nothing, a run of digits both kept with the letters before it and
 split off as a word of its own; every
@@ -432,9 +434,11 @@ NO_APPROVAL_NEEDED_EXCEPTION_OPENING_WORDS_BY_NUMBER = {
     14: "Changing text to state a cited user-ruling,",
     15: "A code fix, a hook's or a setting's included,",
     16: "Removing code, a file or a setting that a program shows nothing uses.",
+    17: "Turning agent-instructions into code",
 }
 (GLOSSARY_RENAME, GLOSSARY_RESPELLING, HASHTAG_MARKER_ADDED, HISTORY_REMOVED, DECISION_CARRIED_OUT,
- SETTLED_BY_APPROVAL_WALK, TEXT_CAUGHT_UP, CODE_FIX, UNUSED_REMOVED) = (7, 8, 9, 10, 12, 13, 14, 15, 16)
+ SETTLED_BY_APPROVAL_WALK, TEXT_CAUGHT_UP, CODE_FIX, UNUSED_REMOVED, PROSE_INTO_CODE) = (
+    7, 8, 9, 10, 12, 13, 14, 15, 16, 17)
 NOT_ASKED_EXCEPTIONS = tuple(number for number in NO_APPROVAL_NEEDED_EXCEPTION_OPENING_WORDS_BY_NUMBER if number != SETTLED_BY_APPROVAL_WALK)
 # Walk-minutes closed before the page numbered its exceptions name the walk-me-through skill's six kinds of then.
 OLD_NOT_ASKED_KINDS = (1, 2, 3, 4, 5, 6)
@@ -817,6 +821,9 @@ NOT_ASKED_GUARDED_FILE_PROBLEM = ("- `{marker}` names {path}, which the instruct
 NOT_ASKED_MISSING_PATH_PROBLEM = "- `{marker}` names {path}, which is not in the checkout {top}."
 NOT_ASKED_NEW_FILE_PROBLEM = ("- `{marker}` names {path}, which is not in the checkout {top}; a code fix that "
                               "settles without the user adds no file but a test.")
+NOT_ASKED_PROSE_INTO_CODE_PROBLEM = ("- `{touches}` names no {missing}; prose instructions turned into code touch "
+                                     "both the Markdown file whose prose is cut down and the code that now does "
+                                     "what it said.")
 NOT_ASKED_NOT_A_TEST_PROBLEM = "- `{marker}` names {path}, which is not a test file in the checkout {top}."
 NOT_ASKED_NO_NEW_TEXT_PROBLEM = "- it has no `#new` line holding the changed text."
 NOT_ASKED_STILL_USED_PROBLEM = ("- `{word}`, named on its `{marker}` line, is still named in {files}, which "
@@ -1527,8 +1534,9 @@ def not_asked_problems(kind, rating, lines, marks, top, item):
     tests = words(found[TEST])
     for path in touched if kind != DECISION_CARRIED_OUT else []:
         if not (top / path).exists():
-            # A code fix may add the test that shows it; any other new file is an addition the user sees.
-            if kind == CODE_FIX and path in tests:
+            # A code fix may add the test that shows it, and prose turned into code the code; any other new file is an
+            # addition the user sees.
+            if (kind == CODE_FIX and path in tests) or (kind == PROSE_INTO_CODE and not path.endswith(".md")):
                 continue
             problem = NOT_ASKED_NEW_FILE_PROBLEM if kind == CODE_FIX else NOT_ASKED_MISSING_PATH_PROBLEM
             problems.append(problem.format(marker=TOUCHES, path=path, top=top))
@@ -1560,6 +1568,11 @@ def not_asked_problems(kind, rating, lines, marks, top, item):
             if others:
                 problems.append(NOT_ASKED_STILL_USED_PROBLEM.format(word=old, marker=RENAME, files=", ".join(others),
                                                                    touches=TOUCHES))
+    if kind == PROSE_INTO_CODE and touched:
+        for missing, present in (("Markdown file", any(path.endswith(".md") for path in touched)),
+                                 ("file that is not Markdown", not all(path.endswith(".md") for path in touched))):
+            if not present:
+                problems.append(NOT_ASKED_PROSE_INTO_CODE_PROBLEM.format(touches=TOUCHES, missing=missing))
     if kind in (GLOSSARY_RESPELLING, HASHTAG_MARKER_ADDED):
         problems += glossary_term_or_marker_problems(kind, found, touched, top, item)
     return problems

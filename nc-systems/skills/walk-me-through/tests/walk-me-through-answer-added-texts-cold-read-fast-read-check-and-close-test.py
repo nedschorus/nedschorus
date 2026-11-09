@@ -2643,7 +2643,7 @@ def test_an_item_of_no_kind_with_an_empty_touches_line_settles_as_a_change_that_
 
 
 def test_a_not_asked_value_other_than_an_exception_number_or_none_is_refused_as_usage():
-    for value in ("17", "0", "weak"):
+    for value in ("18", "0", "weak"):
         case = rated_none_case()
         result = case.run("check", "--not-asked", value)
         check(f"`--not-asked {value}` is refused as usage, writing nothing",
@@ -2789,6 +2789,36 @@ def not_asked_case_with_line(next_to_present, old_line, new_line, files=None):
     case = not_asked_case(next_to_present, files)
     (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").write_text(NOT_ASKED_DOCUMENT.replace(old_line, new_line))
     return case
+
+
+def prose_into_code_case(touches, files=None):
+    """Item 2 of the fixture, rated weak, with its touches line replaced."""
+    return not_asked_case_with_line("item 2 of 7", "#not_asked_touches tools/counter.py tools/counter-test.py",
+                                    f"#not_asked_touches {touches}", files)
+
+
+def test_prose_instructions_turned_into_code_settle_as_exception_17_only_when_markdown_and_code_are_touched():
+    case = prose_into_code_case("docs/poems/index.md tools/poem-counter.py tools/poem-counter-test.py")
+    result = case.run("check", "--not-asked", "17")
+    check("exception 17 settles when it cuts down a Markdown file and adds the code that does what it said",
+          result.returncode == 0
+          and "settled without asking the user, not asked, exception 17 #case_against_weak (" in case.minutes.read_text(),
+          described(result))
+    closed = case.run("close")
+    check("close records a settled exception 17 item as accepted",
+          closed.returncode == 0 and "\nitem 2 of 7: not asked, exception 17; every text the change adds has had a "
+                                     "fast read. <accepted>\n" in case.minutes.read_text(), described(closed))
+    check("exception 17 is refused when it touches no Markdown file",
+          *refused(prose_into_code_case("tools/counter.py"), 17,
+                   "`#not_asked_touches` names no Markdown file; prose instructions turned into code"))
+    check("exception 17 is refused when it touches only Markdown",
+          *refused(prose_into_code_case("docs/poems/index.md"), 17,
+                   "`#not_asked_touches` names no file that is not Markdown;"))
+    check("exception 17 is refused when the Markdown file it cuts down is not in the checkout",
+          *refused(prose_into_code_case("docs/poems/missing.md tools/counter.py"), 17,
+                   "`#not_asked_touches` names docs/poems/missing.md, which is not in the checkout"))
+    check("exception 17 is refused when the item lists no file it touches",
+          *refused(not_asked_case("item 5 of 7"), 17, "it has no `#not_asked_touches` line"))
 
 
 def test_a_name_holding_a_digit_or_of_one_word_is_found_in_any_case_and_inside_a_longer_name():
