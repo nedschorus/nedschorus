@@ -214,6 +214,20 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         (directory / "git").chmod(0o755)
         return directory
 
+    def git_shimmed_when(name: str, condition: str, action: str):
+        """A directory holding a `git` that runs the shell commands of action when
+        the shell test condition holds, and otherwise runs the real git."""
+        directory = tmp / name
+        directory.mkdir()
+        (directory / "git").write_text(
+            "#!/bin/sh\n"
+            f"if {condition}; then\n"
+            f"  {action}\n"
+            "fi\n"
+            f'exec "{real_git}" "$@"\n', encoding="utf-8")
+        (directory / "git").chmod(0o755)
+        return directory
+
     # A `git` that always fails, and a PATH with no git on it at all.
     failing_git_directory = git_failing_when("failing-git", "true")
     no_git_directory = tmp / "no-git-on-path"
@@ -859,6 +873,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "main's changes to lib/shared.py overlap this checkout's copy: after you "
               "make the branch and commit your edit, run git rebase origin/main, which "
               "will stop on this file, and resolve the conflict there."), warning)
+    check("detached: the same overlapping edit again, whose warning would be the same "
+          "text, is silent", detached_warning(shared_file) == "", "")
 
     gone_file = detached / "lib/gone.py"
     gone_file.write_text("the agent edited this\n", encoding="utf-8")
@@ -873,6 +889,26 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "<a-branch-name> origin/main`, and make the same fix in the file that does "
               "that job on main now. If no file on main does that job, drop the edit and "
               "do not make the fix."), warning)
+    # A git log that prints a line and then fails, by exit code or by a signal,
+    # has not named the deleting commit, so the line names none.
+    rename_listing = '[ "$1" = "diff" ] && [ "$5" = "--diff-filter=R" ]'
+    deleting_lookup = '[ "$1" = "log" ] && [ "$3" = "--format=%h (%s)" ]'
+    for case_name, shim_name, action in (
+            ("exits non-zero", "deleting-log-exit-failing-git",
+             'printf "abc1234 (partial)\\n"; exit 128'),
+            ("is killed by a signal", "deleting-log-killed-git",
+             'printf "abc1234 (partial)\\n"; kill -KILL $$')):
+        gone_file.write_text(f"the agent edited this, {shim_name}\n", encoding="utf-8")
+        warning = agent_text(run_hook(
+            hook_payload(detached, gone_file),
+            path_prefix=git_shimmed_when(shim_name, deleting_lookup, action)))
+        check(f"detached: when the git log that names the deleting commit {case_name}, "
+              "the deleted-file line names no commit",
+              warning.split("\n")[-1].startswith(
+                  "main deleted lib/gone.py, so your edit has no file to land in.")
+              and "abc1234" not in warning, warning)
+        # Back to the line that names the commit, so the next case is no repeat.
+        detached_warning(gone_file)
 
     moved_file = detached / "lib/moved.py"
     moved_file.write_text("".join(edited_far_away), encoding="utf-8")
@@ -912,6 +948,27 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           any(line.startswith("R") and line.split("\t")[1:] == ["lib/moved.py",
                                                                   "lib/renamed.py"]
               for line in shown), "\n".join(shown))
+    repeated = run_hook(hook_payload(detached, moved_file),
+                        path_prefix=diff_failing_git_directory)
+    check("detached: the could-not-tell line is said again at the next edit, never held "
+          "back as a repeat",
+          agent_text(repeated) == agent_text(result), agent_text(repeated))
+    # git's error text is what the line normally carries; with no text from git,
+    # the line names git's exit code, or the signal as a negative exit code.
+    for case_name, shim_name, action, fallback in (
+            ("exits non-zero with no error text", "rename-listing-silent-failing-git",
+             "exit 128", "(git diff exited 128)"),
+            ("is killed by a signal", "rename-listing-killed-git",
+             "kill -KILL $$", "(git diff exited -9)")):
+        result = run_hook(hook_payload(detached, moved_file),
+                          path_prefix=git_shimmed_when(shim_name, rename_listing, action))
+        last_line = agent_text(result).split("\n")[-1]
+        check(f"detached: when the rename listing {case_name}, the could-not-tell line "
+              "names git's exit code",
+              result.returncode == 0
+              and last_line.startswith("main no longer has a file at lib/moved.py, and git "
+                                       "could not tell whether main moved or deleted it "
+                                       + fallback + ". "), agent_text(result) + result.stderr)
     git(["checkout", "-q", "--", "lib/moved.py"], detached)
 
     (detached_git_dir / "rebase-merge").mkdir()
