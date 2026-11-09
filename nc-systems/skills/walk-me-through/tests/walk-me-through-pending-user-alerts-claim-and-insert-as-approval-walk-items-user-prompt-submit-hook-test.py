@@ -25,6 +25,7 @@ HERE = Path(__file__).resolve().parents[1]
 HOOK = HERE / "walk-me-through-pending-user-alerts-claim-and-insert-as-approval-walk-items-user-prompt-submit-hook.py"
 INSERT_PROGRAM = HERE / "walk-me-through-user-alert-insert-as-unnumbered-item-after-waiting-item-and-record-in-walk-minutes.py"
 WALK = "alerts-hook-test-walk-2026-10-27"
+HEADLESS_VARIABLES = ("CLAUDE_CODE_SESSION_ATTENDED", "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
 failures = []
 
 
@@ -65,8 +66,10 @@ class Case:
             stream.write(json.dumps({"type": "user", "turnOrigin": origin,
                                      "message": {"role": "user", "content": text}}) + "\n")
 
-    def run(self, prompt, stdin=None, platform="linux", insert_run=""):
-        """insert_run, when given, is a Python expression of the arguments a and k that takes the place of the
+    def run(self, prompt, stdin=None, platform="linux", insert_run="", environment_extra=None):
+        """environment_extra is added to the hook's environment, which holds neither variable that marks an
+        agent-session headless, so a case reads the same in a headless reviewer as in an attended agent-session.
+        insert_run, when given, is a Python expression of the arguments a and k that takes the place of the
         hook's subprocess.run of the insert program, so a case can make that program time out, fail to start or
         die by a signal, which a real run cannot be made to; every other subprocess.run, such as git's, runs."""
         payload = {"hook_event_name": "UserPromptSubmit", "prompt": prompt, "cwd": str(self.checkout),
@@ -76,10 +79,11 @@ class Case:
                                    f"({insert_run}) if 'user-alert-insert' in str(a[0]) else real(*a, **k))"
                                    "(subprocess.run); " if insert_run else "")
                                 + "runpy.run_path(sys.argv[2], run_name='__main__')")
+        environment = {name: value for name, value in os.environ.items() if name not in HEADLESS_VARIABLES}
+        environment.update({"HOME": str(self.home)}, **(environment_extra or {}))
         result = subprocess.run([sys.executable, "-c", run_hook_as_platform, platform, str(HOOK)],
                                 input=stdin or json.dumps(payload),
-                                capture_output=True, text=True, env={**os.environ, "HOME": str(self.home)},
-                                check=False)
+                                capture_output=True, text=True, env=environment, check=False)
         self.output = json.loads(result.stdout) if result.stdout else {}
         context = self.output["hookSpecificOutput"]["additionalContext"] if result.stdout else ""
         return result, context
@@ -206,6 +210,38 @@ def run_not_typed_cases(root):
           case.names("pending") == ["alert-a"], repr(case.names("claimed")))
 
 
+def run_headless_cases(root):
+    commission = "You are the independent reviewer for the nedschorus project. Review pull request 2891."
+    for name, record_origin, environment_extra in (
+            ("headless-first-prompt-no-record", None, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}),
+            ("headless-first-prompt-sdk-record", "sdk", {"CLAUDE_CODE_SESSION_ATTENDED": "0"}),
+            ("caller-owned-child", None, {"NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "1"})):
+        case = Case(root, name)
+        case.alert("alert-a")
+        if record_origin:
+            case.turn_record(record_origin, commission)
+        result, context = case.run(commission, environment_extra=environment_extra)
+        check(f"a headless agent-session's first prompt ({name}) claims nothing and prints nothing",
+              result.returncode == 0 and result.stdout == "" and case.names("pending") == ["alert-a"]
+              and case.names("claimed") == [], result.stdout + result.stderr + repr(case.names("claimed")))
+
+    case = Case(root, "headless-leaves-old-claim")
+    path = case.alert("alert-old", directory="claimed")
+    old = time.time() - 31 * 60
+    os.utime(path, (old, old))
+    case.run("hello", environment_extra={"CLAUDE_CODE_SESSION_ATTENDED": "0"})
+    check("a headless agent-session's prompt neither releases nor claims again an alert claimed over 30 minutes ago",
+          case.names("claimed") == ["alert-old"] and abs(path.stat().st_mtime - old) < 1, repr(case.names("claimed")))
+
+    for name, attended in (("attended-first-prompt", "1"), ("attendance-unset-first-prompt", None)):
+        case = Case(root, name)
+        case.alert("alert-a")
+        result, context = case.run("hello", environment_extra={} if attended is None
+                                   else {"CLAUDE_CODE_SESSION_ATTENDED": attended})
+        check(f"an attended agent-session's first typed prompt, with no record yet ({name}), claims the alert",
+              case.names("claimed") == ["alert-a"] and "alert alert-a" in context, context + result.stderr)
+
+
 def run_mac_cases(root):
     case = Case(root, "mac")
     case.alert("alert-a")
@@ -269,6 +305,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     scratch = Path(temporary_directory)
     run_typed_prompt_cases(scratch)
     run_not_typed_cases(scratch)
+    run_headless_cases(scratch)
     run_mac_cases(scratch)
     run_release_cases(scratch)
     run_failure_cases(scratch)
