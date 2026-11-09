@@ -597,6 +597,45 @@ def test_supervisor_puts_leftovers_before_the_next_step():
           "an unreadable counts file is stated, and the entries are still listed", broken)
 
 
+def test_supervisor_puts_deleted_branches_above_the_leftovers_and_forgets_counts_when_none():
+    fixture_spec = importlib.util.spec_from_file_location(
+        "handoff_supervisor_test_fixture_deleted_and_counts",
+        SYSTEM_DIRECTORY / "tests" / "handoff-supervisor-test-fixture.py")
+    fixture = importlib.util.module_from_spec(fixture_spec)
+    fixture_spec.loader.exec_module(fixture)
+    supervisor = fixture.supervisor
+    counts = SCRATCH / "seat-w-leftovers-prompt-listing-counts.json"
+    prompt = f"Opening.{supervisor.NEXT_STEP_HEADING}Do the next thing."
+    deleted = "\n".join(listing.deleted_section(["deleted branch d1, whose every commit is a copy"]))
+    branches = ("This agent-seat's branches with no pull request: 1:\n- branch b1; 1 commit(s)\nSteps.\n"
+                + deleted)
+    both = supervisor.launch_prompt_with_leftovers_before_the_next_step(prompt, ("", branches), counts)
+    check(both.startswith("Opening.\n\n" + listing.ALREADY_DELETED_HEADING_START)
+          and both.index("- deleted branch d1,")
+          < both.index(supervisor.LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE)
+          < both.index("- (listed in 1 first prompt(s)) branch b1;")
+          and both.endswith(f"Steps.{supervisor.NEXT_STEP_HEADING}Do the next thing."),
+          "the deleted branches go above the leftovers' opening sentence", both)
+    only_deleted = supervisor.launch_prompt_with_leftovers_before_the_next_step(
+        prompt, ("", deleted), counts)
+    check(only_deleted == f"Opening.\n\n{deleted}{supervisor.NEXT_STEP_HEADING}Do the next thing."
+          and not counts.exists(),
+          "with only deleted branches, no leftovers sentence is shown and the counts file is deleted",
+          only_deleted)
+    again = supervisor.launch_prompt_with_leftovers_before_the_next_step(prompt, ("", branches), counts)
+    check("- (listed in 1 first prompt(s)) branch b1;" in again,
+          "a leftover listed after a launch that listed none starts its count again", again)
+    counts.unlink()
+    counts.mkdir()
+    stderr = io.StringIO()
+    with contextlib.redirect_stderr(stderr):
+        unchanged = supervisor.launch_prompt_with_leftovers_before_the_next_step(prompt, ("", ""), counts)
+    check(unchanged == prompt and "could not delete" in stderr.getvalue()
+          and str(counts) in stderr.getvalue(),
+          "a counts file that cannot be deleted is reported on the console", stderr.getvalue())
+    counts.rmdir()
+
+
 def test_supervisor_appends_the_list():
     fixture_spec = importlib.util.spec_from_file_location(
         "handoff_supervisor_test_fixture", SYSTEM_DIRECTORY / "tests" / "handoff-supervisor-test-fixture.py")
@@ -761,6 +800,7 @@ for case in (test_branches, test_pushed_text, test_worktrees, test_gh_failure,
              test_merge_commit_branch_not_deleted,
              test_deletion_reported_when_a_later_git_call_fails,
              test_supervisor_puts_leftovers_before_the_next_step,
+             test_supervisor_puts_deleted_branches_above_the_leftovers_and_forgets_counts_when_none,
              test_supervisor_puts_leftovers_before_the_next_step_without_a_conversation_tail,
              test_supervisor_appends_the_list, test_open_tasks_hold_entries,
              test_hidden_line_counts, test_everything_held,

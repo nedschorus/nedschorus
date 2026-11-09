@@ -4,14 +4,16 @@
 nc-systems/handoff/handoff-supervisor.py puts this list in the first prompt
 of every agent-session it starts, before the next step, so that work an
 earlier agent-session left behind is carried on or deleted instead of
-forgotten. Building the list is code; whether to keep or delete each entry is
-the agent-session's judgment.
+forgotten. Building the list is code; whether to keep or delete each listed
+entry is the agent-session's judgment. The first prompt's list also deletes,
+without asking, the branches WHAT IT DELETES names.
 
 WHAT IS LISTED.
 - A worktree, when its owner file (scripts/worktree-owner-file-read-and-write.py)
-  names this agent-seat, other than the directory the agent-session starts in,
-  a worktree whose owning agent-session's `claude` process still runs, and a
-  worktree whose pull request is open, which merge-lane-2 reviews.
+  names this agent-seat. Three such worktrees are left out: the directory the
+  agent-session starts in; a worktree whose owning agent-session's `claude`
+  process still runs; and a worktree with any open pull request, which
+  merge-lane-2 reviews.
   A worktree with no owner file, or one that cannot be read, is not listed;
   scripts/clean-worktrees.py reports those in its daily count line.
 - A local branch, when no worktree has it checked out, its tip commit is not
@@ -37,9 +39,11 @@ directory that cannot be read.
 
 Each branch entry gives how many commits origin/main lacks and the newest
 one's subject. Beside each entry the list prints the command that deletes it:
-scripts/clean-worktrees.py --remove-worktree-and-force-delete-its-branch or
---force-delete-branch, which ships a worktree's walks and records first, and
-keeps a worktree or branch whose pull request is open.
+scripts/clean-worktrees.py --remove-worktree-and-force-delete-its-branch for a
+worktree, which ships the worktree's walks and records first, or
+--force-delete-branch for a branch. Both commands still refuse a worktree or
+branch whose pull request is open, so one opened after the list was built is
+kept.
 
 origin/main is read as it is on disk: the handoff-supervisor fetches just
 before it builds the prompt.
@@ -49,7 +53,9 @@ a branch it would list whose every commit is already on origin/main as a
 cherry-picked copy (`git cherry origin/main <branch>` prints no `+` line, and
 the branch has no merge commit origin/main lacks, since `git cherry` leaves
 merge commits out): no work is lost, and the list names the branch with the `git branch <name>
-<sha>` command that restores it. A branch whose deletion fails is listed as
+<sha>` command that restores it, under a heading that starts with
+ALREADY_DELETED_HEADING_START, which the handoff-supervisor puts above the
+leftovers' opening sentence. A branch whose deletion fails is listed as
 before, with why.
 
 HOW IT CAN FAIL. When gh cannot list pull requests, worktrees are listed with
@@ -81,6 +87,7 @@ CLEAN_WORKTREES_PATH = REPO_ROOT / "scripts" / "clean-worktrees.py"
 DUE_TASK_RAISE_HOOK_PATH = REPO_ROOT / "scripts" / "agent-seat-due-task-raise-hook.py"
 TASK_HELD_BRANCHES_METADATA_KEY = "branches"
 
+ALREADY_DELETED_HEADING_START = "Already deleted, needing nothing from you:"
 ENTRIES_AT_MOST = 20
 # Every agent-session's first prompt waits on this listing, which took about 13 s for 2,239 pull
 # requests; 60 s leaves room for the count to grow before a slow gh is cut off.
@@ -407,7 +414,7 @@ def unreadable_task_list_line(holding):
 def deleted_section(deleted):
     if not deleted:
         return []
-    return ([f"Already deleted, needing nothing from you: this agent-seat's branches whose every "
+    return ([f"{ALREADY_DELETED_HEADING_START} this agent-seat's branches whose every "
              f"commit is on origin/main, so no work is lost: {len(deleted)}:"]
             + [f"- {entry}" for entry in deleted])
 
