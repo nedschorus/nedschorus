@@ -593,6 +593,28 @@ def main():
           and "could not read this agent-session's transcript" in completed.stderr,
           f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
 
+    # An unreadable subagent transcript shows whether the hook read the subagent transcripts at all.
+    case = Case()
+    document = case.document("docs/plan-of-record.md", modified=5_000_000)
+    subagent_transcript = case.transcript.with_suffix("") / "subagents" / "agent-a1.jsonl"
+    write_transcript(subagent_transcript, file_writing_tool_call_records([document]))
+    subagent_transcript.chmod(0)
+    try:
+        not_linking = case.run("Nothing to link this time.")
+        linking = case.run("Updated docs/plan-of-record.md.")
+    finally:
+        subagent_transcript.chmod(0o644)
+    check("a reply that links no document reads no subagent transcript: silent, exit 0",
+          not_linking.returncode == 0 and not_linking.stdout == "" and not_linking.stderr == "",
+          f"exit {not_linking.returncode}, stdout {not_linking.stdout!r}, stderr {not_linking.stderr!r}")
+    context = (json.loads(linking.stdout)["hookSpecificOutput"]["additionalContext"]
+               if linking.returncode == 0 and linking.stdout.strip() else "")
+    check("a reply that links a document, with a subagent transcript that cannot be read, is reported to the agent and on stderr, exit 0",
+          linking.returncode == 0
+          and "could not read this agent-session's transcript" in context
+          and "could not read this agent-session's transcript" in linking.stderr,
+          f"exit {linking.returncode}, stdout {linking.stdout!r}, stderr {linking.stderr!r}")
+
     case = Case()
     document = case.document("docs/plan-of-record.md", text="on main\n")
     commit_to_main(case.checkout, "docs/plan-of-record.md")
