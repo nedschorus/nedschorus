@@ -526,6 +526,30 @@ check("a subagent that spent a token after its interim report has resumed: repor
       verdicts["alpha"]["running"]["subagents"] == [
           {"id": "a1b2", "started": "2026-11-02T09:00:00Z"}], verdicts["alpha"])
 
+# Claude Code delivers a notification queued while the session was busy as a queued_command
+# attachment, not as a user record.
+machine = Machine()
+attachment_report = subagent_report("a1b2", "Fix-round pushed.", "2026-11-02T09:20:00Z",
+                                    interim=True)
+attachment_report = {"type": "attachment", "timestamp": attachment_report["timestamp"],
+                     "attachment": {"type": "queued_command",
+                                    "prompt": attachment_report["message"]["content"]}}
+project, _ = machine.seat("alpha", [user("go"), SUBAGENT_SPAWN, attachment_report,
+                                    assistant("Done."), turn_end()])
+own = project / "s-1" / "subagents"
+own.mkdir(parents=True, exist_ok=True)
+(own / "agent-a1b2.jsonl").write_text("".join(json.dumps(record) + "\n" for record in [
+    user("", at="2026-11-02T09:05:00Z", tool_result={"backgroundTaskId": "bash-9"}),
+    assistant("Fix-round pushed.", at="2026-11-02T09:19:59Z")]))
+_, verdicts, _ = machine.run()
+check("a subagent whose interim final report came as a queued_command attachment: reported "
+      "stopped at that report, with its own background command",
+      verdicts["alpha"]["running"]["subagents"] == [{
+          "id": "a1b2", "started": "2026-11-02T09:00:00Z",
+          fields.SUBAGENT_STOPPED_AT: "2026-11-02T09:20:00Z",
+          fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS: [
+              {"id": "bash-9", "started": "2026-11-02T09:05:00Z"}]}], verdicts["alpha"])
+
 # --- rule 4 against rule 5: open tasks and their prerequisites -------------------------------
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant("Done."), turn_end()])

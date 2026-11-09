@@ -20,9 +20,9 @@ What it reads, for each agent-seat that has a handoff-supervisor state file
 
 It prints one JSON object per agent-seat, one per line. Each holds what the later slice needs
 without reading anything again: the session id, the transcript path, the last time a token was
-spent and the file that showed it, what is running and since when, for a subagent that has stopped
-and reported while background commands it launched still run, when it stopped and those commands,
-the matched sentences with the code's reading of each, the agent-seat's last message, the tool calls a judge of the sentences
+spent and the file that showed it, what is running and since when (a subagent that reported and
+stopped while background commands it launched still run gets the time of its report and a list of
+those commands), the matched sentences with the code's reading of each, the agent-seat's last message, the tool calls a judge of the sentences
 looks through, the rule that applies and its decision.
 
 What it does not handle: it keeps no record of earlier runs, so it cannot tell which turn-ending
@@ -329,6 +329,19 @@ class TranscriptFacts:
         self.last_task_notification = {} # task id -> (time, whether it is interim)
 
 
+def task_notification_carrier_text(record):
+    """The text of a record that can carry task notifications: a `user` message, or a
+    `queued_command` attachment, the form Claude Code uses for a notification queued while the
+    session was busy. Any other record gives ""."""
+    if record.get("type") == "user":
+        return message_text(record)
+    attachment = record.get("attachment")
+    if record.get("type") == "attachment" and isinstance(attachment, dict) \
+            and attachment.get("type") == "queued_command" and isinstance(attachment.get("prompt"), str):
+        return attachment["prompt"]
+    return ""
+
+
 def read_main_transcript(path):
     facts = TranscriptFacts()
     newest_text_record = None
@@ -359,7 +372,7 @@ def read_main_transcript(path):
             facts.tool_calls.append((moment, block.get("name"), block.get("input") or {}))
             if block.get("name") in TASK_TOOL_NAMES:
                 facts.task_tool_calls.append((moment, block.get("name"), block.get("input") or {}))
-        if record.get("type") == "user" and "<task-id>" in (text := message_text(record)):
+        if "<task-id>" in (text := task_notification_carrier_text(record)):
             for notification in threshold_hook.TASK_NOTIFICATION_PATTERN.findall(text):
                 interim = interim_recognizer.task_notification_is_interim(notification)
                 for task_id in TASK_NOTIFICATION_TASK_ID_PATTERN.findall(notification):
