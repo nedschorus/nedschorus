@@ -85,6 +85,15 @@ later,
 since a suite runs in a session of its own and, outside an nc-test-sandbox,
 outlives a runner killed with SIGKILL.
 
+On a mutant, the test command, like the recorded mutant-killed check's run,
+also gives the runner --remove-temporary-log-directory-once-every-suite-is-judged,
+since a mutant's logs are read by no one when the runner judged every suite:
+this script prints a mutant's runner output only when the runner judged none. The
+baseline's run keeps its logs for the runner's two days, since a baseline
+that fails is printed with each failing suite's log. The test command tells
+the two apart by MUTANT_RUN_ENVIRONMENT_VARIABLE, which this script sets
+only for `cosmic-ray exec` and the parallel workers, which run mutants alone.
+
 PARALLEL MUTANTS. --parallel-mutant-workers N runs N mutants at once, each in a
 scratch worktree of its own at the head, since each worker edits its mutant into
 the file on disk; it needs --cosmic-ray-venv, whose python runs the workers.
@@ -261,6 +270,9 @@ COSMIC_RAY_SESSION_PENDING_MUTANTS_RUN_BY_PARALLEL_WORKERS_FLAG = "--cosmic-ray-
 COSMIC_RAY_SESSION_PENDING_MUTANTS_COUNT_SQL_QUERY = (
     "SELECT COUNT(*) FROM work_items WHERE job_id NOT IN (SELECT job_id FROM work_results)")
 COSMIC_RAY_ONE_WORK_ITEM_MUTATE_AND_TEST_FLAG = "--cosmic-ray-one-work-item-mutate-and-test"
+MUTANT_RUN_ENVIRONMENT_VARIABLE = "MUTATION_TESTING_TEST_COMMAND_RUNS_ON_A_MUTANT"
+TEST_SUITE_RUNNER_LOG_DIRECTORY_REMOVED_ONCE_JUDGED_FLAG = (
+    "--remove-temporary-log-directory-once-every-suite-is-judged")
 
 TEST_SUITE_RUNNER_PATH = Path(__file__).resolve().with_name("run-all-test-suites.py")
 
@@ -455,7 +467,11 @@ def run_test_suite_runner_with_its_stderr_on_stdout_stopped_before_cosmic_ray_li
 
     A runner a signal killed returns the negative signal number, which leaves this process
     nonzero."""
-    test_suite_runner = subprocess.Popen(command, stderr=subprocess.STDOUT)
+    environment = dict(os.environ)
+    if environment.pop(MUTANT_RUN_ENVIRONMENT_VARIABLE, None) is not None:
+        command = [*command[:2], TEST_SUITE_RUNNER_LOG_DIRECTORY_REMOVED_ONCE_JUDGED_FLAG,
+                   *command[2:]]
+    test_suite_runner = subprocess.Popen(command, stderr=subprocess.STDOUT, env=environment)
     try:
         exit_code = test_suite_runner.wait(seconds)
     except subprocess.TimeoutExpired:
@@ -577,9 +593,12 @@ def cosmic_ray_one_work_item_mutate_and_test():
     return 0
 
 
-def test_suite_runner_command(suites, worktree, arguments, recorded_inputs_directory):
+def test_suite_runner_command(suites, worktree, arguments, recorded_inputs_directory,
+                              on_a_mutant=False):
     """The suite runner's command: one run of the suites on the worktree, changing no recording."""
-    command = [sys.executable, str(TEST_SUITE_RUNNER_PATH), "--checkout", str(worktree),
+    command = [sys.executable, str(TEST_SUITE_RUNNER_PATH),
+               *([TEST_SUITE_RUNNER_LOG_DIRECTORY_REMOVED_ONCE_JUDGED_FLAG] if on_a_mutant else []),
+               "--checkout", str(worktree),
                "--python", arguments.python,
                "--recorded-inputs-directory", str(recorded_inputs_directory),
                "--leave-recorded-inputs-and-failure-history-unchanged",
@@ -919,13 +938,15 @@ def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_
         except OSError as error:
             raise CouldNotRun(cosmic_ray_session_not_kept_refusal(path, session, error)) \
                 from error
+    mutant_environment = {**environment, MUTANT_RUN_ENVIRONMENT_VARIABLE: "1"}
     if arguments.parallel_mutant_workers is None:
         run_or_raise([*cosmic_ray, "exec", str(config), str(session)], worktree,
-                     environment, what=f"cosmic-ray exec for {path}")
+                     mutant_environment, what=f"cosmic-ray exec for {path}")
     else:
         run_or_raise([tools["python"], str(Path(__file__).resolve()),
                       COSMIC_RAY_SESSION_PENDING_MUTANTS_RUN_BY_PARALLEL_WORKERS_FLAG,
-                      str(config), str(session), *map(str, worktrees)], worktree, environment,
+                      str(config), str(session), *map(str, worktrees)], worktree,
+                     mutant_environment,
                      what=f"the {len(worktrees)} parallel mutant workers for {path}")
     return outcomes_from_dump(run_or_raise(
         [*cosmic_ray, "dump", str(session)], worktree, environment,
@@ -1335,7 +1356,7 @@ def recorded_mutants_judged_in_one_worktree(to_run, head, arguments, checkout, e
                     shutil.rmtree(cache)
                 mutated = subprocess.run(
                     test_suite_runner_command(suites, worktree, arguments,
-                                              recorded_inputs_directory),
+                                              recorded_inputs_directory, on_a_mutant=True),
                     cwd=str(worktree), env=environment, text=True, stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT, check=False)
                 source_file.write_text(source, encoding="utf-8")

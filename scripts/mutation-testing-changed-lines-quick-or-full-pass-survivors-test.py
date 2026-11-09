@@ -67,6 +67,7 @@ def cosmic_ray_timeout_line_and_test_command_words_for_limit(limit):
              load_script_module().COSMIC_RAY_TEST_COMMAND_RUN_TEST_SUITE_RUNNER_STOPPED_AFTER_SECONDS_FLAG, repr(float(limit))])
 
 CONTROL_DIRECTORY_VARIABLE = "MUTATION_TESTING_CHANGED_LINES_QUICK_OR_FULL_PASS_SURVIVORS_TEST_CONTROL_DIR"
+MUTANT_RUN_ENVIRONMENT_VARIABLE = load_script_module().MUTANT_RUN_ENVIRONMENT_VARIABLE
 
 FAKE_COSMIC_RAY_SOURCE = f'''#!/usr/bin/env python3
 import json, os, pathlib, re, shlex, subprocess, sys
@@ -80,7 +81,8 @@ head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
 with (control / "calls.log").open("a") as log:
     log.write(json.dumps({{"tool": tool, "arguments": arguments,
                           "cwd": os.getcwd(), "head": head,
-                          "session_attended": os.environ.get("CLAUDE_CODE_SESSION_ATTENDED")}}) + "\\n")
+                          "session_attended": os.environ.get("CLAUDE_CODE_SESSION_ATTENDED"),
+                          "on_a_mutant": os.environ.get("{MUTANT_RUN_ENVIRONMENT_VARIABLE}")}}) + "\\n")
 if tool == "python":
     worktrees = arguments[4:]
     (control / "parallel-workers.json").write_text(json.dumps([
@@ -350,6 +352,29 @@ def test_command_output_when_the_machine_lock_is_held(scratch):
              "--only-suites-named", "scripts/thing-test.py"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment,
             timeout=60)
+
+
+def test_command_temporary_log_directories_left(scratch, on_a_mutant):
+    """The runner log directories one run of the real test command and suite runner leaves in
+    its temp directory, on a mutant or on the baseline, its suite passing."""
+    repository, _, _ = scratch_repository(scratch, HEAD_FILES)
+    temp_dir = Path(scratch) / "tmp"
+    temp_dir.mkdir()
+    environment = {name: value for name, value in os.environ.items()
+                   if name != MUTANT_RUN_ENVIRONMENT_VARIABLE}
+    environment[load_test_suite_runner().SIGNAL_SANDBOX_INSIDE_VARIABLE] = "1"
+    environment["TMPDIR"] = str(temp_dir)
+    if on_a_mutant:
+        environment[MUTANT_RUN_ENVIRONMENT_VARIABLE] = "1"
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), load_script_module().COSMIC_RAY_TEST_COMMAND_RUN_TEST_SUITE_RUNNER_STOPPED_AFTER_SECONDS_FLAG,
+         "60.0", sys.executable, str(SCRIPT.with_name("run-all-test-suites.py")),
+         "--checkout", str(repository), "--lock-file", str(Path(scratch) / "machine.lock"),
+         "--recorded-inputs-directory", str(Path(scratch) / "recordings"),
+         "--leave-recorded-inputs-and-failure-history-unchanged",
+         "--only-suites-named", "scripts/thing-test.py"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment, timeout=60)
+    return completed, sorted(path.name for path in temp_dir.glob("run-all-test-suites-*"))
 
 
 def killed_with_output(output):
@@ -1321,6 +1346,11 @@ def run_parallel_mutants_and_kept_sessions_cases():
                   str(SCRIPT.resolve()),
                   load_script_module().COSMIC_RAY_SESSION_PENDING_MUTANTS_RUN_BY_PARALLEL_WORKERS_FLAG],
               f"rc={completed.returncode} steps={steps} err={completed.stderr}")
+        check("the parallel workers run with the variable that marks a mutant's run, and the "
+              "baseline without it",
+              [c["on_a_mutant"] for c in recorded if c["tool"] == "python"] == ["1"]
+              and [c["on_a_mutant"] for c in recorded if c["arguments"][:1] == ["baseline"]]
+              == [None], recorded)
         check("each of the 3 workers has a worktree of its own at the head, the first the one "
               "cosmic-ray's own steps run in",
               len(workers) == 3 and len({worktree for worktree, _ in workers}) == 3
@@ -1345,6 +1375,9 @@ def run_parallel_mutants_and_kept_sessions_cases():
               and steps == ["baseline", "dump", "exec", "dump"]
               and calls(control)[2]["arguments"][2] == str(sessions.resolve() / kept[0]),
               f"rc={completed.returncode} steps={steps} out={completed.stdout}")
+        check("cosmic-ray exec runs with the variable that marks a mutant's run, and the "
+              "baseline without it",
+              [c["on_a_mutant"] for c in calls(control)[:3]] == [None, None, "1"], calls(control))
         for pending, wanted_steps, wanted_out in [
                 (0, ["dump"], "so neither its baseline nor any mutant runs"),
                 (1, ["baseline", "dump", "exec", "dump"], "so only its mutants with no result run")]:
@@ -1712,6 +1745,18 @@ def run_cases():
             check(case_name,
                   completed.returncode == wanted_exit and wanted_text in completed.stdout,
                   f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    for on_a_mutant, left_count, case_name in (
+            (True, 0, "on a mutant, the test command's runner removes its log directory once "
+                      "it judged every suite"),
+            (False, 1, "on the baseline, the test command's runner keeps its log directory for "
+                       "the runner's two days, for the failing suites a baseline refusal cites")):
+        with tempfile.TemporaryDirectory() as scratch_name:
+            completed, left = test_command_temporary_log_directories_left(scratch_name,
+                                                                          on_a_mutant)
+        check(case_name, completed.returncode == 0 and len(left) == left_count,
+              f"rc={completed.returncode} left={left} out={completed.stdout} "
+              f"err={completed.stderr}")
 
     # The machine lock's refusal, as the real test command and suite runner print it, reaches
     # the output cosmic-ray records, and the mutant is ERRORED with it.

@@ -219,21 +219,22 @@ def make_repo(root, tracked, untracked=None, commit=True):
 
 
 def run(root, *arguments, checkout=None, lock_file=None, rendezvous_seconds="20",
-        environment_extra=None, driver=None):
+        environment_extra=None, driver=None, log_dir_given=True):
     """The program run against root/repo with its own lock and log directory.
 
     environment_extra goes into the environment the PROGRAM is launched with,
     which is how a case gives the program's own process an ambient variable
     and then asks what its suites saw. driver, Python source given the program's
     path and arguments, runs the program in its place, as TIME_LIMITS_SHORTENED_DRIVER
-    does."""
+    does. Without log_dir_given the program makes its own temporary log directory,
+    under the TMPDIR environment_extra names."""
     environment = dict(os.environ)
     environment[RAN_FILE_VARIABLE] = str(root / "ran.txt")
     environment[RENDEZVOUS_WAIT_VARIABLE] = rendezvous_seconds
     environment.update(environment_extra or {})
     command = [sys.executable, *(("-c", driver) if driver else ()), str(PROGRAM),
                "--checkout", str(checkout if checkout is not None else root / "repo"),
-               "--log-dir", str(root / "logs"),
+               *(("--log-dir", str(root / "logs")) if log_dir_given else ()),
                "--lock-file", str(lock_file if lock_file is not None else root / "run.lock"),
                "--recorded-inputs-directory", str(root / "recordings"),
                "--suite-files-only-strace-saw-lists-directory", str(root / "recordings"),
@@ -3194,6 +3195,69 @@ check("a negative --wait-for-lock-seconds is a bad invocation, exit 2",
 check("--lock-file defaults to one file per machine under ~/.claude",
       pathlib.Path(defaults.lock_file) == pathlib.Path.home() / ".claude"
       / ".run-all-test-suites.lock", defaults.lock_file)
+
+# --- A judged run's temporary log directory goes at its end, on request ---
+REMOVE_JUDGED_LOG_DIRECTORY_FLAG = "--remove-temporary-log-directory-once-every-suite-is-judged"
+# The suite's TMPDIR is a directory the runner made in the temp directory its log directory is in.
+MAKES_ITS_RUN_LOG_DIRECTORY_UNREMOVABLE = """for log_dir in pathlib.Path(os.environ["TMPDIR"]).parent.glob("run-all-test-suites-*"):
+    kept = log_dir / "kept"
+    (kept / "inner").mkdir(parents=True)
+    kept.chmod(0o500)
+print("ok")
+"""
+
+
+def run_with_temporary_log_directory(tracked, *flags):
+    """(result, log directories left in the run's temp directory, run records left), and the
+    scratch root, which the caller removes."""
+    scratch = pathlib.Path(tempfile.mkdtemp())
+    make_repo(scratch, tracked)
+    temp_dir = scratch / "tmp"
+    temp_dir.mkdir()
+    result = run(scratch, *flags, log_dir_given=False,
+                 environment_extra={"TMPDIR": str(temp_dir)})
+    left = sorted(path.name for path in temp_dir.glob("run-all-test-suites-*"))
+    records_dir = scratch / "run.lock.runs"
+    records = [json.loads(path.read_text()) for path in sorted(records_dir.glob("*.json"))]
+    return scratch, result, left, records
+
+
+if linux_only_cases_run_here("a judged run's temporary log directory removed at its end"):
+    scratch, result, left, records = run_with_temporary_log_directory({"a-test.py": PASSES})
+    check("without the flag, a run's temporary log directory and run record are kept",
+          result.returncode == 0 and len(left) == 1 and len(records) == 1, (result, left, records))
+    shutil.rmtree(scratch)
+    for tracked, exit_code, case in (
+            ({"a-test.py": PASSES}, 0, "every suite passed"),
+            ({"a-test.py": PASSES, "b-test.py": "sys.exit(1)\n"}, 1, "a suite failed")):
+        scratch, result, left, records = run_with_temporary_log_directory(
+            tracked, REMOVE_JUDGED_LOG_DIRECTORY_FLAG)
+        check(f"with the flag, when {case}, the run's temporary log directory and run record "
+              f"are removed at its end, and the exit code is unchanged",
+              result.returncode == exit_code and left == [] and records == [],
+              (result, left, records))
+        shutil.rmtree(scratch)
+    scratch, result, left, records = run_with_temporary_log_directory(
+        {"a-test.py": MAKES_ITS_RUN_LOG_DIRECTORY_UNREMOVABLE}, REMOVE_JUDGED_LOG_DIRECTORY_FLAG)
+    check("with the flag, a log directory that cannot be removed is reported on standard error, "
+          "and its finished run record is kept for a later run to remove it",
+          result.returncode == 0 and len(left) == 1
+          and f"could not remove the log directory {scratch / 'tmp' / left[0]}" in result.stderr
+          and len(records) == 1 and records[0]["finished"],
+          (result, left, records))
+    for kept in scratch.glob("tmp/run-all-test-suites-*/kept"):
+        kept.chmod(0o700)
+    shutil.rmtree(scratch)
+
+with contextlib.redirect_stderr(io.StringIO()) as refused_with_log_dir:
+    try:
+        module.parse_arguments(["--log-dir", "x", "--remove-temporary-log-directory-once-every-suite-is-judged"])
+        with_log_dir_exit = None
+    except SystemExit as stopped:
+        with_log_dir_exit = stopped.code
+check("the flag that removes a judged run's temporary log directory refuses --log-dir, exit 2",
+      with_log_dir_exit == 2 and "leave out --log-dir" in refused_with_log_dir.getvalue(),
+      (with_log_dir_exit, refused_with_log_dir.getvalue()))
 
 print()
 # The count is printed so a short run is visible on sight: a run that ends

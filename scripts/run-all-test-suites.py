@@ -11,6 +11,7 @@ Usage:
                                  [--suite-files-only-strace-saw-lists-directory DIR]
                                  [--leave-recorded-inputs-and-failure-history-unchanged]
                                  [--stop-at-first-failing-suite]
+                                 [--remove-temporary-log-directory-once-every-suite-is-judged]
                                  [--only-suites-named SUITE [SUITE ...]]
 
   --checkout    the top directory of the checkout to test; default, the
@@ -23,8 +24,9 @@ Usage:
                 of suites to run when that is fewer
   --log-dir     where each suite's output and the report are written;
                 default, a new directory under the system temp directory,
-                removed two days after its run ends. Two runs cannot share
-                one --log-dir: the second exits 3
+                removed two days after its run ends, or at its end with
+                --remove-temporary-log-directory-once-every-suite-is-judged.
+                Two runs cannot share one --log-dir: the second exits 3
   --lock-file   default ~/.claude/.run-all-test-suites.lock. Where each suite
                 runs in an nc-test-sandbox (Linux with bwrap), no lock is taken: the
                 run records and the admission directory beside this path are
@@ -65,6 +67,14 @@ Usage:
                 stop signal does, and start no other; the run exits 1, and
                 each suite killed is reported as stopped, not as failed. A
                 suite whose nc-test-sandbox did not start does not stop the run
+  --remove-temporary-log-directory-once-every-suite-is-judged
+                at the end of a run that judged every suite it ran, passed or
+                failed, remove its log directory and run record at once,
+                instead of two days later; a run that left a suite not run,
+                could not write its records, or was stopped by a signal keeps
+                them as usual. For a caller that reads only this program's
+                output, such as the mutation pass on each mutant. Not with
+                --log-dir, whose directory is the caller's to remove
   --only-suites-named SUITE [SUITE ...]
                 run only these suites, each named by its path from the
                 checkout's top directory, as git lists it; a name git does
@@ -1668,6 +1678,10 @@ class RunRecord:
             self.content["suite_processes"].append(
                 {"pid": pid, "start_ticks": start_ticks, "namespace_init": namespace_init})
             self.write()
+
+    def discard(self):
+        with self.lock:
+            self.path.unlink(missing_ok=True)
 
     def finish(self):
         with self.lock:
@@ -3970,12 +3984,17 @@ def parse_arguments(argv):
     parser.add_argument("--leave-recorded-inputs-and-failure-history-unchanged",
                         dest="leave_records_unchanged", action="store_true")
     parser.add_argument("--stop-at-first-failing-suite", action="store_true")
+    parser.add_argument("--remove-temporary-log-directory-once-every-suite-is-judged",
+                        dest="remove_judged_log_dir", action="store_true")
     parser.add_argument("--only-suites-named", nargs="+", metavar="SUITE")
     arguments = parser.parse_args(argv)
     if arguments.jobs is not None and arguments.jobs < 1:
         parser.error("-j takes a whole number of at least 1")
     if arguments.wait_for_lock_seconds < 0:
         parser.error("--wait-for-lock-seconds takes a number of seconds of at least 0")
+    if arguments.remove_judged_log_dir and arguments.log_dir:
+        parser.error("--remove-temporary-log-directory-once-every-suite-is-judged removes only "
+                     "the log directory this program makes; leave out --log-dir, or this flag")
     return arguments
 
 
@@ -4432,6 +4451,15 @@ def main(argv=None, platform=None):
                     f"{len(results)} total; {skip_count} cases skipped in {len(skipping)} "
                     f"suites; {top.name} at {commit[:12]}; {version}{not_selected}{left_out_note}")
         report.close()
+        if arguments.remove_judged_log_dir and not (not_run or records_failed):
+            why = remove_tree_or_say_why(log_dir)
+            if why is None:
+                if run_record is not None:
+                    run_record.discard()
+                run_record = None
+            else:
+                print(f"{PROGRAM}: could not remove the log directory {log_dir} ({why}); a "
+                      f"later run removes it two days after this run ended", file=sys.stderr)
         if run_record is not None:
             run_record.finish()
         # A failing suite outranks a suite not run and missing records, since a caller that
