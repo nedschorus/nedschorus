@@ -11,12 +11,16 @@ runs of the same test left: a directory of this account whose name is the
 test's prefix followed by mkdtemp's eight-character suffix, and under which
 nothing has changed for LEFT_BY_A_KILLED_RUN_AFTER_UNCHANGED_SECONDS, longer
 than any run of a test lasts, so a directory another run still writes in is kept.
+Given no temp directory, it sweeps /tmp as well as the system temp directory,
+because Python falls back to /var/tmp when /tmp has no free inodes, which is
+when the leftovers in /tmp most need removing.
 
 It does not remove a directory named otherwise, such as one a killed run of a
 test that does not use this module left, nor one an earlier run on another
 machine left. A directory it cannot read or remove is kept and named on
-standard error, with the reason, and the run goes on: the failure costs only
-disk space, which the next run tries again to recover.
+standard error, with the reason, and the run goes on in a new scratch
+directory: the failure costs only disk space, which the test's next run tries
+again to recover.
 
 Load it by path, under the snake_case form of its file name:
 
@@ -34,6 +38,7 @@ from pathlib import Path
 
 LEFT_BY_A_KILLED_RUN_AFTER_UNCHANGED_SECONDS = 3 * 60 * 60
 MKDTEMP_SUFFIX_SHAPE = r"[a-z0-9_]{8}"
+TMP = Path("/tmp")
 
 
 def newest_modification_time_in_tree(directory):
@@ -51,13 +56,19 @@ def newest_modification_time_in_tree(directory):
 def remove_scratch_directories_killed_runs_left(prefix, temp_dir=None, now=None,
                                                 unchanged_seconds=LEFT_BY_A_KILLED_RUN_AFTER_UNCHANGED_SECONDS):
     """Remove each directory named prefix + mkdtemp's suffix, of this account, unchanged for
-    unchanged_seconds; return (removed, kept), kept being (path, reason) for each one that
-    could not be read or removed."""
-    temp_dir = Path(tempfile.gettempdir() if temp_dir is None else temp_dir)
+    unchanged_seconds, in temp_dir, or else in the system temp directory and /tmp;
+    return (removed, kept), kept being (path, reason) for each one that could not be
+    read or removed."""
+    if temp_dir is None:
+        temp_dirs = list(dict.fromkeys(path for path in (Path(tempfile.gettempdir()), TMP) if path.is_dir()))
+    else:
+        temp_dirs = [Path(temp_dir)]
     now = time.time() if now is None else now
     shape = re.compile(re.escape(prefix) + MKDTEMP_SUFFIX_SHAPE)
     removed, kept = [], []
-    for directory in sorted(temp_dir.glob(f"{glob_escape(prefix)}*")):
+    candidates = [directory for parent in temp_dirs
+                  for directory in sorted(parent.glob(f"{glob_escape(prefix)}*"))]
+    for directory in candidates:
         try:
             if (not shape.fullmatch(directory.name) or directory.is_symlink()
                     or not directory.is_dir() or directory.lstat().st_uid != os.getuid()):
@@ -83,5 +94,6 @@ def scratch_directory_after_removing_ones_killed_runs_left(prefix, temp_dir=None
     _removed, kept = remove_scratch_directories_killed_runs_left(prefix, temp_dir=temp_dir)
     for directory, reason in kept:
         print(f"{prefix}: could not remove {directory}, which an earlier killed run of this test "
-              f"left ({reason}); the test goes on, and its next run tries again.", file=sys.stderr)
+              f"left ({reason}); the test goes on in a new scratch directory, and the test's next run "
+              f"tries again to remove it.", file=sys.stderr)
     return Path(tempfile.mkdtemp(prefix=prefix, dir=temp_dir)).resolve()

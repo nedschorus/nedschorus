@@ -83,9 +83,10 @@ try:
     removed, kept = common.remove_scratch_directories_killed_runs_left(PREFIX, temp_dir=temp_dir, now=LATER)
     check("once unchanged long enough, the killed run's directory is removed",
           not left.exists() and removed == [left], (removed, kept))
-    check("a directory of another prefix, a longer name and a link are kept",
-          other_name.is_dir() and longer_name.is_dir() and link.is_symlink() and target_of_link.is_dir(),
-          sorted(path.name for path in temp_dir.iterdir()))
+    check("a directory of another prefix, a longer name and a link are kept, and none is reported",
+          other_name.is_dir() and longer_name.is_dir() and link.is_symlink() and target_of_link.is_dir()
+          and kept == [],
+          (sorted(path.name for path in temp_dir.iterdir()), kept))
 
     stuck = temp_dir / f"{PREFIX}stuck123"
     (stuck / "inner").mkdir(parents=True)
@@ -114,6 +115,46 @@ try:
     finally:
         os.chmod(stuck / "inner", 0o700)
     shutil.rmtree(stuck)
+
+    old_top_fresh_inside = temp_dir / f"{PREFIX}freshins"
+    old_top_fresh_inside.mkdir()
+    (old_top_fresh_inside / "file").write_text("x")
+    os.utime(old_top_fresh_inside, (long_ago, long_ago))
+    removed, kept = common.remove_scratch_directories_killed_runs_left(PREFIX, temp_dir=temp_dir)
+    check("a directory whose own time is old but which holds a file changed lately is kept",
+          old_top_fresh_inside.is_dir() and removed == [] and kept == [], (removed, kept))
+    shutil.rmtree(old_top_fresh_inside)
+
+    other_owners = temp_dir / f"{PREFIX}otherown"
+    other_owners.mkdir()
+    os.utime(other_owners, (long_ago, long_ago))
+    real_getuid = os.getuid
+    common.os.getuid = lambda: real_getuid() + 1
+    try:
+        removed, kept = common.remove_scratch_directories_killed_runs_left(PREFIX, temp_dir=temp_dir)
+    finally:
+        common.os.getuid = real_getuid
+    check("a directory of another account is kept",
+          other_owners.is_dir() and removed == [] and kept == [], (removed, kept))
+    other_owners.rmdir()
+
+    fallback_temp_dir = temp_dir / "fallback-temp-dir"
+    fallback_temp_dir.mkdir()
+    left_in_tmp = temp_dir / f"{PREFIX}intmp123"
+    left_in_fallback = fallback_temp_dir / f"{PREFIX}infallbk"
+    for path in (left_in_tmp, left_in_fallback):
+        path.mkdir()
+        os.utime(path, (long_ago, long_ago))
+    real_tmp = common.TMP
+    common.tempfile = type("TempfileStandIn", (), {"gettempdir": staticmethod(lambda: str(fallback_temp_dir))})
+    common.TMP = temp_dir
+    try:
+        removed, kept = common.remove_scratch_directories_killed_runs_left(PREFIX)
+    finally:
+        common.tempfile, common.TMP = tempfile, real_tmp
+    check("given no temp directory, a sweep whose system temp directory fell back from /tmp sweeps /tmp too",
+          sorted(removed) == sorted([left_in_tmp, left_in_fallback]) and kept == [], (removed, kept))
+    shutil.rmtree(fallback_temp_dir)
 
     vanishing = temp_dir / f"{PREFIX}aaaaaaaa"
     staying = temp_dir / f"{PREFIX}bbbbbbbb"
