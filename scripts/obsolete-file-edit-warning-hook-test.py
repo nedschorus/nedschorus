@@ -804,6 +804,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     git(["add", "lib/latin1.txt"], detached_origin)
     git(["commit", "-q", "-m", "a file that is not UTF-8"], detached_origin)
     commit_file(detached_origin, "lib/moved.py", "".join(shared_lines), "a file main moves")
+    commit_file(detached_origin, "lib/drifted.py",
+                "".join(f"drifted line {n}\\n" for n in range(1, 13)),
+                "a file main moves and then rewrites")
     detached = tmp / "detached-checkout"
     git(["clone", "-q", str(detached_origin), str(detached)], tmp)
     configure_identity(detached)
@@ -821,6 +824,14 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     git(["commit", "-q", "-m", "main deletes gone.py"], detached_origin)
     git(["mv", "lib/moved.py", "lib/renamed.py"], detached_origin)
     git(["commit", "-q", "-m", "main moves moved.py"], detached_origin)
+    # Moved, then rewritten: the merge-base-to-main diff no longer pairs the two
+    # paths, though the moving commit's own diff does.
+    git(["mv", "lib/drifted.py", "lib/drifted-to.py"], detached_origin)
+    git(["commit", "-q", "-m", "main moves drifted.py"], detached_origin)
+    (detached_origin / "lib" / "drifted-to.py").write_text(
+        "".join(f"rewritten line {n}\n" for n in range(1, 13)), encoding="utf-8")
+    git(["add", "lib/drifted-to.py"], detached_origin)
+    git(["commit", "-q", "-m", "main rewrites drifted-to.py"], detached_origin)
     git(["fetch", "-q", "origin"], detached)
     deleting_commit = git(["log", "-1", "--format=%h (%s)", "origin/main", "--",
                            "lib/gone.py"], detached).stdout.strip()
@@ -890,25 +901,69 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "that job on main now. If no file on main does that job, drop the edit and "
               "do not make the fix."), warning)
     # A git log that prints a line and then fails, by exit code or by a signal,
-    # has not named the deleting commit, so the line names none.
+    # has not named the commit that removed the path, so the hook cannot tell a
+    # move from a deletion: the could-not-tell line, said again at the next edit.
     rename_listing = '[ "$1" = "diff" ] && [ "$5" = "--diff-filter=R" ]'
     deleting_lookup = '[ "$1" = "log" ] && [ "$3" = "--format=%h (%s)" ]'
-    for case_name, shim_name, action in (
+    for case_name, shim_name, action, fallback in (
             ("exits non-zero", "deleting-log-exit-failing-git",
-             'printf "abc1234 (partial)\\n"; exit 128'),
+             'printf "abc1234 (partial)\\n"; exit 128', "(git log exited 128)"),
             ("is killed by a signal", "deleting-log-killed-git",
-             'printf "abc1234 (partial)\\n"; kill -KILL $$')):
+             'printf "abc1234 (partial)\\n"; kill -KILL $$', "(git log exited -9)")):
         gone_file.write_text(f"the agent edited this, {shim_name}\n", encoding="utf-8")
-        warning = agent_text(run_hook(
-            hook_payload(detached, gone_file),
-            path_prefix=git_shimmed_when(shim_name, deleting_lookup, action)))
-        check(f"detached: when the git log that names the deleting commit {case_name}, "
-              "the deleted-file line names no commit",
+        shim_directory = git_shimmed_when(shim_name, deleting_lookup, action)
+        warning = agent_text(run_hook(hook_payload(detached, gone_file),
+                                      path_prefix=shim_directory))
+        check(f"detached: when the git log that names the removing commit {case_name}, "
+              "the line says git could not tell moved from deleted, with its exit code",
               warning.split("\n")[-1].startswith(
-                  "main deleted lib/gone.py, so your edit has no file to land in.")
+                  "main no longer has a file at lib/gone.py, and git could not tell "
+                  "whether main moved or deleted it " + fallback + ". ")
               and "abc1234" not in warning, warning)
-        # Back to the line that names the commit, so the next case is no repeat.
-        detached_warning(gone_file)
+        repeated = agent_text(run_hook(hook_payload(detached, gone_file),
+                                       path_prefix=shim_directory))
+        check(f"detached: when the git log that names the removing commit {case_name}, "
+              "the same line at the next edit is said again, never held back as a repeat",
+              repeated == warning, repeated)
+    removing_commit_show = '[ "$1" = "show" ] && [ "$2" = "-z" ]'
+    gone_file.write_text("the agent edited this, removing-show-failing-git\n",
+                         encoding="utf-8")
+    show_failing_directory = git_shimmed_when(
+        "removing-show-failing-git", removing_commit_show,
+        'printf "fatal: shimmed show\\n" >&2; exit 128')
+    warning = agent_text(run_hook(hook_payload(detached, gone_file),
+                                  path_prefix=show_failing_directory))
+    check("detached: when git cannot show the removing commit's own renames, the line "
+          "says it could not tell moved from deleted, with git's text",
+          warning.split("\n")[-1].startswith(
+              "main no longer has a file at lib/gone.py, and git could not tell whether "
+              "main moved or deleted it (fatal: shimmed show). "), warning)
+    repeated = agent_text(run_hook(hook_payload(detached, gone_file),
+                                   path_prefix=show_failing_directory))
+    check("detached: that could-not-tell line at the next edit is said again, never "
+          "held back as a repeat", repeated == warning, repeated)
+    show_silent_directory = git_shimmed_when(
+        "removing-show-silent-failing-git", removing_commit_show, "exit 128")
+    gone_file.write_text("the agent edited this, removing-show-silent-failing-git\n",
+                         encoding="utf-8")
+    warning = agent_text(run_hook(hook_payload(detached, gone_file),
+                                  path_prefix=show_silent_directory))
+    check("detached: when that show fails with no error text, the line names git's "
+          "exit code",
+          "could not tell whether main moved or deleted it (git show exited 128). "
+          in warning, warning)
+    # Back to the line that names the commit, so later cases are no repeat.
+    detached_warning(gone_file)
+
+    drifted_file = detached / "lib/drifted.py"
+    drifted_file.write_text("the agent edited the drifted file\n", encoding="utf-8")
+    warning = detached_warning(drifted_file)
+    check("detached: a file main moved and then rewrote past rename detection is told "
+          "its new path, not that main deleted it",
+          warning.split("\n")[-1].startswith(
+              "main moved lib/drifted.py to lib/drifted-to.py.")
+          and "main deleted" not in warning, warning)
+    git(["checkout", "-q", "--", "lib/drifted.py"], detached)
 
     moved_file = detached / "lib/moved.py"
     moved_file.write_text("".join(edited_far_away), encoding="utf-8")
@@ -1130,6 +1185,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "This checkout is on a detached HEAD, and git could not check whether its "
               "commits are already on a remote branch, so treat them as pushed")
           and "git rebase origin/main" not in warning, warning)
+    repeated = agent_text(run_hook(hook_payload(detached, shared_file),
+                                   path_prefix=own_commits_failing_git_directory))
+    check("detached, push state unknown: the same edit at the next run gives the "
+          "push-state line again, never held back as a repeat",
+          repeated == warning, repeated)
 
     branch_state_failing_git_directory = tmp / "branch-state-failing-git"
     branch_state_failing_git_directory.mkdir()

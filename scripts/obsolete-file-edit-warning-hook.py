@@ -474,9 +474,10 @@ def main_lost_file_line(freshness, checkout: Path, merge_base: str,
                         repository_path: str, pushed: bool):
     """(line, whether the line reports a git failure) for an edit at a path
     origin/main no longer has: the moved line naming main's new path when main
-    renamed the file, else the deleted line, naming the deleting commit when git
-    can find it; the unknown line, with git's text, when git could not list main's
-    renames."""
+    renamed the file, by the merge-base-to-main diff or by the diff of the commit
+    that removed the path; else the deleted line, naming that commit when git
+    names one; the unknown line, with git's text, when any of those git steps
+    fails."""
     renamed = freshness.run_git(
         ["diff", "-z", "--name-status", "-M", "--diff-filter=R", merge_base,
          "origin/main"], checkout, timeout=OBSOLETE_DIFF_TIMEOUT_SECONDS)
@@ -490,7 +491,23 @@ def main_lost_file_line(freshness, checkout: Path, merge_base: str,
     deleting = freshness.run_git(
         ["log", "-1", "--format=%h (%s)", "origin/main", "--", repository_path],
         checkout, timeout=COMMIT_COUNT_TIMEOUT_SECONDS)
-    commit = deleting.stdout.strip() if deleting.returncode == 0 else ""
+    if deleting.returncode != 0:
+        text = (deleting.stderr or "").strip() or "git log exited %d" % deleting.returncode
+        return MAIN_LOST_FILE_UNKNOWN_LINE.format(path=repository_path, text=text), True
+    commit = deleting.stdout.strip()
+    if commit:
+        # The merge-base-to-main diff misses a move when main also changed the file
+        # enough afterwards; the removing commit's own diff still pairs the two paths.
+        removing = freshness.run_git(
+            ["show", "-z", "--name-status", "-M", "--format=", commit.split(" ", 1)[0]],
+            checkout, timeout=COMMIT_COUNT_TIMEOUT_SECONDS)
+        if removing.returncode != 0:
+            text = (removing.stderr or "").strip() or "git show exited %d" % removing.returncode
+            return MAIN_LOST_FILE_UNKNOWN_LINE.format(path=repository_path, text=text), True
+        for entry in freshness.git_output.name_status_entries(removing.stdout):
+            if entry.status[:1] == "R" and entry.origin_path == repository_path and entry.path:
+                moved = MAIN_MOVED_FILE_PUSHED_LINE if pushed else MAIN_MOVED_FILE_LINE
+                return moved.format(path=repository_path, new_path=entry.path), False
     return MAIN_DELETED_FILE_LINE.format(
         path=repository_path, deleted_in=f" in commit {commit}" if commit else ""), False
 
