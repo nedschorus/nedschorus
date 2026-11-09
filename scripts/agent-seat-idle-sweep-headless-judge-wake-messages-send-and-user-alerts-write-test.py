@@ -999,6 +999,11 @@ machine.run(1)
 check("a read failure not met again: its end is logged",
       [event["event"] for event in machine.events() if event["event"].startswith("read_failure")]
       == ["read_failure", "read_failure_ended"], machine.events())
+machine.script()
+machine.run(2)
+check("a read failure already ended: a second clean run logs no second end",
+      [event["event"] for event in machine.events() if event["event"].startswith("read_failure")]
+      == ["read_failure", "read_failure_ended"], machine.events())
 state_file.write_text("{not json")
 code, _ = machine.run(10)
 check("the failure back days later: logged anew, no user-alert at once",
