@@ -494,7 +494,7 @@ check("--help ends with the docstring's exit-codes paragraph and prints nothing 
           "invocation, a table this program cannot use, a machine the table does not name, a "
           "job's program missing, a crontab that could not be read, or a shell parser that "
           "could not be installed; or for --check, a job not checked because `launchctl print` "
-          "could not report it.")
+          "could not report it, or a crontab line it could not read.")
       and "WHY THIS EXISTS" not in help_text and "THE TABLE is " not in help_text
       and "user-ruled" not in help_text, help_text)
 check("--check's help names both reasons for exit 1",
@@ -1353,9 +1353,31 @@ with tempfile.TemporaryDirectory() as temporary:
     check("--check reports a line that runs a program from the clone, directly, through env "
           "or at reboot, and not a line that sets PATH to the clone, only reads or writes "
           "a file there, or gives env or an interpreter an option such as `env -C <clone>/data`",
-          exit_code == 1 and printed.count("NOT IN THE TABLE: ") == 3
+          printed.count("NOT IN THE TABLE: ") == 3
           and all(f"NOT IN THE TABLE: the crontab line {line} — " in printed for line in runs)
           and not any(line in printed for line in not_runs), (exit_code, printed))
+    unread = [env_option_takes_a_clone_directory, interpreter_option]
+    check("and names on stderr each line that gives env or an interpreter an option as NOT "
+          "CHECKED, and exits 2, not 1 or 0",
+          exit_code == 2 and errors.count("NOT CHECKED: the crontab line ") == 2
+          and all(f"NOT CHECKED: the crontab line {line} — it gives an interpreter or env an "
+                  f"option" in errors for line in unread)
+          and f"add its job to {FIXTURE_TABLE_PATH} through a pull request" in errors,
+          (exit_code, errors))
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [BOX_MIRROR, BOX_DAILY, BOX_ALONE, interpreter_option]).encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("--check with every job matching and one line it cannot read does not report a clean "
+          "result: it names the line NOT CHECKED and exits 2",
+          exit_code == 2 and printed.count("matches: ") == 3 and "NOT IN THE TABLE" not in printed
+          and f"NOT CHECKED: the crontab line {interpreter_option} — " in errors,
+          (exit_code, printed, errors))
+    exit_code, printed, errors = run_main(["--check"] + TWO_JOBS, NED_BOX, stub)
+    check("and --check limited by --job does not read that line",
+          exit_code == 0 and errors == "", (exit_code, errors))
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [path_setting, BOX_MIRROR, BOX_DAILY, BOX_ALONE]
+        + not_runs + runs).encode())
     exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
     check("--remove-not-in-table takes out only those three, and keeps the PATH line, the "
           "lines that only touch a file in the clone and the lines with an option",

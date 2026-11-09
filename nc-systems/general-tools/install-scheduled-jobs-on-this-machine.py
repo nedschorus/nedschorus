@@ -126,7 +126,9 @@ through an interpreter, and is no cron job's line of the table — not a
 comment, not a line that sets a variable, and not a line that only reads or
 writes a file in the clone; and a plist carrying
 PLIST_WRITTEN_BY_THIS_PROGRAM whose label is no launchd job's of the table.
-A plist written before that line existed is not found.
+A plist written before that line existed is not found. A cron line whose
+programs this program cannot tell, because it gives an interpreter or env an
+option or defines a function, is reported NOT CHECKED instead.
 --remove-not-in-table takes exactly those off, except a cron line that also
 runs a job that is not a program of the clone: it reports that line as KEPT
 and leaves it for a person to edit, since removing it would stop the other
@@ -144,7 +146,8 @@ this program began changing the machine, or for --check a job differs or is
 not in the table; 2 not run — a bad invocation, a table this program cannot
 use, a machine the table does not name, a job's program missing, a crontab
 that could not be read, or a shell parser that could not be installed; or for
---check, a job not checked because `launchctl print` could not report it.
+--check, a job not checked because `launchctl print` could not report it, or
+a crontab line it could not read.
 
 Every option of main() beyond argv is a seam for
 tests/install-scheduled-jobs-on-this-machine-test.py, which installs nothing
@@ -730,6 +733,21 @@ def _program_of_a_cron_job(words):
     return None
 
 
+def _cron_lines_of_placed_jobs(placed: list, lines: list) -> set:
+    # A retired line sharing a current job's filename belongs to that job for check and install.
+    owned = set()
+    for job, placement in placed:
+        if placement["scheduler"] == "cron":
+            owned.update(lines_of_job(lines, job))
+    return owned
+
+
+def _cron_lines_not_read(placed: list, lines: list) -> list:
+    owned = _cron_lines_of_placed_jobs(placed, lines)
+    return [line for index, line in enumerate(lines) if index not in owned
+            and any(program is None for program, _ in programs_a_cron_line_runs(line))]
+
+
 def cron_lines_not_in_table(machine: dict, placed: list, lines: list) -> list:
     """Return (index, also_runs_others) for cron lines running clone programs absent from the table.
 
@@ -738,11 +756,7 @@ def cron_lines_not_in_table(machine: dict, placed: list, lines: list) -> list:
     pipeline stage that only reads a clone program's output; such a line is
     reported and never removed.
     """
-    # A retired line sharing a current job's filename belongs to that job for check and install.
-    owned = set()
-    for job, placement in placed:
-        if placement["scheduler"] == "cron":
-            owned.update(lines_of_job(lines, job))
+    owned = _cron_lines_of_placed_jobs(placed, lines)
     from_the_clone = f"{machine['clone']}/"
     found = []
     for index, line in enumerate(lines):
@@ -969,6 +983,7 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
         elif not loaded_state_unknown:
             print(f"matches: {name} — {placement['scheduler']}.")
     not_in_table = shares_a_line = 0
+    lines_not_read = []
     if every_job_selected:
         if installed_text is None:
             installed_text = read_crontab(run)
@@ -980,6 +995,7 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
                   f"names it for this machine."
                   + (" The line also runs a job that is not a program of the clone, so "
                      "--remove-not-in-table leaves the line in place." if also_runs_others else ""))
+        lines_not_read = _cron_lines_not_read(placed, lines)
         for plist_path, label in plists_not_in_table(machine, placed, launch_agents_directory):
             not_in_table += 1
             print(f"NOT IN THE TABLE: {plist_path}, label {label} — no job of the table "
@@ -1010,7 +1026,18 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
               f"{placement['label']} loaded is unknown.", file=sys.stderr)
         print(failure.next_steps(rerun_command('--check', name), f"NOT CHECKED: {name}",
                                  drift_line="DIFFERS"), file=sys.stderr)
-    if not_checked:
+    for line in lines_not_read:
+        print(f"NOT CHECKED: the crontab line {line} — it gives an interpreter or env an option, "
+              f"which may take the next word, or defines a function, whose body may never run, "
+              f"so whether it runs a program of the clone that no job of the table names is "
+              f"unknown.", file=sys.stderr)
+    if lines_not_read:
+        print(f"When such a line runs a program of the clone, add its job to {table_path} through "
+              f"a pull request, or take the line off with `crontab -e` on this machine.",
+              file=sys.stderr)
+        print("When it runs no program of the clone, tell the user, quoting the line: --check "
+              "exits 2 for as long as the line is in the crontab.", file=sys.stderr)
+    if not_checked or lines_not_read:
         return 2
     return 1 if differences or not_in_table else 0
 
