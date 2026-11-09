@@ -1375,6 +1375,33 @@ with tempfile.TemporaryDirectory() as temporary:
     exit_code, printed, errors = run_main(["--check"] + TWO_JOBS, NED_BOX, stub)
     check("and --check limited by --job does not read that line",
           exit_code == 0 and errors == "", (exit_code, errors))
+    defines_a_function = f"0 5 * * * f() {{ {box_clone}/scripts/a-helper.py; }}; /usr/bin/other"
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [BOX_MIRROR, BOX_DAILY, BOX_ALONE, interpreter_option,
+                                 defines_a_function]).encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("each NOT CHECKED line names its one cause: the option line its option, the function "
+          "line its function, and neither the other's",
+          exit_code == 2
+          and f"NOT CHECKED: the crontab line {interpreter_option} — it gives an interpreter or "
+              f"env an option, which may take the next word, so whether" in errors
+          and f"NOT CHECKED: the crontab line {defines_a_function} — it defines a function, "
+              f"whose body may never run, so whether" in errors
+          and errors.count("it defines a function") == 1
+          and errors.count("it gives an interpreter or env an option") == 1
+          and "crontab -e" not in errors and "ask the user to take the line off" in errors,
+          (exit_code, errors))
+    daily_behind_an_option = BOX_DAILY.replace(
+        f" {box_clone}/scripts/daily-full-test-run-of-main.py",
+        f" -u {box_clone}/scripts/daily-full-test-run-of-main.py")
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [BOX_MIRROR, daily_behind_an_option, BOX_ALONE]).encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("a table job's own line that gives its interpreter an option is that job's DIFFERS, "
+          "exit 1, and not NOT CHECKED",
+          daily_behind_an_option != BOX_DAILY and exit_code == 1
+          and "DIFFERS: daily-full-test-run-of-main" in printed and "NOT CHECKED" not in errors,
+          (daily_behind_an_option, exit_code, printed, errors))
     stub = MachineStub(crontab="".join(
         line + "\n" for line in [path_setting, BOX_MIRROR, BOX_DAILY, BOX_ALONE]
         + not_runs + runs).encode())

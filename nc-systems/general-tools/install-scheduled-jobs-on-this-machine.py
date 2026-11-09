@@ -128,7 +128,8 @@ writes a file in the clone; and a plist carrying
 PLIST_WRITTEN_BY_THIS_PROGRAM whose label is no launchd job's of the table.
 A plist written before that line existed is not found. A cron line whose
 programs this program cannot tell, because it gives an interpreter or env an
-option or defines a function, is reported NOT CHECKED instead.
+option or defines a function, is reported NOT CHECKED instead, with which of
+the two it does, and --remove-not-in-table leaves it in place.
 --remove-not-in-table takes exactly those off, except a cron line that also
 runs a job that is not a program of the clone: it reports that line as KEPT
 and leaves it for a person to edit, since removing it would stop the other
@@ -674,6 +675,14 @@ def _defines_a_function(command_text: str) -> bool:
     return False
 
 
+def _cron_line_command_text(line: str):
+    special_schedule = line.lstrip().startswith("@")
+    fields = line.split(None, 1 if special_schedule else 5)
+    if len(fields) < (2 if special_schedule else 6):
+        return None
+    return fields[-1]
+
+
 def programs_a_cron_line_runs(line: str) -> list:
     """Return (program, reads_output) for each command a cron line runs, or [] for none.
 
@@ -685,13 +694,12 @@ def programs_a_cron_line_runs(line: str) -> list:
     # Interpreter and env options may consume arguments; guessing could remove an unrelated job.
     if not line.strip() or line.lstrip().startswith("#") or CRON_ENVIRONMENT_ASSIGNMENT.match(line):
         return []
-    special_schedule = line.lstrip().startswith("@")
-    fields = line.split(None, 1 if special_schedule else 5)
-    if len(fields) < (2 if special_schedule else 6):
+    command_text = _cron_line_command_text(line)
+    if command_text is None:
         return []
     try:
-        commands = shell_reader.simple_commands(fields[-1])
-        defines_a_function = _defines_a_function(fields[-1])
+        commands = shell_reader.simple_commands(command_text)
+        defines_a_function = _defines_a_function(command_text)
     except shell_reader.ShellParserUnavailable as error:
         raise shell_parser_refusal(error, line)
     # A function's body may never run.
@@ -743,9 +751,19 @@ def _cron_lines_of_placed_jobs(placed: list, lines: list) -> set:
 
 
 def _cron_lines_not_read(placed: list, lines: list) -> list:
+    """Return (line, cause) for each cron line no table job owns whose programs are unresolved."""
     owned = _cron_lines_of_placed_jobs(placed, lines)
-    return [line for index, line in enumerate(lines) if index not in owned
-            and any(program is None for program, _ in programs_a_cron_line_runs(line))]
+    found = []
+    for index, line in enumerate(lines):
+        programs = programs_a_cron_line_runs(line)
+        if index in owned or not any(program is None for program, _ in programs):
+            continue
+        # programs_a_cron_line_runs returns exactly [(None, False)] for a line defining a function.
+        found.append((line, "it defines a function, whose body may never run"
+                      if programs == [(None, False)]
+                      and _defines_a_function(_cron_line_command_text(line))
+                      else "it gives an interpreter or env an option, which may take the next word"))
+    return found
 
 
 def cron_lines_not_in_table(machine: dict, placed: list, lines: list) -> list:
@@ -914,8 +932,8 @@ def remove_not_in_table_mode(machine, placed, launch_agents_directory: Path,
         print(f"KEPT: not in the table — the crontab line {lines[index]} also runs a job that is "
               f"not a program of the clone, so this program left the line in place.")
     if left_in_place:
-        print("To take the retired job off a KEPT line, edit the line by hand with `crontab -e` on "
-              "this machine, and keep the job that is not the clone's.")
+        print("To take the retired job off a KEPT line, ask the user to edit the line by hand in "
+              "this machine's crontab, and keep the job that is not the clone's.")
     plists = plists_not_in_table(machine, placed, launch_agents_directory)
     every_step_worked = True
     for plist_path, label in plists:
@@ -1017,8 +1035,8 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
               f"through a pull request.")
         if shares_a_line:
             print("When a retired job shares its crontab line with a job that is not the clone's, "
-                  "take the retired job off that line by hand with `crontab -e` on this machine, "
-                  "and keep the other job.")
+                  "ask the user to take the retired job off that line by hand in this machine's "
+                  "crontab, and keep the other job.")
         print(f"To learn whether a job was retired on purpose, run "
               f"`git log -p -- {table_path}` in the clone.")
     for name, placement, failure in not_checked:
@@ -1026,15 +1044,13 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
               f"{placement['label']} loaded is unknown.", file=sys.stderr)
         print(failure.next_steps(rerun_command('--check', name), f"NOT CHECKED: {name}",
                                  drift_line="DIFFERS"), file=sys.stderr)
-    for line in lines_not_read:
-        print(f"NOT CHECKED: the crontab line {line} — it gives an interpreter or env an option, "
-              f"which may take the next word, or defines a function, whose body may never run, "
-              f"so whether it runs a program of the clone that no job of the table names is "
-              f"unknown.", file=sys.stderr)
+    for line, cause in lines_not_read:
+        print(f"NOT CHECKED: the crontab line {line} — {cause}, so whether it runs a program of "
+              f"the clone that no job of the table names is unknown.", file=sys.stderr)
     if lines_not_read:
         print(f"When such a line runs a program of the clone, add its job to {table_path} through "
-              f"a pull request, or take the line off with `crontab -e` on this machine.",
-              file=sys.stderr)
+              f"a pull request, or ask the user to take the line off this machine's crontab "
+              f"by hand.", file=sys.stderr)
         print("When it runs no program of the clone, tell the user, quoting the line: --check "
               "exits 2 for as long as the line is in the crontab.", file=sys.stderr)
     if not_checked or lines_not_read:
