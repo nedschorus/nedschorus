@@ -42,9 +42,10 @@ agent-session, or spends tokens after the user was told.
 How it fails, and what the user sees: a headless agent-session that fails, is stopped, answers
 JSON code cannot use, or sends to the wrong entry or the wrong text; a message missing from the
 agent-seat's transcript; and a read failure slice 1 reports for the same agent-seat with the same
-text at runs 2 minutes or more apart, each become a user-alert, written once, and the invocation
+text at every run for 2 minutes or more, each become a user-alert, written once, and the invocation
 exits 1. A read failure seen once only, such as the last line of a transcript Claude Code is still
-writing, is logged and not alerted. Any other failure, such as an unwritable log, prints a
+writing, is logged and not alerted; a run that does not meet it again logs its end, so that it
+coming back later is dated from its return. Any other failure, such as an unwritable log, prints a
 traceback, writes one user-alert per distinct error, and exits 1. A message step is logged before
 its send, so a failed send is not retried every minute: the wait goes on to its next step.
 The harm it can cause is an extra message to an agent-seat, which costs that agent-seat one turn.
@@ -237,7 +238,12 @@ class SweepLog:
     def __init__(self, path):
         self.path = path
         self.events = []
-        self.cut_short_last_line = False
+        # An event written after a last line with no newline would join it into a line that, no
+        # longer last, would stop every later read. A cut-short line the read skipped is dropped
+        # by truncating to this size; a whole one the read accepted only gets its newline. Set at
+        # the read, so that an append need not read the log again.
+        self.truncate_to = None
+        self.add_newline = False
         if path.exists():
             data = path.read_bytes()
             lines = data.split(b"\n")
@@ -249,28 +255,24 @@ class SweepLog:
                 except (UnicodeDecodeError, ValueError) as error:
                     # A last line with no newline is one an invocation was stopped while writing.
                     if number == len(lines):
-                        self.cut_short_last_line = True
+                        self.truncate_to = data.rfind(b"\n") + 1
                         continue
                     raise IdleSweepLogLineNotUtf8Json(
                         f"{path} line {number} is not UTF-8 JSON: {error}") from error
                 if isinstance(event, dict):
                     self.events.append(event)
+            self.add_newline = (self.truncate_to is None and bool(data)
+                                and not data.endswith(b"\n"))
 
     def append(self, event, now):
         event = {"at": iso(now), **event}
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        if self.path.exists():
-            data = self.path.read_bytes()
-            if data and not data.endswith(b"\n"):
-                # An event written after a last line with no newline would join it into a line
-                # that, no longer last, would stop every later read. A cut-short line the read
-                # skipped is dropped; a whole one the read accepted only gets its newline.
-                if self.cut_short_last_line:
-                    os.truncate(self.path, data.rfind(b"\n") + 1)
-                else:
-                    with self.path.open("ab") as stream:
-                        stream.write(b"\n")
-        self.cut_short_last_line = False
+        if self.truncate_to is not None:
+            os.truncate(self.path, self.truncate_to)
+        elif self.add_newline:
+            with self.path.open("ab") as stream:
+                stream.write(b"\n")
+        self.truncate_to, self.add_newline = None, False
         with self.path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
         self.events.append(event)
@@ -326,8 +328,18 @@ class SweepLog:
                 if event.get("event") == "message_sent" and event["message_id"] not in checked]
 
     def read_failure_first_seen(self, seat, text):
-        return next((event["at"] for event in self.of_seat(seat, "read_failure")
-                     if event["error"] == text), None)
+        """When the failure's current run began: its latest read_failure, unless a
+        read_failure_ended follows it."""
+        first_seen = None
+        for event in self.of_seat(seat, "read_failure", "read_failure_ended"):
+            if event["error"] == text:
+                first_seen = event["at"] if event["event"] == "read_failure" else None
+        return first_seen
+
+    def read_failures_open(self):
+        return {(event["agent_seat"], event["error"]) for event in self.events
+                if event.get("event") == "read_failure"
+                and self.read_failure_first_seen(event["agent_seat"], event["error"])}
 
     def alerted(self, key):
         return any(event.get("event") == "user_alert" and event.get("key") == key
@@ -454,6 +466,7 @@ class Sweep:
         self.timeout_seconds = timeout_seconds
         self.machine = machine
         self.failed = False
+        self.read_failures_this_run = set()
         self.started_monotonic = time.monotonic()
 
     def current(self):
@@ -493,17 +506,21 @@ class Sweep:
         delivery check."""
         prompt = SENDER_PROMPT.format(seat=seat, text=text,
                                       find_the_entry=FIND_THE_ENTRY.format(seat=seat))
+        started_at = self.current()
         outcome = run_headless(prompt, SEND_ANSWER_SCHEMA, SENDING_TOOLS, self.working_directory,
                                self.timeout_seconds)
         problems = [outcome.error] if outcome.error else send_problems(outcome, [seat], text)
         if problems:
             self.headless_failed(seat, f"send its {step} message", "; ".join(problems))
             return False
-        self.message_sent(seat, verdict, text, step)
+        self.message_sent(seat, verdict, text, step, started_at)
         return True
 
-    def message_sent(self, seat, verdict, text, step):
+    def message_sent(self, seat, verdict, text, step, started_at):
+        # The delivery check compares transcript times with the send's start: a sender may run on
+        # for minutes after its SendMessage, and the record is written when it ends.
         self.record({"event": "message_sent", "agent_seat": seat, "step": step, "text": text,
+                     "send_started_at": iso(started_at),
                      "message_id": uuid.uuid4().hex, "session_id": verdict.get(fields.SESSION_ID),
                      "transcript_path": verdict.get(fields.TRANSCRIPT_PATH)})
 
@@ -531,6 +548,7 @@ class Sweep:
             return
         prompt = NOTICE_SENDER_PROMPT.format(seats=", ".join(seats), text=text,
                                              find_the_entry=FIND_THE_ENTRY.format(seat="<agent-seat>"))
+        started_at = self.current()
         outcome = run_headless(prompt, SEND_ANSWER_SCHEMA, SENDING_TOOLS, self.working_directory,
                                self.timeout_seconds)
         if outcome.error:
@@ -542,7 +560,7 @@ class Sweep:
             self.headless_failed(", ".join(seats), "send the account-change notice", "; ".join(wrong))
         # The delivery check looks in every listed agent-seat's transcript, sent to or not.
         for seat in seats:
-            self.message_sent(seat, verdicts[seat], text, ACCOUNT_NOTICE)
+            self.message_sent(seat, verdicts[seat], text, ACCOUNT_NOTICE, started_at)
             limit = verdicts[seat].get(fields.USAGE_LIMIT)
             if verdicts[seat].get(fields.RULE) == 1 and limit:
                 self.record({"event": "limit_wake", "agent_seat": seat,
@@ -559,7 +577,7 @@ class Sweep:
             verdict = verdicts.get(seat, {})
             try:
                 found = message_in_transcript(Path(sent["transcript_path"]), sent["text"],
-                                              parse_time(sent["at"]))
+                                              parse_time(sent["send_started_at"]))
             except verdicts_print.ReadFailure as error:
                 self.read_failure(seat, str(error))
                 continue
@@ -582,6 +600,7 @@ class Sweep:
     # --- Read failures ---
 
     def read_failure(self, seat, text):
+        self.read_failures_this_run.add((seat, text))
         first_seen = self.log.read_failure_first_seen(seat, text)
         if first_seen is None:
             self.record({"event": "read_failure", "agent_seat": seat, "error": text})
@@ -595,6 +614,12 @@ class Sweep:
                        "An agent on ned-box can open the file the failure names and repair it, or "
                        "tell the user what is wrong with it; until then the idle sweep does not "
                        f"check {seat}.")
+
+    def read_failures_end(self):
+        """A failure this invocation did not meet again has ended, so that one coming back later
+        is dated from its return."""
+        for seat, text in sorted(self.log.read_failures_open() - self.read_failures_this_run):
+            self.record({"event": "read_failure_ended", "agent_seat": seat, "error": text})
 
     # --- One idle agent-seat ---
 
@@ -712,6 +737,7 @@ class Sweep:
         prompt = IDLE_JUDGE_PROMPT.format(seat=seat, idle_minutes=idle_minutes,
                                           find_the_entry=FIND_THE_ENTRY.format(seat=seat),
                                           facts=json.dumps(facts, indent=1, ensure_ascii=False))
+        started_at = self.current()
         outcome = run_headless(prompt, SEND_ANSWER_SCHEMA, SENDING_TOOLS, self.working_directory,
                                self.timeout_seconds)
         sends = [send for send in outcome.sends if send["succeeded"]]
@@ -733,7 +759,7 @@ class Sweep:
         if sends and not any(problem.startswith("sent to") for problem in problems):
             text = sends[-1]["message"]
             self.start_wait(seat, verdict, stretch, text, 5)
-            self.message_sent(seat, verdict, text, NUDGE)
+            self.message_sent(seat, verdict, text, NUDGE, started_at)
 
     def sentences(self, seat, verdict):
         """Rule 2: judge what code could not settle, and word one message naming every unbacked
@@ -871,8 +897,8 @@ def sweep(arguments, now):
         # Sentences only from the turns that ended since the last check of the same agent-session;
         # a new agent-session is read again with its last turn-ending message only. Since the read,
         # not the record: judge calls for other agent-seats run between the two, and a turn that
-        # ends then must be read next time. A record from before the field has only its "at".
-        since = parse_time(check.get("transcript_read_at", check["at"])) if check else None
+        # ends then must be read next time.
+        since = parse_time(check["transcript_read_at"]) if check else None
         read_times[seat] = run.current()
         verdict = verdicts_print.verdict_for_seat(seat, paths, now, since, checker, parser, skipped)
         if since and verdict.get(fields.SESSION_ID) not in (None, check["session_id"]):
@@ -887,6 +913,7 @@ def sweep(arguments, now):
         if verdict.get(fields.ERRORS) or not verdict.get(fields.IDLE) or verdict.get(fields.RULE) is None:
             continue
         run.handle_seat(seat, verdict, read_times[seat])
+    run.read_failures_end()
     return 1 if run.failed else 0
 
 
