@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Cases for scripts/agent-seat-idle-sweep-verdicts-print.py.
 
-Every case runs the program as a subprocess against folders this suite made: a handoff directory,
+Every case but one runs the program as a subprocess against folders this suite made: a handoff directory,
 an agents root, a projects root, a tasks root and a ~/.claude.json, never the real ones. `gh` is a
 stand-in placed first on PATH that answers from a file the case writes. Each case fixes the time
-with --now, so the 5-minute idle test does not depend on the clock.
+with --now, so the 5-minute idle test does not depend on the clock. The other case calls
+open_tasks_nothing_holds directly, since a run of the program reports a task file that will not
+read at the earlier read of the task list and never reaches that function's own check.
 """
 
 import importlib.util
@@ -208,6 +210,15 @@ _, verdicts, _ = machine.run()
 check("a hold backed by addBlockedBy goes to the judge",
       [(s["kind"], s["code_reading"]) for s in verdicts["alpha"]["sentences"]]
       == [("hold", "judge")], verdicts["alpha"])
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant("I'll hold."),
+                       assistant(tool=("TaskUpdate", {"taskId": "3", "addBlockedBy": ["2"]}),
+                                 at=None),
+                       turn_end()])
+code, verdicts, _ = machine.run()
+check("a task call in a record with no timestamp cannot back a hold: code finds it unbacked",
+      code == 0 and [(s["kind"], s["code_reading"]) for s in verdicts["alpha"]["sentences"]]
+      == [("hold", "unbacked")], (code, verdicts.get("alpha")))
 machine = Machine()
 machine.seat("alpha", [user("a", at="2026-11-02T11:30:00Z"),
                        assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
@@ -719,6 +730,28 @@ check("a task file that will not read: an error and exit 1, not rule 4",
       code == 1 and verdicts["alpha"]["rule"] is None
       and "2.json could not be read as a task" in verdicts["alpha"]["errors"][0]
       and "then run this program again" in verdicts["alpha"]["errors"][0], verdicts["alpha"])
+(machine.tasks / "nedschorus-alpha-tasks" / "1.json").write_text("{not json")
+code, verdicts, _ = machine.run()
+check("two task files that will not read: the error names the first",
+      code == 1 and "1.json could not be read as a task" in verdicts["alpha"]["errors"][0],
+      verdicts["alpha"])
+# Rules 3 to 5 read the task list again after the read that finds waiting tasks, so a file can
+# turn unreadable between the two; only a direct call reaches the second read's check.
+_program_specification = importlib.util.spec_from_file_location(
+    "agent_seat_idle_sweep_verdicts_print", PROGRAM)
+program = importlib.util.module_from_spec(_program_specification)
+_program_specification.loader.exec_module(program)
+unreadable_tasks = Path(tempfile.mkdtemp(dir=str(SUITE_ROOT)))
+for name in ("1.json", "2.json"):
+    (unreadable_tasks / name).write_text("{not json")
+try:
+    program.open_tasks_nothing_holds(unreadable_tasks, checker=None)
+    message = None
+except program.ReadFailure as error:
+    message = str(error)
+check("open tasks nothing holds, from two task files that will not read: the error names the first",
+      message is not None and message.startswith(f"{unreadable_tasks / '1.json'} could not be read")
+      and "holds the agent-seat's work is unknown" in message, message)
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant("Done."), turn_end()])
 machine.seat("beta", [user("go"), assistant("Done."), turn_end()])
