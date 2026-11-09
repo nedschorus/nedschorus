@@ -471,6 +471,61 @@ check("a subagent whose final report came is not running",
       verdicts["alpha"]["running"]["subagents"] == [] and verdicts["alpha"]["rule"] == 4,
       verdicts["alpha"])
 
+
+def subagent_report(agent_id, result, at, interim):
+    note = ("<note>This agent stopped with background work of its own still running; the result "
+            "below may be interim.</note>" if interim else "")
+    return user(f"<task-notification>\n<task-id>{agent_id}</task-id>\n<status>completed</status>\n"
+                f"{note}\n<result>{result}</result>\n</task-notification>", at=at)
+
+
+SUBAGENT_SPAWN = user("", at="2026-11-02T09:00:00Z",
+                      tool_result={"status": "async_launched", "agentId": "a1b2"})
+WAITING_REPORT = subagent_report("a1b2", "I'll wait for the test-run notification.",
+                                 "2026-11-02T09:10:00Z", interim=True)
+machine.seat("alpha", [user("go"), SUBAGENT_SPAWN, WAITING_REPORT,
+                       subagent_report("a1b2", "Fix-round pushed.", "2026-11-02T09:20:00Z",
+                                       interim=False),
+                       assistant("Done."), turn_end()])
+_, verdicts, _ = machine.run()
+check("a subagent whose last report is final, after one that waited on its own background work, "
+      "is not running",
+      verdicts["alpha"]["running"]["subagents"] == [], verdicts["alpha"])
+
+
+def subagent_with_own_background_command(machine, last_spend_at):
+    project, _ = machine.seat("alpha", [
+        user("go"), SUBAGENT_SPAWN, WAITING_REPORT,
+        subagent_report("a1b2", "Fix-round pushed.", "2026-11-02T09:20:00Z", interim=True),
+        assistant("Done."), turn_end()])
+    own = project / "s-1" / "subagents"
+    own.mkdir(parents=True, exist_ok=True)
+    (own / "agent-a1b2.jsonl").write_text("".join(json.dumps(record) + "\n" for record in [
+        user("", at="2026-11-02T09:05:00Z", tool_result={"backgroundTaskId": "bash-9"}),
+        assistant("Fix-round pushed.", at=last_spend_at)]))
+
+
+# Claude Code marks even the final report interim while a background command the subagent
+# launched still runs and has not notified it.
+machine = Machine()
+subagent_with_own_background_command(machine, last_spend_at="2026-11-02T09:19:59Z")
+_, verdicts, _ = machine.run()
+check("a subagent whose final report is marked interim, with a background command of its own "
+      "still running: reported stopped at its report, with that command and its start",
+      verdicts["alpha"]["running"]["subagents"] == [{
+          "id": "a1b2", "started": "2026-11-02T09:00:00Z",
+          fields.SUBAGENT_STOPPED_AT: "2026-11-02T09:20:00Z",
+          fields.SUBAGENT_OWN_BACKGROUND_COMMANDS_RUNNING: [
+              {"id": "bash-9", "started": "2026-11-02T09:05:00Z"}]}]
+      and verdicts["alpha"]["rule"] == 5, verdicts["alpha"])
+machine = Machine()
+subagent_with_own_background_command(machine, last_spend_at="2026-11-02T09:30:00Z")
+_, verdicts, _ = machine.run()
+check("a subagent that spent a token after its interim report has resumed: reported running, "
+      "not stopped",
+      verdicts["alpha"]["running"]["subagents"] == [
+          {"id": "a1b2", "started": "2026-11-02T09:00:00Z"}], verdicts["alpha"])
+
 # --- rule 4 against rule 5: open tasks and their prerequisites -------------------------------
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant("Done."), turn_end()])

@@ -26,6 +26,11 @@ WALK_ITEMS_WAITING = "walk_items_waiting"  # [{"walk_minutes": path, "next_to_pr
 IDLE = "idle"
 NOT_IDLE_BECAUSE = "not_idle_because"      # [reason]
 RUNNING = "running"  # {"subagents": [{"id", "started"}], "background_commands": [{"id", "started"}]}
+# Keys a running subagent entry also carries when the subagent has stopped and reported, and is
+# counted only because background commands it launched still run: when it stopped (ISO time), and
+# those commands, [{"id", "started"}].
+SUBAGENT_STOPPED_AT = "stopped_at"
+SUBAGENT_OWN_BACKGROUND_COMMANDS_RUNNING = "own_background_commands_running"
 HANDOFF_DEFERRED_MARKER = "handoff_deferred_marker"  # path or null
 USAGE_LIMIT = "usage_limit"
 SENTENCES = "sentences"
