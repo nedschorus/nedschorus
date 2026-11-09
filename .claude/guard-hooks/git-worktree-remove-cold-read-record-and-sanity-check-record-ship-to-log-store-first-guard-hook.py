@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Ship every worktree's cold-read-records and sanity-check records to the log-store before `git worktree remove` runs.
+"""Ship the cold-read-records and sanity-check records of the worktree a `git worktree remove` removes to the log-store before it runs.
 
 Both record folders, cold-read-records/ and sanity-check-records/, are
 gitignored, so `git worktree remove` deletes them without a word. Before a
 Bash command that runs `git worktree remove`, this PreToolUse hook lists the
-repository's worktrees with `git worktree list`, run in the hook's cwd, and
-ships the records of every one of them; it does not work out which worktree
-the command removes. The shippers, and the folder each serves, are the ones
+repository's worktrees with `git worktree list`, run in the hook's cwd, works
+out which of them the command removes, and ships the records of those alone:
+a removal whose path names a worktree never reads, ships or waits on another
+worktree's records, and a removal naming no worktree ships nothing. A removal
+the hook cannot place, as described below, ships the records of every
+worktree, as it might remove any of them. The shippers, and the folder each serves, are the ones
 scripts/clean-worktrees.py uses (LOG_STORE_RECORD_SHIPPERS), loaded from that
 file so the two stay one list. A record whose every file the log-store
 already holds with the same content is skipped without running its shipper,
@@ -18,8 +21,8 @@ cold-read-grid holds its record's for the 14 to 44 minutes of a
 cold-read-full-run, is not shipped: that program rewrites files it has
 already written, so a shipment now would make its own shipment, and every
 later one, refuse the record, and the program ships the record itself when it
-finishes. Such a record refuses the removal only when the command removes
-the worktree it is in, because the removal would delete it first. When the
+finishes. Such a record refuses the removal, because the removal would
+delete it first. When the
 command is that one `git worktree remove` and nothing else, so that the shell
 surely runs it, the hook defers the removal: for each such worktree it starts, detached, the
 waiter GIT_WORKTREE_REMOVE_DEFERRED_WAITER_SCRIPT, which waits until no record in the
@@ -41,8 +44,10 @@ worktree's real path. When it cannot tell, because the path or a -C holds a
 variable, a glob or a substitution, `worktree remove` is given an option
 other than -f or --force or more than one path, or the command changes
 directory before a path that depends on it, the hook refuses the removal
-while any record is being written, starts no waiter, and asks for the path
-written out in full, with -f when the command gave -f or --force. A removal
+while any worktree holds a record being written or one that did not ship,
+starts no waiter, and asks for the path written out in full, with -f when
+the command gave -f or --force; when every worktree's records shipped, it
+lets the removal through. A removal
 of a worktree in which a record is being written, in a command that does more
 than that removal, as in `git push && git worktree remove /wt`, gets the same
 refusal and starts no waiter, because the hook cannot tell whether the shell
@@ -53,8 +58,9 @@ It refuses the command, naming each record that did not ship, its worktree,
 the shipper's own line and the command that ships it again, when a shipper
 exits nonzero (FAILED or REFUSED), prints nothing, or has not finished when
 SHIPPING_BUDGET_SECONDS run out, and for each record the budget left
-unreached. A refusal in any worktree refuses every removal until the record
-is renamed and shipped, as the shipper's REFUSED line says.
+unreached. A record the log-store refuses refuses each removal of its
+worktree, and each removal the hook cannot place, until the record is
+renamed and shipped, as the shipper's REFUSED line says.
 .claude/settings.json gives the hook a longer timeout than the budget,
 because a hook that overruns its timeout lets the command through unchecked
 and reports nothing.
@@ -92,9 +98,10 @@ additionalContext that no records were shipped. When the worker fails before
 it has read every worktree's records, as when a shipper module cannot be
 loaded, or has not read them when the deadline passes, the command is let
 through and the agent is told, the same way, that records may not have
-shipped. A removal in another
-repository, given by git's -C or --git-dir, ships the records of the
-repository the hook's cwd is in, not of that one. On the Mac each record is
+shipped. A removal in another repository, given by git's -C or --git-dir,
+names none of the worktrees of the repository the hook's cwd is in, so it
+ships nothing; when the hook cannot place it, it ships the records of the
+cwd's repository, not of that one. On the Mac each record is
 checked against the store over ssh, one record at a time, so with many
 records the budget can run out and refuse the removal; a run after that
 skips the records already shipped. When the worktree's directory cannot be
@@ -164,13 +171,13 @@ _next_step_lines_spec.loader.exec_module(next_step_lines)
 TELL_THE_USER_OR_DISPATCHING_AGENT = "tell " + next_step_lines.REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT
 
 SHIPMENT_FAILED_REFUSAL_TEMPLATE = (
-    "Refused on purpose: before any `git worktree remove`, this hook ships the cold-read-records "
-    "and sanity-check records of every worktree of this repository to the log-store, and "
+    "Refused on purpose: before a `git worktree remove`, this hook ships the cold-read-records "
+    "and sanity-check records of the worktree it removes to the log-store{scope}, and "
     "{count} record(s) did not reach it. The folders cold-read-records/ and sanity-check-records/ "
     "are gitignored, so removing a worktree deletes them for good, and the log-store on ned-box "
-    "is the only other place a record is kept. The hook does not work out which worktree a "
-    "command removes, so it refuses every removal until each record below has shipped.\n"
+    "is the only other place a record is kept.\n"
     "{records}"
+    "{unresolved_instruction}"
     "If a Record line says the log-store or ned-box could not be reached, leave the worktree in "
     f"place, stop, and {TELL_THE_USER_OR_DISPATCHING_AGENT} "
     "that `git worktree remove` is refused because records could not be shipped to the "
@@ -192,6 +199,9 @@ UNSHIPPED_RECORD_LINE_TEMPLATE = (
 SHIPPER_PRINTED_NOTHING_LINE_TEMPLATE = "the shipper printed nothing (exit {code}){stderr}"
 SHIPPING_BUDGET_SPENT_LINE_TEMPLATE = (
     "not shipped: this hook's limit of {budget} seconds for shipping ran out first")
+SHIPMENT_FAILED_UNRESOLVED_SCOPE_TEMPLATE = (
+    "; it could not tell which worktree this command removes ({reason}), so it shipped the records "
+    "of every worktree of this repository")
 RECORD_CHECK_FAILED_LINE_TEMPLATE = "not shipped: this hook could not check or ship it: {error}"
 RECORD_BEING_WRITTEN_LINE_TEMPLATE = "Record {record} (worktree {worktree})\n"
 RECORD_BEING_WRITTEN_IN_REMOVED_WORKTREE_REFUSAL_TEMPLATE = (
@@ -220,8 +230,14 @@ REMOVED_WORKTREE_UNRESOLVED_REFUSAL_TEMPLATE = (
     "That program ships the record to the log-store itself when it finishes; removing its worktree "
     "now would delete the record first.\n"
     "{records}"
+    "{path_written_out_instruction}")
+GIT_WORKTREE_REMOVE_PATH_WRITTEN_OUT_RUN_AGAIN_INSTRUCTION_TEMPLATE = (
     "Run the removal again as `git worktree remove{force} <path>`, with the worktree's path written "
     "out in full, as an absolute path with no variable, in a command that does not change directory.")
+SHIPMENT_FAILED_UNRESOLVED_INSTRUCTION_TEMPLATE = (
+    "If the worktree you remove is not one that a Record line above names, do not follow the lines "
+    "below; instead: " + GIT_WORKTREE_REMOVE_PATH_WRITTEN_OUT_RUN_AGAIN_INSTRUCTION_TEMPLATE[:-1]
+    + ". This hook then ships and checks only that worktree's records.\n")
 GIT_WORKTREE_REMOVE_NOT_THE_WHOLE_SHELL_COMMAND_REFUSAL_REASON = (
     "the command does more than the removal, so this hook cannot tell whether the shell runs the removal")
 # A word the shell would still expand: a variable, a substitution or a glob.
@@ -240,15 +256,15 @@ SHIP_RECORDS_YOURSELF_NEXT_STEP_LINES = (
     "which worktree is kept, quoting each line that begins FAILED or REFUSED.")
 
 WORKTREE_LISTING_FAILED_NOTICE = (
-    "Not checked: the hook that ships every worktree's cold-read-records and sanity-check records "
-    "to the log-store before `git worktree remove` could not list this repository's worktrees "
+    "Not checked: the hook that ships a worktree's cold-read-records and sanity-check records "
+    "to the log-store before `git worktree remove` removes it could not list this repository's worktrees "
     "({reason}), so it shipped no records and let the command run. If the removed worktree held "
     "a record that had not shipped, that record is gone; nothing can bring it back.\n"
     + SHIP_RECORDS_YOURSELF_NEXT_STEP_LINES)
 
 RECORDS_NOT_READ_NOTICE = (
-    "Not checked: the hook that ships every worktree's cold-read-records and sanity-check records "
-    "to the log-store before `git worktree remove` could not read every worktree's records "
+    "Not checked: the hook that ships a worktree's cold-read-records and sanity-check records "
+    "to the log-store before `git worktree remove` removes it could not read every record "
     "({reason}), so it let the command run without knowing that every record had shipped. If the "
     "removed worktree held a record that had not shipped, that record is gone; nothing can bring "
     "it back.\n"
@@ -568,11 +584,18 @@ def ship_every_record(worktrees, runner, clock, deadline, progress):
             progress["lines"][record] = line
 
 
-def shipment_failed_refusal(unshipped):
+def shipment_failed_refusal(unshipped, unresolved=None, force=""):
+    """The refusal for records that did not ship; unresolved is why the hook could not place the removal, or None."""
     lines = "".join(UNSHIPPED_RECORD_LINE_TEMPLATE.format(
         record=record, worktree=worktree, line=line, command=shlex.join(["python3", str(shipper), str(record)]))
         for shipper, worktree, record, line in unshipped)
-    return SHIPMENT_FAILED_REFUSAL_TEMPLATE.format(count=len(unshipped), records=lines)
+    if unresolved is None:
+        scope = instruction = ""
+    else:
+        scope = SHIPMENT_FAILED_UNRESOLVED_SCOPE_TEMPLATE.format(reason=unresolved)
+        instruction = SHIPMENT_FAILED_UNRESOLVED_INSTRUCTION_TEMPLATE.format(force=force)
+    return SHIPMENT_FAILED_REFUSAL_TEMPLATE.format(
+        scope=scope, count=len(unshipped), records=lines, unresolved_instruction=instruction)
 
 
 def ned_box_home_as_this_machine_reaches_it():
@@ -650,7 +673,7 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic, start_wai
         removes = command_runs_git_worktree_remove(command)
     except shell_reader.ShellParserUnavailable as error:
         print(shell_reader.parser_unavailable_hook_output(
-            "The hook that ships every worktree's records before git worktree remove", error,
+            "The hook that ships a worktree's records before git worktree remove removes it", error,
             PARSER_UNAVAILABLE_NEXT_STEP_LINES))
         return 0
     if not removes:
@@ -658,13 +681,18 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic, start_wai
     deadline = clock() + SHIPPING_BUDGET_SECONDS
     # The same deadline in real seconds, for the worker: an injected clock cannot bound a stalled call.
     wall_deadline = time.monotonic() + SHIPPING_BUDGET_SECONDS
-    worktrees, reason = worktrees_listed_or_failure_reason(payload.get("cwd") or os.getcwd(), runner)
+    cwd = payload.get("cwd") or os.getcwd()
+    worktrees, reason = worktrees_listed_or_failure_reason(cwd, runner)
     if worktrees is None:
         note_unchecked(WORKTREE_LISTING_FAILED_NOTICE.format(reason=reason))
         return 0
+    removed, unresolved = worktrees_removed_or_unresolved_reason(command, cwd, worktrees)
+    shipped_worktrees = worktrees if unresolved is not None else list(removed)
+    if not shipped_worktrees:
+        return 0
     progress = {"shipped": set(), "lines": {}, "being_written": []}
-    worker = threading.Thread(target=ship_every_record, args=(worktrees, runner, clock, deadline, progress),
-                              daemon=True)
+    worker = threading.Thread(target=ship_every_record,
+                              args=(shipped_worktrees, runner, clock, deadline, progress), daemon=True)
     worker.start()
     worker.join(max(0.0, wall_deadline - time.monotonic()))
     if "error" in progress:
@@ -684,25 +712,23 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic, start_wai
     unshipped = [(kind[1], worktree, record, lines.get(record) or budget_spent_line())
                  for worktree, kind, record in records
                  if record not in shipped and record not in left_to_their_writers]
-    refusals = [shipment_failed_refusal(unshipped)] if unshipped else []
+    force = " -f" if shell_command_runs_git_worktree_remove_with_force_option(command) else ""
+    refusals = [shipment_failed_refusal(unshipped, unresolved, force)] if unshipped else []
     if being_written:
-        removed, unresolved = worktrees_removed_or_unresolved_reason(
-            command, payload.get("cwd") or os.getcwd(), worktrees)
-        in_removed = [(worktree, record) for worktree, record in being_written
-                      if unresolved is not None or worktree in removed]
         listed = "".join(RECORD_BEING_WRITTEN_LINE_TEMPLATE.format(record=record, worktree=worktree)
-                         for worktree, record in in_removed)
-        if unresolved is None and in_removed and not shell_command_is_one_git_worktree_remove_and_nothing_else(command):
+                         for worktree, record in being_written)
+        if unresolved is None and not shell_command_is_one_git_worktree_remove_and_nothing_else(command):
             unresolved = GIT_WORKTREE_REMOVE_NOT_THE_WHOLE_SHELL_COMMAND_REFUSAL_REASON
         if unresolved is not None:
             refusals.append(REMOVED_WORKTREE_UNRESOLVED_REFUSAL_TEMPLATE.format(
                 reason=unresolved, records=listed,
-                force=" -f" if shell_command_runs_git_worktree_remove_with_force_option(command) else ""))
-        elif in_removed:
+                path_written_out_instruction=GIT_WORKTREE_REMOVE_PATH_WRITTEN_OUT_RUN_AGAIN_INSTRUCTION_TEMPLATE
+                .format(force=force)))
+        else:
             failures = []
-            for worktree in dict.fromkeys(worktree for worktree, _ in in_removed):
+            for worktree in dict.fromkeys(worktree for worktree, _ in being_written):
                 error = start_waiter(worktree, removed[worktree],
-                                     [record for held_in, record in in_removed if held_in == worktree],
+                                     [record for held_in, record in being_written if held_in == worktree],
                                      worktrees[0])
                 if error is not None:
                     failures.append(REMOVAL_NOT_DEFERRED_FAILURE_TEMPLATE.format(worktree=worktree, error=error))

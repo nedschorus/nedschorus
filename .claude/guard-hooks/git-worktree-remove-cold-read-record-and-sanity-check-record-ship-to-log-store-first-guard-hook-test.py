@@ -171,7 +171,7 @@ def payload_for(command, cwd):
     return {"tool_name": "Bash", "cwd": str(cwd), "tool_input": {"command": command}}
 
 
-# Every worktree's unshipped records reach the log-store before the removal, which is let through.
+# The removed worktree's unshipped records reach the log-store before the removal, which is let through.
 checkout, worktree = checkout_with_worktree("shipped")
 other_worktree = checkout.parent / "shipped-other-worktree"
 git(checkout, "worktree", "add", "-q", "--detach", str(other_worktree))
@@ -181,12 +181,16 @@ other_record.mkdir(parents=True)
 code, output, stderr = run_hook_process("git worktree remove some-worktree", checkout)
 cold_read_copy = STORE / "cold-read-records" / "shipped-doc-2026-11-03" / "fast-read.md"
 sanity_check_copy = STORE / "sanity-check-records" / "2026-11-03-shipped-doc" / "finding-dispositions.md"
+check("a removal whose path names no worktree ships nothing and is let through silently",
+      code == 0 and output is None and not cold_read_copy.exists() and not sanity_check_copy.exists(),
+      (code, output, stderr))
+code, output, stderr = run_hook_process(f"git worktree remove {worktree}", checkout)
 check("unshipped records reach the log-store and the removal is let through silently",
       code == 0 and output is None and cold_read_copy.is_file() and sanity_check_copy.is_file()
       and cold_read_copy.read_text() == "shipped report\n",
       (code, output, stderr, sorted(str(path) for path in STORE.rglob("*"))))
-check("the records of a worktree the command does not name ship too",
-      (STORE / "cold-read-records" / other_record.name / "fast-read.md").is_file())
+check("the records of a worktree the command does not name are not shipped",
+      not (STORE / "cold-read-records" / other_record.name).exists())
 check("an empty record directory is not shipped",
       not (STORE / "cold-read-records" / "empty-record").exists())
 
@@ -229,10 +233,13 @@ cold_read_rerun = f"python3 {hook.REPOSITORY_ROOT}/nc-systems/cold-read/cold-rea
 sanity_check_rerun = f"python3 {hook.REPOSITORY_ROOT}/scripts/sanity-check-record-ship.py {sanity_check_record}"
 check("a failed shipment refuses the removal",
       code == 0 and output["hookSpecificOutput"]["permissionDecision"] == "deny", (code, output, stderr))
-check("the refusal opens by saying it refused on purpose, that every worktree's records are shipped, and how many failed",
-      reason.startswith("Refused on purpose: before any `git worktree remove`, this hook ships the cold-read-records "
-                        "and sanity-check records of every worktree of this repository to the log-store, and 2 "
+check("the refusal opens by saying it refused on purpose, that the removed worktree's records are shipped, and how "
+      "many failed",
+      reason.startswith("Refused on purpose: before a `git worktree remove`, this hook ships the cold-read-records "
+                        "and sanity-check records of the worktree it removes to the log-store, and 2 "
                         "record(s) did not reach it."), reason)
+check("a removal the hook placed gets no instruction to write its path out", "Run the removal again" not in reason,
+      reason)
 check("the refusal names each record and its worktree with the shipper's own FAILED line",
       f"Record {cold_read_record} (worktree {worktree}): FAILED:" in reason
       and f"Record {sanity_check_record} (worktree {worktree}): FAILED:" in reason
@@ -269,23 +276,48 @@ check("each ship command the refusal gives runs and ships its record",
       all(rerun.returncode == 0 and rerun.stdout.startswith("shipped:") for rerun in reruns),
       [(rerun.returncode, rerun.stdout, rerun.stderr) for rerun in reruns])
 
-# A record whose name the store holds with other content is refused by the real shipper, and the refusal quotes its mv.
+# A record whose name the store holds with other content is refused by the real shipper: removing its worktree is
+# refused, quoting the shipper's mv, and removing another worktree goes ahead without touching it.
 checkout, worktree = checkout_with_worktree("clash")
+clash_other_worktree = checkout.parent / "clash-other-worktree"
+git(checkout, "worktree", "add", "-q", "--detach", str(clash_other_worktree))
+clash_record = worktree / "cold-read-records" / "clash-doc-2026-11-03"
 clashing_store_copy = STORE / "cold-read-records" / "clash-doc-2026-11-03"
 clashing_store_copy.mkdir(parents=True)
 (clashing_store_copy / "fast-read.md").write_text("another read's report\n")
-code, output, stderr = run_hook_process("git worktree remove anything", checkout)
+code, output, stderr = run_hook_process(f"git worktree remove {worktree}", checkout)
 reason = refusal(output) or ""
-check("a record in any worktree that the shipper refuses refuses the removal, quoting the shipper's mv",
-      f"Record {worktree / 'cold-read-records' / 'clash-doc-2026-11-03'} (worktree {worktree}): REFUSED:" in reason
+check("a record the shipper refuses refuses the removal of its worktree, quoting the shipper's mv",
+      f"Record {clash_record} (worktree {worktree}): REFUSED:" in reason
       and "`mv " in reason and "clash-doc-2026-11-03-2" in reason, (code, output, stderr))
-subprocess.run(["mv", str(worktree / "cold-read-records" / "clash-doc-2026-11-03"),
-                str(worktree / "cold-read-records" / "clash-doc-2026-11-03-2")], check=True)
-code, output, stderr = run_hook_process("git worktree remove anything", checkout)
-check("once the refused record is renamed as the refusal says, the removal ships it and is let through",
+code, output, stderr = run_hook_process(f"git worktree remove {clash_other_worktree}", checkout)
+check("removing another worktree goes ahead while a record the log-store refuses is in the first",
+      code == 0 and output is None
+      and (clashing_store_copy / "fast-read.md").read_text() == "another read's report\n", (code, output, stderr))
+code, output, stderr = run_hook_process('git worktree remove -f "$W"', checkout)
+reason = refusal(output) or ""
+check("a removal the hook cannot place is refused while any worktree holds a record the log-store refuses, saying "
+      "it shipped every worktree's records",
+      reason.startswith("Refused on purpose: before a `git worktree remove`, this hook ships the cold-read-records "
+                        "and sanity-check records of the worktree it removes to the log-store; it could not tell "
+                        "which worktree this command removes (the path $W holds a variable, a glob or a "
+                        "substitution), so it shipped the records of every worktree of this repository, and 1 "
+                        "record(s) did not reach it.")
+      and f"Record {clash_record} (worktree {worktree}): REFUSED:" in reason, (code, output, stderr))
+check("that refusal asks for the removal again with its path written out, keeping -f",
+      "If the worktree you remove is not one that a Record line above names, do not follow the lines below; "
+      "instead: Run the removal again as `git worktree remove -f <path>`, with the worktree's path written out in "
+      "full, as an absolute path with no variable, in a command that does not change directory. This hook then "
+      "ships and checks only that worktree's records.\n" in reason, reason)
+subprocess.run(["mv", str(clash_record), str(worktree / "cold-read-records" / "clash-doc-2026-11-03-2")], check=True)
+code, output, stderr = run_hook_process('git worktree remove "$W"', checkout)
+check("once the refused record is renamed as the refusal says, a removal the hook cannot place ships every "
+      "worktree's records and is let through",
       code == 0 and output is None
       and (STORE / "cold-read-records" / "clash-doc-2026-11-03-2" / "fast-read.md").read_text()
-      == "clash report\n", (code, output, stderr))
+      == "clash report\n"
+      and (STORE / "sanity-check-records" / "2026-11-03-clash-doc" / "finding-dispositions.md").is_file(),
+      (code, output, stderr))
 
 # A worktree with no records is let through silently, without running a shipper.
 checkout, worktree = checkout_with_worktree("no-records")
@@ -509,9 +541,9 @@ check("records that cannot be read let the command through with the not-checked 
       output)
 
 # A worktree listing that fails, cannot run or runs out of time lets the command through with a notice.
-not_checked_opening = ("Not checked: the hook that ships every worktree's cold-read-records and sanity-check "
-                       "records to the log-store before `git worktree remove` could not list this repository's "
-                       "worktrees (")
+not_checked_opening = ("Not checked: the hook that ships a worktree's cold-read-records and sanity-check "
+                       "records to the log-store before `git worktree remove` removes it could not list this "
+                       "repository's worktrees (")
 for name, runner, said in (
         ("exits nonzero", runner_answering(128, b"", b"fatal: not a git repository\n"),
          "`git worktree list` exited 128: fatal: not a git repository"),
@@ -684,10 +716,10 @@ try:
     check("the writer holds its record's being-written lock", held)
     waiter_starts.clear()
     code, output = run_hook(payload_for(f"git worktree remove {other_worktree}", checkout))
-    check("removing another worktree is let through while a record is being written, and the record is not "
-          "shipped, while the other records are, and no waiter is started",
+    check("removing another worktree is let through while a record is being written, ships none of the writer's "
+          "worktree's records, and starts no waiter",
           code == 0 and output is None and not being_written_in_store.exists() and waiter_starts == []
-          and (STORE / "sanity-check-records" / "2026-11-03-beingwritten-doc" / "finding-dispositions.md").is_file(),
+          and not (STORE / "sanity-check-records" / "2026-11-03-beingwritten-doc").exists(),
           (code, output, waiter_starts))
     for label, command, cwd, force in (
             ("by its absolute path", f"git worktree remove --force {worktree}", checkout, True),
