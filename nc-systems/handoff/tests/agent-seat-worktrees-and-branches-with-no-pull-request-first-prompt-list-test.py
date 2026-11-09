@@ -737,6 +737,27 @@ def test_open_tasks_hold_entries():
     check("could not be read" not in text, "a readable task list says nothing of reading", text)
 
 
+def test_open_task_names_a_worktree_by_a_path_written_differently():
+    main = new_clone()
+    set_pull_requests([])
+    record = {"owner_kind": "agent-seat", "agent_seat": "seat-w"}
+    by_dots = owned_worktree(main, "seat-w-by-dots", record)
+    by_slash = owned_worktree(main, "seat-w-by-slash", record)
+    by_link = owned_worktree(main, "seat-w-by-link", record)
+    link = SCRATCH / f"link-to-{main.parent.name}"
+    link.symlink_to(main.parent)
+    task_list("seat-w", {"5": ("pending", {"branches": [
+        str(by_dots.parent / "absent" / ".." / by_dots.name),
+        str(by_slash) + "/",
+        str(link / by_link.name),
+    ]})})
+    text = listing.first_prompt_text(main, "seat-w")
+    check(all(str(path) not in text for path in (by_dots, by_slash, by_link))
+          and "This agent-seat also has 3 worktrees" in text,
+          "a worktree an open task names by a path with .., a trailing slash or a symlink is left out",
+          text)
+
+
 def test_hidden_line_counts():
     check(listing.hidden_line([]) == "", "nothing hidden prints no line")
     check(listing.hidden_line([("branch", {"5"})])
@@ -803,6 +824,7 @@ for case in (test_branches, test_pushed_text, test_worktrees, test_gh_failure,
              test_supervisor_puts_deleted_branches_above_the_leftovers_and_forgets_counts_when_none,
              test_supervisor_puts_leftovers_before_the_next_step_without_a_conversation_tail,
              test_supervisor_appends_the_list, test_open_tasks_hold_entries,
+             test_open_task_names_a_worktree_by_a_path_written_differently,
              test_hidden_line_counts, test_everything_held,
              test_unreadable_task_list_hides_nothing):
     print(f"-- {case.__name__}")
