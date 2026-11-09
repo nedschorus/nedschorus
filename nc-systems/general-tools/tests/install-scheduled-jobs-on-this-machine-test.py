@@ -1376,13 +1376,17 @@ with tempfile.TemporaryDirectory() as temporary:
     check("and --check limited by --job does not read that line",
           exit_code == 0 and errors == "", (exit_code, errors))
     defines_a_function = f"0 5 * * * f() {{ {box_clone}/scripts/a-helper.py; }}; /usr/bin/other"
+    no_program_after_interpreter = f"0 11 * * * /usr/bin/python3 < {box_clone}/scripts/a.py"
     stub = MachineStub(crontab="".join(
         line + "\n" for line in [BOX_MIRROR, BOX_DAILY, BOX_ALONE, interpreter_option,
-                                 defines_a_function]).encode())
+                                 defines_a_function, no_program_after_interpreter]).encode())
     exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
     check("each NOT CHECKED line names its one cause: the option line its option, the function "
-          "line its function, and neither the other's",
+          "line its function, the line with no program after its interpreter that, and none "
+          "another's",
           exit_code == 2
+          and f"NOT CHECKED: the crontab line {no_program_after_interpreter} — it names no "
+              f"program after its interpreter or env, so whether" in errors
           and f"NOT CHECKED: the crontab line {interpreter_option} — it gives an interpreter or "
               f"env an option, which may take the next word, so whether" in errors
           and f"NOT CHECKED: the crontab line {defines_a_function} — it defines a function, "
@@ -1680,6 +1684,18 @@ with tempfile.TemporaryDirectory() as temporary:
                           "\"tree-sitter-bash is missing on ", environment={}) in errors
                       and shell_reader.REQUIREMENTS_FILE.name in errors,
                       (install_calls, exit_code, printed, errors, stub.crontab_writes))
+        install_calls.clear()
+        shell_reader._parser = None
+        shutil.rmtree(shell_reader.STATE_DIRECTORY, ignore_errors=True)
+        shell_reader.load_parser = (lambda: real_load_parser(
+            importer=missing_until_installed, installer=failing_install))
+        stub = MachineStub(crontab=(BOX_MIRROR + "\n" + BOX_DAILY + "\n" + BOX_ALONE + "\n").encode())
+        with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, None):
+            exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+        check("with tree-sitter-bash missing and its install failing, --check on a crontab that "
+              "holds only the table's own jobs reads no line with the parser and exits 0",
+              install_calls == [] and exit_code == 0 and printed.count("matches: ") == 3,
+              (install_calls, exit_code, printed, errors))
     finally:
         shell_reader.load_parser, shell_reader.STATE_DIRECTORY = real_load_parser, saved_state_directory
         shell_reader._parser = saved_parser
