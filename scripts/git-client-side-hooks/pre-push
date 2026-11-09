@@ -50,11 +50,19 @@ checked_remote=origin
 # pre_push_check_run_by_hand_command in the Python file does: the worktree's, else
 # the reference checkout's. Git runs a hook from the top of the worktree being
 # pushed, so scripts/ is the worktree's.
+# shell_quote quotes a word as Python's shlex.quote does, so both print the same command.
+shell_quote() {
+    case "$1" in
+        '' | *[!A-Za-z0-9_@%+=:,./-]*)
+            printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\"'\"'/g")" ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
 pre_push_check_run_by_hand_command() {
     if [ -f "scripts/$1" ]; then
         printf 'python3 scripts/%s --head %s' "$1" "$2"
     elif [ -f "$scripts_directory/$1" ]; then
-        printf 'python3 %s --head %s' "$scripts_directory/$1" "$2"
+        printf 'python3 %s --head %s' "$(shell_quote "$scripts_directory/$1")" "$2"
     else
         printf 'no copy of the check exists to run, as your worktree has no scripts/%s and %s is missing too; tell the user' "$1" "$scripts_directory/$1"
     fi
