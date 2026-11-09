@@ -451,8 +451,9 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
     launch record is looked up in the session's transcript and its subagents' transcripts: a shell
     task launched by the Monitor tool holds nothing, nor does one launched longer ago than the wait;
     one whose launch no transcript records counts as within its wait. Each listed subagent and shell
-    task is dated by its launch record, for a deferral that saved no list; a workflow, or work whose
-    launch no transcript records, has no date. An entry that is not a running subagent, workflow or
+    task is dated by its launch record, for a deferral that saved no list, and so is each subagent
+    off the list whose transcript launched a listed shell task; a workflow, or work whose launch no
+    transcript records, has no date. An entry that is not a running subagent, workflow or
     shell task holds nothing. Raises TranscriptCouldNotBeFullyRead when a transcript cannot be read,
     or a line naming a listed shell task or subagent does not parse.
     """
@@ -474,7 +475,10 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
         return age is None or age <= background_task_wait_seconds
 
     subagent_ids = ids_of(SUBAGENT_TASK_TYPE)
-    launched_at_by_id = subagent_launched_at_by_id_from_transcript_spawn_records(transcript_path, subagent_ids)
+    launching_subagent_ids_off_the_list = sorted(
+        set(launching_subagent_id_by_task_id.values()) - set(subagent_ids))
+    launched_at_by_id = subagent_launched_at_by_id_from_transcript_spawn_records(
+        transcript_path, subagent_ids + launching_subagent_ids_off_the_list)
     launched_at_by_id.update({task_id: now - timedelta(seconds=age)
                               for task_id, age in launch_ages.items() if age is not None})
     return WorkInFlight(
@@ -608,7 +612,10 @@ def awaited_work_still_in_flight(marker, flight: WorkInFlight) -> bool:
     if marker.awaited_work_is_unknown:
         # No list was saved: wait for what was launched before the deferral began.
         def launched_before_deferral(work_id):
-            launched_at = flight.launched_at_by_id.get(work_id)
+            # A subagent's own shell task stands in for the subagent, which is off the list while
+            # the task runs, so it is dated by the subagent's launch.
+            launched_at = flight.launched_at_by_id.get(
+                flight.launching_subagent_id_by_task_id.get(work_id, work_id))
             return launched_at is None or launched_at <= marker.deferral_began_at
         return any(launched_before_deferral(work_id) for work_id in
                    flight.subagent_ids + flight.workflow_ids + flight.background_task_ids)

@@ -1446,6 +1446,27 @@ with tempfile.TemporaryDirectory() as workspace:
         flight = flight_of([list_entry("anospawn", "subagent")], transcript=list_unknown_session)
         check("with no saved list, a listed subagent whose launch no transcript records holds it",
               hook.awaited_work_still_in_flight(list_unknown_marker, flight), flight.launched_at_by_id)
+        # A subagent launched before the deferral leaves the list while it waits on a shell task it
+        # starts after the deferral began; that task stands in for the subagent and holds the handoff.
+        owner_session = transcript_of(workspace, "background-tasks-list-unknown-count-owner.jsonl", [
+            usage_record(100_000, cache_read=450_000),
+            dict(subagent_spawn_record("aearlyowner"), timestamp=two_hours_ago),
+            dict(subagent_spawn_record("alateowner"), timestamp=ten_minutes_ago),
+        ])
+        owner_subagents = owner_session.with_suffix("") / "subagents"
+        owner_subagents.mkdir(parents=True, exist_ok=True)
+        transcript_of(owner_subagents, "agent-aearlyowner.jsonl", [
+            background_task_launch_record("bearlyownertask", launched_at=ten_minutes_ago)])
+        transcript_of(owner_subagents, "agent-alateowner.jsonl", [
+            background_task_launch_record("blateownertask", launched_at=ten_minutes_ago)])
+        flight = flight_of([list_entry("bearlyownertask", "shell")], transcript=owner_session)
+        check("with no saved list, a shell task started after the deferral began by a subagent"
+              " launched before it, now off the list, holds the handoff",
+              hook.awaited_work_still_in_flight(list_unknown_marker, flight), flight.launched_at_by_id)
+        flight = flight_of([list_entry("blateownertask", "shell")], transcript=owner_session)
+        check("with no saved list, a shell task of a subagent launched after the deferral began"
+              " does not hold the handoff",
+              not hook.awaited_work_still_in_flight(list_unknown_marker, flight), flight.launched_at_by_id)
         torn_spawn = transcript_of(workspace, "background-tasks-list-torn-spawn.jsonl", [
             usage_record(100_000, cache_read=450_000)])
         with torn_spawn.open("a", encoding="utf-8") as handle:
@@ -1788,6 +1809,18 @@ with tempfile.TemporaryDirectory() as wait_set_workspace:
           hook.awaited_work_still_in_flight(workflow_marker, hook.WorkInFlight([], [], ["w1"])))
     check("with no saved list, a workflow whose launch time is unknown holds the handoff",
           hook.awaited_work_still_in_flight(unknown_marker, hook.WorkInFlight([], [], ["w9"])))
+    check("with no saved list, a subagent's own shell task launched after the deferral began is"
+          " dated by its subagent's earlier launch, and holds the handoff",
+          hook.awaited_work_still_in_flight(unknown_marker, hook.WorkInFlight(
+              [], ["T"], launched_at_by_id={"T": began + timedelta(minutes=5),
+                                            "A": began - timedelta(hours=1)},
+              launching_subagent_id_by_task_id={"T": "A"})))
+    check("with no saved list, a subagent's own shell task whose subagent was launched after the"
+          " deferral began does not hold the handoff",
+          not hook.awaited_work_still_in_flight(unknown_marker, hook.WorkInFlight(
+              [], ["T"], launched_at_by_id={"T": began - timedelta(hours=1),
+                                            "A": began + timedelta(minutes=5)},
+              launching_subagent_id_by_task_id={"T": "A"})))
     # A deferral that begins while a subagent waits off the list on its own shell task must still
     # wait for that subagent once the task ends and the subagent is back on the list.
     with tempfile.TemporaryDirectory() as owner_workspace:
