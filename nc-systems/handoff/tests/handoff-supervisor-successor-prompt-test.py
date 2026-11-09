@@ -463,7 +463,8 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
                                   "CLAUDE_CODE_TASK_LIST_ID", "TRANSCRIPT_MIRROR_DESTINATION")}
     environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
     subprocess.run(
-        [sys.executable, str(writer_script), "--agent", "roundtrip",
+        # No transcript here, so without the flag the writer would refuse over the roster.
+        [sys.executable, str(writer_script), "--agent", "roundtrip", "--acted-on-reported-problems",
          "--next-step-file", str(next_step_file), "--handoff-dir", str(workspace)],
         capture_output=True, text=True, check=False, env=environment)
     round_tripped = supervisor.parse_handoff_file(workspace / "roundtrip-handoff.md")
