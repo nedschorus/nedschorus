@@ -21,8 +21,8 @@ What it reads, for each agent-seat that has a handoff-supervisor state file
 It prints one JSON object per agent-seat, one per line. Each holds what the later slice needs
 without reading anything again: the session id, the transcript path, the last time a token was
 spent and the file that showed it, what is running and since when (a subagent that reported and
-stopped while background commands it launched still run gets the time of its report and a list of
-those commands), the matched sentences with the code's reading of each, the agent-seat's last message, the tool calls a judge of the sentences
+stopped while background commands it launched still run gets the time of its report under
+`stopped_at` and a list of those commands under `own_running_background_commands`), the matched sentences with the code's reading of each, the agent-seat's last message, the tool calls a judge of the sentences
 looks through, the rule that applies and its decision.
 
 What it does not handle: it keeps no record of earlier runs, so it cannot tell which turn-ending
