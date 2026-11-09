@@ -40,9 +40,13 @@ Whether to build anything on one case is the user's decision.
 
 Recommendation: option 1, because the harm condition of CLAUDE.md's rule is not met, and the user's ruling of 2026-11-01 recorded in GHI [Nothing checks that a design document still describes the code a pull request changes](https://github.com/nedschorus/nedschorus/issues/2078) chose to build no program for the closely related case of design prose that drifts from code.
 
+## What the user ruled, 2026-11-08
+
+The user chose option 1, build nothing now, answering "A" at 2026-11-08 19:10 to item 4 of 5 of the approval-walk whose minutes are `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/memory-refusal-only-the-callers-lines-and-restored-branch-task-rebase-gap-approval-walk-2026-11-08-minutes.md`, which `scripts/walk-files-ship.py` puts there when the walk closes; on 2026-11-08 the walk was still open and the file was there only in the walk's checkout, under `docs/walk/`. The one case did no harm: a pull request reviewer found the six lines and PR 2829 fixed them, so the harm condition of CLAUDE.md's rule on proposing a guard or a validation is not met. The issue closes as not planned, until a second case shows harm.
+
 ## Next action
 
-The agent-seat that next runs an approval-walk carrying open GHI items puts the three options to the user, with the recommendation above, and records his answer in a section of this GHI-MD headed with the ruling's date, landed with edit-GHI. If he chooses option 1, the issue closes as not planned; if option 2, the measurement it names comes first; if option 3, this GHI-MD's case is added to GHI 42's list of candidates and this issue closes as a duplicate.
+None: the issue closes as not planned, under the ruling above.
 
 ## Related, not parents
 
