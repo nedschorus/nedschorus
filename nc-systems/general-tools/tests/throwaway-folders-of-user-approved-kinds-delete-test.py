@@ -350,7 +350,7 @@ def run_unapproved_kind_cases():
           result.stdout)
     alerts = s.alerts()
     check("each new unapproved kind is raised in one user-alert, with its place, count and size",
-          len(alerts) == 3 and any(alert["title"].endswith(f"{s.tmp}/pymp-*") and "2 folders" in alert["alert_text"]
+          len(alerts) == 3 and any(alert["title"].endswith(f"pymp-* in {s.tmp}") and "2 folders" in alert["alert_text"]
                                    and "pymp-a1b2c3d4, pymp-zz99yy88" in alert["alert_text"]
                                    and alert["action"] == program.ALERT_ACTION_TEXT for alert in alerts),
           json.dumps(alerts))

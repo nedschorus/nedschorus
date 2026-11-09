@@ -104,10 +104,11 @@ FAILURES_INSTRUCTION = (
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 THROWAWAY_FOLDERS_PROGRAM = Path(__file__).resolve().parent / "throwaway-folders-of-user-approved-kinds-delete.py"
 THROWAWAY_FOLDERS_STEP_NOT_STARTED_TEMPLATE = (
-    "The second step, `{command}`, could not be started: {error}. No throwaway folder was "
-    "deleted or shown today.\n"
-    "Fix the cause the error names, then on ned-box run that command with --dry-run, and then "
-    "without it.")
+    "The daily 07:30 job's second step, the sweep of throwaway folders, could not be started as "
+    "`{command}`: {error}. The first step, above, ran; no throwaway folder was deleted or shown "
+    "today.\n"
+    "Fix the cause the error names, then on ned-box run that same command with --dry-run added "
+    "at its end, and when that exits 0, run the command again without --dry-run.")
 
 DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES =["/tmp", "/home/nedlern/.cache/claude-code-tmp"]
 SESSION_FOLDER_NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")

@@ -21,7 +21,8 @@ group `pull_request` reads from the name is merged or closed; and `approved`, wh
 approved the kind. A file that cannot be read or is malformed stops the run before anything is
 deleted.
 
-WHAT IS DELETED. A folder directly inside a kind's place that matches the kind, and also:
+WHAT IS DELETED. A folder directly inside a kind's place whose name the kind's `name` matches
+and which holds the kind's `holding`, when it names one, and which also:
 - is a directory, not a symbolic link, owned by the account the program runs as, nedlern from
   the cron job;
 - has nothing in it, at any depth, changed for 24 hours: the newest modification time of the
@@ -47,7 +48,8 @@ tmp.Xq3vT9aBcD is `tmp.*`;
 otherwise the kind is the name up to its first digit followed by `*`, so rv2144r1 is `rv*`; a name
 with no digit is its own kind. Each unapproved kind is printed on every run with its folder count,
 file count and size. The first run that finds a kind writes a user-alert for it, with the
-user-alerts module beside this file, and records the kind in --kinds-shown-state-file, default
+user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py beside this
+file, and records the kind in --kinds-shown-state-file, default
 ~/.local/state/nedschorus/throwaway-folder-kinds-shown-to-the-user.json, so each kind is raised
 once.
 
@@ -59,8 +61,11 @@ Exit status: 0 when done; 1 when anything could not be checked or done: the appr
 unreadable or malformed (nothing is deleted), a place or the process table that cannot be listed,
 a folder whose tree cannot be read in full, a pull request state that cannot be looked up, a
 folder that cannot be deleted, or a user-alert or the state file that cannot be written. Each
-failure is a line on stderr naming the place or folder not checked and why, and the run goes on
-with the others, so a run with a failure never reports that nothing was left behind. Linux only:
+failure is a line on stderr naming what was not checked or done and why. An approved-kinds file
+or a process table that cannot be read stops the run before anything is deleted; a user-alert
+that cannot be written stops the alerts of that run; after any other failure the run goes on
+with the other folders. A run with a failure exits 1 and never reports that nothing was left
+behind. Linux only:
 it reads /proc.
 """
 
@@ -93,21 +98,27 @@ EXAMPLES_IN_AN_ALERT = 5
 EXIT_DONE = 0
 EXIT_FAILED = 1
 
+PROGRAM_COMMAND_ON_NED_BOX = ("python3 " + str(REPOSITORY_ROOT / "nc-systems" / "general-tools"
+                                             / "throwaway-folders-of-user-approved-kinds-delete.py"))
 FAILURES_INSTRUCTION = (
-    "Each failure above kept its folders, or left a place unchecked; the next day's run tries again.\n"
-    "To clear a failure now: find its cause from the error and fix it, then on ned-box run "
-    "`python3 " + str(REPOSITORY_ROOT / "nc-systems" / "general-tools"
-                      / "throwaway-folders-of-user-approved-kinds-delete.py") + " --dry-run`, which "
-    "lists what it would delete and the failures it still meets.\n"
-    "If you cannot fix the cause yourself, tell the user which place or folder is unchecked and "
-    "why; a subagent tells the agent that dispatched it instead.")
-ALERT_TITLE_TEMPLATE = "Throwaway folders of a kind not approved for deletion: {place}/{kind}"
+    "Each failure above, from the daily sweep of throwaway folders, kept the folders it names, or "
+    "left the place it names unchecked; nothing was deleted that a failure names, and the next "
+    "day's run tries again.\n"
+    "To clear a failure now: find its cause from the error line and fix it, then on ned-box run "
+    "`" + PROGRAM_COMMAND_ON_NED_BOX + " --dry-run`, which lists what it would delete and the "
+    "failures it still meets; when it lists no failure, run the same command without --dry-run, "
+    "which deletes the folders it listed.\n"
+    "If you cannot fix the cause yourself, such as a folder only root may delete, tell the user "
+    "which folder or place is kept or unchecked, and why; a subagent tells the agent that "
+    "dispatched it instead.")
+ALERT_TITLE_TEMPLATE = "Leftover folders kept, of a kind the user has not approved for deletion: {kind} in {place}"
 ALERT_TEXT_TEMPLATE = (
-    "The daily throwaway-folder sweep on ned-box found {folders} folders of kind `{kind}` in "
+    "The daily sweep of throwaway folders on ned-box, the folders that killed tests and finished "
+    "reviews leave behind, found {folders} folders of kind `{kind}` in "
     "{place}, owned by nedlern, unchanged for 24 hours and used by no process: {files} files, "
     "{megabytes:.1f} MB. Some of them: {examples}. The sweep deletes only kinds the user approved "
-    "in " + APPROVED_KINDS_FILE_IN_THE_REPOSITORY + ", and this kind is not there, so it keeps them "
-    "and raises this kind only this once.")
+    "in " + APPROVED_KINDS_FILE_IN_THE_REPOSITORY + ", and this kind is not there, so it keeps these "
+    "folders. No later run raises this kind again.")
 ALERT_ACTION_TEXT = (
     "Only the user can approve a kind for deletion. If he approves this one, an agent on ned-box "
     "adds it to " + APPROVED_KINDS_FILE_IN_THE_REPOSITORY + " in a pull request, with a `name` "
