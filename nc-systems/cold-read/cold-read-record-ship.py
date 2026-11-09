@@ -356,6 +356,10 @@ in the nedschorus repository, which this machine also clones:
 - `clean-worktrees-removed-worktrees-and-deleted-branches-log/` -- each
   machine's log of every worktree `scripts/clean-worktrees.py --remove`
   removed and every branch it deleted, one line each, written by that program
+- `git-worktree-remove-deferred-until-cold-read-record-and-sanity-check-record-being-written-locks-release-then-ship-to-log-store-waiter-run-logs/`
+  -- one log per run of the waiter that removes a worktree once no record in
+  it is being written, written by
+  `nc-systems/general-tools/git-worktree-remove-deferred-until-cold-read-record-and-sanity-check-record-being-written-locks-release-then-ship-to-log-store-waiter.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file
