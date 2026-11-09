@@ -4,9 +4,8 @@ the head branch of any open pull request on origin; and before a forced update t
 origin goes through, save the commit it replaces under refs/force-pushed-old-heads/.
 
 Run by scripts/git-client-side-hooks/pre-push with git's pre-push arguments and the pushed refs
-on standard input. Exit 10 refuses the push; exit 0 lets it through. Exit 2, when git cannot say
-whether an update is a fast-forward, or any other exit, makes the hook say the push went
-unchecked and to tell the user.
+on standard input. Exit 10 refuses the push; exit 0 lets it through. Any other exit makes the
+hook say the push went unchecked and to tell the user.
 
 Reviews are of a pull request's pushed head, so an update that does not build on that head
 replaces the commits under review, and deleting the head branch closes the pull request.
@@ -25,7 +24,9 @@ asking GitHub. Every other update to a branch is let through only when `gh pr li
 that the branch has no open pull request, or the rebase-or-replace answer for its open pull
 request is rebase. A deletion is let through only when the
 branch has no open pull request. When gh cannot answer either question, the push is refused,
-because a forced update cannot be undone by the agent that sent it. A remote commit
+because a forced update cannot be undone by the agent that sent it. When git cannot say whether
+an update is a fast-forward, the push is refused too, after the other updates are checked, since
+a forced update would go through with the commit it replaces saved nowhere. A remote commit
 missing from the local repository cannot be shown to be an ancestor, so the update counts as
 not a fast-forward.
 
@@ -56,7 +57,6 @@ _rebase_or_replace_spec.loader.exec_module(rebase_or_replace)
 
 EXIT_ALLOW_PUSH = 0
 EXIT_REFUSE_PUSH = 10
-EXIT_CHECK_COULD_NOT_RUN = 2
 
 CHECKED_REMOTE_NAME = "origin"
 BRANCH_REF_PREFIX = "refs/heads/"
@@ -84,7 +84,8 @@ DELETION_REFUSAL = (
 REWRITE_INSTRUCTIONS = [
     "If you are adding work to the branch: run git fetch origin {branch}, put your change in a "
     "new commit on top of origin/{branch}, and push without --force.",
-    "If the branch conflicts with main: do what scripts/branch-conflict-check.py reports.",
+    "If the branch conflicts with main: run python3 scripts/branch-conflict-check.py --pull-request "
+    "{number}, and do what it reports.",
     "If you already rebased or amended the branch locally: keep that work on another branch "
     "(git branch {branch}-rewritten), go back to the pushed head (git switch -C {branch} "
     "origin/{branch}), and redo your change as a new commit.",
@@ -116,14 +117,19 @@ LOOKUP_FAILED_INSTRUCTION = (
 OLD_HEAD_SAVE_FAILED_REFUSAL = (
     "this push is refused, because it forces an update to branch {branch} on origin, and the "
     "commit that update replaces there, {old_head}, could not first be saved under {ref}: "
-    "{detail}. A forced update leaves the commits it replaces on no branch of origin; the saved "
-    "ref keeps them, so the update can be undone.")
+    "{detail}. A forced update leaves the commits it replaces on no branch of origin, so this "
+    "hook first keeps them under that ref in this repository, which lets the update be undone.")
 OLD_HEAD_SAVE_FAILED_INSTRUCTIONS = [
-    "If the detail names a cause you can fix, such as a failed fetch or a full disk, fix it and "
-    "push again.",
+    "If the cause this message gives is one you can fix, such as a failed fetch from origin or a "
+    "full disk, fix it and push again.",
     "Otherwise tell the user this whole message, and do not push {branch} again until he "
     "answers.",
 ]
+FAST_FORWARD_CHECK_FAILED_REFUSAL = (
+    "this push is refused, because whether its update to branch {branch} on origin builds on "
+    "origin/{branch} could not be checked, as the lines after the instructions say. An update that "
+    "does not build on it is a forced update, which goes through only after the commit it "
+    "replaces is saved.")
 OLD_HEAD_SAVED_NOTE = ("the commit this push replaces on branch {branch}, {old_head}, is saved "
                        "under {ref}.")
 
@@ -373,7 +379,7 @@ def refusal_lines(pushed_refs_text, runner):
 
 
 def main(argv, pushed_refs_text, stderr, environment, runner=subprocess.run):
-    """Return EXIT_ALLOW_PUSH, EXIT_REFUSE_PUSH or EXIT_CHECK_COULD_NOT_RUN for one push."""
+    """Return EXIT_ALLOW_PUSH or EXIT_REFUSE_PUSH for one push."""
     remote_name = argv[0] if argv else ""
     if remote_name != CHECKED_REMOTE_NAME:
         return EXIT_ALLOW_PUSH
@@ -385,6 +391,10 @@ def main(argv, pushed_refs_text, stderr, environment, runner=subprocess.run):
         lines, fast_forward_check_failures, forced_updates = refusal_lines(pushed_refs_text,
                                                                            runner)
     saved_notes = []
+    if not lines and fast_forward_check_failures:
+        branch = fast_forward_check_failures[0][0]
+        lines = [FAST_FORWARD_CHECK_FAILED_REFUSAL.format(branch=branch),
+                 *(line.format(branch=branch) for line in OLD_HEAD_SAVE_FAILED_INSTRUCTIONS)]
     if not lines:
         lines, saved_notes = old_heads_save(forced_updates, runner)
     for note in saved_notes:
@@ -396,9 +406,7 @@ def main(argv, pushed_refs_text, stderr, environment, runner=subprocess.run):
     for branch, detail in fast_forward_check_failures:
         stderr.write(f"{MESSAGE_PREFIX}whether this push's update to branch {branch} is a "
                      f"fast-forward could not be checked: {detail}.\n")
-    if lines:
-        return EXIT_REFUSE_PUSH
-    return EXIT_CHECK_COULD_NOT_RUN if fast_forward_check_failures else EXIT_ALLOW_PUSH
+    return EXIT_REFUSE_PUSH if lines else EXIT_ALLOW_PUSH
 
 
 if __name__ == "__main__":

@@ -465,8 +465,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the pushed advice is word for word, scripts/branch-conflict-check.py's report "
           "for a conflict included",
           "This branch is pushed, so its review may be running: do not rebase or amend "
-          "it. A fix for this topic is a new commit on top. If it conflicts with main, "
-          "do what scripts/branch-conflict-check.py reports. Your next topic starts with "
+          "it. A fix for this topic is a new commit on top. If the branch conflicts with "
+          "main, as python3 scripts/branch-conflict-check.py run in its checkout reports, "
+          "do what that report says. Your next topic starts with "
           "`git checkout -b <name> origin/main`."
           in pushed_warning, pushed_warning)
     check("the pushed warning is also one line",
@@ -495,8 +496,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "This branch's commits are already on GitHub under another branch name, so the "
           "branch is treated as pushed and is not rebased: a pushed head may be under "
           "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
-          "fix is a new commit on top. If it conflicts with main, do what "
-          "scripts/branch-conflict-check.py reports."
+          "fix is a new commit on top. If the branch conflicts with main, as python3 "
+          "scripts/branch-conflict-check.py run in its checkout reports, do what that "
+          "report says."
           in history_warning, history_warning)
     check("the pushed-history warning is one line", history_warning != ""
           and "\n" not in history_warning, repr(history_warning))

@@ -599,7 +599,13 @@ def print_brief(number, reviewer_login):
         "For the subagent, the rules of the round, in order, run in your own worktree:",
         f"0. Make a local branch at the frozen-head and switch to it: git fetch origin && git switch -C {local_branch} {frozen_head}",
         f"1. Before changing anything, run: python3 scripts/branch-conflict-check.py --pull-request {number}",
-        "   If it reports VERDICT: CONFLICT, do what its report says.",
+        "   If it reports VERDICT: CONFLICT with ANSWER: replace, stop the round and take none of steps 2 to 8: "
+        "the pull request is replaced by a new one, and steps 6 and 7 would check and push this one.",
+        "   Then do what the report says; when it has you open the new pull request, the new pull request's "
+        "#replaces line carries this round's findings into its first round.",
+        "   Then tell merge-lane-2 with SendMessage that this round stopped on a conflict with main, naming "
+        "the new pull request's link and head, or the comment that closed this one.",
+        "   If it reports VERDICT: CONFLICT with any other answer, do what its report says.",
         "2. Check each finding against the code. Fix each one that holds, root cause included, "
         "with a test that fails without the fix; a nit needs no test.",
         GUARDED_FILE_CHANGE_CARRYING_OUT_USER_RULING_INSTRUCTION,
