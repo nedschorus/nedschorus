@@ -63,6 +63,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -77,9 +78,12 @@ STOPPED = "stopped"
 UNKNOWN = "unknown"
 
 # Claude Code's lock reason on a subagent's worktree while the subagent runs. On Linux, start is
-# field 22 of /proc/<pid>/stat, the process's start in clock ticks after boot.
+# field 22 of /proc/<pid>/stat, the process's start in clock ticks after boot; on macOS it is the
+# process's start in local time as `ps -o lstart=` prints it, such as "Tue Nov  3 21:24:32 2026".
 CLAUDE_CODE_SUBAGENT_WORKTREE_LOCK_REASON = re.compile(
-    r"^claude agent agent-([0-9A-Za-z]+) \(pid (\d+) start (\d+)\)$")
+    r"^claude agent agent-([0-9A-Za-z]+) \(pid (\d+) start "
+    r"(\d+|[A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} \d{2}:\d{2}:\d{2} \d{4})\)$")
+MACOS_LOCK_START_FORMAT = "%a %b %d %H:%M:%S %Y"
 
 # Claude Code makes a subagent's worktree directly inside .claude/worktrees/ of the reference-checkout and
 # names its directory agent-a followed by 16 lowercase hex digits; other worktrees there, such as an
@@ -298,14 +302,40 @@ def claude_code_subagent_worktree_lock_reason_parse(lock_reason):
     return ClaudeCodeSubagentWorktreeLock(match.group(1), int(match.group(2)), match.group(3))
 
 
+def claude_code_subagent_worktree_lock_macos_start_seconds(lock):
+    """The macOS lock's start as whole seconds since 1970, the form
+    nc-systems/handoff/uncommitted-work-snapshots.py's macos_start_seconds gives; raises ValueError
+    when the start is not the date `ps -o lstart=` prints."""
+    started = time.strptime(" ".join(lock.start_ticks.split()), MACOS_LOCK_START_FORMAT)
+    return str(int(time.mktime(started)))
+
+
 def claude_code_subagent_worktree_lock_dispatching_process_running_state(lock, proc_root="/proc",
-                                                                         platform=sys.platform):
+                                                                         platform=sys.platform,
+                                                                         macos_start_seconds=None):
     """Return (state, explanation): whether the `claude` process the lock names, the process with
-    its id that started at its start, runs. UNKNOWN off Linux, where the start is not read."""
-    if not platform.startswith("linux"):
-        return UNKNOWN, (f"whether claude process {lock.process_id} runs is read only on Linux, "
-                         f"where the lock's start is the process's start in clock ticks")
+    its id that started at its start, runs; UNKNOWN when that cannot be read, and on any platform
+    but Linux and macOS."""
     snapshots = load_uncommitted_work_snapshots_module_once()
+    if platform == "darwin":
+        try:
+            lock_started = claude_code_subagent_worktree_lock_macos_start_seconds(lock)
+        except ValueError:
+            return UNKNOWN, (f"Claude Code's lock names claude process {lock.process_id} with the "
+                             f"start {lock.start_ticks!r}, which is not the date macOS's ps prints")
+        try:
+            started = (macos_start_seconds or snapshots.macos_start_seconds)(lock.process_id)
+        except Exception as error:
+            return UNKNOWN, (f"whether claude process {lock.process_id} runs could not be read: "
+                             f"{type(error).__name__}: {error}")
+        if started == lock_started:
+            return RUNNING, (f"Claude Code's lock names claude process {lock.process_id}, "
+                             f"started at {lock.start_ticks}, which runs")
+        return STOPPED, (f"Claude Code's lock names claude process {lock.process_id}, started at "
+                         f"{lock.start_ticks}, which has ended")
+    if not platform.startswith("linux"):
+        return UNKNOWN, (f"whether claude process {lock.process_id} runs is read only on Linux "
+                         f"and macOS")
     try:
         started = snapshots.linux_start_ticks(lock.process_id, proc_root)
     except (FileNotFoundError, ProcessLookupError):
@@ -320,10 +350,15 @@ def claude_code_subagent_worktree_lock_dispatching_process_running_state(lock, p
                      f"{lock.start_ticks}, which has ended")
 
 
-def claude_code_subagent_worktree_lock_ended_agent_session_owner_key(lock, proc_root="/proc"):
-    """The owner key of the ended agent-session a Linux lock names, as
-    nc-systems/handoff/uncommitted-work-snapshots.py writes one; after a reboot the boot id
-    differs from the process's, and the key still reads as stopped."""
+def claude_code_subagent_worktree_lock_ended_agent_session_owner_key(lock, proc_root="/proc",
+                                                                   platform=sys.platform):
+    """The owner key of the ended agent-session a lock names, in the form
+    nc-systems/handoff/uncommitted-work-snapshots.py writes for the platform; after a reboot the
+    Linux boot id differs from the process's, and the key still reads as stopped. On macOS the
+    key holds the lock's start in seconds, which no later process with that id matches, so it
+    reads as stopped too; raises ValueError when that start cannot be read."""
+    if platform == "darwin":
+        return f"{lock.process_id}-{claude_code_subagent_worktree_lock_macos_start_seconds(lock)}"
     snapshots = load_uncommitted_work_snapshots_module_once()
     return f"{snapshots.linux_boot_id(proc_root)}-{lock.process_id}-{lock.start_ticks}"
 

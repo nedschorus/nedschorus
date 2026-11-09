@@ -26,8 +26,8 @@ Each worktree of the clone with no owner file is handled as follows:
     delete: a Claude Code subagent's worktree, directly inside .claude/worktrees/ of the
     reference-checkout and named agent-a followed by 16 lowercase hex digits, Claude Code's name
     for it, while it is locked with `git worktree lock`, whether or not the lock's claude process
-    runs. scripts/clean-worktrees.py --remove gives such a worktree an owner file once the claude
-    process that Claude Code's lock names has ended.
+    runs. Its line says what scripts/clean-worktrees.py --remove does with it now: keeps it, and
+    why, or unlocks it, and whether it first writes an owner file.
   - Given an owner file naming an agent-seat: an unlocked Claude Code subagent's worktree, when
     the Claude Code transcripts of exactly one agent-seat name its subagent, agent-<id> for the
     directory agent-<id>, as agent_seats_whose_claude_code_transcripts_name_subagent in
@@ -45,12 +45,14 @@ Each worktree of the clone with no owner file is handled as follows:
     fits <name>.
 
 FOR THE USER. Each worktree listed for the user is named on a line of its own with the facts that
-decide whether to keep or delete it: how many uncommitted, untracked or ignored files it holds, how many
+decide whether to keep or delete it. To keep one, do nothing: scripts/clean-worktrees.py never
+removes a listed worktree while it has no owner file. The facts are how many uncommitted, untracked or ignored files it holds, how many
 commits its HEAD has that its branch's upstream lacks, or origin/main when the branch has no
 upstream or the worktree is on a detached HEAD, and whether its branch is merged into origin/main,
 as git reads origin/main without fetching, or that it is on a detached HEAD and has no branch. A
 fact git cannot read is printed as unknown, with git's error. After the list come the two commands
-that delete one such worktree, and its branch when it has one:
+that delete one such worktree, and its branch when it has one, <repo> being the clone this run
+handled:
 
   scripts/worktree-owner-file-read-and-write.py write --agent-seat <agent-seat> --worktree <worktree>
   scripts/clean-worktrees.py --repo <repo> --remove-worktree-and-force-delete-its-branch <worktree>
@@ -134,6 +136,19 @@ def backfill_action(worktree, locked_reason, main_checkout, agents_root, agent_s
     return "write", seat, f"{seat}'s name begins {top}"
 
 
+def clean_worktrees_remove_of_locked_subagent_worktree_text(worktree, record):
+    """What scripts/clean-worktrees.py --remove does now with a locked subagent's worktree."""
+    verdict, ended = cleaner.claude_code_subagent_lock_verdict_or_ended_lock(worktree, record)
+    if verdict is not None:
+        return (f"scripts/clean-worktrees.py --remove keeps it, so nothing needs doing now: "
+                f"{verdict.reason}")
+    owner = ended.owner_to_write
+    first = (f", first giving it an owner file naming the agent-seat {owner['agent_seat']}, whose "
+             f"Claude Code transcripts name its subagent" if owner else "")
+    return (f"the next scripts/clean-worktrees.py --remove unlocks it{first}, since "
+            f"{ended.explanation}, then judges it like any other worktree")
+
+
 def keep_or_delete_facts_text(repo, worktree, branch):
     """The facts FOR THE USER names beside a worktree listed for the user."""
     discarded, listing_error = cleaner.files_a_removal_discards(worktree)
@@ -148,13 +163,15 @@ def keep_or_delete_facts_text(repo, worktree, branch):
             base = upstream.stdout.strip()
     ahead = cleaner.run_git(worktree, "rev-list", "--count", f"{base}..HEAD")
     commits = (f"{ahead.stdout.strip()} commit(s) {base} lacks" if ahead.returncode == 0
-               else f"commits {base} lacks unknown ({' '.join(ahead.stderr.split())})")
+               else f"how many commits its HEAD has that {base} lacks is unknown (git rev-list exited "
+                    f"{ahead.returncode}: {' '.join(ahead.stderr.split()) or 'no error text'})")
     if branch is None:
         merged = "on a detached HEAD, so no branch to merge"
-    elif cleaner.fully_on_origin_main(repo, branch):
-        merged = f"its branch {branch} is merged into origin/main"
     else:
-        merged = f"its branch {branch} is not merged into origin/main"
+        on_main, git_error = cleaner.branch_fully_on_origin_main_true_false_or_none_with_git_error(repo, branch)
+        merged = (f"whether its branch {branch} is merged into origin/main is unknown ({git_error})"
+                  if on_main is None
+                  else f"its branch {branch} is {'' if on_main else 'not '}merged into origin/main")
     return f"{changes}; {commits}; {merged}"
 
 
@@ -205,8 +222,8 @@ def main(argv=None):
         if action == "skip":
             continue
         if action == "subagent":
-            print(f"{worktree}: given no owner file, as {why}: scripts/clean-worktrees.py --remove "
-                  f"gives it one once the claude process Claude Code's lock names has ended")
+            print(f"{worktree}: given no owner file, since it is {why}; "
+                  f"{clean_worktrees_remove_of_locked_subagent_worktree_text(worktree, record)}")
             continue
         if action == "for the user":
             print(f"{worktree}: given no owner file, since {why}; for the user to keep or delete: "
@@ -228,6 +245,8 @@ def main(argv=None):
         print(f"{len(for_the_user)} worktree(s) for the user to keep or delete, owned by no "
               f"agent-seat this program can tell: "
               + ", ".join(str(worktree) for worktree in for_the_user))
+        print("To keep one, do nothing: scripts/clean-worktrees.py never removes a listed worktree "
+              "while it has no owner file.")
         print("To delete one with its branch, give it an owner file naming the agent-seat to be "
               "told of the work-snapshot that keeps its uncommitted files, since "
               "scripts/clean-worktrees.py removes only a worktree holding one, then remove it:\n"

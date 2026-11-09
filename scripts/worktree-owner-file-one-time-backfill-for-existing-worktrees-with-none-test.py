@@ -110,11 +110,13 @@ def run_cases(root):
     worktrees["detached"] = root / "elsewhere" / "detached"
     add("review", home / ".cache" / "merge-lane-review-worktrees" / "pr12-head")
     subagent_ids = {"locked-subagent": "a45a189e6c5e2e31e", "one-seat-subagent": "a0000000000000001",
-                    "no-seat-subagent": "a0000000000000002", "two-seat-subagent": "a0000000000000003"}
+                    "no-seat-subagent": "a0000000000000002", "two-seat-subagent": "a0000000000000003",
+                    "hand-locked-subagent": "a0000000000000004"}
     for name, agent_id in subagent_ids.items():
         add(name, clone / ".claude" / "worktrees" / f"agent-{agent_id}")
     git("worktree", "lock", "--reason", f"claude agent agent-{subagent_ids['locked-subagent']} "
         f"(pid 1 start 1)", str(worktrees["locked-subagent"]))
+    git("worktree", "lock", "--reason", "kept by hand", str(worktrees["hand-locked-subagent"]))
 
     def transcript(seat, agent_id):
         project = home / ".claude" / "projects" / re.sub(r"[^a-zA-Z0-9]", "-",
@@ -181,9 +183,21 @@ def run_cases(root):
     check("a locked subagent's worktree is given none, even when one agent-seat's transcripts "
           "name its subagent, and named with why, not listed for the user",
           owner("locked-subagent") is None
-          and "given no owner file, as a locked Claude Code subagent's worktree"
+          and "given no owner file, since it is a locked Claude Code subagent's worktree; "
           in line_of(output, "locked-subagent")
           and "for the user" not in line_of(output, "locked-subagent"), output)
+    if sys.platform.startswith("linux"):
+        check("a locked subagent's worktree whose lock names an ended claude process is named with "
+              "what the cleaner's next --remove does: unlock it, first writing the owner file",
+              "the next scripts/clean-worktrees.py --remove unlocks it, first giving it an owner "
+              "file naming the agent-seat seat, whose Claude Code transcripts name its subagent, "
+              "since Claude Code's lock names claude process 1"
+              in line_of(output, "locked-subagent"), output)
+    check("a subagent's worktree locked in another form is named with the cleaner keeping it",
+          owner("hand-locked-subagent") is None
+          and "scripts/clean-worktrees.py --remove keeps it, so nothing needs doing now: locked "
+              "with git worktree lock (kept by hand)" in line_of(output, "hand-locked-subagent"),
+          output)
     check("an unlocked subagent's worktree whose subagent one agent-seat's transcripts name is "
           "given an owner file naming that agent-seat",
           owner("one-seat-subagent") == {"owner_kind": "agent-seat", "agent_seat": "seat"}
@@ -218,6 +232,9 @@ def run_cases(root):
     check("a worktree on a detached HEAD is named with the commits origin/main lacks and no branch",
           line_of(output, "detached").endswith(
               "0 commit(s) origin/main lacks; on a detached HEAD, so no branch to merge"), output)
+    check("the list is followed by how to keep a worktree for the user",
+          "To keep one, do nothing: scripts/clean-worktrees.py never removes a listed worktree "
+          "while it has no owner file.\n" in output, output)
     check("the list ends with the two commands that delete one worktree for the user",
           "  scripts/worktree-owner-file-read-and-write.py write --agent-seat <agent-seat> "
           "--worktree <worktree>\n"
@@ -283,6 +300,8 @@ def run_cases(root):
         f'  *"@{{upstream}}"*) case " $* " in *" {worktrees["upstream"]} "*) kill -9 $$ ;; esac ;;\n'
         '  *" rev-list "*) printf "rev-list\\nrefused" >&2\n'
         f'    case " $* " in *" {worktrees["outside"]} "*) kill -9 $$ ;; esac; exit 1 ;;\n'
+        '  *" merge-base "*) case " $* " in *" refs/heads/branch-outside "*) kill -9 $$ ;; esac\n'
+        '    exit 128 ;;\n'
         'esac\n'
         f'exec {shutil.which("git")} "$@"\n')
     (facts_failing_git / "git").chmod(0o755)
@@ -291,15 +310,28 @@ def run_cases(root):
         env={**environment, "PATH": f"{facts_failing_git}{os.pathsep}{environment['PATH']}"},
         capture_output=True, text=True, check=False)
     check("a fact git cannot read, or whose git a signal kills, is printed as unknown, with git's "
-          "error on one line",
+          "exit code and error on one line",
           "for the user to keep or delete: uncommitted, untracked or ignored files unknown "
           "(facts refused); "
-          "commits origin/main lacks unknown (rev-list refused); its branch branch-unmatched"
+          "how many commits its HEAD has that origin/main lacks is unknown (git rev-list exited 1: rev-list "
+          "refused); whether its branch branch-unmatched"
           in line_of(unread_facts.stdout, "unmatched")
-          and "commits origin/main lacks unknown (rev-list refused); its branch branch-outside"
+          and "how many commits its HEAD has that origin/main lacks is unknown (git rev-list exited -9: rev-list "
+              "refused); whether its branch branch-outside"
           in line_of(unread_facts.stdout, "outside"), unread_facts.stdout + unread_facts.stderr)
+    check("a merge check git cannot make is printed as unknown, never as not merged, and a git "
+          "error with no text says so",
+          line_of(unread_facts.stdout, "unmatched").endswith(
+              "whether its branch branch-unmatched is merged into origin/main is unknown (git "
+              "merge-base --is-ancestor exited 128: no error text)")
+          and "not merged" not in line_of(unread_facts.stdout, "unmatched"), unread_facts.stdout)
+    check("a merge check whose git a signal kills is printed as unknown, never as merged",
+          line_of(unread_facts.stdout, "outside").endswith(
+              "whether its branch branch-outside is merged into origin/main is unknown (git "
+              "merge-base --is-ancestor exited -9: no error text)"), unread_facts.stdout)
     check("a branch whose upstream git cannot read is compared with origin/main",
-          "commits origin/main lacks unknown (rev-list refused); its branch branch-upstream"
+          "how many commits its HEAD has that origin/main lacks is unknown (git rev-list exited 1: rev-list "
+          "refused); whether its branch branch-upstream"
           in line_of(unread_facts.stdout, "upstream"), unread_facts.stdout)
     refused = run("--remove")
     check("an unknown argument is refused with exit 2", refused.returncode == 2, refused.stderr)

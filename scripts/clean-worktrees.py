@@ -48,15 +48,17 @@ worktree whose verdict needs a pull request is kept.
 
 CLAUDE CODE'S LOCK. A lock in the form Claude Code writes on a subagent's
 worktree, "claude agent agent-<id> (pid N start T)", once no process N that
-started at T runs, as /proc says on Linux, is not kept for: --remove unlocks
+started at T runs, as /proc says on Linux and ps says on macOS, where T is the
+date ps prints, such as "Tue Nov  3 21:24:32 2026", is not kept for: --remove unlocks
 the worktree, first writing it an owner file when it has none, naming that
 ended agent-session and the agent-seat whose Claude Code transcripts name
 subagent agent-<id> (scripts/worktree-owner-file-read-and-write.py says which
 transcripts those are), then judges it like any other. When no agent-seat's
 transcripts name the subagent, or more than one's do, the worktree is kept,
 locked, and named on a line of its own for the user to keep or delete. The
-report modes say what --remove would do and change nothing. Off Linux, where
-the start is not read, the lock keeps the worktree.
+report modes say what --remove would do and change nothing. While whether
+process N runs cannot be read, and on any platform but Linux and macOS, the lock
+keeps the worktree, as does a lock in any other form.
 
 MERGE-LANE REVIEW CHECKOUTS. A worktree with no owner file directly inside
 ~/.cache/merge-lane-review-worktrees, where merge-lane-2 checks out each pull
@@ -1049,10 +1051,21 @@ def detached_commits_branch_name(worktree, commit):
     return DETACHED_COMMITS_BRANCH_NAME_TEMPLATE.format(worktree_name=worktree.name, commit=commit)
 
 
+def branch_fully_on_origin_main_true_false_or_none_with_git_error(repo, branch):
+    """Return (True, None) when every commit of the branch is on origin/main, (False, None) when
+    one is not, and (None, git's error) when git cannot say."""
+    result = run_git(repo, "merge-base", "--is-ancestor", f"refs/heads/{branch}", "origin/main")
+    if result.returncode == 0:
+        return True, None
+    if result.returncode == 1:
+        return False, None
+    return None, (f"git merge-base --is-ancestor exited {result.returncode}: "
+                  f"{' '.join(result.stderr.split()) or 'no error text'}")
+
+
 def fully_on_origin_main(repo, branch):
     """Whether every commit of the branch is on origin/main; False when git cannot say."""
-    return run_git(repo, "merge-base", "--is-ancestor", f"refs/heads/{branch}",
-                   "origin/main").returncode == 0
+    return branch_fully_on_origin_main_true_false_or_none_with_git_error(repo, branch)[0] is True
 
 
 def print_next_remove_run_line(line, one_named):
