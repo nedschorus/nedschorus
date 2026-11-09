@@ -62,8 +62,9 @@ if not os.path.isdir("/proc/self/fd"):
     print("SKIP  the cases on real processes need /proc [this machine cannot run it]")
 else:
     linux = wait.linux_processes_writing_file
-    reader_process = subprocess.Popen([sys.executable, "-c", CHILD_THAT_SLEEPS],
-                                      stdin=open(output_file), stdout=subprocess.DEVNULL)
+    with open(output_file) as read_only:
+        reader_process = subprocess.Popen([sys.executable, "-c", CHILD_THAT_SLEEPS],
+                                          stdin=read_only, stdout=subprocess.DEVNULL)
     try:
         code, message = wait.wait_until_no_process_writes(str(output_file), 60, linux, sleep=no_sleep)
     finally:
