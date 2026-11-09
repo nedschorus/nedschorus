@@ -573,6 +573,37 @@ for case_name, source, expected in SCOPE_FORMS_EACH_RULE_ONCE_MISSED:
     found = texts(source)
     check(f"scope: {case_name}", found == expected, found)
 
+def texts_as_agent_reads_them(source):
+    return [entry["text_as_agent_reads_it_with_placeholder_stand_ins"] for entry in entries(source)]
+
+
+# Modelled on scripts/pull-request-ready-for-review-mark-after-description-defect-line-and-test-suites-check.py,
+# whose f-string and + chain messages reached cold-read-fast-read as Python source, f" and {quoted} included.
+found = texts_as_agent_reads_them(
+    'NOTHING_CHANGED_LINE = "Nothing was changed."\n'
+    'def refuse(on, quoted, changed):\n'
+    '    raise SystemExit(f"This checkout is on {on}, not {quoted}: {NOTHING_CHANGED_LINE}\\n"\n'
+    '                     "Run git worktree add <a new directory> {quoted}.\\n"\n'
+    '                     + "".join(changed) + f"{len(changed)} change(s), stash@{{<n>}}.")\n')
+check("text as the agent reads it: an f-string field and a + chain operand become <source>, a module constant "
+      "its value, with no Python quote, prefix or doubled brace",
+      found[-1:] == ["This checkout is on <on>, not <quoted>: Nothing was changed.\n"
+                "Run git worktree add <a new directory> {quoted}.\n"
+                "<''.join(changed)><len(changed)> change(s), stash@{<n>}."], found)
+
+found = texts_as_agent_reads_them(
+    'HEAD_LINE = "head " + f"{NAME}"\n'
+    'NAME = "text"\n'
+    'SEPARATOR = "-" * 3\n'
+    'def show(path):\n'
+    '    print(f"{HEAD_LINE}; {HEAD_LINE!r}; {HEAD_LINE:>5}; {SEPARATOR}; {path}")\n'
+    '    print("plain {path}" + SEPARATOR)\n')
+check("text as the agent reads it: a module constant built with + resolves, through another constant in an f-string "
+      "field; a field with a conversion or format spec, or a constant that is no string literal, f-string or + of "
+      "those, stays <source>",
+      found[-2:] == ["head text; <HEAD_LINE>; <HEAD_LINE>; <SEPARATOR>; <path>",
+                     "plain {path}<SEPARATOR>"], found)
+
 check("source that does not parse yields no entries", texts('print("unclosed\n') == [])
 check("no source yields no entries", texts(None) == [])
 

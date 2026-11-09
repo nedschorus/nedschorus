@@ -655,6 +655,14 @@ def run_agent_text_cases(fixture):
     entries = plan["agent_facing_text_whole_pull_request"]
     f_string_entry = next((entry for entry in entries if entry["label"] == "print in show_message()"), {})
     check("changed print f-strings retain placeholders and old/new text", "{name}" in f_string_entry.get("old_text", "") and "{name}" in f_string_entry.get("new_text", "") and "Old message" in f_string_entry["old_text"] and "New message" in f_string_entry["new_text"], entries)
+    f_string_command = f_string_entry.get("fast_read_command")
+    f_string_target = Path(shlex.split(f_string_command)[-1]) if f_string_command else Path()
+    check("an f-string message's target holds the text the agent reads, each field a <source> stand-in, "
+          "not the f-string's Python source",
+          f_string_entry.get("new_text") == "f'New message for {name}'"
+          and f_string_entry.get("new_text_as_agent_reads_it_with_placeholder_stand_ins") == "New message for <name>"
+          and f_string_target.is_file() and f_string_target.read_text(encoding="utf-8") == "New message for <name>\n"
+          and f_string_target.name == f_string_entry["fast_read_target_file_name"], f_string_entry)
     check("changed raise text is listed with context", any(entry["label"] == "raise in show_message()" and entry["old_text"] == "Old failure" and entry["new_text"] == "New failure" for entry in entries), entries)
     check("changed advice constants are listed", any(entry["label"] == "CHECK_ADVICE =" and entry["old_text"] == "Old advice ``` marker" and entry["new_text"] == "New advice ``` marker" for entry in entries), entries)
     check("module docstrings printed through __doc__ are listed", any(entry["label"] == "module docstring (printed by --help)" and "Old help" in entry["old_text"] and "New help" in entry["new_text"] for entry in entries), entries)
@@ -835,8 +843,10 @@ def run_fast_read_command_cases(fixture):
           and all(entry["fast_read_command"] is None and entry["fast_read_target_error"] for entry in blocked_entries)
           and "1 listed agent-facing message has no cold-read-fast-read command, because its text" in json_result.stderr
           and "--target <that file's full path>" in json_result.stderr, json_result)
-    blocked_entry = blocked_entries[0] if blocked_entries else {"path": "", "line": 0, "new_text": ""}
-    file_name = review_plan_module._message_reminder_hook.fast_read_target_path(blocked_entry["path"], blocked_entry["new_text"]).name
+    blocked_entry = blocked_entries[0] if blocked_entries else {
+        "path": "", "line": 0, "new_text_as_agent_reads_it_with_placeholder_stand_ins": ""}
+    file_name = review_plan_module._message_reminder_hook.fast_read_target_path(
+        blocked_entry["path"], blocked_entry["new_text_as_agent_reads_it_with_placeholder_stand_ins"]).name
     listing_lines = [line for line in json_result.stderr.splitlines() if line.startswith("  ")]
     check("the message lists each message without a command once, by path, line and label, with the file name to write",
           listing_lines == [f"  {blocked_entry['path']}:{blocked_entry['line']}  label: {blocked_entry.get('label')}  file name: {file_name}"]
@@ -847,7 +857,8 @@ def run_fast_read_command_cases(fixture):
           "2 listed agent-facing messages have no cold-read-fast-read command, because their text"
           in review_plan_module.missing_fast_read_commands_message(two_entries))
     check("each entry carries the file name the message lists, so the message's file name finds its entry",
-          all(entry["fast_read_target_file_name"] == review_plan_module._message_reminder_hook.fast_read_target_path(entry["path"], entry["new_text"]).name
+          all(entry["fast_read_target_file_name"] == review_plan_module._message_reminder_hook.fast_read_target_path(
+                  entry["path"], entry["new_text_as_agent_reads_it_with_placeholder_stand_ins"]).name
               for entry in blocked_entries)
           and "whose fast_read_target_file_name is that file name" in json_result.stderr, json_result)
     check("the text plan says why a message has no command",
@@ -897,7 +908,8 @@ def run_fast_read_command_cases(fixture):
     try:
         try:
             unplaced = review_plan_module.entries_with_fast_read_commands(
-                [{"path": "scripts/a.py", "line": 1, "label": "raise in f()", "new_text": "text"}])
+                [{"path": "scripts/a.py", "line": 1, "label": "raise in f()", "new_text": "text",
+                  "new_text_as_agent_reads_it_with_placeholder_stand_ins": "text"}])
         except OSError as escaped:
             unplaced = [{"escaped": f"{type(escaped).__name__}: {escaped}"}]
     finally:
