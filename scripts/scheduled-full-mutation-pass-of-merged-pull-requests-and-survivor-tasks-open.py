@@ -32,7 +32,9 @@ WHAT ONE RUN DOES, in order.
      scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.lock
      in --state-directory; while another run holds it, this run exits
      EXIT_ANOTHER_RUN_HOLDS_THE_LOCK having done nothing, and the next
-     scheduled run carries on.
+     scheduled run carries on. The command a job failure task gives for a
+     hand run of one merge takes the same lock, but waits for it instead of
+     exiting: that hand run resumes the kept sessions this program uses.
   2. Runs `git fetch origin main` in the clone and resolves origin/main.
   3. Reads the state file. With no state file, it writes one naming
      origin/main and tests nothing: the merges after that commit are tested
@@ -40,18 +42,23 @@ WHAT ONE RUN DOES, in order.
   4. Checks that each survivor task the state names still lists each of its
      mutants: the task file is still on its owner's task list, not marked
      completed, and its description still names each mutant's diff file. A
-     mutant whose task is marked completed, or whose task's file is gone,
-     cannot be read or no longer names the diff file, is moved, in the state
-     alone, to the task on the same list when exactly one other task not marked
-     completed names its diff file, as when an agent moves the mutants of several survivor tasks
-     into one and marks the others completed, whether or not the session-handoff
-     has yet removed those completed tasks. A mutant of a task marked
-     completed that no other open task names is finished: the state stops
-     naming it. Every other mutant is reported once: one whose task's file is
-     gone or cannot be read, or whose task is not marked completed and no
-     longer names the diff file, when no other open task or two or more name
-     its diff file; and one of a task marked completed when two or more other
-     open tasks name it. Reporting it goes like this:
+     mutant whose task no longer holds it, because the task is marked
+     completed, or its file is gone or cannot be read, or its description no
+     longer names the diff file, goes one of three ways:
+     - Moved: when exactly one other task on the same list, not marked
+       completed, names its diff file, the state alone is changed to name that
+       task, as when an agent moves the mutants of several survivor tasks into
+       one and marks the others completed, whether or not the session-handoff
+       has yet removed those completed tasks.
+     - Finished: when its task is marked completed and no task not marked
+       completed names its diff file, the state stops naming it.
+     - Reported once: in every other case, which is one of these:
+       - its task's file is gone or cannot be read, or its task is not marked
+         completed but no longer names the diff file, and no other open task
+         names the diff file, or two or more do;
+       - its task is marked completed and two or more other open tasks name
+         the diff file.
+     Reporting it goes like this:
      the record naming it is written at once, and only then does the state
      stop naming it, so a run killed later has still reported it; standard
      error names it at the end, and the run goes on and exits
@@ -158,20 +165,26 @@ mutant adds about 30 seconds to the run.
 JOB FAILURE TASKS. The run opens a task on the task list of the agent-seat
 JOB_FAILURE_TASK_AGENT_SEAT names, saying what failed and what to do, for each
 failure of the run itself: a step that failed, as above; a merge carried on
-with no mutant judged beyond those its kept sessions held before the run; and
-any merge still not recorded as tested
-MERGE_STILL_UNTESTED_TASK_OPENED_AFTER_SECONDS_SINCE_MERGE, three days, after
-its merge commit, the sign that the pass no longer keeps up and that the lines
-it mutates must be chosen. A failed step's task has the first line of its
-message as its subject, and a carried-on merge's task names the merge. The
-untested merges share one task, with the fixed subject
+with no mutant judged beyond those its kept sessions held before the run; a
+survivor task whose recheck gave no verdicts; a run record that could not be
+written, opened after the failed write; and any merge still not recorded as
+tested MERGE_STILL_UNTESTED_TASK_OPENED_AFTER_SECONDS_SINCE_MERGE, three days,
+after its merge commit, the sign that the pass no longer keeps up and that the
+lines it mutates must be chosen. A failed step's task has the first line of
+its message as its subject, and a carried-on merge's task names the merge.
+Each of the other three kinds has one task with a fixed subject:
+SURVIVOR_TASKS_NOT_RECHECKED_TASK_SUBJECT, whose description names the
+survivor tasks not rechecked; RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT, whose
+description gives the error; and
 MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT, whose
-description gives their count and the oldest; each run rewrites the
-description of that task while it is open. While a task with the same
+description gives the untested merges' count and the oldest. Each run rewrites
+the description of such a task while it is open. While a task with the same
 subject is open on that list, no second one is opened, and the record names
 the open one. No task is completed by this program: the agent-seat
 completes it once the cause is fixed. A task that cannot be opened is named
-in the record and on standard error, and the run exits EXIT_STEP_FAILED.
+in the record and on standard error, and the run exits EXIT_STEP_FAILED; the
+task for a record not written, when it cannot be opened, is named on standard
+error only, and the run still exits EXIT_RECORD_NOT_WRITTEN.
 
 THE RECORD is one text file per run in the log-store:
 
@@ -205,7 +218,7 @@ Exit codes: 0 every survivor task was rechecked and every merge since the last
 run was mutation-tested and its survivors given tasks, or the first run wrote
 the state file; EXIT_STEP_FAILED (4) a step failed, as above;
 EXIT_RECORD_NOT_WRITTEN (5) the record could not be written;
-EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6);
+EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6) another run holds the lock;
 EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR (7) no step failed, but a
 mutant a survivor task an earlier run opened held was reported at step 4:
 its task's file is gone or cannot be read, or its task, not marked completed,
@@ -215,6 +228,11 @@ EXIT_SURVIVOR_TASK_MUTANTS_NOT_JUDGED_TASK_LEFT_AS_IT_WAS (8) no step failed
 and no task was lost, but the recheck gave no verdicts for a survivor task;
 EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN (9) none of those, but a merge ran past the
 limit and is carried on.
+EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6) comes before all the others: the run exits
+with it at once, before any step, so none of them can apply. When more than one
+of the others applies, the run exits with the first of 5, 4, 7, 8 and 9 that
+applies: an unwritten record outranks a failed step, which outranks a lost
+task, which outranks an unjudged recheck, which outranks a carried-on merge.
 """
 
 # Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
@@ -275,6 +293,10 @@ JOB_FAILURE_TASK_AGENT_SEAT = "fleet-restart-at-login"
 MERGE_STILL_UNTESTED_TASK_OPENED_AFTER_SECONDS_SINCE_MERGE = 3 * 24 * 3600
 MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT = (
     "Nightly full mutation pass: merges still untested three days after they merged")
+SURVIVOR_TASKS_NOT_RECHECKED_TASK_SUBJECT = (
+    "Nightly full mutation pass: survivor tasks left as they were, because their recheck gave "
+    "no verdicts")
+RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT = "Nightly full mutation pass: a run's record was not written"
 DEFAULT_SURVIVOR_TASK_RECORDED_MUTANT_KILLED_CHECK_TIMEOUT_SECONDS = 2 * 3600
 RECORDED_MUTANT_KILLED_CHECK_FLAG = "--recorded-mutant-killed-check"
 SURVIVOR_TASK_SUBJECT_PLACE = re.compile(r"Surviving mutants? in (\S+:[0-9]+): ")
@@ -304,9 +326,6 @@ git_redirecting_removal = module_loaded_by_path(
     "git_redirecting_environment_variables_removal_common",
     REPOSITORY_ROOT / "nc-systems" / "general-tools"
     / "git-redirecting-environment-variables-removal-common.py")
-daily_full_test_run_of_main = module_loaded_by_path(
-    "daily_full_test_run_of_main", Path(__file__).resolve().with_name(
-        "daily-full-test-run-of-main.py"))
 
 
 class StepFailed(Exception):
@@ -573,10 +592,7 @@ def task_file_rewrite(task_file, task):
 
 def program_run_with_limit(command, timeout_seconds):
     """Return (exit code or None when it ran past the limit, stdout, stderr)."""
-    environment = daily_full_test_run_of_main.\
-        environment_with_user_runtime_directory_when_the_user_session_bus_exists(
-            dict(os.environ))
-    process = subprocess.Popen(command, env=environment, stdin=subprocess.DEVNULL,
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                errors="replace")
     try:
@@ -652,11 +668,15 @@ def count_of_mutants_judged_in_kept_cosmic_ray_sessions(directory):
 def mutation_testing_hand_run_command(arguments, merge, parent, workers, sessions_directory):
     """The command that runs the mutation testing program on one merge as this run does,
     resuming its kept sessions with as many workers, outliving the shell it is typed in, with
-    its output in the log-store."""
+    its output in the log-store. It holds this job's lock while it runs, because it shares the
+    kept sessions with the nightly run: it waits while a run holds the lock, and a nightly run
+    that starts during it exits EXIT_ANOTHER_RUN_HOLDS_THE_LOCK."""
     log = (Path(arguments.log_store_root) / HAND_RUNS_DIRECTORY_NAME
            / f"merge-{merge[:8]}-hand-run.log")
     return (f"systemd-run --user --unit=mutation-hand-run-{merge[:8]} --collect "
             f"-p StandardOutput=append:{log} -p StandardError=append:{log} "
+            f"/usr/bin/flock --verbose "
+            f"{shlex.quote(str(arguments.state_directory / LOCK_FILE_NAME))} "
             f"/usr/bin/python3 {shlex.quote(str(arguments.mutation_testing_program))} "
             + shlex.join(mutation_testing_program_command_line_options_for_one_merge(
                 arguments, merge, parent, workers, sessions_directory)))
@@ -980,6 +1000,9 @@ def parse_arguments(argv):
 
 
 def main(argv=None):
+    # The job log takes stdout and stderr in one file; block-buffered stdout would land there
+    # after stderr lines printed later, below the messages that point "above" at it.
+    sys.stdout.reconfigure(line_buffering=True)
     arguments = parse_arguments(argv)
     arguments.clone = arguments.clone.resolve()
     arguments.state_directory.mkdir(parents=True, exist_ok=True)
@@ -1127,6 +1150,19 @@ def main_under_lock(arguments):
             f"Mark this task completed once the user has ruled on that, or once no merge is "
             f"three days untested."),
             True))
+    if not_rechecked:
+        job_failure_tasks.append((
+            SURVIVOR_TASKS_NOT_RECHECKED_TASK_SUBJECT,
+            (f"The scheduled full mutation pass on ned-box left {len(not_rechecked)} survivor "
+             f"task(s) as they were in its run of {started.strftime('%Y-%m-%d %H:%M')} UTC, "
+             f"because the recorded mutant killed check gave no verdicts for them on main:\n\n"
+             + "".join(f"- {line}\n" for line in not_rechecked)
+             + f"\nIts latest record: {record_citation}\n"
+             f"Run each named task's command, given in the task, on ned-box with --head "
+             f"origin/main added at its end, and fix what it prints. Each night's run rewrites "
+             f"this description with that night's tasks.\n"
+             f"Mark this task completed once a run rechecks every survivor task."),
+            True))
     tasks_not_written = []
     for subject, description, *rewritten in job_failure_tasks:
         try:
@@ -1171,9 +1207,47 @@ def main_under_lock(arguments):
     except OSError as error:
         print("\n".join(record) + "\n", end="")
         print(f"{PROGRAM}: the record above was not written to {record_citation} "
-              f"({type(error).__name__}: {error}).\n"
-              f"Fix what the error names; the next run writes its own record, and this one "
-              f"stays only in this output.", file=sys.stderr)
+              f"({type(error).__name__}: {error}); the record stays only in this run's "
+              f"output.", file=sys.stderr)
+        try:
+            task_id, opened = job_failure_task_opened_unless_open(
+                RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT,
+                (f"The scheduled full mutation pass on ned-box could not write the record of its "
+                 f"run of {started.strftime('%Y-%m-%d %H:%M')} UTC to {record_citation} "
+                 f"({type(error).__name__}: {error}). The record is in the job's log instead, "
+                 f"{LOG_STORE_HOST}:{JOB_LOG_FILE}, under that run's start line.\n"
+                 f"Fix what the error names, such as a log-store directory that cannot be "
+                 f"written. Each night's run whose record is not written rewrites this "
+                 f"description.\n"
+                 f"Mark this task completed once a run's record is written to the log-store."),
+                arguments, True)
+        except OSError as task_error:
+            print(f"{PROGRAM}: the task that tells an agent this run's record was not written "
+                  f"could not be opened on {JOB_FAILURE_TASK_AGENT_SEAT}'s task list "
+                  f"({type(task_error).__name__}: {task_error}), so only this job's log, "
+                  f"{LOG_STORE_HOST}:{JOB_LOG_FILE}, shows that the record was not written.\n"
+                  f"Fix what both errors name: the record's, in the line that begins "
+                  f"\"{PROGRAM}: the record above was not written\", and the task's, in the "
+                  f"first line of this message, such as the task list directory "
+                  f"{arguments.task_lists_directory / f'nedschorus-{JOB_FAILURE_TASK_AGENT_SEAT}-tasks'} "
+                  f"not existing.\n"
+                  f"Nothing this run found is lost: the tasks it opened for surviving mutants "
+                  f"stay open, and {state_file} records the merges it tested, so the next run "
+                  f"does not test them again. Only the record is missing from the log-store, "
+                  f"and this job's log holds the record.\n"
+                  f"No hand run is needed: the job's next scheduled run, the next night, "
+                  f"writes its own record and, if that record cannot be written either, tries "
+                  f"again to open a task for it.\n"
+                  f"To check your fix sooner, run on ned-box: {RUN_BY_HAND}", file=sys.stderr)
+        else:
+            how = ("opened" if opened
+                   else "was already open, so this run rewrote its description with this run's "
+                        "error")
+            print(f"{PROGRAM}: JOB FAILURE TASK: task #{task_id} on "
+                  f"{JOB_FAILURE_TASK_AGENT_SEAT}'s task list, "
+                  f"\"{RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT}\", {how}. "
+                  f"The agent-seat {JOB_FAILURE_TASK_AGENT_SEAT} acts on that task; no one needs to act on "
+                  f"this log line.", file=sys.stderr)
         return EXIT_RECORD_NOT_WRITTEN
     print(f"{PROGRAM}: record written to {record_citation}")
     if failure is not None or tasks_not_written:

@@ -23,6 +23,8 @@ import threading
 import time
 from pathlib import Path
 
+FLOCK_PROGRAM = Path("/usr/bin/flock")
+
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
     "git_redirecting_environment_removal_test_fixture",
     str(Path(__file__).resolve().with_name(
@@ -158,7 +160,7 @@ class Fixture:
             (self.agents / name).mkdir(parents=True, exist_ok=True)
         return self.tasks / f"nedschorus-{name}-tasks"
 
-    def run(self, plan=None, *flags, timeout_seconds=None):
+    def run(self, plan=None, *flags, timeout_seconds=None, output=None):
         if plan is not None:
             self.plan_file.write_text(json.dumps(plan))
         command = [sys.executable, str(SCRIPT), "--clone", str(self.clone),
@@ -170,7 +172,9 @@ class Fixture:
                    "--mutation-testing-program", str(self.program)]
         if timeout_seconds is not None:
             command += ["--merge-timeout-seconds", str(timeout_seconds)]
-        return subprocess.run([*command, *flags], capture_output=True, text=True, check=False,
+        streams = ({"capture_output": True} if output is None
+                   else {"stdout": output, "stderr": subprocess.STDOUT})
+        return subprocess.run([*command, *flags], **streams, text=True, check=False,
                               env={**os.environ, PLAN_VARIABLE: str(self.plan_file)},
                               timeout=300)
 
@@ -216,6 +220,100 @@ def task_files(list_directory):
 def job_failure_tasks(fixture):
     directory = fixture.tasks / f"nedschorus-{job.JOB_FAILURE_TASK_AGENT_SEAT}-tasks"
     return [json.loads(path.read_text()) for path in sorted(directory.glob("*.json"))]
+
+
+def run_every_exit_but_0_6_7_9_opens_a_job_failure_task_cases():
+    # Exit 7 opens none, because the job cannot tell a task a handoff deleted after it was
+    # finished from a lost one.
+    opened_for_exit = {}
+
+    def ran(fixture, completed):
+        opened_for_exit.setdefault(completed.returncode, []).append(job_failure_tasks(fixture))
+
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        fixture.state.mkdir()
+        (fixture.state / job.STATE_FILE_NAME).write_text("{not json")
+        ran(fixture, fixture.run())
+
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                               author="alpha")
+        fixture.run({merge: {"json": verdict(survived=[survivor()])}})
+        ran(fixture, fixture.run({"recheck": {"no_verdicts": True, "exit": 2}}))
+
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        fixture.log_store.mkdir()
+        (fixture.log_store / job.RECORDS_DIRECTORY_NAME).write_text("a file, not a directory")
+        completed = fixture.run()
+        ran(fixture, completed)
+        tasks = job_failure_tasks(fixture)
+        check("a record that cannot be written opens one job failure task, giving the error and "
+              "where the record went instead, and says so on standard error",
+              completed.returncode == job.EXIT_RECORD_NOT_WRITTEN
+              and [task["subject"] for task in tasks] == [job.RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT]
+              and "FileExistsError" in tasks[0]["description"]
+              and job.JOB_LOG_FILE in tasks[0]["description"]
+              and f"JOB FAILURE TASK: task #{tasks[0]['id']} on " in completed.stderr
+              and f"\"{job.RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT}\", opened." in completed.stderr,
+              (completed.returncode, completed.stderr, tasks))
+        task_file = (fixture.tasks / f"nedschorus-{job.JOB_FAILURE_TASK_AGENT_SEAT}-tasks"
+                     / f"{tasks[0]['id']}.json")
+        task_file.write_text(json.dumps({**tasks[0], "description": "an older night's"}))
+        completed = fixture.run()
+        check("a second run whose record cannot be written opens no second task, and rewrites "
+              "the open task's description",
+              completed.returncode == job.EXIT_RECORD_NOT_WRITTEN
+              and len(job_failure_tasks(fixture)) == 1
+              and "FileExistsError" in job_failure_tasks(fixture)[0]["description"]
+              and "was already open, so this run rewrote its description with this run's error."
+                  in completed.stderr,
+              (completed.returncode, completed.stderr, job_failure_tasks(fixture)))
+
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.log_store.mkdir()
+        (fixture.log_store / job.RECORDS_DIRECTORY_NAME).write_text("a file, not a directory")
+        completed = fixture.run()
+        check("a record that cannot be written, whose task cannot be opened either, names both "
+              "failures on standard error and still exits 5",
+              completed.returncode == job.EXIT_RECORD_NOT_WRITTEN
+              and "was not written to" in completed.stderr
+              and "this run's record was not written could not be opened on "
+                  f"{job.JOB_FAILURE_TASK_AGENT_SEAT}'s task list (FileNotFoundError"
+                  in completed.stderr
+              and f"the record's, in the line that begins \"{job.PROGRAM}: the record above "
+                  "was not written\"" in completed.stderr
+              and f"To check your fix sooner, run on ned-box: {job.RUN_BY_HAND}"
+                  in completed.stderr
+              and f"{job.PROGRAM}: the record above was not written" in completed.stderr,
+              (completed.returncode, completed.stderr))
+        one_file = fixture.root / "job.log"
+        with one_file.open("w") as log:
+            fixture.run(output=log)
+        log_text = one_file.read_text()
+        record_at = log_text.find("wall-clock seconds:")
+        pointer_at = log_text.find(f"{job.PROGRAM}: the record above was not written")
+        check("with stdout and stderr in one file, as in the job log, the record comes before "
+              "the line that points above at it",
+              0 <= record_at < pointer_at, log_text)
+
+    exits = {value for name, value in vars(job).items() if name.startswith("EXIT_")
+             and isinstance(value, int)} - {job.EXIT_ALL_DONE, job.EXIT_ANOTHER_RUN_HOLDS_THE_LOCK,
+                                            job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR,
+                                            job.EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN}
+    check("every exit code other than 0, 6, 7 and 9 is reached by a case here, and each such "
+          "run opens a job failure task",
+          set(opened_for_exit) == exits
+          and all(tasks for runs in opened_for_exit.values() for tasks in runs),
+          (sorted(exits), opened_for_exit))
 
 
 def run_carry_on_and_job_failure_task_cases():
@@ -952,6 +1050,7 @@ def run_cases():
     with tempfile.TemporaryDirectory() as scratch:
         fixture = Fixture(scratch)
         alpha_list = fixture.seat("alpha")
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
         fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
         merge = fixture.commit("scripts/thing.py",
                                "def double(x):\n    return x + x\nVALUE = 1\n", author="alpha")
@@ -1318,6 +1417,7 @@ def run_cases():
         with tempfile.TemporaryDirectory() as scratch:
             fixture = Fixture(scratch)
             alpha_list = fixture.seat("alpha")
+            fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
             fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
             merge = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
                                    author="alpha")
@@ -1329,9 +1429,16 @@ def run_cases():
             completed = fixture.run({"recheck": {**plan_step, "verdicts": {
                 job.mutant_key(survivor()): "killed"}}, later: {"json": verdict()}}, *flags)
             record = fixture.records()[-1].read_text()
+            opened = [task for task in job_failure_tasks(fixture) if task["subject"]
+                      == job.SURVIVOR_TASKS_NOT_RECHECKED_TASK_SUBJECT]
             check(f"{case_name}: each of two tasks and the state are left as they were, the "
-                  f"record and standard error name both tasks, the merges are still tested, and "
-                  f"the run exits 8",
+                  f"record, standard error and one job failure task name both tasks, the merges "
+                  f"are still tested, and the run exits 8",
+                  len(opened) == 1
+                  and "task #1 on alpha's task list" in opened[0]["description"]
+                  and "task #2 on alpha's task list" in opened[0]["description"]
+                  and f"JOB FAILURE TASK: opened task #{opened[0]['id']}" in record
+                  and
                   completed.returncode
                   == job.EXIT_SURVIVOR_TASK_MUTANTS_NOT_JUDGED_TASK_LEFT_AS_IT_WAS
                   and (alpha_list / "1.json").read_text() == before
@@ -1432,6 +1539,47 @@ def run_cases():
               and not (fixture.state / job.STATE_FILE_NAME).exists(),
               f"rc={completed.returncode} err={completed.stderr}")
 
+    # The hand run a job failure task gives holds the job's lock, because it shares the
+    # merge's kept sessions with the nightly run.
+    if not FLOCK_PROGRAM.exists():
+        # The job runs only on ned-box; the Mac's daily full test run still runs this suite.
+        print(f"SKIP  [this machine cannot run it] the hand-run command's lock case: {FLOCK_PROGRAM} is missing; it exists on Linux only")
+    else:
+        with tempfile.TemporaryDirectory() as scratch:
+            scratch = Path(scratch)
+            state = scratch / "state directory"
+            state.mkdir()
+            ran = scratch / "ran"
+            program = scratch / "fake-program.py"
+            program.write_text("import sys, time\nfrom pathlib import Path\n"
+                               f"Path({str(ran)!r}).write_text('ran')\ntime.sleep(3)\n")
+            arguments = type("Arguments", (), {
+                "log_store_root": str(scratch / "logs"), "state_directory": state,
+                "mutation_testing_program": str(program), "clone": scratch / "clone",
+                "cosmic_ray_venv": scratch / "venv"})()
+            command = job.mutation_testing_hand_run_command(arguments, "a" * 40, "b" * 40, 2,
+                                                            scratch / "sessions")
+            # What systemd-run runs: the command after its own options.
+            under_lock = command[command.index("/usr/bin/flock "):]
+            with open(state / job.LOCK_FILE_NAME, "a") as holder:
+                fcntl.flock(holder, fcntl.LOCK_EX)
+                hand_run = subprocess.Popen(["sh", "-c", under_lock])
+                time.sleep(2)
+                ran_while_held = ran.exists()
+            deadline = time.monotonic() + 30
+            while not ran.exists() and time.monotonic() < deadline:
+                time.sleep(0.1)
+            nightly_lock = job.take_lock(state / job.LOCK_FILE_NAME)
+            hand_run_exit = hand_run.wait(timeout=60)
+            check("a hand run waits while a run holds the job's lock, then runs the mutation "
+                  "testing program, and the nightly run cannot take the lock while it runs",
+                  not ran_while_held and ran.exists() and nightly_lock is None
+                  and hand_run_exit == 0,
+                  f"ran_while_held={ran_while_held} ran={ran.exists()} "
+                  f"nightly_lock={nightly_lock} exit={hand_run_exit}")
+            if nightly_lock is not None:
+                nightly_lock.close()
+
     # A record that cannot be written is printed instead.
     with tempfile.TemporaryDirectory() as scratch:
         fixture = Fixture(scratch)
@@ -1443,6 +1591,8 @@ def run_cases():
               and "first run: no state file" in completed.stdout
               and "was not written to" in completed.stderr,
               f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    run_every_exit_but_0_6_7_9_opens_a_job_failure_task_cases()
 
     # A state file that cannot be opened at all.
     with tempfile.TemporaryDirectory() as scratch:

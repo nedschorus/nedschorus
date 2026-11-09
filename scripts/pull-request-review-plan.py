@@ -51,7 +51,11 @@ print(stopped_line(...)) does. Test files are those ending in
 -test.py or under a tests directory, and are excluded: a test's copy of an
 expected message is not handed to an agent. F-string
 placeholders survive in the listing. Beside each listed string is its
-cold-read-fast-read command, whose target file holds the string's new text. The
+cold-read-fast-read command, whose target file holds the string's new text as
+the agent reads it, with each placeholder shown as <its source>, or as its value
+when it names a module-level string constant, as the collector's
+text_as_agent_reads_it_with_placeholder_stand_ins says; --json gives that text
+as new_text_as_agent_reads_it_with_placeholder_stand_ins. The
 target file is written as
 nc-systems/general-tools/python-edit-changed-agent-facing-message-check-reminder-hook.py
 writes it: in the directory agent-facing-message-fast-read-targets under the
@@ -60,8 +64,18 @@ text. A target that cannot be
 written is marked in the plan, which leaves its message with no
 cold-read-fast-read command, so the program exits 3 after printing the plan.
 A string the collector's kind calls a prompt, text a program hands an agent as
-its instructions, is also marked "needs the user's approval", and has
-needs_user_approval set in --json; a printed message is not.
+its instructions, gets one of two labels; a printed message gets neither. The
+cosmetic-change label, with cosmetic_change_needs_no_approval set in --json,
+goes to a changed prompt whose old and new text, as the agent receives it, are
+identical once whitespace at line ends is removed, each run of blank lines
+becomes one, and blank lines at the start or end are dropped; for an f-string,
+each field's source must also match exactly. A prompt that is an f-string on one
+side only gets the needs-approval label, and so does one whose placeholders, the
+f-string fields and non-literal operands of a + chain, differ in source or order:
+a literal {path} that becomes a field is a change the agent receives. Every other prompt gets the
+needs-approval label, with needs_user_approval set in --json, including an added
+prompt and one the plan lists with no old text, such as a prompt moved into
+another string.
 
 Rule 4: a pull request that adds or changes an nc-architecture-overview, a
 file at the path scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py
@@ -148,6 +162,7 @@ _agent_facing_string_collector_spec = importlib.util.spec_from_file_location(
 _agent_facing_string_collector = importlib.util.module_from_spec(_agent_facing_string_collector_spec)
 _agent_facing_string_collector_spec.loader.exec_module(_agent_facing_string_collector)
 path_is_test_file = _agent_facing_string_collector.path_is_test_file
+f_string_field_text = _agent_facing_string_collector.f_string_field_text
 agent_facing_string_nodes_in_source = _agent_facing_string_collector.agent_facing_string_nodes_in_source
 _message_reminder_hook_spec = importlib.util.spec_from_file_location(
     "python_edit_changed_agent_facing_message_check_reminder_hook",
@@ -540,6 +555,70 @@ def review_tier_and_deciding_reason(changed_files):
     return deciding_file["tier"], deciding_file["reason"]
 
 
+F_STRING_FIELD_STAND_IN = "\x00{index}\x00"
+
+
+def prompt_text_handed_to_agent(text):
+    """(is_f_string, text, fields): the collector gives an f-string as its source, quoted and with \\n as two
+    characters; its text then holds a stand-in for each field, and fields each field's source, compared exactly."""
+    try:
+        expression = ast.parse(text, mode="eval").body
+    except SyntaxError:
+        return False, text, ()
+    if not isinstance(expression, ast.JoinedStr):
+        return False, text, ()
+    fields = tuple(f_string_field_text(part) for part in expression.values if not isinstance(part, ast.Constant))
+    pieces, index = [], 0
+    for part in expression.values:
+        if isinstance(part, ast.Constant):
+            pieces.append(part.value)
+        else:
+            pieces.append(F_STRING_FIELD_STAND_IN.format(index=index))
+            index += 1
+    return True, "".join(pieces), fields
+
+
+def prompt_text_lines_without_trailing_whitespace_or_extra_blank_lines(text):
+    lines = []
+    for line in text.split("\n"):
+        line = line.rstrip()
+        if line or (lines and lines[-1]):
+            lines.append(line)
+    while lines and not lines[-1]:
+        lines.pop()
+    return lines
+
+
+def prompt_texts_differ_only_in_trailing_whitespace_or_blank_lines(old_text, new_text, old_placeholders=(),
+                                                                   new_placeholders=()):
+    """A + chain's text shows a placeholder as {source}, as a plain literal shows its own braces, so the
+    placeholders the collector found are compared too: a literal {path} that becomes a field is not cosmetic."""
+    if old_placeholders != new_placeholders:
+        return False
+    old_is_f_string, old_prose, old_fields = prompt_text_handed_to_agent(old_text)
+    new_is_f_string, new_prose, new_fields = prompt_text_handed_to_agent(new_text)
+    if old_is_f_string != new_is_f_string or old_fields != new_fields:
+        return False
+    return (prompt_text_lines_without_trailing_whitespace_or_extra_blank_lines(old_prose)
+            == prompt_text_lines_without_trailing_whitespace_or_extra_blank_lines(new_prose))
+
+
+def approval_fields_for_agent_text(kind, old_node, new_node):
+    old_text = old_node["text"] if old_node else None
+    cosmetic = (kind == "prompt" and old_text is not None
+                and prompt_texts_differ_only_in_trailing_whitespace_or_blank_lines(
+                    old_text, new_node["text"],
+                    old_node["placeholder_value_source_code_texts"],
+                    new_node["placeholder_value_source_code_texts"]))
+    return {"needs_user_approval": kind == "prompt" and not cosmetic, "cosmetic_change_needs_no_approval": cosmetic}
+
+
+def same_text_and_placeholders(old_node, new_node):
+    return (old_node["text"] == new_node["text"]
+            and old_node["placeholder_value_source_code_texts"]
+            == new_node["placeholder_value_source_code_texts"])
+
+
 def changed_agent_facing_text_entries(repository, old_revision, new_revision, changed_files):
     entries = []
     for changed_file in changed_files:
@@ -552,7 +631,9 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
         if changed_file["status"] == "A":
             entries.extend({"path": path, "line": node["line"], "label": node["label"],
                             "old_text": None, "new_text": node["text"],
-                            "needs_user_approval": node["kind"] == "prompt"} for node in new_nodes)
+                            "new_text_as_agent_reads_it_with_placeholder_stand_ins":
+                                node["text_as_agent_reads_it_with_placeholder_stand_ins"],
+                            **approval_fields_for_agent_text(node["kind"], None, node)} for node in new_nodes)
             continue
         old_nodes = agent_facing_string_nodes_in_source(read_revision_blob_or_none(repository, old_revision, path))
         diff_text = required_git_output(repository, "diff", "-U0", "--no-ext-diff", "--no-textconv", "--no-color",
@@ -566,28 +647,33 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
                 if new_index in listed_new_nodes or not line_span_intersects_hunk_side(
                         new_node["line"], new_node["end_line"], new_start, new_count):
                     continue
-                if any(node["text"] == new_node["text"] for _, node in old_candidates):
+                if any(same_text_and_placeholders(node, new_node) for _, node in old_candidates):
                     continue
                 old_match = next(((index, node) for index, node in old_candidates
                                   if index not in used_old_nodes and node["label"] == new_node["label"]
-                                  and node["text"] != new_node["text"]), None)
+                                  and not same_text_and_placeholders(node, new_node)), None)
                 if old_match:
                     used_old_nodes.add(old_match[0])
                 listed_new_nodes.add(new_index)
+                old_text = old_match[1]["text"] if old_match else None
                 entries.append({"path": path, "line": new_node["line"], "label": new_node["label"],
-                                "old_text": old_match[1]["text"] if old_match else None, "new_text": new_node["text"],
-                                "needs_user_approval": new_node["kind"] == "prompt"})
+                                "old_text": old_text, "new_text": new_node["text"],
+                                "new_text_as_agent_reads_it_with_placeholder_stand_ins":
+                                    new_node["text_as_agent_reads_it_with_placeholder_stand_ins"],
+                                **approval_fields_for_agent_text(new_node["kind"], old_match[1] if old_match else None,
+                                                                 new_node)})
     return sorted(entries, key=lambda entry: (entry["path"], entry["line"], entry["label"]))
 
 
 def entries_with_fast_read_commands(entries):
     """Give each entry its target file's name and the cold-read-fast-read command
-    for its new text, written to that file the way the message reminder hook
-    writes it, or the reason the file could not be written."""
+    for its new text as the agent reads it, written to that file the way the
+    message reminder hook writes it, or the reason the file could not be written."""
     for entry in entries:
-        entry["fast_read_target_file_name"] = fast_read_target_file_name(entry["path"], entry["new_text"])
+        text = entry["new_text_as_agent_reads_it_with_placeholder_stand_ins"]
+        entry["fast_read_target_file_name"] = fast_read_target_file_name(entry["path"], text)
         try:
-            target = fast_read_target_written(entry["path"], entry["new_text"])
+            target = fast_read_target_written(entry["path"], text)
         except OSError as failure:
             entry["fast_read_command"] = None
             entry["fast_read_target_error"] = f"{type(failure).__name__}: {failure}"
@@ -651,8 +737,10 @@ def missing_fast_read_commands_message(missing, json_rerun_command=None):
             + get_json
             + "2. For each file name listed below, find an entry whose fast_read_target_file_name is that file name, "
             "in either the agent_facing_text_whole_pull_request list or the agent_facing_text_delta list. Entries "
-            "with the same file name hold the same new_text, so the first one you find will do.\n"
-            "3. Write that entry's new_text to a file of that name, in a directory outside your checkout, such as one "
+            "with the same file name hold the same new_text_as_agent_reads_it_with_placeholder_stand_ins, so the first "
+            "one you find will do.\n"
+            "3. Write that entry's new_text_as_agent_reads_it_with_placeholder_stand_ins to a file of that name, in a "
+            "directory outside your checkout, such as one "
             "made with mktemp -d. Write the decoded text, not the JSON string: read the plan with a JSON parser, such as "
             "Python's json.load, so that each escape, such as \\n or \\\", becomes the character it stands for.\n"
             "4. For each file you wrote, run " + FAST_READ_COMMAND.format(target="<that file's full path>")
@@ -1020,7 +1108,16 @@ def changed_lines_for_agent_text_entry(entry):
     return list(difflib.unified_diff(old_lines, new_lines, lineterm="", n=2))[2:]
 
 
-PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE = "needs the user's approval: this is a prompt, text the program hands an agent as its instructions"
+PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE = "needs the user's approval unless it is a cosmetic-change, as `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` defines one: this is a prompt, text the program hands an agent as its instructions"
+PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE = "cosmetic-change, needs no approval: this prompt changed only in whitespace at line ends or in the number of blank lines between its paragraphs"
+
+
+def approval_label_for_agent_text_entry(entry):
+    if entry["cosmetic_change_needs_no_approval"]:
+        return PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE
+    if entry["needs_user_approval"]:
+        return PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE
+    return None
 
 
 def render_text_agent_entries(entries):
@@ -1028,8 +1125,8 @@ def render_text_agent_entries(entries):
     for entry in entries:
         lines.append(f"  {entry['path']}:{entry['line']} {entry['label']}")
         lines.append("    " + fast_read_line_for_agent_text_entry(entry))
-        if entry["needs_user_approval"]:
-            lines.append("    " + PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE)
+        if approval_label_for_agent_text_entry(entry):
+            lines.append("    " + approval_label_for_agent_text_entry(entry))
         changed_lines = changed_lines_for_agent_text_entry(entry)
         if changed_lines is not None:
             lines.append("    changed lines:")
@@ -1086,8 +1183,8 @@ def render_pull_request_brief_skeleton(plan):
         for entry in entries:
             lines.extend([f"{entry['path']}:{entry['line']} {entry['label']}", "",
                           *markdown_fenced_text_lines(fast_read_line_for_agent_text_entry(entry)), ""])
-            if entry["needs_user_approval"]:
-                lines.extend([PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE, ""])
+            if approval_label_for_agent_text_entry(entry):
+                lines.extend([approval_label_for_agent_text_entry(entry), ""])
             changed_lines = changed_lines_for_agent_text_entry(entry)
             if changed_lines is not None:
                 lines.extend(["changed lines:", *markdown_fenced_text_lines("\n".join(changed_lines), "diff"), ""])

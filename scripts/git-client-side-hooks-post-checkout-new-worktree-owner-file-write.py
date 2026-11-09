@@ -14,17 +14,24 @@ scripts/clean-worktrees.py reads. The owner named:
   - any other worktree, those agents make by hand inside .claude/worktrees/ included: the
     agent-seat GIT_AUTHOR_NAME names.
 
-It writes no owner file, and prints nothing, when GIT_AUTHOR_NAME names no agent-seat (an
-agent-seat being a directory under the agents root that holds a handoff-supervisor state
-file or a session-handoff file, as scripts/recover-crashed-seats.py lists them), as for a
-worktree a person makes by hand; for that agent-seat's own agent-home, <agents root>/<agent-seat>;
-for a merge-lane review checkout, directly inside ~/.cache/merge-lane-review-worktrees, which
-the cleaner judges by its pull request and which an owner file would keep from that; for the
-clone's main checkout; and when the worktree already has an owner file.
+The agents root is ~/agents, or $NEDSCHORUS_AGENTS_ROOT when set on the Mac, as
+scripts/recover-crashed-seats.py's default_agents_root gives it.
+An agent-seat is a directory under the agents root whose name has a handoff-supervisor state
+file or a session-handoff file in ~/.claude/handoffs/, as scripts/recover-crashed-seats.py lists
+them.
+
+It writes no owner file, and prints nothing:
+  - when GIT_AUTHOR_NAME names no agent-seat, whatever the worktree, a subagent's included,
+    as for a worktree a person makes by hand;
+  - for the agent-home of the agent-seat GIT_AUTHOR_NAME names, <agents root>/<agent-seat>;
+  - for a merge-lane review checkout, directly inside ~/.cache/merge-lane-review-worktrees,
+    which the cleaner judges by its pull request and which an owner file would keep from that;
+  - for the clone's main checkout;
+  - when the worktree already has an owner file.
 
 It does not tell a worktree made for a new agent-seat's agent-home from any other: the
 launchers make that worktree with GIT_AUTHOR_NAME set to the new agent-seat, which has no
-handoff records yet, so it gets none.
+records in ~/.claude/handoffs/ yet, so that worktree gets no owner file.
 
 When the owner file cannot be written, or a subagent's worktree has no `claude` process
 among this program's parents, it prints why on stderr, where the maker of the worktree sees
@@ -34,7 +41,6 @@ one. It always exits 0, because the hook's exit status becomes git's.
 
 import importlib.util
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -51,8 +57,6 @@ def load_module(name, relative_path):
 owner_file = load_module("worktree_owner_file_read_and_write",
                          "scripts/worktree-owner-file-read-and-write.py")
 
-CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY = Path(".claude") / "worktrees"
-CLAUDE_CODE_SUBAGENT_WORKTREE_DIRECTORY_NAME = re.compile(r"agent-a[0-9a-f]{16}")
 
 OWNER_FILE_NOT_WRITTEN_MESSAGE = (
     "post-checkout: the owner file of the new worktree {worktree} was not written: {reason}\n"
@@ -77,8 +81,7 @@ def new_worktree_owner(worktree, main_checkout, agent_seat, agent_seats, agents_
         return None
     if agent_seat not in agent_seats:
         return None
-    if (worktree.parent == (main_checkout / CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY).resolve()
-            and CLAUDE_CODE_SUBAGENT_WORKTREE_DIRECTORY_NAME.fullmatch(worktree.name)):
+    if owner_file.worktree_is_claude_code_subagent_worktree_by_location_and_directory_name(worktree, main_checkout):
         key = claude_process_key()
         if key is None:
             raise owner_file.WorktreeOwnerFileError(

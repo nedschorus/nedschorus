@@ -1280,8 +1280,9 @@ with tempfile.TemporaryDirectory() as temporary:
                   "directory and the command that creates it",
                   exit_code == 1 and said.count("\n") == 1
                   and f"agent-home {missing_seat} does not exist on ned-box" in said
-                  and f"worktree add {missing_seat} ghi-guide-agent'`" in said
-                  and f"worktree add -b ghi-guide-agent {missing_seat} origin/main'`" in said
+                  and f"worktree add --detach {missing_seat} origin/main && touch "
+                      f"\"$(git -C {missing_seat} rev-parse --absolute-git-dir)/agent-home-marker\"'`"
+                      in said
                   and "fallback ladder in .claude/skills/ghi-write/SKILL.md" in said
                   and (SCRIPT_PATH.resolve().parent.parent / ".claude" / "skills"
                        / "ghi-write" / "SKILL.md").is_file(),
@@ -1298,11 +1299,12 @@ with tempfile.TemporaryDirectory() as temporary:
                   and ssh_calls[0][:2] == ["ssh", ghi_ask.AGENT_BOX] and not asked,
                   (exit_code, ssh_calls, said))
 
-        # The two commands the missing-seat message gives create the seat:
-        # the first when the seat's branch exists, the second when it does not.
+        # The command the missing-seat message gives creates the seat's
+        # agent-home, detached at origin/main and marked, whether or not a
+        # ghi-guide-agent branch exists.
         exit_code, said = asks_with_hostname("ned-box", missing_seat)
-        # Each is given as `ssh nedlern@ned-box '<git command>'`, so it runs on
-        # ned-box from either machine; the git command inside is what runs here.
+        # It is given as `ssh nedlern@ned-box '<shell command>'`, so it runs on
+        # ned-box from either machine; the shell command inside is what runs here.
         given_commands = re.findall(
             r"`ssh nedlern@ned-box '(git -C ~/Projects/nedschorus [^'`]+)'`", said)
         import subprocess as real_subprocess
@@ -1314,8 +1316,8 @@ with tempfile.TemporaryDirectory() as temporary:
             return real_subprocess.run(["git", *arguments], capture_output=True,
                                        text=True, env=git_environment, check=False)
 
-        for case, branch_exists in (("first", True), ("second", False)):
-            projects_repository = root / f"projects-nedschorus-{case}"
+        for branch_exists in (True, False):
+            projects_repository = root / f"projects-nedschorus-{branch_exists}"
             run_git("init", "-q", "-b", "main", str(projects_repository))
             run_git("-C", str(projects_repository), "commit", "-q",
                     "--allow-empty", "-m", "initial")
@@ -1323,15 +1325,18 @@ with tempfile.TemporaryDirectory() as temporary:
                     "refs/remotes/origin/main", "HEAD")
             if branch_exists:
                 run_git("-C", str(projects_repository), "branch", "ghi-guide-agent")
-            command = given_commands[0 if branch_exists else 1] if len(given_commands) == 2 else ""
+            command = given_commands[0] if len(given_commands) == 1 else "false"
             created = real_subprocess.run(
-                shlex.split(command.replace("~/Projects/nedschorus",
-                                            str(projects_repository))) or ["false"],
+                ["sh", "-c", command.replace("~/Projects/nedschorus", str(projects_repository))],
                 capture_output=True, text=True, env=git_environment, check=False)
-            check(f"the missing-seat message's {case} command creates the seat "
-                  f"directory when the ghi-guide-agent branch "
+            git_directory = run_git("-C", str(missing_seat), "rev-parse",
+                                    "--absolute-git-dir").stdout.strip()
+            check(f"the missing-seat message's command creates the seat's agent-home, detached "
+                  f"at origin/main and marked, when the ghi-guide-agent branch "
                   f"{'exists' if branch_exists else 'does not exist'}",
-                  created.returncode == 0 and (missing_seat / ".git").exists(),
+                  created.returncode == 0 and (missing_seat / ".git").exists()
+                  and run_git("-C", str(missing_seat), "symbolic-ref", "-q", "HEAD").returncode == 1
+                  and git_directory and (Path(git_directory) / "agent-home-marker").is_file(),
                   (given_commands, created.returncode, created.stderr))
             run_git("-C", str(projects_repository), "worktree", "remove",
                     "--force", str(missing_seat))

@@ -251,6 +251,70 @@ def run_unit_cases():
     check("normalized AST preserves behaviour and f-string expressions",
           review_plan_module.normalized_syntax_tree_dump_without_strings(old_source)
           != review_plan_module.normalized_syntax_tree_dump_without_strings(old_source.replace("{x}", "{x + 1}")))
+    prompt_before = "# Task\n\nRead the whole file, then\nreport each name.\n\n- first step\n- second step\n"
+    compare = review_plan_module.prompt_texts_differ_only_in_trailing_whitespace_or_blank_lines
+    cosmetic_cases = [
+        ("trailing spaces and tabs added", prompt_before.replace("then\n", "then  \t\n").replace("step\n", "step \n"), True),
+        ("extra blank lines between paragraphs", prompt_before.replace("# Task\n\n", "# Task\n\n\n\n"), True),
+        ("a blank line holding only spaces", prompt_before.replace("# Task\n\n", "# Task\n   \n"), True),
+        ("blank lines added at the start and the end", "\n\n" + prompt_before + "\n\n", True),
+        ("an f-string with trailing spaces added, read from its source", None, True),
+        ("a moved line break", prompt_before.replace("then\nreport", "then report"), False),
+        ("dropped emphasis marks", prompt_before.replace("whole", "**whole**"), False),
+        ("a paragraph split by a blank line", prompt_before.replace("then\nreport", "then\n\nreport"), False),
+        ("a changed word", prompt_before.replace("second step", "next step"), False),
+    ]
+    reviewed_pairs_that_are_not_cosmetic = [
+        ("Edit _private_helper only.", "Edit private_helper only."),
+        ("Edit __init__.py now.", "Edit init.py now."),
+        ("Write to /tmp/_scratch now.", "Write to /tmp/scratch now."),
+        ("Delete files matching *.pyc here.", "Delete files matching .pyc here."),
+        ("Pass **kwargs on.", "Pass kwargs on."),
+        ("Wait 2 * 3 seconds.", "Wait 2 3 seconds."),
+        ("Name it x _ y.", "Name it x y."),
+        ("Use \\*args here.", "Use \\args here."),
+        ("1. first\n2. second", "1. first\n3. second"),
+        ("1. first\n2. second", "- first\n- second"),
+        ("- a\n  - b", "- a\n- b"),
+        ("Run `` _x `` now.", "Run `` x `` now."),
+        ("Run `a  b` now.", "Run `a b` now."),
+        ("Run `x now.", "Run x now."),
+        ("Hello {name}", "f'Hello {name}'"),
+        ("Hello", "f'Hello'"),
+        ("Use {x} here.", "Use  {x}  here."),
+        ("f\"Report {len('a b')}\"", "f\"Report {len('a  b')}\""),
+        ("Delete every __pycache__ directory first.", "Delete every pycache directory first."),
+        ("Call __init__ first.", "Call init first."),
+        ("Edit __main__.", "Edit main."),
+        ("f'Delete __pycache__ in {d}.'", "f'Delete pycache in {d}.'"),
+        ("Remove *tmp* files.", "Remove tmp files."),
+        ("Delete `build`/old now.", "Delete `build` /old now."),
+        ("Run `make`test now.", "Run `make` test now."),
+        ("Run x`a`.", "Run x `a`."),
+        ("Text\n---", "Text ---"),
+        ("Text\n===\nmore", "Text === more"),
+        ("a\n> quote", "a > quote"),
+        ("| a | b |\n|---|---|", "| a | b | |---|---|"),
+        ("a\n\n    code  x", "a\n\n    code x"),
+    ]
+    check("a prompt text that is not Python source is read as plain text with no fields",
+          review_plan_module.prompt_text_handed_to_agent("Read the file now.") == (False, "Read the file now.", ()))
+    check("a prompt text that parses as Python but is not an f-string is read as plain text with no fields",
+          review_plan_module.prompt_text_handed_to_agent("report") == (False, "report", ()))
+    check("an f-string prompt is read as the text it builds, with each field's source",
+          review_plan_module.prompt_text_handed_to_agent("f'Read {path}\\nnow.'")
+          == (True, "Read " + review_plan_module.F_STRING_FIELD_STAND_IN.format(index=0) + "\nnow.", ("{path}",)))
+    for before, after in reviewed_pairs_that_are_not_cosmetic:
+        check(f"prompt comparison: {before!r} to {after!r} is not a cosmetic-change", compare(before, after) is False)
+    for name, before, after in [("a trailing newline added where the old text had none", "Read the file.", "Read the file.\n"),
+                                ("trailing newlines added where the old text had none", "Read the file.", "Read the file.\n\n")]:
+        check(f"prompt comparison: {name} is a cosmetic-change", compare(before, after) is True, (before, after))
+    for name, prompt_after, expected in cosmetic_cases:
+        before, after = prompt_before, prompt_after
+        if prompt_after is None:
+            before, after = "f'Read {path!r}\\nthen report.'", "f'Read {path!r}  \\nthen report.'"
+        check(f"prompt comparison: {name} is {'a cosmetic-change' if expected else 'not a cosmetic-change'}",
+              compare(before, after) is expected, (before, after))
     check("hunk parser handles omitted counts and zero-line sides",
           review_plan_module.parse_diff_hunk_line_ranges("@@ -1 +2 @@\n-x\n+y\n@@ -3,0 +4,2 @@ context\n@@ -9,3 +8,0 @@\n")
           == [(1, 1, 2, 1), (3, 0, 4, 2), (9, 3, 8, 0)])
@@ -591,6 +655,14 @@ def run_agent_text_cases(fixture):
     entries = plan["agent_facing_text_whole_pull_request"]
     f_string_entry = next((entry for entry in entries if entry["label"] == "print in show_message()"), {})
     check("changed print f-strings retain placeholders and old/new text", "{name}" in f_string_entry.get("old_text", "") and "{name}" in f_string_entry.get("new_text", "") and "Old message" in f_string_entry["old_text"] and "New message" in f_string_entry["new_text"], entries)
+    f_string_command = f_string_entry.get("fast_read_command")
+    f_string_target = Path(shlex.split(f_string_command)[-1]) if f_string_command else Path()
+    check("an f-string message's target holds the text the agent reads, each field a <source> stand-in, "
+          "not the f-string's Python source",
+          f_string_entry.get("new_text") == "f'New message for {name}'"
+          and f_string_entry.get("new_text_as_agent_reads_it_with_placeholder_stand_ins") == "New message for <name>"
+          and f_string_target.is_file() and f_string_target.read_text(encoding="utf-8") == "New message for <name>\n"
+          and f_string_target.name == f_string_entry["fast_read_target_file_name"], f_string_entry)
     check("changed raise text is listed with context", any(entry["label"] == "raise in show_message()" and entry["old_text"] == "Old failure" and entry["new_text"] == "New failure" for entry in entries), entries)
     check("changed advice constants are listed", any(entry["label"] == "CHECK_ADVICE =" and entry["old_text"] == "Old advice ``` marker" and entry["new_text"] == "New advice ``` marker" for entry in entries), entries)
     check("module docstrings printed through __doc__ are listed", any(entry["label"] == "module docstring (printed by --help)" and "Old help" in entry["old_text"] and "New help" in entry["new_text"] for entry in entries), entries)
@@ -640,12 +712,59 @@ def run_agent_text_cases(fixture):
                "f'new note, transcript at {self.transcript_path}.'", True)], delta)
     text_plan = fixture.run_review_plan(json_output=False).stdout
     check("the text plan marks the changed prompt as needing the user's approval",
-          review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in text_plan, text_plan)
+          review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE in text_plan, text_plan)
     skeleton_path = fixture.control_directory / "prompt-brief.md"
-    fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
+    skeleton_result = fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
     skeleton = skeleton_path.read_text() if skeleton_path.exists() else ""
     check("the brief skeleton marks the changed prompt as needing the user's approval",
-          review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in skeleton, skeleton)
+          skeleton_result.returncode == 0
+          and review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE in skeleton,
+          (skeleton_result, skeleton))
+    prompt_program_before = ('def compose(path):\n    prompt = f"# Task\\n\\nRead the **whole** file {path},\\nthen report.'
+                             '\\n\\n```sh\\nls  -l\\n```\\n"\n    return prompt\n')
+    literal_brace_prompt = 'def compose(path):\n    prompt = "Read {path}.\\n"\n    return prompt\n'
+    field_in_chain_prompt = 'def compose(path):\n    prompt = "Read " + f"{path}.  \\n"\n    return prompt\n'
+    literal_chain_prompt = 'def compose(path):\n    prompt = "Read " + "the file.\\n"\n    return prompt\n'
+    name_in_chain_prompt = 'def compose(path):\n    prompt = "Read " + path + ".\\n"\n    return prompt\n'
+    for case_index, (name, program_before, prompt_program_after, expected_cosmetic) in enumerate([
+            ("a prompt whose only change is trailing spaces", prompt_program_before, prompt_program_before.replace(",\\nthen", ",  \\nthen"), True),
+            ("a prompt whose only change is an extra blank line", prompt_program_before, prompt_program_before.replace("# Task\\n\\n", "# Task\\n\\n\\n"), True),
+            ("a prompt whose only change is dropped bold marks", prompt_program_before, prompt_program_before.replace("**whole**", "whole"), False),
+            ("a prompt with a changed word", prompt_program_before, prompt_program_before.replace("then report", "then summarize"), False),
+            ("a prompt with a changed code block", prompt_program_before, prompt_program_before.replace("ls  -l", "ls -la"), False),
+            ("a literal {path} that becomes an f-string field in a + chain", literal_brace_prompt, field_in_chain_prompt, False),
+            ("an f-string field in a + chain that becomes a literal {path}", field_in_chain_prompt, literal_brace_prompt, False),
+            ("a literal {path} that becomes a field, the flattened texts equal",
+             literal_brace_prompt, field_in_chain_prompt.replace(".  \\n", ".\\n"), False),
+            ("a + chain of plain literals whose only change is trailing spaces",
+             literal_chain_prompt, literal_chain_prompt.replace("file.\\n", "file.  \\n"), True),
+            ("a literal {path} that becomes a name operand in a + chain", literal_brace_prompt, name_in_chain_prompt, False),
+            ("a name operand in a + chain that becomes a literal {path}", name_in_chain_prompt, literal_brace_prompt, False)]):
+        fixture.reset_fixture_to_base()
+        fixture.write_fixture_file("nc-systems/handoff/cosmetic-prompt-program.py", program_before)
+        earlier = fixture.commit_fixture_changes("prompt before")
+        # On the merge base too, so that the whole pull request's list pairs the prompt with its old text.
+        fixture.git_command("update-ref", "refs/remotes/origin/main", earlier)
+        fixture.write_fixture_file("nc-systems/handoff/cosmetic-prompt-program.py", prompt_program_after)
+        head = fixture.commit_fixture_changes("prompt after")
+        fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
+        delta = fixture.read_review_plan()["agent_facing_text_delta"]
+        text_plan = fixture.run_review_plan(json_output=False).stdout
+        skeleton_path = fixture.control_directory / f"cosmetic-prompt-brief-{case_index}.md"
+        skeleton_result = fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
+        skeleton = skeleton_path.read_text() if skeleton_path.exists() else ""
+        expected_label, other_label = (
+            (review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE,
+             review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE)
+            if expected_cosmetic else
+            (review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE,
+             review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE))
+        check(f"{name} gets the {'cosmetic-change' if expected_cosmetic else 'needs-approval'} label in --json, the text plan and the brief skeleton",
+              [(entry["label"], entry["needs_user_approval"], entry["cosmetic_change_needs_no_approval"]) for entry in delta]
+              == [("prompt = in compose()", not expected_cosmetic, expected_cosmetic)]
+              and expected_label in text_plan and other_label not in text_plan
+              and skeleton_result.returncode == 0
+              and expected_label in skeleton and other_label not in skeleton, (delta, text_plan, skeleton_result, skeleton))
     fixture.reset_fixture_to_base()
     printed_before = compose_before.replace("return prompt", "print(prompt)").replace("prompt", "line")
     fixture.write_fixture_file("nc-systems/handoff/recovery-note-program.py", printed_before)
@@ -659,7 +778,7 @@ def run_agent_text_cases(fixture):
     check("a changed message built in a local name and printed is listed with no approval needed",
           [(entry["label"], entry["needs_user_approval"]) for entry in delta]
           == [("recovery_note = in IgnitionPlan.compose()", False)]
-          and review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE not in text_plan, (delta, text_plan))
+          and review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE not in text_plan, (delta, text_plan))
     fixture.reset_fixture_to_base()
     fixture.write_fixture_file("nc-systems/handoff/added-prompt-program.py",
                                'def compose(next_step):\n    prompt = f"added prompt: {next_step}"\n    return prompt\n\n\n'
@@ -724,8 +843,10 @@ def run_fast_read_command_cases(fixture):
           and all(entry["fast_read_command"] is None and entry["fast_read_target_error"] for entry in blocked_entries)
           and "1 listed agent-facing message has no cold-read-fast-read command, because its text" in json_result.stderr
           and "--target <that file's full path>" in json_result.stderr, json_result)
-    blocked_entry = blocked_entries[0] if blocked_entries else {"path": "", "line": 0, "new_text": ""}
-    file_name = review_plan_module._message_reminder_hook.fast_read_target_path(blocked_entry["path"], blocked_entry["new_text"]).name
+    blocked_entry = blocked_entries[0] if blocked_entries else {
+        "path": "", "line": 0, "new_text_as_agent_reads_it_with_placeholder_stand_ins": ""}
+    file_name = review_plan_module._message_reminder_hook.fast_read_target_path(
+        blocked_entry["path"], blocked_entry["new_text_as_agent_reads_it_with_placeholder_stand_ins"]).name
     listing_lines = [line for line in json_result.stderr.splitlines() if line.startswith("  ")]
     check("the message lists each message without a command once, by path, line and label, with the file name to write",
           listing_lines == [f"  {blocked_entry['path']}:{blocked_entry['line']}  label: {blocked_entry.get('label')}  file name: {file_name}"]
@@ -736,7 +857,8 @@ def run_fast_read_command_cases(fixture):
           "2 listed agent-facing messages have no cold-read-fast-read command, because their text"
           in review_plan_module.missing_fast_read_commands_message(two_entries))
     check("each entry carries the file name the message lists, so the message's file name finds its entry",
-          all(entry["fast_read_target_file_name"] == review_plan_module._message_reminder_hook.fast_read_target_path(entry["path"], entry["new_text"]).name
+          all(entry["fast_read_target_file_name"] == review_plan_module._message_reminder_hook.fast_read_target_path(
+                  entry["path"], entry["new_text_as_agent_reads_it_with_placeholder_stand_ins"]).name
               for entry in blocked_entries)
           and "whose fast_read_target_file_name is that file name" in json_result.stderr, json_result)
     check("the text plan says why a message has no command",
@@ -786,7 +908,8 @@ def run_fast_read_command_cases(fixture):
     try:
         try:
             unplaced = review_plan_module.entries_with_fast_read_commands(
-                [{"path": "scripts/a.py", "line": 1, "label": "raise in f()", "new_text": "text"}])
+                [{"path": "scripts/a.py", "line": 1, "label": "raise in f()", "new_text": "text",
+                  "new_text_as_agent_reads_it_with_placeholder_stand_ins": "text"}])
         except OSError as escaped:
             unplaced = [{"escaped": f"{type(escaped).__name__}: {escaped}"}]
     finally:

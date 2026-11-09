@@ -46,7 +46,8 @@ round that was answered has its fix commit carried onto the replacing branch, an
 of the replacement, which the brief still needs, grades it. Once this pull request's first round is
 answered, by a fix commit or a round record, that answer covers the carried findings, so its later
 rounds carry none. For the same reason, when C replaces B and B replaces A, A's findings are not carried
-into C when B's first round was answered, since they were carried into that round. A carried finding or nit with the same path, line and body as one of this pull
+into C when B's first round was answered, by a fix commit, a round record or merge-lane-2's later approval of B,
+even of the round's unchanged frozen-head, since they were carried into that round. A carried finding or nit with the same path, line and body as one of this pull
 request's own counts once. A #replaces line the reader cannot follow is refused.
 
 Without --check, run in the author's checkout: refuse when the pull request's head has moved past
@@ -885,18 +886,19 @@ def failing_suites_in_scratch_worktree(commit, command_for_checkout):
     # frozen-head shares must not let an unfinished run through.
     if unfinished:
         raise StepFailed(f"the suite runner, {shlex.join(command)}, run on {commit[:12]}, did not judge every "
-                         f"suite: it printed {unfinished[0]!r}. Its output is above. Nothing was pushed.\n"
+                         "suite: it printed\n" + "".join(f"  {line}\n" for line in unfinished)
+                         + "Its output is above. Nothing was pushed.\n"
                          "Run this --check again once, not the suite runner by itself.\n"
-                         "If the runner again prints a line opening NOT RUN or 'run-all-test-suites: not run "
-                         "to the end', tell merge-lane-2 with SendMessage, quoting each such line, and do "
-                         "not push")
+                         "If the runner again prints a line opening 'NOT RUN' or 'run-all-test-suites: not "
+                         "run to the end', tell merge-lane-2 with SendMessage, quoting each such line, and do "
+                         "not push.")
     if status == test_suite_runner.EXIT_ALL_PASSED or (status == test_suite_runner.EXIT_SOME_FAILED and failing):
         return failing
     raise StepFailed(f"the suite runner, {shlex.join(command)}, run on {commit[:12]}, ended with "
                      f"{test_suite_runner.describe_exit(status)} and named no failing suite, so it stopped "
                      "before judging every suite; its output is above. Nothing was pushed.\n"
                      "Run the check again once. If the runner stops the same way, tell merge-lane-2 with "
-                     "SendMessage what it printed, and do not push")
+                     "SendMessage what it printed, and do not push.")
 
 
 def suites_the_round_broke_and_suites_failing_at_frozen_head_too(frozen_head, commit):

@@ -20,8 +20,8 @@ Those cases guard the reaper's central promise — ambiguity keeps, never
 reaps — which a worktree holding someone's uncommitted work depends on.
 
 The cleaner lists pull requests with gh. Every run here finds this suite's
-own gh first on PATH, which prints the JSON in FAKE_GH_PULL_REQUESTS, or an
-empty list, or fails with exit FAKE_GH_EXIT_CODE, and never reaches GitHub.
+own gh first on PATH, which prints the JSON in FAKE_GH_PULL_REQUESTS, keeping
+only the fields named after --json, or an empty list, or fails with exit FAKE_GH_EXIT_CODE, and never reaches GitHub.
 
 The classification cases run against the machine's REAL lsof, and that is the
 one way this suite can fail for a reason that is not a defect. If lsof does not
@@ -72,10 +72,12 @@ import os
 import select
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import time
+import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -106,15 +108,22 @@ atexit.register(shutil.rmtree, _removals_log_for_every_run, ignore_errors=True)
 os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(Path(_removals_log_for_every_run) / "log.txt")
 
 # Every run finds this gh first: it prints FAKE_GH_PULL_REQUESTS, an empty list by default, or fails
-# with exit FAKE_GH_EXIT_CODE, so no run reaches GitHub.
+# with exit FAKE_GH_EXIT_CODE, so no run reaches GitHub. Like the real gh, it prints only the fields
+# named after --json, so a field the cleaner forgets to ask for is missing from what it reads.
 _fake_gh_directory = tempfile.mkdtemp(prefix="clean-worktrees-test-fake-gh-")
 atexit.register(shutil.rmtree, _fake_gh_directory, ignore_errors=True)
 FAKE_GH = Path(_fake_gh_directory) / "gh"
 FAKE_GH.write_text(
-    "#!/bin/sh\n"
-    'if [ -n "$FAKE_GH_EXIT_CODE" ]; then echo "gh: stand-in listing failure" >&2; '
-    'exit "$FAKE_GH_EXIT_CODE"; fi\n'
-    'printf "%s\\n" "${FAKE_GH_PULL_REQUESTS:-[]}"\n', encoding="utf-8")
+    f"#!{sys.executable}\n"
+    "import json, os, sys\n"
+    "if os.environ.get('FAKE_GH_EXIT_CODE'):\n"
+    "    print('gh: stand-in listing failure', file=sys.stderr)\n"
+    "    sys.exit(int(os.environ['FAKE_GH_EXIT_CODE']))\n"
+    "pull_requests = json.loads(os.environ.get('FAKE_GH_PULL_REQUESTS') or '[]')\n"
+    "if '--json' in sys.argv:\n"
+    "    fields = sys.argv[sys.argv.index('--json') + 1].split(',')\n"
+    "    pull_requests = [{f: p[f] for f in fields if f in p} for p in pull_requests]\n"
+    "print(json.dumps(pull_requests))\n", encoding="utf-8")
 FAKE_GH.chmod(0o755)
 os.environ["PATH"] = f"{_fake_gh_directory}{os.pathsep}{os.environ.get('PATH', '')}"
 os.environ.pop("FAKE_GH_PULL_REQUESTS", None)
@@ -1613,7 +1622,7 @@ with tempfile.TemporaryDirectory() as scratch:
     reported_walk_wt = worktree_holding_a_walk("reported-walk-wt")
     reported = run_clean_shipping_to(str(walk_store / "cold-read-records")).stdout
     check("the report names a done worktree's walk and says --remove ships it first",
-          f"--remove first ships its 1 record(s) to the log-store and keeps the worktree if one "
+          f"--remove first ships its 1 record(s) to the log-store and keeps the worktree if a record "
           f"does not ship; the records it ships: "
           f"docs/walk/{walk_name}.md" in reported, reported)
     check("the report ships no walk", not (walk_store / "walk").exists())
@@ -1934,6 +1943,45 @@ with tempfile.TemporaryDirectory() as scratch:
         module.subprocess.run = real_run
     check("a parent process whose command line ps cannot give is logged by its pid and unknown",
           unknown_caller == f"{os.getppid()} unknown", unknown_caller)
+
+    no_origin = scratch / "no-origin-main"
+    no_origin.mkdir()
+    git(no_origin, "init", "-b", "main")
+    git(no_origin, "-c", "user.email=test@test.invalid", "-c", "user.name=test",
+        "commit", "--allow-empty", "-m", "only commit")
+    check("a branch git cannot compare with origin/main, because there is none, never counts as "
+          "fully on origin/main, so the cleaner keeps it",
+          module.fully_on_origin_main(no_origin, "main") is False)
+
+    # The cleaner fed a real Mac lock reason, as Claude Code writes it, on macOS.
+    mac_locked = scratch / "mac-locked"
+    git(no_origin, "worktree", "add", "-b", "mac-locked", str(mac_locked))
+    owner_module = module.owner_file
+    real_running_state = owner_module.claude_code_subagent_worktree_lock_dispatching_process_running_state
+    real_owner_key = owner_module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key
+    real_seats = owner_module.agent_seats_whose_claude_code_transcripts_name_subagent
+    owner_module.claude_code_subagent_worktree_lock_dispatching_process_running_state = (
+        lambda lock: real_running_state(lock, platform="darwin", macos_start_seconds=lambda pid: None))
+    owner_module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key = (
+        lambda lock: real_owner_key(lock, platform="darwin"))
+    owner_module.agent_seats_whose_claude_code_transcripts_name_subagent = lambda agent_id: ["seat-x"]
+    try:
+        mac_verdict, mac_ended = module.claude_code_subagent_lock_verdict_or_ended_lock(
+            mac_locked, types.SimpleNamespace(locked_reason=(
+                "claude agent agent-a9e3e2fe0e79f0a2c (pid 29741 start Tue Nov  3 21:24:32 2026)")))
+    finally:
+        owner_module.claude_code_subagent_worktree_lock_dispatching_process_running_state = real_running_state
+        owner_module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key = real_owner_key
+        owner_module.agent_seats_whose_claude_code_transcripts_name_subagent = real_seats
+    mac_start_seconds = str(int(time.mktime(time.strptime("Tue Nov 3 21:24:32 2026",
+                                                          "%a %b %d %H:%M:%S %Y"))))
+    check("on macOS the cleaner unlocks a worktree whose real-form Claude Code lock names an ended "
+          "claude process, writing an owner file with the macOS owner key",
+          mac_verdict is None and mac_ended is not None
+          and mac_ended.owner_to_write == {"owner_kind": owner_module.OWNER_AGENT_SESSION,
+                                           "agent_seat": "seat-x",
+                                           "owner_key": f"29741-{mac_start_seconds}"},
+          (mac_verdict, mac_ended))
 
 # --- One named worktree or branch ---
 
@@ -2460,7 +2508,7 @@ with tempfile.TemporaryDirectory() as scratch:
         review_occupant.wait()
 
 # --- Claude Code's lock exception: a lock whose claude process has ended is unlocked ---
-# Linux only: off Linux the lock's start is not read, so the lock keeps the worktree.
+# Linux only: the case reads its ended process's start and the boot id from /proc.
 if sys.platform.startswith("linux"):
     with tempfile.TemporaryDirectory() as scratch:
         scratch = Path(scratch).resolve()
@@ -2656,6 +2704,139 @@ if sys.platform.startswith("linux"):
               and "could not be read: PermissionError" in lock_line(unreadable.stdout,
                                                                      "ended-lock-unnamed-wt"),
               unreadable.stdout + unreadable.stderr)
+
+# --- A removal stopped partway ---
+# A real kill cannot be timed to land inside `git worktree remove`, so a stub git does what git
+# does first, deleting the worktree's .git file and some files, then kills the cleaner that ran it.
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch).resolve()
+    checkout = scratch / "checkout"
+    origin = scratch / "origin.git"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
+    git(checkout, "remote", "add", "origin", str(origin))
+    git(checkout, "push", "-u", "origin", "main")
+    managed = checkout / ".claude" / "worktrees"
+    managed.mkdir(parents=True)
+    killing_git = scratch / "killing-git"
+    killing_git.mkdir()
+    (killing_git / "git").write_text(
+        f"#!{sys.executable}\n"
+        "import os, signal, sys\n"
+        "from pathlib import Path\n"
+        "if 'worktree' in sys.argv and 'remove' in sys.argv:\n"
+        "    left = Path(sys.argv[-1])\n"
+        "    (left / '.git').unlink()\n"
+        "    (left / 'README.md').unlink()\n"
+        "    os.kill(os.getppid(), signal.SIGKILL)\n"
+        "    sys.exit(0)\n"
+        f"os.execv({shutil.which('git')!r}, ['git'] + sys.argv[1:])\n", encoding="utf-8")
+    (killing_git / "git").chmod(0o755)
+
+    def stopped_partway(name):
+        """A done worktree whose --remove run was killed inside `git worktree remove`."""
+        path = managed / name
+        git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
+        give_stopped_owner(path)
+        (path / "untracked.txt").write_text("x\n", encoding="utf-8")
+        environment = dict(os.environ)
+        environment["PATH"] = f"{killing_git}{os.pathsep}{environment['PATH']}"
+        killed = subprocess.run(
+            [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), "--remove"],
+            capture_output=True, text=True, check=False, env=environment)
+        return path, killed
+
+    def registered(path):
+        return str(path) in git(checkout, "worktree", "list", "--porcelain")
+
+    first, killed = stopped_partway("stopped-partway-wt")
+    check("the stub git kills the cleaner inside the removal, leaving the worktree half removed",
+          killed.returncode == -signal.SIGKILL and first.exists()
+          and not (first / ".git").exists() and registered(first),
+          f"{killed.returncode} {killed.stdout}{killed.stderr}")
+    report = run_clean(checkout)
+    check("the report names a removal stopped partway as done, and not as a dead registration",
+          "stopped-partway-wt: done — an earlier scripts/clean-worktrees.py --remove was stopped "
+          "while removing this worktree"
+          in report.stdout
+          and "stopped-partway-wt" not in next((line for line in report.stdout.splitlines()
+                                                if "git worktree prune" in line), ""),
+          report.stdout)
+    finished = run_clean(checkout, "--remove")
+    check("the next --remove finishes the removal: directory, registration and branch go",
+          finished.returncode == 0 and "stopped-partway-wt: removed, branch stopped-partway-wt-"
+          "branch deleted" in finished.stdout
+          and not first.exists() and not registered(first)
+          and git(checkout, "branch", "--list", "stopped-partway-wt-branch").strip() == "",
+          finished.stdout + finished.stderr)
+
+    without_file = managed / "dotgit-deleted-by-hand-wt"
+    git(checkout, "worktree", "add", "-b", "dotgit-deleted-by-hand-wt-branch", str(without_file),
+        "origin/main")
+    give_stopped_owner(without_file)
+    (without_file / ".git").unlink()
+    by_hand = run_clean(checkout, "--remove")
+    check("a worktree whose .git file went with no removal begun is kept, as before",
+          without_file.exists() and registered(without_file)
+          and "dotgit-deleted-by-hand-wt: kept — git would prune its registration" in by_hand.stdout,
+          by_hand.stdout)
+
+    named, _ = stopped_partway("stopped-partway-named-wt")
+    named_run = run_clean(checkout, "--remove-worktree-and-force-delete-its-branch", str(named))
+    check("--remove-worktree-and-force-delete-its-branch finishes a removal stopped partway",
+          named_run.returncode == 0 and not named.exists() and not registered(named)
+          and git(checkout, "branch", "--list", "stopped-partway-named-wt-branch").strip() == "",
+          named_run.stdout + named_run.stderr)
+
+    stuck, _ = stopped_partway("stopped-partway-undeletable-wt")
+    (stuck / "kept-dir").mkdir()
+    (stuck / "kept-dir" / "file").write_text("x\n", encoding="utf-8")
+    (stuck / "kept-dir").chmod(0o500)
+    try:
+        undeletable = run_clean(checkout, "--remove")
+    finally:
+        (stuck / "kept-dir").chmod(0o755)
+    check("a finish that cannot delete what is left fails, exit 1, and keeps the registration",
+          undeletable.returncode == 1 and registered(stuck)
+          and "stopped-partway-undeletable-wt: removal FAILED — an earlier "
+              "scripts/clean-worktrees.py --remove was stopped partway" in undeletable.stdout,
+          undeletable.stdout + undeletable.stderr)
+
+    sought = managed / "zz-sought-wt"
+    git(checkout, "worktree", "add", "-b", "zz-sought-wt-branch", str(sought), "origin/main")
+    unreadable_first = managed / "aa-unreadable-gitdir-wt"
+    git(checkout, "worktree", "add", "-b", "aa-unreadable-gitdir-wt-branch", str(unreadable_first),
+        "origin/main")
+    gitdir_file = Path(git(unreadable_first, "rev-parse", "--absolute-git-dir").strip()) / "gitdir"
+    gitdir_file.chmod(0o000)
+    try:
+        found = load_clean_worktrees_module().registration_directory_of(checkout, sought)
+    finally:
+        gitdir_file.chmod(0o644)
+    check("a registration whose gitdir file cannot be read is passed over, and the search goes on",
+          found is not None and (found / "gitdir").read_text(encoding="utf-8").strip()
+          == str((sought / ".git").resolve()), str(found))
+
+    unwritable = managed / "removal-file-unwritable-wt"
+    git(checkout, "worktree", "add", "-b", "removal-file-unwritable-wt-branch", str(unwritable),
+        "origin/main")
+    give_stopped_owner(unwritable)
+    registration = Path(git(unwritable, "rev-parse", "--absolute-git-dir").strip())
+    registration.chmod(0o500)
+    try:
+        refused = run_clean(checkout, "--remove")
+    finally:
+        registration.chmod(0o755)
+    check("a removal whose removal-started file cannot be written is not begun, and fails",
+          refused.returncode == 1 and (unwritable / ".git").exists()
+          and "removal-file-unwritable-wt: removal FAILED, worktree kept" in refused.stdout,
+          refused.stdout + refused.stderr)
 
 check("no run of the suite shipped into the store every run defaults to",
       not any(Path(_ship_store_for_every_run).iterdir()),

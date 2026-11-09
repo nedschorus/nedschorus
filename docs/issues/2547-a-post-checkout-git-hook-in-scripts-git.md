@@ -30,7 +30,17 @@ The 468 worktrees found on ned-box on 2026-11-03 with no owner file, and those o
 
 ## Next action
 
-An agent-seat that takes up this GHI answers the open questions from the code, then builds the hook in one pull request with its tests.
+None: the hook is built, and this GHI closes.
+
+## Outcome
+
+Built by [PR 2770, "A git post-checkout hook writes the owner file of each new worktree"](https://github.com/nedschorus/nedschorus/pull/2770), commit `af7bb3132`, merged to main as `786329759`, with follow-ups [PR 2806](https://github.com/nedschorus/nedschorus/pull/2806), [PR 2819](https://github.com/nedschorus/nedschorus/pull/2819), [PR 2825](https://github.com/nedschorus/nedschorus/pull/2825) and [PR 2830](https://github.com/nedschorus/nedschorus/pull/2830). `scripts/git-client-side-hooks/post-checkout` runs `scripts/git-client-side-hooks-post-checkout-new-worktree-owner-file-write.py`, whose docstring says which owner it names and when it writes none. `scripts/git-client-side-hooks-post-checkout-new-worktree-owner-file-write-test.py` passed on ned-box on 2026-11-08 against main at `a17081fe3`.
+
+The first open question was answered by the worktree's directory name, not by Claude Code's lock reason: a worktree directly inside `.claude/worktrees/` of the clone's main checkout, named `agent-a` followed by 16 lowercase hex digits, is a subagent's, and its owner is the agent-session of the nearest `claude` parent process; any other worktree's owner is the agent-seat `GIT_AUTHOR_NAME` names. The second was answered by the exclusions the docstring lists: the agent-home of the agent-seat `GIT_AUTHOR_NAME` names, a merge-lane review checkout directly inside `~/.cache/merge-lane-review-worktrees`, and the clone's main checkout get no owner file.
+
+The third open question needs no edit to GHI [One design of record for the project's git checkouts, worktrees and branch rules](https://github.com/nedschorus/nedschorus/issues/1121). The design of record that GHI plans is not on main yet (`git ls-files | grep -i checkouts-worktrees-and-branch-rules` on main at `a17081fe3` found nothing), and `docs/issues/1121-one-design-of-record-for-the-project-s.md` names "the git hooks" only as a group, listing none of them by name. The writer of that design, who must state each program that keeps a checkout current or enforces a worktree rule, finds the hook in `scripts/git-client-side-hooks/` beside the other client-side hooks.
+
+Known gap, from the docstring: the hook does not recognise a new agent-seat's agent-home as an agent-home. The launchers make that worktree with `GIT_AUTHOR_NAME` set to the new agent-seat, which has no records in `~/.claude/handoffs/` yet, so the hook names no agent-seat and writes no owner file. The result is the one the exclusion for agent-homes wants, since `scripts/clean-worktrees.py` keeps a worktree with no owner file, so nothing is left to build. The same reason leaves without an owner file any worktree that a new agent-seat makes before its first handoff-supervisor state file or session-handoff file exists, and the cleaner keeps such a worktree until someone writes one.
 
 ## Where this came from
 

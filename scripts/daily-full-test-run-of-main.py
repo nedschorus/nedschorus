@@ -57,10 +57,7 @@ WHAT ONE RUN DOES, in order.
      worktree, with no selection option and no -j, so the runner chooses how
      many suites run at once. --record-inputs-with-strace makes this the one
      run on ned-box whose recordings strace adds to, because strace costs
-     too much CPU to run on every test run there. On
-     Linux the runner's environment gains XDG_RUNTIME_DIR=/run/user/<uid>
-     when it has none and /run/user/<uid>/bus exists, because cron gives no
-     user session bus. The
+     too much CPU to run on every test run there. The
      runner waits up to an hour for the machine's lock itself; when it exits
      3 after that hour, the record says the lock was not released within it.
      The verdict is the runner's exit code and its `SUMMARY:` line, read from
@@ -139,13 +136,13 @@ a machine has installed with the table.
   ned-box: one cron line, run from the reference clone with the system's
   Python. ned-box's clock is America/Los_Angeles.
 
-    30 3 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/daily-full-test-run-of-main.py >> /home/nedlern/.claude/daily-full-test-run-of-main.log 2>&1
+    0 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/daily-full-test-run-of-main.py >> /home/nedlern/.claude/daily-full-test-run-of-main.log 2>&1
 
   Both streams are appended to that file because ned-box has no mail
   transfer agent, so cron discards what a job prints: a refusal that writes
   no record, exit 5 or exit 6, is read there.
 
-  the Mac: a launchd job at 03:30 Pacific, the same time as ned-box. A run
+  the Mac: a launchd job at 03:30 Pacific. A run
   missed while the Mac sleeps starts at the next wake (user-ruled, his "y" at
   2026-10-01T04:38:17Z in Mac session 8db2e753, item 11 of the walk
   open-questions-concerns-and-recommendations-2026-09-30).
@@ -354,23 +351,6 @@ def subprocess_run_copying_each_output_line_as_it_arrives(arguments, worktree: P
     return completed
 
 
-def environment_with_user_runtime_directory_when_the_user_session_bus_exists(
-        environment, platform=None, uid=None, path_exists=os.path.exists):
-    """Return the environment, with XDG_RUNTIME_DIR added when the user's session bus is there.
-
-    cron starts the job without the user's session variables, and the runner's
-    `systemd-run --user --scope` finds the bus at $XDG_RUNTIME_DIR/bus, so without the
-    variable no suite's CPU seconds or peak memory are measured. The variable is added
-    only on Linux, only when it is missing, and only when /run/user/<uid>/bus exists."""
-    platform = sys.platform if platform is None else platform
-    uid = os.getuid() if uid is None else uid
-    runtime_directory = f"/run/user/{uid}"
-    if (platform.startswith("linux") and "XDG_RUNTIME_DIR" not in environment
-            and path_exists(f"{runtime_directory}/bus")):
-        return {**environment, "XDG_RUNTIME_DIR": runtime_directory}
-    return environment
-
-
 def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, monotonic,
                                                        stream_to=None):
     """Return (process result, seconds waiting for the lock, whether the lock was never taken).
@@ -382,8 +362,7 @@ def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, 
     started = monotonic()
     arguments = [*command, "--wait-for-lock-seconds",
                  f"{DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS:g}"]
-    environment = environment_with_user_runtime_directory_when_the_user_session_bus_exists(
-        run_all_test_suites.environment_without_git_redirecting_variables())
+    environment = run_all_test_suites.environment_without_git_redirecting_variables()
     if stream_to is None:
         completed = subprocess.run(
             arguments, cwd=str(worktree), env=environment,

@@ -66,10 +66,10 @@ def git(*arguments, cwd=None, check=True):
     return completed.stdout.strip()
 
 
-def commit_with_change(change, scratch):
-    """Return a commit made from HEAD with change(worktree) applied; HEAD itself is untouched."""
+def commit_with_change(change, scratch, start="HEAD"):
+    """Return a commit made from start with change(worktree) applied; start itself is untouched."""
     worktree = Path(scratch) / f"changed-{len(os.listdir(scratch))}"
-    git("worktree", "add", "--detach", str(worktree), "HEAD")
+    git("worktree", "add", "--detach", str(worktree), start)
     try:
         change(worktree)
         git("-c", "core.hooksPath=/dev/null", "-c", "user.name=replay test", "-c", "user.email=replay@test.invalid",
@@ -138,10 +138,14 @@ def commit_with_one_command_per_process_reader_changed(code_on_ls, scratch):
 
 
 def commit_with_guard_changed(guard_path, appended_code, scratch):
+    return commit_with_guard_changed_from("HEAD", guard_path, appended_code, scratch)
+
+
+def commit_with_guard_changed_from(start, guard_path, appended_code, scratch):
     def append(worktree):
         with open(worktree / guard_path, "a") as handle:
             handle.write("\n" + appended_code + "\n")
-    return commit_with_change(append, scratch)
+    return commit_with_change(append, scratch, start)
 
 
 def scratch_directory_removal_failures(directory):
@@ -210,7 +214,26 @@ def default_scratch_replay(head_ref, scratch, *extra, base_ref="HEAD", pairs=FIX
     return status, out, err, sorted(os.listdir(temporary)), sorted(runs.iterdir())
 
 
-def run_replay(head_ref, scratch, *extra, base_ref="HEAD", scratch_directory=True, pairs=FIXTURE_PAIRS):
+def commit_with_tree_of_parented_on(ref, parent):
+    """Return a commit with ref's tree whose one parent is parent.
+
+    A case's base made from HEAD is a child of HEAD, so the replay's merge of HEAD, or of another child of HEAD,
+    with that base would hold the base's tree; a head parented on the base merges to its own tree, as a head
+    cut from the base does."""
+    return git("-c", "user.name=replay test", "-c", "user.email=replay@test.invalid", "commit-tree", "--no-gpg-sign",
+               f"{ref}^{{tree}}", "-p", parent, "-m", "replay test: a head cut from the base")
+
+
+def head_ref_cut_from_base(head_ref, base_ref, head_cut_from_base):
+    """Return head_ref, or, when the base is not HEAD, which every head of the suite's own is made from, a commit
+    with head_ref's tree parented on the base."""
+    return commit_with_tree_of_parented_on(head_ref, base_ref) \
+        if head_cut_from_base and base_ref != "HEAD" and head_ref != base_ref else head_ref
+
+
+def run_replay(head_ref, scratch, *extra, base_ref="HEAD", scratch_directory=True, pairs=FIXTURE_PAIRS,
+               head_cut_from_base=True):
+    head_ref = head_ref_cut_from_base(head_ref, base_ref, head_cut_from_base)
     pairs_file = Path(scratch) / "fixture-pairs.json"
     pairs_file.write_text(json.dumps(pairs))
     arguments = ["--repository", str(TEST_REPOSITORY), "--base-ref", base_ref, "--head-ref", head_ref,
@@ -232,6 +255,7 @@ def run_replay_within(deadline_seconds, head_ref, scratch, *extra, base_ref="HEA
     the replay gets SIGTERM, which makes it stop its steps and remove its checkouts, then SIGKILL if it is
     still running; the status returned is then None.
     """
+    head_ref = head_ref_cut_from_base(head_ref, base_ref, True)
     pairs_file = Path(scratch) / "fixture-pairs.json"
     pairs_file.write_text(json.dumps(pairs))
     arguments = ["--repository", str(TEST_REPOSITORY), "--base-ref", base_ref, "--head-ref", head_ref,
@@ -605,6 +629,21 @@ try:
         reading = replay.read_git_worktree_remove_records_ship_first(real_guard, command, "/c", None)
         check(f"the real worktree-removal guard's reading of {command!r} pickles", pickle.loads(pickle.dumps(reading)) == reading, reading)
 
+    grid_guard_path = ".claude/guard-hooks/handoff-deferral-cold-read-full-run-launch-refusal-hook.py"
+    check("the handoff-deferral grid-launch guard is read by its own reading function",
+          replay.GUARDS.get(grid_guard_path) is replay.read_handoff_deferral_cold_read_full_run_launch,
+          replay.GUARDS.get(grid_guard_path))
+    grid_guard_spec = importlib.util.spec_from_file_location("grid_launch_guard", REPOSITORY_ROOT / grid_guard_path)
+    grid_guard = importlib.util.module_from_spec(grid_guard_spec)
+    grid_guard_spec.loader.exec_module(grid_guard)
+    for command, expected in (
+            ("python3 nc-systems/cold-read/cold-read-grid.py --target a.md",
+             ("refused", grid_guard.COLD_READ_FULL_RUN_REFUSED_AND_SAVED_REASON)),
+            ("sed -n 1,9p nc-systems/cold-read/cold-read-grid.py", ("passed", None))):
+        reading = replay.read_handoff_deferral_cold_read_full_run_launch(grid_guard, command, "/c", None)
+        check(f"the handoff-deferral grid-launch guard's reading of {command!r}, as if a deferral were on",
+              reading == expected and pickle.loads(pickle.dumps(reading)) == reading, reading)
+
     def add_bash_hook(worktree):
         path = worktree / ".claude" / "settings.json"
         settings = json.loads(path.read_text())
@@ -858,6 +897,53 @@ try:
           status == 0 and "NO VERDICT CHANGED" in out and "would refuse" not in out
           and f"guards the head adds, read at the head only: ['{ISSUE_WRITE_GUARD}']" in out,
           f"status {status}\n{out}\n{err}")
+
+    # As on pull requests 2707 and 2731, whose heads were cut before the base gained the pkill guard.
+    base_with_tmux_kill_guard_added = commit_with_tree_of_parented_on("HEAD", before_tmux_kill_guard)
+    head_cut_before_tmux_kill_guard = commit_with_guard_changed_from(
+        before_tmux_kill_guard, ISSUE_WRITE_GUARD, "# changed by a head cut before the tmux kill guard", scratch)
+    status, out, err = run_replay(head_cut_before_tmux_kill_guard, scratch,
+                                  base_ref=base_with_tmux_kill_guard_added, head_cut_from_base=False)
+    check("a head cut before the base gained a guard: the head merged with the base is replayed, so the guard is "
+          "compared at both refs and not reported missing at the head; exit 0",
+          status == 0 and "NO VERDICT CHANGED" in out and "guards the head adds, read at the head only: none" in out
+          and f"head: {head_cut_before_tmux_kill_guard} at {head_cut_before_tmux_kill_guard}, replayed as its merge "
+          "with the base, " in out, f"status {status}\n{out}\n{err}")
+
+    conflicting_base = commit_with_guard_changed(TMUX_KILL_GUARD, "# the base's last line", scratch)
+    conflicting_head = commit_with_guard_changed(TMUX_KILL_GUARD, "# the head's last line", scratch)
+    status, out, err = run_replay(conflicting_head, scratch, base_ref=conflicting_base, head_cut_from_base=False)
+    check("a head that does not merge cleanly with the base: exit 2, naming the conflicted file and the head's "
+          "author as the agent-seat to tell",
+          status == 2 and "does not merge cleanly with the base" in err and f"in: ['{TMUX_KILL_GUARD}']" in err
+          and "the head's commit names replay test as its author." in err
+          and "VERDICT" not in out, f"status {status}\n{out}\n{err}")
+
+    unrelated_head = git("-c", "user.name=replay test", "-c", "user.email=replay@test.invalid", "commit-tree",
+                         "--no-gpg-sign", "HEAD^{tree}", "-m", "replay test: a head with no history in common")
+    status, out, err = run_replay(unrelated_head, scratch, head_cut_from_base=False)
+    check("a head that shares no history with the base: exit 2, passing on git merge-tree's reason and only "
+          "the step for unrelated histories",
+          status == 2 and "git merge-tree of the base" in err
+          and "no guard was replayed: fatal: refusing to merge unrelated histories.\n" in err
+          and "naming commits that share history" in err and "with every option you gave it" not in err,
+          f"status {status}\n{out}\n{err}")
+
+    # Injected: no real pair of commits makes git merge-tree fail for any reason but unrelated histories.
+    real_run_git = replay.run_git_returning_completed_process_without_exit_code_check
+    replay.run_git_returning_completed_process_without_exit_code_check = (
+        lambda *_: subprocess.CompletedProcess([], 128, "", "fatal: unable to read tree 1234\n"))
+    try:
+        replay.head_merged_with_base_commit_make_or_raise_on_conflict(Path("."), "base1", "head1")
+        raised = ""
+    except replay.ReplayFailed as error:
+        raised = str(error)
+    finally:
+        replay.run_git_returning_completed_process_without_exit_code_check = real_run_git
+    check("git merge-tree failing for another reason: the message gives only the run-once-more step",
+          "no guard was replayed: fatal: unable to read tree 1234.\n" in raised
+          and "with every option you gave it this time unchanged" in raised
+          and "naming commits that share history" not in raised, raised)
 
     uncallable = commit_with_guard_changed(ISSUE_WRITE_GUARD, "del analyze_command_text", scratch)
     status, out, err = run_replay(uncallable, scratch)

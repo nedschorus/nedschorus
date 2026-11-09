@@ -253,9 +253,11 @@ DETACHED_OPERATION_IN_PROGRESS_LINE = (
     "checkout forward."
 )
 DETACHED_WORK_OF_ITS_OWN_LINE = (
-    "It holds work of its own: run `git switch -c <branch name>` to put that work on a "
-    "branch, and commit any uncommitted changes there; from then on the hook's rules for a "
-    "branch apply."
+    "It holds work of its own.\n"
+    "If this checkout is an agent-home, git refuses commits in it: carry that work to a "
+    "worktree of your own on an nc-topic-branch, as the refusal of `git commit` here says how.\n"
+    "Otherwise run `git switch -c <branch name>` to put that work on a branch, and commit any "
+    "uncommitted changes there; from then on the hook's rules for a branch apply."
 )
 DETACHED_FAST_FORWARD_REFUSED_LINES = (
     "Git refused the fast-forward: {error}\n"

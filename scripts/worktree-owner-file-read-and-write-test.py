@@ -17,6 +17,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 _fixture_spec = importlib.util.spec_from_file_location(
@@ -158,9 +159,18 @@ with tempfile.TemporaryDirectory() as scratch:
           == module.ClaudeCodeSubagentWorktreeLock("a59101f2afd522964", 3052879, "197651712"))
     for reason in ("", None, "test lock", "claude agent agent-x (pid 12)",
                    "claude agent agent-a1 (pid 12 start 3) and more",
-                   "claude agent agent-a1 (pid 12 start Sat Nov  7 17:22:57 2026)"):
+                   "claude agent agent-a1 (pid 12 start Nov  7 17:22:57 2026)"):
         check(f"no process is read from the lock reason {reason!r}",
               module.claude_code_subagent_worktree_lock_reason_parse(reason) is None)
+
+    mac_reason = "claude agent agent-a9e3e2fe0e79f0a2c (pid 29741 start Tue Nov  3 21:24:32 2026)"
+    mac_lock = module.claude_code_subagent_worktree_lock_reason_parse(mac_reason)
+    check("Claude Code's lock reason on the Mac, whose start is the date ps prints, names the "
+          "subagent and the dispatching process with its start",
+          mac_lock == module.ClaudeCodeSubagentWorktreeLock("a9e3e2fe0e79f0a2c", 29741,
+                                                            "Tue Nov  3 21:24:32 2026"), mac_lock)
+    mac_start_seconds = str(int(time.mktime(time.strptime("Tue Nov 3 21:24:32 2026",
+                                                          "%a %b %d %H:%M:%S %Y"))))
 
     fake_proc = scratch / "fake-proc"
     (fake_proc / "sys" / "kernel" / "random").mkdir(parents=True)
@@ -189,12 +199,48 @@ with tempfile.TemporaryDirectory() as scratch:
     state, explanation = lock_state(43, "22")
     check("a lock whose process's stat cannot be read is unknown, never ended",
           state == module.UNKNOWN and "could not be read" in explanation, explanation)
-    state, explanation = lock_state(41, "22", platform="darwin")
-    check("a lock off Linux is unknown, since its start is read only on Linux",
-          state == module.UNKNOWN and "only on Linux" in explanation, explanation)
+    def mac_lock_state(start_seconds_of_process):
+        return module.claude_code_subagent_worktree_lock_dispatching_process_running_state(
+            mac_lock, fake_proc, "darwin", start_seconds_of_process)
+
+    state, _ = mac_lock_state(lambda pid: mac_start_seconds)
+    check("a macOS lock whose process runs with the lock's start is running",
+          state == module.RUNNING, state)
+    state, explanation = mac_lock_state(lambda pid: str(int(mac_start_seconds) + 60))
+    check("a macOS lock whose process id runs with another start has ended",
+          state == module.STOPPED and "has ended" in explanation, explanation)
+    state, explanation = mac_lock_state(lambda pid: None)
+    check("a macOS lock whose process is gone has ended",
+          state == module.STOPPED and "has ended" in explanation, explanation)
+
+    def process_check_fails(pid):
+        raise OSError("ps failed")
+
+    state, explanation = mac_lock_state(process_check_fails)
+    check("a macOS lock whose process cannot be checked is unknown, never ended",
+          state == module.UNKNOWN and "could not be read" in explanation, explanation)
+    state, explanation = module.claude_code_subagent_worktree_lock_dispatching_process_running_state(
+        module.ClaudeCodeSubagentWorktreeLock("a1", 41, "22"), fake_proc, "darwin", lambda pid: None)
+    check("a macOS lock whose start is not the date ps prints is unknown, never ended",
+          state == module.UNKNOWN and "not the date" in explanation, explanation)
+    state, explanation = lock_state(41, "22", platform="win32")
+    check("a lock on neither Linux nor macOS is unknown",
+          state == module.UNKNOWN and "only on Linux and macOS" in explanation, explanation)
     check("the ended agent-session's owner key is this boot's id, the lock's process and its start",
           module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key(
-              module.ClaudeCodeSubagentWorktreeLock("a1", 7, "8"), fake_proc) == "abcd-7-8")
+              module.ClaudeCodeSubagentWorktreeLock("a1", 7, "8"), fake_proc, "linux") == "abcd-7-8")
+    check("on macOS the ended agent-session's owner key is the lock's process and its start in "
+          "seconds, the form a work-snapshot's macOS owner key takes",
+          module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key(
+              mac_lock, fake_proc, "darwin") == f"29741-{mac_start_seconds}")
+    try:
+        module.claude_code_subagent_worktree_lock_ended_agent_session_owner_key(
+            module.ClaudeCodeSubagentWorktreeLock("a1", 7, "8"), fake_proc, "darwin")
+        no_key = None
+    except ValueError as error:
+        no_key = error
+    check("on macOS a lock whose start is not the date ps prints gives no owner key",
+          no_key is not None)
 
     agents_root = scratch / "agents"
     seat_handoffs = scratch / "seat-handoffs"
@@ -339,6 +385,15 @@ with tempfile.TemporaryDirectory() as scratch:
     outside = run("show", cwd=scratch)
     check("show outside any worktree exits 1 and says the directory is in no git worktree",
           outside.returncode == 1 and "is in no git worktree" in outside.stderr, outside.stderr)
+    subagent_name = "agent-a0123456789abcdef"
+    reference = scratch / "reference-checkout"
+    check("a worktree named as Claude Code names a subagent's, directly inside .claude/worktrees/ "
+          "of the reference-checkout, is a subagent's",
+          module.worktree_is_claude_code_subagent_worktree_by_location_and_directory_name(
+              reference / ".claude" / "worktrees" / subagent_name, reference))
+    check("a worktree with a subagent's name anywhere else is not a subagent's",
+          not module.worktree_is_claude_code_subagent_worktree_by_location_and_directory_name(
+              scratch / "agents" / "seat-a-worktrees" / subagent_name, reference))
     for arguments in ([], ["write"], ["write", "--agent-seat"], ["show", "extra"], ["--worktree"]):
         bad = run(*arguments)
         check(f"the invocation {arguments} exits 2", bad.returncode == 2, bad.stderr)

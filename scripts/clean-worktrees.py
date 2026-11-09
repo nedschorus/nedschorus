@@ -15,7 +15,8 @@ agent-session, counts as running. A worktree is KEPT, with the reason, when:
   - it is locked with `git worktree lock`, as Claude Code locks a subagent's
     worktree while the subagent runs, apart from the lock CLAUDE CODE'S LOCK
     below unlocks;
-  - git would prune it, its directory being gone;
+  - git would prune it, its directory being gone, unless STOPPED PARTWAY
+    below applies;
   - a rebase, merge, cherry-pick or revert is in progress in it, or git
     cannot locate the files that show one;
   - whether its owner runs cannot be read;
@@ -48,15 +49,17 @@ worktree whose verdict needs a pull request is kept.
 
 CLAUDE CODE'S LOCK. A lock in the form Claude Code writes on a subagent's
 worktree, "claude agent agent-<id> (pid N start T)", once no process N that
-started at T runs, as /proc says on Linux, is not kept for: --remove unlocks
+started at T runs, as /proc says on Linux and ps says on macOS, where T is the
+date ps prints, such as "Tue Nov  3 21:24:32 2026", is not kept for: --remove unlocks
 the worktree, first writing it an owner file when it has none, naming that
 ended agent-session and the agent-seat whose Claude Code transcripts name
 subagent agent-<id> (scripts/worktree-owner-file-read-and-write.py says which
 transcripts those are), then judges it like any other. When no agent-seat's
 transcripts name the subagent, or more than one's do, the worktree is kept,
 locked, and named on a line of its own for the user to keep or delete. The
-report modes say what --remove would do and change nothing. Off Linux, where
-the start is not read, the lock keeps the worktree.
+report modes say what --remove would do and change nothing. While whether
+process N runs cannot be read, and on any platform but Linux and macOS, the lock
+keeps the worktree, as does a lock in any other form.
 
 MERGE-LANE REVIEW CHECKOUTS. A worktree with no owner file directly inside
 ~/.cache/merge-lane-review-worktrees, where merge-lane-2 checks out each pull
@@ -69,8 +72,8 @@ pull request was merged or closed at least 24 hours ago, once the lock,
 prune, in-progress operation and vacancy checks above pass. It is kept, with
 the reason, when its name holds no such part or more than one, as main and
 main-green-<commit> do, when the pull request is open, finished less than 24
-hours ago, or missing from gh's listing, or when gh fails or gives a closing
-time this program cannot read. The 24 hours are a margin, not a check: after a merge,
+hours ago, or missing from gh's listing, or when gh fails or gives no closing
+time this program can read. The 24 hours are a margin, not a check: after a merge,
 merge-lane-2's merge program removes the pull request's checkouts and tests
 main in pr<n>-merge-commit-on-main-worktree, and between its steps no process
 has a working directory there for the vacancy check to see. Its walks and its
@@ -104,6 +107,17 @@ listed. If git cannot list a worktree's files, the worktree is kept. While
 its owner runs, --remove checks again just before the removal, after the slow
 checks and the shipments, that the worktree holds no uncommitted or untracked
 file, so a file written meanwhile keeps it.
+
+STOPPED PARTWAY. Just before `git worktree remove --force`, --remove writes
+the file clean-worktrees-removal-started into the worktree's directory under
+the clone's .git/worktrees/. git deletes the worktree's files, its .git file
+among them, before that directory, so a run killed inside the removal can
+leave a registration git would prune that still holds the file. A later
+--remove, or --remove-worktree-and-force-delete-its-branch naming it, finishes
+that removal: it deletes what is left of the worktree's directory and the
+registration's directory, then deletes the branch as for any removal. Its
+records were shipped and its work kept before the file was written. The
+report modes name it as done, and the dead-registration line leaves it out.
 
 BRANCHES. The cleaner deletes a local branch other than main whose commits
 are all on origin/main and which no worktree has checked out, with
@@ -429,7 +443,34 @@ def dead_worktree_registrations(repo):
     listing = git_output.run_git(repo, ["worktree", "list", "--porcelain", "-z"])
     return [(record.path, record.prunable_reason or "no reason given")
             for record in git_output.worktree_records(listing)
-            if record.prunable_reason is not None]
+            if record.prunable_reason is not None
+            and not removal_was_started(repo, Path(record.path))]
+
+
+REMOVAL_STARTED_FILE_NAME = "clean-worktrees-removal-started"
+
+
+def registration_directory_of(repo, worktree):
+    """Return the worktree's directory under the clone's .git/worktrees/, found by its gitdir
+    file, or None when no readable gitdir file names it; raise git_output.GitCommandFailed when
+    git cannot name the clone's git directory."""
+    common = os.fsdecode(git_output.run_git(
+        repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).strip()
+    wanted = (worktree / ".git").resolve()
+    for registration in sorted((Path(common) / "worktrees").glob("*")):
+        try:
+            named = Path((registration / "gitdir").read_text(encoding="utf-8").strip())
+        except OSError:
+            continue
+        if named.resolve() == wanted:
+            return registration
+    return None
+
+
+def removal_was_started(repo, worktree):
+    """Whether a --remove run wrote its removal-started file for this worktree's registration."""
+    registration = registration_directory_of(repo, worktree)
+    return registration is not None and (registration / REMOVAL_STARTED_FILE_NAME).exists()
 
 
 def branch_refs_with_no_worktree_fully_on_main(repo):
@@ -767,6 +808,8 @@ class Verdict:
     # Kept locked by Claude Code's lock of an ended agent-session that no agent-seat's
     # transcripts name: the count lines name it for the user.
     for_the_user_to_keep_or_delete: bool = False
+    # A removal an earlier --remove began and was killed in; --remove finishes it.
+    removal_stopped_partway: bool = False
 
 
 def owner_text(owner):
@@ -975,7 +1018,7 @@ def removal_records_and_discarded_files_text(worktree, discarded):
     records = log_store_records_in(worktree)
     if records:
         text += (f"; --remove first ships its {len(records)} record(s) to the log-store and "
-                 f"keeps the worktree if one does not ship; the records it ships: "
+                 f"keeps the worktree if a record does not ship; the records it ships: "
                  + ", ".join(str(record_path.relative_to(worktree)) for _, record_path in records))
     if discarded:
         text += (f"; removing it discards {len(discarded)} uncommitted, untracked or ignored "
@@ -1049,10 +1092,21 @@ def detached_commits_branch_name(worktree, commit):
     return DETACHED_COMMITS_BRANCH_NAME_TEMPLATE.format(worktree_name=worktree.name, commit=commit)
 
 
+def branch_fully_on_origin_main_true_false_or_none_with_git_error(repo, branch):
+    """Return (True, None) when every commit of the branch is on origin/main, (False, None) when
+    one is not, and (None, git's error) when git cannot say."""
+    result = run_git(repo, "merge-base", "--is-ancestor", f"refs/heads/{branch}", "origin/main")
+    if result.returncode == 0:
+        return True, None
+    if result.returncode == 1:
+        return False, None
+    return None, (f"git merge-base --is-ancestor exited {result.returncode}: "
+                  f"{' '.join(result.stderr.split()) or 'no error text'}")
+
+
 def fully_on_origin_main(repo, branch):
     """Whether every commit of the branch is on origin/main; False when git cannot say."""
-    return run_git(repo, "merge-base", "--is-ancestor", f"refs/heads/{branch}",
-                   "origin/main").returncode == 0
+    return branch_fully_on_origin_main_true_false_or_none_with_git_error(repo, branch)[0] is True
 
 
 def print_next_remove_run_line(line, one_named):
@@ -1128,6 +1182,8 @@ def remove_worktree(worktree, branch, repo, verdict, one_named=False):
     """Ship its log-store records, keep what the removal would lose, then remove a done worktree
     and delete its branch when every commit of the branch is on origin/main, or, for one named
     worktree, whatever the branch holds; return False when something failed."""
+    if verdict.removal_stopped_partway:
+        return finish_removal_stopped_partway(worktree, branch, repo, verdict, one_named)
     unshipped = ship_log_store_records(worktree)
     if unshipped:
         if one_named:
@@ -1186,11 +1242,59 @@ def remove_worktree(worktree, branch, repo, verdict, one_named=False):
         print(f"{worktree.name}: removing it will discard {len(discarded)} uncommitted, "
               f"untracked or ignored file(s): {discarded_files_text(discarded)}")
     head = commit_of(worktree, "HEAD")
+    git_directory = os.fsdecode(git_output.run_git(worktree, ["rev-parse", "--absolute-git-dir"]))
+    try:
+        (Path(git_directory.strip()) / REMOVAL_STARTED_FILE_NAME).write_text("", encoding="utf-8")
+    except OSError as error:
+        print(f"{worktree.name}: removal FAILED, worktree kept — the cleaner could not write "
+              f"{REMOVAL_STARTED_FILE_NAME} into the worktree's registration directory under the "
+              f"clone's .git/worktrees/: {error}. It writes that file before every removal, so "
+              f"that a later run can finish a removal stopped partway")
+        print_next_remove_run_line(
+            WORKTREE_KEPT_AFTER_FAILURE_NEXT_REMOVE_RUN_RETRIES_LINE_TEMPLATE.format(name=worktree.name),
+            one_named)
+        return False
     # A single --force removes untracked and modified files but still refuses a locked worktree.
     removal = run_git(repo, "worktree", "remove", "--force", str(worktree))
     if removal.returncode != 0:
         print(f"{worktree.name}: removal FAILED — {removal.stderr.strip()[:120]}")
         return False
+    return report_removal_and_delete_branch(worktree, branch, repo, head, discarded, one_named)
+
+
+def removal_stopped_partway_verdict(record):
+    return Verdict(True, "an earlier scripts/clean-worktrees.py --remove was stopped while removing "
+                         "this worktree, and the next --remove finishes that removal",
+                   judged_head=record.head, removal_stopped_partway=True)
+
+
+def finish_removal_stopped_partway(worktree, branch, repo, verdict, one_named):
+    """Delete what a stopped `git worktree remove` left, the worktree's directory and its
+    registration's directory, then report and delete the branch as for any removal."""
+    registration = registration_directory_of(repo, worktree)
+    try:
+        if worktree.exists():
+            shutil.rmtree(worktree)
+        # The caller found the registration a moment ago; None means another process removed it.
+        if registration is not None:
+            shutil.rmtree(registration)
+    except OSError as error:
+        print(f"{worktree.name}: removal FAILED — an earlier scripts/clean-worktrees.py --remove "
+              f"was stopped partway through removing this worktree, and deleting what that run "
+              f"left of its directory and of its registration directory under .git/worktrees/ "
+              f"failed: {error}")
+        print_next_remove_run_line(
+            f"{worktree.name}: do nothing now: the next scripts/clean-worktrees.py --remove, daily "
+            f"or at a handoff, tries again to finish the removal; if it fails the same way there, "
+            f"fix the cause the line above names", one_named)
+        return False
+    return report_removal_and_delete_branch(worktree, branch, repo,
+                                            verdict.judged_head or "unknown", [], one_named)
+
+
+def report_removal_and_delete_branch(worktree, branch, repo, head, discarded, one_named):
+    """Print the removal's line, delete its branch as BRANCHES and ONE NAMED WORKTREE OR BRANCH
+    say, and write the log of removals; return False when something failed."""
     line = f"{worktree.name}: removed"
     branch_deleted = False
     branch_failed = False
@@ -1288,6 +1392,9 @@ def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
                         False, "its owner file or its unlock failed", KEPT_NOT_CHECKABLE)))
                     continue
                 record = record._replace(locked_reason=None)
+        if verdict is None and record.prunable_reason is not None and record.locked_reason is None \
+                and removal_was_started(repo, worktree):
+            verdict = removal_stopped_partway_verdict(record)
         if verdict is None:
             verdict = classify(worktree, branch, record, pull_requests)
         if not verdict.done:
@@ -1402,6 +1509,10 @@ def remove_one_named_worktree(repo, main_checkout, path):
               f"as `git worktree list` shows them")
         return False
     worktree, branch, record = found[0]
+    if record.prunable_reason is not None and record.locked_reason is None \
+            and removal_was_started(repo, worktree):
+        return remove_worktree(worktree, branch, repo, removal_stopped_partway_verdict(record),
+                               one_named=True)
     try:
         by_head_branch = list_all_pull_requests_grouped_by_head_branch(repo)
     except PullRequestListingFailed as error:

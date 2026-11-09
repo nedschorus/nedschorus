@@ -46,15 +46,14 @@ def check(case_name, condition, detail=""):
             print(f"      {detail}")
 
 
-# What each machine had installed when this program was written, measured
-# with `crontab -l` on both on 2026-10-01. The table must give these lines
-# byte for byte: an install on either machine then changes nothing.
+# The cron lines the table must give each machine, byte for byte, in the form
+# `crontab -l` prints them.
 NED_BOX_MIRROR_LINE = (
     "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
     "transcript-mirror-to-log-store.py --failures-only >> "
     "/home/nedlern/.claude/transcript-mirror.log 2>&1")
 NED_BOX_DAILY_LINE = (
-    "30 3 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "0 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
     "daily-full-test-run-of-main.py >> "
     "/home/nedlern/.claude/daily-full-test-run-of-main.log 2>&1")
 MAC_MIRROR_LINE = (
@@ -88,6 +87,11 @@ NED_BOX_CRASH_RESTART_WATCHER_LINE = (
     "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
     "handoff-agent-crash-watcher.py >> "
     "/home/nedlern/.claude/handoff-agent-crash-watcher.log 2>&1")
+NED_BOX_IDLE_SWEEP_LINE = (
+    "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.py >> "
+    "/home/nedlern/.claude/agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-"
+    "write.log 2>&1")
 NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE = (
     "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
     "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> "
@@ -268,7 +272,7 @@ clean = real_jobs["clean-worktrees"]
 check("the table gives ned-box the transcript mirror's cron line it has installed, byte for byte",
       installer.cron_line(ned_box, mirror, mirror["on"]["ned-box"]) == NED_BOX_MIRROR_LINE,
       installer.cron_line(ned_box, mirror, mirror["on"]["ned-box"]))
-check("the table gives ned-box the daily full test run's cron line it has installed, byte for byte",
+check("the table gives ned-box the daily full test run's cron line, byte for byte",
       installer.cron_line(ned_box, daily, daily["on"]["ned-box"]) == NED_BOX_DAILY_LINE,
       installer.cron_line(ned_box, daily, daily["on"]["ned-box"]))
 check("the table gives the Mac the transcript mirror's cron line it has installed, byte for byte",
@@ -279,8 +283,8 @@ check("the Mac's daily full test run is a launchd job at 03:30, not a cron line:
       "while the Mac sleeps starts at the next wake",
       daily["on"]["mac"]["scheduler"] == "launchd" and mac_plist == MAC_DAILY_PLIST
       and list(mac_plist) == list(MAC_DAILY_PLIST), mac_plist)
-check("the table gives ned-box the worktree cleanup's cron line at 06:30, two hours after "
-      "the daily full test run",
+check("the table gives ned-box the worktree cleanup's cron line at 06:30, after the daily "
+      "full test run",
       installer.cron_line(ned_box, clean, clean["on"]["ned-box"]) == NED_BOX_CLEAN_LINE,
       installer.cron_line(ned_box, clean, clean["on"]["ned-box"]))
 mac_clean_plist = installer.launch_agent_plist(mac, clean, clean["on"]["mac"])
@@ -289,12 +293,14 @@ check("the Mac's worktree cleanup is a launchd job at 06:30, so a run missed whi
       clean["on"]["mac"]["scheduler"] == "launchd" and mac_clean_plist == MAC_CLEAN_PLIST
       and list(mac_clean_plist) == list(MAC_CLEAN_PLIST), mac_clean_plist)
 check("the table's jobs are the two typed by hand before this program, the worktree "
-      "cleanup, ned-box's crash restart watcher, ned-box's Remote Control reconnect watcher, the "
+      "cleanup, ned-box's crash restart watcher, ned-box's agent-seat idle sweep, ned-box's Remote Control reconnect watcher, the "
       "weekly owner check of the work-snapshot hook, the session dialogs refresh, the "
       "guarded-file store's prune, the nc-shared-database's backup and its copy to the "
       "Mac, the deletion of exited agent-sessions' temp folders, the scheduled full "
       "mutation pass, the no-sandbox test suites' run on main, and no other",
-      sorted(real_jobs) == ["claude-code-temp-folders-of-exited-agent-sessions-delete",
+      sorted(real_jobs) == ["agent-seat-idle-sweep-headless-judge-wake-messages-send-and-"
+                            "user-alerts-write",
+                            "claude-code-temp-folders-of-exited-agent-sessions-delete",
                             "clean-worktrees", "daily-full-test-run-of-main",
                             "guarded-file-versions-and-approvals-store-removed-checkout-"
                             "copies-prune",
@@ -412,6 +418,8 @@ check("--print as ned-box prints ned-box's cron lines from the real table and ru
           "clean-worktrees — cron line:", NED_BOX_CLEAN_LINE,
           "handoff-agent-crash-watcher — cron line:",
           NED_BOX_CRASH_RESTART_WATCHER_LINE,
+          "agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write — cron "
+          "line:", NED_BOX_IDLE_SWEEP_LINE,
           "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher — "
           "cron line:", NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE,
           "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — cron line:",
@@ -486,7 +494,7 @@ check("--help ends with the docstring's exit-codes paragraph and prints nothing 
           "invocation, a table this program cannot use, a machine the table does not name, a "
           "job's program missing, a crontab that could not be read, or a shell parser that "
           "could not be installed; or for --check, a job not checked because `launchctl print` "
-          "could not report it.")
+          "could not report it, or a crontab line it could not read.")
       and "WHY THIS EXISTS" not in help_text and "THE TABLE is " not in help_text
       and "user-ruled" not in help_text, help_text)
 check("--check's help names both reasons for exit 1",
@@ -568,7 +576,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     # --- cron: only the selected jobs' lines change -----------------------
     foreign_line = "15 2 * * * /usr/local/bin/something-else --nightly"
-    differing_daily = BOX_DAILY.replace("30 3 * * *", "0 4 * * *")
+    differing_daily = BOX_DAILY.replace("0 0 * * *", "0 4 * * *")
     stub = MachineStub(crontab=(
         f"{NED_BOX_FOREIGN_COMMENT}\n{differing_daily}\n{foreign_line}\n").encode())
     exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
@@ -1345,9 +1353,31 @@ with tempfile.TemporaryDirectory() as temporary:
     check("--check reports a line that runs a program from the clone, directly, through env "
           "or at reboot, and not a line that sets PATH to the clone, only reads or writes "
           "a file there, or gives env or an interpreter an option such as `env -C <clone>/data`",
-          exit_code == 1 and printed.count("NOT IN THE TABLE: ") == 3
+          printed.count("NOT IN THE TABLE: ") == 3
           and all(f"NOT IN THE TABLE: the crontab line {line} — " in printed for line in runs)
           and not any(line in printed for line in not_runs), (exit_code, printed))
+    unread = [env_option_takes_a_clone_directory, interpreter_option]
+    check("and names on stderr each line that gives env or an interpreter an option as NOT "
+          "CHECKED, and exits 2, not 1 or 0",
+          exit_code == 2 and errors.count("NOT CHECKED: the crontab line ") == 2
+          and all(f"NOT CHECKED: the crontab line {line} — it gives an interpreter or env an "
+                  f"option" in errors for line in unread)
+          and f"add its job to {FIXTURE_TABLE_PATH} through a pull request" in errors,
+          (exit_code, errors))
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [BOX_MIRROR, BOX_DAILY, BOX_ALONE, interpreter_option]).encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("--check with every job matching and one line it cannot read does not report a clean "
+          "result: it names the line NOT CHECKED and exits 2",
+          exit_code == 2 and printed.count("matches: ") == 3 and "NOT IN THE TABLE" not in printed
+          and f"NOT CHECKED: the crontab line {interpreter_option} — " in errors,
+          (exit_code, printed, errors))
+    exit_code, printed, errors = run_main(["--check"] + TWO_JOBS, NED_BOX, stub)
+    check("and --check limited by --job does not read that line",
+          exit_code == 0 and errors == "", (exit_code, errors))
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [path_setting, BOX_MIRROR, BOX_DAILY, BOX_ALONE]
+        + not_runs + runs).encode())
     exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
     check("--remove-not-in-table takes out only those three, and keeps the PATH line, the "
           "lines that only touch a file in the clone and the lines with an option",
@@ -1358,7 +1388,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # A retired line that runs a program file of the same name as a cron job
     # of the table is found as that job's line, the way an install finds it:
     # --check reports it as that job's DIFFERS, and --install replaces it.
-    same_file_other_arguments = BOX_DAILY.replace("30 3 * * *", "0 2 * * *").replace(
+    same_file_other_arguments = BOX_DAILY.replace(
         "daily-full-test-run-of-main.py", "daily-full-test-run-of-main.py --a-retired-argument")
     stub = MachineStub(crontab=(f"{BOX_MIRROR}\n{BOX_DAILY}\n{BOX_ALONE}\n"
                                 f"{same_file_other_arguments}\n").encode())

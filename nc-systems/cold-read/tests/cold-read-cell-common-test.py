@@ -922,7 +922,10 @@ with tempfile.TemporaryDirectory() as scratch:
           classify(stdout="You've hit your Opus weekly usage limit · resets Nov 7\n")
           == ("account-limit", "Opus weekly usage limit · resets Nov 7"),
           repr(classify(stdout="You've hit your Opus weekly usage limit · resets Nov 7\n")))
-    check("a line whose \"limit\" comes four or more words after \"You've hit your \" is exit-N",
+    check("exactly four words before limit is exit-N",
+          classify(stdout="You've hit your a b c d limit\n")[0] == "exit-1",
+          repr(classify(stdout="You've hit your a b c d limit\n")))
+    check("a line whose \"limit\" comes five or more words after \"You've hit your \" is exit-N",
           classify(stdout="You've hit your stride and now the speed limit\n")[0] == "exit-1",
           repr(classify(stdout="You've hit your stride and now the speed limit\n")))
     check("the Fable limit line is model-limit for a Fable attempt, the family as detail",

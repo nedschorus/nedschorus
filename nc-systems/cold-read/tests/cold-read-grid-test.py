@@ -150,9 +150,9 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 from unittest import mock
@@ -508,8 +508,23 @@ def frozen_target_path_in_scratch_repository(repository, record_directory):
         repository / TARGET_RELATIVE_PATH, record_directory)
 
 
-with tempfile.TemporaryDirectory() as scratch:
-    scratch = Path(scratch)
+_scratch_directory_common_spec = importlib.util.spec_from_file_location(
+    "test_scratch_directory_whose_earlier_killed_runs_leftovers_are_removed_first_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "test-scratch-directory-whose-earlier-killed-runs-leftovers-are-removed-first-common.py")
+_scratch_directory_common = importlib.util.module_from_spec(_scratch_directory_common_spec)
+_scratch_directory_common_spec.loader.exec_module(_scratch_directory_common)
+SCRATCH_ROOT = _scratch_directory_common.scratch_directory_after_removing_ones_killed_runs_left(
+    "cold-read-grid-test-")
+
+
+def stopped_by_sigterm(*_):
+    raise SystemExit(1)  # So the finally below removes SCRATCH_ROOT.
+
+
+signal.signal(signal.SIGTERM, stopped_by_sigterm)
+try:
+    scratch = SCRATCH_ROOT
     stubs = scratch / "stub-bin"
 
     # --- The check that could not run ---------------------------------------
@@ -2765,6 +2780,63 @@ with tempfile.TemporaryDirectory() as scratch:
           and " of 3 for " not in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
+    # Only the records whose name contains the document's file stem are
+    # opened: a record of another document is never read, so even one that
+    # cannot be read leaves the count intact.
+    repository = build_scratch_repository(scratch, "full-run-count-other-document-record-unread")
+    for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
+        seed_log_store_record(repository, f"cold-read-grid-test-target-{day}", ["claude-hunt-deep.md"])
+    seed_log_store_record(repository, "some-other-document-2026-09-01", ["claude-hunt-deep.md"],
+                          frozen_relative="docs/some-other-document.md")
+    other_record = repository / SCRATCH_LOG_STORE_RELATIVE / "some-other-document-2026-09-01"
+    other_record.chmod(0o000)
+    try:
+        result = run_grid(repository, stubs / "full-run-count-other-document-record-unread")
+    finally:
+        other_record.chmod(0o755)
+    check("another document's record is not opened when counting, so a fourth run is still refused",
+          result.returncode == 2 and "refusing cold-read-full-run 4" in result.stderr,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    # The log-store on ned-box is listed over ssh with one find that prunes
+    # the other documents' records. A stand-in ssh runs that find here; where
+    # this machine's find has no -printf, the stand-in prints each path instead.
+    remote_store = scratch / "full-run-count-remote-store"
+    for name, frozen in (("cold-read-grid-test-target-2026-09-01", TARGET_RELATIVE_PATH),
+                         ("some-other-document-2026-09-01", "docs/some-other-document.md")):
+        (remote_store / name / "target" / Path(frozen).parent).mkdir(parents=True, exist_ok=True)
+        (remote_store / name / "target" / frozen).write_text("earlier run\n", encoding="utf-8")
+        (remote_store / name / "claude-hunt-deep.md").write_text("earlier run\n", encoding="utf-8")
+    (remote_store / "some-other-document-2026-09-01").chmod(0o000)
+    find_has_printf = subprocess.run(["find", str(remote_store / "cold-read-grid-test-target-2026-09-01"),
+                                      "-printf", ""], capture_output=True).returncode == 0
+    ssh_stub = stubs / "full-run-count-remote-listing-ssh"
+    ssh_stub.write_text(
+        "#!/usr/bin/env python3\nimport shlex, subprocess, sys\n"
+        "command = shlex.split(sys.argv[-1])\n"
+        f"if not {find_has_printf}:\n"
+        "    at = command.index('-printf')\n"
+        "    command[at:at + 2] = ['-print']\n"
+        "sys.exit(subprocess.run(command).returncode)\n", encoding="utf-8")
+    ssh_stub.chmod(0o755)
+    remote_listing_grid_spec = importlib.util.spec_from_file_location(
+        "cold_read_grid_remote_listing", SYSTEM_DIRECTORY / "cold-read-grid.py")
+    remote_listing_grid = importlib.util.module_from_spec(remote_listing_grid_spec)
+    remote_listing_grid_spec.loader.exec_module(remote_listing_grid)
+    remote_listing_grid.record_shipper.SSH_COMMAND = [str(ssh_stub)]
+    try:
+        remote_lines = remote_listing_grid.record_file_listing(
+            "ned-box-stand-in", str(remote_store),
+            remote_listing_grid.record_directory_name_parts({TARGET_RELATIVE_PATH}))
+    finally:
+        (remote_store / "some-other-document-2026-09-01").chmod(0o755)
+    listed = sorted(line.split("\t")[0].removeprefix(f"{remote_store}/") for line in remote_lines)
+    check("the remote listing holds the document's records and prunes another document's unread",
+          listed == ["cold-read-grid-test-target-2026-09-01/claude-hunt-deep.md",
+                     f"cold-read-grid-test-target-2026-09-01/target/{TARGET_RELATIVE_PATH}"]
+          and (not find_has_printf or all("\t" in line for line in remote_lines)),
+          repr(remote_lines))
+
     # A log-store that cannot be listed does not stop the read, as with
     # shipping, and the run says it went uncounted rather than counting zero.
     repository = build_scratch_repository(scratch, "full-run-count-store-unreadable")
@@ -2788,6 +2860,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an unreadable git history is reported as EARLIER COLD-READ-FULL-RUNS NOT COUNTED",
           "EARLIER COLD-READ-FULL-RUNS NOT COUNTED:" in result.stdout and "git log --follow" in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+finally:
+    shutil.rmtree(SCRATCH_ROOT, ignore_errors=True)
 
 
 # The docstring is a reader's map of the run: its cell count must match the

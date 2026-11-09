@@ -56,8 +56,6 @@ GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign
 STAND_IN_RUNNER = '''import json, os, sys, time
 with open(os.environ["QUIET_GAP_TEST_CALLS"], "a") as calls:
     calls.write(json.dumps(sys.argv[1:]) + "\\n")
-with open(os.environ["QUIET_GAP_TEST_CALLS"] + ".xdg", "w") as seen:
-    seen.write(os.environ.get("XDG_RUNTIME_DIR", "unset"))
 log_dir = sys.argv[sys.argv.index("--log-dir") + 1]
 os.makedirs(log_dir, exist_ok=True)
 mode = os.environ.get("QUIET_GAP_TEST_RUNNER", "pass")
@@ -224,41 +222,6 @@ with tempfile.TemporaryDirectory() as directory:
     check("at the same commit after a pass, no run is due", code == 0 and calls == []
           and "no run due" in printed, (code, printed))
 
-    # No nc-test-sandbox has /run/user/<uid>/bus, so the daily run's helper is handed a
-    # machine where the bus is there, or is not.
-    real_module_loaded_by_path = program.module_loaded_by_path
-    FAKE_UID = 4242
-
-    def daily_run_module_on_a_machine_whose_user_bus(bus_exists):
-        def loaded(name, path):
-            daily = real_module_loaded_by_path(name, path)
-            real_helper = daily.environment_with_user_runtime_directory_when_the_user_session_bus_exists
-            daily.environment_with_user_runtime_directory_when_the_user_session_bus_exists = (
-                lambda environment: real_helper(
-                    environment, platform="linux", uid=FAKE_UID,
-                    path_exists=lambda path: bus_exists and path == f"/run/user/{FAKE_UID}/bus"))
-            return daily
-        return loaded
-
-    saved_xdg = os.environ.pop("XDG_RUNTIME_DIR", None)
-    try:
-        s.commit_on_origin("cron starts the program without the user's session bus")
-        with constants(module_loaded_by_path=daily_run_module_on_a_machine_whose_user_bus(True)):
-            code, printed, calls = s.run()
-        seen = Path(f"{s.calls}.xdg").read_text()
-        check("started without XDG_RUNTIME_DIR, as under cron, on a machine with the user's "
-              "session bus, the runner is given XDG_RUNTIME_DIR=/run/user/<uid>",
-              code == 0 and len(calls) == 1 and seen == f"/run/user/{FAKE_UID}",
-              (code, printed, seen))
-        s.commit_on_origin("a machine with no user session bus")
-        with constants(module_loaded_by_path=daily_run_module_on_a_machine_whose_user_bus(False)):
-            code, printed, calls = s.run()
-        seen = Path(f"{s.calls}.xdg").read_text()
-        check("on a machine with no user session bus, the runner is given no XDG_RUNTIME_DIR",
-              code == 0 and len(calls) == 1 and seen == "unset", (code, printed, seen))
-    finally:
-        if saved_xdg is not None:
-            os.environ["XDG_RUNTIME_DIR"] = saved_xdg
     first_commit = s.state()["passing_commit"]
 
     # --- main moves, and the run fails -------------------------------------------

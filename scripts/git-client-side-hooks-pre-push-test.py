@@ -353,9 +353,14 @@ class Scenario:
     `conflicting` conflicts with origin/main and the other two do not.
     Every setup push uses --no-verify, so the setup never depends on the hook
     under test.
+
+    Unless worktree_has_checks is False, the clone holds untracked empty files at
+    scripts/branch-conflict-check.py and at the revert check's path, as a seat's
+    worktree holds both checks, so the hooks give the hand-check commands that run
+    the worktree's copies.
     """
 
-    def __init__(self, parent, name, hooks, path_override=None):
+    def __init__(self, parent, name, hooks, path_override=None, worktree_has_checks=True):
         self.parent = parent
         self.name = name
         self.origin = parent / (name + "-origin.git")
@@ -390,6 +395,10 @@ class Scenario:
         self.commit("shared.txt", "main's line\n", "Main side")
         self.git(self.clone, "push", "--quiet", "--no-verify", "origin", "main")
         self.git(self.clone, "fetch", "--quiet", "origin")
+        if worktree_has_checks:
+            (self.clone / "scripts").mkdir()
+            for check_file in (REAL_CONFLICT_CHECK, REAL_REVERT_CHECK):
+                (self.clone / "scripts" / check_file.name).write_text("")
 
     def environment(self):
         env = {key: value for key, value in os.environ.items()
@@ -1804,8 +1813,118 @@ def run_revert_check_cases(scratch):
           repr(scenario.fake_check_calls()))
 
 
+REFERENCE_CHECKOUT_CHECK_RUN_BY_HAND_COMMAND = "python3 %s --head %s"
+NO_COPY_TO_RUN_TEXT = ("no copy of the check exists to run, as your worktree has no scripts/%s "
+                       "and %s is missing too; tell the user")
+# Gives no verdict when the hook runs it, which passes --branch, and a clean one when run by hand.
+FAKE_CHECK_NO_VERDICT_FROM_HOOK_CLEAN_BY_HAND = FAKE_CHECK_PREAMBLE + """\
+if "--branch" in sys.argv:
+    sys.exit(7)
+print("VERDICT: CLEAN -- " + os.path.abspath(__file__) + " ran with " + " ".join(sys.argv[1:]))
+"""
+FAKE_CHECK_ALWAYS_CLEAN = FAKE_CHECK_PREAMBLE + """\
+print("VERDICT: CLEAN -- fake clean verdict for the test.")
+sys.exit(0)
+"""
+HAND_CONFLICT_CHECK_LINE = "Check clean by hand from your worktree: %s"
+HAND_REVERT_CHECK_AFTER_CONFLICT_CHECK_LINE = (
+    "Once the hand conflict check of clean prints VERDICT: CLEAN, check it for files set back "
+    "too: %s")
+HAND_REVERT_CHECK_LINE = "Check it by hand from your worktree: %s"
+
+
+def run_worktree_without_checks_cases(scratch):
+    """A worktree with no copy of a check is given a hand-check command that runs the reference
+    checkout's copy, and that command runs it; when the reference checkout's copy is the missing
+    file too, the line says no copy exists, instead of naming a command that cannot run."""
+    runner = load_runner_module()
+    empty_directory = scratch / "no-scripts-directory"
+    empty_directory.mkdir()
+    started_in = os.getcwd()
+    os.chdir(empty_directory)
+    try:
+        stream = io.StringIO()
+        runner.report_unexpected_error(stream, RuntimeError("boom"), ["origin", "url"], None)
+    finally:
+        os.chdir(started_in)
+    check("an error before the pushed refs were read, in a worktree with no checks: both "
+          "commands run the reference checkout's copies",
+          REFERENCE_CHECKOUT_CHECK_RUN_BY_HAND_COMMAND % (REAL_CONFLICT_CHECK, "<branch name>")
+          in stream.getvalue()
+          and REFERENCE_CHECKOUT_CHECK_RUN_BY_HAND_COMMAND % (REAL_REVERT_CHECK, "<branch name>")
+          in stream.getvalue()
+          and "python3 scripts/" not in stream.getvalue(), stream.getvalue())
+
+    def hook_copy_command(hooks, check_file, short):
+        return REFERENCE_CHECKOUT_CHECK_RUN_BY_HAND_COMMAND % (hooks.parent / check_file.name,
+                                                               short)
+
+    def no_copy_text(hooks, check_file, short):
+        return NO_COPY_TO_RUN_TEXT % (check_file.name, hooks.parent / check_file.name)
+
+    fake = FAKE_CHECK_NO_VERDICT_FROM_HOOK_CLEAN_BY_HAND
+    for case_number, (label, layout_arguments, expected_lines) in enumerate((
+            ("the Python file is missing",
+             {"include_runner": False, "conflict_check": fake, "revert_check": fake},
+             ((HAND_CONFLICT_CHECK_LINE, REAL_CONFLICT_CHECK, hook_copy_command),
+              (HAND_REVERT_CHECK_AFTER_CONFLICT_CHECK_LINE, REAL_REVERT_CHECK,
+               hook_copy_command))),
+            ("the conflict check gives no verdict",
+             {"conflict_check": fake, "revert_check": fake},
+             ((HAND_CONFLICT_CHECK_LINE, REAL_CONFLICT_CHECK, hook_copy_command),
+              (HAND_REVERT_CHECK_AFTER_CONFLICT_CHECK_LINE, REAL_REVERT_CHECK,
+               hook_copy_command))),
+            ("the reference checkout's conflict check is missing",
+             {"conflict_check": None, "revert_check": fake},
+             ((HAND_CONFLICT_CHECK_LINE, REAL_CONFLICT_CHECK, no_copy_text),
+              (HAND_REVERT_CHECK_AFTER_CONFLICT_CHECK_LINE, REAL_REVERT_CHECK,
+               hook_copy_command))),
+            ("the Python file and the reference checkout's checks are missing",
+             {"include_runner": False, "conflict_check": None, "revert_check": None},
+             ((HAND_CONFLICT_CHECK_LINE, REAL_CONFLICT_CHECK, no_copy_text),
+              (HAND_REVERT_CHECK_AFTER_CONFLICT_CHECK_LINE, REAL_REVERT_CHECK, no_copy_text))),
+            ("the reference checkout's revert check is missing",
+             {"conflict_check": FAKE_CHECK_ALWAYS_CLEAN, "revert_check": None},
+             ((HAND_REVERT_CHECK_LINE, REAL_REVERT_CHECK, no_copy_text),)))):
+        name = "worktree-without-checks-%d" % case_number
+        hooks = make_layout(scratch, "layout-" + name, **layout_arguments)
+        scenario = Scenario(scratch, name, hooks, worktree_has_checks=False)
+        scenario.git(scenario.clone, "switch", "--quiet", "clean")
+        short = scenario.head("clean")[:SHORT_COMMIT_LENGTH]
+        outcome = scenario.push("origin", "clean")
+        label = "worktree without the checks, " + label
+        check("%s: the push goes through" % label, went_through(outcome), outcome.describe())
+        check("%s: no command runs the worktree's missing copy" % label,
+              "python3 scripts/" not in outcome.stderr, outcome.describe())
+        lines = outcome.stderr.splitlines()
+        for line_text, check_file, fill in expected_lines:
+            fill_text = fill(hooks, check_file, short)
+            check("%s: the hand check of %s %s" % (
+                      label, check_file.name, "runs the reference checkout's copy"
+                      if fill is hook_copy_command else "says no copy exists"),
+                  line_text % fill_text in lines, outcome.describe())
+            if fill is not hook_copy_command:
+                continue
+            ran = subprocess.run(fill_text, shell=True, cwd=str(scenario.clone),
+                                 env=scenario.environment(), capture_output=True, text=True,
+                                 timeout=60)
+            check("%s: that command runs the reference checkout's %s on the commit"
+                  % (label, check_file.name),
+                  ran.returncode == 0
+                  and ran.stdout.strip() == "VERDICT: CLEAN -- %s ran with --head %s"
+                  % (hooks.parent / check_file.name, short),
+                  "exit %s; stdout %r; stderr %r" % (ran.returncode, ran.stdout, ran.stderr))
+
+
 def main():
-    run_unit_cases()
+    # The unit cases run the hook code in this process and the shell part in its working
+    # directory, as git runs a hook in the worktree being pushed; this checkout is that worktree.
+    started_in = os.getcwd()
+    os.chdir(SCRIPTS_DIRECTORY.parent)
+    try:
+        run_unit_cases()
+    finally:
+        os.chdir(started_in)
     # Resolved, because git and the hooks print resolved paths: on macOS the temporary
     # directory is under /var, a symlink to /private/var.
     scratch = Path(tempfile.mkdtemp(prefix="pre-push-test-")).resolve()
@@ -1815,6 +1934,7 @@ def main():
         run_mutation_testing_worktree_cases(scratch)
         run_open_pull_request_branch_cases(scratch)
         run_revert_check_cases(scratch)
+        run_worktree_without_checks_cases(scratch)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     if failures:
