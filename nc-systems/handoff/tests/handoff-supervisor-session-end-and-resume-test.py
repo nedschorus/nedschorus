@@ -573,10 +573,19 @@ def run_handoff_worktree_cleanup_cases(workspace: Path):
                    if name in os.environ}
     # The real cleaner's --remove would otherwise append to the real log-store's log of removals.
     os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(workspace / "clean-worktrees-removals-log.txt")
-    # The cleaner lists pull requests with gh; this one lists none and never reaches GitHub.
+    # The cleaner asks gh for pull requests; this one answers none, to a `gh pr list` or to the
+    # cleaner's `gh api graphql` query, and never reaches GitHub.
     fake_gh_directory = workspace / "fake-gh-listing-no-pull-requests"
     fake_gh_directory.mkdir()
-    (fake_gh_directory / "gh").write_text("#!/bin/sh\necho '[]'\n", encoding="utf-8")
+    (fake_gh_directory / "gh").write_text((
+        f"#!{sys.executable}\n"
+        "import json, re, sys\n"
+        "if sys.argv[1:3] != ['api', 'graphql']:\n"
+        "    print('[]')\n"
+        "    sys.exit(0)\n"
+        "aliases = [a.split('=', 1)[0] for a in sys.argv[3:] if re.fullmatch(r'[bn]\\d+=.*', a)]\n"
+        "print(json.dumps({'data': {'repository': {a: None if a[0] == 'n' else\n"
+        "    {'pageInfo': {'hasNextPage': False}, 'nodes': []} for a in aliases}}}))\n"), encoding="utf-8")
     (fake_gh_directory / "gh").chmod(0o755)
     saved_path = os.environ["PATH"]
     os.environ["PATH"] = f"{fake_gh_directory}{os.pathsep}{saved_path}"

@@ -19,9 +19,13 @@ on a healthy machine, so they run the reaper with a stub lsof first on PATH.
 Those cases guard the reaper's central promise — ambiguity keeps, never
 reaps — which a worktree holding someone's uncommitted work depends on.
 
-The cleaner lists pull requests with gh. Every run here finds this suite's
-own gh first on PATH, which prints the JSON in FAKE_GH_PULL_REQUESTS, keeping
-only the fields named after --json, or an empty list, or fails with exit FAKE_GH_EXIT_CODE, and never reaches GitHub.
+The cleaner asks gh for pull requests. Every run here finds this suite's own
+gh first on PATH, which answers from the JSON in FAKE_GH_PULL_REQUESTS, an
+empty list by default, or fails with exit FAKE_GH_EXIT_CODE, and never
+reaches GitHub. It answers `gh api graphql` for the head branches and numbers
+the query's variables name, and `gh pr list --state open`; it refuses
+`gh pr list --state all`, so a run that lists every pull request ever opened
+fails.
 
 The classification cases run against the machine's REAL lsof, and that is the
 one way this suite can fail for a reason that is not a defect. If lsof does not
@@ -107,27 +111,67 @@ _removals_log_for_every_run = tempfile.mkdtemp(prefix="clean-worktrees-test-remo
 atexit.register(shutil.rmtree, _removals_log_for_every_run, ignore_errors=True)
 os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(Path(_removals_log_for_every_run) / "log.txt")
 
-# Every run finds this gh first: it prints FAKE_GH_PULL_REQUESTS, an empty list by default, or fails
-# with exit FAKE_GH_EXIT_CODE, so no run reaches GitHub. Like the real gh, it prints only the fields
-# named after --json, so a field the cleaner forgets to ask for is missing from what it reads.
+# Every run finds this gh first, so no run reaches GitHub. Like the real gh, it answers only the
+# fields asked for, so a field the cleaner forgets to ask for is missing from what it reads; and like
+# the real gh, it exits 1 when a number is no pull request's, still printing the rest of the answer.
+# It appends each call's arguments, as JSON, to FAKE_GH_CALLS_LOG when that is set.
 _fake_gh_directory = tempfile.mkdtemp(prefix="clean-worktrees-test-fake-gh-")
 atexit.register(shutil.rmtree, _fake_gh_directory, ignore_errors=True)
 FAKE_GH = Path(_fake_gh_directory) / "gh"
 FAKE_GH.write_text(
     f"#!{sys.executable}\n"
-    "import json, os, sys\n"
+    "import json, os, re, sys\n"
+    "arguments = sys.argv[1:]\n"
+    "if os.environ.get('FAKE_GH_CALLS_LOG'):\n"
+    "    with open(os.environ['FAKE_GH_CALLS_LOG'], 'a') as log:\n"
+    "        log.write(json.dumps(arguments) + '\\n')\n"
     "if os.environ.get('FAKE_GH_EXIT_CODE'):\n"
     "    print('gh: stand-in listing failure', file=sys.stderr)\n"
     "    sys.exit(int(os.environ['FAKE_GH_EXIT_CODE']))\n"
     "pull_requests = json.loads(os.environ.get('FAKE_GH_PULL_REQUESTS') or '[]')\n"
-    "if '--json' in sys.argv:\n"
-    "    fields = sys.argv[sys.argv.index('--json') + 1].split(',')\n"
-    "    pull_requests = [{f: p[f] for f in fields if f in p} for p in pull_requests]\n"
-    "print(json.dumps(pull_requests))\n", encoding="utf-8")
+    "def only(fields, pull_request):\n"
+    "    return {f: pull_request[f] for f in fields if f in pull_request}\n"
+    "if arguments[:2] == ['pr', 'list']:\n"
+    "    state = arguments[arguments.index('--state') + 1]\n"
+    "    if state != 'open':\n"
+    "        print('gh: stand-in refuses to list every pull request ever opened', file=sys.stderr)\n"
+    "        sys.exit(1)\n"
+    "    fields = arguments[arguments.index('--json') + 1].split(',')\n"
+    "    print(json.dumps([only(fields, p) for p in pull_requests if p['state'] == 'OPEN']))\n"
+    "    sys.exit(0)\n"
+    "assert arguments[:2] == ['api', 'graphql'], arguments\n"
+    "variables = dict(arguments[i + 1].split('=', 1) for i in range(2, len(arguments), 2))\n"
+    "fields = re.search(r'nodes \\{ ([^}]*) \\}|pullRequest\\(number: \\$\\w+\\) \\{ ([^}]*) \\}',\n"
+    "                   variables['query']).group(1, 2)\n"
+    "fields = (fields[0] or fields[1]).split()\n"
+    "repository, errors = {}, []\n"
+    "if os.environ.get('FAKE_GH_GRAPHQL_OTHER_ERROR'):\n"
+    "    errors.append({'type': 'FORBIDDEN', 'path': ['repository'], 'message': 'stand-in refusal'})\n"
+    "for alias, value in variables.items():\n"
+    "    if re.fullmatch(r'b\\d+', alias):\n"
+    "        found = sorted((p for p in pull_requests if p['headRefName'] == value),\n"
+    "                       key=lambda p: -p['number'])\n"
+    "        repository[alias] = {'pageInfo': {'hasNextPage': len(found) > 100},\n"
+    "                             'nodes': [only(fields, p) for p in found[:100]]}\n"
+    "    elif re.fullmatch(r'n\\d+', alias):\n"
+    "        found = [p for p in pull_requests if p['number'] == int(value)]\n"
+    "        repository[alias] = only(fields, found[0]) if found else None\n"
+    "        if not found:\n"
+    "            errors.append({'type': 'NOT_FOUND', 'path': ['repository', alias],\n"
+    "                           'message': f'Could not resolve to a PullRequest with the number of {value}.'})\n"
+    "answer = {'data': {'repository': repository}}\n"
+    "if errors:\n"
+    "    answer['errors'] = errors\n"
+    "print(json.dumps(answer))\n"
+    "if errors:\n"
+    "    print('gh: ' + errors[0]['message'], file=sys.stderr)\n"
+    "    sys.exit(1)\n", encoding="utf-8")
 FAKE_GH.chmod(0o755)
 os.environ["PATH"] = f"{_fake_gh_directory}{os.pathsep}{os.environ.get('PATH', '')}"
 os.environ.pop("FAKE_GH_PULL_REQUESTS", None)
 os.environ.pop("FAKE_GH_EXIT_CODE", None)
+os.environ.pop("FAKE_GH_CALLS_LOG", None)
+os.environ.pop("FAKE_GH_GRAPHQL_OTHER_ERROR", None)
 
 WORKTREE_OWNER_FILE_NAME = "worktree-owner.json"
 
@@ -586,7 +630,7 @@ with tempfile.TemporaryDirectory() as scratch:
             listed = {path.resolve(): (branch, record)
                       for path, branch, record in clean_module.list_worktrees(checkout, checkout)}
             timed_out_classification = clean_module.classify(
-                dirty_wt, *listed[dirty_wt.resolve()], clean_module.PullRequestsByHeadBranchLazyCache(checkout))
+                dirty_wt, *listed[dirty_wt.resolve()], clean_module.PullRequestsOfHeadBranchesAndNumbersLazyCache(checkout))
         finally:
             os.environ["PATH"] = saved_path
         check("an lsof that times out keeps the worktree",
@@ -1077,7 +1121,7 @@ with tempfile.TemporaryDirectory() as scratch:
               "kept, and the count line says the branch count is unknown",
               merged_wt.exists() and closed_wt.exists()
               and "merged-wt: kept — the pull requests of its branch merged-wt-branch could not be "
-                  "read: `gh pr list" in failing_gh.stdout
+                  "read: `gh api graphql`" in failing_gh.stdout
               and "gh: stand-in listing failure" in failing_gh.stdout
               and "branches with no pull request unknown (" in failing_gh.stdout,
               failing_gh.stdout + failing_gh.stderr)
@@ -1167,23 +1211,146 @@ with tempfile.TemporaryDirectory() as scratch:
         not_json_gh.mkdir()
         (not_json_gh / "gh").write_text("#!/bin/sh\necho 'not a list'\n", encoding="utf-8")
         (not_json_gh / "gh").chmod(0o755)
+        failing_with_answer_gh = scratch / "failing-with-answer-gh"
+        failing_with_answer_gh.mkdir()
+        (failing_with_answer_gh / "gh").write_text(
+            "#!/bin/sh\necho '{\"data\": {\"repository\": {\"b0\": {\"pageInfo\": {\"hasNextPage\": "
+            "false}, \"nodes\": []}}}}'\necho 'gh: stand-in failure' >&2\nexit 1\n", encoding="utf-8")
+        (failing_with_answer_gh / "gh").chmod(0o755)
         no_gh = scratch / "no-gh"
         no_gh.mkdir()
         (no_gh / "git").symlink_to(shutil.which("git"))
         try:
             os.environ["PATH"] = f"{not_json_gh}{os.pathsep}{saved_path}"
             not_json = raised_by(lambda: module.list_all_pull_requests_grouped_by_head_branch(checkout))
+            not_json_open = raised_by(lambda: module.open_pull_requests_grouped_by_head_branch(checkout))
+            not_json_query = raised_by(lambda: module.pull_requests_of_head_branches_and_numbers(
+                checkout, ["a"], [1]))
+            os.environ["PATH"] = f"{failing_with_answer_gh}{os.pathsep}{saved_path}"
+            failing_with_answer = raised_by(lambda: module.pull_requests_of_head_branches_and_numbers(
+                checkout, ["a"], []))
             os.environ["PATH"] = str(no_gh)
             not_run = raised_by(lambda: module.list_all_pull_requests_grouped_by_head_branch(checkout))
+            not_run_query = raised_by(lambda: module.pull_requests_of_head_branches_and_numbers(
+                checkout, ["a"], []))
         finally:
             os.environ["PATH"] = saved_path
         check("gh printing something other than a list of pull requests is a listing failure",
-              isinstance(not_json, module.PullRequestListingFailed)
-              and "printed something other than a list of pull requests" in str(not_json),
-              repr(not_json))
+              all(isinstance(error, module.PullRequestListingFailed)
+                  and "printed something other than" in str(error)
+                  for error in (not_json, not_json_open, not_json_query)),
+              f"{not_json!r} {not_json_open!r} {not_json_query!r}")
+        check("gh exiting nonzero with no GraphQL error is a query failure, though it printed an answer",
+              isinstance(failing_with_answer, module.PullRequestListingFailed)
+              and "exited 1: gh: stand-in failure" in str(failing_with_answer), repr(failing_with_answer))
         check("gh that cannot be run is a listing failure",
-              isinstance(not_run, module.PullRequestListingFailed)
-              and "could not be run" in str(not_run), repr(not_run))
+              all(isinstance(error, module.PullRequestListingFailed)
+                  and "could not be run" in str(error) for error in (not_run, not_run_query)),
+              f"{not_run!r} {not_run_query!r}")
+
+        # In this process: the pull request query against this suite's gh, which logs its calls.
+        calls_log = scratch / "gh-calls.jsonl"
+
+        def with_fake_gh(call, fixture, **variables):
+            calls_log.unlink(missing_ok=True)
+            saved = {name: os.environ.get(name) for name in
+                     ("FAKE_GH_PULL_REQUESTS", "FAKE_GH_CALLS_LOG", *variables)}
+            os.environ.update(FAKE_GH_PULL_REQUESTS=json.dumps(fixture),
+                              FAKE_GH_CALLS_LOG=str(calls_log), **variables)
+            try:
+                return call()
+            except Exception as error:
+                return error
+            finally:
+                for name, value in saved.items():
+                    if value is None:
+                        os.environ.pop(name, None)
+                    else:
+                        os.environ[name] = value
+
+        def gh_calls():
+            return ([json.loads(line) for line in calls_log.read_text().splitlines()]
+                    if calls_log.exists() else [])
+
+        def asked(call_arguments):
+            return {argument.split("=", 1)[1] for argument in call_arguments
+                    if argument.split("=", 1)[0][:1] in "bn" and argument.split("=", 1)[0][1:].isdigit()}
+
+        crowded = [{"number": 100 + index, "state": "CLOSED", "headRefName": "crowded",
+                    "headRefOid": "a" * 40, "closedAt": "2026-01-01T00:00:00Z"}
+                   for index in range(101)]
+        sample = [{"number": 1, "state": "MERGED", "headRefName": "x", "headRefOid": "1" * 40,
+                   "closedAt": "2026-01-01T00:00:00Z"},
+                  {"number": 2, "state": "OPEN", "headRefName": "x", "headRefOid": "2" * 40,
+                   "closedAt": None},
+                  {"number": 3, "state": "CLOSED", "headRefName": "y", "headRefOid": "3" * 40,
+                   "closedAt": "2026-01-01T00:00:00Z"}]
+        answered = with_fake_gh(lambda: module.pull_requests_of_head_branches_and_numbers(
+            checkout, ["x", "y", "z"], [3, 404, module.GRAPHQL_INT_MAX + 1]), sample)
+        check("the query answers each head branch newest first, a branch with none as empty, a "
+              "number no pull request has as None, and a number beyond GraphQL's Int unasked",
+              answered == ({"x": [sample[1], sample[0]], "y": [sample[2]], "z": []},
+                           {3: sample[2], 404: None, module.GRAPHQL_INT_MAX + 1: None})
+              and len(gh_calls()) == 1 and asked(gh_calls()[0]) == {"x", "y", "z", "3", "404"},
+              f"{answered!r} {gh_calls()}")
+        saved_batch = module.PULL_REQUEST_QUERY_KEYS_PER_BATCH
+        module.PULL_REQUEST_QUERY_KEYS_PER_BATCH = 2
+        try:
+            batched = with_fake_gh(lambda: module.pull_requests_of_head_branches_and_numbers(
+                checkout, ["x", "y", "z"], [1]), sample)
+        finally:
+            module.PULL_REQUEST_QUERY_KEYS_PER_BATCH = saved_batch
+        check("the query is split into batches, each answered under its own aliases",
+              batched == ({"x": [sample[1], sample[0]], "y": [sample[2]], "z": []}, {1: sample[0]})
+              and [asked(call) for call in gh_calls()] == [{"x", "y"}, {"z", "1"}],
+              f"{batched!r} {gh_calls()}")
+        too_many = with_fake_gh(lambda: module.pull_requests_of_head_branches_and_numbers(
+            checkout, ["crowded"], []), crowded)
+        check("a head branch with more pull requests than one answer holds is a query failure",
+              isinstance(too_many, module.PullRequestListingFailed)
+              and "more than 100 pull requests whose head branch is crowded" in str(too_many),
+              repr(too_many))
+        other_error = with_fake_gh(lambda: module.pull_requests_of_head_branches_and_numbers(
+            checkout, ["x"], []), sample, FAKE_GH_GRAPHQL_OTHER_ERROR="1")
+        check("an error other than a number no pull request has is a query failure, though the "
+              "answer holds data",
+              isinstance(other_error, module.PullRequestListingFailed)
+              and "exited 1" in str(other_error), repr(other_error))
+
+        def cache_calls():
+            cache = module.PullRequestsOfHeadBranchesAndNumbersLazyCache(checkout, ["x", "y"], [3])
+            first = (cache.of_head_branch("x"), cache.of_number(3), cache.of_head_branches(["y"]))
+            later = cache.of_head_branch("z")
+            return first, later, len(gh_calls())
+        cached = with_fake_gh(cache_calls, sample)
+        check("the cache asks once for every branch and number it was given, and again only for one "
+              "it was not",
+              cached == (([sample[1], sample[0]], sample[2], {"y": [sample[2]]}), [], 2)
+              and asked(gh_calls()[1]) == {"z"}, f"{cached!r} {gh_calls()}")
+
+        def failing_cache_calls():
+            cache = module.PullRequestsOfHeadBranchesAndNumbersLazyCache(checkout, ["x"])
+            errors = [raised_by(lambda: cache.of_head_branch("x")),
+                      raised_by(lambda: cache.of_number(7))]
+            return errors, len(gh_calls())
+        failed_cache = with_fake_gh(failing_cache_calls, sample, FAKE_GH_EXIT_CODE="1")
+        check("once gh has failed, the cache raises its failure again without asking gh",
+              failed_cache[1] == 1 and all(isinstance(error, module.PullRequestListingFailed)
+                                            and "stand-in listing failure" in str(error)
+                                            for error in failed_cache[0]), repr(failed_cache))
+
+        whole_run = with_fake_gh(lambda: subprocess.run(
+            [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout)],
+            capture_output=True, text=True, check=False, env=dict(os.environ, HOME=str(fake_home))),
+            pull_requests)
+        local_branches = {line for line in git(checkout, "for-each-ref", "--format=%(refname:lstrip=2)",
+                                               "refs/heads/").splitlines() if line != "main"}
+        check("a run asks gh, in one call, only for the pull requests of the clone's local branches, "
+              "never listing every pull request ever opened",
+              whole_run.returncode == 0 and len(gh_calls()) == 1
+              and gh_calls()[0][:2] == ["api", "graphql"]
+              and asked(gh_calls()[0]) == local_branches,
+              f"{gh_calls()} {local_branches} {whole_run.stdout[-500:]}{whole_run.stderr[-500:]}")
         committed_late_wt = owned_worktree("committed-late-wt", running_session_owner)
         judged_head = head_of(committed_late_wt)
         commit_in(committed_late_wt, "committed-after-the-verdict")
@@ -2433,7 +2600,7 @@ with tempfile.TemporaryDirectory() as scratch:
               gh_failed.returncode == 0 and all(path.exists() for path in every_checkout)
               and review_line(gh_failed.stdout, "pr10-merged").startswith(
                   "pr10-merged: kept — it is a merge-lane review checkout of pull request #10, whose "
-                  "state could not be read: `gh pr list")
+                  "state could not be read: `gh api graphql`")
               and "gh: stand-in listing failure" in review_line(gh_failed.stdout, "pr10-merged"),
               gh_failed.stdout + gh_failed.stderr)
 
@@ -2471,9 +2638,9 @@ with tempfile.TemporaryDirectory() as scratch:
               two_numbers_checkout.exists()
               and "name holds no single pull request number"
               in review_line(removal.stdout, "head-13-12345678"), removal.stdout)
-        check("a pull request number gh's listing does not hold keeps the checkout",
+        check("a pull request number GitHub does not hold keeps the checkout",
               unlisted_checkout.exists()
-              and "pull request #99, which gh's listing does not hold"
+              and "pull request #99, which GitHub does not hold"
               in review_line(removal.stdout, "verdict-99r1"), removal.stdout)
         check("a locked merge-lane review checkout of a merged pull request is kept",
               locked_checkout.exists()
