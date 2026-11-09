@@ -214,6 +214,10 @@ SPAWNED_SUBAGENT_STATUS = "async_launched"
 # Check a toolUseResult key, not raw text: foreground grep output can contain the launch marker.
 BACKGROUND_TASK_LAUNCH_KEY = "backgroundTaskId"
 
+# Claude Code writes no task-notification for a task TaskStop stops; only the TaskStop result,
+# whose toolUseResult carries this key beside task_id, records that the task ended.
+TASK_STOP_RESULT_KEY = "task_type"
+
 # Completion notifications use these tags across several record types.
 TASK_NOTIFICATION_PATTERN = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
 TASK_NOTIFICATION_TASK_ID_PATTERN = re.compile(r"<task-id>([^<]+)</task-id>")
@@ -401,8 +405,9 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                    should_raise_on_undecodable_bytes=False) -> WorkInFlight:
     """Return running subagents and background tasks in launch order.
 
-    A subagent whose last task-notification is interim counts only while its own transcript
-    shows work in flight; should_read_subagent_own_transcripts=False counts it from the notices alone.
+    A subagent or background task that a TaskStop call stopped has finished, and so have the
+    background tasks of a subagent it stopped. A subagent whose last task-notification is interim
+    counts only while its own transcript shows work in flight; should_read_subagent_own_transcripts=False counts it from the notices alone.
     should_raise_on_undecodable_bytes=True raises TranscriptCouldNotBeFullyRead on bytes that are
     not UTF-8 anywhere in the file, instead of reading past them.
     """
@@ -418,7 +423,8 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
     launched_task_ids = []
     launched_task_age = {}
     launched_at_by_id = {}
-    # The last notification for a task-id decides: an interim one leaves its subagent running.
+    # The last notification or TaskStop for a task-id decides: an interim notification leaves its
+    # subagent running.
     last_notification_is_interim = {}
     try:
         decoding_errors = "strict" if should_raise_on_undecodable_bytes else "replace"
@@ -426,13 +432,17 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
             for line in handle:
                 is_spawn_candidate = SPAWNED_SUBAGENT_STATUS in line
                 is_launch_candidate = BACKGROUND_TASK_LAUNCH_KEY in line
-                if is_spawn_candidate or is_launch_candidate:
+                is_stop_candidate = TASK_STOP_RESULT_KEY in line
+                if is_spawn_candidate or is_launch_candidate or is_stop_candidate:
                     try:
                         record = json.loads(line)
                     except (json.JSONDecodeError, UnicodeDecodeError) as problem:
-                        raise TranscriptCouldNotBeFullyRead(
-                            f"{path}: a spawn or launch record did not parse"
-                        ) from problem
+                        # A stop record not read only leaves its task counted as running.
+                        if is_spawn_candidate or is_launch_candidate:
+                            raise TranscriptCouldNotBeFullyRead(
+                                f"{path}: a spawn or launch record did not parse"
+                            ) from problem
+                        record = None
                     tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
                     if not isinstance(tool_result, dict):
                         tool_result = {}
@@ -448,6 +458,9 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                             launched_task_ids.append(task_id)
                             launched_task_age[task_id] = record_age_seconds(record, now)
                             launched_at_by_id[task_id] = record_time(record)
+                    stopped_id = tool_result.get("task_id")
+                    if TASK_STOP_RESULT_KEY in tool_result and isinstance(stopped_id, str):
+                        last_notification_is_interim[stopped_id] = False
                 if "<task-id>" in line:
                     for notification in TASK_NOTIFICATION_PATTERN.findall(line):
                         interim = interim_recognizer.task_notification_is_interim(notification)

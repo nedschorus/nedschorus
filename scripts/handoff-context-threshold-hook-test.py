@@ -331,6 +331,21 @@ def monitor_start_record(task_id="b45e25tz2"):
     }
 
 
+def task_stop_record(task_id, task_type):
+    """A TaskStop tool_result that stopped the task, read off cold-read-improvement's session
+    21792509 of 2026-11-09 and trimmed to the fields the hook reads."""
+    message = f"Successfully stopped task: {task_id} (Sweep this seat's leftover worktrees)"
+    result = {"message": message, "task_id": task_id, "task_type": task_type,
+              "command": "Sweep this seat's leftover worktrees"}
+    return {
+        "type": "user", "timestamp": GRID_LAUNCHED_AT,
+        "message": {"role": "user", "content": [{
+            "tool_use_id": f"toolu_stop_{task_id}", "type": "tool_result",
+            "content": json.dumps(result)}]},
+        "toolUseResult": result,
+    }
+
+
 # The two shapes below were read off session 44674c20 of 2026-09-14, the
 # cold-read grid run that this deferral was extended for, and trimmed to the
 # fields the hook reads.
@@ -715,6 +730,50 @@ with tempfile.TemporaryDirectory() as workspace:
         refused = True
     check("a background launch record cut off mid-write is not read as nothing running",
           refused, "the scan answered instead of refusing")
+
+    # Claude Code writes no task-notification for a task TaskStop stops, only this result.
+    bash_stopped = transcript_of(workspace, "background-task-stopped.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        background_task_launch_record("b27dndn4c"),
+        background_task_launch_record("bzzzzzzzz"),
+        task_stop_record("b27dndn4c", "local_bash"),
+    ])
+    flight = hook.work_in_flight(str(bash_stopped), float("inf"), now=grid_at_13_minutes)
+    check("a background task TaskStop stopped is not in flight; one it did not stop still is",
+          flight.background_task_ids == ["bzzzzzzzz"], str(flight.background_task_ids))
+
+    # Real case, cold-read-improvement 2026-11-09: subagent a01d1eb8fe1e4066a reported interim
+    # while its own background command bdrdn0t9k ran; the parent then stopped the subagent with
+    # TaskStop, which killed bdrdn0t9k with it, and the idle sweep still reported it running.
+    subagent_stopped = transcript_of(workspace, "subagent-stopped.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record("a01d1eb8fe1e4066a"),
+        *notification_records(
+            "<task-notification>\n<task-id>a01d1eb8fe1e4066a</task-id>\n<status>completed"
+            "</status>\n<note>This agent stopped with background work of its own still running; "
+            "the result below may be interim.</note>\n<result>12 of 15 deleted.</result>\n"
+            "</task-notification>"),
+        task_stop_record("a01d1eb8fe1e4066a", "local_agent"),
+    ])
+    stopped_subagent_own = hook.subagent_transcript_path(subagent_stopped, "a01d1eb8fe1e4066a")
+    stopped_subagent_own.parent.mkdir(parents=True, exist_ok=True)
+    transcript_of(stopped_subagent_own.parent, stopped_subagent_own.name,
+                  [background_task_launch_record("bdrdn0t9k")])
+    flight = hook.work_in_flight(str(subagent_stopped), float("inf"), now=grid_at_13_minutes)
+    check("a subagent TaskStop stopped after an interim report is not in flight, though its own "
+          "background command never notified",
+          flight.subagent_ids == [], str(flight.subagent_ids))
+
+    # A cut-off stop record, unlike a cut-off launch, is skipped: missing it only leaves the task
+    # counted as running.
+    stop_cut_off = Path(workspace) / "background-task-stop-cut-off.jsonl"
+    stop_text = json.dumps(task_stop_record("b27dndn4c", "local_bash"))
+    stop_cut_off.write_text(
+        json.dumps(background_task_launch_record("b27dndn4c")) + "\n"
+        + stop_text[:stop_text.index('"task_type"') + len('"task_type": "loc')], encoding="utf-8")
+    flight = hook.work_in_flight(str(stop_cut_off), float("inf"), now=grid_at_13_minutes)
+    check("a TaskStop result cut off mid-write is skipped and leaves its task in flight",
+          flight.background_task_ids == ["b27dndn4c"], str(flight.background_task_ids))
 
     # --- "Could not tell" is not "nothing is running" ----------------------
     # A spawn record caught mid-append is not observed in practice — 841
