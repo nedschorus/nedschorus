@@ -52,8 +52,9 @@ The cycle, per reincarnation:
      (agent_seat_worktrees_and_branches_text). These leftovers go between the
      prompt's opening and its next step, and each leftover entry starts with
      a count of the first prompts that have listed it, such as "(listed in 2
-     first prompt(s))"; the branches the list deleted go above them
-     (launch_prompt_with_leftovers_before_the_next_step).
+     first prompt(s))"; the branches the first-prompt list deleted go above
+     the leftovers' opening sentence, under a line that opens with their
+     heading (launch_prompt_with_leftovers_before_the_next_step).
   7. Keep the current and previous handoff and conversation-tail; delete older ones.
 
 The handoff file the agent writes (simple `key: value` lines):
@@ -1675,7 +1676,9 @@ def forget_leftover_prompt_listing_counts(counts_path: Path) -> None:
     except OSError as error:
         print(f"handoff-supervisor: could not delete {counts_path}, the leftovers' listing counts, "
               f"after a launch that listed no leftover: {type(error).__name__}: {error}. A "
-              f"leftover listed again later keeps its old count until the file is deleted.",
+              f"leftover listed again later keeps its old count until the file is deleted; the "
+              f"next launch that lists no leftover tries again, or you may delete {counts_path} "
+              f"by hand.",
               file=sys.stderr)
 
 
@@ -1687,11 +1690,14 @@ def launch_prompt_with_leftovers_before_the_next_step(prompt: str, leftover_part
     heading_start = agent_seat_worktrees_and_branches_list.ALREADY_DELETED_HEADING_START
     listed_parts, deleted_parts = [], []
     for part in leftover_parts:
-        listed, heading, deleted = part.partition(heading_start)
+        # Only a line that opens with the heading starts the deleted block: an entry's commit
+        # subject may quote the heading's words.
+        found = re.search("^" + re.escape(heading_start), part, re.MULTILINE)
+        listed = part[:found.start()] if found else part
         if listed.strip():
             listed_parts.append(listed.rstrip("\n"))
-        if heading:
-            deleted_parts.append(heading + deleted)
+        if found:
+            deleted_parts.append(part[found.start():])
     blocks = deleted_parts
     leftovers = "\n\n".join(listed_parts)
     if leftovers:

@@ -625,6 +625,16 @@ def test_supervisor_puts_deleted_branches_above_the_leftovers_and_forgets_counts
     again = supervisor.launch_prompt_with_leftovers_before_the_next_step(prompt, ("", branches), counts)
     check("- (listed in 1 first prompt(s)) branch b1;" in again,
           "a leftover listed after a launch that listed none starts its count again", again)
+    quoting = ("This agent-seat's branches with no pull request: 2:\n"
+               f"- branch b2; 1 commit(s), the newest \"Move the {listing.ALREADY_DELETED_HEADING_START} "
+               "heading\"\n- branch b3; 1 commit(s)\nSteps.\n" + deleted)
+    quoted = supervisor.launch_prompt_with_leftovers_before_the_next_step(prompt, ("", quoting), counts)
+    check("- (listed in 1 first prompt(s)) branch b2;" in quoted
+          and "- (listed in 1 first prompt(s)) branch b3;" in quoted
+          and quoted.index("- deleted branch d1,")
+          < quoted.index(supervisor.LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE),
+          "a commit subject quoting the deleted branches' heading does not start the deleted block",
+          quoted)
     counts.unlink()
     counts.mkdir()
     stderr = io.StringIO()

@@ -6,7 +6,7 @@ of every agent-session it starts, before the next step, so that work an
 earlier agent-session left behind is carried on or deleted instead of
 forgotten. Building the list is code; whether to keep or delete each listed
 entry is the agent-session's judgment. The first prompt's list also deletes,
-without asking, the branches WHAT IT DELETES names.
+without asking, the branches that the section WHAT IT DELETES below describes.
 
 WHAT IS LISTED.
 - A worktree, when its owner file (scripts/worktree-owner-file-read-and-write.py)
@@ -41,7 +41,7 @@ Each branch entry gives how many commits origin/main lacks and the newest
 one's subject. Beside each entry the list prints the command that deletes it:
 scripts/clean-worktrees.py --remove-worktree-and-force-delete-its-branch for a
 worktree, which ships the worktree's walks and records first, or
---force-delete-branch for a branch. Both commands still refuse a worktree or
+scripts/clean-worktrees.py --force-delete-branch for a branch. Both commands still refuse a worktree or
 branch whose pull request is open, so one opened after the list was built is
 kept.
 
@@ -53,9 +53,9 @@ a branch it would list whose every commit is already on origin/main as a
 cherry-picked copy (`git cherry origin/main <branch>` prints no `+` line, and
 the branch has no merge commit origin/main lacks, since `git cherry` leaves
 merge commits out): no work is lost, and the list names the branch with the `git branch <name>
-<sha>` command that restores it, under a heading that starts with
-ALREADY_DELETED_HEADING_START, which the handoff-supervisor puts above the
-leftovers' opening sentence. A branch whose deletion fails is listed as
+<sha>` command that restores it, under a line that opens with the heading
+"Already deleted, needing nothing from you:", which the handoff-supervisor
+puts above the leftovers' opening sentence. A branch whose deletion fails is listed as
 before, with why.
 
 HOW IT CAN FAIL. When gh cannot list pull requests, worktrees are listed with
