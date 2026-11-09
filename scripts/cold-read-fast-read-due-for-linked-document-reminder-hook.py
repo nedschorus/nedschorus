@@ -27,7 +27,10 @@ A call a hook refused is recorded as a tool_result with is_error true, so it
 counts as no write; so does a call with no tool_result yet, such as one still
 waiting on a hook or a permission decision. Not seen, and so never asked
 about: a document written by a shell command, such as cp or a heredoc, and one
-written in an earlier agent-session that a session-handoff replaced. Only
+written in an earlier agent-session that a session-handoff replaced. The
+last reply is read first, backward from the end of the transcript; the whole
+transcript and the subagent transcripts are read only when that reply links a
+document that is not skipped. Only
 lines holding "file_path" or the tool_use_id of a Write or Edit call already
 seen are parsed, since a transcript can pass 40 MB; such a line that is not
 JSON, as a line still being written is, is skipped.
@@ -99,9 +102,9 @@ without that file, as older reads and reads run without the variable leave,
 or naming another agent-session, counts only by the file-time rule above, so
 this agent-session is reminded about its own later change to a document
 someone else read. The hook keeps no list of its own: a reminder the agent
-ignores comes back, because no read ran. When the transcript cannot be read,
-the hook checks nothing and tells the agent so, in additionalContext and on
-stderr.
+ignores comes back, because no read ran. When the transcript, or a subagent
+transcript the hook reads, cannot be read, the hook checks nothing and tells
+the agent so, in additionalContext and on stderr.
 
 SILENT when nothing is due, when this Stop ends the agent's answer to a Stop
 hook's output (the shared rule of
@@ -509,6 +512,16 @@ def document_is_due(document, record_directories, document_top, record_names,
     return document.stat().st_mtime > newest_record_time
 
 
+def transcript_unreadable_output(error):
+    lines = [line.format(reason=error) for line in TRANSCRIPT_UNREADABLE_LINES]
+    print(f"cold-read-fast-read-due-for-linked-document-reminder-hook: {lines[0]}",
+          file=sys.stderr)
+    return json.dumps({"hookSpecificOutput": {
+        "hookEventName": "Stop",
+        "additionalContext": "\n".join(lines),
+    }}, ensure_ascii=False)
+
+
 def run(stdin_text, environment):
     """Return the text to print, or None."""
     payload = json.loads(stdin_text)
@@ -527,17 +540,11 @@ def run(stdin_text, environment):
         return None
     log_store_directory = store.resolve().parent
     cwd = Path(payload["cwd"]) if payload.get("cwd") else None
+    transcript = Path(transcript_path).expanduser()
     try:
-        reply = last_reply_text(Path(transcript_path).expanduser())
-        written = find_files_written_by_agent_session_and_its_subagents(Path(transcript_path).expanduser())
+        reply = last_reply_text(transcript)
     except (OSError, UnicodeDecodeError) as error:
-        lines = [line.format(reason=error) for line in TRANSCRIPT_UNREADABLE_LINES]
-        print(f"cold-read-fast-read-due-for-linked-document-reminder-hook: {lines[0]}",
-              file=sys.stderr)
-        return json.dumps({"hookSpecificOutput": {
-            "hookEventName": "Stop",
-            "additionalContext": "\n".join(lines),
-        }}, ensure_ascii=False)
+        return transcript_unreadable_output(error)
     if not reply:
         return None
     git_environment = environment_without_git_redirection()
@@ -556,6 +563,13 @@ def run(stdin_text, environment):
     documents = find_markdown_file_paths_linked_or_named_in_agent_reply(
         reply, cwd, session_top,
         lambda path: is_skipped(path, log_store_directory, record_names))
+    written = set()
+    if documents:
+        # Only when a document is linked: the transcripts can pass 40 MB, and the hook runs on every Stop.
+        try:
+            written = find_files_written_by_agent_session_and_its_subagents(transcript)
+        except (OSError, UnicodeDecodeError) as error:
+            return transcript_unreadable_output(error)
     for document in documents:
         if document not in written:
             continue
