@@ -72,6 +72,7 @@ import os
 import select
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -2703,6 +2704,139 @@ if sys.platform.startswith("linux"):
               and "could not be read: PermissionError" in lock_line(unreadable.stdout,
                                                                      "ended-lock-unnamed-wt"),
               unreadable.stdout + unreadable.stderr)
+
+# --- A removal stopped partway ---
+# A real kill cannot be timed to land inside `git worktree remove`, so a stub git does what git
+# does first, deleting the worktree's .git file and some files, then kills the cleaner that ran it.
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch).resolve()
+    checkout = scratch / "checkout"
+    origin = scratch / "origin.git"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
+    git(checkout, "remote", "add", "origin", str(origin))
+    git(checkout, "push", "-u", "origin", "main")
+    managed = checkout / ".claude" / "worktrees"
+    managed.mkdir(parents=True)
+    killing_git = scratch / "killing-git"
+    killing_git.mkdir()
+    (killing_git / "git").write_text(
+        f"#!{sys.executable}\n"
+        "import os, signal, sys\n"
+        "from pathlib import Path\n"
+        "if 'worktree' in sys.argv and 'remove' in sys.argv:\n"
+        "    left = Path(sys.argv[-1])\n"
+        "    (left / '.git').unlink()\n"
+        "    (left / 'README.md').unlink()\n"
+        "    os.kill(os.getppid(), signal.SIGKILL)\n"
+        "    sys.exit(0)\n"
+        f"os.execv({shutil.which('git')!r}, ['git'] + sys.argv[1:])\n", encoding="utf-8")
+    (killing_git / "git").chmod(0o755)
+
+    def stopped_partway(name):
+        """A done worktree whose --remove run was killed inside `git worktree remove`."""
+        path = managed / name
+        git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
+        give_stopped_owner(path)
+        (path / "untracked.txt").write_text("x\n", encoding="utf-8")
+        environment = dict(os.environ)
+        environment["PATH"] = f"{killing_git}{os.pathsep}{environment['PATH']}"
+        killed = subprocess.run(
+            [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), "--remove"],
+            capture_output=True, text=True, check=False, env=environment)
+        return path, killed
+
+    def registered(path):
+        return str(path) in git(checkout, "worktree", "list", "--porcelain")
+
+    first, killed = stopped_partway("stopped-partway-wt")
+    check("the stub git kills the cleaner inside the removal, leaving the worktree half removed",
+          killed.returncode == -signal.SIGKILL and first.exists()
+          and not (first / ".git").exists() and registered(first),
+          f"{killed.returncode} {killed.stdout}{killed.stderr}")
+    report = run_clean(checkout)
+    check("the report names a removal stopped partway as done, and not as a dead registration",
+          "stopped-partway-wt: done — an earlier scripts/clean-worktrees.py --remove was stopped "
+          "while removing this worktree"
+          in report.stdout
+          and "stopped-partway-wt" not in next((line for line in report.stdout.splitlines()
+                                                if "git worktree prune" in line), ""),
+          report.stdout)
+    finished = run_clean(checkout, "--remove")
+    check("the next --remove finishes the removal: directory, registration and branch go",
+          finished.returncode == 0 and "stopped-partway-wt: removed, branch stopped-partway-wt-"
+          "branch deleted" in finished.stdout
+          and not first.exists() and not registered(first)
+          and git(checkout, "branch", "--list", "stopped-partway-wt-branch").strip() == "",
+          finished.stdout + finished.stderr)
+
+    without_file = managed / "dotgit-deleted-by-hand-wt"
+    git(checkout, "worktree", "add", "-b", "dotgit-deleted-by-hand-wt-branch", str(without_file),
+        "origin/main")
+    give_stopped_owner(without_file)
+    (without_file / ".git").unlink()
+    by_hand = run_clean(checkout, "--remove")
+    check("a worktree whose .git file went with no removal begun is kept, as before",
+          without_file.exists() and registered(without_file)
+          and "dotgit-deleted-by-hand-wt: kept — git would prune its registration" in by_hand.stdout,
+          by_hand.stdout)
+
+    named, _ = stopped_partway("stopped-partway-named-wt")
+    named_run = run_clean(checkout, "--remove-worktree-and-force-delete-its-branch", str(named))
+    check("--remove-worktree-and-force-delete-its-branch finishes a removal stopped partway",
+          named_run.returncode == 0 and not named.exists() and not registered(named)
+          and git(checkout, "branch", "--list", "stopped-partway-named-wt-branch").strip() == "",
+          named_run.stdout + named_run.stderr)
+
+    stuck, _ = stopped_partway("stopped-partway-undeletable-wt")
+    (stuck / "kept-dir").mkdir()
+    (stuck / "kept-dir" / "file").write_text("x\n", encoding="utf-8")
+    (stuck / "kept-dir").chmod(0o500)
+    try:
+        undeletable = run_clean(checkout, "--remove")
+    finally:
+        (stuck / "kept-dir").chmod(0o755)
+    check("a finish that cannot delete what is left fails, exit 1, and keeps the registration",
+          undeletable.returncode == 1 and registered(stuck)
+          and "stopped-partway-undeletable-wt: removal FAILED — an earlier "
+              "scripts/clean-worktrees.py --remove was stopped partway" in undeletable.stdout,
+          undeletable.stdout + undeletable.stderr)
+
+    sought = managed / "zz-sought-wt"
+    git(checkout, "worktree", "add", "-b", "zz-sought-wt-branch", str(sought), "origin/main")
+    unreadable_first = managed / "aa-unreadable-gitdir-wt"
+    git(checkout, "worktree", "add", "-b", "aa-unreadable-gitdir-wt-branch", str(unreadable_first),
+        "origin/main")
+    gitdir_file = Path(git(unreadable_first, "rev-parse", "--absolute-git-dir").strip()) / "gitdir"
+    gitdir_file.chmod(0o000)
+    try:
+        found = load_clean_worktrees_module().registration_directory_of(checkout, sought)
+    finally:
+        gitdir_file.chmod(0o644)
+    check("a registration whose gitdir file cannot be read is passed over, and the search goes on",
+          found is not None and (found / "gitdir").read_text(encoding="utf-8").strip()
+          == str((sought / ".git").resolve()), str(found))
+
+    unwritable = managed / "removal-file-unwritable-wt"
+    git(checkout, "worktree", "add", "-b", "removal-file-unwritable-wt-branch", str(unwritable),
+        "origin/main")
+    give_stopped_owner(unwritable)
+    registration = Path(git(unwritable, "rev-parse", "--absolute-git-dir").strip())
+    registration.chmod(0o500)
+    try:
+        refused = run_clean(checkout, "--remove")
+    finally:
+        registration.chmod(0o755)
+    check("a removal whose removal-started file cannot be written is not begun, and fails",
+          refused.returncode == 1 and (unwritable / ".git").exists()
+          and "removal-file-unwritable-wt: removal FAILED, worktree kept" in refused.stdout,
+          refused.stdout + refused.stderr)
 
 check("no run of the suite shipped into the store every run defaults to",
       not any(Path(_ship_store_for_every_run).iterdir()),
