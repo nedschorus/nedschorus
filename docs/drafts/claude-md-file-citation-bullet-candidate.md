@@ -1,0 +1,5 @@
+# Candidate: the citation bullet of CLAUDE.md, with two sentences added
+
+This is the bullet as it would read. The added sentences are the last two.
+
+- Never cite a pull request, GitHub issue, task, commit, seat or session by a bare number, hash, GUID or name. Write its ID-type and its name, and make it a clickable link when it can be opened: "PR [recover-crashed-seats: exit nonzero when any seat was not recovered](https://github.com/nedschorus/nedschorus/pull/426)", never "#426". Numbers mean almost nothing to the user; titles and links are what he reads and clicks. In anything an agent reads, a file in the repository is cited by its name in backticks, `nedschorus-glossary.md`, when no other file in the repository has that name, and otherwise by its name with as many parent directories as make it unique, `cold-read/SKILL.md`. In a message displayed to the user, a file he is meant to read is a clickable link: to GitHub when the file is on a pushed branch, and otherwise a `file://` link to its absolute path.
