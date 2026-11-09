@@ -373,18 +373,29 @@ check("a subagent spent a token a minute ago: not idle, and the source is the su
 
 # --- approval-walk items --------------------------------------------------------------------
 machine = Machine()
-machine.seat("alpha", IDLE_TURN)
+machine.seat("alpha", [user("go"), assistant("Done."), turn_end()])
+machine.task("alpha", "1")
 machine.walk_minutes("alpha", "#next_to_present item 1 of 3\nnotes\n#next_to_present item 2 of 3\n")
 _, verdicts, _ = machine.run()
-check("a walk item waiting: not idle",
-      verdicts["alpha"]["idle"] is False and verdicts["alpha"]["walk_items_waiting"][0]
-      ["next_to_present"] == "item 2 of 3", verdicts["alpha"])
+check("a walk item waiting and a ready task: idle, rule 5, and the walk item is a fact",
+      verdicts["alpha"]["idle"] is True and verdicts["alpha"]["rule"] == 5
+      and verdicts["alpha"]["walk_items_waiting"][0]["next_to_present"] == "item 2 of 3",
+      verdicts["alpha"])
+machine.task("alpha", "1", status="completed")
+_, verdicts, _ = machine.run()
+check("a walk item waiting and nothing ready: idle, rule 4, no wake",
+      verdicts["alpha"]["idle"] is True and verdicts["alpha"]["rule"] == 4
+      and verdicts["alpha"]["walk_items_waiting"] != [], verdicts["alpha"])
+machine = Machine()
+machine.seat("alpha", IDLE_TURN)
 machine.walk_minutes("alpha", "#next_to_present item 2 of 3\n#approval_walk_paused later\n")
 _, verdicts, _ = machine.run()
-check("a paused walk has no item waiting", verdicts["alpha"]["idle"] is True, verdicts["alpha"])
+check("a paused walk has no item waiting", verdicts["alpha"]["walk_items_waiting"] == [],
+      verdicts["alpha"])
 machine.walk_minutes("alpha", "#next_to_present item 3 of 3\n#next_to_present none, closed\n")
 _, verdicts, _ = machine.run()
-check("a closed walk has no item waiting", verdicts["alpha"]["idle"] is True, verdicts["alpha"])
+check("a closed walk has no item waiting", verdicts["alpha"]["walk_items_waiting"] == [],
+      verdicts["alpha"])
 for minutes_text, what in (
         ("#next_to_present item 3 of 3\n#next_to_present closed\n", "closed by the short form"),
         ("#next_to_present item 2 of 9 #approval_walk_paused later\n", "paused on the marker's line"),

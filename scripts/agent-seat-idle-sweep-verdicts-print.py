@@ -571,7 +571,7 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         walk_waiting = walk_items_waiting(seat_directory, parser)
         quiet = last_spend is None or (now - last_spend).total_seconds() >= IDLE_AFTER_SECONDS
         verdict.update(turn_ended=turn_ended, walk_items_waiting=walk_waiting)
-        verdict["idle"] = quiet and turn_ended and not walk_waiting
+        verdict["idle"] = quiet and turn_ended
         # The read above refused every complete line that does not parse and every byte that is
         # not UTF-8, so this read can fail only on the last line, still being written.
         try:
@@ -596,8 +596,7 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
             verdict["not_idle_because"] = [
                 reason for reason, holds in (
                     ("a token was spent less than 5 minutes ago", not quiet),
-                    ("its last turn has not ended", not turn_ended),
-                    ("an approval-walk item is waiting on the user", bool(walk_waiting)))
+                    ("its last turn has not ended", not turn_ended))
                 if holds]
             return verdict
 

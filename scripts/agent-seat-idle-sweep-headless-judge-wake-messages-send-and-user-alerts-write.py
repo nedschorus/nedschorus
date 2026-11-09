@@ -184,9 +184,10 @@ sentence naming any agent-seat you could not send to.
 
 IDLE_JUDGE_PROMPT = """\
 You judge one idle agent-seat for the idle sweep, a program on ned-box. The agent-seat {seat} has \
-spent no tokens for {idle_minutes} minutes, its last turn has ended, and no approval-walk item waits \
-on the user. Code could not settle the case: something may be left for it to do, or it may rightly \
-be waiting. The facts code found are in the JSON below.
+spent no tokens for {idle_minutes} minutes, and its last turn has ended. Code could not settle the \
+case: something may be left for it to do, or it may rightly be waiting. The facts code found are in \
+the JSON below. An approval-walk item waiting on the user holds back only that walk, not the \
+agent-seat's other work.
 
 Judge whether the agent-seat could act now. If it could, send it one short message with SendMessage \
 saying what you saw. Name each background command and subagent that has not finished or reported, \
@@ -698,6 +699,7 @@ class Sweep:
                 "last_turn_ending_message": last_message or None,
                 "open_tasks_nothing_holds": verdict.get(fields.OPEN_TASKS_NOTHING_HOLDS),
                 "handoff_deferral_marker_file": verdict.get(fields.HANDOFF_DEFERRED_MARKER),
+                "approval_walk_items_waiting_on_the_user": verdict.get(fields.WALK_ITEMS_WAITING),
                 "running_subagents": with_minutes(running.get("subagents", [])),
                 "running_background_commands": with_minutes(running.get("background_commands", []))}
 
