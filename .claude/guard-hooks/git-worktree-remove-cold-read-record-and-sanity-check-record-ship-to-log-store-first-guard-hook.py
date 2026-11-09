@@ -222,7 +222,7 @@ REMOVED_WORKTREE_UNRESOLVED_REFUSAL_TEMPLATE = (
     "{records}"
     "Run the removal again as `git worktree remove{force} <path>`, with the worktree's path written "
     "out in full, as an absolute path with no variable, in a command that does not change directory.")
-REMOVAL_NOT_THE_WHOLE_COMMAND_REASON = (
+GIT_WORKTREE_REMOVE_NOT_THE_WHOLE_SHELL_COMMAND_REFUSAL_REASON = (
     "the command does more than the removal, so this hook cannot tell whether the shell runs the removal")
 # A word the shell would still expand: a variable, a substitution or a glob.
 UNEXPANDED_WORD_PATTERN = re.compile(r"[$`*?[]|\{\}")
@@ -693,7 +693,7 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic, start_wai
         listed = "".join(RECORD_BEING_WRITTEN_LINE_TEMPLATE.format(record=record, worktree=worktree)
                          for worktree, record in in_removed)
         if unresolved is None and in_removed and not shell_command_is_one_git_worktree_remove_and_nothing_else(command):
-            unresolved = REMOVAL_NOT_THE_WHOLE_COMMAND_REASON
+            unresolved = GIT_WORKTREE_REMOVE_NOT_THE_WHOLE_SHELL_COMMAND_REFUSAL_REASON
         if unresolved is not None:
             refusals.append(REMOVED_WORKTREE_UNRESOLVED_REFUSAL_TEMPLATE.format(
                 reason=unresolved, records=listed,

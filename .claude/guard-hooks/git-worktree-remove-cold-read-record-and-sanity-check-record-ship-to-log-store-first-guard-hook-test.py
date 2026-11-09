@@ -728,7 +728,7 @@ try:
         check(f"a removal of the worktree a record is being written in, {label}, is refused, naming the record, "
               f"and no waiter is started",
               code == 0 and reason.startswith(unresolved_refusal_start)
-              and hook.REMOVAL_NOT_THE_WHOLE_COMMAND_REASON in reason
+              and hook.GIT_WORKTREE_REMOVE_NOT_THE_WHOLE_SHELL_COMMAND_REFUSAL_REASON in reason
               and f"Record {being_written} (worktree {worktree})\n" in reason and waiter_starts == []
               and f"Run the removal again as `git worktree remove{force} <path>`" in reason
               and not being_written_in_store.exists(),
