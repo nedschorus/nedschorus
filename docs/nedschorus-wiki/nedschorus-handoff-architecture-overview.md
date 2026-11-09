@@ -151,7 +151,6 @@ Unless named otherwise, files are in `~/.claude/handoffs/` on the agent-seat's m
 - GHI [Restore and discard commands in `nc-systems/handoff/uncommitted-work-snapshots.py` replace the restore steps an agent runs by hand](https://github.com/nedschorus/nedschorus/issues/2539)
 - GHI [The agent-crash-watcher puts a handoff-supervisor back on an unsupervised agent-seat whose session-handoff is waiting](https://github.com/nedschorus/nedschorus/issues/2541)
 - GHI [The handoff-supervisor writes the memory review's started mark when it puts the memory-review reminder into the initial-agent-instructions](https://github.com/nedschorus/nedschorus/issues/2545)
-- GHI [A post-checkout git hook in `scripts/git-client-side-hooks/` writes the owner file of each new worktree an agent makes](https://github.com/nedschorus/nedschorus/issues/2547)
 - GHI [Agent-seats run on a last known good commit of main, while main's newest commit is tested as the release candidate up to four times a day](https://github.com/nedschorus/nedschorus/issues/2636)
 
 **Checked against:** commit [a17081fe3b0d0c6092273fa1e910bd22528cdd78](https://github.com/nedschorus/nedschorus/commit/a17081fe3b0d0c6092273fa1e910bd22528cdd78)
