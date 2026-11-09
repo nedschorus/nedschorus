@@ -958,6 +958,22 @@ check("a sender that runs on after its send: the delivery check finds the messag
       [event["found"] for event in machine.events("delivery_checked")] == [True]
       and not machine.alerts(), (machine.events("delivery_checked"), machine.alerts()))
 
+# --- a message_sent record with no send_started_at, as the log holds from older invocations ------
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.script(sent_ok())
+machine.run(0)
+older = [{key: value for key, value in event.items() if key != "send_started_at"}
+         for event in machine.events()]
+machine.log.write_text("".join(json.dumps(event) + "\n" for event in older))
+machine.append("alpha", user(machine.events("message_sent")[0]["text"], at(0)))
+machine.script()
+code, output = machine.run(2)
+check("a pending send logged with no send_started_at: checked from its \"at\", no crash",
+      code == 0 and [event["found"] for event in machine.events("delivery_checked")] == [True],
+      (code, output, machine.events("delivery_checked")))
+
 # --- a read failure that ended and came back is dated from its return ---------------------------
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
