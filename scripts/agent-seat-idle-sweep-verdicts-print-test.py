@@ -353,6 +353,11 @@ check("a token spent 2 minutes ago: not idle",
       verdicts["alpha"]["idle"] is False and verdicts["alpha"]["rule"] is None
       and verdicts["alpha"]["not_idle_because"] == ["a token was spent less than 5 minutes ago"],
       verdicts["alpha"])
+machine.walk_minutes("alpha", "#next_to_present item 2 of 3\n")
+_, verdicts, _ = machine.run()
+check("a token spent 2 minutes ago and a walk item waiting: the walk item is no reason not to be idle",
+      verdicts["alpha"]["not_idle_because"] == ["a token was spent less than 5 minutes ago"],
+      verdicts["alpha"])
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant(ANNOUNCED), turn_end(), user("another prompt")])
 _, verdicts, _ = machine.run()

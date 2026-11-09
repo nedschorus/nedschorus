@@ -327,15 +327,15 @@ check("rule 5: a verdict not to send is logged with its reason, and no wait star
       [(event["sent"], event["reason"]) for event in machine.events("judge_answer")]
       == [(False, "a subagent started 3 minutes ago is still running")]
       and not machine.events("wait_step"), machine.events())
-machine = Machine()
-machine.seat("alpha", DONE_TURN)
-machine.task("alpha", "1")
-walk = machine.agents / "alpha" / "docs" / "walk"
+walk_item_machine = Machine()
+walk_item_machine.seat("alpha", DONE_TURN)
+walk_item_machine.task("alpha", "1")
+walk = walk_item_machine.agents / "alpha" / "docs" / "walk"
 walk.mkdir(parents=True)
 (walk / "w-minutes.md").write_text("#next_to_present item 2 of 3\n")
-machine.script({"answer": {"sent": False, "reason": "it is answering the user"}})
-code, _ = machine.run(0)
-calls = machine.claude_calls()
+walk_item_machine.script({"answer": {"sent": False, "reason": "it is answering the user"}})
+walk_item_machine.run(0)
+calls = walk_item_machine.claude_calls()
 check("rule 5 with a walk item waiting: the judge is still asked, and is handed the walk item",
       len(calls) == 1 and '"task 1"' in calls[0]["prompt"]
       and '"approval_walk_items_waiting_on_the_user"' in calls[0]["prompt"]
