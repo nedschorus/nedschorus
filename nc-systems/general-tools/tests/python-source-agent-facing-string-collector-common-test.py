@@ -635,10 +635,59 @@ found = texts_as_agent_reads_them(
     '    def method(self):\n'
     '        print(f"Method: {message}")\n'
     'print(f"Top: {message}")\n')
-check("text as the agent reads it: a parameter, a local or a class body's name hides the module constant, a "
-      "global declaration and a method of the class do not",
-      found == ["Stopped: <message>", "Local: <message>", "other", "Global: default", "Class: <message>",
-                "Method: default", "Top: default"], found)
+check("text as the agent reads it: a module constant whose name the file also binds elsewhere, as a parameter, a "
+      "local, a global declaration or a class body's name, stays <source> everywhere, module level included",
+      found == ["Stopped: <message>", "Local: <message>", "other", "Global: <message>", "Class: <message>",
+                "Method: <message>", "Top: <message>"], found)
+
+found = texts_as_agent_reads_them(
+    'LABEL = "module"\n'
+    'def outer():\n'
+    '    LABEL = "outer"\n'
+    '    def inner():\n'
+    '        global LABEL\n'
+    '        print(f"Inner: {LABEL}")\n')
+check("text as the agent reads it: an inner function's global declaration of a constant an outer function rebinds "
+      "leaves it <source>", found == ["Inner: <LABEL>"], found)
+
+found = texts_as_agent_reads_them(
+    'NOTE = "module"\n'
+    'def report():\n'
+    '    text = f"Note: {NOTE}"\n'
+    '    show = lambda other: print(text)\n')
+check("text as the agent reads it: a local string followed into a lambda renders a constant the file binds once "
+      "as its value, whatever the lambda binds", found == ["Note: module"], found)
+
+found = texts_as_agent_reads_them(
+    'N = "module"\n'
+    'def listing(xs):\n'
+    '    print([f"L: {N}" for N in xs])\n')
+check("text as the agent reads it: a comprehension's target named as a module constant leaves it <source>",
+      found == ["L: <N>"], found)
+
+found = texts_as_agent_reads_them(
+    'DETAIL = "now"\n'
+    'STOP = f"stop {DETAIL}"\n'
+    'OTHER = f"other {SHADOWED}"\n'
+    'SHADOWED = "module"\n'
+    'def hook(SHADOWED):\n'
+    '    print(json.dumps({"reason": STOP}))\n'
+    '    print(json.dumps({"reason": OTHER}))\n')
+check("text as the agent reads it: a module constant given as a hook output's value renders the constants it names, "
+      "except one the file binds elsewhere", found == ["stop now", "other <SHADOWED>"], found)
+
+for case_name, binding in (("a for loop's target", "for NAME in items:\n    pass\n"),
+                           ("a del statement", "del NAME\n"),
+                           ("except ... as", "try:\n    pass\nexcept OSError as NAME:\n    pass\n"),
+                           ("an import", "import NAME\n"),
+                           ("a nonlocal declaration", "def f():\n    def g():\n        nonlocal NAME\n"),
+                           ("a := target", "if (NAME := read()):\n    pass\n"),
+                           ("a function's name", "def NAME():\n    pass\n"),
+                           ("a type parameter", "def first[NAME](items):\n    pass\n"),
+                           ("a match capture", "match value:\n    case [NAME]:\n        pass\n")):
+    found = texts_as_agent_reads_them(f'NAME = "module"\n{binding}print(f"x {{NAME}}")\n')
+    check(f"text as the agent reads it: a module constant also bound by {case_name} stays <source>",
+          found == ["x <NAME>"], found)
 
 check("source that does not parse yields no entries", texts('print("unclosed\n') == [])
 check("no source yields no entries", texts(None) == [])
