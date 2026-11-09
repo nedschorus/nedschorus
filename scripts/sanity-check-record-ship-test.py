@@ -55,12 +55,25 @@ def make_record(root: pathlib.Path, name: str, files: dict) -> pathlib.Path:
     return record
 
 
-def ship(destination, *args, script=SHIP):
+def ship(destination, *args, script=SHIP, extra_env=None):
     env = dict(os.environ)
     env[DESTINATION_VARIABLE] = destination
+    env.update(extra_env or {})
     return subprocess.run([sys.executable, str(script), *args],
                           capture_output=True, text=True, check=False, env=env)
 
+
+# A writer: loads the record shipper given as argv[1], takes the being-written
+# lock on the record argv[2], prints "held", and holds it until its stdin closes.
+COLD_READ_RECORD_BEING_WRITTEN_LOCK_HOLDER_UNTIL_STDIN_CLOSES_PYTHON_SOURCE = """
+import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location("shipper", sys.argv[1])
+shipper = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(shipper)
+shipper.record_directory_being_written_lock_take(pathlib.Path(sys.argv[2]))
+print("held", flush=True)
+sys.stdin.read()
+"""
 
 CUT_REPORT = "<!-- provenance: runtime=claude model=opus -->\n# cut\n\nfinding one\n"
 MECHANIZATION_REPORT = "<!-- provenance: runtime=codex model=gpt -->\n# mechanization\n\nfinding two\n"
@@ -90,9 +103,9 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
     local_destination = str(store / "cold-read-records")
     records = scratch / "sanity-check-records"
     record = make_record(records, "2026-09-17-design-to-main-state-machine-design", {
-        "cut-claude.md": CUT_REPORT,
-        "mechanization-codex.md": MECHANIZATION_REPORT,
-        "scratch/cut-claude/notes.md": "working notes\n",
+        "cut-adversarial-prompt-claude.md": CUT_REPORT,
+        "mechanization-adversarial-prompt-codex.md": MECHANIZATION_REPORT,
+        "scratch/cut-adversarial-prompt-claude/notes.md": "working notes\n",
     })
     result = ship(local_destination, str(record))
     shipped_dir = store / "sanity-check-records" / record.name
@@ -100,11 +113,11 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
           result.returncode == 0 and result.stdout.startswith("shipped: "),
           f"exit {result.returncode}: {result.stdout}{result.stderr}")
     check("it lands under sanity-check-records/ in the store, not cold-read-records/",
-          (shipped_dir / "cut-claude.md").is_file()
+          (shipped_dir / "cut-adversarial-prompt-claude.md").is_file()
           and not (store / "cold-read-records" / record.name).exists(),
           sorted(p.name for p in store.iterdir()))
     check("a cell's scratch directory ships with the reports",
-          (shipped_dir / "scratch" / "cut-claude" / "notes.md").is_file(),
+          (shipped_dir / "scratch" / "cut-adversarial-prompt-claude" / "notes.md").is_file(),
           sorted(str(p.relative_to(shipped_dir)) for p in shipped_dir.rglob("*")))
     check("the store's README lists this kind with this program as its owner",
           "- `sanity-check-records/` -- " in (store / "README.md").read_text(encoding="utf-8")
@@ -139,7 +152,7 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
     # cold-read-records, and a sanity-check record lives under
     # sanity-check-records, where the command must look.
     triaged = make_record(records, "2026-09-23-triage-replacement", {
-        "cut-claude.md": CUT_REPORT, "triage.md": "# triage\n"})
+        "cut-adversarial-prompt-claude.md": CUT_REPORT, "triage.md": "# triage\n"})
     ship(local_destination, str(triaged))
     (triaged / "triage.md").write_text("# triage\n\nrevised\n", encoding="utf-8")
     result = ship(local_destination, str(triaged))
@@ -150,6 +163,23 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
           in result.stderr
           and "localhost/home/nedlern/nedschorus-logs/cold-read-records/" not in result.stderr,
           result.stderr)
+
+    # --- A failed copy names this program in its rerun command ---------------
+    # The record shipper builds the line; a sanity-check record is shipped
+    # again by this program, not by the record shipper.
+    failing_rsync = scratch / "stub-bin-rsync-exit-23"
+    failing_rsync.mkdir()
+    (failing_rsync / "rsync").write_text("#!/bin/sh\nexit 23\n", encoding="utf-8")
+    (failing_rsync / "rsync").chmod(0o755)
+    unshipped = make_record(records, "2026-10-31-copy-fails", {"cut-adversarial-prompt-claude.md": CUT_REPORT})
+    result = ship(local_destination, str(unshipped), extra_env={
+        "PATH": f"{failing_rsync}{os.pathsep}{os.environ.get('PATH', '')}"})
+    check("a failed copy is FAILED, exit 1, ending with the command that reruns "
+          "this program, not the record shipper, on the record",
+          result.returncode == 1
+          and result.stdout == (f"FAILED: {unshipped.name} — rsync exit 23 during the "
+                                f"copy. Rerun: `{SHIP} {unshipped.resolve()}`\n"),
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
 
     # --- Bad invocation --------------------------------------------------------
     result = ship(local_destination)
@@ -170,10 +200,15 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
     shutil.copytree(SCRIPTS_DIR.parent / "nc-systems" / "cold-read",
                     scratch_repo / "nc-systems" / "cold-read",
                     ignore=shutil.ignore_patterns("__pycache__"))
+    # cold-read-record-names-common.py reads ned-box's home and its Mac mount from this module.
+    ned_box_home_module = "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py"
+    (scratch_repo / "nc-systems" / "general-tools").mkdir()
+    shutil.copy2(SCRIPTS_DIR.parent / "nc-systems" / "general-tools" / ned_box_home_module,
+                 scratch_repo / "nc-systems" / "general-tools" / ned_box_home_module)
     scratch_ship = scratch_repo / "scripts" / SHIP.name
     all_store = str(scratch / "all-store" / "cold-read-records")
     good = make_record(scratch_repo / "sanity-check-records", "2026-09-10-good",
-                       {"cut-claude.md": CUT_REPORT})
+                       {"cut-adversarial-prompt-claude.md": CUT_REPORT})
     make_record(scratch_repo / "sanity-check-records", "2026-09-11-empty", {})
     # A cold-read record beside it must not be swept up by this program's --all.
     make_record(scratch_repo / "cold-read-records", "2026-09-10-not-this-kind",
@@ -187,6 +222,27 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
           result.stdout + result.stderr)
     check("--all leaves cold-read records alone",
           "not-this-kind" not in result.stdout and "of 2" in lines[-1], result.stdout)
+
+    # --- A sanity-check record still being written is not shipped -------------
+    # scripts/sanity-check-adversarial-prompts.py holds its record's
+    # being-written lock until it ships the record; this kind goes through the
+    # same refusal. The writer is a second process taking the lock.
+    being_written = make_record(scratch_repo / "sanity-check-records", "2026-09-12-being-written",
+                                {"cut-adversarial-prompt-claude.md": CUT_REPORT})
+    holder = subprocess.Popen(
+        [sys.executable, "-c", COLD_READ_RECORD_BEING_WRITTEN_LOCK_HOLDER_UNTIL_STDIN_CLOSES_PYTHON_SOURCE,
+         str(scratch_repo / "nc-systems" / "cold-read" / "cold-read-record-ship.py"), str(being_written)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        held_line = holder.stdout.readline()
+        result = ship(all_store, str(being_written), script=scratch_ship)
+    finally:
+        holder.communicate("")
+    check("a sanity-check record whose writer holds its being-written lock is FAILED, exit 1",
+          held_line == "held\n" and result.returncode == 1
+          and result.stdout.startswith("FAILED: 2026-09-12-being-written — still being written")
+          and not (pathlib.Path(all_store).parent / "sanity-check-records" / being_written.name).exists(),
+          f"{held_line!r}; exit {result.returncode}: {result.stdout}")
 
 print()
 if failures:

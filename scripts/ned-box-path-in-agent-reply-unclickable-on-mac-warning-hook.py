@@ -17,7 +17,7 @@ says), masking fenced code, code spans, links and bare URLs, the record of
 the last reply noted, the hook output, and the test for a headless
 `claude -p` child, where the hook stays silent. It stays silent on every
 machine but ned-box, as this_machine_is_ned_box() from
-nc-systems/handoff/daily-memory-review-mark.py decides: a session on the Mac
+nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py decides: a session on the Mac
 names its own files by their Mac paths.
 
 NOTED, outside fenced code blocks:
@@ -62,10 +62,42 @@ import tempfile
 from pathlib import Path
 
 PROGRAM = "ned-box-path-in-agent-reply-unclickable-on-mac-warning-hook"
+FAULT_LINES = (
+    PROGRAM + ": your previous reply was not checked for /home/nedlern/ paths the user cannot "
+    "open on the Mac, because the check failed: {reason}",
+    "When you give the user a ned-box file to open, link the file as "
+    "file:///Volumes/nedhome/<the path after /home/nedlern/>.",
+    "If this failure is reported again on later prompts, tell the user, quoting the first line.",
+)
+
+
+def _load_module_by_path(module_name, path):
+    specification = importlib.util.spec_from_file_location(module_name, path)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def fault_exit(error):
+    reason = f"{type(error).__name__}: {error}"
+    print("\n".join(FAULT_LINES).format(reason=reason), file=sys.stderr)
+    return 1
+
+
+# The patterns below are built from these paths, so a load that fails ends the
+# hook here, reported the way main() reports any other fault.
+try:
+    ned_box_home_path_constants = _load_module_by_path(
+        "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+        Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+        / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+except Exception as error:
+    sys.exit(fault_exit(error))
+
 HIT_LINES_LISTED_AT_MOST = 10
 NOTE_RECORD_DIRECTORY_NAME = "ned-box-path-in-agent-reply-unclickable-on-mac-warning-hook-state"
-NED_BOX_HOME = "/home/nedlern/"
-MAC_MOUNT_OF_NED_BOX_HOME = "/Volumes/nedhome/"
+NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME + "/"
+MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME + "/"
 LOG_STORE_DIRECTORY_UNDER_NED_BOX_HOME = "nedschorus-logs/"
 SCP_CITATION_HOST_PREFIX = "nedlern@ned-box:"
 
@@ -75,12 +107,12 @@ SCP_CITATION_HOST_PREFIX = "nedlern@ned-box:"
 # its opening run and the same run is cut from the path's end.
 PATH_REST = r"[^\s`'\"<>()\[\]{}|*\x00]*"
 PATH_REST_PATTERN = re.compile(PATH_REST)
-BARE_PATH_PATTERN = re.compile(r"(?<![\w/.~-])(?P<emphasis>_*)(?P<path>/home/nedlern/" + PATH_REST + ")")
+BARE_PATH_PATTERN = re.compile(r"(?<![\w/.~-])(?P<emphasis>_*)(?P<path>" + re.escape(NED_BOX_HOME) + PATH_REST + ")")
 SCP_HOST_PREFIX_BEFORE_PATH_PATTERN = re.compile(r"(?:[\w.-]+@)?ned-box:$")
 UNOPENABLE_TARGET_PATTERN = re.compile(
-    r"^<?(?:file://(?:localhost)?)?/home/nedlern/(?P<rest>[^<>\s]*?)>?$", re.IGNORECASE)
+    r"^<?(?:file://(?:localhost)?)?" + re.escape(NED_BOX_HOME) + r"(?P<rest>[^<>\s]*?)>?$", re.IGNORECASE)
 UNOPENABLE_FILE_URL_PATTERN = re.compile(
-    r"^<?file://(?:localhost)?/home/nedlern/(?P<rest>[^<>\s]*?)>?$", re.IGNORECASE)
+    r"^<?file://(?:localhost)?" + re.escape(NED_BOX_HOME) + r"(?P<rest>[^<>\s]*?)>?$", re.IGNORECASE)
 TRAILING_SENTENCE_PUNCTUATION = ".,;:!?"
 
 PREVIOUS_REPLY_OPENING_LINES = (
@@ -101,24 +133,10 @@ HIT_LINE = '"{written}" in "{excerpt}": write {replacement}'
 MORE_HITS_LINE = ("{count} more not listed: reread the rest of the same reply for paths under "
                   "/home/nedlern/ given the same way.")
 SUGGESTED_LINK_TEMPLATE = "[{text}](file://" + MAC_MOUNT_OF_NED_BOX_HOME + "{rest})"
-FAULT_LINES = (
-    PROGRAM + ": your previous reply was not checked for /home/nedlern/ paths the user cannot "
-    "open on the Mac, because the check failed: {reason}",
-    "When you give the user a ned-box file to open, link the file as "
-    "file:///Volumes/nedhome/<the path after /home/nedlern/>.",
-    "If this failure is reported again on later prompts, tell the user, quoting the first line.",
-)
 NOTE_RECORD_FAILED_LINE = (
     PROGRAM + ": its record of the replies it has noted, {record}, could not be {action} "
     "({reason}), so this note may be sent again for the same reply. Nothing needs doing about "
     "the record.")
-
-
-def _load_module_by_path(module_name, path):
-    specification = importlib.util.spec_from_file_location(module_name, path)
-    module = importlib.util.module_from_spec(specification)
-    specification.loader.exec_module(module)
-    return module
 
 
 @functools.lru_cache(maxsize=None)
@@ -130,10 +148,10 @@ def bare_number_hook():
 
 
 @functools.lru_cache(maxsize=None)
-def daily_memory_review_mark():
+def handoff_user_review_of_agent_memory_stores_mark():
     return _load_module_by_path(
-        "daily_memory_review_mark",
-        Path(__file__).resolve().parents[1] / "nc-systems" / "handoff" / "daily-memory-review-mark.py")
+        "handoff_user_review_of_agent_memory_stores_mark",
+        Path(__file__).resolve().parents[1] / "nc-systems" / "handoff" / "handoff-user-review-of-agent-memory-stores-mark.py")
 
 
 class UnopenablePath:
@@ -256,9 +274,9 @@ def previous_reply_note(payload, environment):
     transcript_file = Path(transcript_path).expanduser()
     if not transcript_file.exists():
         return None
-    records = hook.transcript_records(transcript_file)
     reply, message_id = hook.previous_reply(
-        records, hook._load_absence_claim_hook().is_human_or_parent_message)
+        hook.previous_turn_records(transcript_file),
+        hook._load_absence_claim_hook().is_human_or_parent_message)
     if not reply.strip():
         return None
     record_path = note_record_path_for(payload.get("session_id"))
@@ -293,16 +311,11 @@ def run(stdin_text, environment, on_ned_box):
 
 def main():
     try:
-        output = run(sys.stdin.read(), os.environ, daily_memory_review_mark().this_machine_is_ned_box())
+        output = run(sys.stdin.read(), os.environ, handoff_user_review_of_agent_memory_stores_mark().this_machine_is_ned_box())
         if output is not None:
             print(output)
     except Exception as error:
-        try:
-            reason = f"{type(error).__name__}: {error}"
-            print("\n".join(FAULT_LINES).format(reason=reason), file=sys.stderr)
-        except Exception:
-            pass
-        return 1
+        return fault_exit(error)
     return 0
 
 

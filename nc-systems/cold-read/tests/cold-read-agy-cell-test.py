@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for cold-read-agy-cell.py — the Antigravity leg's pins and its one
-quirk, driven through a stub `agy` so no model is ever called.
+"""Tests for cold-read-agy-cell.py — the Antigravity leg's pins, its one
+quirk and its Google login, driven through a stub `agy` so no model is ever
+called.
 
 WHAT IS PINNED HERE.
 
@@ -9,7 +10,7 @@ WHAT IS PINNED HERE.
     measurements, superseding low), and the stamp says so, with
     runtime=agy. The other tiers are refused by this launcher before agy
     runs: it pins no model for them, and a Gemini review under a `deep`- or
-    `second`-tier stamp would be a tier the roster never measured it on.
+    `second-strongest-model`-tier stamp would be a tier the roster never measured it on.
 
   - The invocation is the one measured working in the 2026-09-04 campaign:
     --add-dir <repo> (or AGENTS.md does not load), --dangerously-skip-permissions
@@ -42,8 +43,18 @@ WHAT IS PINNED HERE.
     directly reads all six, which is what shows the check can fail.
     Claude's and Codex's login files in the scratch home are kept out too,
     and agy's own is still read, since masking it would log agy out
-    (user-ruled 2026-09-29). With no sandbox program on PATH the launcher
-    refuses, exit 64, and never starts agy.
+    (user-ruled 2026-09-29). These cases need the real sandbox program,
+    which cannot start inside the nc-test-sandbox, so they run only with
+    --real-sandbox-cases-only, which
+    nc-systems/cold-read/tests/cold-read-agy-cell-real-sandbox-test.py
+    passes; every other case runs with the fixture's pass-through stand-in
+    for the sandbox program on PATH. With no sandbox program on PATH the
+    launcher refuses, exit 64, and never starts agy.
+
+  - The Google login. A GEMINI_API_KEY the caller set never reaches agy,
+    and a key file at .config/nedschorus/gemini-api.key in the scratch home
+    is not read. When agy prints what the real agy prints with no login, the
+    cell exits 1 and its cause line is logged-out, saying how to log agy in.
 
   - Every case runs the launcher with HOME at that scratch home, so no run
     of this suite scans or masks the real home's credential files.
@@ -62,9 +73,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 # This suite sits in nc-systems/cold-read/tests/; the programs it tests are
@@ -82,11 +95,14 @@ scratch_repository_fixture = importlib.util.module_from_spec(
     _scratch_repository_fixture_spec)
 _scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
 
-# The phrases the launcher and the shared module print, spelled out here
-# rather than imported so a reworded line fails here rather than passing
-# however either side was reworded.
-STDOUT_RECOVERY_PHRASE = "recovered the report from the model's chat output"
-NEAR_MISS_RECOVERY_PHRASE = "recovered a near-miss report"
+# The shared cell module, whose own suite pins its wording; the cases here take that wording from it.
+_cell_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common", SYSTEM_DIRECTORY / "cold-read-cell-common.py")
+cell_common = importlib.util.module_from_spec(_cell_common_spec)
+_cell_common_spec.loader.exec_module(cell_common)
+
+STDOUT_RECOVERY_PHRASE = cell_common.STDOUT_RECOVERY_PHRASE
+NEAR_MISS_RECOVERY_PHRASE = cell_common.NEAR_MISS_RECOVERY_PHRASE
 
 # A review-length chat answer and a remark-length one, either side of the
 # launcher's 120-word threshold.
@@ -98,9 +114,16 @@ SHORT_CHAT_REMARK = "I have written the report to the path you gave me.\n"
 # "report" is text to write to the report path (absent means write nothing),
 # "near_miss" writes the report one directory away from where it was asked,
 # "stdout" is the model's chat text, "dump_argv" and "dump_prompt" are paths
-# to record what the stub was launched with, and "exit" is the code to exit
-# with. The report path arrives by environment, as in the other cell tests,
-# so a reworded template cannot unhook the stub.
+# to record what the stub was launched with, "dump_key" is a path to record
+# GEMINI_API_KEY as agy received it (null when absent), "hang_writing_child_pid_to" is a path
+# to append the pid of a child the stub starts before both sleep past any
+# deadline a case sets, "exit_leaving_child_writing_pid_to" is a path to
+# append the pid of a child the stub starts, which keeps the stub's stdout
+# and stderr open and sleeps on after the stub exits, with the stub's own pid
+# appended to the same path plus ".stub" just before it exits, "stderr" is text for
+# stderr, and "exit" is the code to exit with. The report path arrives by
+# environment, as in the other cell tests, so a reworded template cannot
+# unhook the stub.
 STUB_AGY = """#!/usr/bin/env python3
 import json, os, pathlib, sys
 argv = sys.argv
@@ -128,12 +151,61 @@ if "read_paths" in step:
         except OSError as error:
             reads[path] = "UNREADABLE: " + str(error)
     pathlib.Path(step["dump_reads"]).write_text(json.dumps(reads), encoding="utf-8")
+if "dump_key" in step:
+    pathlib.Path(step["dump_key"]).write_text(
+        json.dumps(os.environ.get("GEMINI_API_KEY")), encoding="utf-8")
+if "dump_record_directory_descriptor_count" in step:
+    record_directory = os.stat(report_path.parent)
+    count = 0
+    for name in os.listdir("/dev/fd"):
+        try:
+            opened = os.fstat(int(name))
+        except OSError:
+            continue
+        count += (opened.st_dev, opened.st_ino) == (record_directory.st_dev, record_directory.st_ino)
+    pathlib.Path(step["dump_record_directory_descriptor_count"]).write_text(str(count), encoding="utf-8")
 if "stdout" in step:
     sys.stdout.write(step["stdout"])
+if "stderr" in step:
+    sys.stderr.write(step["stderr"])
+if "hang_writing_child_pid_to" in step:
+    import subprocess, time
+    sys.stdout.flush()
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
+    with open(step["hang_writing_child_pid_to"], "a", encoding="utf-8") as handle:
+        handle.write("%d\\n" % child.pid)
+    time.sleep(300)
+if "exit_leaving_child_writing_pid_to" in step:
+    import subprocess
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
+    with open(step["exit_leaving_child_writing_pid_to"], "a", encoding="utf-8") as handle:
+        handle.write("%d\\n" % child.pid)
+    with open(step["exit_leaving_child_writing_pid_to"] + ".stub", "a", encoding="utf-8") as handle:
+        handle.write("%d\\n" % os.getpid())
 sys.exit(step.get("exit", 0))
 """
 
 failures = []
+
+# With this flag the suite runs only the cases that need the real sandbox
+# program, with no stand-in on PATH; REAL_SANDBOX_CASES_SUITE runs it so, and
+# is listed in scripts/run-all-test-suites.py's SUITES_RUN_WITHOUT_ANY_SANDBOX.
+# Without it every other case runs, with the fixture's pass-through stand-in
+# for the sandbox program on PATH, so this suite runs inside the nc-test-sandbox.
+REAL_SANDBOX_CASES_ONLY_FLAG = "--real-sandbox-cases-only"
+REAL_SANDBOX_CASES_ONLY = REAL_SANDBOX_CASES_ONLY_FLAG in sys.argv[1:]
+REAL_SANDBOX_CASES_SUITE = "nc-systems/cold-read/tests/cold-read-agy-cell-real-sandbox-test.py"
+
+
+def path_with_stub_agy_first(stub_directory, environment):
+    """PATH with the stub agy first, then, unless only the real-sandbox cases
+    run, the stand-in sandbox programs, kept apart from the stub so a case can
+    put the stub alone on PATH."""
+    parts = [str(stub_directory)]
+    if not REAL_SANDBOX_CASES_ONLY:
+        parts.append(str(scratch_repository_fixture.install_fake_sandbox_programs(
+            stub_directory.parent / "fake-sandbox-programs")))
+    return os.pathsep.join([*parts, environment.get("PATH", "")])
 
 
 def check(case_name, condition, detail=""):
@@ -189,12 +261,15 @@ def scratch_home_for(stub_directory):
 
 
 def run_agy_cell(repository, stub_directory, plan, report_path, *arguments,
-                 tier="fast", path_override=None):
+                 tier="fast", path_override=None, gemini_api_key=None, pass_fds=()):
     install_stub_agy(stub_directory)
     environment = dict(os.environ)
+    environment.pop("GEMINI_API_KEY", None)
+    if gemini_api_key is not None:
+        environment["GEMINI_API_KEY"] = gemini_api_key
     environment["HOME"] = str(scratch_home_for(stub_directory))
     environment["PATH"] = (path_override if path_override is not None else
-                           f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}")
+                           path_with_stub_agy_first(stub_directory, environment))
     environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
     return subprocess.run(
@@ -202,8 +277,88 @@ def run_agy_cell(repository, stub_directory, plan, report_path, *arguments,
          "--cell", "fast-clarify", "--tier", tier,
          "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
          *arguments],
-        capture_output=True, text=True, check=False, env=environment,
+        capture_output=True, text=True, check=False, env=environment, cwd=repository,
+        pass_fds=pass_fds,
     )
+
+
+def start_agy_cell_in_own_session(repository, stub_directory, plan, report_path):
+    """Start the agy cell in a session of its own, as the grid starts a
+    cell, and return its Popen."""
+    install_stub_agy(stub_directory)
+    environment = dict(os.environ)
+    environment.pop("GEMINI_API_KEY", None)
+    environment["HOME"] = str(scratch_home_for(stub_directory))
+    environment["PATH"] = path_with_stub_agy_first(stub_directory, environment)
+    environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
+    environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
+    return subprocess.Popen(
+        [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"),
+         "--cell", "fast-clarify", "--tier", "fast",
+         "--target", TARGET_RELATIVE_PATH, "--report", str(report_path)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+        env=environment, cwd=repository, start_new_session=True)
+
+
+def wait_for_pids_written_to(pid_file, seconds):
+    deadline = time.monotonic() + seconds
+    while not pids_written_to(pid_file) and time.monotonic() < deadline:
+        time.sleep(0.1)
+
+
+def process_exited_within(pid, seconds):
+    """Whether `pid` has exited, reaped or not, within `seconds`: a zombie
+    counts, because the cell reaps agy only once agy's pipes close."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                               capture_output=True, text=True, check=False).stdout.strip()
+        if not state or state.startswith("Z"):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def agy_cell_copy_killing_agy_after_seconds(repository, timeout_seconds, margin_seconds):
+    """Rewrite the scratch copy of the agy cell so it gives agy
+    `timeout_seconds` and kills agy's process group `margin_seconds` later."""
+    copied_cell = repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"
+    cell_text = copied_cell.read_text(encoding="utf-8")
+    for constant_line, value in (
+            ("COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n", timeout_seconds),
+            ("COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS = 60\n", margin_seconds)):
+        if cell_text.count(constant_line) != 1:
+            raise AssertionError(f"the agy cell no longer holds {constant_line!r} once")
+        cell_text = cell_text.replace(
+            constant_line, constant_line.split("=")[0] + f"= {value}\n")
+    copied_cell.write_text(cell_text, encoding="utf-8")
+
+
+def pids_written_to(pid_file):
+    if not pid_file.is_file():
+        return []
+    return [int(line) for line in pid_file.read_text(encoding="utf-8").split()]
+
+
+def process_gone_within(pid, seconds):
+    """Whether `pid` has exited, and been reaped, within `seconds`."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def kill_left_over_processes(pids):
+    """A failing case may leave the stub's child sleeping; end it."""
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 def provenance_stamp_of(report):
@@ -212,9 +367,101 @@ def provenance_stamp_of(report):
     return report.read_text(encoding="utf-8").splitlines()[0]
 
 
+
+def credential_files_unreadable_inside_the_real_sandbox_cases(scratch, stubs):
+    """The cases that need the real bwrap or sandbox-exec: run only under
+    REAL_SANDBOX_CASES_ONLY_FLAG."""
+    # --- No credential file is readable from inside the cell -------------
+    # The canaries sit in the scratch home the launcher is given as HOME.
+    # The two in the credential directories carry no credential suffix, so
+    # only the directory rule -- bwrap's --tmpfs, sandbox-exec's subpath --
+    # keeps them out; the .token and .env files are kept out by the file
+    # rule -- the launch-time scan of the home on Linux, the pattern on macOS.
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "credential-files")
+    scratch_home = scratch_home_for(stubs)
+    canary_text = "CANARY-NOT-A-SECRET-cold-read-agy-cell-test\n"
+    nedschorus_canary = scratch_home / ".config" / "nedschorus" / "probe-canary"
+    gh_canary = scratch_home / ".config" / "gh" / "hosts.yml"
+    ssh_canary = scratch_home / ".ssh" / "id_canary"
+    token_canary = scratch_home / "projects" / "probe.token"
+    env_canary = scratch_home / "projects" / ".env"
+    ordinary_file = scratch_home / "projects" / "ordinary.txt"
+    # The scratch repository is outside the scratch home, so on Linux only
+    # the repository scan root reaches these two.
+    repository_token_canary = repository / "credential-canaries" / "probe.token"
+    repository_env_canary = repository / "credential-canaries" / ".env"
+    # The other reviewer programs' login files are credentials too; agy's own
+    # is not masked, because agy runs whole inside the sandbox and would lose
+    # its login (user-ruled 2026-09-29).
+    claude_login_canary = scratch_home / ".claude" / ".credentials.json"
+    codex_login_canary = scratch_home / ".codex" / "auth.json"
+    agy_login_canary = scratch_home / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
+    credential_canaries = (nedschorus_canary, gh_canary, ssh_canary,
+                           token_canary, env_canary,
+                           repository_token_canary, repository_env_canary,
+                           claude_login_canary, codex_login_canary)
+    for canary in (*credential_canaries, ordinary_file, agy_login_canary):
+        canary.parent.mkdir(parents=True, exist_ok=True)
+        canary.write_text(canary_text, encoding="utf-8")
+    read_step = {"report": "STUB AGY REVIEW: canaries\n",
+                 "read_paths": [str(path) for path in
+                                (*credential_canaries, ordinary_file, agy_login_canary)]}
+
+    # The control: the stub on its own reads every one of them.
+    direct_reads_dump = scratch / "credential-reads-direct.json"
+    stub = install_stub_agy(stubs)
+    direct_environment = dict(os.environ)
+    direct_environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(
+        {"*": dict(read_step, dump_reads=str(direct_reads_dump))})
+    direct_environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(
+        scratch / "credential-direct-report.md")
+    subprocess.run([str(stub), "--model", "any"], env=direct_environment,
+                   capture_output=True, text=True, check=False)
+    direct_reads = (json.loads(direct_reads_dump.read_text(encoding="utf-8"))
+                    if direct_reads_dump.is_file() else {})
+    check("the control: the stub run directly reads all nine credential canaries",
+          all(direct_reads.get(str(path)) == canary_text
+              for path in credential_canaries),
+          repr(direct_reads))
+
+    cell_reads_dump = scratch / "credential-reads-in-cell.json"
+    result = run_agy_cell(repository, stubs,
+                          {"*": dict(read_step, dump_reads=str(cell_reads_dump))},
+                          report)
+    cell_reads = (json.loads(cell_reads_dump.read_text(encoding="utf-8"))
+                  if cell_reads_dump.is_file() else {})
+    check("a cell whose agy tries the canaries still exits 0",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    for label, canary in (("a file in .config/nedschorus/", nedschorus_canary),
+                          ("a file in gh's login directory .config/gh/", gh_canary),
+                          ("a file in .ssh/", ssh_canary),
+                          ("a .token file", token_canary),
+                          ("a .env file", env_canary),
+                          ("a .token file in the repository", repository_token_canary),
+                          ("a .env file in the repository", repository_env_canary),
+                          ("Claude's login file", claude_login_canary),
+                          ("Codex's login file", codex_login_canary)):
+        check(f"inside the cell, {label} cannot be read",
+              str(canary) in cell_reads
+              and "CANARY" not in cell_reads[str(canary)], repr(cell_reads))
+    check("inside the cell, an ordinary file beside them is still read",
+          cell_reads.get(str(ordinary_file)) == canary_text, repr(cell_reads))
+    check("inside the cell, agy's own login file is still read",
+          cell_reads.get(str(agy_login_canary)) == canary_text, repr(cell_reads))
+
+
 with tempfile.TemporaryDirectory() as scratch:
     scratch = Path(scratch).resolve()  # macOS: /var is a link to /private/var, and the scripts resolve
     stubs = scratch / "stub-bin"
+    if REAL_SANDBOX_CASES_ONLY:
+        credential_files_unreadable_inside_the_real_sandbox_cases(scratch, stubs)
+        print()
+        if failures:
+            print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
+            sys.exit(1)
+        print("all cases passed")
+        sys.exit(0)
 
     # --- The fast tier's pin, and the invocation -------------------------
     repository = build_scratch_repository(scratch)
@@ -260,8 +507,32 @@ with tempfile.TemporaryDirectory() as scratch:
           and "{REPORT_PATH}" not in received_prompt,
           repr(received_prompt[:300]))
 
+    # The fast read on the Mac sizes its ssh time limit from the per-model
+    # constant, so --print-timeout must follow it, not a literal that happens
+    # to equal it.
+    repository = build_scratch_repository(scratch)
+    copied_cell = repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"
+    cell_text = copied_cell.read_text(encoding="utf-8")
+    constant_line = "COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n"
+    check("the agy cell sets its per-model time limit on one line this suite can change",
+          cell_text.count(constant_line) == 1, repr(constant_line))
+    copied_cell.write_text(cell_text.replace(
+        constant_line, "COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 45 * 60\n"),
+        encoding="utf-8")
+    report = report_path_for(repository, "print-timeout-follows-constant")
+    argv_dump = scratch / "print-timeout-follows-constant-argv.json"
+    result = run_agy_cell(
+        repository, stubs,
+        {"*": {"report": "STUB AGY REVIEW\n", "dump_argv": str(argv_dump)}}, report,
+    )
+    argv = json.loads(argv_dump.read_text(encoding="utf-8")) if argv_dump.is_file() else []
+    check("agy's --print-timeout follows the cell's per-model time limit",
+          result.returncode == 0 and "--print-timeout" in argv
+          and argv[argv.index("--print-timeout") + 1] == "45m",
+          f"exit {result.returncode}; argv={argv!r}; stderr={result.stderr!r}")
+
     # --- The other tiers are refused before agy runs ----------------------
-    for other_tier in ("deep", "second"):
+    for other_tier in ("deep", "second-strongest-model"):
         repository = build_scratch_repository(scratch)
         report = report_path_for(repository, f"tier-{other_tier}")
         result = run_agy_cell(
@@ -350,84 +621,150 @@ with tempfile.TemporaryDirectory() as scratch:
           and " model=gemini-3.8-flash-high " in stamp and " effort=high " in stamp,
           f"exit {result.returncode}; stamp={stamp!r}; stderr={result.stderr!r}")
 
-    # --- No credential file is readable from inside the cell -------------
-    # The canaries sit in the scratch home the launcher is given as HOME.
-    # The two in the credential directories carry no credential suffix, so
-    # only the directory rule -- bwrap's --tmpfs, sandbox-exec's subpath --
-    # keeps them out; the .token and .env files are kept out by the file
-    # rule -- the launch-time scan of the home on Linux, the pattern on macOS.
+    print("SKIP  the credential-file cases: they need the real sandbox program, "
+          f"which cannot start in the nc-test-sandbox; {REAL_SANDBOX_CASES_SUITE} runs them")
+
+    # --- The Google login, not a Gemini API key -------------------------------
+    gemini_api_key_file = scratch_home_for(stubs) / ".config" / "nedschorus" / "gemini-api.key"
+    gemini_api_key_file.parent.mkdir(parents=True, exist_ok=True)
+    gemini_api_key_file.write_text("test-key-from-file\n", encoding="utf-8")
+
+    def received_key(dump):
+        return json.loads(dump.read_text(encoding="utf-8")) if dump.is_file() else "NOT RUN"
+
+    for case_slug, caller_key in (("key-from-caller", "test-key-from-caller"),
+                                  ("key-file-only", None)):
+        repository = build_scratch_repository(scratch)
+        report = report_path_for(repository, case_slug)
+        key_dump = scratch / f"{case_slug}-key.json"
+        result = run_agy_cell(repository, stubs,
+                              {"*": {"report": "STUB AGY REVIEW\n", "dump_key": str(key_dump)}},
+                              report, gemini_api_key=caller_key)
+        check(f"{case_slug}: the cell exits 0 and agy is given no GEMINI_API_KEY",
+              result.returncode == 0 and received_key(key_dump) is None,
+              f"exit {result.returncode}; key={received_key(key_dump)!r}; "
+              f"stderr={result.stderr!r}")
+    gemini_api_key_file.unlink()
+
+    # What the real agy 1.4.7 printed on ned-box with ~/.gemini hidden; the URL is shortened.
+    agy_logged_out_stderr = (
+        "Authentication required. Please visit the URL to log in:\n"
+        "  https://accounts.google.com/o/oauth2/auth?access_type=offline&state=x\n"
+        "\n"
+        "Waiting for authentication (timeout 60s)...\n"
+        "Or, paste the authorization code here and press Enter:\n"
+        "Error: authentication timed out.\n"
+        "error: authentication failed or timed out\n")
     repository = build_scratch_repository(scratch)
-    report = report_path_for(repository, "credential-files")
-    scratch_home = scratch_home_for(stubs)
-    canary_text = "CANARY-NOT-A-SECRET-cold-read-agy-cell-test\n"
-    nedschorus_canary = scratch_home / ".config" / "nedschorus" / "probe-canary"
-    gh_canary = scratch_home / ".config" / "gh" / "hosts.yml"
-    ssh_canary = scratch_home / ".ssh" / "id_canary"
-    token_canary = scratch_home / "projects" / "probe.token"
-    env_canary = scratch_home / "projects" / ".env"
-    ordinary_file = scratch_home / "projects" / "ordinary.txt"
-    # The scratch repository is outside the scratch home, so on Linux only
-    # the repository scan root reaches these two.
-    repository_token_canary = repository / "credential-canaries" / "probe.token"
-    repository_env_canary = repository / "credential-canaries" / ".env"
-    # The other reviewer programs' login files are credentials too; agy's own
-    # is not masked, because agy runs whole inside the sandbox and would lose
-    # its login (user-ruled 2026-09-29).
-    claude_login_canary = scratch_home / ".claude" / ".credentials.json"
-    codex_login_canary = scratch_home / ".codex" / "auth.json"
-    agy_login_canary = scratch_home / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
-    credential_canaries = (nedschorus_canary, gh_canary, ssh_canary,
-                           token_canary, env_canary,
-                           repository_token_canary, repository_env_canary,
-                           claude_login_canary, codex_login_canary)
-    for canary in (*credential_canaries, ordinary_file, agy_login_canary):
-        canary.parent.mkdir(parents=True, exist_ok=True)
-        canary.write_text(canary_text, encoding="utf-8")
-    read_step = {"report": "STUB AGY REVIEW: canaries\n",
-                 "read_paths": [str(path) for path in
-                                (*credential_canaries, ordinary_file, agy_login_canary)]}
-
-    # The control: the stub on its own reads every one of them.
-    direct_reads_dump = scratch / "credential-reads-direct.json"
-    stub = install_stub_agy(stubs)
-    direct_environment = dict(os.environ)
-    direct_environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(
-        {"*": dict(read_step, dump_reads=str(direct_reads_dump))})
-    direct_environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(
-        scratch / "credential-direct-report.md")
-    subprocess.run([str(stub), "--model", "any"], env=direct_environment,
-                   capture_output=True, text=True, check=False)
-    direct_reads = (json.loads(direct_reads_dump.read_text(encoding="utf-8"))
-                    if direct_reads_dump.is_file() else {})
-    check("the control: the stub run directly reads all nine credential canaries",
-          all(direct_reads.get(str(path)) == canary_text
-              for path in credential_canaries),
-          repr(direct_reads))
-
-    cell_reads_dump = scratch / "credential-reads-in-cell.json"
+    report = report_path_for(repository, "logged-out")
     result = run_agy_cell(repository, stubs,
-                          {"*": dict(read_step, dump_reads=str(cell_reads_dump))},
-                          report)
-    cell_reads = (json.loads(cell_reads_dump.read_text(encoding="utf-8"))
-                  if cell_reads_dump.is_file() else {})
-    check("a cell whose agy tries the canaries still exits 0",
-          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
-    for label, canary in (("a file in .config/nedschorus/", nedschorus_canary),
-                          ("a file in gh's login directory .config/gh/", gh_canary),
-                          ("a file in .ssh/", ssh_canary),
-                          ("a .token file", token_canary),
-                          ("a .env file", env_canary),
-                          ("a .token file in the repository", repository_token_canary),
-                          ("a .env file in the repository", repository_env_canary),
-                          ("Claude's login file", claude_login_canary),
-                          ("Codex's login file", codex_login_canary)):
-        check(f"inside the cell, {label} cannot be read",
-              str(canary) in cell_reads
-              and "CANARY" not in cell_reads[str(canary)], repr(cell_reads))
-    check("inside the cell, an ordinary file beside them is still read",
-          cell_reads.get(str(ordinary_file)) == canary_text, repr(cell_reads))
-    check("inside the cell, agy's own login file is still read",
-          cell_reads.get(str(agy_login_canary)) == canary_text, repr(cell_reads))
+                          {"*": {"stderr": agy_logged_out_stderr, "exit": 1}}, report)
+    check("logged-out: the cell exits 1",
+          result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
+    expected_cause_line = (
+        "cold-read-agy-cell: cause: logged-out — agy has no Google login on this "
+        "machine; the user logs in by running agy in a terminal there")
+    check("logged-out: the cause line says agy has no Google login and how to log in",
+          expected_cause_line in result.stderr.splitlines(), repr(result.stderr))
+
+    # --- An agy that runs past its deadline is killed with its children ------
+    repository = build_scratch_repository(scratch)
+    agy_cell_copy_killing_agy_after_seconds(repository, 1, 1)
+    report = report_path_for(repository, "agy-past-its-deadline")
+    pid_file = scratch / "agy-past-its-deadline-child-pids"
+    started = time.monotonic()
+    result = run_agy_cell(repository, stubs,
+                          {"*": {"hang_writing_child_pid_to": str(pid_file),
+                                 "stdout": "stub agy: words before the hang\n"}}, report)
+    elapsed = time.monotonic() - started
+    child_pids = pids_written_to(pid_file)
+    check("an agy that runs past its deadline fails the cell with exit 1 and no report, "
+          "within seconds of the deadline",
+          result.returncode == 1 and not report.exists() and elapsed < 60,
+          f"exit {result.returncode}; {elapsed:.0f} s; stderr={result.stderr!r}")
+    check("the cell reports the attempt as timed out, on the cause line callers read",
+          "cold-read-agy-cell: cause: timed-out — no result within 2 seconds"
+          in result.stderr.splitlines()
+          and "gemini-3.8-flash-medium(timed-out)" in result.stderr,
+          repr(result.stderr))
+    check("what agy printed before it was killed is on the cell's stderr",
+          "stub agy: words before the hang" in result.stderr, repr(result.stderr))
+    check("the process agy started is killed with agy",
+          len(child_pids) == 1 and all(process_gone_within(pid, 10) for pid in child_pids),
+          repr(child_pids))
+    kill_left_over_processes(child_pids)
+
+    # --- A stopped cell stops agy too --------------------------------------
+    # agy runs in a session of its own, outside the group the grid stops; the
+    # cell's SIGTERM handling must carry the stop to agy's group.
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "stopped-cell")
+    pid_file = scratch / "stopped-cell-child-pids"
+    launcher = start_agy_cell_in_own_session(
+        repository, stubs, {"*": {"hang_writing_child_pid_to": str(pid_file)}}, report)
+    wait_for_pids_written_to(pid_file, 60)
+    cell_common.stop_process_tree(launcher)
+    child_pids = pids_written_to(pid_file)
+    check("stopping a cell as the grid does kills the process agy started",
+          len(child_pids) == 1 and all(process_gone_within(pid, 10) for pid in child_pids),
+          repr(child_pids))
+    check("a cell stopped by SIGTERM exits 128 plus SIGTERM's number, not by SIGKILL",
+          launcher.returncode == 128 + signal.SIGTERM, repr(launcher.returncode))
+    kill_left_over_processes(child_pids)
+
+    # --- A stopped cell stops agy's children after agy itself exited -------
+    # agy has exited, but its child holds agy's stdout and stderr, so the
+    # cell still waits on them when SIGTERM arrives.
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "stopped-cell-after-agy-exited")
+    pid_file = scratch / "stopped-cell-after-agy-exited-child-pids"
+    launcher = start_agy_cell_in_own_session(
+        repository, stubs, {"*": {"exit_leaving_child_writing_pid_to": str(pid_file)}}, report)
+    stub_pid_file = pid_file.with_name(pid_file.name + ".stub")
+    wait_for_pids_written_to(stub_pid_file, 60)
+    stub_pids = pids_written_to(stub_pid_file)
+    # A SIGTERM that lands while agy still runs would test the case above instead.
+    stub_exited = len(stub_pids) == 1 and process_exited_within(stub_pids[0], 10)
+    cell_common.stop_process_tree(launcher)
+    child_pids = pids_written_to(pid_file)
+    check("the stub agy exited before the cell was stopped", stub_exited, repr(stub_pids))
+    check("stopping a cell after agy exited kills the child still holding agy's output",
+          len(child_pids) == 1 and all(process_gone_within(pid, 10) for pid in child_pids),
+          repr(child_pids))
+    check("a cell stopped after agy exited exits 128 plus SIGTERM's number",
+          launcher.returncode == 128 + signal.SIGTERM, repr(launcher.returncode))
+    kill_left_over_processes(child_pids)
+
+    # --- The being-written lock reaches agy on the timeout path ------------
+    # The agy cell always runs its reviewer under a per-model timeout, a launch path apart from
+    # the one the other cells take, so a cell killed while agy still writes the report leaves the
+    # record unshipped only if agy holds the lock the cell was passed.
+    shipper_spec = importlib.util.spec_from_file_location(
+        "cold_read_record_ship_under_test", SYSTEM_DIRECTORY / "cold-read-record-ship.py")
+    shipper_module = importlib.util.module_from_spec(shipper_spec)
+    shipper_spec.loader.exec_module(shipper_module)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "being-written-lock")
+    report.parent.mkdir(parents=True)
+    descriptor_count_file = scratch / "agy-record-directory-descriptor-count"
+    shipper_module.record_directory_being_written_lock_take(report.parent)
+    try:
+        result = run_agy_cell(
+            repository, stubs,
+            {"*": {"report": "STUB AGY REVIEW\n",
+                   "dump_record_directory_descriptor_count": str(descriptor_count_file)}},
+            report,
+            pass_fds=shipper_module.record_names.record_directory_being_written_lock_pass_fds_for_child_writers(
+                report.parent),
+        )
+    finally:
+        shipper_module.record_directory_being_written_lock_release(report.parent)
+    agy_descriptor_count = (descriptor_count_file.read_text(encoding="utf-8")
+                            if descriptor_count_file.exists() else "not written")
+    check("agy, run under the per-model timeout, holds the record's being-written lock the cell was passed",
+          agy_descriptor_count == "1",
+          f"descriptors on the record directory: {agy_descriptor_count}; exit {result.returncode}; "
+          f"stderr={result.stderr[-2000:]!r}")
 
     # --- No sandbox program on PATH: refused, agy never started ------------
     repository = build_scratch_repository(scratch)

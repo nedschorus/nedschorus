@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Find a file that is no longer on disk, across every history this fleet keeps.
+"""Find a file that is no longer on disk, across every history the Mac and ned-box keep.
 
 WHY THIS EXISTS. On 2026-08-23 an agent followed a citation in nedschorus#46 to
 `md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md`, found
-nothing, and built the ghi-info tool without the eleven deferred findings that
+nothing, and built the ghi-guide-agent tool without the eleven deferred findings that
 file held. The path had been deleted on 2026-08-14 (commit ab541cc) when review
 records were retired. The content was never actually lost: it was in git, in the
 predecessor's own session transcript, in Timeshift on the box, and in Time
@@ -98,7 +98,8 @@ out of the 11:51 local snapshot with no password typed.
 THE HONESTY CONTRACT. Every surface reports one of three outcomes, and never
 conflates the second with the third:
 
-  FOUND        — with the exact command that recovers the content.
+  FOUND        — with where this run copied the content to, or the command that copies it when
+                 the copy needs a mount this run did not make.
   NOT FOUND    — this surface was genuinely searched and does not have it.
   UNAVAILABLE  — this surface could NOT be searched, with the reason and the
                  command that would fix it.
@@ -107,9 +108,17 @@ A surface that cannot be read must never render as "not found". That distinction
 is the whole point: an agent told "not in Time Machine" stops looking, and an
 agent told "Time Machine needs your password, here is the command" asks for it.
 
-READ-ONLY BY CONSTRUCTION. This script only lists and reads; the copying is
-left to the recovery commands it prints. It never writes backup state, which
-agents are forbidden to do (.claude/hooks/backup-and-snapshot-write-guard.py
+READ-ONLY BY CONSTRUCTION, APART FROM ONE FOLDER. This script lists and reads,
+and it writes in one place only: each version it finds is copied into
+~/Downloads/nedschorus-found-copies/<time of the search>/ (--found-copies-root
+or FIND_DELETED_PATH_FOUND_COPIES_ROOT moves the folder), named for where it
+came from and when, so an agent opens a copy and never runs a command that
+writes a backup over a file where it stands. A copy
+never replaces a file already in that folder. A version this run can only
+reach through a mount it did not make, a Time Machine snapshot or an unmounted
+local snapshot, gets a printed command that copies it into the same folder.
+It never writes backup state, which
+agents are forbidden to do (.claude/guard-hooks/backup-and-snapshot-write-guard.py
 holds the tool path; the rule binds shell commands too). Two calls it makes
 change mount state and nothing else. `diskutil mount` on the Time Machine
 destination mounts a disk the user already attached, which is how you read a
@@ -118,7 +127,12 @@ attached but unmounted, because the user's disk does go offline and a script
 that gives up there is useless to him (user-ruled 2026-08-23). `mount_apfs -o
 ro` on a local snapshot opens it READ-ONLY, which is reading a snapshot rather
 than modifying one, and every snapshot this script opens is unmounted again in
-a `finally` — including when the search inside it fails.
+a `finally` — including when the search inside it fails. Each run mounts on a
+mount point named with its own process ID. A snapshot that an ended run of this
+script left on its mount point is unmounted by the next run, which then mounts it
+on its own. A snapshot that another live run of this script holds, or that an
+ended run left and that will not unmount, is never read in place, and is
+reported as not searched.
 
 CROSSING THE ROOT WALL, WITH NOBODY IN THE ROOM. The whole of surface 7's
 privilege is that one mount_apfs against the external backup volume. Two things
@@ -144,15 +158,6 @@ make it crossable, and they only work together.
     and a password prompt with no terminal behind it can only hang until
     something kills it.
 
-WHEN A HUMAN REALLY IS NEEDED, THIS MAC SAYS SO OUT LOUD. On 2026-08-31 this
-script reported that Time Machine "needs your password"; the agent reading that
-relayed it four paragraphs into a long message, and the user never saw it. The
-channel worked exactly as built and still failed him. So a run that hits the
-wall also speaks one short sentence through macOS `say`, which is the one
-channel here that does not depend on an agent choosing to pass anything on. It
-is gated hard so that it stays rare: speech_line_when_root_password_is_needed
-holds the four conditions and what each of them is protecting against.
-
 NO HARDCODED DEVICE NODES. `/dev/disk5s2` was the backup volume on 2026-08-23;
 device numbers reshuffle across replugs. Everything resolves at runtime from the
 destination name that `tmutil destinationinfo` reports. The local-snapshot
@@ -177,15 +182,9 @@ used through the same import as its host rule: the locator keeps its own copy
 of that function only because it is sent whole to the other machine over ssh,
 and this program never is.
 
-The git recovery command it prints is run later in its caller's shell, where
-those variables may still be set, so it is printed as `env -u GIT_DIR ...
-git -C <repo> show <commit>:<path>`, unsetting the same variables itself.
-The prefix is the locator's PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES,
-so the two programs print one form.
-Printed as a bare `git -C`, under a caller's GIT_COMMON_DIR or GIT_DIR it
-exited 128 instead of printing the file: Codex's review cell on PR "The
-backup search's commands ignore a caller's git redirect variables", fixed
-on the user's "y" in walk merge-lane-mac-helper-open-decisions-2026-09-30.
+A git version is copied by this run itself, with `git show <commit>:<path>`
+under the same environment, so a caller's redirect variables cannot send it
+to another repository.
 
 RUN ON NED-BOX ITSELF, the box's two surfaces are searched in place. Until
 2026-09-30 every run reached "the box" by `ssh nedlern@ned-box`, from the box
@@ -238,19 +237,40 @@ line changes the surface's status.
 --box-ssh-host and --skip box keep their meaning: the first names the box only
 for the Mac's ssh, and the second still leaves Timeshift out.
 
+A GIT BLOB ID. The guarded-file hook,
+.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py,
+names each version of a guarded file by its git blob id, logs a line for each
+version it sees, with that id and the time, and keeps a copy only of a version
+git does not hold. So a query of exactly 40 lowercase hexadecimal characters is
+read as a blob id, and the code takes every step: it asks git (git cat-file -e,
+then git log's find-object search over every ref and reflog) and copies the
+blob when git holds it; when no commit holds it, it reads the hook's log lines under the
+log-store's guarded-file-versions-and-approvals/ for the path and the time the
+hook first saw the version, copies the store's copy when there is one, and
+opens the first Timeshift snapshot (ned-box) or Time Machine snapshot (the
+Mac) taken after that time at that path. A Timeshift file is hashed and kept
+only when its id matches; a Time Machine file is reached by a printed command,
+and the agent checks its id with `git hash-object`. Snapshot names are read as
+this machine's local time. The other surfaces search by path and are not run
+for a blob id. Any other query is a path, searched as below.
+
 Usage:
   python3 scripts/find-deleted-path-across-backups.py <path>
+  python3 scripts/find-deleted-path-across-backups.py <40-hex git blob id>
   python3 scripts/find-deleted-path-across-backups.py <path> --skip box
   python3 scripts/find-deleted-path-across-backups.py <path> --skip localsnapshots
   python3 scripts/find-deleted-path-across-backups.py <path> --log-store-root /home/nedlern/nedschorus-logs
   python3 scripts/find-deleted-path-across-backups.py <path> --repo ~/Projects/nedschorus
   python3 scripts/find-deleted-path-across-backups.py <path> --prompt-for-root
 
-There is no recovery flag: each FOUND line is followed by the exact command
-that recovers the content, for you to run.
+Each FOUND surface says where this run copied what it found, under
+~/Downloads/nedschorus-found-copies/<time of the search>/, or prints the command
+that copies it there when the copy needs a mount.
 
 <path> may be repo-relative ("docs/issues/46-x.md"), absolute, or any trailing
-fragment of a path ("dispositions.md"). Fragments match by path suffix. It
+fragment of a path ("dispositions.md"). A fragment matches whole trailing
+path components: "dispositions.md" matches "docs/dispositions.md", not
+"docs/old-dispositions.md". It
 may also be written as it is cited: in the scp form
 ("nedlern@ned-box:/home/nedlern/nedschorus-logs/x.md", or "ned-box:<path>"),
 from the current directory ("../x.md", "./x.md"), or from a home ("~/x.md").
@@ -289,14 +309,21 @@ reflog, transcripts and Timeshift answer the fragment forms; the log-store
 lists by the file's name, whatever form it was given in, and counts as found
 only a copy whose path ends with the form given.
 
-Exit code: 0 when at least one surface FOUND it. 1 when every surface that ran
+Exit code: 0 when at least one version FOUND was copied into the found-copies
+folder. 1 when every surface that ran
 was searched and none has it — the only exit that means "stop looking", once
 any log-store candidates the summary names have been checked. 3 when
 nothing was found and at least one surface could NOT be searched: the same
 thing the summary's "Could NOT search" line says, and the usual result of an
 unattended run, because reading inside Time Machine needs root — unless the
 sudoers rule described above is installed, which is exactly what makes that
-surface answerable with nobody in the room. 2 on a usage error. The first
+surface answerable with nobody in the room. 4 when a surface FOUND it
+but no version was copied into the found-copies folder and no printed command
+copies one, as when every copy failed or the only hit is a transcript: the
+FOUND lines say what was found. 5 when nothing was copied but a printed
+command, such as a snapshot mount, copies a version into the folder; the
+summary says which such commands the agent runs and which go to the user
+because their sudo may ask for his password. 2 on a usage error. The first
 version returned 1 for the third case too, so a wrapper branching on $? was
 told "not found" by a run that had searched nothing. Log-store candidates
 never count toward 0: the summary names them on a line of their own instead,
@@ -308,6 +335,7 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import hashlib
 import importlib.util
 import os
 import re
@@ -315,6 +343,7 @@ import shlex
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -330,7 +359,17 @@ _git_output_spec = importlib.util.spec_from_file_location(
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
-PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES = locator.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
+_transcript_mirror_spec = importlib.util.spec_from_file_location(
+    "transcript_mirror_to_log_store", Path(__file__).with_name("transcript-mirror-to-log-store.py"))
+transcript_mirror = importlib.util.module_from_spec(_transcript_mirror_spec)
+_transcript_mirror_spec.loader.exec_module(transcript_mirror)
 
 FOUND = "FOUND"
 NOT_FOUND = "NOT FOUND"
@@ -340,6 +379,11 @@ EXIT_FOUND = 0
 EXIT_NOT_FOUND_EVERYWHERE = 1
 EXIT_USAGE = 2
 EXIT_INCOMPLETE = 3
+EXIT_FOUND_BUT_NOT_COPIED = 4
+EXIT_FOUND_COPY_COMMAND_PRINTED = 5
+
+FOUND_COPIES_ROOT_ENVIRONMENT_VARIABLE = "FIND_DELETED_PATH_FOUND_COPIES_ROOT"
+DEFAULT_FOUND_COPIES_ROOT = "~/Downloads/nedschorus-found-copies"
 
 DEFAULT_BOX_SSH_HOST = "nedlern@ned-box"
 DEFAULT_TIMESHIFT_SNAPSHOT_ROOT = "/mnt/backup/timeshift/snapshots"
@@ -350,10 +394,12 @@ DEFAULT_BOX_SEARCH_ROOTS = (
 )
 DEFAULT_TRANSCRIPTS_DIR = "~/.claude/projects"
 DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
-# Keep this path aligned with transcript-mirror-to-log-store.py's destination.
-MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE = ("transcripts", "mac", "projects")
-# Keep this name aligned with transcript-mirror-to-log-store.py's MIRROR_PASS_STAMP_FILE_NAME.
-MAC_MIRROR_PASS_STAMP_FILE_NAME = "last-complete-mirror-pass-utc.txt"
+MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE = (
+    *transcript_mirror.split_destination(transcript_mirror.LOG_STORE_AGENT_SESSION_FILES_DESTINATION)[1]
+    .relative_to(DEFAULT_LOG_STORE_ROOT).parts,
+    transcript_mirror.MACHINE_NAME_ELSEWHERE,
+    next(store for name, _, store, _ in transcript_mirror.SOURCES if name == "projects"))
+MAC_MIRROR_PASS_STAMP_FILE_NAME = transcript_mirror.MIRROR_PASS_STAMP_FILE_NAME
 MAC_MIRROR_PASS_STAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 LOG_STORE_HITS_SHOWN = 10
 
@@ -366,16 +412,26 @@ TIME_MACHINE_READONLY_MOUNT_POINT = "/private/tmp/nedschorus-backup-readonly-mou
 
 TIME_MACHINE_SNAPSHOT_NAME_PREFIX = "com.apple.TimeMachine."
 
-SPOKEN_TOOL_NAME = "find deleted path across backups"
-
 # The Data volume holds user files; snapshots of / hold only system updates.
 MAC_DATA_VOLUME = "/System/Volumes/Data"
 
 # Only .local snapshots hold local user files; .backup is external and os.update is system-only.
 LOCAL_SNAPSHOT_NAME_SUFFIX = ".local"
 
-# Use /private/tmp because mount reports the resolved path, not the /tmp symlink.
-LOCAL_SNAPSHOT_MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro"
+# Use /private/tmp because mount reports the resolved path, not the /tmp symlink. The process ID keeps two
+# runs at once off one mount point, so whatever already sits on this one was left by a run that has ended.
+LOCAL_SNAPSHOT_MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro-%d" % os.getpid()
+
+# A git blob id: SHA-1, as this project's repositories use.
+GIT_BLOB_ID = re.compile(r"[0-9a-f]{40}")
+# Keep this aligned with the guarded-file hook's LOG_STORE_KIND and LOG_FILE_NAME.
+GUARDED_FILE_VERSIONS_UNDER_LOG_STORE = "guarded-file-versions-and-approvals"
+GUARDED_FILE_VERSIONS_LOG_NAME = "log"
+TIMESHIFT_SNAPSHOT_NAME_FORMAT = "%Y-%m-%d_%H-%M-%S"
+
+# A process whose command line holds this is a run of this script.
+THIS_SCRIPT_NAME = "find-deleted-path-across-backups"
+PROGRAM_PATH = "scripts/find-deleted-path-across-backups.py"
 
 # Bound waits so an ssh to a sleeping box cannot hang recovery.
 SHORT_TIMEOUT_SECONDS = 20
@@ -389,11 +445,21 @@ BOX_TRANSCRIPTS_DIR_MISSING = 3
 class SurfaceReport:
     """One surface's result and recovery instructions."""
 
-    def __init__(self, surface, status, lines=None, recovery=None):
+    def __init__(self, surface, status, lines=None, recovery=None, versions=None, prints_copy_command=False,
+                 copy_command_may_ask_password=False):
         self.surface = surface
         self.status = status
         self.lines = list(lines or [])
         self.recovery = list(recovery or [])
+        # True only when a recovery command copies a version into the found-copies folder; a transcript's
+        # context print or a bare unmount is a recovery line that copies nothing.
+        self.prints_copy_command = prints_copy_command
+        # True when that command's sudo may stop for the user's password, so only he can run it.
+        self.copy_command_may_ask_password = copy_command_may_ask_password
+        # Each FoundVersion this run copies into the found-copies folder after the surface finishes.
+        self.versions = list(versions or [])
+        self.copied = []
+        self.copy_failures = []
 
     def render(self):
         out = ["%-15s %s" % (self.surface, self.status)]
@@ -402,6 +468,171 @@ class SurfaceReport:
         for command in self.recovery:
             out.append("    $ " + command)
         return "\n".join(out)
+
+
+class FoundCopiesFolder:
+    """The one folder a run copies what it finds into: <root>/<UTC time of the search>/."""
+
+    def __init__(self, root=None, now=None):
+        root = root or os.environ.get(FOUND_COPIES_ROOT_ENVIRONMENT_VARIABLE) or DEFAULT_FOUND_COPIES_ROOT
+        stamp = time.strftime("%Y-%m-%dT%H%M%SZ", time.gmtime(now))
+        self.path = os.path.join(os.path.expanduser(root), stamp)
+
+    def destination(self, name):
+        """A path inside the folder for a copy called name, never outside it."""
+        # A name built from a path or a snapshot can hold "/" or "..", which would leave the folder.
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-.") or "copy"
+        return os.path.join(self.path, safe)
+
+
+_found_copies_folder = None
+
+
+def found_copies_folder():
+    """This run's found-copies folder, chosen at its first use."""
+    global _found_copies_folder
+    if _found_copies_folder is None:
+        _found_copies_folder = FoundCopiesFolder()
+    return _found_copies_folder
+
+
+def use_found_copies_folder(folder):
+    global _found_copies_folder
+    _found_copies_folder = folder
+
+
+class FoundVersion:
+    """One version a surface found, which this run copies into the found-copies folder.
+
+    kind is "file" for a file this machine can read, "box-file" for a file read over ssh on the box,
+    and "git" for a blob read with git show.
+    """
+
+    def __init__(self, name, kind, source, host=None, repo=None):
+        self.name = name
+        self.kind = kind
+        self.source = source
+        self.host = host
+        self.repo = repo
+
+    def described(self):
+        if self.kind == "box-file":
+            return "%s:%s" % (self.host, self.source)
+        if self.kind == "git":
+            return "%s in %s" % (self.source, self.repo)
+        return self.source
+
+
+def fetch_bytes(argv, timeout=LONG_TIMEOUT_SECONDS):
+    """Run a command and return (returncode, stdout bytes, stderr text)."""
+    try:
+        completed = subprocess.run(argv, env=locator.environment_without_git_redirecting_variables(),
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   timeout=timeout)
+    except FileNotFoundError:
+        return 127, b"", "%s: not found on this machine" % argv[0]
+    except subprocess.TimeoutExpired:
+        return 124, b"", "timed out after %ss: %s" % (timeout, " ".join(argv))
+    return completed.returncode, completed.stdout, completed.stderr.decode("utf-8", "replace")
+
+
+def _version_bytes(version, fetch):
+    """Return (content bytes, None) or (None, why it could not be read)."""
+    if version.kind == "file":
+        try:
+            with open(version.source, "rb") as handle:
+                return handle.read(), None
+        except OSError as error:
+            return None, str(error)
+    if version.kind == "box-file":
+        argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=%d" % BOX_LOG_STORE_CONNECT_TIMEOUT_SECONDS,
+                version.host, "cat -- %s" % shlex.quote(version.source)]
+    else:
+        argv = ["git", "-C", version.repo, "show", version.source]
+    code, out, err = fetch(argv)
+    if code != 0:
+        return None, "%s exited %d: %s" % (argv[0], code, (err.strip().splitlines() or ["(no message)"])[-1])
+    return out, None
+
+
+class CopyWriteFailed(OSError):
+    """A copy could not be written; partial_left names a cut-off file that could not be removed, or is None."""
+
+    def __init__(self, error, partial_left):
+        super().__init__(str(error))
+        self.partial_left = partial_left
+
+
+def _remove_partial(temporary):
+    """Remove a temporary file; return its path when it could not be removed, else None."""
+    try:
+        os.unlink(temporary)
+        return None
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return temporary
+
+
+def _write_new_file(path, content):
+    """Write content to path, or to path with -2, -3 ... added when path is taken.
+
+    Return the path used, and the temporary file's path when it could not be removed afterwards, else None.
+
+    The content goes to a hidden temporary file first and is linked to its name only once complete, so a
+    write that fails partway never leaves a cut-off file under a copy's name.
+    """
+    fd, temporary = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".partial-")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+    except OSError as error:
+        raise CopyWriteFailed(error, _remove_partial(temporary))
+    base, extension = os.path.splitext(path)
+    candidate, number = path, 1
+    while True:
+        try:
+            # A link never replaces a file, so two versions with one name both survive.
+            os.link(temporary, candidate)
+        except FileExistsError:
+            number += 1
+            candidate = "%s-%d%s" % (base, number, extension)
+            continue
+        except OSError as error:
+            raise CopyWriteFailed(error, _remove_partial(temporary))
+        return candidate, _remove_partial(temporary)
+
+
+def copy_found_versions(report, folder=None, fetch=None):
+    """Copy each version the report found into the found-copies folder, and say where, in its lines."""
+    if not report.versions:
+        return report
+    folder = folder or found_copies_folder()
+    fetch = fetch or fetch_bytes
+    for version in report.versions:
+        content, why = _version_bytes(version, fetch)
+        if content is not None:
+            try:
+                os.makedirs(folder.path, exist_ok=True)
+                written, duplicate_left = _write_new_file(folder.destination(version.name), content)
+            except CopyWriteFailed as error:
+                left = ("a partial file was left at %s and is not a copy" % error.partial_left
+                        if error.partial_left else "no partial file was left")
+                content, why = None, "could not write into %s: %s; %s" % (folder.path, error, left)
+            except OSError as error:
+                content, why = None, "could not write into %s: %s" % (folder.path, error)
+        if content is None:
+            report.copy_failures.append(version)
+            report.lines.append("could NOT copy %s — %s" % (version.described(), why))
+            continue
+        report.copied.append(written)
+        report.lines.append("copied to %s" % written + (
+            "; a hidden second link to it, %s, could not be removed" % duplicate_left if duplicate_left else ""))
+    return report
+
+
+def _name_stamp_from_epoch(seconds):
+    return time.strftime("%Y-%m-%dT%H%MZ", time.gmtime(seconds))
 
 
 def running_on_ned_box(hostname=None):
@@ -413,11 +644,15 @@ def running_on_ned_box(hostname=None):
 def run_command(argv, timeout=SHORT_TIMEOUT_SECONDS, cwd=None):
     """Run a command and return (returncode, stdout, stderr)."""
     # Git redirect variables override -C and must not leak into recovery commands.
+    environment = locator.environment_without_git_redirecting_variables()
+    if argv[0] == "git":
+        # _git_top_level reads git's English error text to tell "not a repository" from a failure.
+        environment["LC_ALL"] = "C"
     try:
         completed = subprocess.run(
             argv,
             cwd=cwd,
-            env=locator.environment_without_git_redirecting_variables(),
+            env=environment,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=timeout,
@@ -481,6 +716,286 @@ def _plain_path_from_cited_query(query, cwd=None):
 
 
 
+def is_git_blob_id(query):
+    return GIT_BLOB_ID.fullmatch(query) is not None
+
+
+def git_blob_id_of(content):
+    """The id git gives these bytes as a blob."""
+    return hashlib.sha1(b"blob %d\0" % len(content) + content).hexdigest()
+
+
+def search_git_for_blob(blob_id, repo, runner=run_command):
+    """Copy the blob when the repository holds it, and name the commits that hold it. The report's
+    commit_holds is True only when a commit or a reflog entry was found holding it."""
+    code, _, stderr = runner(["git", "-C", repo, "cat-file", "-e", blob_id])
+    if code == 1 and not stderr.strip():
+        report = SurfaceReport("git", NOT_FOUND, ["%s holds no object %s" % (repo, blob_id)])
+        report.commit_holds = False
+        return report
+    if code != 0:
+        report = SurfaceReport("git", UNAVAILABLE, ["git cat-file -e %s in %s exited %s — %s"
+                                                    % (blob_id, repo, code, stderr.strip() or "no error text")])
+        report.commit_holds = False
+        return report
+    code, out, stderr = runner(["git", "-C", repo, "cat-file", "-t", blob_id])
+    if code != 0:
+        report = SurfaceReport("git", UNAVAILABLE, ["git cat-file -t %s in %s exited %s — %s"
+                                                    % (blob_id, repo, code, stderr.strip() or "no error text")])
+        report.commit_holds = False
+        return report
+    if out.strip() != "blob":
+        report = SurfaceReport("git", NOT_FOUND, ["%s in %s is a %s, not a file's content"
+                                                  % (blob_id, repo, out.strip() or "object of no type")])
+        report.commit_holds = False
+        return report
+    code, out, stderr = runner(["git", "-C", repo, "log", "--all", "--reflog", "--find-object=" + blob_id,
+                                "--format=COMMIT %H|%ad|%s", "--date=short", "--name-only", "-n", "5"],
+                               timeout=LONG_TIMEOUT_SECONDS)
+    lines = ["%s holds the blob" % repo]
+    holders, name = [], None
+    if code != 0:
+        lines.append("git log --find-object failed, so which commits hold it is not known — %s"
+                     % (stderr.strip() or "exit %s" % code))
+    else:
+        for line in out.splitlines():
+            if line.startswith("COMMIT "):
+                holders.append(line[len("COMMIT "):].split("|", 2) + [""])
+            elif line.strip() and holders and not holders[-1][3]:
+                holders[-1][3] = line.strip()
+                name = name or os.path.basename(line.strip())
+        for sha, date, subject, path in holders:
+            lines.append("    %s, added or removed by %s (%s) %s"
+                         % (path or "(path not listed)", sha[:9], date, subject[:70]))
+        if not holders:
+            lines.append("no commit and no reflog entry holds it: git keeps it outside every commit, as a "
+                         "staged blob or one a merge wrote, and prunes such a blob after about two weeks")
+    version = FoundVersion("git-blob-%s%s" % (blob_id[:12], "-" + name if name else ""), "git", blob_id,
+                           repo=repo)
+    report = SurfaceReport("git", FOUND, lines, versions=[version])
+    report.commit_holds = bool(holders)
+    return report
+
+
+def _guarded_file_log_script(blob_id, directory):
+    """A shell script printing LOG <file>, LINE <line> and COPY <file> records for the blob, or NOROOT."""
+    quoted_id, quoted_directory = shlex.quote(blob_id), shlex.quote(directory)
+    return "\n".join([
+        "set -u",
+        "dir=%s" % quoted_directory,
+        'if [ ! -d "$dir" ]; then echo NOROOT; exit 0; fi',
+        "files=$(grep -rlF --include=%s -e %s \"$dir\"); rc=$?"
+        % (GUARDED_FILE_VERSIONS_LOG_NAME, quoted_id),
+        'if [ "$rc" -gt 1 ]; then exit "$rc"; fi',
+        'printf "%s\\n" "$files" | while IFS= read -r f; do',
+        '  [ -n "$f" ] || continue',
+        "  printf 'LOG %s\\n' \"$f\"",
+        "  lines=$(grep -F -e %s \"$f\"); rc=$?" % quoted_id,
+        '  if [ "$rc" -gt 1 ]; then exit "$rc"; fi',
+        "  [ -z \"$lines\" ] || printf '%s\\n' \"$lines\" | sed 's/^/LINE /'",
+        '  copy="$(dirname "$f")"/%s' % quoted_id,
+        "  if [ -f \"$copy\" ]; then printf 'COPY %s\\n' \"$copy\"; fi",
+        "done",
+    ])
+
+
+def search_guarded_file_versions_log(blob_id, log_store_root, box_ssh_host, runner=run_command, store_is_here=None):
+    """Read the guarded-file hook's log lines for the blob. The report's sightings is
+    [(machine, guarded path, first time seen in ns)], earliest first."""
+    directory = os.path.join(log_store_root, GUARDED_FILE_VERSIONS_UNDER_LOG_STORE)
+    if store_is_here is None:
+        store_is_here = os.path.isdir(log_store_root)
+    script = _guarded_file_log_script(blob_id, directory)
+    if store_is_here:
+        where, argv = "this machine", ["bash", "-c", script]
+    elif not box_ssh_host:
+        report = SurfaceReport("guarded-file log", UNAVAILABLE,
+                               ["not searched — %s is not on this machine and no ssh host was given" % directory])
+        report.sightings = []
+        return report
+    else:
+        where = box_ssh_host
+        argv = ["ssh", "-o", "ConnectTimeout=%d" % BOX_LOG_STORE_CONNECT_TIMEOUT_SECONDS, "-o", "BatchMode=yes",
+                box_ssh_host, script]
+    code, out, stderr = runner(argv, timeout=LONG_TIMEOUT_SECONDS)
+    if code != 0 or "NOROOT" in out.splitlines():
+        why = ("%s does not exist on %s" % (directory, where) if code == 0 else
+               "the search on %s exited %s — %s" % (where, code, stderr.strip() or "no error text"))
+        report = SurfaceReport("guarded-file log", UNAVAILABLE, [why])
+        report.sightings = []
+        return report
+    first_seen, copies, current = {}, [], None
+    for line in out.splitlines():
+        if line.startswith("LOG "):
+            relative = line[len("LOG "):][len(directory) + 1:]
+            machine, _, rest = relative.partition("/")
+            current = (machine, "/" + rest[:-len("/" + GUARDED_FILE_VERSIONS_LOG_NAME)])
+        elif line.startswith("LINE ") and current is not None:
+            fields = line[len("LINE "):].split("\t")
+            if len(fields) >= 7 and fields[0] == "seen" and blob_id in fields[4:6] and fields[1].isdigit():
+                seen = int(fields[1])
+                first_seen[current] = min(seen, first_seen.get(current, seen))
+        elif line.startswith("COPY "):
+            copies.append(line[len("COPY "):])
+    sightings = sorted(((machine, path, seen) for (machine, path), seen in first_seen.items()),
+                       key=lambda sighting: sighting[2])
+    lines = ["the hook saw it at %s on %s, first at %s" % (path, machine, _local_time_of(seen))
+             for machine, path, seen in sightings[:5]]
+    if len(sightings) > 5:
+        lines.append("... and at %d other paths" % (len(sightings) - 5))
+    if not sightings:
+        lines.append("no seen line of the guarded-file hook names %s, so there is no time to open a snapshot at"
+                     % blob_id)
+    if copies:
+        versions = [FoundVersion("guarded-file-store-%s-%s" % (blob_id[:12], os.path.basename(os.path.dirname(copy))),
+                                 "file" if store_is_here else "box-file", copy, host=box_ssh_host)
+                    for copy in copies[:1]]
+        report = SurfaceReport("guarded-file log", FOUND, lines + ["the store keeps a copy: %s" % copies[0]],
+                               versions=versions)
+    else:
+        report = SurfaceReport("guarded-file log", NOT_FOUND, lines + ["the store keeps no copy of it"])
+    report.sightings = sightings
+    return report
+
+
+def _local_time_of(nanoseconds):
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(nanoseconds / 1e9))
+
+
+def search_timeshift_after(blob_id, path, seen, box_ssh_host, snapshot_root, runner=run_command, on_ned_box=False):
+    """Open the first Timeshift snapshot taken after the hook saw the version, and keep path there when its
+    blob id is the one wanted."""
+    listing = "set -u; ROOT=%s; if [ ! -d \"$ROOT\" ]; then echo NOROOT; exit 0; fi; ls -1 \"$ROOT\"" % shlex.quote(
+        snapshot_root)
+    if on_ned_box:
+        where, argv = locator.NED_BOX_HOSTNAME, ["bash", "-c", listing]
+    elif not box_ssh_host:
+        return SurfaceReport("timeshift", UNAVAILABLE, ["not searched — no ssh host given (--skip box, or an empty "
+                                                        "--box-ssh-host)"])
+    else:
+        where, argv = box_ssh_host, ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", box_ssh_host, listing]
+    code, out, stderr = runner(argv, timeout=LONG_TIMEOUT_SECONDS)
+    if code != 0:
+        return SurfaceReport("timeshift", UNAVAILABLE, ["the snapshots on %s could not be listed (exit %s) — %s"
+                                                        % (where, code, stderr.strip() or "no error text")])
+    if "NOROOT" in out.splitlines():
+        return SurfaceReport("timeshift", UNAVAILABLE, ["%s does not exist on %s — is the backup drive mounted?"
+                                                        % (snapshot_root, where)])
+    seen_at = time.localtime(seen / 1e9)
+    after = []
+    for name in out.split():
+        try:
+            taken = time.strptime(name, TIMESHIFT_SNAPSHOT_NAME_FORMAT)
+        except ValueError:
+            continue
+        if time.mktime(taken) >= time.mktime(seen_at):
+            after.append(name)
+    if not after:
+        return SurfaceReport("timeshift", NOT_FOUND, ["no snapshot on %s was taken after %s, when the hook saw %s"
+                                                      % (where, _local_time_of(seen), path)])
+    snapshot = min(after)
+    source = "%s/%s/localhost%s" % (snapshot_root.rstrip("/"), snapshot, path)
+    version = FoundVersion("timeshift-%s-%s" % (snapshot, os.path.basename(path)),
+                           "file" if on_ned_box else "box-file", source, host=box_ssh_host)
+    content, why = _version_bytes(version, fetch_bytes)
+    first = "the first snapshot after %s, when the hook saw the version, is %s" % (_local_time_of(seen), snapshot)
+    if content is None:
+        if _missing_on_this_machine(source) if version.kind == "file" else "No such file" in why:
+            return SurfaceReport("timeshift", NOT_FOUND, [first, "it does not hold %s" % path])
+        return SurfaceReport("timeshift", UNAVAILABLE, [first, "%s could not be read — %s" % (source, why)])
+    held = git_blob_id_of(content)
+    if held != blob_id:
+        return SurfaceReport("timeshift", NOT_FOUND, [
+            first, "it holds %s at another version, %s: the version was replaced before that snapshot" % (path, held)])
+    return SurfaceReport("timeshift", FOUND, [first, "it holds %s at this version" % path], versions=[version])
+
+
+def _missing_on_this_machine(path):
+    """True only when path or a directory above it does not exist; a path that cannot be looked at is not
+    missing."""
+    try:
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    return False
+
+
+def search_time_machine_after(blob_id, path, seen, runner=run_command, prompt_for_root=False):
+    """Open the first Time Machine snapshot taken after the hook saw the version, and print the command that
+    copies path from it."""
+    destination, _ = _time_machine_destination(runner)
+    if destination is None:
+        return SurfaceReport("time machine", UNAVAILABLE, ["no Time Machine destination is configured on this "
+                                                           "machine; the version was seen on the Mac, so run this "
+                                                           "program there"])
+    device, mount_point, attached = _time_machine_volume_state(destination["name"], runner)
+    if not attached or not mount_point:
+        return SurfaceReport("time machine", UNAVAILABLE, ["the backup disk %r is not mounted"
+                                                           % destination["name"]],
+                             ["diskutil mount %s" % shlex.quote(destination["name"])])
+    snapshots, failure = _time_machine_snapshots(device, runner)
+    if failure is not None:
+        return SurfaceReport("time machine", UNAVAILABLE, ["the snapshots of %r could not be listed — %s"
+                                                           % (destination["name"], failure)])
+    seen_stamp = time.strftime("%Y%m%d%H%M%S", time.localtime(seen / 1e9))
+    after = [snapshot for snapshot in snapshots if (_snapshot_timestamp(snapshot) or "") >= seen_stamp]
+    if not after:
+        return SurfaceReport("time machine", NOT_FOUND, ["no snapshot was taken after %s, when the hook saw %s"
+                                                         % (_local_time_of(seen), path)])
+    snapshot = min(after, key=_snapshot_timestamp)
+    first = "the first snapshot after %s, when the hook saw the version, is %s" % (_local_time_of(seen), snapshot)
+    outcome, detail, release_failure = _time_machine_probe(snapshot, device, path, runner, prompt_for_root)
+    lines = [first] + (["%s stayed mounted on %s — %s" % (snapshot, TIME_MACHINE_READONLY_MOUNT_POINT,
+                                                          release_failure)] if release_failure else [])
+    check = ("then check that `git hash-object` of the copy prints %s; another id means the version was replaced "
+             "before that snapshot" % blob_id)
+    if outcome == "hit":
+        return SurfaceReport("time machine", FOUND, lines + ["it holds %s; %s" % (path, check)],
+                             _time_machine_manual_recovery(snapshot, device, path, clear_first=bool(release_failure)),
+                             prints_copy_command=True, copy_command_may_ask_password=True)
+    if outcome == "miss":
+        return SurfaceReport("time machine", NOT_FOUND, lines + ["it does not hold %s" % path])
+    return SurfaceReport("time machine", UNAVAILABLE, lines + ["could not search it — %s" % detail, check],
+                         _time_machine_manual_recovery(snapshot, device, path, clear_first=bool(release_failure)),
+                         prints_copy_command=True, copy_command_may_ask_password=True)
+
+
+def build_blob_report(blob_id, repo, box_ssh_host, snapshot_root, skip=(), runner=run_command, prompt_for_root=False,
+                      log_store_root=DEFAULT_LOG_STORE_ROOT, on_surface_done=None, on_ned_box=None):
+    """Search for a git blob id: git, then, when no commit holds it, the guarded-file hook's log and the first
+    snapshot taken after the hook saw it."""
+    if on_ned_box is None:
+        on_ned_box = running_on_ned_box()
+    reports = []
+
+    def finished(report):
+        copy_found_versions(report)
+        reports.append(report)
+        if on_surface_done is not None:
+            on_surface_done(report)
+        return report
+
+    if "git" not in skip and finished(search_git_for_blob(blob_id, repo, runner)).commit_holds:
+        return reports
+    if "box" in skip:
+        box_ssh_host = ""
+    if "logstore" in skip:
+        return reports
+    log = finished(search_guarded_file_versions_log(blob_id, log_store_root, box_ssh_host, runner))
+    earliest = {}
+    for machine, path, seen in log.sightings:
+        earliest.setdefault(machine, (path, seen))
+    if "ned-box" in earliest and "box" not in skip and "timeshift" not in skip:
+        path, seen = earliest["ned-box"]
+        finished(search_timeshift_after(blob_id, path, seen, box_ssh_host, snapshot_root, runner, on_ned_box))
+    if "mac" in earliest and "timemachine" not in skip:
+        path, seen = earliest["mac"]
+        finished(search_time_machine_after(blob_id, path, seen, runner, prompt_for_root))
+    return reports
+
+
 def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_SNAPSHOT_MOUNT_POINT):
     # Resolve /tmp to /private/tmp so comparisons use the mount table's spelling.
     mount_point = os.path.realpath(mount_point)
@@ -494,7 +1009,7 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
             "local snapshots",
             UNAVAILABLE,
             ["could not list the local snapshots of %s — %s" % (MAC_DATA_VOLUME, failure),
-             "this surface is macOS-only; on the box there are none to list and none to search"],
+             "this surface is macOS-only; on ned-box there are none to list and none to search"],
             ["tmutil listlocalsnapshots %s" % MAC_DATA_VOLUME],
         )
     if not snapshots:
@@ -506,21 +1021,30 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
         )
 
     already_mounted = _local_snapshots_already_mounted(runner)
-    # An occupied mount point blocks later mounts, but may belong to a live seat.
-    # Report how to clear it; never unmount another run's snapshot automatically.
+    # Clear what ended runs left before reading anything. Another run's mount is never read in place, since
+    # another live run may unmount it between this run's two tests of it.
+    run_lines, run_release, held_by_other_runs = _clear_mounts_left_by_ended_runs(
+        already_mounted, mount_point, runner)
+    # An occupied mount point blocks later mounts; it was left by an ended run, so the printed clear is safe.
     occupying = sorted(name for name, where in already_mounted.items() if where == mount_point)
     hits = []
     searched = []
     in_place = []
     unsearched = []
     stuck = None
+    made_mount_point = False
     for snapshot in snapshots:
+        # A cleanup failure comes first: it is true whatever the loop below does, and it explains its clear command.
+        if snapshot in held_by_other_runs:
+            unsearched.append((snapshot, held_by_other_runs[snapshot]))
+            continue
         if stuck is not None:
             # Stop after a failed release: later mounts would all fail on the occupied mount point.
             unsearched.append((snapshot, "not reached: " + stuck))
             continue
         outcome, where, release_failure, read_in_place = _local_snapshot_probe(
             snapshot, probe_path, mount_point, runner, already_mounted.get(snapshot))
+        made_mount_point = made_mount_point or not read_in_place
         if outcome == "unmounted":
             unsearched.append((snapshot, where))
         else:
@@ -533,9 +1057,12 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
             # Add "not reached" only for later snapshots; this snapshot was searched.
             stuck = "%s stayed mounted on %s — %s" % (snapshot, mount_point, release_failure)
 
+    if made_mount_point and stuck is None and not occupying:
+        run_lines.extend(_remove_empty_mount_point(mount_point, "this run's own", runner))
+
     lines = ["%d local snapshot(s) retained, %d searched — no password needed for any of it"
              % (len(snapshots), len(searched)),
-             "tested %s inside each" % probe_path]
+             "tested %s inside each" % probe_path] + run_lines
     if occupying:
         # Report the occupied mount point even when every readable snapshot was searched.
         lines.append("the mount point %s already had %s on it when this run started, so every snapshot "
@@ -550,9 +1077,7 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
         if repeats:
             lines.append("    ... and %d more snapshot(s) with the same message" % repeats)
 
-    if stuck and not unsearched:
-        # A failed release on the last snapshot has no later unsearched entry to report it.
-        lines.append(stuck)
+    lines.extend(_failed_release_line(stuck, unsearched))
 
     clear_first = bool(stuck) or bool(occupying)
 
@@ -563,9 +1088,18 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
         if len(hits) > 5:
             lines.append("    ... and %d older" % (len(hits) - 5))
         best_snapshot, best_where, best_read_in_place = hits[0]
+        if best_read_in_place:
+            # Already mounted where it sits: this run copies it out; only a mount of its own is left to release.
+            version = FoundVersion("localsnapshot-%s-%s" % (_snapshot_name_stamp(best_snapshot),
+                                                            os.path.basename(probe_path)),
+                                   "file", best_where + probe_path)
+            release = ([_local_snapshot_clear_mount_point_command(mount_point)] if best_where == mount_point
+                       else [])
+            return SurfaceReport("local snapshots", FOUND, lines, release + run_release, [version])
         return SurfaceReport("local snapshots", FOUND, lines,
-                             _local_snapshot_recovery(best_snapshot, probe_path, mount_point, clear_first,
-                                                      already_at=best_where if best_read_in_place else None))
+                             _local_snapshot_recovery(best_snapshot, probe_path, mount_point, clear_first)
+                             + run_release,
+                             prints_copy_command=True)
 
     if searched:
         lines.append("searched %s .. %s and none of them has it" % (searched[-1], searched[0]))
@@ -575,8 +1109,12 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
                      "other path would need a find over the volume, which this surface does not run)" % wanted)
     if unsearched:
         # macOS cannot mount a snapshot twice; recovery must read an existing mount in place.
+        # A snapshot another live run holds is still in already_mounted, so it is left out here too.
         reachable = [snapshot for snapshot, _ in unsearched if snapshot not in already_mounted]
-        if not reachable:
+        if not reachable and any(snapshot in held_by_other_runs for snapshot, _ in unsearched):
+            lines.append("mount_apfs cannot open a snapshot twice, so a snapshot another run of this script "
+                         "has mounted can be searched only once that mount is gone: run this search again then")
+        elif not reachable:
             lines.append("every snapshot that could not be searched is one macOS already has mounted; "
                          "mount_apfs cannot open a snapshot twice, and macOS's own mounts are not this "
                          "script's to clear — the rest were searched and do not have it")
@@ -584,39 +1122,140 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
             "local snapshots",
             UNAVAILABLE,
             lines,
-            _local_snapshot_recovery(reachable[0], probe_path, mount_point, clear_first) if reachable
-            else ([_local_snapshot_clear_mount_point_command(mount_point)] if clear_first else []),
+            (_local_snapshot_recovery(reachable[0], probe_path, mount_point, clear_first) if reachable
+             else ([_local_snapshot_clear_mount_point_command(mount_point)] if clear_first else []))
+            + run_release,
         )
     # A failed release does not undo a completed search; keep NOT FOUND and provide the clear command.
     return SurfaceReport("local snapshots", NOT_FOUND, lines,
-                         [_local_snapshot_clear_mount_point_command(mount_point)] if clear_first else [])
+                         ([_local_snapshot_clear_mount_point_command(mount_point)] if clear_first else [])
+                         + run_release)
+
+
+def _ended_run_process_id(where, mount_point):
+    """The process ID in a mount point of this script's own spelling other than this run's, else None."""
+    head, _, own_id = mount_point.rpartition("-")
+    if not own_id.isdigit() or where == mount_point:
+        return None
+    match = re.fullmatch(re.escape(head) + r"-(\d+)", where)
+    return int(match.group(1)) if match else None
+
+
+def _run_of_this_script_is_live(process_id, runner):
+    """Return (live, why, ps failed): whether process_id is a run of this script that is still running."""
+    code, out, stderr = runner(["ps", "-p", str(process_id), "-o", "command="])
+    if code == 1 and not out.strip() and not stderr.strip():
+        return False, "process %d has ended" % process_id, False
+    if code != 0:
+        first = stderr.strip().splitlines()[0] if stderr.strip() else "no error text"
+        # Unknown is treated as live: unmounting a live run's snapshot would break its search.
+        return (True, "ps could not say whether process %d still runs — ps exited %s: %s"
+                % (process_id, code, first), True)
+    if THIS_SCRIPT_NAME in out:
+        return True, "process %d, another run of this script, is still running" % process_id, False
+    return False, "process %d has ended and its number now belongs to another program" % process_id, False
+
+
+def _clear_mounts_left_by_ended_runs(already_mounted, mount_point, runner):
+    """Unmount snapshots that ended runs of this script left mounted, and remove their empty mount points.
+
+    Returns (report lines, clear commands for mounts that would not release, {snapshot: why it is not
+    searched} for snapshots another run's mount still holds). A cleared snapshot is dropped from
+    already_mounted so this run mounts it for itself. One that would not release is not searched: another
+    run reclaiming it at the same time may unmount it between this run's two tests of it.
+    """
+    lines = []
+    release = []
+    held_by_other_runs = {}
+    head = mount_point.rpartition("-")[0]
+    for snapshot, where in sorted(already_mounted.items()):
+        process_id = _ended_run_process_id(where, mount_point)
+        if process_id is None:
+            continue
+        live, why, _ = _run_of_this_script_is_live(process_id, runner)
+        if live:
+            held_by_other_runs[snapshot] = "mounted on %s, and %s" % (where, why)
+            continue
+        code, _, stderr = runner(["diskutil", "unmount", where])
+        if code != 0:
+            first = stderr.strip().splitlines()[0] if stderr.strip() else "no error text"
+            held_by_other_runs[snapshot] = (
+                "left mounted on %s by a run of this script that ended (%s), and diskutil unmount exited %s: %s"
+                % (where, why, code, first))
+            release.append(_local_snapshot_clear_mount_point_command(where))
+            continue
+        del already_mounted[snapshot]
+        lines.append("%s was left mounted on %s by a run of this script that ended (%s); this run unmounted it"
+                     % (snapshot, where, why))
+        lines.extend(_remove_empty_mount_point(where, "an ended run's", runner))
+    code, out, stderr = runner(["find", os.path.dirname(head), "-maxdepth", "1", "-type", "d", "-empty",
+                                "-name", os.path.basename(head) + "-*"])
+    if code != 0:
+        first = stderr.strip().splitlines()[0] if stderr.strip() else "no error text"
+        lines.append("could not look for empty mount points that ended runs left in %s — find exited %s: %s"
+                     % (os.path.dirname(head), code, first))
+        return lines, release, held_by_other_runs
+    for left in sorted(out.split()):
+        process_id = _ended_run_process_id(left, mount_point)
+        if process_id is None:
+            continue
+        live, why, ps_failed = _run_of_this_script_is_live(process_id, runner)
+        if ps_failed:
+            lines.append("left the empty mount point %s in place, since %s" % (left, why))
+        if live:
+            continue
+        lines.extend(_remove_empty_mount_point(left, "an ended run's", runner))
+    return lines, release, held_by_other_runs
+
+
+def _remove_empty_mount_point(where, whose, runner):
+    """Remove an empty mount point; return a line naming it when it could not be removed."""
+    code, _, stderr = runner(["rmdir", where])
+    if code == 0:
+        return []
+    first = stderr.strip().splitlines()[0] if stderr.strip() else "no error text"
+    return ["could not remove %s empty mount point %s — rmdir exited %s: %s" % (whose, where, code, first)]
 
 
 def _local_snapshot_clear_mount_point_command(mount_point):
     return "diskutil unmount %s" % shlex.quote(mount_point)
 
 
-def _local_snapshot_recovery(snapshot, probe_path, mount_point, clear_first=False, already_at=None):
-    """Return commands to copy the file and release any mount opened for recovery."""
-    # Internal Data snapshots need no sudo; an already-mounted snapshot must be read in place.
-    if already_at == mount_point:
-        # Copy before clearing this mount point, or recovery unmounts its own source.
-        return [
-            "cp %s . && %s"
-            % (shlex.quote(already_at + probe_path), _local_snapshot_clear_mount_point_command(mount_point)),
-        ]
-    if already_at:
-        return [
-            "cp %s ." % shlex.quote(already_at + probe_path),
-            "# macOS already has %s mounted there — nothing to mount, nothing to release" % snapshot,
-        ]
+def _local_snapshot_recovery(snapshot, probe_path, mount_point, clear_first=False):
+    """Return commands that mount the snapshot, copy the file into the found-copies folder, and unmount."""
+    # Internal Data snapshots need no sudo.
     clear = [_local_snapshot_clear_mount_point_command(mount_point)] if clear_first else []
     return clear + [
         "mkdir -p %s && mount_apfs -o ro -s %s %s %s"
         % (shlex.quote(mount_point), snapshot, MAC_DATA_VOLUME, shlex.quote(mount_point)),
-        "cp %s . && diskutil unmount %s"
-        % (shlex.quote(mount_point + probe_path), shlex.quote(mount_point)),
+        "%s && diskutil unmount %s"
+        % (_copy_into_found_copies_command(mount_point + probe_path,
+                                           "localsnapshot-%s-%s" % (_snapshot_name_stamp(snapshot),
+                                                                    os.path.basename(probe_path))),
+           shlex.quote(mount_point)),
     ]
+
+
+def _copy_into_found_copies_command(source, name):
+    """A command that copies source into the found-copies folder, never over a file already there."""
+    folder = found_copies_folder()
+    return "mkdir -p %s && cp -n %s %s" % (shlex.quote(folder.path), shlex.quote(source),
+                                           shlex.quote(folder.destination(name)))
+
+
+def _snapshot_name_stamp(snapshot_name):
+    """The snapshot's time as YYYY-MM-DDThhmm, for a copy's name, or its date when that is all it holds."""
+    digits = _snapshot_timestamp(snapshot_name) or _snapshot_datestamp(snapshot_name)
+    if len(digits) >= 12:
+        return "%s-%s-%sT%s" % (digits[:4], digits[4:6], digits[6:8], digits[8:12])
+    return "%s-%s-%s" % (digits[:4], digits[4:6], digits[6:8]) if len(digits) >= 8 else "undated"
+
+
+def _failed_release_line(stuck, unsearched):
+    """The failed-release line, unless a "not reached" entry already carries it."""
+    if stuck and not any(reason.startswith("not reached: ") for _, reason in unsearched):
+        return [stuck]
+    return []
 
 
 def _grouped_by_reason(unsearched):
@@ -672,14 +1311,21 @@ def _local_snapshot_probe_path(wanted, repo, runner):
             "git, transcripts and Timeshift do answer a bare filename; re-run with at least one "
             "directory component, or the absolute path, to search this surface too",
         ]
-    code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
-    if code != 0 or not out.strip():
+    try:
+        top_level = _git_top_level(repo, runner)
+    except _GitCommandFailed as failure:
+        return None, [
+            "%r is relative, and git could not give the top level of %s to resolve it against — %s"
+            % (wanted, repo, failure),
+            "re-run with the absolute path, or fix the git failure above",
+        ]
+    if top_level is None:
         return None, [
             "%r is relative and %s is not a git repository, so there is no top level to resolve it "
             "against and no absolute path to test inside a snapshot" % (wanted, repo),
             "re-run with the absolute path, or with --repo pointing at the repository it belongs to",
         ]
-    return _below_data_volume(os.path.join(out.strip(), stripped)), []
+    return _below_data_volume(os.path.join(top_level, stripped)), []
 
 
 def _below_data_volume(path):
@@ -742,23 +1388,20 @@ def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contai
     if code != 0:
         return SurfaceReport(surface, UNAVAILABLE, ["%s is not a git repository (%s)" % (repo, stderr.strip())])
 
-    wanted, toplevel = _repo_relative_form(wanted, repo, runner)
-    if wanted.startswith("/"):
-        return SurfaceReport(
-            surface,
-            UNAVAILABLE,
-            ["%s is outside %s, so git was not asked for it" % (wanted, toplevel or repo),
-             "re-run with the path relative to the repository, or a trailing fragment of it"],
-        )
-
-    # git pathspecs are relative to -C, but these queries and --name-only results are repo-relative.
-    code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
-    top_level = out.strip() if code == 0 and out.strip() else repo
-
     lines = []
-    recovery = []
+    versions = []
     dates_held = []
     try:
+        wanted, toplevel = _repo_relative_form(wanted, repo, runner)
+        if wanted.startswith("/"):
+            return SurfaceReport(
+                surface,
+                UNAVAILABLE,
+                ["%s is outside %s, so git was not asked for it" % (wanted, toplevel or repo),
+                 "re-run with the path relative to the repository, or a trailing fragment of it"],
+            )
+        # git pathspecs are relative to -C, but these queries and --name-only results are repo-relative.
+        top_level = _git_top_level(repo, runner) or repo
         paths = _git_candidate_paths(wanted, top_level, runner, revisions)
         if not paths:
             return SurfaceReport(surface, NOT_FOUND, [never_contained_template % (repo, wanted)])
@@ -769,8 +1412,8 @@ def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contai
             sha, date, subject = commit
             lines.append("%s" % path)
             lines.append("    last held by %s (%s) %s" % (sha[:9], date, subject[:70]))
-            recovery.append("%s -C %s show %s:%s" % (PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES,
-                                                     shlex.quote(repo), sha[:9], shlex.quote(path)))
+            versions.append(FoundVersion("git-%s-%s" % (sha[:8], os.path.basename(path)), "git",
+                                         "%s:%s" % (sha, path), repo=top_level))
             dates_held.append(date)
     except _GitCommandFailed as failure:
         return SurfaceReport(surface, UNAVAILABLE, ["git failed while searching %s — %s" % (repo, failure)])
@@ -778,20 +1421,20 @@ def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contai
     if not lines:
         return SurfaceReport(surface, NOT_FOUND, [none_held_line])
 
-    report = SurfaceReport(surface, FOUND, lines, recovery)
+    report = SurfaceReport(surface, FOUND, lines, versions=versions)
     report.dates_held = dates_held
     return report
 
 
 def _repo_relative_form(wanted, repo, runner=run_command):
-    """Return (normalized query, repository top level or None)."""
-    # git log accepts absolute paths, but cat-file blob addresses require repo-relative paths.
+    """Return (normalized query, repository top level or None); raises _GitCommandFailed when git fails."""
+    # git log accepts absolute paths, but git ls-tree matches repo-relative paths only.
     if not wanted.startswith("/"):
         return wanted, None
-    code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
-    if code != 0 or not out.strip():
+    toplevel = _git_top_level(repo, runner)
+    if toplevel is None:
         return wanted, None
-    toplevel = os.path.realpath(out.strip())
+    toplevel = os.path.realpath(toplevel)
     real = os.path.realpath(wanted)
     if real.startswith(toplevel + "/"):
         return real[len(toplevel) + 1:], toplevel
@@ -822,7 +1465,20 @@ def _git_candidate_paths(wanted, repo, runner, revisions=GIT_REVISIONS_EVERY_REF
 
 
 class _GitCommandFailed(Exception):
-    """A required git command failed; the exception text is stderr."""
+    """A required git command failed; the exception text carries git's stderr."""
+
+
+def _git_top_level(repo, runner):
+    """Return the top level of the repository holding repo, or None when repo is in no git repository.
+
+    Raises _GitCommandFailed for any other git failure, such as a bare repository or a corrupt one."""
+    code, out, stderr = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
+    if code == 0 and out.strip():
+        return out.strip()
+    if code != 0 and git_output.git_stderr_says_outside_a_repository(stderr):
+        return None
+    raise _GitCommandFailed("git -C %s rev-parse --show-toplevel exited %s — %s"
+                            % (repo, code, stderr.strip() or "no error text"))
 
 
 def _git_newest_commit_holding(path, repo, runner, revisions=GIT_REVISIONS_EVERY_REF,
@@ -866,8 +1522,11 @@ def _git_newest_commit_holding(path, repo, runner, revisions=GIT_REVISIONS_EVERY
 
 
 def _git_tree_holds(sha, path, repo, runner):
-    code, _, _ = runner(["git", "-C", repo, "cat-file", "-e", "%s:%s" % (sha, path)])
-    return code == 0
+    # git cat-file -e exits 128 both for an absent path and for a git failure; ls-tree tells them apart.
+    code, out, stderr = runner(["git", "-C", repo, "ls-tree", "-z", sha, "--", path])
+    if code != 0:
+        raise _GitCommandFailed(stderr.strip() or "git ls-tree exited %s" % code)
+    return any(entry.path == path for entry in git_output.tree_entries(out))
 
 
 def _git_some_ref_reaches(sha, repo, runner):
@@ -903,7 +1562,7 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
         where = "this machine"
         code, out, stderr = runner([sys.executable, "-c"] + probe_arguments, timeout=SHORT_TIMEOUT_SECONDS)
     elif box_ssh_host:
-        where = "the box (%s)" % box_ssh_host
+        where = "ned-box (%s)" % box_ssh_host
         code, out, stderr = runner(
             ["ssh", "-o", "ConnectTimeout=%d" % BOX_LOG_STORE_CONNECT_TIMEOUT_SECONDS, "-o", "BatchMode=yes",
              box_ssh_host, "python3 -c " + " ".join(shlex.quote(a) for a in probe_arguments)],
@@ -914,7 +1573,7 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
             return SurfaceReport(
                 "log-store",
                 UNAVAILABLE,
-                ["the box (%s) is unreachable — %s" % (box_ssh_host, first_error or "ssh failed"),
+                ["ned-box (%s) is unreachable — %s" % (box_ssh_host, first_error or "ssh failed"),
                  "see why with `ssh %s true`; once it connects, re-run this search" % box_ssh_host],
             )
     else:
@@ -999,10 +1658,10 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
                      " with: %s)" % (older_candidates, name, list_every_name))
     if unread:
         lines.append("(%s)" % unread_line)
-    newest_at_wanted_path = shlex.quote(at_wanted_path[0][1])
-    recovery = (["cp %s ." % newest_at_wanted_path] if store_is_here
-                else ["scp %s:%s ." % (box_ssh_host, newest_at_wanted_path)])
-    return SurfaceReport("log-store", FOUND, lines, recovery)
+    newest_time, newest_path = at_wanted_path[0][0], at_wanted_path[0][1]
+    version = FoundVersion("logstore-%s-%s" % (_name_stamp_from_epoch(newest_time), os.path.basename(newest_path)),
+                           "file" if store_is_here else "box-file", newest_path, host=box_ssh_host)
+    return SurfaceReport("log-store", FOUND, lines, versions=[version])
 
 
 def _log_store_listing(hits, list_every_name):
@@ -1095,13 +1754,13 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
         hits = [h for h in out.splitlines() if h.strip()]
         first_error = stderr.strip().splitlines()[0] if stderr.strip() else ""
         if code == 255:
-            lines.append("the box (%s): unreachable — %s" % (box_ssh_host, first_error or "ssh failed"))
+            lines.append("ned-box (%s): unreachable — %s" % (box_ssh_host, first_error or "ssh failed"))
             statuses.append(UNAVAILABLE)
         elif code == BOX_TRANSCRIPTS_DIR_MISSING:
-            lines.append("the box (%s): ~/.claude/projects does not exist there" % box_ssh_host)
+            lines.append("ned-box (%s): ~/.claude/projects does not exist there" % box_ssh_host)
             statuses.append(UNAVAILABLE)
         elif hits:
-            lines.append("the box (%s): %d session transcript(s) mention it" % (box_ssh_host, len(hits)))
+            lines.append("ned-box (%s): %d session transcript(s) mention it" % (box_ssh_host, len(hits)))
             for hit in hits[:5]:
                 lines.append("    " + hit)
             if len(hits) > 5:
@@ -1109,14 +1768,14 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
             recovery.append("ssh %s %s | head" % (box_ssh_host, shlex.quote(_transcript_context_print_command(wanted, hits[0]))))
             statuses.append(FOUND)
         elif code == 1:
-            lines.append("the box (%s): searched ~/.claude/projects, no transcript mentions it" % box_ssh_host)
+            lines.append("ned-box (%s): searched ~/.claude/projects, no transcript mentions it" % box_ssh_host)
             statuses.append(NOT_FOUND)
         else:
-            lines.append("the box (%s): grep over ~/.claude/projects failed (exit %s) — %s"
+            lines.append("ned-box (%s): grep over ~/.claude/projects failed (exit %s) — %s"
                          % (box_ssh_host, code, first_error or "no error text"))
             statuses.append(UNAVAILABLE)
     else:
-        lines.append("the box: not searched — no ssh host given (--skip box, or an empty --box-ssh-host)")
+        lines.append("ned-box: not searched — no ssh host given (--skip box, or an empty --box-ssh-host)")
 
     if FOUND in statuses:
         # The searching session quotes the path too; a lone transcript hit may contain no recovered content.
@@ -1256,7 +1915,7 @@ def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=r
         return SurfaceReport(
             "timeshift",
             UNAVAILABLE,
-            ["the box (%s) is unreachable — %s" % (box_ssh_host, first_error or "ssh failed"),
+            ["ned-box (%s) is unreachable — %s" % (box_ssh_host, first_error or "ssh failed"),
              "the snapshots are fine; this machine just cannot see them right now"],
         )
     if code != 0:
@@ -1290,11 +1949,12 @@ def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=r
     if unsearched:
         lines.append("(find failed under %d snapshot director%s, first: %s — those were not searched)"
                      % (len(unsearched), "y" if len(unsearched) == 1 else "ies", unsearched[0]))
-    if on_ned_box:
-        recovery = ["cp %s ." % shlex.quote(hits[0])]
-    else:
-        recovery = ["scp %s:%s ." % (box_ssh_host, shlex.quote(hits[0]))]
-    return SurfaceReport("timeshift", FOUND, lines, recovery)
+    newest = hits[0]
+    snapshot_directory = newest[len(snapshot_root):].lstrip("/").split("/", 1)[0] if newest.startswith(
+        snapshot_root) else "snapshot"
+    version = FoundVersion("timeshift-%s-%s" % (snapshot_directory, os.path.basename(newest)),
+                           "file" if on_ned_box else "box-file", newest, host=box_ssh_host)
+    return SurfaceReport("timeshift", FOUND, lines, versions=[version])
 
 
 def _timeshift_probe_script(wanted, snapshot_root, search_roots):
@@ -1323,9 +1983,9 @@ def _timeshift_probe_script(wanted, snapshot_root, search_roots):
 
 def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TIME_MACHINE_SNAPSHOT_LIMIT,
                         runner=run_command, prompt_for_root=False):
-    destination = _time_machine_destination(runner)
+    destination, why_none = _time_machine_destination(runner)
     if destination is None:
-        return SurfaceReport("time machine", UNAVAILABLE, ["no Time Machine destination is configured on this Mac"])
+        return SurfaceReport("time machine", UNAVAILABLE, [why_none])
 
     name = destination["name"]
     device, mount_point, attached = _time_machine_volume_state(name, runner)
@@ -1350,7 +2010,10 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
                 ["diskutil mount %s" % shlex.quote(name)],
             )
 
-    snapshots = _time_machine_snapshots(device, runner)
+    snapshots, failure = _time_machine_snapshots(device, runner)
+    if failure is not None:
+        return SurfaceReport("time machine", UNAVAILABLE,
+                             ["the snapshots of %r could not be listed — %s" % (name, failure)])
     if not snapshots:
         return SurfaceReport(
             "time machine",
@@ -1384,6 +2047,8 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
             searched.append(snapshot)
         else:
             unsearched.append((snapshot, detail))
+    # Only the sudoers rule makes the printed `sudo mount_apfs` run without a password; a warm credential expires.
+    rule_carried_it = can_sudo != 0 and not prompt_for_root
     if can_sudo == 0:
         how = "with an already-warm sudo"
     elif prompt_for_root:
@@ -1394,15 +2059,14 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
              % (len(snapshots), len(searched), len(candidates), how)]
     for snapshot, reason in unsearched:
         lines.append("could not search %s — %s" % (snapshot, reason))
-    if stuck and not unsearched:
-        # The last candidate has no later unsearched entry to carry a failed release.
-        lines.append(stuck)
+    lines.extend(_failed_release_line(stuck, unsearched))
     if hits:
         for snapshot, hit in hits:
             lines.append("%s holds %s" % (snapshot, hit))
         return SurfaceReport("time machine", FOUND, lines,
                              _time_machine_manual_recovery(hits[0][0], device, hits[0][1],
-                                                           clear_first=bool(stuck)))
+                                                           clear_first=bool(stuck)),
+                             prints_copy_command=True, copy_command_may_ask_password=not rule_carried_it)
     if searched:
         lines.append("searched %s and did not find it" % ", ".join(searched))
     if unsearched:
@@ -1415,7 +2079,7 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
 
 
 def _time_machine_root_wall(snapshots, candidates, dated_by_git, device, refusal, unsearched):
-    """Return an UNAVAILABLE report marked as requiring a root credential."""
+    """Return the UNAVAILABLE report for a mount that sudo refused for want of a password."""
     # Only the mount's sudo refusal proves this; sudo -n true does not test the mount's NOPASSWD rule.
     lines = [
         "%d snapshots present, %s .. %s — enumerated fine, but the mount was refused: %s"
@@ -1429,11 +2093,8 @@ def _time_machine_root_wall(snapshots, candidates, dated_by_git, device, refusal
         lines.append("could not search %s — %s" % (snapshot, reason))
     lines.append(_candidate_line(candidates[0], dated_by_git))
     lines.append(_alternative_line(snapshots, candidates[0], dated_by_git))
-    wall = SurfaceReport("time machine", UNAVAILABLE, lines,
+    return SurfaceReport("time machine", UNAVAILABLE, lines,
                          _time_machine_manual_recovery(candidates[0], device))
-    wall.root_credential_needed = True
-    wall.snapshots_enumerated = list(snapshots)
-    return wall
 
 
 def _is_sudo_non_interactive_refusal(stderr):
@@ -1455,17 +2116,26 @@ def _time_machine_manual_recovery(snapshot, device, path_inside=None, clear_firs
     open_it = "mkdir -p %s && sudo mount_apfs -o ro -s %s %s %s" % (mount, snapshot, device, mount)
     if path_inside:
         return clear + [open_it,
-                        "cp %s . && diskutil unmount %s"
-                        % (shlex.quote(data_root + path_inside), mount)]
+                        "%s && diskutil unmount %s"
+                        % (_copy_into_found_copies_command(
+                            data_root + path_inside,
+                            "timemachine-%s-%s" % (_snapshot_name_stamp(snapshot), os.path.basename(path_inside))),
+                           mount)]
     return clear + [open_it + " && ls %s" % shlex.quote(data_root),
                     "# then look for the path under %s, and: diskutil unmount %s"
                     % (data_root, mount)]
 
 
 def _time_machine_destination(runner):
-    code, out, _ = runner(["tmutil", "destinationinfo"])
+    """Return (destination, None), or (None, the line saying why there is none)."""
+    code, out, stderr = runner(["tmutil", "destinationinfo"])
+    if code == 127:
+        # run_command's answer for a missing program; ned-box has no tmutil.
+        return None, ("%s, and Time Machine exists only on macOS, so this machine has no Time Machine "
+                      "backup to search" % stderr.strip())
+    none_configured = "no Time Machine destination is configured on this machine"
     if code != 0:
-        return None
+        return None, none_configured
     destination = {}
     for line in out.splitlines():
         if ":" not in line:
@@ -1477,7 +2147,7 @@ def _time_machine_destination(runner):
             destination["name"] = value
         elif key == "mount point" and value:
             destination["mount_point"] = value
-    return destination if destination.get("name") else None
+    return (destination, None) if destination.get("name") else (None, none_configured)
 
 
 def _time_machine_volume_state(name, runner):
@@ -1500,11 +2170,12 @@ def _time_machine_volume_state(name, runner):
 
 
 def _time_machine_snapshots(device, runner):
+    """Return (snapshot names, newest first; None) or ([], why the listing failed)."""
     if not device:
-        return []
-    code, out, _ = runner(["diskutil", "apfs", "listSnapshots", device], timeout=LONG_TIMEOUT_SECONDS)
+        return [], "the backup disk's device node is not known"
+    code, out, stderr = runner(["diskutil", "apfs", "listSnapshots", device], timeout=LONG_TIMEOUT_SECONDS)
     if code != 0:
-        return []
+        return [], "diskutil apfs listSnapshots %s exited %s — %s" % (device, code, stderr.strip() or "no error text")
     names = []
     for line in out.splitlines():
         stripped = line.strip().lstrip("|").strip()
@@ -1513,7 +2184,7 @@ def _time_machine_snapshots(device, runner):
             if value:
                 names.append(value)
     # Snapshot timestamps sort lexically.
-    return sorted(names, reverse=True)
+    return sorted(names, reverse=True), None
 
 
 def _time_machine_candidates(snapshots, newest_date_held, limit):
@@ -1619,53 +2290,69 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
 
 
 
-def announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner):
-    """Speak and return the password request, or return None."""
-    # Wait for speech to finish so script exit does not orphan the announcement.
-    sentence = speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner)
-    if sentence is None:
-        return None
-    runner(["say", sentence])
-    return sentence
+def git_failure_next_steps(rerun):
+    """The lines that tell an agent what to do after a git failure in a run started as rerun."""
+    return next_step_lines.git_failure_next_step_lines(
+        rerun, PROGRAM_PATH, text_the_failure_line_contains="git's failure:",
+        include_the_misspelt_branch_commit_or_path_line=True)
 
 
-def speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner):
-    """Return a password request only when mounting a backup can help recovery."""
-    # No deletion timestamp means no proof a backup predates deletion; never-committed paths stay silent.
-    wall = next((r for r in reports if getattr(r, "root_credential_needed", False)), None)
-    if wall is None:
-        return None
-    if any(r.status == FOUND for r in reports):
-        return None
-    stripped = _strip_dot_slash(wanted)
-    if "/" not in stripped:
-        return None
-    if "git" in skip:
-        # Do not query git when the caller skipped that surface.
-        return None
-    deleted_at = _git_deletion_timestamp(stripped, repo, runner)
-    if deleted_at is None:
-        return None
-    stamps = [_snapshot_timestamp(s) for s in getattr(wall, "snapshots_enumerated", [])]
-    if not any(stamp is not None and stamp <= deleted_at for stamp in stamps):
-        return None
-    return "%s needs your password to search Time Machine for %s" % (
-        SPOKEN_TOOL_NAME, os.path.basename(stripped))
+REPO_PLACEHOLDER = "<checkout>"
 
 
-def _git_deletion_timestamp(wanted, repo, runner):
-    """Return the deletion commit's local timestamp as YYYYMMDDhhmmss, or None."""
-    # Snapshot names use local time; query from the repo root because wanted is repo-relative.
-    code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
-    top_level = out.strip() if code == 0 and out.strip() else repo
-    code, out, _ = runner(["git", "-C", top_level, "log", "--all", "--full-history", "-1",
-                           "--diff-filter=D", "--date=format-local:%Y%m%d%H%M%S",
-                           "--format=%cd", "--", wanted])
-    if code != 0 or not out.strip():
-        return None
-    stamp = out.strip().splitlines()[0].strip()
-    return stamp if len(stamp) == 14 and stamp.isdigit() else None
+def arguments_without_repo(arguments):
+    """arguments with every --repo option and its value left out; after a -- separator every argument is kept."""
+    kept = []
+    skip_next = False
+    for position, argument in enumerate(arguments):
+        if skip_next:
+            skip_next = False
+        elif argument == "--":
+            return kept + list(arguments[position:])
+        elif argument == "--repo":
+            skip_next = True
+        elif not argument.startswith("--repo="):
+            kept.append(argument)
+    return kept
 
+
+def build_agent_facing_message_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command(repo, named, failure, skip, repo_rerun):
+    """The lines, before the shared next steps, for a git top-level failure; true for whichever git surfaces --skip left in."""
+    git_surfaces = [name for flag, name in (("git", "git"), ("reflog", "git reflog")) if flag not in skip]
+    if len(git_surfaces) == 2:
+        affected = ("The git and git reflog surfaces cannot search, and their result lines will say UNAVAILABLE "
+                    "for this failure.")
+    elif git_surfaces:
+        affected = ("The %s surface cannot search, and its result line will say UNAVAILABLE for this failure; "
+                    "--skip left out the other git surface." % git_surfaces[0])
+    else:
+        affected = ("--skip left out the git and git reflog surfaces, so no surface prints a line for this "
+                    "failure.")
+    found = ("If some surface finds the path, this program exits 0 when this program copied a version, 5 when this "
+             "program copied no version but printed a command that copies one, and 4 otherwise.")
+    if git_surfaces:
+        not_found = "If no surface finds the path, this program exits 3, for an incomplete search."
+    else:
+        not_found = ("If no surface finds the path, this program exits 1, for a search that missed everywhere, when "
+                     "at least one surface ran and every surface that ran reports NOT FOUND, and 3, for an incomplete "
+                     "search, otherwise.")
+    return ("%s: git could not find the top level of the repository at %s. This program searches several "
+            "surfaces, the places a deleted file may survive, such as local snapshots, git, git reflog, the "
+            "log-store, transcripts, Timeshift and Time Machine, and prints one result line per surface. %s Every "
+            "other surface that --skip did not leave out runs as usual, given the absolute path %s unchanged, since "
+            "git could not turn it into a path inside the repository; each such surface matches that path in its "
+            "own way, and its result line reports that surface's own result, which this git failure does not "
+            "affect, though a surface can still be UNAVAILABLE for a reason of its own.\n"
+            "%s %s\n"
+            "git's failure: %s\n"
+            "If --repo names the wrong directory, or was left out and the current directory is not in the path's "
+            "checkout, run %s with %s replaced by a checkout of the repository the path was deleted from."
+            % (THIS_SCRIPT_NAME, repo, affected, named, found, not_found, failure, repo_rerun, REPO_PLACEHOLDER))
+
+
+def rerun_command(arguments):
+    """The command line that runs this program again with arguments, from any directory."""
+    return shlex.join(["python3", os.path.abspath(__file__)] + list(arguments))
 
 
 def _combine(statuses):
@@ -1686,6 +2373,7 @@ def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, sea
     newest_date_held = None
 
     def finished(report):
+        copy_found_versions(report)
         reports.append(report)
         if on_surface_done is not None:
             on_surface_done(report)
@@ -1714,13 +2402,11 @@ def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, sea
     if "timemachine" not in skip:
         finished(search_time_machine(wanted, newest_date_held, runner=runner,
                                      prompt_for_root=prompt_for_root))
-    # Assemble the speech decision here so callers that bypass main receive it too.
-    announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner)
     return reports
 
 
 def render_header(wanted):
-    return "Searching every history this fleet keeps for: %s" % wanted
+    return "Searching every history the Mac and ned-box keep for: %s" % wanted
 
 
 def render_summary(reports):
@@ -1730,6 +2416,31 @@ def render_summary(reports):
     candidates = [r for r in reports if r.status != FOUND and getattr(r, "candidate_copies", 0)]
     if found:
         out.append("Recoverable from: %s." % ", ".join(r.surface for r in found))
+        copied = [path for r in found for path in r.copied]
+        not_copied = [r.surface for r in found if r.copy_failures]
+        if copied:
+            out.append("Copied %d version(s) into %s: open them there; nothing was written anywhere else, "
+                       "and restoring a file to its own path is a separate step, taken only when asked."
+                       % (len(copied), found_copies_folder().path))
+        if not_copied:
+            out.append("Could NOT copy every version %s found: see each one's \"could NOT copy\" line above."
+                       % ", ".join(not_copied))
+        if not copied:
+            agent_runs = [r.surface for r in found if r.prints_copy_command and not r.copy_command_may_ask_password]
+            user_runs = [r.surface for r in found if r.prints_copy_command and r.copy_command_may_ask_password]
+            if agent_runs or user_runs:
+                steps = []
+                if agent_runs:
+                    steps.append("run the commands printed under %s yourself, in order, since they ask for no password"
+                                 % ", ".join(agent_runs))
+                if user_runs:
+                    steps.append("give the user the commands printed under %s, in order, since their sudo may ask "
+                                 "for his password" % ", ".join(user_runs))
+                out.append("Nothing was copied yet: %s. Each surface's commands copy a version into %s."
+                           % ("; ".join(steps), found_copies_folder().path))
+            else:
+                out.append("No version was copied: what was found is only what each FOUND surface's lines "
+                           "above say.")
     else:
         out.append("No surface that could be searched has it.")
     if candidates:
@@ -1757,12 +2468,18 @@ def print_surface_as_it_finishes(report):
 
 
 def main(argv=None, runner=run_command):
+    # An abbreviation such as --rep would set --repo yet slip past arguments_without_repo.
     parser = argparse.ArgumentParser(
+        allow_abbrev=False,
         description="Find a deleted path across this Mac's local snapshots, git and its reflog, the log-store, "
-                    "agent transcripts, Timeshift on the box, and Time Machine.",
+                    "agent transcripts, Timeshift on ned-box, and Time Machine.",
     )
-    parser.add_argument("path", help="repo-relative, absolute, or any trailing fragment of the path; "
-                                     "the scp form nedlern@ned-box:<path>, ../<path> and ~/<path> are read too")
+    parser.add_argument("path", help="a git blob id of 40 lowercase hexadecimal characters; or a path: "
+                                     "repo-relative, absolute, or the path's last whole component or components, "
+                                     "such as dispositions.md for docs/dispositions.md but not docs/old-dispositions.md, "
+                                     "matched with case; "
+                                     "the scp form nedlern@ned-box:<path>, ../<path> and ~/<path> are read too; "
+                                     "a path that opens with a dash goes after --")
     parser.add_argument("--repo", default=os.environ.get("FIND_DELETED_PATH_REPO", "."),
                         help="git repository to search (default: current directory)")
     parser.add_argument("--transcripts-dir", default=os.environ.get("FIND_DELETED_PATH_TRANSCRIPTS_DIR", DEFAULT_TRANSCRIPTS_DIR))
@@ -1770,24 +2487,47 @@ def main(argv=None, runner=run_command):
     parser.add_argument("--timeshift-snapshot-root", default=os.environ.get("FIND_DELETED_PATH_TIMESHIFT_SNAPSHOT_ROOT", DEFAULT_TIMESHIFT_SNAPSHOT_ROOT))
     parser.add_argument("--log-store-root", default=os.environ.get("FIND_DELETED_PATH_LOG_STORE_ROOT", DEFAULT_LOG_STORE_ROOT),
                         help="the log-store's directory: read in place when it exists on this machine, "
-                             "otherwise on the box over ssh")
+                             "otherwise on ned-box over ssh")
     parser.add_argument("--skip", action="append", default=[],
                         choices=["localsnapshots", "git", "reflog", "logstore", "transcripts", "box", "timeshift",
                                  "timemachine"],
-                        help="skip a surface (repeatable); 'box' skips everything on the box — "
+                        help="skip a surface (repeatable); 'box' skips everything on ned-box — "
                              "its transcripts, Timeshift, and the log-store unless it is on this machine — "
                              "so nothing is sent over ssh")
+    parser.add_argument("--found-copies-root",
+                        default=os.environ.get(FOUND_COPIES_ROOT_ENVIRONMENT_VARIABLE, DEFAULT_FOUND_COPIES_ROOT),
+                        help="the folder each found version is copied into, under a subfolder named for the time "
+                             "of the search (default: %s)" % DEFAULT_FOUND_COPIES_ROOT)
     parser.add_argument("--prompt-for-root", action="store_true",
                         help="mount the Time Machine snapshot from here, letting sudo ask for your "
                              "password in this terminal, instead of printing the command. Only ever "
                              "pass this by hand: a hook has no terminal to answer a prompt in")
     args = parser.parse_args(argv)
+    rerun = rerun_command(sys.argv[1:] if argv is None else argv)
+
+    use_found_copies_folder(FoundCopiesFolder(args.found_copies_root))
+    if is_git_blob_id(args.path):
+        print(render_header("the version whose git blob id is %s" % args.path) + "\n", flush=True)
+        reports = build_blob_report(args.path, args.repo, args.box_ssh_host, args.timeshift_snapshot_root,
+                                    skip=set(args.skip), runner=runner, prompt_for_root=args.prompt_for_root,
+                                    log_store_root=args.log_store_root,
+                                    on_surface_done=print_surface_as_it_finishes)
+        print(render_summary(reports), flush=True)
+        return exit_status(reports)
 
     try:
         named = _plain_path_from_cited_query(args.path)
     except CitedQueryCannotBePlaced as refusal:
         parser.error(str(refusal))
-    wanted, _ = _repo_relative_form(named, args.repo, runner)
+    try:
+        wanted, _ = _repo_relative_form(named, args.repo, runner)
+    except _GitCommandFailed as failure:
+        # The git surfaces report the same failure as UNAVAILABLE; the other surfaces can still search.
+        repo_rerun = rerun_command(["--repo", REPO_PLACEHOLDER]
+                                   + arguments_without_repo(sys.argv[1:] if argv is None else argv))
+        print(build_agent_facing_message_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command(args.repo, named, failure, set(args.skip), repo_rerun)
+              + "\n" + git_failure_next_steps(rerun), file=sys.stderr, flush=True)
+        wanted = named
     shown = wanted if wanted == args.path else "%s (given as %s)" % (wanted, args.path)
 
     print(render_header(shown) + "\n", flush=True)
@@ -1809,9 +2549,15 @@ def main(argv=None, runner=run_command):
 
 
 def exit_status(reports):
-    """Return 0 for a hit, 1 for an exhaustive miss, or 3 for an incomplete search."""
-    if any(r.status == FOUND for r in reports):
-        return EXIT_FOUND
+    """Return 0 when a version was copied, 5 when none was but a printed command copies one, 4 for any
+    other hit, 1 for an exhaustive miss, or 3 for an incomplete search."""
+    found = [r for r in reports if r.status == FOUND]
+    if found:
+        if any(r.copied for r in found):
+            return EXIT_FOUND
+        if any(r.prints_copy_command for r in found):
+            return EXIT_FOUND_COPY_COMMAND_PRINTED
+        return EXIT_FOUND_BUT_NOT_COPIED
     if not reports or any(r.status == UNAVAILABLE for r in reports):
         return EXIT_INCOMPLETE
     return EXIT_NOT_FOUND_EVERYWHERE

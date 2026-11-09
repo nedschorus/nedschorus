@@ -12,6 +12,7 @@ Prints one line per case and exits non-zero if any case fails.
 
 import importlib.util
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -51,6 +52,16 @@ for case, text in ABSENT_ANSWERS.items():
     check(f"absent: {case}", says_absent(text) is True, text)
     check(f"absent inside a longer stderr: {case}",
           says_absent(f"tmux: {text}\n") is True, text)
+
+# Messages list these wordings to agents, so each one must stand for an answer the
+# pattern accepts, and each answer the pattern accepts must have its wording.
+WORDINGS = pattern.TMUX_TARGET_OR_SERVER_DOES_NOT_EXIST_ERROR_WORDINGS
+for case, text in ABSENT_ANSWERS.items():
+    matching = [wording for wording, regex in WORDINGS if re.search(regex, text)]
+    check(f"one wording names the absent answer: {case}", len(matching) == 1, (text, matching))
+check("every wording's regex matches one of the recorded absent answers",
+      all(any(re.search(regex, text) for text in ABSENT_ANSWERS.values()) for _, regex in WORDINGS),
+      WORDINGS)
 
 OTHER_FAILURES = {
     "a client and server of different versions":

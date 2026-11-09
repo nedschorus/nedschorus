@@ -22,8 +22,17 @@ copies of one report are carried once; a report repeated after a SendMessage
 to the same subagent is a new report, carried again.
 """
 
+import importlib.util
 import json
 import re
+from pathlib import Path
+
+_interim_recognizer_specification = importlib.util.spec_from_file_location(
+    "claude_code_subagent_task_notification_interim_recognizer_common",
+    Path(__file__).resolve().with_name(
+        "claude-code-subagent-task-notification-interim-recognizer-common.py"))
+interim_recognizer = importlib.util.module_from_spec(_interim_recognizer_specification)
+_interim_recognizer_specification.loader.exec_module(interim_recognizer)
 
 # The extractor's name for the third voice; the extractor checks at load time that both files agree.
 SUBAGENT_VOICE = "subagent"
@@ -33,9 +42,8 @@ SUBAGENT_NOTIFICATION_SUMMARY_PREFIXES = ('Agent "', 'Background agent "', 'Dyna
 HANDBACK_FRAME_OPENING = "[Subagent hand-back]"
 HANDBACK_FRAME_END = "The report follows:"
 REPORT_SENT_AS_HANDBACK_PREFIX = "This agent's report was delivered to you as a message"
-# A notification sent while a subagent waits on its own background work; its report comes later.
-REPORT_NOT_YET_SENT_PREFIX = "This agent has not reported yet"
-RESULTS_THAT_ARE_NOT_REPORTS = (REPORT_SENT_AS_HANDBACK_PREFIX, REPORT_NOT_YET_SENT_PREFIX)
+RESULTS_THAT_ARE_NOT_REPORTS = (REPORT_SENT_AS_HANDBACK_PREFIX,
+                                interim_recognizer.REPORT_NOT_YET_SENT_PREFIX)
 LAUNCH_NOTICE_PREFIXES = ("Async agent launched", "Workflow launched")
 
 

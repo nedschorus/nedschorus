@@ -27,11 +27,14 @@ import io
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -474,11 +477,13 @@ def run_cases_on_ned_box(workspace: Path):
           result.stdout == "daily-full-test-run-of-main: record written to nedlern@ned-box:"
           f"{fixture.log_store}/daily-full-test-runs/ned-box/2026-09-30.txt\n", result.stdout)
     check("the runner is run once, by the Python running this program, as the worktree's "
-          "scripts/run-all-test-suites.py --log-dir <logs> --wait-for-lock-seconds 3600, with "
-          "no selection option, no -j and no --recorded-inputs-directory",
+          "scripts/run-all-test-suites.py --log-dir <logs> --record-inputs-with-strace "
+          "--wait-for-lock-seconds 3600, with no selection option, no -j and no "
+          "--recorded-inputs-directory",
           len(result.runner_calls) == 1
           and call.get("argv") == [str(fixture.worktree / "scripts" / "run-all-test-suites.py"),
                                    "--log-dir", str(fixture.logs),
+                                   "--record-inputs-with-strace",
                                    "--wait-for-lock-seconds", "3600"]
           and os.path.realpath(call.get("executable", "")) == os.path.realpath(sys.executable),
           repr(result))
@@ -616,9 +621,11 @@ def run_cases_on_ned_box(workspace: Path):
     # --- The seams -------------------------------------------------------------
     recorded_inputs = workspace / "a-recorded-inputs-directory"
     result = fixture.run(extra_arguments=["--recorded-inputs-directory", str(recorded_inputs)])
-    check("--recorded-inputs-directory is passed through to the runner",
-          result.code == 0 and result.runner_calls[0]["argv"][-4:-2]
-          == ["--recorded-inputs-directory", str(recorded_inputs)]
+    check("--recorded-inputs-directory is passed through to the runner, as its "
+          "--recorded-inputs-directory and its --suite-files-only-strace-saw-lists-directory",
+          result.code == 0 and result.runner_calls[0]["argv"][-6:-2]
+          == ["--recorded-inputs-directory", str(recorded_inputs),
+              "--suite-files-only-strace-saw-lists-directory", str(recorded_inputs)]
           and not recorded_inputs.exists(), repr(result))
     stand_in_elsewhere = workspace / "a-stand-in-runner-outside-the-worktree.py"
     stand_in_elsewhere.write_text(STAND_IN_RUNNER_SOURCE, encoding="utf-8")
@@ -628,7 +635,7 @@ def run_cases_on_ned_box(workspace: Path):
           "worktree, with the same arguments",
           result.code == 0 and result.runner_calls[0]["argv"]
           == [str(stand_in_elsewhere), "--log-dir", str(fixture.logs),
-              "--wait-for-lock-seconds", "3600"]
+              "--record-inputs-with-strace", "--wait-for-lock-seconds", "3600"]
           and result.runner_calls[0]["checkout"] == str(fixture.worktree), repr(result))
 
     # --- What a killed run left -------------------------------------------------
@@ -940,6 +947,185 @@ def run_log_store_readme_cases():
           and "`scripts/daily-full-test-run-of-main.py`" in readme, readme)
 
 
+def run_line_copying_cases(workspace: Path):
+    """A line the runner prints reaches stream_to while the runner still runs."""
+    go_on = workspace / "line-copying" / "go-on"
+    go_on.parent.mkdir(parents=True)
+    child = ("import pathlib, sys, time\n"
+             "print('first on stdout', flush=True)\n"
+             "print('first on stderr', file=sys.stderr, flush=True)\n"
+             f"go_on = pathlib.Path({str(go_on)!r})\n"
+             "deadline = time.monotonic() + 20\n"
+             "while not go_on.exists() and time.monotonic() < deadline:\n"
+             "    time.sleep(0.05)\n"
+             "print('after' if go_on.exists() else 'never copied while running')\n"
+             "sys.exit(0 if go_on.exists() else 9)\n")
+
+    class StreamThatLetsTheChildGoOn:
+        def __init__(self):
+            self.lines = []
+
+        def write(self, text):
+            self.lines.append(text)
+            if {"first on stdout\n", "first on stderr\n"} <= set(self.lines):
+                go_on.touch()
+
+        def flush(self):
+            pass
+
+    stream = StreamThatLetsTheChildGoOn()
+    completed = program.subprocess_run_copying_each_output_line_as_it_arrives(
+        [sys.executable, "-c", child], workspace, os.environ.copy(), stream)
+    check("each line the runner prints, on stdout and on stderr, is copied while the "
+          "runner still runs, so a run stopped early has shown how far it got",
+          completed.returncode == 0
+          and sorted(stream.lines) == ["after\n", "first on stderr\n", "first on stdout\n"],
+          f"{completed!r} {stream.lines!r}")
+    check("the copied lines are also kept, stdout and stderr apart, as subprocess.run "
+          "would keep them",
+          completed.stdout == "first on stdout\nafter\n"
+          and completed.stderr == "first on stderr\n", repr(completed))
+
+    class StreamThatCannotBeWritten:
+        def write(self, text):
+            raise BrokenPipeError(32, "Broken pipe")
+
+        def flush(self):
+            pass
+
+    def run_bounded(child, stream):
+        """Return what the call raised or returned, or a note that it was still running."""
+        outcomes = []
+
+        def call():
+            try:
+                outcomes.append(program.subprocess_run_copying_each_output_line_as_it_arrives(
+                    [sys.executable, "-c", child], workspace, os.environ.copy(), stream))
+            except program.RunnerOutputCopyFailed as failure:
+                outcomes.append(failure)
+
+        # In a thread with a bound, so a runner blocked on a pipe nobody reads fails
+        # the case instead of hanging the suite.
+        caller = threading.Thread(target=call, daemon=True)
+        caller.start()
+        caller.join(30)
+        return outcomes[0] if outcomes else "still running after 30 s"
+
+    ten_lines_and_a_summary = ("for number in range(10):\n"
+                               "    print(f'line {number}', flush=True)\n"
+                               "print('SUMMARY: done', flush=True)\n")
+    outcome = run_bounded(ten_lines_and_a_summary, StreamThatCannotBeWritten())
+    check("when a write to stream_to fails, the failure is passed up as "
+          "RunnerOutputCopyFailed naming the error, and the runner's 11 lines, SUMMARY "
+          "line included, and its exit code 0 are all kept",
+          isinstance(outcome, program.RunnerOutputCopyFailed)
+          and "Broken pipe" in outcome.reason and outcome.completed.returncode == 0
+          and len(outcome.completed.stdout.splitlines()) == 11
+          and outcome.completed.stdout.endswith("SUMMARY: done\n"), repr(outcome))
+
+    two_thousand_and_one_lines = ("import sys\n"
+                                  "for number in range(2001):\n"
+                                  "    print('x' * 200, flush=True)\n"
+                                  "    print('y' * 200, file=sys.stderr, flush=True)\n")
+    outcome = run_bounded(two_thousand_and_one_lines, StreamThatCannotBeWritten())
+    check("after a failed write the pipes are still read, so a runner printing far more "
+          "than a pipe holds runs to its end instead of blocking",
+          isinstance(outcome, program.RunnerOutputCopyFailed)
+          and outcome.completed.returncode == 0
+          and len(outcome.completed.stdout.splitlines()) == 2001
+          and len(outcome.completed.stderr.splitlines()) == 2001,
+          outcome if isinstance(outcome, str) else repr(outcome.completed.returncode))
+
+    interrupt_sent = threading.Event()
+
+    class StreamThatInterruptsThisProgram:
+        def __init__(self):
+            self.sent = False
+
+        def write(self, text):
+            if not self.sent:
+                self.sent = True
+                os.kill(os.getpid(), signal.SIGINT)
+                interrupt_sent.set()
+
+        def flush(self):
+            pass
+
+    def interrupted_runner_outcome_and_pid_file(pid_file_name):
+        # A runner that would print for a minute, so only an interrupt ends it early.
+        pid_file = workspace / "line-copying" / pid_file_name
+        noisy_child = ("import os, pathlib, sys, time\n"
+                       f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+                       "deadline = time.monotonic() + 60\n"
+                       "while time.monotonic() < deadline:\n"
+                       "    print('x' * 200, flush=True)\n")
+        interrupt_sent.clear()
+        try:
+            program.subprocess_run_copying_each_output_line_as_it_arrives(
+                [sys.executable, "-c", noisy_child], workspace, os.environ.copy(),
+                StreamThatInterruptsThisProgram())
+            outcome = "returned"
+        except KeyboardInterrupt:
+            outcome = "interrupted"
+        return outcome, pid_file
+
+    def check_runner_stopped(case_name, outcome, pid_file):
+        check(case_name,
+              outcome == "interrupted" and pid_file.is_file()
+              and not pid_is_running(int(pid_file.read_text())),
+              f"{outcome} {pid_file.read_text() if pid_file.is_file() else 'no pid file'}")
+
+    outcome, pid_file = interrupted_runner_outcome_and_pid_file("runner-pid")
+    check_runner_stopped("an interrupt while waiting for the runner is passed on, and the "
+                         "runner is stopped and reaped, not left running with nothing "
+                         "reading its output", outcome, pid_file)
+
+    # The first copier's start returns only once its line has raised the interrupt, so
+    # the interrupt always lands while the copiers are being started, however loaded
+    # the machine is.
+    class CopierWhoseStartWaitsForTheInterrupt(threading.Thread):
+        def start(self):
+            super().start()
+            interrupt_sent.wait(60)
+
+    real_thread = program.threading.Thread
+    program.threading.Thread = CopierWhoseStartWaitsForTheInterrupt
+    try:
+        outcome, pid_file = interrupted_runner_outcome_and_pid_file("runner-pid-2")
+    finally:
+        program.threading.Thread = real_thread
+    check_runner_stopped("an interrupt that arrives while the copiers are being started "
+                         "is passed on, and the runner is stopped and reaped",
+                         outcome, pid_file)
+
+
+def run_not_run_suite_record_cases():
+    runner = program.run_all_test_suites
+    not_run = {"suite": "scripts/b-test.py", "exit": 1, "seconds": 0.1, "skips": [],
+               "test sandbox did not start": True}
+    not_run_lines = [runner.suite_line(not_run),
+                     f"{runner.NOT_RUN_SUITE_LINE_PREFIX}{not_run['suite']} "
+                     f"{runner.why_suite_failed(not_run)} — log /a/log/directory/scripts__b-test.py.log"]
+    summary = "SUMMARY: 1 passed, 0 failed, 1 not run, 2 total"
+    printed = ["run-all-test-suites: /a/checkout at 0123456789ab", "PASS scripts/a-test.py (0.1s)",
+               not_run_lines[0], "", "1 not run, because bwrap could not build the "
+               "nc-test-sandbox; each log says why and what to do:", not_run_lines[1], summary]
+    kept = program.runner_output_lines_for_the_record(
+        types.SimpleNamespace(stdout="\n".join(printed) + "\n", stderr=""))
+    check("a run with a suite whose nc-test-sandbox did not start keeps both of the runner's "
+          "NOT RUN lines for it in the record, as the runner's own code prints them",
+          [line for line in kept if line in not_run_lines] == not_run_lines
+          and summary in kept, repr(kept))
+
+
+def pid_is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     # Resolved, because the program resolves the paths it is given and the
     # Mac's temporary directory is reached through a symbolic link.
@@ -948,6 +1134,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_cases_on_the_mac(workspace_root)
     run_cases_as_a_program(workspace_root)
     run_log_store_readme_cases()
+    run_line_copying_cases(workspace_root)
+    run_not_run_suite_record_cases()
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

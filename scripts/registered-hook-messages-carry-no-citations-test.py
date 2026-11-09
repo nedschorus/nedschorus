@@ -5,15 +5,19 @@ an issue or pull request number, or a GitHub pull or issue link.
 CLAUDE.md keeps quotations of the user, rulings, dates and citations out of the
 text a program hands an agent: the agent needs the reason and the instruction,
 and a citation only says who decided and when. The suite reads the hooks
-.claude/settings.json registers, and in each the module-level string
-constants, or tuples of strings, whose names end in one of MESSAGE_NAME_ENDINGS.
-It reads only those: across all programs and tests a citation pattern also
-matches dates and issue numbers that are data, while in hook messages every
-match so far was a citation.
+.claude/settings.json registers, and in each every module-level string
+constant, or tuple or list of strings, whose name is in capitals, whatever the
+name ends in: a hook's message reaches the agent whether or not its name ends
+in one of the suffixes the agent-facing-message collector recognizes,
+nc-systems/general-tools/python-source-agent-facing-string-collector-common.py.
+It reads only registered hooks: across all programs and tests a citation
+pattern also matches dates and issue numbers that are data, while in hook
+constants every match so far was a citation.
 
-A hook that declares no such constant fails too, so a message built inline
-cannot escape the check. A message that needs one of these forms as data goes
-in EXEMPTIONS, named by hook and constant.
+A hook that declares no constant whose name ends in one of the collector's
+suffixes fails too, so a message built inline cannot escape the check. A
+constant that needs one of these forms as data goes in EXEMPTIONS, named by
+hook and constant.
 """
 import importlib.util
 import json
@@ -30,8 +34,11 @@ _date_pattern_spec.loader.exec_module(_date_pattern)
 REPOSITORY = Path(__file__).resolve().parent.parent
 SETTINGS = REPOSITORY / ".claude" / "settings.json"
 
-MESSAGE_NAME_ENDINGS = ("_REASON", "_MESSAGE", "_REFUSAL", "_ADVICE", "_NOTICE",
-                        "_INSTRUCTION", "_TEMPLATE", "_LINE")
+_collector_spec = importlib.util.spec_from_file_location(
+    "python_source_agent_facing_string_collector_common",
+    REPOSITORY / "nc-systems" / "general-tools" / "python-source-agent-facing-string-collector-common.py")
+collector = importlib.util.module_from_spec(_collector_spec)
+_collector_spec.loader.exec_module(collector)
 
 CITATION_PATTERNS = {
     "date": _date_pattern.DATE_MARKER_PATTERN,
@@ -71,17 +78,14 @@ def registered_hook_paths():
 
 
 def is_message_name(name):
-    if not name.isupper():
-        return False
-    stem = name[:-1] if name.endswith("S") else name
-    return stem.endswith(MESSAGE_NAME_ENDINGS)
+    return name.isupper() and collector.variable_name_has_agent_facing_message_suffix(name)
 
 
-def message_texts(module):
-    """{constant name: its text} for the module's message constants."""
+def constant_texts(module):
+    """{constant name: its text} for the module's string constants named in capitals."""
     texts = {}
     for name, value in vars(module).items():
-        if not is_message_name(name):
+        if not name.isupper():
             continue
         if isinstance(value, str):
             texts[name] = value
@@ -89,6 +93,10 @@ def message_texts(module):
                 isinstance(part, str) for part in value):
             texts[name] = "\n".join(value)
     return texts
+
+
+def declares_message_constants(texts):
+    return any(is_message_name(name) for name in texts)
 
 
 def citations_in(text):
@@ -123,6 +131,21 @@ for text in ("gh issue close <number> --reason completed",
     check(f"a message with no citation passes: {text}", citations_in(text) == [],
           citations_in(text))
 
+# A constant is read whatever its name ends in, and only when its name is in capitals.
+probe = type(sys)("probe")
+probe.UNCHECKED_NOTE_SUFFIX = "see PR 12"
+probe.REMINDER_OPENINGS = ("a", "b")
+probe.lower_name_line = "not a constant"
+probe.GIT_TIMEOUT_SECONDS = 5
+check("every string constant named in capitals is read, whatever its name ends in",
+      constant_texts(probe) == {"UNCHECKED_NOTE_SUFFIX": "see PR 12", "REMINDER_OPENINGS": "a\nb"},
+      constant_texts(probe))
+
+bare_probe = type(sys)("bare_probe")
+bare_probe.REFUSAL = "stopped"
+check("a hook whose only string constant is a bare REFUSAL declares no message constant",
+      not declares_message_constants(constant_texts(bare_probe)), constant_texts(bare_probe))
+
 hook_paths = registered_hook_paths()
 check(".claude/settings.json registers hooks for this suite to read", len(hook_paths) > 5,
       hook_paths)
@@ -132,9 +155,10 @@ for relative_path in hook_paths:
     except Exception as error:
         check(f"{relative_path} loads", False, f"{type(error).__name__}: {error}")
         continue
-    texts = message_texts(module)
-    check(f"{relative_path} declares its messages as named constants", texts != {},
-          f"no module-level constant ending in one of {MESSAGE_NAME_ENDINGS}")
+    texts = constant_texts(module)
+    check(f"{relative_path} declares its messages as named constants",
+          declares_message_constants(texts),
+          f"no module-level constant ending in one of {collector.AGENT_STRING_NAME_SUFFIXES}")
     for name, text in sorted(texts.items()):
         if (relative_path, name) in EXEMPTIONS:
             continue

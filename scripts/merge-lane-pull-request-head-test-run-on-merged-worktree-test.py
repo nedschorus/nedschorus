@@ -13,6 +13,7 @@ Run: python3 scripts/merge-lane-pull-request-head-test-run-on-merged-worktree-te
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -32,12 +33,27 @@ with open(os.environ["MERGE_LANE_HEAD_TEST_RUN_TEST_LOG"], "a") as log:
 exit_code = json.loads(os.environ["MERGE_LANE_HEAD_TEST_RUN_TEST_EXITS"]).get(
     os.path.basename(checkout), 0)
 print("pull-request-head-test-run: starting")
+go_on = os.environ.get("MERGE_LANE_HEAD_TEST_RUN_TEST_GO_ON")
+if go_on:
+    import time
+    print("a progress line on stderr", file=sys.stderr, flush=True)
+    deadline = time.monotonic() + 20
+    while not os.path.exists(go_on) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if not os.path.exists(go_on):
+        sys.exit(9)
+for _ in range(int(os.environ.get("MERGE_LANE_HEAD_TEST_RUN_TEST_EXTRA_STDERR_LINES", "0"))):
+    print("y" * 200, file=sys.stderr)
 print(f"SUMMARY: fake summary for {os.path.basename(checkout)}")
 print("a line on stderr", file=sys.stderr)
 sys.exit(exit_code)
 '''
 
 failures = []
+
+
+def review_worktrees_directory(helpers):
+    return helpers.parent / f"{helpers.name}-review-worktrees"
 
 
 def check(name, condition, detail=""):
@@ -54,6 +70,7 @@ def run_program(scratch, helpers, exits, *pull_requests, review_tools=None, cwd=
     completed = subprocess.run(
         [sys.executable, str(PROGRAM), *pull_requests,
          "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+         "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(helpers)),
          "--review-tools-worktree-at-main", str(review_tools or scratch / "main-checkout")],
         capture_output=True, text=True, cwd=cwd,
         env={**os.environ, "GIT_DIR": str(scratch / "no-such-git-directory"),
@@ -77,10 +94,11 @@ def main():
         detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
         check("each pull request is run in turn", [
             call["argv"][call["argv"].index("--checkout") + 1] for call in calls] == [
-            str(helpers / "wt" / "pr7-merged"), str(helpers / "wt" / "pr8-merged")], detail)
+            str(review_worktrees_directory(helpers) / "pr7-merged"),
+            str(review_worktrees_directory(helpers) / "pr8-merged")], detail)
         check("the run gets the paths under the worktrees and outputs directory",
               calls and calls[0]["argv"] == [
-                  "--checkout", str(helpers / "wt" / "pr7-merged"),
+                  "--checkout", str(review_worktrees_directory(helpers) / "pr7-merged"),
                   "--log-store-root", str(helpers / "hr" / "pr7" / "log-store"),
                   "--temporary-directory", str(helpers / "hr" / "pr7" / "tmp"),
                   "--recorded-inputs-directory", str(helpers / "hr" / "store")],
@@ -100,6 +118,8 @@ def main():
               in (helpers / "hr" / "pr7" / "stdout").read_text()
               and (helpers / "hr" / "pr7" / "stderr").read_text() == "a line on stderr\n",
               detail)
+        check("the run's stderr is also printed on the program's stderr",
+              completed.stderr == "a line on stderr\na line on stderr\n", detail)
         check("one line per pull request with its exit code and SUMMARY line",
               completed.stdout.splitlines() == [
                   "PR 7 head test run: exit 0; SUMMARY: fake summary for pr7-merged",
@@ -119,10 +139,144 @@ def main():
         detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
         check("relative directory options run main's runner on the right checkout",
               completed.returncode == 0 and calls and calls[0]["argv"][:2] == [
-                  "--checkout", str(helpers / "wt" / "pr7-merged")], detail)
+                  "--checkout", str(review_worktrees_directory(helpers) / "pr7-merged")], detail)
         check("relative directory options still put an absolute tripwire-bin first on PATH",
               calls and calls[0]["first_path_entry"] == str(helpers / "tripwire-bin"),
               json.dumps(calls))
+
+        go_on = scratch / "go-on"
+        live = subprocess.Popen(
+            [sys.executable, str(PROGRAM), "7",
+             "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+             "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(helpers)),
+             "--review-tools-worktree-at-main", str(scratch / "main-checkout")],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env={**os.environ, "MERGE_LANE_HEAD_TEST_RUN_TEST_LOG": str(scratch / "live.log"),
+                 "MERGE_LANE_HEAD_TEST_RUN_TEST_EXITS": "{}",
+                 "MERGE_LANE_HEAD_TEST_RUN_TEST_GO_ON": str(go_on)})
+        first = live.stderr.readline()
+        go_on.touch()
+        stdout, rest = live.communicate(timeout=60)
+        check("a line the run prints on stderr reaches the program's stderr while the run "
+              "still runs, so a run stopped early has shown how far it got",
+              first == "a progress line on stderr\n" and live.returncode == 0
+              and stdout == "PR 7 head test run: exit 0; SUMMARY: fake summary for pr7-merged\n",
+              f"exit {live.returncode}\n{first!r}\n{stdout}{rest}")
+
+        # /dev/full fails every write with ENOSPC, as a full disk under the outputs does.
+        if Path("/dev/full").exists():
+            (helpers / "hr" / "pr9").mkdir(parents=True, exist_ok=True)
+            (helpers / "hr" / "pr9" / "stderr").symlink_to("/dev/full")
+            completed, calls = run_program(scratch, helpers, {}, "9")
+            lines = completed.stdout.splitlines()
+            check("when writing the run's stderr to <outputs>/stderr fails, the program "
+                  "says so, with the failed close of that file, prints the run's exit code "
+                  "and SUMMARY line, and exits 2",
+                  completed.returncode == 2 and "Traceback" not in completed.stderr
+                  and lines and lines[0].startswith("PR 9 head test run, process ")
+                  and (f"writing its stderr to {helpers}/hr/pr9/stderr failed (OSError: "
+                       "[Errno 28] No space left on device; closing it then failed too "
+                       "(OSError: [Errno 28] No space left on device))") in lines[0]
+                  and lines[-1]
+                  == "PR 9 head test run: exit 0; SUMMARY: fake summary for pr9-merged",
+                  f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+            check("when writing the run's stderr to <outputs>/stderr fails, the program gives "
+                  "the command that runs it again, not that file",
+                  ("When you need the lost stderr, run the head test run for PR 9 again with "
+                   "this command, from any directory: " + shlex.join([
+                       sys.executable, str(PROGRAM.resolve()), "9",
+                       "--merge-lane-worktrees-and-outputs-directory", str(helpers.resolve()),
+                       "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(helpers).resolve()),
+                       "--review-tools-worktree-at-main",
+                       str((scratch / "main-checkout").resolve())])) in lines
+                  and any(line.startswith("Before you run it, give it a stderr that takes "
+                                          "every write: do not close its stderr")
+                          for line in lines)
+                  and "which holds all of it" not in completed.stdout,
+                  f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+
+            completed, calls = run_program(scratch, helpers, {"pr7-merged": 3}, "7", "9")
+            check("a failed copy of a later pull request's run leaves an earlier run's "
+                  "nonzero exit code as the program's",
+                  completed.returncode == 3, f"exit {completed.returncode}\n{completed.stdout}")
+
+            # Both copies fail: <outputs>/stderr is /dev/full and the program's stderr is a
+            # pipe whose reading end is closed. The run itself exits 1.
+            both = subprocess.Popen(
+                [sys.executable, str(PROGRAM), "9",
+                 "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+                 "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(helpers)),
+                 "--review-tools-worktree-at-main", str(scratch / "main-checkout")],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                env={**os.environ, "MERGE_LANE_HEAD_TEST_RUN_TEST_LOG": str(scratch / "both.log"),
+                     "MERGE_LANE_HEAD_TEST_RUN_TEST_EXITS": json.dumps({"pr9-merged": 1}),
+                     "MERGE_LANE_HEAD_TEST_RUN_TEST_EXTRA_STDERR_LINES": "2001"})
+            both.stderr.close()
+            try:
+                stdout = both.stdout.read()
+                both.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                both.kill()
+                stdout = "still running after 60 s"
+            lines = stdout.splitlines()
+            rerun_lines = [line for line in lines if line.startswith(
+                "When you need the lost stderr, run the head test run for PR 9 again")]
+            before_lines = [line for line in lines if line.startswith("Before you run it")]
+            check("when both copies of the run's stderr fail, each copy-failure message gives "
+                  "the command that runs it again, not the failed <outputs>/stderr, names that "
+                  "file's own error as the one to fix first, and the program exits 2 although "
+                  "the run exited 1",
+                  both.returncode == 2 and len(rerun_lines) == 2
+                  and "which holds all of it" not in stdout
+                  and "writing its stderr to stderr failed (BrokenPipeError" in stdout
+                  and len(before_lines) == 2
+                  and all(f"{helpers}/hr/pr9/stderr is the copy that failed, fix what OSError: "
+                          "[Errno 28] No space left on device; closing it then failed too "
+                          "(OSError: [Errno 28] No space left on device) names first."
+                          in line for line in before_lines)
+                  and lines and lines[-1]
+                  == "PR 9 head test run: exit 1; SUMMARY: fake summary for pr9-merged",
+                  f"exit {both.returncode}\n{stdout}")
+        else:
+            print("SKIP  a failing write to <outputs>/stderr: /dev/full does not exist here")
+
+        # The program's stderr is a pipe whose reading end is closed, so each write to it
+        # fails; the run prints far more than a pipe holds.
+        unread = subprocess.Popen(
+            [sys.executable, str(PROGRAM), "7",
+             "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+             "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(helpers)),
+             "--review-tools-worktree-at-main", str(scratch / "main-checkout")],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env={**os.environ, "MERGE_LANE_HEAD_TEST_RUN_TEST_LOG": str(scratch / "unread.log"),
+                 "MERGE_LANE_HEAD_TEST_RUN_TEST_EXITS": "{}",
+                 "MERGE_LANE_HEAD_TEST_RUN_TEST_EXTRA_STDERR_LINES": "2001"})
+        unread.stderr.close()
+        try:
+            stdout = unread.stdout.read()
+            unread.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            unread.kill()
+            stdout = "still running after 60 s"
+        lines = stdout.splitlines()
+        check("when writing the run's stderr to the program's stderr fails, the run still "
+              "goes to its end, its stderr file is whole, and the program says so with the "
+              "run's process id, points at that file instead of a rerun, keeps the summary "
+              "line unchanged, and exits 2",
+              unread.returncode == 2 and len(lines) == 4
+              and lines[0].startswith("PR 7 head test run, process ")
+              and "writing its stderr to stderr failed (BrokenPipeError" in lines[0]
+              and "that copy lacks the run's stderr from the first line that could not be "
+                  "written to it onward" in lines[0]
+              and "The run's verdict still stands" in lines[1]
+              and f"{PROGRAM.name} exits 2 for the failed copy, even when the head test "
+                  "run itself exited nonzero, unless an earlier pull request's run or failed copy already set a "
+                  "nonzero exit code; that 2 says nothing about the tests" in lines[1]
+              and lines[2] == (f"When you need the lost stderr, read {helpers}/hr/pr7/stderr, "
+                               "which holds all of it.")
+              and lines[3] == "PR 7 head test run: exit 0; SUMMARY: fake summary for pr7-merged"
+              and len((helpers / "hr" / "pr7" / "stderr").read_text().splitlines()) == 2002,
+              f"exit {unread.returncode}\n{stdout}")
 
         shutil.rmtree(helpers / "tripwire-bin")
         completed, calls = run_program(scratch, helpers, {}, "7")

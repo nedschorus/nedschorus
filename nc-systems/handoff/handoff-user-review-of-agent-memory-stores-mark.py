@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+"""Record daily memory review marks and share store readers with reminder checks.
+
+Use Pacific dates for the user’s noon. The done digest must cover both
+machines, so done runs only on the Mac: ned-box has no route back to read
+the Mac’s store.
+
+Claude Code shares a repository’s memory store across worktrees. Ignore
+hidden files such as .DS_Store so incidental metadata cannot trigger review."""
+
+import argparse
+import base64
+import hashlib
+import importlib.util
+import json
+import shlex
+import socket
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+PROGRAM = "handoff-user-review-of-agent-memory-stores-mark"
+PROGRAM_PATH = f"nc-systems/handoff/{PROGRAM}.py"
+
+PACIFIC_TIME_ZONE_NAME = "America/Los_Angeles"
+
+_ned_box_home_specification = importlib.util.spec_from_file_location(
+    "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+    Path(__file__).resolve().parents[1] / "general-tools" / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+ned_box_home_path_constants = importlib.util.module_from_spec(_ned_box_home_specification)
+_ned_box_home_specification.loader.exec_module(ned_box_home_path_constants)
+
+NED_BOX_HOSTNAME = "ned-box"
+NED_BOX_SSH_TARGET = "nedlern@ned-box"
+NED_BOX_SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+
+MAC_MEMORY_STORE_DIRECTORY = "/Users/el/.claude/projects/-Users-el-Projects-nedschorus/memory"
+NED_BOX_MEMORY_STORE_UNDER_HOME = ".claude/projects/-home-nedlern-Projects-nedschorus/memory"
+NED_BOX_MEMORY_STORE_DIRECTORY = ned_box_home_path_constants.NED_BOX_HOME + "/" + NED_BOX_MEMORY_STORE_UNDER_HOME
+# Reviewers read and delete entries through the mount, falling back to ssh.
+# This reader uses ssh because a hung mount has no read timeout.
+NED_BOX_MEMORY_STORE_MAC_MOUNT_DIRECTORY = (
+    ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME + "/" + NED_BOX_MEMORY_STORE_UNDER_HOME)
+MEMORY_STORE_INDEX_FILE_NAME = "MEMORY.md"
+
+DAILY_MEMORY_REVIEW_MARKS_DIRECTORY = ned_box_home_path_constants.NED_BOX_HOME + "/nedschorus-logs/daily-memory-review-marks"
+DAILY_MEMORY_REVIEW_MARK_KINDS = ("started", "done")
+
+# Look up the timeout at call time so tests can lower it.
+DAILY_MEMORY_REVIEW_MARK_SSH_TIMEOUT_SECONDS = 30
+
+# Use the same reader locally and over ssh so both memory stores follow identical rules.
+MEMORY_STORE_AND_REVIEW_MARKS_READ_PROGRAM = r"""
+import base64, json, os, re, sys
+store_directory, marks_directory = sys.argv[1], sys.argv[2]
+mark_file_name_pattern = (sys.argv[3] if len(sys.argv) > 3
+                          else r"[0-9]{4}-[0-9]{2}-[0-9]{2}-(started|done)[.]txt")
+store = {}
+if store_directory and os.path.isdir(store_directory):
+    for name in os.listdir(store_directory):
+        path = os.path.join(store_directory, name)
+        if not name.startswith(".") and os.path.isfile(path):
+            with open(path, "rb") as handle:
+                store[name] = base64.b64encode(handle.read()).decode("ascii")
+marks = {}
+if marks_directory and os.path.isdir(marks_directory):
+    for name in os.listdir(marks_directory):
+        if re.fullmatch(mark_file_name_pattern, name):
+            with open(os.path.join(marks_directory, name), encoding="utf-8",
+                      errors="replace") as handle:
+                marks[name] = handle.read()
+print(json.dumps({"store": store, "marks": marks}))
+"""
+
+
+class DailyMemoryReviewReadOrWriteFailed(Exception):
+    """A store or mark operation failed; the message identifies the command and failure."""
+
+    def __init__(self, message: str, ned_box_did_not_answer: bool = False):
+        super().__init__(message)
+        # ssh exits 255 for its own failures, such as no connection; any other
+        # exit, or output that does not parse, came from ned-box, so ned-box answered.
+        self.ned_box_did_not_answer = ned_box_did_not_answer
+
+
+def this_machine_is_ned_box() -> bool:
+    return socket.gethostname().split(".")[0] == NED_BOX_HOSTNAME
+
+
+def pacific_time_of(moment: datetime) -> datetime:
+    """Return a timezone-aware moment in America/Los_Angeles."""
+    return moment.astimezone(ZoneInfo(PACIFIC_TIME_ZONE_NAME))
+
+
+def daily_memory_review_mark_file_name(pacific_date: str, mark: str) -> str:
+    return f"{pacific_date}-{mark}.txt"
+
+
+def ned_box_memory_store_citation() -> str:
+    """Return the store’s scp citation, usable from either machine."""
+    return f"{NED_BOX_SSH_TARGET}:{NED_BOX_MEMORY_STORE_DIRECTORY}/"
+
+
+def run_on_ned_box_or_here(command: str, ssh_target, timeout: float, stdin_text=None):
+    """Return command stdout from ssh or local execution, raising on failure."""
+    argv = ([*NED_BOX_SSH_COMMAND, ssh_target, command] if ssh_target
+            else ["/bin/sh", "-c", command])
+    runner = f"ssh {ssh_target}" if ssh_target else "/bin/sh"
+    try:
+        completed = subprocess.run(argv, capture_output=True, text=True, check=False,
+                                   timeout=timeout, input=stdin_text)
+    except subprocess.TimeoutExpired:
+        raise DailyMemoryReviewReadOrWriteFailed(
+            f"{runner} timed out after {timeout} seconds and was killed",
+            ned_box_did_not_answer=bool(ssh_target))
+    except OSError as error:
+        raise DailyMemoryReviewReadOrWriteFailed(
+            f"this machine could not start {runner}: {type(error).__name__}: {error}")
+    if completed.returncode != 0:
+        first_line = (completed.stderr.strip().splitlines() or ["no detail"])[0]
+        raise DailyMemoryReviewReadOrWriteFailed(
+            f"{runner} exited {completed.returncode}: {first_line}",
+            ned_box_did_not_answer=bool(ssh_target) and completed.returncode == 255)
+    return completed.stdout
+
+
+def read_memory_store_and_review_marks(ssh_target, store_directory: str,
+                                       marks_directory: str, timeout: float,
+                                       mark_file_name_pattern=None):
+    """Return (store, marks) as {name: bytes} and {name: text}; empty directory arguments skip reads."""
+    command = " ".join(shlex.quote(part) for part in (
+        "python3", "-c", MEMORY_STORE_AND_REVIEW_MARKS_READ_PROGRAM,
+        store_directory, marks_directory,
+        *((mark_file_name_pattern,) if mark_file_name_pattern else ())))
+    output = run_on_ned_box_or_here(command, ssh_target, timeout)
+    try:
+        answer = json.loads(output)
+        store = {name: base64.b64decode(content) for name, content in answer["store"].items()}
+        marks = dict(answer["marks"])
+    except (ValueError, KeyError, TypeError, AttributeError) as error:
+        where = f"over ssh {ssh_target}" if ssh_target else "on this machine"
+        raise DailyMemoryReviewReadOrWriteFailed(
+            f"the reader of memory stores and marks in {PROGRAM_PATH}, run {where}, printed output that "
+            f"is not the JSON it should print: {type(error).__name__}: {error}")
+    return store, marks
+
+
+def memory_store_entry_count(store: dict) -> int:
+    return sum(1 for name in store if name != MEMORY_STORE_INDEX_FILE_NAME)
+
+
+def memory_stores_digest(mac_store: dict, ned_box_store: dict) -> str:
+    digest = hashlib.sha256()
+    for store_name, store in (("mac", mac_store), ("ned-box", ned_box_store)):
+        for file_name in sorted(store):
+            content = store[file_name]
+            digest.update(f"{store_name}\0{file_name}\0{len(content)}\0".encode("utf-8"))
+            digest.update(content)
+    return digest.hexdigest()
+
+
+def latest_done_mark(marks: dict):
+    """Return (Pacific_date, digest) for the latest done mark, or None."""
+    done = sorted(name for name in marks if name.endswith("-done.txt"))
+    if not done:
+        return None
+    return done[-1][:len("YYYY-MM-DD")], marks[done[-1]].strip()
+
+
+def write_daily_memory_review_mark(ssh_target, file_name: str, content: str, timeout: float,
+                                   marks_directory=None):
+    # Send content on stdin so the shell cannot interpret it.
+    marks_directory = marks_directory or DAILY_MEMORY_REVIEW_MARKS_DIRECTORY
+    directory = shlex.quote(marks_directory)
+    target = shlex.quote(f"{marks_directory}/{file_name}")
+    run_on_ned_box_or_here(f"mkdir -p {directory} && cat > {target}", ssh_target,
+                           timeout, stdin_text=content + "\n")
+
+
+def main(argv=None, now=None) -> int:
+    parser = argparse.ArgumentParser(
+        prog=PROGRAM,
+        description="Record that today's memory review has started, or that it is done.")
+    parser.add_argument("mark", choices=DAILY_MEMORY_REVIEW_MARK_KINDS)
+    arguments = parser.parse_args(argv)
+    now = now or datetime.now(timezone.utc)
+    pacific_date = pacific_time_of(now).date().isoformat()
+    timeout = DAILY_MEMORY_REVIEW_MARK_SSH_TIMEOUT_SECONDS
+    ssh_target = None if this_machine_is_ned_box() else NED_BOX_SSH_TARGET
+    if arguments.mark == "done":
+        if ssh_target is None:
+            print(f"{PROGRAM}: the done mark was not written, because this machine is "
+                  f"ned-box: the done mark holds a digest of each machine's memory store, "
+                  f"and ned-box cannot read the Mac's memory store.\n"
+                  f"If you are a subagent, send this whole message to the agent that dispatched "
+                  f"you instead of acting on it; otherwise, do what the next line says.\n"
+                  f"Tell the user: \"Today's memory review is not yet recorded as done; "
+                  f"to record it, run this on the Mac, in a nedschorus checkout: "
+                  f"python3 {PROGRAM_PATH} done\"", file=sys.stderr)
+            return 1
+        try:
+            store_being_read = f"ned-box's memory store, {ned_box_memory_store_citation()}"
+            ned_box_store, _ = read_memory_store_and_review_marks(
+                ssh_target, NED_BOX_MEMORY_STORE_DIRECTORY, "", timeout)
+            store_being_read = f"the Mac's memory store, {MAC_MEMORY_STORE_DIRECTORY}/"
+            mac_store, _ = read_memory_store_and_review_marks(
+                None, MAC_MEMORY_STORE_DIRECTORY, "", timeout)
+        except DailyMemoryReviewReadOrWriteFailed as error:
+            print(f"{PROGRAM}: the done mark was not written, because {store_being_read} "
+                  f"could not be read: {error}\n"
+                  f"If you are a subagent, send this whole message to the agent that dispatched "
+                  f"you instead of acting on it; otherwise, do what the next lines say.\n"
+                  f"Tell the user: \"Today's memory review is not recorded as done, because "
+                  f"{store_being_read} could not be read: {error}. Until the done mark is "
+                  f"written, the handoff-supervisor may remind the next agent-seat that starts "
+                  f"on the Mac to do the review again.\"\n"
+                  f"When the user says the cause is fixed, run: python3 {PROGRAM_PATH} done",
+                  file=sys.stderr)
+            return 1
+        content = memory_stores_digest(mac_store, ned_box_store)
+    else:
+        content = now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    file_name = daily_memory_review_mark_file_name(pacific_date, arguments.mark)
+    mark_citation = f"{NED_BOX_SSH_TARGET}:{DAILY_MEMORY_REVIEW_MARKS_DIRECTORY}/{file_name}"
+    try:
+        write_daily_memory_review_mark(ssh_target, file_name, content, timeout)
+    except DailyMemoryReviewReadOrWriteFailed as error:
+        print(f"{PROGRAM}: the memory review's {arguments.mark} mark was not written to "
+              f"{mark_citation}: {error}\n"
+              f"If you are a subagent, send this whole message to the agent that dispatched "
+              f"you instead of acting on it; otherwise, do what the next lines say.\n"
+              f"Tell the user: \"The memory review's {arguments.mark} mark could not be "
+              f"written on ned-box: {error}. Until that mark is written, the "
+              f"handoff-supervisor may remind the next agent-seat that starts on the Mac to do "
+              f"the review again.\"\n"
+              f"When the user says the cause is fixed, run, on the machine you ran this on: "
+              f"python3 {PROGRAM_PATH} {arguments.mark}", file=sys.stderr)
+        return 1
+    print(f"{PROGRAM}: the memory review's {arguments.mark} mark is recorded for the "
+          f"Pacific date {pacific_date} in {mark_citation}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

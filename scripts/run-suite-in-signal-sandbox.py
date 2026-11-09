@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one test suite inside the signal sandbox, optionally with a hand mutant applied.
+"""Run one nc-test-suite inside the signal sandbox, optionally with a hand mutant applied.
 
 Usage:
   python3 scripts/run-suite-in-signal-sandbox.py <suite> [--mutant PATCH]
@@ -33,15 +33,16 @@ Usage:
 The suite runs exactly as scripts/run-all-test-suites.py runs it: from the
 checkout's top directory, stdin closed, without the variables that redirect
 git, inside the signal sandbox (`bwrap --unshare-pid` on Linux, `sandbox-exec`
-on macOS), with RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX=1; on Linux in a test
-sandbox of its own once admission lets it start, at low priority and in a cgroup
-scope of its own, whose CPU seconds and peak memory it prints, and on macOS while
-holding the machine's test-run lock. Before the suite starts, a check inside the sandbox
+on macOS), with RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX=1; on Linux in an
+nc-test-sandbox of its own once admission lets it start, at low priority and in a cgroup
+scope of its own, whose CPU seconds and peak memory it prints, under the runner's
+MEMORY CEILING (a suite with a process killed at it fails, and says so), and on macOS
+while holding the machine's test-run lock, with no memory ceiling. Before the suite starts, a check inside the sandbox
 proves it is confined: on Linux, that process 1 there is bwrap; on macOS, that
 a signal to a process outside the sandbox is refused. If the check fails, the
 suite is not run. This program never runs a suite unconfined: without the
 sandbox, on a platform other than Linux and macOS, or for a suite listed in
-SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX, it refuses. Started inside a sandbox
+SUITES_RUN_WITHOUT_ANY_SANDBOX, it refuses. Started inside a sandbox
 already, it runs the suite there, after the same check. When the suite ends or
 the run is interrupted, it kills every process the suite left behind: on Linux
 every descendant, as the end of the sandbox's PID namespace does otherwise; on
@@ -410,7 +411,7 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
         bytecode_dir.mkdir(parents=True, exist_ok=True)
         writable.append(bytecode_dir)
         environment["PYTHONPYCACHEPREFIX"] = str(bytecode_dir)
-    # The test sandbox is built from Linux's /proc and bwrap, so not on another platform.
+    # The nc-test-sandbox is built from Linux's /proc and bwrap, so not on another platform.
     if platform.startswith("linux"):
         sandbox_prefix = runner.command_prefix_starting_one_suite_in_its_test_sandbox(
             sandbox_prefix, top, writable, suite,
@@ -430,7 +431,9 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
         if cgroup_unavailable_because is None:
             statistics = tempfile.TemporaryFile()
             resource_prefix = [*runner.command_prefix_running_one_suite_in_its_cgroup_scope(
-                statistics.fileno(), in_bwrap=True), *resource_prefix]
+                statistics.fileno(), in_bwrap=True,
+                memory_ceiling_bytes=runner.test_suite_memory_ceiling_bytes(suite)),
+                *resource_prefix]
         else:
             print(f"{PROGRAM}: the suite runs without a cgroup scope, so its CPU seconds and "
                   f"peak memory are not measured: {cgroup_unavailable_because}", flush=True)
@@ -451,15 +454,23 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
                 process.kill()
                 process.wait()
             stop_descendants()
+    killed_at_memory_ceiling = 0
     if statistics is not None:
         with statistics:
             statistics.seek(0)
-            cpu_seconds, peak_memory, missing = \
-                runner.cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(
-                    statistics.read().decode("utf-8", "replace"))
+            counters = statistics.read().decode("utf-8", "replace")
+        cpu_seconds, peak_memory, missing = \
+            runner.cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(counters)
         print(f"{PROGRAM}: " + (missing if missing else
                                 f"the suite used {cpu_seconds:.1f} CPU seconds, peak memory "
                                 f"{peak_memory / 10**6:.0f} MB"), flush=True)
+        killed_at_memory_ceiling = \
+            runner.processes_killed_at_memory_ceiling_from_suite_cgroup_statistics(counters)
+        if killed_at_memory_ceiling:
+            print(f"{PROGRAM}: OUT OF MEMORY: the kernel killed {killed_at_memory_ceiling} of the "
+                  f"suite's processes at its memory ceiling of "
+                  f"{runner.test_suite_memory_ceiling_bytes(suite) / 10**9:g} GB, so the suite "
+                  f"failed", flush=True)
     try:
         proof = runner.read_text_without_following_symlinks(proof_file)
     except OSError:
@@ -470,6 +481,8 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
     exit_code = process.returncode
     if in_test_sandbox and 128 < exit_code <= 128 + runner.SIGNAL_NUMBER_LIMIT:
         exit_code = -(exit_code - 128)
+    if killed_at_memory_ceiling and exit_code == 0:
+        exit_code = -signal.SIGKILL
     return exit_code
 
 
@@ -512,9 +525,9 @@ def run(arguments, platform):
     if not (top / suite).is_file():
         raise NotRun(f"{suite} is not a file in {top}; pass the suite's path relative to "
                      f"the checkout's top directory")
-    if suite in runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX:
+    if suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX:
         raise NotRun(f"{suite} cannot run inside the signal sandbox: "
-                     f"{runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX[suite]}")
+                     f"{runner.SUITES_RUN_WITHOUT_ANY_SANDBOX[suite]}")
     patch = Path(arguments.mutant).resolve() if arguments.mutant else None
     if patch is not None and not patch.is_file():
         raise NotRun(f"the mutant {arguments.mutant} is not a file")
@@ -531,7 +544,7 @@ def run(arguments, platform):
     if unconfined_because:
         raise NotRun(f"no signal sandbox: {unconfined_because}")
 
-    # In its own test sandbox the suite shares no machine state with other runs, so no
+    # In its own nc-test-sandbox the suite shares no machine state with other runs, so no
     # machine lock is taken; admission decides when it starts, as for the runner's suites.
     in_test_sandbox = platform.startswith("linux") and \
         runner.does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix)
@@ -565,11 +578,13 @@ def run(arguments, platform):
         # Clean up after earlier runs here, as scripts/run-all-test-suites.py does.
         if lock_handle is None:
             with runner.lock_held_while_cleaning_up_after_earlier_runs(Path(arguments.lock_file)):
-                runner.clean_up_after_earlier_runs(Path(arguments.lock_file), previous_holder,
-                                                   platform)
+                clean_up_lines = runner.clean_up_after_earlier_runs(
+                    Path(arguments.lock_file), previous_holder, platform)
         else:
-            runner.clean_up_after_earlier_runs(Path(arguments.lock_file), previous_holder,
-                                               platform)
+            clean_up_lines = runner.clean_up_after_earlier_runs(
+                Path(arguments.lock_file), previous_holder, platform)
+        for line in clean_up_lines:
+            print(f"{PROGRAM}: {line}", flush=True)
         admitted = contextlib.nullcontext(0.0)
         if in_test_sandbox:
             readings = runner.TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler(psutil)

@@ -30,8 +30,13 @@ says only where to look and how to list what exists.
 THE STORE'S RULES HOLD HERE, WITH ONE DIFFERENCE INSIDE `seats/`. FAIL
 LOUDLY is the record shipper's (nc-systems/cold-read/cold-read-record-ship.py) and is
 kept: an unreachable ned-box prints a line opening FAILED and exits non-zero
-with the file still on disk for a later run. ADD-ONLY and REFUSE ON
-DIFFERENCE remain the rules of the records kind, which that program still
+with the file still on disk for a later run; a FAILED line for a shipment that
+stops after its copy has begun ends with the command that reruns it. Every
+FAILED line also names this run's own staging directory when it could not be
+removed, with the command that deletes it, because a later shipment of the
+file stops on it; a shipment whose file was stored prints that FAILED line,
+with the citation, in place of the citation alone. ADD-ONLY
+and REFUSE ON DIFFERENCE remain the rules of the records kind, which that program still
 enforces unchanged; here a file of the same name whose content differs is
 REPLACED, and the replacement is announced.
 
@@ -101,7 +106,9 @@ environment. With neither, the program refuses rather than guessing: a
 directory named for the wrong seat is worse than an error, because the file
 is then filed where nobody will look for it.
 
-OUTPUT. Exactly one line on stdout per file -- the citation, or `FAILED:`.
+OUTPUT. Exactly one line on stdout per file -- the citation, or `FAILED:`,
+which carries the citation when the file was stored but this run's staging
+directory could not be removed.
 Everything else is on stderr, the line announcing a replacement included.
 Exit 0 when every file shipped, 1 when any failed, 64 for a bad invocation.
 
@@ -225,9 +232,14 @@ def ensure_seat_directory(destination: SeatsStoreDestination, seat: str):
     seat_directory = destination.seats_path / seat
     root = destination.seats_path.parent
     if destination.copy_host is None:
-        pathlib.Path(seat_directory).mkdir(parents=True, exist_ok=True)
-        shipper.refresh_store_readme(root)
-        return subprocess.CompletedProcess([], 0, "", "")
+
+        def make_directory_and_refresh_readme():
+            pathlib.Path(seat_directory).mkdir(parents=True, exist_ok=True)
+            shipper.refresh_store_readme(root)
+
+        completed, _ = shipper.local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
+            make_directory_and_refresh_readme)
+        return completed
     script = shipper.make_directory_and_refresh_readme_script(
         seat_directory, root)
     return subprocess.run(
@@ -239,16 +251,15 @@ def ensure_seat_directory(destination: SeatsStoreDestination, seat: str):
 def stored_digest(copy_host, target):
     """(process, digest-or-None) for the store's copy of one file.
 
-    None means the file is not there; an unreachable host is the process's
-    non-zero return with a digest of None, which the caller separates by
-    checking the return code.
+    None means the file is not there; an unreachable host, or a local read
+    that fails, is the process's non-zero return with a digest of None, which
+    the caller separates by checking the return code.
     """
     if copy_host is None:
         path = pathlib.Path(target)
-        if not path.is_file():
-            return subprocess.CompletedProcess([], 0, "", ""), None
-        return (subprocess.CompletedProcess([], 0, "", ""),
-                hashlib.sha256(path.read_bytes()).hexdigest())
+        return shipper.local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
+            lambda: hashlib.sha256(path.read_bytes()).hexdigest()
+            if path.is_file() else None)
     script = f"if [ -f '{target}' ]; then sha256sum -- '{target}'; fi"
     completed = subprocess.run(shipper.SSH_COMMAND + [copy_host, script],
                                capture_output=True, text=True, check=False)
@@ -325,36 +336,69 @@ def ship_one_file(destination: SeatsStoreDestination, seat: str,
     seat_directory = destination.seats_path / seat
     staging_dir = seat_directory / (f"{shipper.STAGING_DIRECTORY_PREFIX}"
                                     f"{stored_name}-{secrets.token_hex(6)}")
+    # `--seat=` and `--as=`: argparse reads a value after a space that begins
+    # with a dash as an option, and rejects the command.
+    rerun_arguments = [str(REPO_ROOT / "scripts" / "seat-shared-file-ship.py"), f"--seat={seat}"]
+    if stored_name != source.name:
+        rerun_arguments += [f"--as={stored_name}"]
+    rerun = f"`{shlex.join(rerun_arguments + [str(source.absolute())])}`"
+
+    def left_behind_sentences(why):
+        """`why` is remove_staging_directory's answer. A staging directory left
+        behind stops every later shipment of the file in
+        replace_with_staged_files, so every FAILED line names it."""
+        shown, command = shipper.staging_directory_host_colon_path_and_local_or_ssh_rm_command(
+            destination.copy_host, staging_dir)
+        return (f"This run's staging directory {shown}, if it is there, could not be "
+                f"removed ({why}). Until it is deleted, a later shipment of this file "
+                f"stops on it. Deleting it loses nothing, because the file stays at "
+                f"{source.absolute()} and every shipment copies it again into a new "
+                f"staging directory of its own; delete it with `{command}`.")
+
+    def stopped_line(what_failed, why):
+        """The staging directory left behind is named before the rerun, which
+        would stop on it."""
+        if not why:
+            return f"FAILED: {seat}/{stored_name} — {what_failed}. Rerun: {rerun}"
+        return (f"FAILED: {seat}/{stored_name} — {what_failed}. "
+                f"{left_behind_sentences(why)} Then rerun: {rerun}")
+
     copied = rsync_one_file(destination.copy_host, source, f"{staging_dir}/")
     if copied.returncode != 0:
-        shipper.remove_staging_directory(destination.copy_host, staging_dir)
-        print(f"FAILED: {seat}/{stored_name} — rsync exited "
-              f"{copied.returncode}", flush=True)
+        why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
+        print(stopped_line(f"rsync exited {copied.returncode} during the copy", why),
+              flush=True)
         print(copied.stderr.strip(), file=sys.stderr)
         return EXIT_FAILED
     renamed, outcomes = shipper.replace_with_staged_files(
         destination.copy_host, staging_dir, seat_directory,
         [(source.name, stored_name, None)])
-    shipper.remove_staging_directory(destination.copy_host, staging_dir)
+    why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
     if isinstance(outcomes, shipper.OtherShipmentStaging):
         failed, instruction = shipper.other_shipment_failure_lines(
             f"{seat}/{stored_name}", outcomes)
+        if why:
+            failed += f" {left_behind_sentences(why)}"
         print(failed, flush=True)
         print(instruction, file=sys.stderr)
         return EXIT_FAILED
     if outcomes is None or stored_name not in outcomes:
-        print(f"FAILED: {seat}/{stored_name} — the store could not be written; "
-              f"a later run finishes it", flush=True)
+        print(stopped_line("the store could not be written", why), flush=True)
         print(renamed.stderr.strip(), file=sys.stderr)
         return EXIT_FAILED
     outcome = outcomes[stored_name]
     if outcome.stored_sha256 != local_digest:
+        left_behind = f" {left_behind_sentences(why)}" if why else ""
         print(f"FAILED: {seat}/{stored_name} — the store holds sha256 "
               f"{outcome.stored_sha256}, not this file's {local_digest}: another "
               f"shipment replaced it while this one ran. Ship this file again "
-              f"only if it is the copy the store should keep.", flush=True)
+              f"only if it is the copy the store should keep.{left_behind}", flush=True)
         return EXIT_FAILED
-    print(citation, flush=True)
+    if why:
+        print(f"FAILED: {seat}/{stored_name} — stored at {citation}. "
+              f"{left_behind_sentences(why)}", flush=True)
+    else:
+        print(citation, flush=True)
     replaced_digest = (outcome.displaced_sha256
                        if outcome.displaced_sha256 not in (None, local_digest)
                        else None)
@@ -375,7 +419,7 @@ def ship_one_file(destination: SeatsStoreDestination, seat: str,
               f"Timeshift snapshots: on ned-box, run `sha256sum "
               f"/mnt/backup/timeshift/snapshots/*/localhost{stored_path}` and "
               f"take a snapshot whose line shows that digest.", file=sys.stderr)
-    return EXIT_SHIPPED
+    return EXIT_FAILED if why else EXIT_SHIPPED
 
 
 def main() -> int:

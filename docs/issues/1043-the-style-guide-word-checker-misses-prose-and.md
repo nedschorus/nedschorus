@@ -6,7 +6,7 @@ issue: "[The style-guide-word-checker misses prose and flags code in six Markdow
 
 Filed without the user's sign-off by the agent-seat merge-lane-2 on 2026-10-04. The user ruled on 2026-08-23 that a reproduced finding whose consequence is at least wrong behavior in operation is filed that way; the ruling is recorded in merge-lane-2's `CLAUDE.local.md` on ned-box. The sections are, in order: the reproductions, where each finding came from, why the findings matter, their causes, and the next action.
 
-The programs are `scripts/style-guide-word-checker.py` (the checker) and `scripts/style-guide-word-checker-markdown-edit-hook.py` (the PostToolUse hook that runs the checker after an agent's Edit or Write of a Markdown file), as they are on main at commit `07fbc10e`. Line numbers below are at that commit. The style guide page, `docs/nedschorus-wiki/nedschorus-style-guide.md`, says the checker skips code; each shape below is a case where the checker or the hook gets the boundary between code and prose wrong, or does not check a line an agent just wrote.
+The programs are `scripts/style-guide-word-checker-nbd.py` (the checker) and `scripts/style-guide-word-checker-markdown-edit-hook-nbd.py` (the PostToolUse hook that runs the checker after an agent's Edit or Write of a Markdown file), as they are on main at commit `07fbc10e`, where their names did not yet end in `-nbd`. Line numbers below are at that commit. The style guide page, `docs/nedschorus-wiki/nedschorus-style-guide.md`, says the checker skips code; each shape below is a case where the checker or the hook gets the boundary between code and prose wrong, or does not check a line an agent just wrote.
 
 ## Reproductions
 
@@ -25,7 +25,7 @@ starts = not (len(sys.argv) > 3 and sys.argv[3] == "fragment")
 print([(h.line_number, h.form) for h in m.find_style_guide_word_hits_in_markdown(text, m.APPLIES_TO_FILES, text_starts_document=starts)])
 ```
 
-The command is `python3 run_checker.py scripts/style-guide-word-checker.py <input>.md`, with `fragment` added as a third argument to scan the input the way the hook scans an Edit's `new_string` (`text_starts_document=False`). The output is the list of hits as (line number, word). The word used in every input is "seat", a word the style guide lists.
+The command is `python3 run_checker.py scripts/style-guide-word-checker-nbd.py <input>.md`, with `fragment` added as a third argument to scan the input the way the hook scans an Edit's `new_string` (`text_starts_document=False`). The output is the list of hits as (line number, word). The word used in every input is "seat", a word the style guide lists.
 
 ### 1. A line holding a list marker before three backticks closes a fenced code block
 
@@ -70,7 +70,7 @@ Run `git switch
 seat --force` now.
 ```
 
-Then pipe this payload to `python3 scripts/style-guide-word-checker-markdown-edit-hook.py` (`<repository>` stands for the scratch repository's absolute path):
+Then pipe this payload to `python3 scripts/style-guide-word-checker-markdown-edit-hook-nbd.py` (`<repository>` stands for the scratch repository's absolute path):
 
 ```json
 {"tool_name": "Edit", "cwd": "<repository>", "tool_input": {"file_path": "<repository>/notes.md", "old_string": "seat --force` now.", "new_string": "seat --force` today."}}
@@ -164,7 +164,7 @@ Each shape is wrong behavior in operation, in one of two directions:
 
 ## Causes
 
-All line numbers are in `scripts/style-guide-word-checker.py` at `07fbc10e` unless the hook is named.
+All line numbers are in `scripts/style-guide-word-checker-nbd.py` at `07fbc10e` unless the hook is named.
 
 - Item 1: `FENCE_PATTERN` (line 117) accepts any indentation and an optional list marker before the fence characters. That is right for an opening fence that starts a list item, but `find_style_guide_word_hits_in_markdown` uses the same match to close an open fence (lines 263 to 269), where CommonMark allows at most three spaces of indentation and no list marker.
 - Item 2: `INLINE_CODE_SPAN_PATTERN` (line 124), `` (`+).+?\1 ``, can match a backtick run shorter than the run that opens the span, because the regular expression backtracks into the opening run. On line 1 of the input the pattern takes `` `a ` `` as a span of single backticks, so no span is left open to carry to line 2. CommonMark requires the closing run to have the same length as the opening run, with no backtick on either side of either run.
@@ -175,7 +175,7 @@ All line numbers are in `scripts/style-guide-word-checker.py` at `07fbc10e` unle
 
 ## Next action
 
-Fix the six shapes in the checker and the hook, adding one case per item to `scripts/style-guide-word-checker-markdown-edit-hook-test.py`, built from the inputs above. Each case fails on main at `07fbc10e` and passes after the fix.
+Fix the six shapes in the checker and the hook, adding one case per item to `scripts/style-guide-word-checker-markdown-edit-hook-nbd-test.py`, built from the inputs above. Each case fails on main at `07fbc10e` and passes after the fix.
 
 - Items 1, 5 and 6: accept a closing fence only at zero to three spaces of indentation with nothing before the run, as CommonMark does. End list tracking at a heading as well as at an unindented line after a blank. Decide how a fence that never closes is treated; one choice is to treat an indented opening fence whose closing fence never comes as not a fence, so that a misread line cannot hide the rest of the text.
 - Item 2: match a code span's closing run only when the closing run has exactly the opening run's length, with no backtick next to either run; `backtick_run_closing` (line 192) already matches runs that way and can serve as the model.

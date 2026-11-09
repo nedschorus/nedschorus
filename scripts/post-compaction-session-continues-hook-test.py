@@ -185,7 +185,7 @@ with tempfile.TemporaryDirectory() as workspace:
     for case_name, raw_input_text, fault_words in (
             ("empty stdin", "", "JSONDecodeError"),
             ("unparseable stdin", "{not json at all", "JSONDecodeError"),
-            ("a non-object payload", '["a list, not an object"]', "a JSON list, not an object")):
+            ("a non-object payload", '["a list, not an object"]', "JSON, but not an object")):
         result = run_hook(None, home, raw_input_text=raw_input_text)
         check(f"{case_name} is reported on stderr, exit 1",
               reported(result, fault_words), f"code {result.returncode}, "
@@ -523,17 +523,17 @@ with tempfile.TemporaryDirectory() as workspace:
         hook.hook_payload_from_stdin = original_payload_reader
 
     threshold_module = hook.sibling_module(hook.THRESHOLD_SCRIPT, "handoff_context_threshold_hook")
-    original_marker_path = threshold_module.fired_marker_path
+    original_marker_path = threshold_module.handoff_asked_marker_path
     try:
-        threshold_module.fired_marker_path = raise_instead
+        threshold_module.handoff_asked_marker_path = raise_instead
         marker_fault = hook.clear_fired_marker("s-path-fails")
     finally:
-        threshold_module.fired_marker_path = original_marker_path
+        threshold_module.handoff_asked_marker_path = original_marker_path
     check("a marker path that cannot be computed: the line names the session and says why no path",
           "clearing the fired marker failed" in marker_fault
           and "Tell the user that the fired marker for session s-path-fails was not deleted. "
               "Its path cannot be named here, because only handoff-context-threshold-hook.py "
-              "defines it and its fired_marker_path() failed." in marker_fault,
+              "defines it and its handoff_asked_marker_path() failed." in marker_fault,
           marker_fault)
 
     # ---- the marker name has one definition ------------------------------
@@ -541,7 +541,7 @@ with tempfile.TemporaryDirectory() as workspace:
     threshold_source = HOOK_SCRIPT.with_name(
         "handoff-context-threshold-hook.py").read_text(encoding="utf-8")
     check("the threshold hook defines the fired-marker suffix exactly once",
-          threshold_source.count('FIRED_MARKER_SUFFIX = "-handoff-asked"') == 1,
+          threshold_source.count('HANDOFF_ASKED_MARKER_SUFFIX = "-handoff-asked"') == 1,
           "definition count is not 1")
     check("this hook carries no second copy of the marker name",
           "-handoff-asked" not in HOOK_SCRIPT.read_text(encoding="utf-8").replace(

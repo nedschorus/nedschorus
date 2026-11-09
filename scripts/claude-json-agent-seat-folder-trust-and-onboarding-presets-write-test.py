@@ -193,15 +193,22 @@ def main() -> int:
                   and "may stop at" not in completed.stderr,
                   (completed.returncode, completed.stderr))
             check(f"{case_name}: the one remedy that fits, naming {home}/.claude/backups/",
-                  f"{home}/.claude/backups/ that {wanted}, then launch again" in completed.stderr
+                  f"The user restores {state} from the newest copy in {home}/.claude/backups/ that {wanted}; "
+                  "after that, launch again." in completed.stderr
                   and other_wanted not in completed.stderr
                   and "~/.claude/backups/" not in completed.stderr
                   and "Otherwise" not in completed.stderr
                   and "Fix the cause" not in completed.stderr,
                   completed.stderr)
+            check(f"{case_name}: the remedy says the user restores or moves the file, "
+                  "because it holds the Claude Code login, and an agent does not replace it",
+                  f"{state} holds the Claude Code login, so the user restores or moves it; "
+                  "an agent that reads this tells the user and does not replace the file."
+                  in completed.stderr,
+                  completed.stderr)
             check(f"{case_name}: what to do when no backup fits, also naming the backups",
-                  f"If no copy in {home}/.claude/backups/ {wanted}: "
-                  f"move {state} aside, such as to {state}.unreadable, then launch again"
+                  f"If no copy in {home}/.claude/backups/ {wanted}, the user "
+                  f"moves {state} aside, such as to {state}.unreadable; after that, launch again."
                   in completed.stderr,
                   completed.stderr)
             check(f"{case_name}: the file is byte-identical and its inode unchanged, "
@@ -210,6 +217,21 @@ def main() -> int:
                   and after.st_ino == before.st_ino
                   and temporary_leftovers(home) == [],
                   (state.read_bytes(), temporary_leftovers(home)))
+
+        # A file that holds JSON other than an object names the JSON type, not Python's.
+        for case_number, (content, json_type) in enumerate((
+                (b"[]", "array"), (b'"text"', "string"), (b"7", "number"),
+                (b"1.5", "number"), (b"true", "boolean"), (b"null", "null"))):
+            state = root / f"not-an-object-{case_number}.json"
+            state.write_bytes(content)
+            try:
+                write(state, "/seats/one")
+                raised = None
+            except presets.ClaudeJsonNotAJsonObjectError as error:
+                raised = error
+            check(f"JSON {content.decode()}: the error names JSON's type, {json_type}",
+                  str(raised) == f"{state} holds a JSON {json_type}, not an object",
+                  raised)
 
         # The onboarding-only write, which the handoff-supervisor makes before every
         # agent-session it launches: onboarding and theme, never a trust preset.
@@ -269,7 +291,7 @@ def main() -> int:
                   (completed.returncode, completed.stderr))
             check("unwritable HOME: the remedy is to fix the cause, naming the file and its "
                   "folder, not to restore a backup",
-                  "Fix the cause named above, then launch again." in completed.stderr
+                  "Fix the cause named above; after that, launch again." in completed.stderr
                   and f"make {home}/.claude.json and its folder {home}/ writable by the account"
                   in completed.stderr
                   and "Restore" not in completed.stderr,

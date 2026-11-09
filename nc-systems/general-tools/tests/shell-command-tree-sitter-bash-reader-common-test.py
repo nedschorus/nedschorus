@@ -13,13 +13,14 @@ Prints one line per case and exits non-zero if any case fails.
 
 import contextlib
 import importlib.util
+import inspect
 import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
-import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -57,6 +58,120 @@ def check(case_name, condition, detail=""):
     else:
         print(f"FAIL  {case_name}: {detail}")
         failures.append(case_name)
+
+
+class CountingParser:
+    """Stands in for the reader's tree-sitter Parser and counts its parses."""
+
+    def __init__(self, real):
+        self.real, self.parses = real, 0
+
+    def parse(self, *arguments, **options):
+        self.parses += 1
+        return self.real.parse(*arguments, **options)
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
+# A reader that parses once per line or per word reads in quadratic time; counting its parses
+# shows that where a clock cannot, since a clock also measures the machine's load.
+PARSE_COUNTING_CHILD_CODE = (
+    "import importlib.util, json, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+    "r = importlib.util.module_from_spec(s); s.loader.exec_module(r)\n"
+    + inspect.getsource(CountingParser)
+    + "counting = r._parser = CountingParser(r.parser())\n"
+    "results = []\n"
+    "for n in json.loads(sys.argv[2]):\n"
+    " counting.parses = 0; found = r.simple_commands(eval(sys.argv[3]))\n"
+    " results.append([counting.parses, len(found), list(found[int(sys.argv[4])])])\n"
+    "print(json.dumps(results))")
+
+
+def parses_counted_in_a_child(text_expression, sizes, argument="", index=-1):
+    """Read text_expression's text at each of sizes in a new process under the guard's 30 s.
+
+    text_expression is Python that builds the command from n, the size, and a, the argument.
+    Return a list of [parses, commands read, command at index] per size, or the error as a string.
+    """
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", PARSE_COUNTING_CHILD_CODE, str(MODULE_PATH), json.dumps(sizes),
+             f"(lambda a: {text_expression})({argument!r})", str(index)],
+            timeout=30, check=True, capture_output=True, text=True)
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
+        return repr(problem)
+    return json.loads(completed.stdout)
+
+
+def parses_grow_by_a_constant(counted):
+    """True when counted, from parses_counted_in_a_child at two sizes, holds parses that grow by at most two."""
+    return (isinstance(counted, list) and 1 <= counted[0][0]
+            and counted[1][0] <= counted[0][0] + 2)
+
+
+# For a quadratic that is not a parse, the reader's CPU time is compared between two reads. CPU
+# time leaves out the time spent waiting for a busy machine's processors; the reads alternate,
+# best of three each, so a burst of load slows both alike.
+READ_TIME_RATIO_CHILD_CODE = (
+    "import importlib.util, json, sys, time; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+    "r = importlib.util.module_from_spec(s); s.loader.exec_module(r)\n"
+    "exec(sys.argv[2])\n"
+    "arguments = json.loads(sys.argv[3])\n"
+    "runs, outputs = [[] for _ in arguments], [None for _ in arguments]\n"
+    "for _ in range(3):\n"
+    " for index, argument in enumerate(arguments):\n"
+    "  started = time.process_time(); outputs[index] = read(argument)\n"
+    "  runs[index].append(time.process_time() - started)\n"
+    "print(json.dumps([[min(times) for times in runs], outputs]))")
+
+
+def read_times_in_a_child(read_definition, arguments):
+    """Time read(argument) for each of arguments in CPU seconds, best of three, in a new process.
+
+    Return [timings, outputs] or the error.
+    """
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", READ_TIME_RATIO_CHILD_CODE, str(MODULE_PATH), read_definition,
+             json.dumps(arguments)], timeout=300, check=True, capture_output=True, text=True)
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
+        return repr(problem)
+    return json.loads(completed.stdout)
+
+
+# A quadratic loop in the reader's own Python shows as lines run, which no machine load changes; a
+# quadratic copy inside one line, such as a bytes slice, does not show.
+READER_LINES_RUN_CHILD_CODE = (
+    "import importlib.util, json, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+    "r = importlib.util.module_from_spec(s); s.loader.exec_module(r)\n"
+    "exec(sys.argv[2])\n"
+    "lines_run, reader_file = 0, r.simple_commands.__code__.co_filename\n"
+    "def count_line(frame, event, argument):\n"
+    " global lines_run\n"
+    " lines_run += event == 'line'\n"
+    " return count_line\n"
+    "def trace_reader(frame, event, argument):\n"
+    " return count_line if frame.f_code.co_filename == reader_file else None\n"
+    "counts, outputs = [], []\n"
+    "for n in json.loads(sys.argv[3]):\n"
+    " lines_run = 0; sys.settrace(trace_reader); output = read(n); sys.settrace(None)\n"
+    " counts.append(lines_run); outputs.append(output)\n"
+    "print(json.dumps([counts, outputs]))")
+
+
+def reader_lines_run_counted_in_a_child(read_definition, sizes):
+    """Count the reader's lines run by read(n) at each of sizes in a new process under the guard's 30 s.
+
+    Return [counts, outputs], or the error as a string.
+    """
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", READER_LINES_RUN_CHILD_CODE, str(MODULE_PATH), read_definition,
+             json.dumps(sizes)], timeout=30, check=True, capture_output=True, text=True)
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
+        return repr(problem)
+    return json.loads(completed.stdout)
 
 
 ANSI_C_WORDS = [r"$'a\nb'", r"$'\t\x41\101\e\cA\c?'", r"$'it\'s \"x\" \?'", r"$'keep \q and \x and \u'",
@@ -146,6 +261,159 @@ check("a case's branches are commands and its patterns are not",
 check("$'...' ends at its unescaped quote, and a plain '...' at its first quote",
       words_of("a $'it\\'s' b; c 'x'") == [["a", "it's", "b"], ["c", "x"]],
       words_of("a $'it\\'s' b; c 'x'"))
+found = words_of("echo \\ #word; rm -rf x && git push --force")
+check("a # after an escaped space is part of its word, so the commands after it on the line are read",
+      [words[0] for words in found] == ["echo", "rm", "git"] and " #word" in found[0], found)
+check("a # after an escaped backslash still starts a comment, which hides the rest of its line",
+      words_of("echo \\\\ # rm -rf x\nls") == [["echo", "\\"], ["ls"]],
+      words_of("echo \\\\ # rm -rf x\nls"))
+found = reader.simple_commands("echo '\\ #q'; cat <<EOF\n\\ #body\nEOF\nls")
+check("a # after an escaped space inside quotes and in a here-document body is left as written",
+      [list(words) for words in found] == [["echo", "\\ #q"], ["cat"], ["ls"]]
+      and found[1].redirects == [("<<", "\\ #body\n")],
+      [(list(words), words.redirects) for words in found])
+found = words_of("echo \\\t#word; rm -rf x")
+check("a # after an escaped tab is part of its word, so the commands after it on the line are read",
+      [words[0] for words in found] == ["echo", "rm"], found)
+found = reader.simple_commands('cat <<EOF; echo \\ #word"\ninside"\nEOF\ntmux kill-server')
+check("a # after an escaped space on a here-document's opening line does not hide the quote that "
+      "carries the line on, so the body starts after it and the command after the body is read",
+      [words[0] for words in found] == ["cat", "echo", "tmux"] and found[0].redirects == [("<<", "")],
+      [(list(words), words.redirects) for words in found])
+for command, expected in [("echo \\ x", ["echo", " x"]), ("echo \\  x", ["echo", " ", "x"]),
+                          ("echo \\ \\ x", ["echo", "  x"]), ("echo \\\tx", ["echo", "\tx"]),
+                          ('echo \\ "q"', ["echo", " q"]), ("echo a\\ b \\ c", ["echo", "a b", " c"])]:
+    check(f"escaped blanks at a word's start stay in the word, as bash passes it: {command!r}",
+          words_of(command) == [expected], words_of(command))
+# Each expected list is the words bash passed to a shell function standing in for the command.
+for command, expected in [("echo \\ <<<x y", [["echo", " ", "y"]]),
+                          ("zzp \\  >f x", [["zzp", " ", "x"]]),
+                          ("zzp a>f \\  b", [["zzp", "a", " ", "b"]]),
+                          ("zzq \\ ;", [["zzq", " "]]),
+                          ("zzq \\ \\ ;zzp", [["zzq", "  "], ["zzp"]]),
+                          ("zzp \\ &&zzq", [["zzp", " "], ["zzq"]]),
+                          ("zzp \\  #c", [["zzp", " "]]),
+                          ("zzp \\ \nzzq", [["zzp", " "], ["zzq"]]),
+                          ("zzq \\ \\\n;", [["zzq", " "]]),
+                          ("zzq \\ |zzp", [["zzq", " "], ["zzp"]]),
+                          ("zzq \\ ", [["zzq", " "]]),
+                          ("(zzq \\ )", [["zzq", " "]]),
+                          ("zzp `zzq \\ `", [["zzq", " "], ["zzp", "`zzq \\ `"]]),
+                          ("zzp \\ 0<(zzq) x", [["zzq"], ["zzp", " 0<(zzq)", "x"]]),
+                          ("zzp a \\ 0<(zzq)", [["zzq"], ["zzp", "a", " 0<(zzq)"]]),
+                          # tree-sitter-bash folds the lines after this pipeline into its redirections.
+                          ("zzp hi | zzq | zzr -c | zzs -2\nzzt > f <x\nzzu > g <y\n"
+                           "zzv $(zzw) \\ && for t in a b; do zzx; done",
+                           [["zzp", "hi"], ["zzq"], ["zzr", "-c"], ["zzs", "-2"], ["zzt"], ["zzu"], ["zzw"],
+                            ["zzv", "$(zzw)", " "], ["zzx"]])]:
+    check(f"escaped blanks next to a redirection or a separator are words, as bash passes them: "
+          f"{command!r}", words_of(command) == expected, words_of(command))
+for command, expected in [("zzp >\\ f", (["zzp"], [(">", " f")])),
+                          ("zzp > \\  f", (["zzp", "f"], [(">", " ")]))]:
+    found = reader.simple_commands(command)
+    check(f"escaped blanks before a redirection's target start the target, as bash reads it: "
+          f"{command!r}", (list(found[0]), found[0].redirects) == expected,
+          [(list(words), words.redirects) for words in found])
+# Each expected pair is the words bash passed to a shell function standing in for the command, and
+# the file it wrote. tree-sitter-bash ends a word before a backslash and tab, and before a line
+# continuation; bash keeps the escaped blanks that touch a word's end in that word.
+for command, expected in [("zzq >f\\\t;", [(["zzq"], [(">", "f\t")])]),
+                          ("zzq a\\\t;", [(["zzq", "a\t"], [])]),
+                          ("git push origin br >f\\\t",
+                           [(["git", "push", "origin", "br"], [(">", "f\t")])]),
+                          ("zzq a\\\t\t2", [(["zzq", "a\t", "2"], [])]),
+                          ("zzq a\\ ;", [(["zzq", "a "], [])]),
+                          ("zzq >f\\\t\t2", [(["zzq", "2"], [(">", "f\t")])]),
+                          ("zzq <<<x\\\t;", [(["zzq"], [("<<<", "x\t")])]),
+                          ("zzq a\\\t\\ \tb", [(["zzq", "a\t ", "b"], [])]),
+                          ("zzq a\\\n\\\t;", [(["zzq", "a\t"], [])]),
+                          ("zzq \"a\"\\\t;", [(["zzq", "a\t"], [])]),
+                          ("zzq a >f\\\t b", [(["zzq", "a", "b"], [(">", "f\t")])]),
+                          ("zzq a\\\t>f", [(["zzq", "a\t"], [(">", "f")])]),
+                          ("zzq >\\\tf;", [(["zzq"], [(">", "\tf")])]),
+                          ("zzq a b\\\t", [(["zzq", "a", "b\t"], [])]),
+                          ("zzq a\\\tb", [(["zzq", "a\tb"], [])]),
+                          ("zzq >f\\\tg", [(["zzq"], [(">", "f\tg")])]),
+                          ("zzq a\\\nb", [(["zzq", "ab"], [])]),
+                          ("zzq >f\\\ng", [(["zzq"], [(">", "fg")])]),
+                          ("zzq 0<(zzp)\\\t;", [(["zzp"], []), (["zzq", "0<(zzp)\t"], [])]),
+                          ("zzq $(zzp)\\\tb", [(["zzp"], []), (["zzq", "$(zzp)\tb"], [])])]:
+    found = reader.simple_commands(command)
+    check(f"escaped blanks that touch a word's end stay in that word, as bash reads it: {command!r}",
+          [(list(words), words.redirects) for words in found] == expected,
+          [(list(words), words.redirects) for words in found])
+found = reader.simple_commands("ls ~\\\t ~/x\\\t")
+check("an escaped blank added to a word before its first / quotes its ~, so bash does not expand it",
+      list(found[0]) == ["ls", "~\t", "~/x\t"]
+      and [type(word) for word in found[0][1:]]
+      == [str, reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand],
+      [(word, type(word).__name__) for word in found[0]])
+found = reader.simple_commands("ls \\ ~/x")
+check("a word that starts with an escaped space is not a word whose ~ bash expands",
+      list(found[0]) == ["ls", " ~/x"]
+      and not isinstance(found[0][1], reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand),
+      [(word, type(word).__name__) for word in found[0]])
+# Correcting each body line with a parse of its own would take minutes for 4,000 lines.
+counted = parses_counted_in_a_child("'cat <<EOF\\n' + 'line \\\\ #x\\n' * n + 'EOF\\ntmux kill-server'",
+                                    [1000, 4000])
+check("a 4,000-line here-document whose lines each hold a # after an escaped space is read in at most "
+      "two parses more than 1,000 such lines, inside a guard's 30 s, and the command after it is read",
+      parses_grow_by_a_constant(counted) and counted[1][2] == ["tmux", "kill-server"], counted)
+# Copying the redirection's text once per target is quadratic, without any parse to count, so
+# 512,000 words after a redirection are timed against the same words with no redirection. Read
+# in place, the redirection takes 1.1 to 1.2 times as long; copied once per target, 4.7 to 6
+# times, both measured best of three, idle and under load. 512,000 words take 2 to 5 s of CPU.
+timed = read_times_in_a_child(
+    "def read(argument):\n redirect, n = argument\n"
+    " found = r.simple_commands('echo' + (' >f' if redirect else '') + ' a' * n + '\\ntmux kill-server')\n"
+    " return [len(found[0]), list(found[-1])]", [[True, 512000], [False, 512000]])
+check("a redirection followed by 512,000 words is read in less than 2.5 times the CPU time of the same "
+      "words with no redirection, inside a guard's 30 s, and the command after it is read",
+      isinstance(timed, list) and timed[0][0] < 30 and timed[0][0] < 2.5 * timed[0][1]
+      and timed[1][0] == [512001, ["tmux", "kill-server"]] and timed[1][1] == [512001, ["tmux", "kill-server"]],
+      timed)
+# The ratio above divides out a slowdown in reading plain words, so plain words are counted alone.
+# Copying the command's text once per word, byte by byte, runs about 16 times the reader's lines
+# at four times the words; read in place, about 4 times.
+counted = reader_lines_run_counted_in_a_child(
+    "def read(n):\n found = r.simple_commands('echo' + ' a' * n + '\\ntmux kill-server')\n"
+    " return [len(found[0]), list(found[-1])]", [500, 2000])
+check("2,000 plain words are read in less than 5 times the reader's lines run for 500, inside a guard's "
+      "30 s, and the command after them is read",
+      isinstance(counted, list) and 1 <= counted[0][0] and counted[0][1] < 5 * counted[0][0]
+      and counted[1] == [[501, ["tmux", "kill-server"]], [2001, ["tmux", "kill-server"]]], counted)
+found = words_of("cat <<EOF\n$(echo a \\ #x; rm y\n)\nEOF\n")
+check("a # after an escaped space in a substitution in a here-document body is part of its word, "
+      "so the commands after it in the substitution are read",
+      ["rm", "y"] in found, found)
+found = reader.simple_commands("cat <<EOF\nEOFX\n\\ #x\nEOF\necho after")
+check("a # after an escaped space on a body line that only starts with the delimiter is left as written",
+      found[0].redirects == [("<<", "EOFX\n\\ #x\n")] and list(found[1]) == ["echo", "after"],
+      [(list(words), words.redirects) for words in found])
+found = words_of('echo "$(echo \\ #x)" `echo \\ #y` ${v:-\\ #z}')
+check("a word holding a substitution or an expansion reads as written, with no backslash added before its #",
+      ["echo", "$(echo \\ #x)", "`echo \\ #y`", "${v:-\\ #z}"] in found, found)
+script = b"#!/bin/sh\nx=`# PR 1\necho hi`\necho \\ #word;# PR 2\ncat <<EOF\n# body\nEOF\ncase $y in\n  *\"a\"*\"b\"*) ;;\nesac\n"
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(script)
+check("the comments of a script are tree-sitter-bash's own, after the reader's corrections, "
+      "in offsets of the script as given",
+      [script[start:end] for start, end in read.comments] == [b"#!/bin/sh", b"# PR 1", b"# PR 2"],
+      [script[start:end] for start, end in read.comments])
+check("a span tree-sitter-bash cannot read is reported with whether it holds a #, "
+      "and a script whose quotes and here-documents close has nothing missing",
+      read.unreadable_spans and not any(holds for _, holds in read.unreadable_spans)
+      and read.missing_tokens == [] and read.heredocs_never_closed == [], read)
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(
+    b'case "$x" in\n  *"a#"*"b"*) echo hit ;;\nesac\n')
+check("a span tree-sitter-bash cannot read that holds a # is reported as holding one",
+      read.unreadable_spans == [(15, True)], read)
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(
+    b"cat <<EOF\nno end\n")
+check("a here-document that never closes is reported as written",
+      read.heredocs_never_closed == ["<<EOF"], read)
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(b"if true; then echo hi\n")
+check("a token a line needs that never comes is reported with its line",
+      read.missing_tokens == [("fi", 2)], read)
 check("export and unset are read as commands with their words",
       words_of("export A=1; unset B") == [["export", "A=1"], ["unset", "B"]],
       words_of("export A=1; unset B"))
@@ -170,6 +438,37 @@ for command, expected in [
 ]:
     found = [(list(f), f.redirects) for f in reader.simple_commands(command)]
     check(f"the 0 before a redirect is its descriptor, not a word: {command!r}", found == expected, found)
+# tree-sitter-bash reads a 0 that starts a command, before < or >, as the command's name; bash reads
+# it as the redirect's descriptor, and the command's name is the first word after the target.
+for command, expected in [
+    ("0</dev/null zzp push", [(["zzp", "push"], [("0<", "/dev/null")])]),
+    ("0>f zzp", [(["zzp"], [("0>", "f")])]),
+    ("0<&- zzp a", [(["zzp", "a"], [("0<&-", "")])]),
+    ("0<<<x zzp", [(["zzp"], [("0<<<", "x")])]),
+    ("0<<E zzp\nx\nE", [(["zzp"], [("<<", "x\n")])]),
+    ("0\\\n<f zzp", [(["zzp"], [("0<", "f")])]),
+    ("0<f", []),
+    ("x=1 0<f zzp", [(["x=1", "zzp"], [("0<", "f")])]),
+    ("zzq; 0<f zzp", [(["zzq"], []), (["zzp"], [("0<", "f")])]),
+    ("zzq && 0<f zzp", [(["zzq"], []), (["zzp"], [("0<", "f")])]),
+    ("zzq || 0<f zzp", [(["zzq"], []), (["zzp"], [("0<", "f")])]),
+    ("zzq & 0<f zzp", [(["zzq"], []), (["zzp"], [("0<", "f")])]),
+    ("zzq | 0<f zzp", [(["zzq"], []), (["zzp"], [("0<", "f")])]),
+    ("(0<f zzp)", [(["zzp"], [("0<", "f")])]),
+    ("{ 0<f zzp; }", [(["zzp"], [("0<", "f")])]),
+    ("if 0<f zzp; then zzq; fi", [(["zzp"], [("0<", "f")]), (["zzq"], [])]),
+    ("while 0<f zzp; do zzq; done", [(["zzp"], [("0<", "f")]), (["zzq"], [])]),
+    ("! 0<f zzp", [(["zzp"], [("0<", "f")])]),
+    ("zzq $(0<f zzp)", [(["zzp"], [("0<", "f")]), (["zzq", "$(0<f zzp)"], [])]),
+    # The 0 is the command's name when it is a word of its own, or joined to the text before it.
+    ("0 <f zzp", [(["0", "zzp"], [("<", "f")])]),
+    ("'0'<f zzp", [(["0", "zzp"], [("<", "f")])]),
+    ("a\\\n0<f zzp", [(["a0", "zzp"], [("<", "f")])]),
+    ("x=1\\\n0<f zzp", [(["x=10", "zzp"], [("<", "f")])]),
+]:
+    found = [(list(f), f.redirects) for f in reader.simple_commands(command)]
+    check(f"a 0 that starts a command before a redirect is its descriptor, not the command's name, "
+          f"as bash reads it: {command!r}", found == expected, found)
 # bash passes 0<(xb) to xa as one word, and a wrapper's option value written so is one word too.
 found = [(list(f), f.redirects) for f in reader.simple_commands("xa 0<(xb)")]
 check("a 0 written against a process substitution is part of its word",
@@ -177,6 +476,242 @@ check("a 0 written against a process substitution is part of its word",
 words = list(reader.simple_commands("env -u 0<(printf x) git push")[-1])
 check("a wrapper's option value written as 0<(...) leaves the program after it",
       reader.simple_command_program_index_skipping_wrappers(words) == (3, True), words)
+
+# --- a closing redirection, which has no target ---
+# Each expected pair is the words bash passed to a shell function standing in for the command, and
+# its redirections. bash reads n>&- and n<&- as closing descriptor n, so every word after one is an
+# argument; tree-sitter-bash gives the operator a target, and misreads the words after it.
+for command, expected in [
+    ("zzp 2>&- --force origin main", [(["zzp", "--force", "origin", "main"], [("2>&-", "")])]),
+    ("git push 2>&- --force origin main",
+     [(["git", "push", "--force", "origin", "main"], [("2>&-", "")])]),
+    ("git push >&- --force origin br", [(["git", "push", "--force", "origin", "br"], [(">&-", "")])]),
+    ("git push <&- --force origin br", [(["git", "push", "--force", "origin", "br"], [("<&-", "")])]),
+    ("git push 3>&- --force origin br", [(["git", "push", "--force", "origin", "br"], [("3>&-", "")])]),
+    ("git push 2>&- -f origin br", [(["git", "push", "-f", "origin", "br"], [("2>&-", "")])]),
+    ("git push 2>&- --force-with-lease origin br",
+     [(["git", "push", "--force-with-lease", "origin", "br"], [("2>&-", "")])]),
+    # tree-sitter-bash ends this command after a, with a ; that is not written; a written ; still ends it.
+    ("zzp 2>&- a b", [(["zzp", "a", "b"], [("2>&-", "")])]),
+    ("zzp 2>&- a; b", [(["zzp", "a"], [("2>&-", "")]), (["b"], [])]),
+    ("zzp >&- a b", [(["zzp", "a", "b"], [(">&-", "")])]),
+    ("zzp <&- a", [(["zzp", "a"], [("<&-", "")])]),
+    ("zzp 1<&- a", [(["zzp", "a"], [("1<&-", "")])]),
+    ("zzp 12>&- a b", [(["zzp", "a", "b"], [("12>&-", "")])]),
+    ("zzp 2>&- a >f b", [(["zzp", "a", "b"], [("2>&-", ""), (">", "f")])]),
+    ("zzp a 2>&-", [(["zzp", "a"], [("2>&-", "")])]),
+    ("zzp >&-x", [(["zzp", "x"], [(">&-", "")])]),
+    ("zzp >&- a \"b c\" $(zzq x)", [(["zzq", "x"], []), (["zzp", "a", "b c", "$(zzq x)"], [(">&-", "")])]),
+    ("(zzp <&- a b)", [(["zzp", "a", "b"], [("<&-", "")])]),
+    ("zzp >&- \\\n a b", [(["zzp", "a", "b"], [(">&-", "")])]),
+    ("zzp >&- a\nzzq b", [(["zzp", "a"], [(">&-", "")]), (["zzq", "b"], [])]),
+    ("zzq <&- \n\\\n \"x y\"", [(["zzq"], [("<&-", "")]), (["x y"], [])]),
+    ("zzp 2>&- 0<&- a", [(["zzp", "a"], [("2>&-", ""), ("0<&-", "")])]),
+    ("zzp 2>f \\ 2>&-", [(["zzp", " 2"], [("2>", "f"), (">&-", "")])]),
+    # Escaped blanks after a closing operator start a word, since it has no target to continue.
+    ("zzq <&- ''\\ ;", [(["zzq", " "], [("<&-", "")])]),
+    ("zzq >&-\\\t", [(["zzq", "\t"], [(">&-", "")])]),
+    ("zzq <&-\\\n\\\t", [(["zzq", "\t"], [("<&-", "")])]),
+    ("zzq >&-\\ x", [(["zzq", " x"], [(">&-", "")])]),
+    # Escaped blanks after a redirect that comes before the program start the program's name.
+    ("<&-\\\tzzp a b", [(["\tzzp", "a", "b"], [("<&-", "")])]),
+]:
+    found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
+    check(f"a closing redirection has no target, so the words after it are arguments, as bash "
+          f"passes them: {command!r}", found == expected, found)
+# tree-sitter-bash puts the 2 here before the closing operator; bash's target is f<tab>2, which this
+# reader does not yet read, so only the words are checked.
+check("what tree-sitter-bash puts before a closing operator is not a word after it",
+      words_of("zzp >f\\\t2>&- a") == [["zzp", "a"]], words_of("zzp >f\\\t2>&- a"))
+# After a word that escaped blanks continue, tree-sitter-bash starts the redirect at the backslash
+# and puts the text touching the operator inside it, before the operator. After a blank, bash reads
+# that text as the descriptor when it is decimal digits, and as a word otherwise.
+for command, expected in [
+    ("zzp ''\\  2>&-", [(["zzp", " "], [("2>&-", "")])]),
+    ("zzp ''\\  -3>&-", [(["zzp", " ", "-3"], [(">&-", "")])]),
+    ("zzp ''\\  -f3>&- b", [(["zzp", " ", "-f3", "b"], [(">&-", "")])]),
+    ("zzp ''\\  -3>f b", [(["zzp", " ", "-3", "b"], [(">", "f")])]),
+]:
+    found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
+    check(f"text tree-sitter-bash puts before an operator after escaped blanks is a descriptor or a word, "
+          f"as bash reads it: {command!r}", found == expected, found)
+# bash reads only decimal digits touching < or > as a descriptor, after it removes line continuations.
+for command, expected in [
+    ("env -u 2>&1 0x1</dev/null zzp push --force origin br",
+     [(["env", "-u", "0x1", "zzp", "push", "--force", "origin", "br"], [("2>&", "1"), ("<", "/dev/null")])]),
+    ("env -u 0x1</dev/null zzp push --force origin br",
+     [(["env", "-u", "0x1", "zzp", "push", "--force", "origin", "br"], [("<", "/dev/null")])]),
+    ("env 3>&- 0\\\n</dev/null zzp push --force origin br",
+     [(["env", "zzp", "push", "--force", "origin", "br"], [("3>&-", ""), ("0<", "/dev/null")])]),
+    ("env 0\\\n</dev/null zzp push --force origin br",
+     [(["env", "zzp", "push", "--force", "origin", "br"], [("0<", "/dev/null")])]),
+    ("zzp 2#1>f a", [(["zzp", "2#1", "a"], [(">", "f")])]),
+    ("zzp -3>f a", [(["zzp", "-3", "a"], [(">", "f")])]),
+    ("zzp -3>&- a", [(["zzp", "-3", "a"], [(">&-", "")])]),
+    ("zzp push -f4>&- origin br", [(["zzp", "push", "-f4", "origin", "br"], [(">&-", "")])]),
+    ("zzp a \\ -3>&- b", [(["zzp", "a", " -3", "b"], [(">&-", "")])]),
+    ("zzp 12\\\n>f a", [(["zzp", "a"], [("12>", "f")])]),
+    ("zzp 0\\\n\\\n<f a", [(["zzp", "a"], [("0<", "f")])]),
+]:
+    found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
+    check(f"a descriptor is decimal digits touching the operator once line continuations are removed, "
+          f"as bash reads it: {command!r}", found == expected, found)
+# bash reads digits as a descriptor only when they are a whole token: what touches their left, once
+# line continuations are removed, joins them to a word, and digits right after >& or <& are its target.
+for command, expected in [
+    ("env -u \\ 0\\\n</dev/null zzp push --force origin br",
+     [(["env", "-u", " 0", "zzp", "push", "--force", "origin", "br"], [("<", "/dev/null")])]),
+    ("env -u \\\t0\\\n</dev/null zzp push --force origin br",
+     [(["env", "-u", "\t0", "zzp", "push", "--force", "origin", "br"], [("<", "/dev/null")])]),
+    ("env -u \\ 0</dev/null zzp", [(["env", "-u", " 0", "zzp"], [("<", "/dev/null")])]),
+    ("env -u ' '0\\\n</dev/null zzp", [(["env", "-u", " 0", "zzp"], [("<", "/dev/null")])]),
+    ("zzp 'a'4>f", [(["zzp", "a4"], [(">", "f")])]),
+    ("zzp a\\\n\\\n4>f x", [(["zzp", "a4", "x"], [(">", "f")])]),
+    ("bash 1>&2\\\n</dev/null", [(["bash"], [("1>&", "2"), ("<", "/dev/null")])]),
+    ("bash 1>&2</dev/null", [(["bash"], [("1>&", "2"), ("<", "/dev/null")])]),
+    ("bash 0<&3</dev/null", [(["bash"], [("0<&", "3"), ("<", "/dev/null")])]),
+    ("zzp a>&2\\\n4>f", [(["zzp", "a"], [(">&", "24"), (">", "f")])]),
+    ("zzp push -f\\\n4>/dev/null origin br", [(["zzp", "push", "-f4", "origin", "br"], [(">", "/dev/null")])]),
+    ("-f\\\n4>/dev/null zzp b", [(["-f4", "zzp", "b"], [(">", "/dev/null")])]),
+    ("zzp 1\\\\\n2>f", [(["zzp", "1\\"], [])]),
+    ("zzp a;2>f b", [(["zzp", "a"], []), (["b"], [("2>", "f")])]),
+]:
+    found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
+    check(f"digits are a descriptor only when they are a whole token, as bash reads them: {command!r}",
+          found == expected, found)
+# bash removes each line continuation before it reads tokens, except inside single quotes, $'...',
+# comments and a heredoc body whose delimiter is quoted; tree-sitter-bash keeps one inside an
+# operator such as <( and misreads the command. Each expected reading is bash's, from bash -xc.
+for command, expected in [
+    ("git push --repo <\\\n(true) --force origin b",
+     [(["true"], []), (["git", "push", "--repo", "<(true)", "--force", "origin", "b"], [])]),
+    ("zzp \"a\\\nb\" 'c\\\nd' $'e\\\nf'", [(["zzp", "ab", "c\\\nd", "e\\\nf"], [])]),
+    ("zzp a\\\\\nb", [(["zzp", "a\\"], []), (["b"], [])]),
+    ("zzp \\\\\n-f4>f 4>f", [(["zzp", "\\"], []), (["-f4"], [(">", "f"), ("4>", "f")])]),
+    ("zzp end\\\n", [(["zzp", "end"], [])]),
+    ("zzp \"$(zzq --repo <\\\n(zzr) --force)\"",
+     [(["zzr"], []), (["zzq", "--repo", "<(zzr)", "--force"], []),
+      (["zzp", "$(zzq --repo <(zzr) --force)"], [])]),
+    ("zzp `zzq --repo <\\\n(zzr) --force`",
+     [(["zzr"], []), (["zzq", "--repo", "<(zzr)", "--force"], []),
+      (["zzp", "`zzq --repo <(zzr) --force`"], [])]),
+    ("# c \\\nzzp x", [(["zzp", "x"], [])]),
+    ("zzp a\\\n#b", [(["zzp", "a#b"], [])]),
+    ("zzp $\\\n(zzq) <\\\n<<x", [(["zzq"], []), (["zzp", "$(zzq)"], [("<<<", "x")])]),
+    ("cat <<EOF\nE\\\nOF\nzzp ran\nEOF", [(["cat"], [("<<", "")]), (["zzp", "ran"], []), (["EOF"], [])]),
+    ("cat <<EOF\nx\\\nEOF\nzzp ran\nEOF", [(["cat"], [("<<", "x\\\nEOF\nzzp ran\n")])]),
+    ("cat <<'EOF'\nx\\\nEOF\nzzp ran\nEOF",
+     [(["cat"], [("<<", "x\\\n")]), (["zzp", "ran"], []), (["EOF"], [])]),
+    ("cat <<EOF\n$(zzp --repo <\\\n(zzq) --force)\nEOF",
+     [(["zzq"], []), (["zzp", "--repo", "<(zzq)", "--force"], []),
+      (["cat"], [("<<", "$(zzp --repo <\\\n(zzq) --force)\n")])]),
+    ("cat <<'EOF'\n$(zzp \\\nx)\nEOF", [(["cat"], [("<<", "$(zzp \\\nx)\n")])]),
+    ("cat <<E\\\nOF\n$(zzp)\nEOF", [(["zzp"], []), (["cat"], [("<<", "$(zzp)\n")])]),
+    ("cat <<\"E\\\nOF\"\n$(zzp)\nEOF", [(["cat"], [("<<", "$(zzp)\n")])]),
+    ("zzq <<'\\\nG'\nx\nG\nzzr", [(["zzq"], [("<<", "x\nG\nzzr")])]),
+    ("zzq <<\"\\\nG\"\nx\nG\nzzr", [(["zzq"], [("<<", "x\n")]), (["zzr"], [])]),
+    ("zzs \"$(zzq <<EOF\nE\\\nOF)\nEOF\n)\"",
+     [(["zzq"], [("<<", "")]), (["zzs", "$(zzq <<EOF\nE\\\nOF)\nEOF\n)"], [])]),
+    ("zzs \"$(zzq <<EOF\nE\\\nO\\\nF)\nEOF\n)\"; zzr",
+     [(["zzq"], [("<<", "")]), (["zzs", "$(zzq <<EOF\nE\\\nO\\\nF)\nEOF\n)"], []), (["zzr"], [])]),
+    ("zzp <<x'A'\\\nB\nbody\nxAB\nzzr", [(["zzp"], [("<<", "body\n")]), (["zzr"], [])]),
+    ("zzp <<\\'E\\\nF\nx\n'EF\nzzr", [(["zzp"], [("<<", "x\n")]), (["zzr"], [])]),
+]:
+    found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
+    check(f"a line continuation is removed where bash removes it, and kept elsewhere: {command!r}",
+          found == expected, found)
+for command in ("case a in a) zzp x;\\\n& esac; zzq", "case a in a) zzp x;\\\n;& esac; zzq"):
+    found = [list(words) for words in reader.simple_commands(command)]
+    check(f"a last case terminator a line continuation splits is repaired, so the command after esac "
+          f"is read: {command!r}", found == [["zzp", "x"], ["zzq"]], found)
+# One parse per continued line would take minutes for 4,000 lines.
+for shape, line in [("plain, half of them holding a here-string",
+                     "zzp a{n} \\\n  b c\nzzq <<< a{n} \\\n  c\n"),
+                    ("each holding << in single quotes", "zzp '<<' a{n} \\\n  b c\n"),
+                    ("each holding << in a comment", "zzp a{n} \\\n  b c # <<\n"),
+                    ("each holding << in $(( ))", "zzp $((1<<2)) a{n} \\\n  b c\n")]:
+    counted = parses_counted_in_a_child(
+        "''.join(a.format(n=i) for i in range(n // a.count('zz'))) + 'tmux kill-server'", [1000, 4000], line)
+    check(f"4,000 continued lines, {shape}, are read in at most two parses more than 1,000 such lines, inside a "
+          f"guard's 30 s, and the command after them is read",
+          parses_grow_by_a_constant(counted) and counted[1][1:] == [4001, ["tmux", "kill-server"]], counted)
+command = "case a in a) zzp;\\\n;& esac; case b in b) zzq;& esac; zzr"
+found = [list(words) for words in reader.simple_commands(command)]
+check(f"a case terminator a line continuation splits is replaced over its whole length in the text "
+      f"as given, so the command after the next case is read: {command!r}",
+      found == [["zzp"], ["zzq"], ["zzr"]], found)
+# A heredoc after continued lines is taken out in the parse that removes them, unless that parse
+# reads it otherwise. Each expected reading was checked against bash 5.3.9.
+for command, expected in [
+    # bash joins <\<newline><A into a heredoc on the same line as <<B, which takes its body first.
+    ("zzp <\\\n<A zzq <<B\na\nA\nb\nB\nzzr", [(["zzp", "zzq"], ["a\n", "b\n"]), (["zzr"], [])]),
+    # bash joins $\<newline>( into a substitution, inside which the body also ends at B).
+    ("zzp $\\\n(zzq <<B\nx\nB)\nzzr",
+     [(["zzq"], ["x\n"]), (["zzp", "$(zzq <<B\nx\nB)"], []), (["zzr"], [])])]:
+    found = [(list(words), [heredoc.body for heredoc in words.heredocs])
+             for words in reader.simple_commands(command)]
+    check(f"a continuation removed before a heredoc that changes how the heredoc is read is removed in a "
+          f"parse of its own: {command!r}", found == expected, found)
+for command in ("zzp << \\\n  EOF\nbody\nEOF\nzzr", "zzp <<- \\\n\tEOF\n\tbody\n\tEOF\nzzr",
+                "zzp 0<< \\\n EOF\nbody\nEOF\nzzr"):
+    found = [(list(words), [heredoc.body for heredoc in words.heredocs])
+             for words in reader.simple_commands(command)]
+    check(f"a heredoc delimiter after a line continuation and blanks ends the body at its line, as bash "
+          f"reads it, so the command after it is read: {command!r}",
+          found == [(["zzp"], ["body\n"]), (["zzr"], [])], found)
+counted = parses_counted_in_a_child("'zzp <<\\'E\\'\\nbody\\nE\\nzzq a \\\\\\n  b\\n' * n + 'tmux kill-server'",
+                                    [50, 100])
+check("a heredoc after a continued line costs at most two parses, one of them of its opening line alone, "
+      "and the command after 100 of them is read",
+      isinstance(counted, list) and counted[1][0] - counted[0][0] <= 2 * 50
+      and counted[1][1:] == [201, ["tmux", "kill-server"]], counted)
+source = b"zzp a\\\nb <<'E'\nx\nE\n# c\n"
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(source)
+check("a comment after a heredoc taken out in the parse that removes a continuation before it is reported "
+      "at its offsets in the source as given", read.comments == [(19, 22)], read)
+# The opening line's end is found in a parse of the lines after the operator, as few as hold no error.
+for command, expected in [
+        ("zzp <<EOF; x=$(zzq a\nzzq b)\nbody\nEOF\nzzr",
+         [(["zzp"], ["body\n"]), (["zzq", "a"], []), (["zzq", "b"], []), (["zzr"], [])]),
+        ('zzp <<EOF; zzq "a\nb"\nbody\nEOF\nzzr', [(["zzp"], ["body\n"]), (["zzq", "a\nb"], []), (["zzr"], [])]),
+        ("zzp <<EOF; zzq a \\\nb\nbody\nEOF\nzzr", [(["zzp"], ["body\n"]), (["zzq", "a", "b"], []), (["zzr"], [])])]:
+    found = [(list(words), [heredoc.body for heredoc in words.heredocs])
+             for words in reader.simple_commands(command)]
+    check(f"a heredoc's opening line that a substitution, quotes or a line continuation carry onto the next line ends after them: "
+          f"{command!r}", found == expected, found)
+# Time is counted in parses of the same command, and on the processor, so the machine's load
+# does not decide it: one parse of the whole command per heredoc, each walked in Python, and a
+# parse for its continued line besides, took about 2,200 parses' time for 2,000 heredocs.
+PARSES_TIME_CHILD_CODE = (
+    "import importlib.util, json, sys, time; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+    "r = importlib.util.module_from_spec(s); s.loader.exec_module(r)\n"
+    "text = eval(sys.argv[2]); encoded = text.encode(); r.parser().parse(encoded); parses = []\n"
+    "for _ in range(5):\n"
+    " started = time.process_time(); r.parser().parse(encoded); parses.append(time.process_time() - started)\n"
+    "started = time.process_time(); found = r.simple_commands(text); took = time.process_time() - started\n"
+    "print(json.dumps([took / min(parses), took, len(found), list(found[-1])]))")
+try:
+    completed = subprocess.run(
+        [sys.executable, "-c", PARSES_TIME_CHILD_CODE, str(MODULE_PATH),
+         "'zzp <<EOF\\nbody\\nEOF\\nzzq a \\\\\\n  b\\n' * 2000 + 'tmux kill-server'"],
+        timeout=120, check=True, capture_output=True, text=True)
+    timed = json.loads(completed.stdout)
+except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
+    timed = repr(problem)
+check("2,000 heredocs, each followed by a continued line, are read in less than 1,000 times the time of one "
+      "parse of the command, inside a guard's 30 s, and the command after them is read",
+      isinstance(timed, list) and timed[0] < 1000 and timed[1] < 30 and timed[3] == ["tmux", "kill-server"],
+      timed)
+for source, expected in [(b"zzp a\\\nb # c\n", [(9, 12)]), (b"zzp a\\\n\\\nb \\\n#c\n", [(13, 15)])]:
+    read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(source)
+    check(f"a comment after line continuations is reported at its offsets in the source as given: {source!r}",
+          read.comments == expected, read)
+found = [(list(words), words.redirects) for words in reader.simple_commands("zzp 2>&1>f")]
+check("a number that is a redirection's first target stays its target, though the next redirection touches it",
+      found and found[0][1][0] == ("2>&", "1"), found)
+found = [(list(words), words.redirects) for words in reader.simple_commands("zzp >f a 0<g")]
+check("a descriptor written against the redirection after a target is that redirection's, not a word",
+      found == [(["zzp", "a"], [(">", "f"), ("0<", "g")])], found)
 
 # --- the program a command runs, after wrappers ---
 for words, expected in [
@@ -218,6 +753,11 @@ for words, expected in [
     (["xargs", "-R", "2", "bash"], (3, False)),
     (["xargs", "-S", "255", "bash"], (3, False)),
     (["sudo", "-h", "bash"], (2, True)),
+    (["command", "-v", "pkill"], (None, True)),
+    (["command", "-V", "killall"], (None, True)),
+    (["command", "-pv", "pkill"], (None, True)),
+    (["sudo", "command", "-v", "pkill"], (None, True)),
+    (["command", "-p", "pkill"], (2, True)),
 ]:
     check(f"the program of {' '.join(words)} is word {expected[0]}, "
           f"{'receiving' if expected[1] else 'not receiving'} the standard input",
@@ -310,14 +850,13 @@ timing_code = ("import importlib.util, sys; s = importlib.util.spec_from_file_lo
                "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); "
                "r.simple_commands('case x in x) :;& ' + '#' * 60 + ' y\\nesac; case z in z) :;& ' + '#' * 60)")
 try:
-    started = time.monotonic()
-    subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=20, check=True,
+    subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=30, check=True,
                    capture_output=True)
-    timing = time.monotonic() - started
-except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
-    timing = repr(problem)
-check("a run of # after a terminator is matched in linear time",
-      isinstance(timing, float) and timing < 10, timing)
+    problem = None
+except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
+    problem = repr(error)
+check("a run of # after a terminator is matched without backtracking that hangs, inside a guard's 30 s",
+      problem is None, problem)
 found = reader.simple_commands("ssh h $'true\\ntmux kill-server'")
 check("an ANSI-C quoted remote command keeps its newline, so the command after it is seen",
       found[0][2] == "true\ntmux kill-server", list(found[0]))
@@ -327,36 +866,30 @@ check("a repaired ;& leaves a quoted ;; elsewhere in the command as written", fo
 found = words_of("cat <<A\n$(echo 'a;&' 'a;;'; case x in x) :;& esac)\nA")
 check("a repaired ;& in a body leaves a quoted ;; elsewhere in the body as written",
       found[0] == ["echo", "a;&", "a;;"], found)
-timing_code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
-               "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); "
-               "print(list(r.simple_commands('cat <<A\\n' + '$(case x in x) :;& esac)\\n' * 2000 "
-               "+ '$(tmux kill-server)\\nA')[-2]))")
-try:
-    started = time.monotonic()
-    last = subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=60, check=True,
-                          capture_output=True, text=True).stdout.strip()
-    timing = time.monotonic() - started
-except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
-    last, timing = None, repr(problem)
-check("a body holding 2,000 cases ended by ;& is repaired in one pass, and the command after them is read",
-      isinstance(timing, float) and timing < 30 and last == "['tmux', 'kill-server']", (timing, last))
-# The offsets of the terminators one round writes are moved once, not once per terminator; with the
-# parse's own checks made free, 30,000 of them take seconds, and a quadratic shift takes minutes.
-timing_code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
-               "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); "
-               "r._inside_text = lambda *arguments, **options: False; "
-               "found = r._source_with_case_terminators_repaired("
-               "b'$(case x in x) :;& esac)\\n' * 30000, r.TEXT_NODE_TYPES, all_at_once=True); "
-               "print(len(found[3]))")
-try:
-    started = time.monotonic()
-    restored_count = subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=60,
-                                    check=True, capture_output=True, text=True).stdout.strip()
-    timing = time.monotonic() - started
-except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
-    restored_count, timing = None, repr(problem)
-check("30,000 terminators written in one round have their offsets moved in linear time",
-      isinstance(timing, float) and timing < 10 and restored_count == "30000", (timing, restored_count))
+counted = parses_counted_in_a_child(
+    "'cat <<A\\n' + '$(case x in x) :;& esac)\\n' * n + '$(tmux kill-server)\\nA'", [500, 2000], index=-2)
+check("a body holding 2,000 cases ended by ;& is repaired in at most two parses more than 500 such "
+      "cases, inside a guard's 30 s, and the command after them is read",
+      parses_grow_by_a_constant(counted) and counted[1][2] == ["tmux", "kill-server"], counted)
+# The offsets of the terminators one round writes are moved once, not once per terminator; moving
+# them once per terminator runs about 16 times the reader's lines at four times the terminators.
+counted = reader_lines_run_counted_in_a_child(
+    "r._inside_text = lambda *arguments, **options: False\n"
+    "def read(n):\n return len(r._source_with_case_terminators_repaired("
+    "b'$(case x in x) :;& esac)\\n' * n, r.TEXT_NODE_TYPES, all_at_once=True)[3])", [2000, 8000])
+check("8,000 terminators written in one round have their offsets moved in less than 5 times the reader's "
+      "lines run for 2,000, inside a guard's 30 s",
+      isinstance(counted, list) and 1 <= counted[0][0] and counted[0][1] < 5 * counted[0][0]
+      and counted[1] == [2000, 8000], counted)
+counted = parses_counted_in_a_child("'case a in a) zzp;& esac\\n' * n + 'tmux kill-server'", [500, 2000])
+check("2,000 cases ended by ;& are repaired in at most two parses more than 500 such cases, inside a "
+      "guard's 30 s, and the command after them is read",
+      parses_grow_by_a_constant(counted) and counted[1][1:] == [2001, ["tmux", "kill-server"]], counted)
+command = "case x in x) zzq;& esac\nzzp <<'E'\ncase y in y) :;;& esac\nE\nzzr"
+found = [(list(words), [heredoc.body for heredoc in words.heredocs]) for words in reader.simple_commands(command)]
+check("a terminator in a heredoc body after a repaired case is not repaired, since a parse that has not "
+      "read the case right does not show the body",
+      found == [(["zzq"], []), (["zzp"], ["case y in y) :;;& esac\n"]), (["zzr"], [])], found)
 # Each ;;& written as ;; shortens the text, so a later terminator's offset in the command as written is further on.
 found = words_of("case a in a) :;;& esac; " * 20 + "echo 'x;;' $(case b in b) :;& esac)")
 check("a terminator repaired after twenty that shortened the text is put back where it was written",
@@ -776,10 +1309,16 @@ tabbed = "cat <<A\n$(cat <<-'B'\n" + "\tx\n" * 30 + "\tB\n)\n$(echo '$(tmux kill
 check("a <<- heredoc inside a body's substitution is read once, and quoted text after it is no command",
       [list(f) for f in reader.simple_commands(tabbed)]
       == [["cat"], ["echo", "$(tmux kill-server)"], ["cat"]], [list(f) for f in reader.simple_commands(tabbed)])
-started = time.monotonic()
-found = reader.simple_commands("cat <<A\n" + "$(printf 1)\n" * 3500 + "A")
-check("a body of 3,500 substitutions is read in one parse, well inside a guard's 30 s",
-      len(found) == 3501 and time.monotonic() - started < 3, (len(found), time.monotonic() - started))
+counting = reader._parser = CountingParser(reader.parser())
+try:
+    found = reader.simple_commands("cat <<A\n" + "$(printf 1)\n" * 875 + "A")
+    parses_for_875 = counting.parses
+    counting.parses = 0
+    found = reader.simple_commands("cat <<A\n" + "$(printf 1)\n" * 3500 + "A")
+finally:
+    reader._parser = counting.real
+check("a body of 3,500 substitutions is read in no more parses than a body of 875",
+      len(found) == 3501 and 1 <= counting.parses <= parses_for_875, (len(found), parses_for_875, counting.parses))
 found = reader.simple_commands("cat <<A\n$(cd /x)\nA\ncat <<B\n$(git push -f o t)\nB")
 check("substitutions in two different bodies are different child shells, so a cd in one stays there",
       found[0].child_shell != found[2].child_shell
@@ -1035,8 +1574,22 @@ with tempfile.TemporaryDirectory() as scratch:
         raised = None
     except reader.ShellParserUnavailable as error:
         raised = error
-    check("a new process that fails to read the command raises ShellParserUnavailable with its error",
-          raised is not None and "no parser" in raised.install_output, raised)
+    check("a new process that fails to read the command raises ShellCommandUnreadable with its error, "
+          "so the guard's note says the reader failed, not that the parser is missing",
+          isinstance(raised, reader.ShellCommandUnreadable) and "no parser" in raised.install_output,
+          raised)
+
+    def runner_timing_out(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, 1)
+    try:
+        reader._simple_commands_in_a_new_process("ls", None, runner_timing_out)
+        raised = None
+    except reader.ShellParserUnavailable as error:
+        raised = error
+    check("a new process that times out raises ShellCommandUnreadable, saying the read timed out",
+          isinstance(raised, reader.ShellCommandUnreadable)
+          and raised.install_output.startswith("reading the command in a new process failed: "),
+          raised)
 
     # The reader failing in the new process reaches this process as ShellCommandUnreadable.
     real_collect, real_stdin, real_stdout = reader._collect, sys.stdin, sys.stdout
@@ -1254,10 +1807,11 @@ except r.ShellParserUnavailable as error:
         assert "permissionDecision" not in hook_output, hook_output
         return hook_output["additionalContext"]
 
-    first = context_of(reader.parser_unavailable_hook_output("The force-push guard", error, {}))
-    again = context_of(reader.parser_unavailable_hook_output("The tmux kill guard", error, {}))
+    NEXT_STEPS = "If the command did X, tell the user.\nDo not do Y to correct it."
+    first = context_of(reader.parser_unavailable_hook_output("The force-push guard", error, NEXT_STEPS, {}))
+    again = context_of(reader.parser_unavailable_hook_output("The tmux kill guard", error, NEXT_STEPS, {}))
     unattended = context_of(reader.parser_unavailable_hook_output(
-        "The tmux kill guard", error, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
+        "The tmux kill guard", error, NEXT_STEPS, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
     check("the message says the command was not checked and has the user told, with what the "
           "install printed",
           "let this command through without checking it" in first
@@ -1270,9 +1824,14 @@ except r.ShellParserUnavailable as error:
         this_host, "", "").splitlines()[1]
     check("the install command stands on a line of its own in the message",
           install in first.splitlines(), first)
-    check("the words to report include the command, as a fenced code block, and what was undone",
-          reader.COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION in first and "what you undid" in first
-          and "what you could not undo" in first, first)
+    check("the words to report include the command, as a fenced code block, and ask nothing about "
+          "an undo",
+          reader.COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION in first and "undid" not in first
+          and "could not undo" not in first, first)
+    check("when the parser is missing, the guard's own next-step lines follow the first line, and "
+          "nothing tells the agent to undo",
+          first.splitlines()[1:3] == NEXT_STEPS.splitlines() and "undo what the command did" not in first,
+          first)
     words = reader.tree_sitter_bash_install_failure_report_words_build(
         "ned-box", "pip: no network", "nothing is checked there").splitlines()
     check("for ned-box, the install command is the ssh form the user runs in a Terminal on the Mac",
@@ -1315,13 +1874,14 @@ except r.ShellParserUnavailable as error:
 
     # --- each Bash guard lets the command through and says so ---
     GUARDS = [
-        ("scripts/synthetic-keystroke-guard-hook.py", "The synthetic keystroke guard"),
-        ("scripts/force-push-with-open-pull-request-guard-hook.py", "The force-push guard"),
-        (".claude/hooks/ghi-issue-write-redirect.py", "The GHI write redirect guard"),
-        ("scripts/search-file-argument-read-as-option-guard-hook.py",
+        (".claude/guard-hooks/synthetic-keystroke-guard-hook.py", "The synthetic keystroke guard"),
+        (".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py", "The force-push guard"),
+        (".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py", "The GHI write redirect guard"),
+        (".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py",
          "The search-file-argument guard"),
-        ("nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-"
+        (".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-"
          "server-selection-refusal-hook.py", "The tmux kill guard"),
+        (".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py", "The hand-typed codex exec guard"),
     ]
     for relative, guard_name in GUARDS:
         guard = load(REPOSITORY_ROOT / relative, "guard_" + Path(relative).stem.replace("-", "_"))
@@ -1330,6 +1890,7 @@ except r.ShellParserUnavailable as error:
         def unavailable(*arguments, **keywords):
             raise guard.shell_reader.ShellParserUnavailable("pip: network is unreachable")
         guard.shell_reader.simple_commands = unavailable
+        own_lines = guard.PARSER_UNAVAILABLE_NEXT_STEP_LINES
         payload = {"tool_name": "Bash", "session_id": f"guard-{relative}", "cwd": scratch,
                    "tool_input": {"command": "tmux kill-server; git push --force o b"}}
         stdout = io.StringIO()
@@ -1342,14 +1903,19 @@ except r.ShellParserUnavailable as error:
         check(f"with no parser, {relative} lets the command through and says it was not checked",
               code == 0 and context.startswith(guard_name + " let this command through"),
               (code, context))
+        check(f"with no parser, {relative}'s note gives the guard's own next-step lines and no undo",
+              own_lines in context and "undo what the command did" not in context, context)
 
     unreadable = reader.ShellCommandUnreadable("ValueError: injected")
-    attended = context_of(reader.parser_unavailable_hook_output("The force-push guard", unreadable, {}))
+    attended = context_of(reader.parser_unavailable_hook_output(
+        "The force-push guard", unreadable, NEXT_STEPS, {}))
     unattended = context_of(reader.parser_unavailable_hook_output(
-        "The force-push guard", unreadable, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
-    check("when the reader fails, the guard's message says the command ran and what to check and undo",
-          "the command has run" in attended and "Look at what the command did" in attended
-          and "undo" in attended and "Tell the user" in attended and "ValueError: injected" in attended,
+        "The force-push guard", unreadable, NEXT_STEPS, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
+    check("when the reader fails, the guard's message says the command ran, then gives the guard's "
+          "own next-step lines, and nothing tells the agent to undo",
+          "the command has run" in attended and attended.splitlines()[1:3] == NEXT_STEPS.splitlines()
+          and "undo what the command did" not in attended and "undid" not in attended
+          and "Tell the user" in attended and "ValueError: injected" in attended,
           attended)
     check("in an agent-session no user attends, the reader-failed message does not ask to tell the user",
           "do not tell the user" in unattended and "Tell the user" not in unattended
@@ -1375,7 +1941,7 @@ except r.ShellParserUnavailable as error:
             for session in ({}, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}):
                 built.clear()
                 message = context_of(reader.parser_unavailable_hook_output(
-                    "The force-push guard", failure, session))
+                    "The force-push guard", failure, NEXT_STEPS, session))
                 check(f"when {label}, with the session variables {session}, the guard's message "
                       f"ends with the report", len(built) == 1 and message.endswith(built[0]),
                       (built, message))
@@ -1384,7 +1950,8 @@ except r.ShellParserUnavailable as error:
     for session, attended_wanted in [((None, None), True), (("1", None), True), (("0", None), False),
                                      ((None, "1"), False)]:
         with reader.agent_session_attendance_environment_variables_temporarily_set_for_test(*session):
-            from_session = context_of(reader.parser_unavailable_hook_output("The force-push guard", unreadable))
+            from_session = context_of(reader.parser_unavailable_hook_output(
+                "The force-push guard", unreadable, NEXT_STEPS))
         check(f"with the session variables {session}, the message reads the session from them",
               ("Tell the user" in from_session) == attended_wanted
               and ("do not tell the user" in from_session) != attended_wanted, from_session)
@@ -1397,7 +1964,7 @@ except r.ShellParserUnavailable as error:
     check("the session variables are set inside the block and put back as they were after it",
           inside == (None, "1") and after == ("outer", None), (inside, after))
     missing_unattended = context_of(reader.parser_unavailable_hook_output(
-        "The force-push guard", reader.ShellParserUnavailable("pip: no network"),
+        "The force-push guard", reader.ShellParserUnavailable("pip: no network"), NEXT_STEPS,
         {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
     check("in an agent-session no user attends, the parser-missing message still has a subagent "
           "report to the agent that dispatched it",
@@ -1510,7 +2077,7 @@ try:
 except reader.ShellParserUnavailable as error:
     raised = error
 check("a new process that fails outside the reader reaches the guard as its exception's line, not a traceback",
-      raised is not None and raised.install_output
+      isinstance(raised, reader.ShellCommandUnreadable) and raised.install_output
       == "reading the command in a new process failed: RuntimeError: the request could not be read",
       raised and raised.install_output)
 # A new process killed by a signal prints nothing; its exit status is then the agent's only clue.
@@ -1523,7 +2090,7 @@ try:
 except reader.ShellParserUnavailable as error:
     raised = error
 check("a new process killed by a signal, which prints nothing, reaches the guard as its exit status",
-      raised is not None
+      isinstance(raised, reader.ShellCommandUnreadable)
       and raised.install_output == "reading the command in a new process failed: exit -9",
       raised and raised.install_output)
 command = reader.simple_commands("cat <<E >~/x\nb\nE")[0]
@@ -1550,20 +2117,25 @@ for command in ["cd ~/x && git -C ~/y push > ~/z", "env -C ~/w git push -f",
         in_a_new_process = error
     check(f"a new process reads {command!r} as this process does, classes and attributes included",
           same_reading(in_a_new_process, in_this_process), (in_a_new_process, in_this_process))
-# Every command this test read, through the same encoder in one child process.
-child_code = ("import importlib.util, json, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
-              "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); out = []\n"
-              "for command, markers in json.loads(sys.stdin.buffer.read().decode('utf-8', r.SHELL_TEXT_ERRORS)):\n"
-              "    try: out.append({'commands': r._reader_output_to_json(r.simple_commands(command, markers))})\n"
-              "    except r.ShellCommandUnreadable as error: out.append({'unreadable': error.install_output})\n"
-              "sys.stdout.buffer.write(json.dumps(out, ensure_ascii=False).encode('utf-8', r.SHELL_TEXT_ERRORS))")
+# Every command this test read, through the same encoder, in one child process that reads one request per
+# line, and in one new process per command as a hook reads it: both must give this process's reading.
 recorded = list(dict.fromkeys((text, json.dumps(markers)) for text, markers in COMMANDS_READ))
-child = subprocess.run([sys.executable, "-c", child_code, str(MODULE_PATH)], capture_output=True,
-                       input=json.dumps([[text, json.loads(markers)] for text, markers in recorded],
-                                        ensure_ascii=False).encode("utf-8", reader.SHELL_TEXT_ERRORS))
-differing = []
-if child.returncode == 0:
-    for (text, markers), read in zip(recorded, json.loads(child.stdout.decode("utf-8", reader.SHELL_TEXT_ERRORS))):
+requests = [json.dumps({"command": text, "glob_markers": json.loads(markers)}, ensure_ascii=False)
+            .encode("utf-8", reader.SHELL_TEXT_ERRORS) for text, markers in recorded]
+child = subprocess.run(
+    [sys.executable, str(MODULE_PATH), reader.NEW_PROCESS_READ_ONE_REQUEST_PER_LINE_UNTIL_INPUT_CLOSES_FLAG],
+    capture_output=True, input=b"".join(request + b"\n" for request in requests))
+from_one_child = child.stdout.split(b"\n")
+with ThreadPoolExecutor(8) as pool:
+    from_one_process_each = list(pool.map(lambda request: subprocess.run(
+        [sys.executable, str(MODULE_PATH), reader.NEW_PROCESS_READ_FLAG], input=request,
+        capture_output=True).stdout, requests))
+differing, differing_from_one_process_each = [], []
+if child.returncode == 0 and len(from_one_child) == len(recorded) + 1:
+    for (text, markers), line, alone in zip(recorded, from_one_child, from_one_process_each):
+        if line != alone:
+            differing_from_one_process_each.append(text)
+        read = json.loads(line.decode("utf-8", reader.SHELL_TEXT_ERRORS))
         try:
             here = reader.simple_commands(text, json.loads(markers))
         except reader.ShellCommandUnreadable as error:
@@ -1571,10 +2143,13 @@ if child.returncode == 0:
         there = (read if "unreadable" in read else reader._reader_output_from_json(read["commands"]))
         if not same_reading(there, here):
             differing.append(text)
-check(f"each of the {len(recorded)} commands this test read reads the same in a child process, "
-      f"through the encoder, classes and attributes included",
-      child.returncode == 0 and len(recorded) > 100 and not differing,
-      (child.returncode, child.stderr[-500:], differing[:5]))
+check(f"each of the {len(recorded)} commands this test read reads the same in a child process that reads "
+      f"one request per line, through the encoder, classes and attributes included",
+      child.returncode == 0 and len(recorded) > 100 and len(from_one_child) == len(recorded) + 1
+      and from_one_child[-1] == b"" and not differing,
+      (child.returncode, child.stderr[-500:], len(from_one_child), differing[:5]))
+check(f"each of the {len(recorded)} commands gets the same reply from that child as from a new process of its own",
+      child.returncode == 0 and not differing_from_one_process_each, differing_from_one_process_each[:5])
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

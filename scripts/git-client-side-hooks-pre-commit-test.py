@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Tests for scripts/git-client-side-hooks/pre-commit and pre-merge-commit,
 the hooks that refuse an agent's commit made under the user's own address or
-under the unconfigured-agent tripwire.
+under the unconfigured-agent tripwire, and that keep the tripwire in the
+clone's own config: writing it back when another identity replaced it, and
+refusing a commit in a clone that holds no identity.
 
 Run: python3 scripts/git-client-side-hooks-pre-commit-test.py
 Prints one line per case and exits non-zero if any case fails. Every case
@@ -62,21 +64,26 @@ def check(case_name, condition, detail=""):
 class ThrowawayRepository:
     """One repository on main with one commit, wired to the hooks under test,
     its own config holding `config_name <config_email>` the way a clone's
-    shared .git/config holds one identity for every worktree."""
+    shared .git/config holds one identity for every worktree: the tripwire
+    unless a case says otherwise, and no identity at all when a case passes
+    None for both."""
 
     def __init__(self, parent: Path, name: str,
-                 config_name="shared-config", config_email="shared-config@example.invalid"):
+                 config_name=TRIPWIRE_NAME, config_email=TRIPWIRE_EMAIL):
         self.root = parent / name
         self.root.mkdir()
         self.empty_global_config = parent / f"{name}-empty-gitconfig"
         self.empty_global_config.write_text("")
         self.git({}, "init", "--quiet", "--initial-branch=main")
-        self.git({}, "config", "user.name", config_name)
-        self.git({}, "config", "user.email", config_email)
-        self.git({}, "config", "core.hooksPath", str(HOOK_DIRECTORY))
         (self.root / "base.txt").write_text("base\n")
         self.git({}, "add", "base.txt")
-        self.git({}, "commit", "--quiet", "-m", "Base commit")
+        self.git({}, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+                 "commit", "--quiet", "-m", "Base commit")
+        if config_name is not None:
+            self.git({}, "config", "user.name", config_name)
+        if config_email is not None:
+            self.git({}, "config", "user.email", config_email)
+        self.git({}, "config", "core.hooksPath", str(HOOK_DIRECTORY))
 
     def environment(self, extra):
         env = {key: value for key, value in os.environ.items()
@@ -115,6 +122,14 @@ class ThrowawayRepository:
     def head_author_and_committer(self):
         return self.git({}, "log", "-1", "--format=%an <%ae>|%cn <%ce>").stdout.strip()
 
+    def local_identity(self):
+        """The clone's own user.name and user.email, None for an unset key."""
+        values = []
+        for key in ("user.name", "user.email"):
+            completed = self.attempt({}, "config", "--local", "--get", key)
+            values.append(completed.stdout.strip() if completed.returncode == 0 else None)
+        return tuple(values)
+
 
 REFUSAL_FIRST_INSTRUCTION = "Commit under this seat's own name, not as "
 
@@ -138,8 +153,9 @@ EXPECTED_REFUSAL_LINES = [
     "If you are amending a commit the user wrote, leave it and make a new"
     " commit on top instead.",
     "Do not change user.name or user.email in git config: every worktree of"
-    " the clone shares that config, so the change would rename every"
-    " agent-seat's commits.",
+    " the clone shares that config, and a launched agent-seat's commits keep"
+    " its own name either way, but an agent-session started without its"
+    " launcher could then commit under the new identity.",
     "If the user is committing by hand, commit from a terminal outside the"
     " Claude session, adding -c user.name=<name> -c user.email=<address> after"
     " git if the clone's identity is unconfigured-agent.",
@@ -149,6 +165,16 @@ EXPECTED_REFUSAL_LINES = [
 def refused(completed):
     return (completed.returncode != 0
             and REFUSAL_FIRST_INSTRUCTION in completed.stderr)
+
+
+WRITTEN_BACK_OPENING = "pre-commit: this commit is refused, because the clone's own git config, "
+WRITTEN_BACK_CLOSING = "; this hook has written unconfigured-agent back."
+NO_IDENTITY_MARK = "holds no user.name or user.email"
+
+
+def refused_and_written_back(completed):
+    return (completed.returncode != 0 and WRITTEN_BACK_OPENING in completed.stderr
+            and WRITTEN_BACK_CLOSING in completed.stderr)
 
 
 def run_cases(scratch: Path):
@@ -197,8 +223,83 @@ def run_cases(scratch: Path):
     before = repository.head()
     completed = repository.attempt_commit(FAKE_SESSION)
     check("a session committing under a shared config holding the user's address is refused",
-          refused(completed) and repository.head() == before,
+          refused_and_written_back(completed) and repository.head() == before,
           (completed.returncode, completed.stderr.strip()))
+
+    # --- The clone's own identity, replaced by an agent's `git config
+    # user.name`: written back, the commit refused, and the next commit of a
+    # launched seat goes through. ----------------------------------------
+    repository = ThrowawayRepository(scratch, "replaced-identity",
+                                     config_name="prime-intellect",
+                                     config_email="prime-intellect@nedschorus.invalid")
+    before = repository.head()
+    completed = repository.attempt_commit({**FAKE_SESSION, **SEAT_IDENTITY})
+    check("a replaced clone identity refuses even a launched seat's commit",
+          refused_and_written_back(completed) and repository.head() == before,
+          (completed.returncode, completed.stderr.strip()))
+    check("a replaced clone identity is written back to the tripwire",
+          repository.local_identity() == (TRIPWIRE_NAME, TRIPWIRE_EMAIL),
+          repository.local_identity())
+    check("the written-back refusal names the identity it found",
+          "held the identity prime-intellect <prime-intellect@nedschorus.invalid> instead of"
+          in completed.stderr, completed.stderr)
+    check("the written-back refusal says to tell the user, then commit again",
+          "Tell the user that " in completed.stderr
+          and "Then commit again." in completed.stderr, completed.stderr)
+    completed = repository.attempt_commit({**FAKE_SESSION, **SEAT_IDENTITY})
+    check("after the write-back, the launched seat's next commit goes through",
+          completed.returncode == 0 and repository.head() != before,
+          completed.stderr.strip())
+
+    # --- Only one key replaced counts as replaced. ------------------------
+    repository = ThrowawayRepository(scratch, "replaced-email-only",
+                                     config_email="someone@nedschorus.invalid")
+    completed = repository.attempt_commit({**FAKE_SESSION, **SEAT_IDENTITY})
+    check("a clone identity with only its email replaced is written back and refused",
+          refused_and_written_back(completed)
+          and repository.local_identity() == (TRIPWIRE_NAME, TRIPWIRE_EMAIL),
+          (completed.stderr.strip(), repository.local_identity()))
+
+    # --- One key unset is a replaced identity, not a new clone: an agent's
+    # `git config --unset user.email` is written back too. -----------------
+    repository = ThrowawayRepository(scratch, "email-unset-only", config_email=None)
+    completed = repository.attempt_commit({**FAKE_SESSION, **SEAT_IDENTITY})
+    check("a clone identity with only its email unset is written back and refused",
+          refused_and_written_back(completed)
+          and repository.local_identity() == (TRIPWIRE_NAME, TRIPWIRE_EMAIL),
+          (completed.stderr.strip(), repository.local_identity()))
+
+    # --- A clone with no identity: refused, nothing written, and the two
+    # commands for the user printed. ----------------------------------------
+    repository = ThrowawayRepository(scratch, "no-identity",
+                                     config_name=None, config_email=None)
+    before = repository.head()
+    completed = repository.attempt_commit({**FAKE_SESSION, **SEAT_IDENTITY})
+    check("a clone holding no identity refuses the commit",
+          completed.returncode != 0 and NO_IDENTITY_MARK in completed.stderr
+          and repository.head() == before,
+          (completed.returncode, completed.stderr.strip()))
+    check("a clone holding no identity is left with none written",
+          repository.local_identity() == (None, None), repository.local_identity())
+    check("the no-identity refusal prints the user's two commands",
+          "config user.name unconfigured-agent" in completed.stderr
+          and "config user.email unconfigured-agent@nedschorus.invalid" in completed.stderr,
+          completed.stderr)
+
+    # --- A launched seat's commit with its own -c values: --local ignores
+    # them, so the clone's tripwire is untouched and the commit goes through.
+    repository = ThrowawayRepository(scratch, "launched-dash-c")
+    before = repository.head()
+    with open(repository.root / "a.txt", "a") as handle:
+        handle.write("line\n")
+    repository.git({}, "add", "a.txt")
+    completed = repository.attempt(
+        {**FAKE_SESSION, **SEAT_IDENTITY}, "-c", "user.name=seat-g",
+        "-c", "user.email=seat-g@nedschorus.invalid", "commit", "--quiet", "-m", "A change")
+    check("a launched seat's `git -c user.name=... commit` is not affected by the clone check",
+          completed.returncode == 0 and repository.head() != before
+          and repository.local_identity() == (TRIPWIRE_NAME, TRIPWIRE_EMAIL),
+          (completed.stderr.strip(), repository.local_identity()))
 
     # --- The tripwire: refused when a session falls through to it, and
     # outranked by the launcher's environment when the seat is launched. -
@@ -394,11 +495,86 @@ def run_cases(scratch: Path):
                             for line in EXPECTED_REFUSAL_LINES],
           refusal_lines)
 
+    # --- git var failing: the hook says the identity went unchecked. -----
+    # Run directly, not by git commit, because git puts its own exec-path
+    # ahead of PATH, which would hide the stand-in git.
+    stand_in_directory = scratch / "stand-in-git"
+    stand_in_directory.mkdir()
+    real_git = shutil.which("git")
+    stand_in = stand_in_directory / "git"
+    stand_in.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = var ] && [ "$2" = GIT_AUTHOR_IDENT ]; then\n'
+        '    echo "fatal: injected git var failure" >&2\n'
+        "    exit 128\n"
+        "fi\n"
+        f'exec "{real_git}" "$@"\n')
+    stand_in.chmod(0o755)
+    for label, committer_email, expect_refused in (
+            ("a seat committer", "seat-g@nedschorus.invalid", False),
+            ("the user's address as committer", "ned@lerner1.com", True)):
+        repository = ThrowawayRepository(scratch, "git-var-fails-" + committer_email)
+        environment = repository.environment({
+            **FAKE_SESSION, **SEAT_IDENTITY, "GIT_COMMITTER_EMAIL": committer_email,
+            "PATH": f"{stand_in_directory}{os.pathsep}{os.environ.get('PATH', '')}"})
+        completed = subprocess.run(
+            ["sh", str(HOOK_DIRECTORY / "pre-commit")], cwd=str(repository.root),
+            env=environment, capture_output=True, text=True, timeout=30)
+        check(f"when git var fails for the author, with {label}, the hook says the author "
+              f"was not checked, shows git's error, and still checks the committer",
+              "pre-commit: git var GIT_AUTHOR_IDENT failed, so this commit's author was not "
+              "checked" in completed.stderr
+              and "fatal: injected git var failure" in completed.stderr
+              and (refused(completed) if expect_refused else completed.returncode == 0),
+              (completed.returncode, completed.stderr))
+
+
+def run_config_failure_cases(scratch: Path):
+    """git config failing, read or write: the hook reports it and refuses.
+    Run directly, not by git commit, for the reason the git var cases give."""
+    stand_in_directory = scratch / "stand-in-git-config"
+    stand_in_directory.mkdir()
+    real_git = shutil.which("git")
+    stand_in = stand_in_directory / "git"
+    stand_in.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = config ] && [ "$2" = --local ] && [ "$3" = "$FAIL_CONFIG_ARGUMENT" ]'
+        ' && { [ -z "${FAIL_CONFIG_KEY:-}" ] || [ "$4" = "$FAIL_CONFIG_KEY" ]; }; then\n'
+        '    echo "fatal: injected git config failure" >&2\n'
+        "    exit 128\n"
+        "fi\n"
+        f'exec "{real_git}" "$@"\n')
+    stand_in.chmod(0o755)
+    for label, fail_argument, fail_key, config_name, expected in (
+            ("writing the tripwire back", "user.name", "", "prime-intellect",
+             "and writing unconfigured-agent back failed"),
+            ("reading user.name", "--get", "user.name", TRIPWIRE_NAME,
+             "because reading user.name from the clone's own git config"),
+            ("reading user.email", "--get", "user.email", TRIPWIRE_NAME,
+             "because reading user.email from the clone's own git config")):
+        repository = ThrowawayRepository(
+            scratch, "config-fails-" + fail_argument.strip("-") + "-" + (fail_key or "write"),
+            config_name=config_name)
+        environment = repository.environment({
+            **FAKE_SESSION, **SEAT_IDENTITY, "FAIL_CONFIG_ARGUMENT": fail_argument,
+            "FAIL_CONFIG_KEY": fail_key,
+            "PATH": f"{stand_in_directory}{os.pathsep}{os.environ.get('PATH', '')}"})
+        completed = subprocess.run(
+            ["sh", str(HOOK_DIRECTORY / "pre-commit")], cwd=str(repository.root),
+            env=environment, capture_output=True, text=True, timeout=30)
+        check(f"when git config fails {label}, the hook says so, shows git's error, refuses, "
+              f"and does not go on to say it wrote the tripwire back",
+              completed.returncode != 0 and expected in completed.stderr
+              and "fatal: injected git config failure" in completed.stderr
+              and WRITTEN_BACK_CLOSING not in completed.stderr,
+              (completed.returncode, completed.stderr))
+
 
 def main():
     scratch = Path(tempfile.mkdtemp(prefix="pre-commit-hook-test-"))
     try:
         run_cases(scratch)
+        run_config_failure_cases(scratch)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     if failures:

@@ -3,7 +3,7 @@
 
 User-walked 2026-08-17 (git-infra rules walk, deployment-boundary item). The
 fleet already had the between-sessions half: handoff-supervisor.py's
-sync_working_branch_with_main fast-forwards a clean seat branch at launch,
+launch_time_git_sync fast-forwards a clean seat branch at launch,
 and its own docstring names the gap — "a long-lived session drifts
 arbitrarily far from main with nothing announcing it." This script is the
 announcing, and where safe the catching up, DURING a session:
@@ -64,7 +64,9 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
      copy carries no work of its own by construction, and 2026-08-17 it sat
      33 commits stale, running a superseded extractor under every supervisor
      on the machine. A reference that cannot update — someone left work
-     there — is a user line; a success is silent.
+     there — is a user line; a success is silent, unless git's output from
+     the fast-forward carries a FAILED line from the post-merge hook, which
+     git does not count as a failure.
 
 The user's lines travel as the Stop hook's `systemMessage`. The agent's notes
 are NOT emitted at Stop: a Stop hook's `additionalContext` makes Claude Code
@@ -83,7 +85,11 @@ being lost. Every note the agent receives ends by saying it is not for the
 user, because agents were repeating these notes to him.
 
 Everything here exits 0: a freshness fault must never block a turn from
-ending, and no `decision` field is ever emitted.
+ending, and no `decision` field is ever emitted. A git command that fails
+where the script needs its answer stops the run, and the failure is told:
+to the user at Stop, to the agent at --deliver-pending-agent-notes, and on
+stdout in the operator-facing modes. Only a directory in no repository at
+all stays silent.
 Silence is meaningful — no output means nothing changed. The stamp
 (<git-dir>/checkout-freshness-stamp.json) is what the status line and boot
 reports display, so "0 behind" is only ever claimed off a real fetch, with
@@ -118,6 +124,13 @@ _git_output_spec = importlib.util.spec_from_file_location(
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 # Every Stop hook obeys this rule first: see the module's docstring.
 _stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
     "claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
@@ -125,6 +138,13 @@ _stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_locat
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
 stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
 _stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
+
+_rebase_or_replace_spec = importlib.util.spec_from_file_location(
+    "pull_request_conflict_with_main_rebase_or_replace_answer_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "pull-request-conflict-with-main-rebase-or-replace-answer-common.py")
+rebase_or_replace = importlib.util.module_from_spec(_rebase_or_replace_spec)
+_rebase_or_replace_spec.loader.exec_module(rebase_or_replace)
 
 STAMP_FILE_NAME = "checkout-freshness-stamp.json"
 
@@ -167,11 +187,9 @@ GIT_IN_PROGRESS_MARKERS = tuple(GIT_IN_PROGRESS_OPERATION_BY_MARKER)
 # itself, so REBASE_ADVICE is what the agent gets only when the hook could
 # not — a dirty tree, or a conflict it aborted. A pushed branch is never
 # moved by anyone but its author, and then only forward.
-# A pushed branch that conflicts with main is the one exception: no commit on
-# top can clear a conflict, so it is cleared by the hand-merge that
-# the VERDICT: CONFLICT report of scripts/branch-conflict-check.py describes.
-# Forbidding every merge here would send an agent with a conflict away from
-# the one move that clears it.
+# No commit on top can clear a conflict with main, so a pushed branch that
+# conflicts is sent to scripts/branch-conflict-check.py, whose report says
+# whether it is rebased or its pull request replaced.
 # The runner selects the suites a change can affect, so no agent picks them by hand.
 SELECTIVE_TEST_RUN_COMMAND = (
     "python3 scripts/run-all-test-suites.py "
@@ -196,8 +214,7 @@ REBASE_ADVICE = (
 LEAVE_IT_ADVICE = (
     "This branch is pushed, so its review may be running. Do not rebase or "
     "amend it. A fix for this topic is a new commit on top, pushed once. If it "
-    "conflicts with main, clear the conflict with the hand-merge that "
-    "scripts/branch-conflict-check.py describes. "
+    "conflicts with main, do what scripts/branch-conflict-check.py reports. "
     "Start your next topic with `git checkout -b <name> origin/main`."
 )
 # A branch whose own commits are already on a remote branch, under another
@@ -210,8 +227,8 @@ PUSHED_HISTORY_ADVICE = (
     "This branch's commits are already on GitHub under another branch name, so the "
     "branch is treated as pushed and is not rebased: a pushed head may be under "
     "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
-    "fix is a new commit on top. If it conflicts with main, clear the conflict with "
-    "the hand-merge that scripts/branch-conflict-check.py describes."
+    "fix is a new commit on top. If it conflicts with main, do what "
+    "scripts/branch-conflict-check.py reports."
 )
 # A detached HEAD with no work of its own is moved forward by this hook; these
 # are what the agent is told after a move (A) or when it could not be made (B).
@@ -236,9 +253,11 @@ DETACHED_OPERATION_IN_PROGRESS_LINE = (
     "checkout forward."
 )
 DETACHED_WORK_OF_ITS_OWN_LINE = (
-    "It holds work of its own: run `git switch -c <branch name>` to put that work on a "
-    "branch, and commit any uncommitted changes there; from then on the hook's rules for a "
-    "branch apply."
+    "It holds work of its own.\n"
+    "If this checkout is an agent-home, git refuses commits in it: carry that work to a "
+    "worktree of your own on an nc-topic-branch, as the refusal of `git commit` here says how.\n"
+    "Otherwise run `git switch -c <branch name>` to put that work on a branch, and commit any "
+    "uncommitted changes there; from then on the hook's rules for a branch apply."
 )
 DETACHED_FAST_FORWARD_REFUSED_LINES = (
     "Git refused the fast-forward: {error}\n"
@@ -250,6 +269,33 @@ DETACHED_FAST_FORWARD_REFUSED_LINES = (
 # Git's wording when a fast-forward would overwrite an untracked file: the one
 # refusal the agent can clear, so the one not sent to the user.
 GIT_UNTRACKED_FILE_WOULD_BE_OVERWRITTEN_TEXT = "untracked working tree files would be overwritten"
+# A git command failed where this script needed its answer: the run stops
+# there, having moved nothing past what it already reported. The next-step
+# lines depend on the reader and on when the hook runs again: the Stop
+# hook's message reaches only the user, the notes delivery's only the agent,
+# and the other modes' reader ran the command and can run it again.
+GIT_FAILED_CAUSE_LINE = "{prefix}: {what}, because a git command failed: {error}\n"
+GIT_FAILED_STOP_HOOK_USER_NEXT_STEP_LINES = (
+    "This check runs again at the end of the agent's next turn.\n"
+    "If that run also reports a git failure, whether this error or another, paste both "
+    "messages to the agent and ask it to find the cause: the agent does not see these messages."
+)
+GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES = (
+    "Nothing needs rerunning: this check runs again when the next prompt arrives.\n"
+    "If the same failure is reported again with the next prompt, tell the user what "
+    "{program} printed, git's error included."
+)
+GIT_FAILED_RERUN_NEXT_STEP_LINES = next_step_lines.git_failure_next_step_lines(
+    "{rerun}", text_the_failure_line_contains="because a git command failed",
+    include_the_misspelt_branch_commit_or_path_line=False)
+
+
+def git_failed_text(prefix: str, what: str, error, next_steps: str, rerun: str = None) -> str:
+    """The message for a GitCommandFailed: GIT_FAILED_CAUSE_LINE, then next_steps."""
+    return (GIT_FAILED_CAUSE_LINE + next_steps).format(
+        prefix=prefix, what=what, error=error, rerun=rerun, program=Path(__file__).name)
+
+
 UNKNOWN_ADVICE = ("Your head state could not be determined (a git command failed); nothing "
                   "was changed. Check `git status` before working.")
 AFTER_REBASE_ADVICE = f"Run `{SELECTIVE_TEST_RUN_COMMAND}`: your work now sits on newer code."
@@ -280,7 +326,8 @@ DRIFT_PATH_CATEGORIES = (
     ("skills you run under",
      lambda path: path.startswith(".claude/skills/")),
     ("hooks and wiring that run on your work",
-     lambda path: path.startswith(".claude/hooks/") or path == ".claude/settings.json"),
+     lambda path: path.startswith(".claude/guard-hooks/")
+     or path == ".claude/settings.json"),
     ("systems you build on, code and design of record",
      lambda path: path.startswith("nc-systems/")),
     ("scripts your tests run against",
@@ -654,18 +701,51 @@ def run_git(arguments, working_directory: Path, timeout: int = 60):
                                            f"{type(error).__name__}: {error}")
 
 
-def checkout_root(directory: Path):
-    result = run_git(["rev-parse", "--show-toplevel"], directory, timeout=15)
-    if result.returncode != 0:
+def git_command_failed(arguments, directory: Path, result):
+    """The GitCommandFailed error for a run_git result git did not accept."""
+    returncode = None if result.returncode == GIT_DID_NOT_RUN else result.returncode
+    return git_output.GitCommandFailed(arguments, directory, returncode, result.stderr)
+
+
+def run_git_or_raise(arguments, directory: Path, timeout: int = 60, accepted_exit_codes=(0,)):
+    """run_git, raising GitCommandFailed for any exit code not accepted."""
+    result = run_git(arguments, directory, timeout=timeout)
+    if result.returncode not in accepted_exit_codes:
+        raise git_command_failed(arguments, directory, result)
+    return result
+
+
+def path_unless_outside_a_repository(arguments, directory: Path):
+    """The path git prints, or None when directory does not exist or is in no
+    git repository; GitCommandFailed for any other failure."""
+    if not directory.is_dir():
         return None
-    return Path(result.stdout.strip())
+    result = run_git(arguments, directory, timeout=15)
+    if result.returncode == 0:
+        return Path(result.stdout.strip())
+    if (result.returncode != GIT_DID_NOT_RUN
+            and git_output.git_stderr_says_outside_a_repository(result.stderr)):
+        return None
+    raise git_command_failed(arguments, directory, result)
+
+
+def checkout_root(directory: Path):
+    return path_unless_outside_a_repository(["rev-parse", "--show-toplevel"], directory)
 
 
 def git_directory(checkout: Path):
-    result = run_git(["rev-parse", "--absolute-git-dir"], checkout, timeout=15)
-    if result.returncode != 0:
+    return path_unless_outside_a_repository(["rev-parse", "--absolute-git-dir"], checkout)
+
+
+def current_branch(checkout: Path):
+    """The checked-out branch's name, "HEAD" when detached, None when HEAD is
+    unborn: a repository with no commit yet has no branch to compare."""
+    # --abbrev-ref exits 128 on an unborn HEAD, so that case is asked first.
+    if run_git_or_raise(["rev-parse", "--verify", "--quiet", "HEAD"], checkout, timeout=15,
+                        accepted_exit_codes=(0, 1)).returncode == 1:
         return None
-    return Path(result.stdout.strip())
+    return run_git_or_raise(["rev-parse", "--abbrev-ref", "HEAD"], checkout,
+                            timeout=15).stdout.strip()
 
 
 def read_stamp(stamp_path: Path) -> dict:
@@ -697,14 +777,15 @@ def fetch_if_stale(checkout: Path, stamp_path: Path, interval_seconds: int) -> d
     return stamp
 
 
+def failure(command, result):
+    """One line naming the git command that failed, its exit code and its stderr."""
+    detail = "; ".join(line.strip() for line in result.stderr.splitlines() if line.strip())
+    return f"git {command} exited {result.returncode}" + (f": {detail}" if detail else "")
+
+
 def counts_against_main(checkout: Path):
     """((behind, ahead), None) of HEAD against origin/main, or (None, error)
     when git could not make the count."""
-    def failure(command, result):
-        detail = "; ".join(line.strip() for line in result.stderr.splitlines()
-                           if line.strip())
-        return f"git {command} exited {result.returncode}" + (f": {detail}" if detail else "")
-
     main = run_git(["rev-parse", "--verify", "--quiet", "origin/main"], checkout, timeout=15)
     if main.returncode != 0:
         # --quiet makes a missing ref exit 1 with nothing on stderr; anything
@@ -807,8 +888,11 @@ def head_state(checkout: Path, branch: str):
     as pushed, never rebased. A new key rather
     than "pushed", because "pushed" says HEAD equals origin/<branch>, which
     is false here, and the head state is what the agent and the stamp read.
-    A git failure in that check is "unknown", never "unpushed": "unpushed" is
-    the one answer that authorises a rebase."""
+    A git failure anywhere here is "unknown", never "unpushed", "detached" or
+    "diverged-from-remote": "unpushed" is the one answer that authorises a
+    rebase, and "diverged-from-remote" accuses the agent of rewriting a pushed
+    head. Only exit 1 from `rev-parse --verify --quiet` means "no such branch",
+    and only exit 1 from `merge-base --is-ancestor` means "not an ancestor"."""
     if branch in ("", "HEAD"):
         return "detached", "detached HEAD"
     remote = run_git(["rev-parse", "--verify", "--quiet", f"origin/{branch}"],
@@ -819,7 +903,9 @@ def head_state(checkout: Path, branch: str):
         # match counts_against_main, which treats the same failure class as
         # unknowable.
         return "unknown", "head state unknowable (git did not run)"
-    if remote.returncode != 0:
+    if remote.returncode not in (0, 1):
+        return "unknown", f"head state unknowable ({failure('rev-parse', remote)})"
+    if remote.returncode == 1:
         holders = remote_branches_holding_own_commits(checkout)
         if holders is None:
             return "unknown", ("head state unknowable (git could not check whether this "
@@ -832,26 +918,34 @@ def head_state(checkout: Path, branch: str):
         return "pushed-history", (f"no branch of this name on origin, but its commits are "
                                   f"already on {named} (pushed history: a fix is a new "
                                   f"commit on top, never a rebase)")
-    head = run_git(["rev-parse", "HEAD"], checkout, timeout=15).stdout.strip()
-    if remote.stdout.strip() == head:
+    head = run_git(["rev-parse", "HEAD"], checkout, timeout=15)
+    if head.returncode != 0:
+        return "unknown", f"head state unknowable ({failure('rev-parse', head)})"
+    if remote.stdout.strip() == head.stdout.strip():
         return "pushed", (f"head pushed and equal to origin/{branch} (frozen: a fix is a "
-                          "new commit on top, never an amend; a conflict with main is "
-                          "cleared by a hand-merge)")
+                          "new commit on top, never an amend; for a conflict with main, "
+                          "do what scripts/branch-conflict-check.py reports)")
     local = run_git(["rev-list", "--count", f"origin/{branch}..HEAD"], checkout, timeout=30)
-    count = local.stdout.strip() if local.returncode == 0 else "some"
+    if local.returncode != 0:
+        return "unknown", f"head state unknowable ({failure('rev-list', local)})"
+    count = local.stdout.strip()
     if count == "0":
         # HEAD is behind its own remote branch: the shape the fix-on-frozen-head
         # process leaves once the authoring seat fetches a fresh agent's fix
         # commit. The truth is that the remote is ahead.
         remote_only = run_git(["rev-list", "--count", f"HEAD..origin/{branch}"], checkout,
                               timeout=30)
-        remote_count = remote_only.stdout.strip() if remote_only.returncode == 0 else "some"
+        if remote_only.returncode != 0:
+            return "unknown", f"head state unknowable ({failure('rev-list', remote_only)})"
+        remote_count = remote_only.stdout.strip()
         return "behind-remote", (f"head behind origin/{branch} by {remote_count} commit(s) "
                                  f"pushed from elsewhere (a fix on the frozen head, most "
                                  f"likely); fast-forward to it before working here")
     ancestor = run_git(["merge-base", "--is-ancestor", f"origin/{branch}", "HEAD"],
                        checkout, timeout=15)
-    if ancestor.returncode != 0:
+    if ancestor.returncode not in (0, 1):
+        return "unknown", f"head state unknowable ({failure('merge-base', ancestor)})"
+    if ancestor.returncode == 1:
         # Neither side contains the other: the pushed history was rewritten —
         # an amend or a rebase after a push, which moves a frozen head under
         # its reviewer (CLAUDE.md's frozen-head rule). Told to the agent.
@@ -863,11 +957,10 @@ def head_state(checkout: Path, branch: str):
 
 def merge_blockers(checkout: Path, git_dir: Path):
     """Why the reference fast-forward must not run here right now; empty
-    list means safe."""
+    list means safe. Raises GitCommandFailed when git cannot read the branch."""
     blockers = []
-    branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], checkout,
-                     timeout=15).stdout.strip()
-    if branch in ("", "HEAD"):
+    branch = current_branch(checkout)
+    if branch == "HEAD":
         blockers.append("detached HEAD")
     if branch == "main":
         blockers.append("parked on main (reference checkouts fast-forward only)")
@@ -1061,9 +1154,10 @@ def merges_from_main(checkout: Path):
     origin/main AND whose two parents merge cleanly, with rename detection and
     without it — the catch-up merge CLAUDE.md bans, because such merges moved
     frozen heads under running reviews. None when git could not list the
-    branch's merges.
+    branch's merges. Raises GitCommandFailed when git cannot read a merge's
+    second parent or cannot say whether that parent is on origin/main.
 
-    A merge of another topic branch is not the banned thing, so the second
+    A merge of another nc-topic-branch is not the banned thing, so the second
     parent is tested for being on main rather than every merge being flagged.
     A branch that carries older catch-up merges is flagged once, which is
     correct: those merges are real and the agent has not been told of them.
@@ -1105,12 +1199,14 @@ def merges_from_main(checkout: Path):
         return None
     flagged = []
     for sha in merges.stdout.split():
-        second = run_git(["rev-parse", "--verify", "--quiet", f"{sha}^2"], checkout, timeout=15)
-        if second.returncode != 0:
+        second = run_git_or_raise(["rev-parse", "--verify", "--quiet", f"{sha}^2"], checkout,
+                                  timeout=15, accepted_exit_codes=(0, 1))
+        if second.returncode == 1:
             continue
-        on_main = run_git(["merge-base", "--is-ancestor", second.stdout.strip(), "origin/main"],
-                          checkout, timeout=15)
-        if on_main.returncode != 0:
+        on_main = run_git_or_raise(["merge-base", "--is-ancestor", second.stdout.strip(),
+                                    "origin/main"], checkout, timeout=15,
+                                   accepted_exit_codes=(0, 1))
+        if on_main.returncode == 1:
             continue
         first = run_git(["rev-parse", "--verify", "--quiet", f"{sha}^1"], checkout, timeout=15)
         # A first parent that does not resolve cannot be re-merged, so the merge
@@ -1270,7 +1366,9 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
         return
     stamp_path = git_dir / STAMP_FILE_NAME
     stamp = fetch_if_stale(checkout, stamp_path, interval_seconds)
-    branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], checkout, timeout=15).stdout.strip()
+    branch = current_branch(checkout)
+    if branch is None:
+        return
     state_key, state_text = head_state(checkout, branch)
 
     # 1. Misbehaviour, to the agent, once per distinct finding of each
@@ -1356,7 +1454,10 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     # files just changed under the agent, and that is never deduplicated. A
     # skip or a conflict is told once per key, but ATTEMPTED every turn end,
     # so the moment the tree is clean it goes.
-    if state_key == "unpushed":
+    # A never-pushed branch has no pull request on origin.
+    if state_key == "unpushed" and (
+            rebase_or_replace.pull_request_conflict_with_main_rebase_or_replace_answer(False)
+            == rebase_or_replace.REBASE_ONTO_MAIN):
         outcome, detail = rebase_never_pushed_branch(checkout, git_dir)
         if outcome == "rebased":
             stamp["behind"], stamp["ahead"] = 0, stamp.get("own")
@@ -1455,10 +1556,9 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
 
 
 def reference_checkout_of(checkout: Path):
-    """The main worktree of the same repository — the machine's reference copy."""
-    listing = run_git(["worktree", "list", "--porcelain", "-z"], checkout, timeout=15)
-    if listing.returncode != 0:
-        return None
+    """The main worktree of the same repository — the machine's reference copy.
+    Raises GitCommandFailed when git cannot list the worktrees."""
+    listing = run_git_or_raise(["worktree", "list", "--porcelain", "-z"], checkout, timeout=15)
     records = git_output.worktree_records(listing.stdout)
     return Path(records[0].path) if records else None
 
@@ -1565,6 +1665,11 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
     stamp["behind"], stamp["last_action"] = 0, f"reference fast-forwarded {behind}"
     stamp.pop("last_reference_blockers", None)
     write_stamp(stamp_path, stamp)
+    # Git exits 0 whatever the post-merge hook returns, and puts the hook's
+    # output on its own stderr, so a hook's failure is seen only here.
+    if "FAILED" in pulled.stderr:
+        report(f"catch-up: reference checkout {reference} fast-forwarded {behind} commit(s), "
+               f"and its post-merge hook reported a failure:\n{pulled.stderr.strip()}")
     if operator_facing:
         report(f"catch-up: reference checkout {reference} fast-forwarded {behind} commit(s) "
                f"to origin/main")
@@ -1613,15 +1718,29 @@ def main(argv=None) -> int:
     arguments = parser.parse_args(argv)
 
     if arguments.report:
-        print(report_line(Path(arguments.repo).resolve(), arguments.interval_seconds))
+        repository = Path(arguments.repo).resolve()
+        try:
+            print(report_line(repository, arguments.interval_seconds))
+        except git_output.GitCommandFailed as error:
+            print(git_failed_text("freshness", f"{repository} was not compared with "
+                                  "origin/main", error, GIT_FAILED_RERUN_NEXT_STEP_LINES,
+                                  rerun=f"`python3 {Path(__file__).resolve()} --report "
+                                        f"--repo {repository}`"))
         return 0
 
     if arguments.reference_pull:
-        root = checkout_root(Path(arguments.repo).resolve())
-        if root is not None:
-            reference = reference_checkout_of(root)
-            if reference is not None:
-                fast_forward_reference_checkout(reference, arguments.interval_seconds)
+        repository = Path(arguments.repo).resolve()
+        try:
+            root = checkout_root(repository)
+            if root is not None:
+                reference = reference_checkout_of(root)
+                if reference is not None:
+                    fast_forward_reference_checkout(reference, arguments.interval_seconds)
+        except git_output.GitCommandFailed as error:
+            report(git_failed_text("catch-up", f"the reference checkout of {repository} "
+                                   "was not updated", error, GIT_FAILED_RERUN_NEXT_STEP_LINES,
+                                   rerun=f"`python3 {Path(__file__).resolve()} "
+                                         f"--reference-pull --repo {repository}`"))
         flush_report()
         return 0
 
@@ -1640,8 +1759,13 @@ def main(argv=None) -> int:
                    else Path(payload.get("cwd") or "."))
 
     if arguments.deliver_pending_agent_notes:
-        root = checkout_root(session_cwd)
-        text = deliver_pending_agent_notes(root) if root is not None else ""
+        try:
+            root = checkout_root(session_cwd)
+            text = deliver_pending_agent_notes(root) if root is not None else ""
+        except git_output.GitCommandFailed as error:
+            text = git_failed_text("checkout-freshness", "the notes queued for you in "
+                                   f"{session_cwd} were not delivered", error,
+                                   GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES)
         if text:
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
                                                      "additionalContext": text}},
@@ -1650,22 +1774,24 @@ def main(argv=None) -> int:
 
     # One exit, one flush: an early return here would be a silent hook, which
     # is the failure mode this queue introduces if it is not funnelled.
-    root = checkout_root(session_cwd)
-    if root is not None:
-        branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], root,
-                         timeout=15).stdout.strip()
-        if branch == "main":
-            # A session seated in the reference copy itself: ff-only, never
-            # merge, and no telling — it has no branch of its own to be told
-            # about, and this path keeps it current.
-            fast_forward_reference_checkout(root, arguments.interval_seconds,
-                                            operator_facing=False)
-        else:
-            catch_up_session_checkout(root, arguments.interval_seconds)
-            reference = reference_checkout_of(root)
-            if reference is not None and reference != root:
-                fast_forward_reference_checkout(reference, arguments.interval_seconds,
+    try:
+        root = checkout_root(session_cwd)
+        if root is not None:
+            if current_branch(root) == "main":
+                # A session seated in the reference copy itself: ff-only, never
+                # merge, and no telling — it has no branch of its own to be told
+                # about, and this path keeps it current.
+                fast_forward_reference_checkout(root, arguments.interval_seconds,
                                                 operator_facing=False)
+            else:
+                catch_up_session_checkout(root, arguments.interval_seconds)
+                reference = reference_checkout_of(root)
+                if reference is not None and reference != root:
+                    fast_forward_reference_checkout(reference, arguments.interval_seconds,
+                                                    operator_facing=False)
+    except git_output.GitCommandFailed as error:
+        report(git_failed_text("checkout-freshness", f"the freshness check of {session_cwd} "
+                               "stopped", error, GIT_FAILED_STOP_HOOK_USER_NEXT_STEP_LINES))
     flush_hook_output()
     return 0
 

@@ -2,9 +2,9 @@
 """Tests for handoff-supervisor.py: a supervisor's hold on its seat, and the
 session it launches.
 
-The supervisor lock and the process-identity check behind it; adopting a
-session already running; the appended system prompt and the seat environment
-a launched session gets; and the agent-binary update before each launch,
+The supervisor lock and the process-identity check behind it; the refusal to
+start without a pinned task list; the appended system prompt and the seat
+environment a launched session gets; and the agent-binary update before each launch,
 under the machine-wide update lock. The supervisor's other cases are in
 handoff-supervisor-successor-prompt-test.py and
 handoff-supervisor-session-end-and-resume-test.py, beside this file.
@@ -53,21 +53,15 @@ a_process_that_looks_like_a_supervisor = fixture.a_process_that_looks_like_a_sup
 sandboxed_update_lock_path = fixture.sandboxed_update_lock_path
 
 
-def run_adoption_cases(workspace: Path):
-    """Adopting a running session is what lets a hand-started agent reincarnate:
-    a supervisor normally owns only the process it launched itself."""
-    # A process that has already exited: if the startup check stopped firing,
-    # adopting it ends the supervisor at once instead of watching a live process.
-    exited = subprocess.Popen(["true"])  # pylint: disable=consider-using-with
-    exited.wait(timeout=10)
+def run_unpinned_task_list_startup_refusal_cases(workspace: Path):
+    """A supervisor not started by a launcher that pins its task list refuses
+    to start; the read-only --check needs no pin."""
     for value in (None, "", "   "):
         environment = dict(os.environ)
         environment.pop("CLAUDE_CODE_TASK_LIST_ID", None)
         if value is not None:
             environment["CLAUDE_CODE_TASK_LIST_ID"] = value
-        for arguments in ([], ["--resume-session-id", "retiring-session"],
-                          ["--adopt-session-id", "live-session",
-                           "--adopt-process-id", str(exited.pid)]):
+        for arguments in ([], ["--resume-session-id", "retiring-session"]):
             result = subprocess.run(
                 [sys.executable, str(SCRIPT_PATH), "--agent", "unpinned",
                  "--cd", str(workspace), "--handoff-dir", str(workspace / "unpinned"),
@@ -94,42 +88,6 @@ def run_adoption_cases(workspace: Path):
         check(f"read-only check needs no task-list pin: {value!r}",
               result.returncode == 1 and "startup stopped" not in result.stderr,
               result.stderr)
-
-    # Not a context manager: the point is a process this test does NOT own a
-    # handle to in the supervisor, which is what adoption exists for.
-    sleeper = subprocess.Popen(  # pylint: disable=consider-using-with
-        [sys.executable, "-c", "import time; time.sleep(30)"])
-    try:
-        adopted = supervisor.AdoptedSession("some-session-id", sleeper.pid)
-        check("an adopted live process reads as running", adopted.poll() is None)
-        adopted.terminate()
-        sleeper.wait(timeout=10)
-        check("an adopted process can be terminated", adopted.poll() == 0)
-        check("terminating an already-gone process is not an error",
-              adopted.terminate() is None)
-    finally:
-        if sleeper.poll() is None:
-            sleeper.kill()
-            sleeper.wait()
-
-    gone = supervisor.AdoptedSession("some-session-id", 99999999)
-    check("a process id that does not exist reads as gone", gone.poll() == 0)
-
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--agent", "adopter",
-         "--handoff-dir", str(workspace), "--adopt-session-id", "an-id"],
-        capture_output=True, text=True, check=False,
-    )
-    check("adopting without a process id is refused", result.returncode == 2, result.stderr)
-
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--agent", "adopter", "--cd", str(workspace),
-         "--handoff-dir", str(workspace), "--adopt-session-id", "an-id",
-         "--adopt-process-id", "99999999"],
-        capture_output=True, text=True, check=False,
-    )
-    check("adopting a process that is already gone is refused",
-          result.returncode == 2 and "already gone" in result.stderr, result.stderr)
 
 
 def run_process_identity_cases(workspace: Path):
@@ -180,7 +138,11 @@ def run_process_identity_cases(workspace: Path):
     line, answered = supervisor.read_process_command_line(os.getpid())
     check("the real reader reads this process's own command line",
           answered and line is not None and "python" in line.lower(), (answered, line))
-    line, answered = supervisor.read_process_command_line(99999999)
+    # A child that has exited and been reaped names no process, on Linux and on
+    # macOS alike; a made-up id like 99999999 is refused on macOS as too large.
+    reaped = subprocess.Popen([sys.executable, "-c", "pass"])
+    reaped.wait()
+    line, answered = supervisor.read_process_command_line(reaped.pid)
     check("the real reader says ps ANSWERED for a process that is not there",
           answered and line is None, (answered, line))
     real_search_path = os.environ.get("PATH", "")
@@ -221,6 +183,26 @@ def run_process_identity_cases(workspace: Path):
           supervisor.PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS == 15,
           supervisor.PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS)
 
+    # A ps that runs and fails exits 1 with an error, which is not the empty
+    # exit 1 ps gives for a process that is not there.
+    failing_ps_directory = workspace / "failing-ps"
+    failing_ps_directory.mkdir()
+    failing_ps = failing_ps_directory / "ps"
+    failing_ps.write_text("#!/bin/sh\necho 'ps: stub failure' >&2\nexit 1\n", encoding="utf-8")
+    failing_ps.chmod(0o755)
+    complaint = io.StringIO()
+    try:
+        os.environ["PATH"] = f"{failing_ps_directory}:{real_search_path}"
+        with contextlib.redirect_stderr(complaint):
+            line, answered = supervisor.read_process_command_line(os.getpid())
+    finally:
+        os.environ["PATH"] = real_search_path
+    check("a ps that fails with an error is reported as not having answered, not as "
+          "'no such process'", not answered and line is None, (answered, line))
+    check("and the reader prints ps's error, after the ps command exactly as it ran",
+          f"ps -ww -p {os.getpid()} -o args= exited 1: ps: stub failure"
+          in complaint.getvalue(), complaint.getvalue())
+
     alive, detail = supervisor.process_is_supervisor_for_agent(
         99999999, "x", read_command_line=ps_says_no_such_process)
     check("ps answering 'no such process' means not a supervisor",
@@ -260,7 +242,8 @@ def run_process_identity_cases(workspace: Path):
     try:
         with contextlib.redirect_stderr(complaints):
             alive, detail = supervisor.process_is_supervisor_for_agent(
-                unidentifiable.pid, "x", read_command_line=ps_could_not_run)
+                unidentifiable.pid, "x", read_command_line=ps_could_not_run,
+                lock_path=Path("/handoffs/x-supervisor.lock"))
         check("a live but unidentifiable process IS assumed to be the supervisor",
               alive, detail)
         check("and it says it cannot tell, rather than claiming the process is gone",
@@ -269,8 +252,12 @@ def run_process_identity_cases(workspace: Path):
               "could not identify" in complaints.getvalue()
               and "ps could not be run" in complaints.getvalue(),
               complaints.getvalue())
-        check("and names the way out, since whoever asked is now stuck on an assumption",
-              "lock is removed" in complaints.getvalue(), complaints.getvalue())
+        check("and names the way out, since whoever asked is now stuck on an assumption: "
+              "the user checks with the ps command the program ran, then removes the named lock file",
+              f"the user runs `ps -ww -p {unidentifiable.pid} -o args=`" in complaints.getvalue()
+              and "ps has still not answered, so the lock stays" in complaints.getvalue()
+              and "the user removes the supervisor lock /handoffs/x-supervisor.lock"
+              in complaints.getvalue(), complaints.getvalue())
         check("and does not claim a consequence only one of the callers has",
               "this seat will not start" not in complaints.getvalue(),
               complaints.getvalue())
@@ -556,12 +543,12 @@ def run_appended_system_prompt_cases(workspace: Path):
     recovered seat silently running without the appended text.
     """
     def boot_once(name: str, extra_arguments: list):
-        """Boot-ignite once with an argument-recording stub; return its argv,
+        """Start a fresh agent-session at boot once with an argument-recording stub; return its argv,
         one argument per line, and the supervisor's stderr."""
         handoff_directory = workspace / name
         handoff_directory.mkdir(parents=True, exist_ok=True)
         (handoff_directory / f"{name}-handoff.md").write_text(
-            "written-at: 2026-08-31T00:00:00Z\nnext-step: carry on\nrestart-counter: 5\n",
+            "written-at: 2026-08-31T00:00:00Z\nnext-step: carry on\nsession-handoff-sequence-number: 5\n",
             encoding="utf-8",
         )
         supervisor.write_supervisor_state(
@@ -823,11 +810,156 @@ def run_launched_session_seat_environment_cases(workspace: Path):
           f"{recorded} state session_id={state.get('session_id')}")
 
 
+def run_launched_session_github_token_cases(workspace: Path):
+    """Every launched session gets GH_TOKEN set to the token of the GitHub account its
+    agent-seat acts as: merge-lane-2 as ned-review-merge, every other agent-seat as its
+    machine's account. Every way an agent-seat is started runs the supervisor, so this is
+    what makes a crash recovery or a restart at login act as the right account.
+
+    The supervisor is started with a decoy GH_TOKEN, as a recovery run from another
+    agent-session's shell would start it, so an inherited token cannot pass for the one
+    the supervisor set. When the token file is missing, empty or unreadable the supervisor
+    starts no session, exits 5 and names the account and the file."""
+    directory = workspace / "github-token-cases"
+    directory.mkdir(parents=True, exist_ok=True)
+    record_path = directory / "gh-token.json"
+    stub_agent = directory / "stub-agent"
+    stub_agent.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os\n"
+        f"open({str(record_path)!r}, 'w').write(json.dumps(os.environ.get('GH_TOKEN')))\n",
+        encoding="utf-8")
+    stub_agent.chmod(0o755)
+    machine_account = ("ubuntu-claude"
+                       if supervisor.handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
+                       else "mac-claude")
+
+    def start_supervisor(agent, home=None):
+        record_path.unlink(missing_ok=True)
+        seat_directory = directory / f"{agent}-directory"
+        seat_directory.mkdir(exist_ok=True)
+        environment = dict(os.environ, GH_TOKEN="decoy-inherited-token")
+        if home is not None:
+            environment["HOME"] = str(home)
+        completed = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--agent", agent, "--cd", str(seat_directory),
+             "--handoff-dir", str(directory / f"{agent}-handoffs"),
+             "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
+            capture_output=True, text=True, check=False,
+            stdin=subprocess.DEVNULL, timeout=60, env=environment)
+        recorded = json.loads(record_path.read_text()) if record_path.is_file() else "no session"
+        return completed, recorded
+
+    for agent, account in (("merge-lane-2", "ned-review-merge"),
+                           ("github-token-ordinary-seat", machine_account)):
+        completed, recorded = start_supervisor(agent)
+        check(f"a session of {agent} gets the token of {account}, not the inherited GH_TOKEN",
+              recorded == fixture.FIXTURE_GITHUB_TOKEN_BY_ACCOUNT[account],
+              f"{recorded!r}; exit {completed.returncode}: {completed.stderr[-600:]}")
+
+    user_fills_the_file = "write the GitHub token of ned-review-merge to"
+    for label, prepare, remedy in (
+            ("missing", lambda token_file: None, user_fills_the_file),
+            ("empty", lambda token_file: token_file.write_text("\n", encoding="utf-8"),
+             user_fills_the_file),
+            ("unreadable", lambda token_file: (token_file.write_text("x\n", encoding="utf-8"),
+                                               token_file.chmod(0)),
+             "readable by the Unix user"),
+    ):
+        home = directory / f"home-with-{label}-token-file"
+        (home / ".config" / "nedschorus").mkdir(parents=True, exist_ok=True)
+        token_file = home / ".config" / "nedschorus" / "ned-review-merge.token"
+        prepare(token_file)
+        completed, recorded = start_supervisor("merge-lane-2", home=home)
+        check(f"a {label} token file: the supervisor starts no session and exits 5, "
+              "naming the agent-seat, the account and the file",
+              completed.returncode == supervisor.AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS == 5
+              and recorded == "no session"
+              and "the agent-seat merge-lane-2 was not started" in completed.stderr
+              and "ned-review-merge" in completed.stderr
+              and str(token_file) in completed.stderr
+              and "Do not start the agent-seat any other way" in completed.stderr
+              and remedy in completed.stderr
+              and "If you are an agent, do not open, write or change the file" in completed.stderr
+              and "`launch-claude-ubuntu merge-lane-2`" in completed.stderr,
+              f"{recorded!r}; exit {completed.returncode}: {completed.stderr[-800:]}")
+        if token_file.exists():
+            token_file.chmod(0o600)
+
+    # A launcher runs the check outside the agent-seat's pane, where the task list is not
+    # pinned yet, so the check must not stop at the pin.
+    def check_token_file_only(agent, home=None):
+        record_path.unlink(missing_ok=True)
+        environment = {key: value for key, value in os.environ.items()
+                       if key != "CLAUDE_CODE_TASK_LIST_ID"}
+        if home is not None:
+            environment["HOME"] = str(home)
+        completed = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--agent", agent,
+             "--agent-command", str(stub_agent),
+             "--agent-seat-github-token-file-readable-check-only"],
+            capture_output=True, text=True, check=False,
+            stdin=subprocess.DEVNULL, timeout=60, env=environment)
+        return completed, "a session" if record_path.is_file() else "no session"
+
+    completed, recorded = check_token_file_only("merge-lane-2")
+    check("--agent-seat-github-token-file-readable-check-only with a token file: exits 0, "
+          "prints nothing and starts no session, though the task list is not pinned",
+          completed.returncode == 0 and recorded == "no session"
+          and completed.stdout == "" and completed.stderr == "",
+          f"{recorded}; exit {completed.returncode}: {completed.stderr[-600:]}")
+    completed, recorded = check_token_file_only(
+        "merge-lane-2", home=directory / "home-with-missing-token-file")
+    check("--agent-seat-github-token-file-readable-check-only with no token file: exits 5 "
+          "with the refusal a start prints, and starts no session",
+          completed.returncode == supervisor.AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS
+          and recorded == "no session"
+          and "handoff-supervisor: the agent-seat merge-lane-2 was not started" in completed.stderr,
+          f"{recorded}; exit {completed.returncode}: {completed.stderr[-600:]}")
+
+
+def run_launched_session_claude_code_tmpdir_cases(workspace: Path):
+    """On ned-box a launched session gets CLAUDE_CODE_TMPDIR, the main-disk directory the daily
+    temp-folder deletion also sweeps; elsewhere the supervisor leaves the variable as it found it,
+    since that path exists only on ned-box."""
+    directory = workspace / "tmpdir-cases"
+    directory.mkdir(parents=True, exist_ok=True)
+    record_path = directory / "tmpdir.json"
+    stub_agent = directory / "stub-agent"
+    stub_agent.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os\n"
+        f"open({str(record_path)!r}, 'w').write(json.dumps(os.environ.get('CLAUDE_CODE_TMPDIR')))\n",
+        encoding="utf-8")
+    stub_agent.chmod(0o755)
+    for on_ned_box, expected in ((True, supervisor.NED_BOX_CLAUDE_CODE_TMPDIR),
+                                 (False, "decoy-inherited-tmpdir")):
+        record_path.unlink(missing_ok=True)
+        with mock.patch.object(supervisor.handoff_user_review_of_agent_memory_stores_mark,
+                               "this_machine_is_ned_box", return_value=on_ned_box), \
+                mock.patch.dict(os.environ, {"CLAUDE_CODE_TMPDIR": "decoy-inherited-tmpdir"}):
+            supervisor.launch_agent_session(str(stub_agent), "tmpdir-session", directory,
+                                            "prompt").wait(timeout=60)
+        recorded = json.loads(record_path.read_text()) if record_path.is_file() else None
+        check(f"a session launched {'on ned-box' if on_ned_box else 'off ned-box'} runs with "
+              f"CLAUDE_CODE_TMPDIR={expected}", recorded == expected, str(recorded))
+    deletion_path = (Path(SCRIPT_PATH).resolve().parents[1] / "general-tools"
+                     / "claude-code-temp-folders-of-exited-agent-sessions-delete.py")
+    deletion_spec = importlib.util.spec_from_file_location("temp_folders_delete", deletion_path)
+    deletion = importlib.util.module_from_spec(deletion_spec)
+    deletion_spec.loader.exec_module(deletion)
+    check("the daily temp-folder deletion sweeps the directory ned-box sessions are given",
+          supervisor.NED_BOX_CLAUDE_CODE_TMPDIR in deletion.DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES,
+          str(deletion.DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES))
+
+
 with fixture.handoff_supervisor_suite_workspace() as workspace:
-    run_adoption_cases(workspace)
+    run_unpinned_task_list_startup_refusal_cases(workspace)
     run_appended_system_prompt_cases(workspace)
     run_appended_system_prompt_agent_part_cases(workspace)
     run_launched_session_seat_environment_cases(workspace)
+    run_launched_session_github_token_cases(workspace)
+    run_launched_session_claude_code_tmpdir_cases(workspace)
     run_process_identity_cases(workspace)
     run_lock_cases(workspace)
 
@@ -924,9 +1056,7 @@ with tempfile.TemporaryDirectory() as update_workspace:
     # The wiring. launch_agent_session is the ONE site every restart path
     # reaches a session through: the supervisor's relaunch after a handoff,
     # recover-crashed-seats.py, and the login restart, which goes through
-    # recovery. An adopted session never passes through here, which is what
-    # keeps the update off the adopted path structurally rather than by
-    # where the call happens to sit.
+    # recovery.
     agent = an_agent_recording_its_invocations(update_workspace)
     supervisor.launch_agent_session(
         str(agent), "session-without-update", Path(update_workspace), "prompt",
@@ -1082,10 +1212,17 @@ with tempfile.TemporaryDirectory() as onboarding_workspace:
                   printed)
             check(f"a ~/.claude.json that is {case_name}: the one remedy that fits, with what "
                   "to do when no backup fits, and no 'then' clause",
-                  f"Restore {claude_json} from the newest copy in {backups}/ that {wanted}.\n"
+                  f"The user restores {claude_json} from the newest copy in {backups}/ that {wanted}.\n"
                   in printed
-                  and f"If no copy in {backups}/ {wanted}: move {claude_json} aside" in printed
-                  and other_wanted not in printed and ", then " not in printed,
+                  and f"If no copy in {backups}/ {wanted}, the user moves {claude_json} aside"
+                  in printed
+                  and other_wanted not in printed and "after that" not in printed,
+                  printed)
+            check(f"a ~/.claude.json that is {case_name}: the remedy says the user restores or "
+                  "moves the file, because it holds the Claude Code login",
+                  f"{claude_json} holds the Claude Code login, so the user restores or moves it; "
+                  "an agent that reads this tells the user and does not replace the file.\n"
+                  f"The user restores {claude_json}" in printed,
                   printed)
             check(f"a ~/.claude.json that is {case_name}: the message says a fix helps only "
                   "the next launch, and that answering an onboarding screen is the user's step",

@@ -17,7 +17,7 @@ def _load_sibling_module(file_name, module_name):
     return module
 
 
-tables = _load_sibling_module("design-to-main-state-tables.py", "design_to_main_state_tables")
+tables = _load_sibling_module("design-to-main-state-tables-common.py", "design_to_main_state_tables")
 run_state_module = _load_sibling_module("design-to-main-run-state.py", "design_to_main_run_state")
 git_record_module = _load_sibling_module("design-to-main-git-record.py", "design_to_main_git_record")
 

@@ -39,11 +39,20 @@ Usage:
 """
 
 import argparse
+import importlib.util
 import os
 import plistlib
+import shlex
 import subprocess
 import sys
 from pathlib import Path
+
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
 
 DEFAULT_LABEL = "com.nedschorus.restart-live-seats-at-login"
 PROGRAM_FILE_NAME = "restart-live-seats-at-login.py"
@@ -114,10 +123,33 @@ def install(label: str, checkout: Path, handoff_directory, launch_agents_directo
     return 0
 
 
+# launchctl print exits 113 when the domain has no such service.
+LAUNCHCTL_PRINT_SERVICE_NOT_FOUND = 113
+
+
 def remove(label: str, launch_agents_directory: Path, run=subprocess.run) -> int:
     plist_path = launch_agents_directory / f"{label}.plist"
-    run(["launchctl", "bootout", f"{launchd_domain()}/{label}"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    target = f"{launchd_domain()}/{label}"
+    booted = run(["launchctl", "bootout", target],
+                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    # bootout also fails for a label that is not loaded; only print can say which.
+    if booted.returncode != 0 and run(
+            ["launchctl", "print", target], stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL).returncode != LAUNCHCTL_PRINT_SERVICE_NOT_FOUND:
+        error_text = " ".join((booted.stderr or b"").decode(errors="replace").split())
+        print(f"install-restart-live-seats-at-login-launch-agent: `launchctl bootout {target}` "
+              f"exited {booted.returncode}"
+              + (f": {error_text}" if error_text else ", printing nothing on stderr")
+              + f"; so {label} may still be loaded, and {plist_path} was kept.", file=sys.stderr)
+        rerun = shlex.join([str(Path(__file__).resolve()), "--remove", "--label", label])
+        if error_text:
+            print("Fix what launchctl's error names.", file=sys.stderr)
+            print(f"Then run `{rerun}` on this Mac.", file=sys.stderr)
+        else:
+            print(f"Run `{rerun}` once more, on this Mac.", file=sys.stderr)
+            print(next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                f"so {label} may still be loaded"), file=sys.stderr)
+        return 1
     if plist_path.is_file():
         plist_path.unlink()
         print(f"install-restart-live-seats-at-login-launch-agent: unloaded {label} and "
