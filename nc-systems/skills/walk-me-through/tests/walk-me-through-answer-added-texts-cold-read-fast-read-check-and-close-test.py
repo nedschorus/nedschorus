@@ -47,7 +47,14 @@ _cold_read_scratch_fixture_spec = importlib.util.spec_from_file_location(
     / "cold-read-scratch-repository-test-fixture.py")
 cold_read_scratch_fixture = importlib.util.module_from_spec(_cold_read_scratch_fixture_spec)
 _cold_read_scratch_fixture_spec.loader.exec_module(cold_read_scratch_fixture)
-SUITE_ROOT = Path(tempfile.mkdtemp(prefix="answer-added-texts-fast-read-check-test-")).resolve()
+_scratch_directory_common_spec = importlib.util.spec_from_file_location(
+    "test_scratch_directory_whose_earlier_killed_runs_leftovers_are_removed_first_common",
+    Path(__file__).resolve().parents[3] / "general-tools"
+    / "test-scratch-directory-whose-earlier-killed-runs-leftovers-are-removed-first-common.py")
+_scratch_directory_common = importlib.util.module_from_spec(_scratch_directory_common_spec)
+_scratch_directory_common_spec.loader.exec_module(_scratch_directory_common)
+SUITE_ROOT = _scratch_directory_common.scratch_directory_after_removing_ones_killed_runs_left(
+    "answer-added-texts-fast-read-check-test-")
 WALK_NAME = "poem-page-2026-10-12"
 FAILURE_PREFIX = "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close "
 failures = []

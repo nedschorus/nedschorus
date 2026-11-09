@@ -150,9 +150,9 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 from unittest import mock
@@ -508,8 +508,23 @@ def frozen_target_path_in_scratch_repository(repository, record_directory):
         repository / TARGET_RELATIVE_PATH, record_directory)
 
 
-with tempfile.TemporaryDirectory() as scratch:
-    scratch = Path(scratch)
+_scratch_directory_common_spec = importlib.util.spec_from_file_location(
+    "test_scratch_directory_whose_earlier_killed_runs_leftovers_are_removed_first_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "test-scratch-directory-whose-earlier-killed-runs-leftovers-are-removed-first-common.py")
+_scratch_directory_common = importlib.util.module_from_spec(_scratch_directory_common_spec)
+_scratch_directory_common_spec.loader.exec_module(_scratch_directory_common)
+SCRATCH_ROOT = _scratch_directory_common.scratch_directory_after_removing_ones_killed_runs_left(
+    "cold-read-grid-test-")
+
+
+def stopped_by_sigterm(*_):
+    raise SystemExit(1)  # So the finally below removes SCRATCH_ROOT.
+
+
+signal.signal(signal.SIGTERM, stopped_by_sigterm)
+try:
+    scratch = SCRATCH_ROOT
     stubs = scratch / "stub-bin"
 
     # --- The check that could not run ---------------------------------------
@@ -2788,6 +2803,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an unreadable git history is reported as EARLIER COLD-READ-FULL-RUNS NOT COUNTED",
           "EARLIER COLD-READ-FULL-RUNS NOT COUNTED:" in result.stdout and "git log --follow" in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+finally:
+    shutil.rmtree(SCRATCH_ROOT, ignore_errors=True)
 
 
 # The docstring is a reader's map of the run: its cell count must match the
