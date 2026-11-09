@@ -752,6 +752,7 @@ check("a log whose last line was cut short: later runs still read the log, exit 
       code == 0 and "IdleSweepLogLineNotUtf8Json" not in output, (code, output))
 check("a log whose last line was cut short: the skipped line is dropped before the next event",
       '{"event": "acc' not in machine.log.read_text().splitlines()
+      and machine.log.read_text().startswith('{"event": "account_seen", "account": "account-1"')
       and all(json.loads(line) for line in machine.log.read_text().splitlines()),
       machine.log.read_text())
 machine = Machine()
@@ -936,6 +937,47 @@ machine.run(7)
 check("a promise written between the transcript read and the check record is read on the next run",
       SECOND_PROMISE in [event["sentence"] for event in machine.events("sentence_checked")
                          if event["agent_seat"] == "beta"], machine.events())
+
+# --- the delivery check measures from the send's start, not from the sender's end ------------------
+# The sender runs 2 s, so its message_sent record is written 2 s after the send began. A received
+# record 119 s before the start is inside the 120 s clock slack from the start, and outside it from
+# the end: found only when the check measures from the start.
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.script(dict(sent_ok(), sleep=2))
+machine.run(0)
+sent = machine.events("message_sent")
+check("a send logs the time it started, apart from the time the record is written",
+      len(sent) == 1 and sent[0].get("send_started_at") == at(0) and sent[0]["at"] > at(0), sent)
+early = (START - timedelta(seconds=119)).isoformat().replace("+00:00", "Z")
+machine.append("alpha", user(sent[0]["text"], early))
+machine.script()
+machine.run(2)
+check("a sender that runs on after its send: the delivery check finds the message, no user-alert",
+      [event["found"] for event in machine.events("delivery_checked")] == [True]
+      and not machine.alerts(), (machine.events("delivery_checked"), machine.alerts()))
+
+# --- a read failure that ended and came back is dated from its return ---------------------------
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+state_file = machine.handoffs / "alpha-supervisor-state.json"
+good_state = state_file.read_text()
+state_file.write_text("{not json")
+machine.run(0)
+state_file.write_text(good_state)
+machine.script()
+machine.run(1)
+check("a read failure not met again: its end is logged",
+      [event["event"] for event in machine.events() if event["event"].startswith("read_failure")]
+      == ["read_failure", "read_failure_ended"], machine.events())
+state_file.write_text("{not json")
+code, _ = machine.run(10)
+check("the failure back days later: logged anew, no user-alert at once",
+      len(machine.events("read_failure")) == 2 and not machine.alerts(), machine.alerts())
+code, _ = machine.run(13)
+check("the failure back, minutes after its return: one user-alert",
+      code == 1 and len(machine.alerts()) == 1, (code, machine.alerts()))
 
 if failures:
     print(f"{len(failures)} case(s) failed")
