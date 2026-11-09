@@ -308,6 +308,15 @@ def case_paths(case):
             "--fast-read-program", str(case.stand_in), "--counts-log", str(case.counts_log)]
 
 
+def outside_paths(text, case):
+    """text with this checkout's and the case's paths removed, so that a word the program must not print
+    is not found in a directory name, such as a worktree named for a flag. The case's temporary directory
+    goes first: it lies inside case.root, and its own name can hold the word."""
+    for path in (case.temporary_directory, case.root, Path(__file__).resolve().parents[4]):
+        text = text.replace(str(path), "")
+    return text
+
+
 def described(result):
     return f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}"
 
@@ -626,8 +635,9 @@ def test_a_check_started_with_a_stop_signal_ignored_keeps_ignoring_it():
 
 def test_a_scratch_directory_a_stop_signal_cannot_remove_is_reported_with_the_command_that_removes_it():
     for number in (signal.SIGTERM, signal.SIGHUP):
-        # A space in the path shows the command quotes the directory.
-        case = Case(temporary_directory_name="scratch root")
+        # A space in the path shows the command quotes the directory; the word "flag" in it shows the
+        # check below for that word ignores paths.
+        case = Case(temporary_directory_name="scratch flag root")
         result = case.run("check", mode=f"stopped-unremovable {number.name}")
         left = [case.temporary_directory / name for name in case.left_in_temporary_directory()]
         command = re.search(r"Run `(.+?)`", result.stderr)
@@ -641,7 +651,7 @@ def test_a_scratch_directory_a_stop_signal_cannot_remove_is_reported_with_the_co
               described(result))
         check(f"the {number.name} message names no answer's flags, and gives a reason for the removal that "
               f"holds wherever TMPDIR points",
-              "flag" not in result.stderr and "/tmp has a quota" not in result.stderr
+              "flag" not in outside_paths(result.stderr, case) and "/tmp has a quota" not in result.stderr
               and "the disk it is on can fill" in result.stderr,
               described(result))
         removal = subprocess.run(["sh", "-c", command.group(1) if command else "false"], capture_output=True,
@@ -1286,7 +1296,7 @@ def test_no_open_walk_or_no_item_fails():
     result = case.run("check")
     check("check with no open approval-walk fails on stderr",
           result.returncode == 1 and result.stderr.startswith(FAILURE_PREFIX + "check: ") and "no approval-walk is open" in result.stderr
-          and "paused" not in result.stderr, described(result))
+          and "paused" not in outside_paths(result.stderr, case), described(result))
     case = Case(next_to_present="item 4 of 9")
     with open(case.minutes, "a") as minutes:
         minutes.write("#approval_walk_paused the user's stop order\n")
