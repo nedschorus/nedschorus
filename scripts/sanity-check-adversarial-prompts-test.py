@@ -451,8 +451,10 @@ def main():
         claimed = runner.fresh_record_dir("stored-target")
         check("a name the log-store already holds is skipped",
               claimed.name == f"{today}-stored-target-2", f"claimed {claimed}")
+        check("the name given is claimed in the log-store as well",
+              (store_records / claimed.name).is_dir(), f"store holds {sorted(store_records.iterdir())}")
 
-        # Case 17c: the store cannot be listed; the name is checked against
+        # Case 17c: the name cannot be claimed in the store; it is checked against
         # this checkout alone, and stderr says so.
         store_records.chmod(0)
         try:
@@ -461,11 +463,11 @@ def main():
                 unchecked = runner.fresh_record_dir("unlisted-target")
         finally:
             store_records.chmod(0o755)
-        check("an unlistable store still yields a record directory",
+        check("a store that will not take the claim still yields a record directory",
               unchecked.name == f"{today}-unlisted-target" and unchecked.is_dir(),
               f"claimed {unchecked}")
-        check("an unlistable store is reported on stderr",
-              "could not be read" in caught.getvalue() and unchecked.name in caught.getvalue(),
+        check("a store that will not take the claim is reported on stderr",
+              "could not be claimed" in caught.getvalue() and unchecked.name in caught.getvalue(),
               f"stderr was {caught.getvalue()!r}")
     if saved_destination is None:
         os.environ.pop(destination_variable, None)

@@ -224,6 +224,10 @@ if "wait_for_file" in step:
         sys.exit(1)
 if "dump_prompt" in step:
     pathlib.Path(step["dump_prompt"]).write_text(prompt, encoding="utf-8")
+if "write_file" in step:
+    written = pathlib.Path(step["write_file"][0])
+    written.parent.mkdir(parents=True, exist_ok=True)
+    written.write_text(step["write_file"][1], encoding="utf-8")
 if "edit_document" in step:
     with open(step["edit_document"], "a", encoding="utf-8") as handle:
         handle.write("An edit made while the reviewer read.\\n")
@@ -533,11 +537,13 @@ with tempfile.TemporaryDirectory() as scratch:
           str(skill_report))
     check("the fast read creates its record directory as it names it",
           skill_report.parent.is_dir(), str(skill_report.parent))
-    # Removed so the next case's name is free in this checkout, as it says.
+    check("and claims the same name in the log-store",
+          (in_process_log_store / "SKILL-cold-read-2026-09-16").is_dir(),
+          str(in_process_log_store))
+    # Removed here only, so the store's claim now stands for another
+    # checkout's read of the document that day, in the log-store alone: the
+    # name passes over it, as this checkout's own records are.
     skill_report.parent.rmdir()
-    # Another checkout's read of the document that day is in the log-store
-    # alone: the name passes over it, as this checkout's own records are.
-    (in_process_log_store / "SKILL-cold-read-2026-09-16").mkdir(parents=True)
     skill_report_beside_the_store = name_module.fast_read_report_path_for_target(
         skill_target, clock_at_1042)
     check("a record name the log-store holds is passed over, though this checkout lacks it",
@@ -555,7 +561,7 @@ with tempfile.TemporaryDirectory() as scratch:
                     skill_target, clock_at_1042)
         finally:
             in_process_log_store.chmod(0o755)
-        check("when the log-store cannot be listed, the name free in this checkout is used",
+        check("when the name cannot be claimed in the log-store, the name free in this checkout is used",
               skill_report_unlisted == scratch / "in-process-records"
               / "SKILL-cold-read-2026-09-16" / "cold-read-fast-read.md", str(skill_report_unlisted))
         check("and the fast read says on stderr that the name was not checked against the "
@@ -1691,26 +1697,19 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}; stderr={result.stderr[-400:]!r}")
 
     # A store already holding other bytes under the record's name refuses it:
-    # the record did not reach the store either. The read names its record
-    # against the store's names too, so the store root is made unlistable
-    # (write and search only): the read then falls back to a name free in the
-    # checkout, which the store already holds.
+    # the record did not reach the store either. The read claims its record's
+    # name in the store before the reviewer runs, so the other read's report
+    # is written into that claimed directory while the reviewer reads.
     repository = build_scratch_repository(scratch)
     records_report = (repository / "cold-read-records" / f"a-design-{record_stamp}"
                       / "cold-read-fast-read.md")
     stored_elsewhere = (repository / SCRATCH_LOG_STORE_RELATIVE / records_report.parent.name
                         / "cold-read-fast-read.md")
-    stored_elsewhere.parent.mkdir(parents=True)
-    stored_elsewhere.write_text("ANOTHER READ'S REPORT\n", encoding="utf-8")
-    store_root = stored_elsewhere.parent.parent
-    store_root.chmod(0o333)
-    try:
-        result = run_fast_read(
-            repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
-            records_report, other_relative, counter,
-        )
-    finally:
-        store_root.chmod(0o755)
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n",
+                                  "write_file": [str(stored_elsewhere), "ANOTHER READ'S REPORT\n"]}},
+        records_report, other_relative, counter,
+    )
     check("a store that refuses the record is reported as record: REFUSED on stderr, the "
           "report's path is still the stdout line, and the read exits 1",
           result.returncode == 1 and result.stdout.strip() == str(records_report)
