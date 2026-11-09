@@ -1418,6 +1418,42 @@ with tempfile.TemporaryDirectory() as workspace:
         flight = flight_of([list_entry("bsubold", "shell")])
         check("a subagent's own shell task past the wait holds nothing", not flight,
               str(flight.background_task_ids))
+        # A Workflow-tool agent keeps its transcript a level deeper. Layout, ids and journal lines
+        # from ~/.claude/projects/ on ned-box, MD-skills' probe session
+        # 65d644bd-b689-43c4-b258-efed0a8087b4 of 2026-11-04, whose Stop-hook input listed the
+        # workflow w2c4bv83u and its agent's shell task bxecf0mah; that headless transcript carries
+        # no toolUseResult, so the launch records take the interactive shape above.
+        workflow_session = transcript_of(workspace, "65d644bd-b689-43c4-b258-efed0a8087b4.jsonl", [
+            usage_record(100_000, cache_read=450_000)])
+        workflow_run = workflow_session.with_suffix("") / "subagents" / "workflows" / "wf_b109740f-730"
+        workflow_run.mkdir(parents=True, exist_ok=True)
+        transcript_of(workflow_run, "agent-a59a8abb54ebd7b15.jsonl", [
+            background_task_launch_record("bxecf0mah", launched_at=two_hours_ago),
+            background_task_launch_record("bwfyoung1", launched_at=ten_minutes_ago),
+            monitor_start_record("bwfmonitor"),
+        ])
+        (workflow_run / "journal.jsonl").write_text(
+            '{"type":"launched"}\n'
+            '{"type":"started","agentId":"a59a8abb54ebd7b15","label":"probe-sleep"}\n'
+            'not JSON, yet naming bxecf0mah and "backgroundTaskId"\n', encoding="utf-8")
+
+        def workflow_flight_of(entries):
+            return flight_of(entries, transcript=workflow_session)
+
+        flight = workflow_flight_of([list_entry("w2c4bv83u", "workflow"),
+                                     list_entry("bxecf0mah", "shell")])
+        check("a Workflow-tool agent's shell task past the wait holds nothing, dated from the"
+              " agent's transcript under subagents/workflows/",
+              flight.background_task_ids == [] and flight.workflow_ids == ["w2c4bv83u"],
+              f"{flight.background_task_ids} {flight.workflow_ids}")
+        flight = workflow_flight_of([list_entry("bwfyoung1", "shell")])
+        check("a Workflow-tool agent's shell task within the wait holds the handoff, tied to no"
+              " subagent", flight.background_task_ids == ["bwfyoung1"]
+              and flight.launching_subagent_id_by_task_id == {},
+              f"{flight.background_task_ids} {flight.launching_subagent_id_by_task_id}")
+        flight = workflow_flight_of([list_entry("bwfmonitor", "shell")])
+        check("a Monitor a Workflow-tool agent started holds nothing", not flight,
+              str(flight.background_task_ids))
         flight = flight_of([list_entry("bmonitor01", "shell")])
         check("a Monitor, which the list shows as a shell task, holds nothing", not flight,
               str(flight.background_task_ids))
