@@ -1151,7 +1151,7 @@ def test_in_place_and_duplicate_leftovers():
 
 
 def test_untracked_draft_kept_across_a_head_move_is_in_place_and_duplicated():
-    """The 2026-11-05 MD-skills case: untracked drafts, HEAD fast-forwarded between two
+    """Untracked drafts, HEAD fast-forwarded between two
     session-handoffs, each leaving a work-snapshot of the same files."""
     main = new_clone()
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "moved", "moved-branch")
