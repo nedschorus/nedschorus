@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Tests that a suite inside its test sandbox cannot escape it.
+"""Tests that a suite inside its nc-test-sandbox cannot escape it.
 
 A probe is run as a suite by scripts/run-all-test-suites.py's own run_one_suite,
 the path every suite takes: in a cgroup scope at low priority, with the input
 recorder, in a checkout that is a linked worktree, as merge-lane-2's head test
-runs and mutation testing use. The probe tries every escape. Each target is one
+runs and nc-mutation-testing use. The probe tries every escape. Each target is one
 this file made for the purpose: a file in the real home directory, a tmux server
 on a socket of its own, a listening socket in the session's runtime directory, a
 sleeper process, a scratch repository. If a protection were missing, the worst a
@@ -91,7 +91,7 @@ MACHINE_SOCKETS_NAMED = (
     "/run/docker.sock", "/run/dbus/system_bus_socket", "/run/snapd.socket",
     "/run/systemd/io.systemd.Manager")
 # gnome-shell on ned-box serves displays :0 and :1; its authorization cookie lives in the
-# runtime directory, which the test sandbox hides.
+# runtime directory, which the nc-test-sandbox hides.
 X11_DISPLAYS_PROBED = (0, 1)
 PROBE_SUITE = "escape-probe-test.py"
 
@@ -279,6 +279,19 @@ def ruff_version():
     if done.returncode != 0:
         raise RuntimeError((done.stdout + done.stderr).strip()[-300:])
 attempt("run python3 -m ruff --version", ruff_version)
+def temporary_directory_paths():
+    import tempfile
+    made = tempfile.mkdtemp()
+    cwd_reported = subprocess.run([sys.executable, "-c", "import os; print(os.getcwd())"],
+                                  cwd=made, capture_output=True, text=True, timeout=60,
+                                  check=True).stdout.strip()
+    return {"tmpdir": os.environ.get("TMPDIR"), "tmpdir_is_link": os.path.islink(os.environ["TMPDIR"]),
+            "tmpdir_resolved": os.path.realpath(os.environ["TMPDIR"]), "made": made,
+            "made_resolved": os.path.realpath(made), "cwd_reported": cwd_reported}
+try:
+    report("see TMPDIR's paths", True, json.dumps(temporary_directory_paths()))
+except BaseException as error:
+    report("see TMPDIR's paths", False, repr(error))
 # Sockets this test makes outside only once the probe has started, in /var/tmp and in the
 # home directory: what a process outside makes later must not show inside either.
 # The handshake goes through the suite's own input record, the one file both sides write
@@ -301,7 +314,7 @@ for path in targets["late_sockets"]:
 
 def bwrap_unavailable_reason():
     if not sys.platform.startswith("linux"):
-        return f"{sys.platform} has no test sandbox; it is built with bwrap on Linux"
+        return f"{sys.platform} has no nc-test-sandbox; it is built with bwrap on Linux"
     if os.environ.get(runner.SIGNAL_SANDBOX_INSIDE_VARIABLE):
         return "this suite is already inside a sandbox, where bwrap cannot start again"
     if shutil.which("bwrap") is None:
@@ -373,7 +386,7 @@ def make_linked_worktree(scratch):
 
 
 def run_probe(scratch):
-    """Run the probe as a suite in its test sandbox, and check every target after."""
+    """Run the probe as a suite in its nc-test-sandbox, and check every target after."""
     sandbox_prefix, unconfined_because = runner.signal_sandbox()
     if not sandbox_prefix:
         print(f"SKIP  every escape case: the runner builds no sandbox here: {unconfined_because}")
@@ -571,7 +584,7 @@ def run_probe(scratch):
             except ValueError:
                 continue
             attempts[record["attempt"]] = record
-        check("the probe ran as a suite inside its test sandbox and reported",
+        check("the probe ran as a suite inside its nc-test-sandbox and reported",
               result["exit"] == 0 and len(attempts) > 40, (result["exit"], log_text[-1500:]))
         check("the probe ran in a cgroup scope of its own, as suites do, and its counters "
               "were read",
@@ -612,12 +625,26 @@ def run_probe(scratch):
         print("named machine sockets among those probed: "
               + (", ".join(path for path in MACHINE_SOCKETS_NAMED if path in probed) or "none"))
 
+        # Not an escape: TMPDIR is reached through a symbolic link, as macOS's /var is, so a
+        # suite that mixes a path built from TMPDIR with a resolved one fails here too.
+        record = attempts.get("see TMPDIR's paths")
+        paths = json.loads(record["detail"]) if record is not None and record["worked"] else {}
+        check("inside, TMPDIR names a symbolic link to a directory in the sandbox's private /tmp",
+              bool(paths) and paths["tmpdir_is_link"] and paths["tmpdir_resolved"] != paths["tmpdir"]
+              and paths["tmpdir_resolved"].startswith("/tmp/"), record)
+        check("inside, a directory tempfile makes is under TMPDIR as named, and a process "
+              "started in it reports the resolved path as its cwd",
+              bool(paths) and paths["made"].startswith(paths["tmpdir"] + "/")
+              and paths["cwd_reported"] == paths["made_resolved"]
+              and paths["made_resolved"].startswith(paths["tmpdir_resolved"] + "/")
+              and paths["cwd_reported"] != paths["made"], record)
+
         # Not an escape: a path the runner shows on purpose, which a suite needs, must work inside.
         ruff_binary = pathlib.Path.home() / ".local/bin/ruff"
         ruff_outside = subprocess.run([sys.executable, "-m", "ruff", "--version"],
                                       capture_output=True, text=True, timeout=60)
         if not ruff_binary.is_file() or ruff_outside.returncode != 0:
-            print(f"SKIP  inside, python3 -m ruff --version runs: outside, {ruff_binary} "
+            print(f"SKIP  [this machine cannot run it] inside, python3 -m ruff --version runs: outside, {ruff_binary} "
                   f"{'exists' if ruff_binary.is_file() else 'is absent'} and python3 -m ruff "
                   f"--version exits {ruff_outside.returncode}, so there is no Ruff to show")
         else:
@@ -646,7 +673,7 @@ def run_probe(scratch):
             check(f"inside, a credential file is not there: {path}", ok, record)
         for directory in DIRECTORIES_HIDDEN_WHOLE_THAT_HOLD_SOMETHING_OUTSIDE:
             if not (os.path.isdir(directory) and os.listdir(directory)):
-                print(f"SKIP  {directory} holds nothing outside, so its hiding cannot be seen")
+                print(f"SKIP  [this machine cannot run it] {directory} holds nothing outside, so its hiding cannot be seen")
                 continue
             ok, record = blocked(f"see anything in {directory}")
             check(f"inside, {directory} is empty, though it holds something outside", ok, record)
@@ -655,7 +682,7 @@ def run_probe(scratch):
             check("inside, a file under /mnt, such as a backup snapshot of the home directory, "
                   "is not there", ok, record)
         else:
-            print("SKIP  /mnt/backup holds nothing here, so no backup file can be looked for")
+            print("SKIP  [this machine cannot run it] /mnt/backup holds nothing here, so no backup file can be looked for")
         for directory in writable_directories:
             check(f"outside afterwards, nothing the suite wrote in {directory}, a directory "
                   f"this account can create files in, is there",

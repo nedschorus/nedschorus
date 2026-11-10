@@ -14,15 +14,19 @@ looking. Each blocked surface therefore has a case asserting both the status
 AND that the output says what to do about it.
 """
 
+import atexit
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 # A variable that redirects git, left in this process, would send the scratch
@@ -38,6 +42,20 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 # Every copy this suite makes lands in a scratch folder, never in the user's Downloads.
 FOUND_COPIES_SCRATCH = tempfile.mkdtemp(prefix="find-deleted-path-found-copies-test-")
 os.environ["FIND_DELETED_PATH_FOUND_COPIES_ROOT"] = FOUND_COPIES_SCRATCH
+
+
+def remove_found_copies_scratch_left_by_a_run_that_raised():
+    # A run that reaches the end removes the folder there, where a failure can still fail the suite; this
+    # covers a run that raised or got Ctrl-C, whose exit status is already nonzero.
+    if os.path.isdir(FOUND_COPIES_SCRATCH):
+        try:
+            shutil.rmtree(FOUND_COPIES_SCRATCH)
+        except OSError as error:
+            print("the found-copies scratch folder %s could not be removed: %s: %s"
+                  % (FOUND_COPIES_SCRATCH, type(error).__name__, error), file=sys.stderr)
+
+
+atexit.register(remove_found_copies_scratch_left_by_a_run_that_raised)
 
 MODULE_PATH = Path(__file__).with_name("find-deleted-path-across-backups.py")
 spec = importlib.util.spec_from_file_location("find_deleted_path_across_backups", MODULE_PATH)
@@ -65,7 +83,7 @@ def check(name, condition, detail=""):
     if condition:
         print("PASS  %s" % name)
     else:
-        print("FAIL  %s%s" % (name, (" — " + detail) if detail else ""))
+        print("FAIL  %s%s" % (name, (" — " + str(detail)) if detail else ""))
         failures.append(name)
 
 
@@ -109,8 +127,18 @@ class FakeRunner:
         self.calls.append(joined)
         for needle, answer in self.table:
             if needle in joined:
-                return answer
+                return answer(argv) if callable(answer) else answer
         return self.default
+
+
+def top_level_is_the_directory_given(argv):
+    """Answer git -C <directory> rev-parse --show-toplevel as a repository's top level would."""
+    return 0, argv[2] + "\n", ""
+
+
+def tree_holds_the_path(argv):
+    """Answer git ls-tree -z <commit> -- <path> as a tree that holds <path> would."""
+    return 0, "100644 blob %s\t%s\0" % ("0" * 40, argv[-1]), ""
 
 
 class LocalShellRunner(FakeRunner):
@@ -165,13 +193,14 @@ check("a dotfile still matches itself by suffix",
 # suffix scan runs) and some non-dot path ends with the same remainder.
 git_dotfile = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
     ("--name-only", (0, "scripts/env\0README.md\0", "")),
     # scripts/env is alive and well in history; the fixture must let the
     # wrong match go all the way to a FOUND, or the case proves nothing.
     ("log --all --full-history --format=%H|%ad|%s", (0, "ba432e8e5|2026-08-20|add env\n", "")),
     ("log --all --full-history --format=%H|%P|%ct|%ad|%s", (0, "ba432e8e5|0a0a0a0a0|1787000000|2026-08-20|add env\n", "")),
-    ("cat-file -e", (0, "", "")),
+    ("ls-tree -z", tree_holds_the_path),
 ])
 report = finder.search_git(".env", "/repo", git_dotfile)
 check("a request for '.env' is NOT FOUND when history only has 'scripts/env'",
@@ -506,6 +535,10 @@ check("... and it is NOT counted as one macOS already had mounted, because it is
       "%s %s" % (report.lines, report.recovery))
 check("... and the snapshots that could not be mounted past it are still UNAVAILABLE, not 'not found'",
       report.status == UNAVAILABLE, "%s %s" % (report.status, report.lines))
+check("... and this run does not try to remove its own mount point, which the leftover still occupies",
+      "rmdir " + MOUNT_POINT not in occupied.calls
+      and not any(l.startswith("could not remove") for l in report.lines),
+      "%s %s" % (occupied.calls, report.lines))
 
 # The occupier is a perfectly good read-only mount of a real snapshot, so when
 # the file is in it the answer is FOUND — and one command both takes the file
@@ -531,25 +564,232 @@ if os.path.realpath("/tmp") == "/private/tmp":
           "%s %s" % (report.status, report.lines))
 
 
-# Another run at the same time mounts on its own mount point, so this run finds no occupier, hands back
-# no unmount, and reads that run's snapshot where it sits instead of unmounting it.
-OTHER_RUNS_MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro-1"
+# Mount points of other runs of this script. Each ID is longer than any real one, so it is no prefix of this
+# run's own and a table entry naming it never answers for this run's mount point.
+OTHER_RUNS_MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro-900000001"
+ENDED_RUNS_MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro-900000002"
+LIVE_RUN_PS = ("ps -p 900000001 -o command=", (0, "python3 scripts/find-deleted-path-across-backups.py notes.md\n", ""))
+ENDED_RUN_PS = ("ps -p 900000002 -o command=", (1, "", ""))
+NO_EMPTY_MOUNT_POINTS = ("find /private/tmp -maxdepth 1", (0, "", ""))
+REMOVES_FINE = ("rmdir", (0, "", ""))
+
+# Another live run's mount is never read: that run unmounts it when its own test is done, so a test here
+# could find the tree gone and record a miss. Nor is it unmounted, which would break that run's search.
 concurrent = MountTableRunner([
-    # The trailing slash keeps these from matching this run's own mount point, whose ID may begin with 1.
-    ("test -d " + OTHER_RUNS_MOUNT_POINT, (0, "", "")),
-    ("test -e " + OTHER_RUNS_MOUNT_POINT + "/", (0, "", "")),
+    LIVE_RUN_PS, NO_EMPTY_MOUNT_POINTS, REMOVES_FINE,
     ("mount_apfs", (0, "", "")),
     RELEASES_FINE,
     ("test -e", (1, "", "")),
     LISTS_SNAPSHOTS,
 ], OCCUPIED_LISTING.replace(MOUNT_POINT, OTHER_RUNS_MOUNT_POINT))
 report = finder.search_local_snapshots(REAPED, "/repo", concurrent)
-check("a snapshot another live run has mounted is read in place, and nothing tells the agent to unmount it",
-      report.status == FOUND
-      and not any(l.startswith("the mount point ") for l in report.lines)
-      and not any("diskutil unmount " + OTHER_RUNS_MOUNT_POINT in c for c in report.recovery)
-      and not any(c == "diskutil unmount " + OTHER_RUNS_MOUNT_POINT for c in concurrent.calls),
-      "%s %s %s %s" % (report.status, report.lines, report.recovery, concurrent.calls))
+check("a snapshot another live run has mounted is not read, and is not unmounted",
+      not any(c.startswith("test ") and OTHER_RUNS_MOUNT_POINT + "/" in c + "/" for c in concurrent.calls)
+      and not any(c == "diskutil unmount " + OTHER_RUNS_MOUNT_POINT for c in concurrent.calls)
+      and not any(OTHER_RUNS_MOUNT_POINT in c for c in report.recovery),
+      "%s %s" % (concurrent.calls, report.recovery))
+check("... and it is reported as not searched, naming the run that holds it, never 'none of them has it'",
+      report.status == UNAVAILABLE
+      and any(l == "could not search com.apple.TimeMachine.2026-08-30-124711.local — mounted on %s, and "
+                   "process 900000001, another run of this script, is still running" % OTHER_RUNS_MOUNT_POINT
+              for l in report.lines)
+      and any("run this search again then" in l for l in report.lines)
+      and not any("macOS already has mounted" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+check("... and no mount command is offered for it, since mount_apfs cannot open it twice",
+      not any("2026-08-30-124711" in c for c in report.recovery), str(report.recovery))
+
+# A run killed between its mount_apfs and its diskutil unmount leaves the snapshot on its own mount point.
+# The next run unmounts it itself, removes its empty mount point, and searches the snapshot on its own.
+ended_listing = OCCUPIED_LISTING.replace(MOUNT_POINT, ENDED_RUNS_MOUNT_POINT)
+ended = MountTableRunner([
+    # Its directory still resolves, as it would if the rmdir after the unmount failed; it is empty now.
+    ("test -d " + ENDED_RUNS_MOUNT_POINT, (0, "", "")),
+    ENDED_RUN_PS, NO_EMPTY_MOUNT_POINTS, REMOVES_FINE, MOUNTS_FINE, RELEASES_FINE,
+    ("test -e", (1, "", "")), LISTS_SNAPSHOTS,
+], ended_listing)
+report = finder.search_local_snapshots(REAPED, "/repo", ended)
+check("a snapshot an ended run left mounted is unmounted by this run, then searched on this run's own mount",
+      "diskutil unmount " + ENDED_RUNS_MOUNT_POINT in ended.calls
+      and "rmdir " + ENDED_RUNS_MOUNT_POINT in ended.calls
+      and any(c.startswith("mount_apfs") and "2026-08-30-124711" in c and c.endswith(MOUNT_POINT)
+              for c in ended.calls)
+      and report.status == NOT_FOUND,
+      "%s %s" % (report.status, ended.calls))
+check("... and the report names it as left by an ended run, never as one macOS already had mounted",
+      any(l == "com.apple.TimeMachine.2026-08-30-124711.local was left mounted on %s by a run of this script "
+               "that ended (process 900000002 has ended); this run unmounted it" % ENDED_RUNS_MOUNT_POINT
+          for l in report.lines)
+      and not any("macOS already had" in l for l in report.lines),
+      str(report.lines))
+check("... and this run removes its own empty mount point when it is done",
+      ended.calls[-1] == "rmdir " + MOUNT_POINT and not any("could not remove" in l for l in report.lines),
+      "%s %s" % (ended.calls, report.lines))
+
+# A process ID can be given to another program once the run that had it ends.
+reused = MountTableRunner([
+    ("ps -p 900000002 -o command=", (0, "/usr/libexec/some-daemon\n", "")),
+    NO_EMPTY_MOUNT_POINTS, REMOVES_FINE, MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")), LISTS_SNAPSHOTS,
+], ended_listing)
+report = finder.search_local_snapshots(REAPED, "/repo", reused)
+check("a mount whose run's process ID now belongs to another program is cleared as an ended run's",
+      "diskutil unmount " + ENDED_RUNS_MOUNT_POINT in reused.calls
+      and any("process 900000002 has ended and its number now belongs to another program" in l for l in report.lines),
+      "%s %s" % (reused.calls, report.lines))
+
+ps_fails = MountTableRunner([
+    ("ps -p 900000002 -o command=", (127, "", "ps: command not found\n")),
+    NO_EMPTY_MOUNT_POINTS, REMOVES_FINE, MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")), LISTS_SNAPSHOTS,
+], ended_listing)
+report = finder.search_local_snapshots(REAPED, "/repo", ps_fails)
+check("when ps cannot say whether the run still runs, its mount is left alone and the snapshot reported "
+      "unsearched with ps's words",
+      "diskutil unmount " + ENDED_RUNS_MOUNT_POINT not in ps_fails.calls
+      and report.status == UNAVAILABLE
+      and any("ps could not say whether process 900000002 still runs — ps exited 127: ps: command not found" in l
+              for l in report.lines),
+      "%s %s %s" % (ps_fails.calls, report.status, report.lines))
+
+# ps exits 1 for a bad option too, saying so on stderr; only a silent 1 says the process has ended.
+ps_refuses = MountTableRunner([
+    ("ps -p 900000002 -o command=", (1, "", "ps: illegal option -- o\n")),
+    NO_EMPTY_MOUNT_POINTS, REMOVES_FINE, MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")), LISTS_SNAPSHOTS,
+], ended_listing)
+report = finder.search_local_snapshots(REAPED, "/repo", ps_refuses)
+check("when ps exits 1 with an error, the run is not taken as ended: its mount is left alone, with ps's words",
+      "diskutil unmount " + ENDED_RUNS_MOUNT_POINT not in ps_refuses.calls
+      and any("ps exited 1: ps: illegal option -- o" in l for l in report.lines),
+      "%s %s %s" % (ps_refuses.calls, report.status, report.lines))
+
+# An ended run's mount that will not release is not read in place: another run reclaiming it at the same
+# time may finish unmounting it between this run's two tests, and an empty directory would read as a miss.
+ended_stuck = MountTableRunner([
+    ENDED_RUN_PS, NO_EMPTY_MOUNT_POINTS, REMOVES_FINE,
+    ("diskutil unmount " + ENDED_RUNS_MOUNT_POINT, (1, "", "Unmount failed: Resource busy\n")),
+    ("test -d " + ENDED_RUNS_MOUNT_POINT, (0, "", "")),
+    ("test -e " + ENDED_RUNS_MOUNT_POINT + "/", (1, "", "")),
+    MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")), LISTS_SNAPSHOTS,
+], ended_listing)
+report = finder.search_local_snapshots(REAPED, "/repo", ended_stuck)
+check("an ended run's mount that will not unmount is not read, and its snapshot is reported not searched "
+      "with the unmount's words",
+      not any(c.startswith("test ") and ENDED_RUNS_MOUNT_POINT in c for c in ended_stuck.calls)
+      and report.status == UNAVAILABLE
+      and any(l == "could not search com.apple.TimeMachine.2026-08-30-124711.local — left mounted on %s by a "
+                   "run of this script that ended (process 900000002 has ended), and diskutil unmount exited 1: "
+                   "Unmount failed: Resource busy" % ENDED_RUNS_MOUNT_POINT for l in report.lines)
+      and not any("macOS already had" in l for l in report.lines),
+      "%s %s %s" % (report.status, report.lines, ended_stuck.calls))
+check("... and the command that clears it is handed back, with no mount command for it",
+      report.recovery == ["diskutil unmount " + ENDED_RUNS_MOUNT_POINT], str(report.recovery))
+
+# Both cleanup failures are reported when this run's own mount also will not release: the ended run's mount
+# keeps its own reason, not "not reached", so its clear command comes back explained.
+ENDED_STUCK_LINE = ("could not search com.apple.TimeMachine.2026-08-30-124711.local — left mounted on %s by a "
+                    "run of this script that ended (process 900000002 has ended), and diskutil unmount exited 1: "
+                    "Unmount failed: Resource busy" % ENDED_RUNS_MOUNT_POINT)
+OWN_STUCK = ("diskutil unmount " + MOUNT_POINT, (1, "", "Unmount of own failed: busy\n"))
+both_stuck = MountTableRunner([
+    ENDED_RUN_PS, NO_EMPTY_MOUNT_POINTS, REMOVES_FINE,
+    ("diskutil unmount " + ENDED_RUNS_MOUNT_POINT, (1, "", "Unmount failed: Resource busy\n")),
+    OWN_STUCK, MOUNTS_FINE, ("test -e", (1, "", "")), LISTS_SNAPSHOTS,
+], ended_listing)
+report = finder.search_local_snapshots(REAPED, "/repo", both_stuck)
+check("an ended run's mount that will not unmount is reported with its own reason even after this run's "
+      "own mount would not release",
+      ENDED_STUCK_LINE in report.lines
+      and any(l.startswith("could not search ") and "not reached: " in l and "Unmount of own failed: busy" in l
+              for l in report.lines)
+      and not any(" stayed mounted on " in l and not l.startswith("could not search ") for l in report.lines)
+      and "diskutil unmount " + ENDED_RUNS_MOUNT_POINT in report.recovery,
+      "%s %s" % (report.lines, report.recovery))
+
+# With no later snapshot left to carry "not reached", this run's own failed release gets a line of its own.
+two_snapshots = ("tmutil listlocalsnapshots", (0, "com.apple.TimeMachine.2026-08-31-124711.local\n"
+                                                  "com.apple.TimeMachine.2026-08-30-124711.local\n", ""))
+both_stuck_last = MountTableRunner([
+    ENDED_RUN_PS, NO_EMPTY_MOUNT_POINTS, REMOVES_FINE,
+    ("diskutil unmount " + ENDED_RUNS_MOUNT_POINT, (1, "", "Unmount failed: Resource busy\n")),
+    OWN_STUCK, MOUNTS_FINE, ("test -e", (1, "", "")), two_snapshots,
+], ended_listing)
+report = finder.search_local_snapshots(REAPED, "/repo", both_stuck_last)
+check("... and when no snapshot is left to be not reached, both failures still get a line",
+      ENDED_STUCK_LINE in report.lines
+      and any(l.startswith("com.apple.TimeMachine.2026-08-31-124711.local stayed mounted on %s — " % MOUNT_POINT)
+              and "Unmount of own failed: busy" in l for l in report.lines)
+      and report.recovery == ["diskutil unmount " + MOUNT_POINT, "diskutil unmount " + ENDED_RUNS_MOUNT_POINT],
+      "%s %s" % (report.lines, report.recovery))
+
+# The clear for an ended run's stuck mount is handed back even when another snapshot, one macOS has mounted,
+# holds the file and is copied straight out.
+found_beside_stuck = MountTableRunner([
+    ENDED_RUN_PS, NO_EMPTY_MOUNT_POINTS, REMOVES_FINE,
+    ("diskutil unmount " + ENDED_RUNS_MOUNT_POINT, (1, "", "Unmount failed: Resource busy\n")),
+    ("test -d " + LIVE_OS_MOUNT, (0, "", "")),
+    ("test -e " + LIVE_OS_MOUNT, (0, "", "")),
+    MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")), LISTS_SNAPSHOTS,
+], MOUNT_LISTING.replace(STALE_OS_MOUNT, ENDED_RUNS_MOUNT_POINT))
+report = finder.search_local_snapshots(REAPED, "/repo", found_beside_stuck)
+check("a hit read where macOS has it mounted still hands back the clear for an ended run's stuck mount",
+      report.status == FOUND and version_sources(report) == [("file", LIVE_OS_MOUNT + REAPED)]
+      and report.recovery == ["diskutil unmount " + ENDED_RUNS_MOUNT_POINT],
+      "%s %s %s" % (report.status, version_sources(report), report.recovery))
+
+# Every run before this one left its empty mount point behind; those of ended runs are removed.
+LIVE_RUNS_EMPTY = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro-900000001"
+ENDED_RUNS_EMPTY = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro-900000002"
+sweep = FakeRunner([
+    ("find /private/tmp -maxdepth 1", (0, "%s\n%s\n" % (LIVE_RUNS_EMPTY, ENDED_RUNS_EMPTY), "")),
+    LIVE_RUN_PS, ENDED_RUN_PS, REMOVES_FINE, LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE,
+    ("test -e", (1, "", "")),
+])
+report = finder.search_local_snapshots(REAPED, "/repo", sweep)
+sweep_ps_fails = FakeRunner([
+    ("find /private/tmp -maxdepth 1", (0, ENDED_RUNS_EMPTY + "\n", "")),
+    ("ps -p 900000002 -o command=", (124, "", "timed out\n")),
+    REMOVES_FINE, LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")),
+])
+report = finder.search_local_snapshots(REAPED, "/repo", sweep_ps_fails)
+check("an empty mount point whose run ps cannot answer for is left in place, and the report says why",
+      "rmdir " + ENDED_RUNS_EMPTY not in sweep_ps_fails.calls
+      and any(l == "left the empty mount point %s in place, since ps could not say whether process 900000002 "
+                   "still runs — ps exited 124: timed out" % ENDED_RUNS_EMPTY for l in report.lines),
+      "%s %s" % (sweep_ps_fails.calls, report.lines))
+
+check("an ended run's empty mount point is removed, and a live run's is left alone",
+      "rmdir " + ENDED_RUNS_EMPTY in sweep.calls and "rmdir " + LIVE_RUNS_EMPTY not in sweep.calls,
+      str(sweep.calls))
+
+sweep_fails = FakeRunner([
+    ("find /private/tmp -maxdepth 1", (0, ENDED_RUNS_EMPTY + "\n", "")),
+    ENDED_RUN_PS, ("rmdir", (1, "", "rmdir: Operation not permitted\n")),
+    LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")),
+])
+report = finder.search_local_snapshots(REAPED, "/repo", sweep_fails)
+check("an empty mount point that cannot be removed is named with rmdir's words, and the search goes on",
+      any(l == "could not remove an ended run's empty mount point %s — rmdir exited 1: rmdir: Operation not "
+               "permitted" % ENDED_RUNS_EMPTY for l in report.lines)
+      and any(l == "could not remove this run's own empty mount point %s — rmdir exited 1: rmdir: Operation "
+                   "not permitted" % MOUNT_POINT for l in report.lines)
+      and report.status == NOT_FOUND,
+      "%s %s" % (report.status, report.lines))
+
+find_fails = FakeRunner([
+    ("find /private/tmp -maxdepth 1", (1, "", "find: /private/tmp: Permission denied\n")),
+    REMOVES_FINE, LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")),
+])
+report = finder.search_local_snapshots(REAPED, "/repo", find_fails)
+check("a find that cannot list the mount points is named with its words, and the search goes on",
+      any(l == "could not look for empty mount points that ended runs left in /private/tmp — find exited 1: "
+               "find: /private/tmp: Permission denied" for l in report.lines)
+      and report.status == NOT_FOUND,
+      "%s %s" % (report.status, report.lines))
+
+stuck_keeps_dir = ReleaseFailsRunner([LISTS_SNAPSHOTS, MOUNTS_FINE, NO_EMPTY_MOUNT_POINTS, REMOVES_FINE,
+                                      ("test -e", (1, "", ""))])
+finder.search_local_snapshots(REAPED, "/repo", stuck_keeps_dir)
+check("a mount point this run could not unmount is not removed, since it is not empty",
+      "rmdir " + MOUNT_POINT not in stuck_keeps_dir.calls, str(stuck_keeps_dir.calls))
 
 # But when something unsearchable IS still mountable, that is the one to offer.
 mixed_unreachable = MountTableRunner([
@@ -610,6 +850,34 @@ local_no_repo = FakeRunner([LISTS_SNAPSHOTS, ("rev-parse --show-toplevel", (128,
 report = finder.search_local_snapshots("docs/a/b.md", "/not-a-repo", local_no_repo)
 check("a relative path with no repository to resolve it against is UNAVAILABLE, not NOT FOUND",
       report.status == UNAVAILABLE and any("no top level to resolve it against" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+
+# git translates "not a git repository" for a user whose locale is not English, so the run sets LC_ALL=C.
+with tempfile.TemporaryDirectory() as stand_in_bin:
+    with open(os.path.join(stand_in_bin, "git"), "w") as stand_in:
+        stand_in.write('#!/bin/sh\nif [ "$LC_ALL" = C ]; then echo "fatal: not a git repository" >&2; '
+                       'else echo "fatal: kein Git-Repository" >&2; fi\nexit 128\n')
+    os.chmod(os.path.join(stand_in_bin, "git"), 0o755)
+    path_before, locale_before = os.environ["PATH"], os.environ.get("LC_ALL")
+    os.environ["PATH"] = stand_in_bin + os.pathsep + path_before
+    os.environ["LC_ALL"] = "de_DE.UTF-8"
+    try:
+        _, translated_lines = finder._local_snapshot_probe_path("docs/a/b.md", stand_in_bin, finder.run_command)
+    finally:
+        os.environ["PATH"] = path_before
+        if locale_before is None:
+            del os.environ["LC_ALL"]
+        else:
+            os.environ["LC_ALL"] = locale_before
+check("a user whose locale is not English still gets 'not a git repository', not a git failure",
+      any("no top level to resolve it against" in l for l in translated_lines), str(translated_lines))
+
+local_top_level_fails = FakeRunner([
+    LISTS_SNAPSHOTS, ("rev-parse --show-toplevel", (128, "", "fatal: unable to read index\n"))])
+report = finder.search_local_snapshots("docs/a/b.md", "/repo", local_top_level_fails)
+check("a top-level lookup git fails is reported with git's words, not as 'not a git repository'",
+      report.status == UNAVAILABLE and any("unable to read index" in l for l in report.lines)
+      and not any("not a git repository" in l for l in report.lines),
       "%s %s" % (report.status, report.lines))
 
 local_relative = FakeRunner([
@@ -774,7 +1042,7 @@ check("... and without waiting on a date hint from git, which they take none of"
       str(order_probe.calls))
 
 mac_transcripts_copy_under_log_store = os.path.join(
-    *getattr(finder, "MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE", ("transcripts", "mac", "projects")))
+    *getattr(finder, "MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE", ("agent-session-files-by-machine", "mac", "projects")))
 check("the two cases above name the Mac and a log-store root that exists on neither machine, "
       "so on ned-box neither reaches the log-store or its copy of the Mac's transcripts",
       not mac_transcripts_copies_walked
@@ -804,6 +1072,7 @@ check("the report column is wide enough for 'local snapshots' to keep the status
 # Both log formats are answered so an older walk gets real data too.
 git_found = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --all --full-history -1 --format=%H", (0, "abc123def\n", "")),
     ("log --all --full-history --format=%H|%ad|%s",
      (0, "abc123def|2026-08-14|retire review records\nfeedface|2026-08-12|write it\n", "")),
@@ -811,9 +1080,9 @@ git_found = FakeRunner([
      (0, "abc123def|merge0123|1786708800|2026-08-14|retire review records\n"
          "feedface|00000000|1786536000|2026-08-12|write it\n", "")),
     ("--date=short merge0123", (0, "1786701600|2026-08-14|merge seat branch\n", "")),
-    ("cat-file -e abc123def:", (128, "", "does not exist")),
-    ("cat-file -e merge0123:", (0, "", "")),
-    ("cat-file -e feedface:", (0, "", "")),
+    ("ls-tree -z abc123def ", (0, "", "")),
+    ("ls-tree -z merge0123 ", tree_holds_the_path),
+    ("ls-tree -z feedface ", tree_holds_the_path),
 ])
 report = finder.search_git("md-review-records/x/dispositions.md", "/repo", git_found)
 check("git reports FOUND for a deleted path still in history", report.status == FOUND)
@@ -833,6 +1102,7 @@ check("git records the last date it HELD the file, not the last date it modified
 
 git_log_fails = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --all --full-history -1 --format=%H", (0, "abc123def\n", "")),
     ("log --all --full-history --format=%H|", (128, "", "fatal: bad object HEAD")),
 ])
@@ -843,6 +1113,7 @@ check("a git log that fails mid-search is UNAVAILABLE with git's words, not NOT 
 
 git_absent = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
     ("--name-only", (0, "docs/other.md\0README.md\0", "")),
 ])
@@ -857,14 +1128,15 @@ check("a non-repo is UNAVAILABLE, not NOT FOUND", report.status == UNAVAILABLE)
 # keep going back to a commit that does.
 git_walks_back = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --all --full-history -1 --format=%H", (0, "deadbeef\n", "")),
     ("log --all --full-history --format=%H|%ad|%s",
      (0, "deadbeef|2026-08-14|delete it\nfeedface|2026-08-13|write it\n", "")),
     ("log --all --full-history --format=%H|%P|%ct|%ad|%s",
      (0, "deadbeef|feedface|1786708800|2026-08-14|delete it\nfeedface|00000000|1786622400|2026-08-13|write it\n", "")),
     ("--date=short feedface", (0, "1786622400|2026-08-13|write it\n", "")),
-    ("cat-file -e deadbeef:", (128, "", "does not exist")),
-    ("cat-file -e feedface:", (0, "", "")),
+    ("ls-tree -z deadbeef ", (0, "", "")),
+    ("ls-tree -z feedface ", tree_holds_the_path),
 ])
 report = finder.search_git("a/b.md", "/repo", git_walks_back)
 check("git skips the deleting commit and cites one whose tree has the blob",
@@ -875,8 +1147,8 @@ check("... and the date it records is that commit's, not the deletion's",
       repr(getattr(report, "newest_date_held", None)))
 
 # The documented absolute-path form. `git log` accepts an absolute pathspec,
-# so the fast path succeeded and returned the absolute string; `cat-file`
-# cannot address a blob that way, so every commit failed the tree check and
+# so the fast path succeeded and returned the absolute string; a tree lookup
+# cannot address a path that way, so every commit failed the tree check and
 # git said NOT FOUND for a file it had the whole time.
 git_absolute = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
@@ -885,7 +1157,7 @@ git_absolute = FakeRunner([
     ("log --all --full-history --format=%H|%ad|%s", (0, "abc123def|2026-08-14|retire review records\n", "")),
     ("log --all --full-history --format=%H|%P|%ct|%ad|%s", (0, "abc123def|00000000|1786708800|2026-08-14|retire review records\n", "")),
     # Only the repo-relative form can be addressed in a tree.
-    ("cat-file -e abc123def:md-review-records/x/dispositions.md", (0, "", "")),
+    ("ls-tree -z abc123def -- md-review-records/x/dispositions.md", tree_holds_the_path),
 ])
 report = finder.search_git("/repo/md-review-records/x/dispositions.md", "/repo", git_absolute)
 check("an absolute path inside the repository is searched by its repo-relative form",
@@ -903,6 +1175,32 @@ check("an absolute path outside the repository is UNAVAILABLE with the re-run in
       "%s %s" % (report.status, report.lines))
 check("... and git was not asked to search for it",
       not any(" log " in c for c in git_outside.calls), str(git_outside.calls))
+
+# git cat-file -e exits 128 both for a path a tree lacks and for a git failure, so a broken repository read
+# as "no tree holds it", NOT FOUND.
+git_tree_lookup_fails = FakeRunner([
+    ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
+    ("log --all --full-history -1 --format=%H", (0, "deadbeef\n", "")),
+    ("log --all --full-history --format=%H|%P|%ct|%ad|%s",
+     (0, "deadbeef|feedface|1786708800|2026-08-14|delete it\n", "")),
+    ("ls-tree -z", (128, "", "fatal: bad object deadbeef\n")),
+])
+report = finder.search_git("a/b.md", "/repo", git_tree_lookup_fails)
+check("a tree lookup git fails is UNAVAILABLE with git's words, not NOT FOUND",
+      report.status == UNAVAILABLE and any("bad object deadbeef" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+
+# A top-level lookup that fails inside a repository is a git failure, not "outside the repository".
+TOP_LEVEL_FAILS = ("rev-parse --show-toplevel", (128, "", "fatal: unable to read index\n"))
+for query in ("a/b.md", "/repo/a/b.md"):
+    git_top_level_fails = FakeRunner([("rev-parse --git-dir", (0, ".git\n", "")), TOP_LEVEL_FAILS])
+    report = finder.search_git(query, "/repo", git_top_level_fails)
+    check("git: a top-level lookup that fails for %s is UNAVAILABLE with git's words, and nothing is searched"
+          % query,
+          report.status == UNAVAILABLE and any("unable to read index" in l for l in report.lines)
+          and not any(" log " in c for c in git_top_level_fails.calls),
+          "%s %s %s" % (report.status, report.lines, git_top_level_fails.calls))
 
 
 def git_fixture_repo(tmp):
@@ -1148,6 +1446,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
 reflog_git_fails = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --reflog --not --all", (128, "", "fatal: bad object refs/heads/broken")),
 ])
 report = finder.search_git_reflog("a/b.md", "/repo", reflog_git_fails)
@@ -1244,7 +1543,7 @@ for variable in ("GIT_COMMON_DIR", "GIT_DIR"):
         check("real git: with %s naming another clone, the git surface still FINDS a file only the "
               "searched repository's history holds" % variable,
               report.status == FOUND and git_sources(report) and git_sources(report)[0].endswith(":a/b.md")
-              and [version.repo for version in report.versions] == [str(repo)],
+              and [version.repo for version in report.versions] == [os.path.realpath(repo)],
               "%s %s %s" % (report.status, report.lines, git_sources(report)))
         check("real git: with %s naming another clone, the reflog surface searches the repository asked "
               "about: NOT FOUND, because every ref there already reaches the file" % variable,
@@ -1295,9 +1594,9 @@ with tempfile.TemporaryDirectory() as tmp:
 
     box_no_dir = LocalShellRunner([], box_home)
     report = finder.search_transcripts("a/b.md", str(mac_dir), "nedlern@ned-box", box_no_dir)
-    box_lines = [l for l in report.lines if l.startswith("the box")]
+    box_lines = [l for l in report.lines if l.startswith("ned-box (")]
     check("a box with no ~/.claude/projects says so, never 'searched ..., no transcript mentions it'",
-          box_lines == ["the box (nedlern@ned-box): ~/.claude/projects does not exist there"],
+          box_lines == ["ned-box (nedlern@ned-box): ~/.claude/projects does not exist there"],
           str(box_lines))
     box_script = [c for c in box_no_dir.calls if c.startswith("ssh")][0]
     check("the box grep is not piped, so its own exit status reaches the caller",
@@ -1309,7 +1608,7 @@ with tempfile.TemporaryDirectory() as tmp:
     box_empty = LocalShellRunner([], box_home)
     report = finder.search_transcripts("a/b.md", str(mac_dir), "nedlern@ned-box", box_empty)
     check("a box whose transcripts do not mention the path is searched and says so",
-          any(l.startswith("the box") and "no transcript mentions it" in l for l in report.lines),
+          any(l.startswith("ned-box (") and "no transcript mentions it" in l for l in report.lines),
           str(report.lines))
 
     Path(box_projects, "session.jsonl").write_text('{"text": "read a/b.md today"}\n')
@@ -1372,7 +1671,7 @@ check("--skip box sends nothing over ssh",
       not any(c.startswith("ssh") for c in skip_box.calls), str(skip_box.calls))
 transcripts_report = [r for r in reports if r.surface == "transcripts"][0]
 check("--skip box: the transcripts surface says its box half was not searched",
-      any(l.startswith("the box: not searched") for l in transcripts_report.lines), str(transcripts_report.lines))
+      any(l.startswith("ned-box: not searched") for l in transcripts_report.lines), str(transcripts_report.lines))
 check("--skip box drops the Timeshift surface", not any(r.surface == "timeshift" for r in reports))
 check("--skip box drops the log-store when it is not on this machine",
       not any(r.surface == "log-store" for r in reports), str([r.surface for r in reports]))
@@ -1648,7 +1947,7 @@ with tempfile.TemporaryDirectory() as tmp:
     report = finder.search_log_store("pr-main-process-design.md", str(Path(tmp, "no-store-here")),
                                      "nedlern@ned-box", LocalShellRunner([], Path(tmp)), store_is_here=False)
     check("log-store: a root the box does not have is UNAVAILABLE, naming it",
-          report.status == UNAVAILABLE and any("does not exist on the box" in l for l in report.lines),
+          report.status == UNAVAILABLE and any("does not exist on ned-box (" in l for l in report.lines),
           "%s %s" % (report.status, report.lines))
 
     for index in range(finder.LOG_STORE_HITS_SHOWN + 2):
@@ -1719,7 +2018,7 @@ check("log-store: the name matched is the file's stem, lower-cased",
 # Only the exact name is FOUND. mac-claude's review 5298558956 on PR 702, reproduced
 # against the real store: nowhere/never-existed/plan.md matched 88 names containing
 # "plan", came back FOUND with exit 0, "Recoverable from: log-store." and a cp of an
-# unrelated file, and silenced the password speech.
+# unrelated file.
 with tempfile.TemporaryDirectory() as tmp:
     store, (exact_copy, older_rename, newer_rename, unrelated) = log_store_fixture(tmp)
     exact_copy.unlink()
@@ -1740,7 +2039,6 @@ with tempfile.TemporaryDirectory() as tmp:
           and "Recoverable from" not in finder.render_summary([report])
           and "Candidates only, not counted as found: log-store" in finder.render_summary([report]),
           finder.render_summary([report]))
-    LOG_STORE_CANDIDATES_ONLY = report
 
     walk = Path(store, "walk")
     walk.mkdir()
@@ -1792,7 +2090,6 @@ with tempfile.TemporaryDirectory() as tmp:
     check("log-store: ... and the run counts it as not found: exit 1, nothing recoverable",
           finder.exit_status([report]) == 1 and "Recoverable from" not in finder.render_summary([report]),
           finder.render_summary([report]))
-    LOG_STORE_SAME_NAME_ELSEWHERE = report
 
     captured = io.StringIO()
     with contextlib.redirect_stdout(captured):
@@ -1970,7 +2267,7 @@ with tempfile.TemporaryDirectory() as tmp:
           == ["ned-box: searched %s, no transcript mentions it" % Path(box, ".claude", "projects"),
               "the Mac: not searched — a run on ned-box cannot search the Mac; run the locator on the Mac, which searches both machines",
               "the Mac's log-store copy, %s, does not exist, so it was not searched either"
-              % Path(NO_LOG_STORE_ON_THIS_MACHINE, "transcripts", "mac", "projects")],
+              % Path(NO_LOG_STORE_ON_THIS_MACHINE, "agent-session-files-by-machine", "mac", "projects")],
           str(by_surface["transcripts"].lines))
     summary = finder.render_summary(reports)
     check("on the box: nothing found still exits 3, and the summary names transcripts alone, for the Mac",
@@ -2015,7 +2312,7 @@ with tempfile.TemporaryDirectory() as tmp:
           str(on_mac.calls))
     check("on the Mac: transcripts' local half is still this Mac's",
           by_surface["transcripts"].lines[0].startswith("this Mac: ")
-          and any(l.startswith("the box (nedlern@ned-box)") for l in by_surface["transcripts"].lines),
+          and any(l.startswith("ned-box (nedlern@ned-box)") for l in by_surface["transcripts"].lines),
           str(by_surface["transcripts"].lines))
 
     # A local bash exits 255 only on its own account: it is not ssh's
@@ -2055,7 +2352,7 @@ with tempfile.TemporaryDirectory() as tmp:
     box_projects.mkdir(parents=True)
     Path(box_projects, "quiet.jsonl").write_text('{"text": "nothing relevant"}\n')
     store = Path(tmp, "store")
-    copy = Path(store, "transcripts", "mac", "projects")
+    copy = Path(store, "agent-session-files-by-machine", "mac", "projects")
     mac_session = Path(copy, "-Users-el-agents-x", "mac-session.jsonl")
     mac_session.parent.mkdir(parents=True)
     mac_session.write_text('{"text": "wrote mac/only.md here"}\n')
@@ -2086,7 +2383,7 @@ with tempfile.TemporaryDirectory() as tmp:
     age_line = ("the copy's newest transcript was last written on the Mac at %s UTC, 10 min before this search; "
                 "a Mac transcript written after the copy's last mirror pass is not in it"
                 % time.strftime("%Y-%m-%d %H:%M", time.gmtime(written)))
-    stamp = Path(store, "transcripts", "mac", "last-complete-mirror-pass-utc.txt")
+    stamp = Path(store, "agent-session-files-by-machine", "mac", "last-complete-mirror-pass-utc.txt")
     no_stamp_line = ("the Mac's mirror has left no pass-time stamp at %s, so when the Mac's mirror last completed "
                      "a pass is not known on ned-box" % stamp)
     check("on the box: a copy grepped in full and empty is NOT FOUND, with the copy's measured age",
@@ -2131,7 +2428,7 @@ with tempfile.TemporaryDirectory() as tmp:
           "exit %s\n%s" % (finder.exit_status(reports), finder.render_summary(reports)))
 
     empty_store = Path(tmp, "empty-store")
-    empty_copy = Path(empty_store, "transcripts", "mac", "projects")
+    empty_copy = Path(empty_store, "agent-session-files-by-machine", "mac", "projects")
     Path(empty_copy, "p").mkdir(parents=True)
     Path(empty_copy, "p", "notes.txt").write_text("a mention outside any transcript: nowhere/c.md\n")
     reports = run_as_if_on(True, "nowhere/c.md", box, RunsBashAndGrepHere([], box), skip=ONLY_TRANSCRIPTS,
@@ -2159,7 +2456,7 @@ with tempfile.TemporaryDirectory() as tmp:
           not any(str(copy) in c for c in on_mac.calls)
           and not any("log-store copy" in l for l in reports[0].lines)
           and reports[0].lines[0].startswith("this Mac: ")
-          and any(l.startswith("the box (nedlern@ned-box)") for l in reports[0].lines),
+          and any(l.startswith("ned-box (nedlern@ned-box)") for l in reports[0].lines),
           "%s %s" % (on_mac.calls, reports[0].lines))
 
 age_words = getattr(finder, "_age_in_words", lambda seconds: None)
@@ -2173,12 +2470,14 @@ mirror_spec = importlib.util.spec_from_file_location(
 mirror = importlib.util.module_from_spec(mirror_spec)
 mirror_spec.loader.exec_module(mirror)
 copy_parts = getattr(finder, "MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE", None)
-_, mirror_transcripts_root = mirror.split_destination(mirror.LOG_STORE_TRANSCRIPTS_DESTINATION)
-check("the Mac's copy is where the mirror writes it: <log-store>/transcripts/<the Mac's name>/<projects' name>",
-      copy_parts is not None and len(copy_parts) == 3
-      and str(mirror_transcripts_root) == os.path.join(finder.DEFAULT_LOG_STORE_ROOT, copy_parts[0])
-      and copy_parts[1] == mirror.MACHINE_NAME_ELSEWHERE
-      and (copy_parts[2], Path(".claude", "projects")) in [(name, Path(path)) for name, path, *_ in mirror.SOURCES]
+_, mirror_transcripts_root = mirror.split_destination(mirror.LOG_STORE_AGENT_SESSION_FILES_DESTINATION)
+check("the Mac's copy is where the mirror writes it: <log-store>/agent-session-files-by-machine/<the Mac's name>/<projects' name>",
+      copy_parts is not None
+      and os.path.join(finder.DEFAULT_LOG_STORE_ROOT, *copy_parts)
+      == str(mirror_transcripts_root / mirror.MACHINE_NAME_ELSEWHERE / "projects")
+      == "/home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/projects"
+      and ("projects", Path(".claude", "projects"), "projects") in [(name, Path(path), store)
+                                                                   for name, path, store, _ in mirror.SOURCES]
       and Path(finder.DEFAULT_TRANSCRIPTS_DIR) == Path("~", ".claude", "projects"),
       "%s %s %s" % (copy_parts, mirror_transcripts_root, mirror.SOURCES))
 
@@ -2236,6 +2535,14 @@ check("the candidate snapshot is the newest one at or before the deletion date",
 check("with a git date, the alternative offered is the next NEWER snapshot",
       any(l.startswith("next to try if it predates the file") and "2026-08-15" in l for l in report.lines),
       str(report.lines))
+
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=FakeRunner([
+    ("tmutil destinationinfo", DESTINATION_INFO),
+    ("diskutil info", DISKUTIL_MOUNTED),
+    ("diskutil apfs listSnapshots", (1, "", "diskutil: injected listing failure")),
+]))
+check("Time Machine whose snapshot listing fails is UNAVAILABLE, with diskutil's words",
+      report.status == UNAVAILABLE and any("injected listing failure" in l for l in report.lines), str(report.lines))
 
 # Without a git date the newest snapshot is all we have, and it may postdate the
 # deletion — the failure mode found by running the real script with --skip git.
@@ -2470,6 +2777,21 @@ check("... and the walk stops rather than filing every later candidate under the
 check("... and the command that frees the mount point comes back with the report",
       "diskutil unmount " + TM_MOUNT in report.recovery, str(report.recovery))
 
+# A failed release is reported even when an earlier candidate is already unsearched, since its mount was
+# refused: the clear command at the head of the recovery needs that line to explain it.
+tm_refused_then_stuck = TimeMachineReleaseFailsRunner(WARM + [
+    ("mount_apfs -o ro -s com.apple.TimeMachine.2026-08-13-183101.backup", (1, "", "mount_apfs: Resource busy\n")),
+    ("sudo -n mount_apfs", (0, "", "")),
+    (TM_FIND, (0, "", "")),
+])
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_refused_then_stuck)
+check("a Time Machine release that fails after an earlier candidate's mount was refused is still named",
+      any(l.startswith("could not search com.apple.TimeMachine.2026-08-13-183101.backup") for l in report.lines)
+      and any(" stayed mounted on " + TM_MOUNT in l and "Resource busy" in l and not l.startswith("could not")
+              for l in report.lines)
+      and report.recovery[:1] == ["diskutil unmount " + TM_MOUNT],
+      "%s %s" % (report.lines, report.recovery))
+
 tm_one_refused = FakeRunner(WARM + [
     ("mount_apfs -o ro -s com.apple.TimeMachine.2026-08-13-183101.backup", (1, "", "mount_apfs: Resource busy\n")),
     ("sudo -n mount_apfs", (0, "", "")),
@@ -2484,7 +2806,38 @@ check("one refused mount among searched-and-empty snapshots is UNAVAILABLE, list
 
 tm_none = FakeRunner([("tmutil destinationinfo", (1, "", "tmutil: no destination configured"))])
 report = finder.search_time_machine("a/b.md", runner=tm_none)
-check("no configured destination is UNAVAILABLE", report.status == UNAVAILABLE)
+check("no configured destination is UNAVAILABLE, saying so without naming the machine a Mac",
+      report.status == UNAVAILABLE
+      and report.lines == ["no Time Machine destination is configured on this machine"], repr(report.lines))
+
+check("arguments_without_repo leaves out --repo with its value, and --repo=, keeping every other argument",
+      finder.arguments_without_repo(["a.md", "--repo", "/r", "--skip", "box", "--repo=/s"]) == ["a.md", "--skip", "box"],
+      repr(finder.arguments_without_repo(["a.md", "--repo", "/r", "--skip", "box", "--repo=/s"])))
+
+check("arguments_without_repo keeps every argument after a -- separator, a path named --repo included",
+      finder.arguments_without_repo(["--repo", "/r", "--", "--repo", "x.md"]) == ["--", "--repo", "x.md"],
+      finder.arguments_without_repo(["--repo", "/r", "--", "--repo", "x.md"]))
+
+for abbreviated in (["--rep", "/x"], ["--rep=/x"]):
+    refused = subprocess.run([sys.executable, str(Path(finder.__file__).resolve())] + abbreviated + ["/x/a.md"],
+                             capture_output=True, text=True, timeout=60)
+    check("the abbreviated option %s is refused as unrecognized, so it cannot set --repo behind "
+          "arguments_without_repo's back" % abbreviated[0],
+          refused.returncode == 2 and "unrecognized arguments: %s" % abbreviated[0] in refused.stderr,
+          "exit %s\n%s" % (refused.returncode, refused.stderr))
+
+message = finder.build_agent_facing_message_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command("/r", "/r/a.md", "planted failure", {"reflog"}, "python3 p")
+check("with only git reflog skipped, the git-failure message names the git surface alone and keeps exit 3 for no find",
+      "The git surface cannot search, and its result line will say UNAVAILABLE for this failure; --skip left out "
+      "the other git surface." in message
+      and "If no surface finds the path, this program exits 3, for an incomplete search." in message, message)
+
+report = finder.search_time_machine("a/b.md", runner=FakeRunner(
+    [("tmutil destinationinfo", (127, "", "tmutil: not found on this machine"))]))
+check("a machine without tmutil, such as ned-box, is UNAVAILABLE because Time Machine exists only on macOS",
+      report.status == UNAVAILABLE
+      and report.lines == ["tmutil: not found on this machine, and Time Machine exists only on macOS, so this "
+                           "machine has no Time Machine backup to search"], repr(report.lines))
 
 # --------------------------------------------------------------------------
 # the assembled report
@@ -2527,6 +2880,15 @@ code, text = run_main(["a/b.md", "--repo", "/nonexistent-not-a-repo", "--transcr
 check("exit 3 when no surface could be searched (git, its reflog, the log-store, transcripts, timeshift all UNAVAILABLE)",
       code == 3 and "Could NOT search: git, git reflog, log-store, transcripts, timeshift" in text,
       "exit=%s\n%s" % (code, text))
+main_errors = io.StringIO()
+with contextlib.redirect_stderr(main_errors):
+    code, text = run_main(["/repo/a/b.md", "--repo", "/repo", "--transcripts-dir", "/nonexistent",
+                           "--box-ssh-host", "", "--skip", "timemachine", "--skip", "localsnapshots"],
+                          FakeRunner([("rev-parse --git-dir", (0, ".git\n", "")), TOP_LEVEL_FAILS]))
+check("an absolute path git cannot make repo-relative is searched as that absolute path, with git's words on stderr",
+      code == 3 and "Searching every history the Mac and ned-box keep for: /repo/a/b.md" in text
+      and "unable to read index" in main_errors.getvalue(),
+      "exit=%s\n%s\n%s" % (code, text, main_errors.getvalue()))
 check("... and the docstring's exit-code block promises exactly that",
       "3 when" in finder.__doc__ and "could NOT be searched" in finder.__doc__)
 
@@ -2556,6 +2918,7 @@ check("exit 0 when a surface FOUND it and its version was copied",
 
 mixed = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
     ("--name-only", (0, "docs/other.md\0", "")),
     ("ssh", (255, "", "ssh: connect to host ned-box port 22: No route to host\n")),
@@ -2584,7 +2947,7 @@ check("every flag the docstring names is one the parser accepts",
 code, text = run_main(["/repo/md-review-records/x/dispositions.md", "--repo", "/repo", "--skip", "transcripts",
                        "--skip", "box", "--skip", "timemachine", "--skip", "localsnapshots"], git_absolute)
 check("the header shows the repo-relative form an absolute path was searched as",
-      text.startswith("Searching every history this fleet keeps for: md-review-records/x/dispositions.md "
+      text.startswith("Searching every history the Mac and ned-box keep for: md-review-records/x/dispositions.md "
                       "(given as /repo/md-review-records/x/dispositions.md)"),
       text.splitlines()[0])
 
@@ -2624,10 +2987,11 @@ check("each surface is handed on before the next one starts searching",
 
 completed_table = [
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --all --full-history -1 --format=%H", (0, "abc123def\n", "")),
     ("log --all --full-history --format=%H|%P|%ct|%ad|%s",
      (0, "abc123def|00000000|1786708800|2026-08-14|retire review records\n", "")),
-    ("cat-file -e abc123def:", (0, "", "")),
+    ("ls-tree -z abc123def ", tree_holds_the_path),
     ("ssh", (255, "", "ssh: connect to host ned-box port 22: No route to host\n")),
 ]
 streamed_args = ["md-review-records/x/dispositions.md", "--repo", "/repo", "--transcripts-dir", "/nonexistent",
@@ -2708,7 +3072,7 @@ with tempfile.TemporaryDirectory() as tmp:
               still_searching and re.search(r"^git\s+FOUND$", seen.decode("utf-8", "replace"), re.M) is not None,
               "still searching: %s; read before the kill: %r" % (still_searching, seen))
         check("streaming, real pipe: a run killed mid-search keeps every section that had answered, and no summary",
-              printed.startswith("Searching every history this fleet keeps for: a/b.md")
+              printed.startswith("Searching every history the Mac and ned-box keep for: a/b.md")
               and re.search(r"^git\s+FOUND$", printed, re.M) and re.search(r"^git reflog\s+NOT FOUND$", printed, re.M)
               and "Recoverable from" not in printed,
               repr(printed))
@@ -2823,7 +3187,7 @@ COLD_THEN_PROMPTED = [
 tm_cold_default = FakeRunner(COLD_THEN_PROMPTED)
 report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_cold_default)
 check("without --prompt-for-root a cold sudo stops at the wall, as an unattended run must",
-      report.status == UNAVAILABLE and getattr(report, "root_credential_needed", False)
+      report.status == UNAVAILABLE
       and any("the mount was refused: sudo: a password is required" in l for l in report.lines),
       "%s %s" % (report.status, report.lines))
 check("... after actually TRYING the mount, which is the only thing that can see the sudoers rule",
@@ -2877,127 +3241,6 @@ check("the flag is off by default: the identical run without it stops at the wal
       code == 3 and "Could NOT search: time machine" in text, "exit=%s\n%s" % (code, text))
 
 # --------------------------------------------------------------------------
-# The spoken line, and the four conditions that keep it rare
-# --------------------------------------------------------------------------
-
-DELETED_2026_08_13_NOON = ("--diff-filter=D", (0, "20260813120000\n", ""))
-SNAPSHOT_BEFORE = "com.apple.TimeMachine.2026-08-12-202035.backup"
-SNAPSHOT_SAME_DAY_AFTER = "com.apple.TimeMachine.2026-08-13-183101.backup"
-
-
-def tm_wall_report(snapshots=(SNAPSHOT_BEFORE, SNAPSHOT_SAME_DAY_AFTER)):
-    """The report shape the Time Machine surface hands back at the password wall."""
-    wall = finder.SurfaceReport("time machine", UNAVAILABLE, ["reading INSIDE one needs your password"])
-    wall.root_credential_needed = True
-    wall.snapshots_enumerated = list(snapshots)
-    return wall
-
-
-def tm_report_without_the_wall_mark(status, line):
-    """A Time Machine report that stopped somewhere OTHER than the credential.
-
-    It carries the enumerated snapshots too, so the only thing separating it
-    from the report above is the mark itself. Without that the condition-2
-    cases would pass merely because the attribute was absent, and a gate that
-    spoke for every UNAVAILABLE Time Machine report would slip through them.
-    """
-    report = finder.SurfaceReport("time machine", status, [line])
-    report.snapshots_enumerated = [SNAPSHOT_BEFORE, SNAPSHOT_SAME_DAY_AFTER]
-    return report
-
-
-def spoken(wanted, reports, table=(DELETED_2026_08_13_NOON,), skip=()):
-    return finder.speech_line_when_root_password_is_needed(
-        wanted, reports, "/repo", skip, FakeRunner(list(table)))
-
-
-missed = [finder.SurfaceReport("git", NOT_FOUND, ["searched"]),
-          finder.SurfaceReport("transcripts", NOT_FOUND, ["searched"])]
-
-line = spoken("docs/a/b.md", missed + [tm_wall_report()])
-check("all four conditions met: there is a line to speak",
-      line is not None, "the announce half of this change does nothing if this never fires")
-check("... naming the tool first and the file last, in one short sentence",
-      line and line.startswith(finder.SPOKEN_TOOL_NAME) and line.endswith("b.md")
-      and "\n" not in line and len(line.split()) < 20,
-      repr(line))
-check("... and it speaks the basename, not a path nobody can follow read aloud",
-      line and "docs/" not in line, repr(line))
-
-check("condition 1 — a surface that FOUND it means nobody is needed",
-      spoken("docs/a/b.md",
-             missed + [finder.SurfaceReport("git", FOUND, ["x"], ["git show a:x"]), tm_wall_report()])
-      is None)
-check("condition 1 — a surface that could NOT be searched does not excuse the wall",
-      spoken("docs/a/b.md",
-             [finder.SurfaceReport("timeshift", UNAVAILABLE, ["box asleep"]), tm_wall_report()])
-      is not None,
-      "an unreachable box leaves him just as needed; only a FOUND makes him unnecessary")
-
-check("condition 1 — log-store candidates are not a find, so they do not silence the wall",
-      spoken("docs/a/b.md", missed + [LOG_STORE_CANDIDATES_ONLY, tm_wall_report()]) is not None,
-      "a name that only contains the stem recovers nothing; the person is still needed")
-check("condition 1 — the same file name in another directory does not silence the wall either",
-      spoken("docs/a/b.md", missed + [LOG_STORE_SAME_NAME_ELSEWHERE, tm_wall_report()]) is not None,
-      "another record's dispositions.md recovers nothing; the person is still needed")
-check("condition 2 — no wall mark, no line: a warm sudo searched and never met one",
-      spoken("docs/a/b.md",
-             missed + [tm_report_without_the_wall_mark(NOT_FOUND, "searched")]) is None)
-check("condition 2 — a disconnected disk is UNAVAILABLE but is not a credential wall",
-      spoken("docs/a/b.md",
-             missed + [tm_report_without_the_wall_mark(UNAVAILABLE, "reconnect it")]) is None,
-      "speaking here sends him to type a password at a disk that is not plugged in")
-
-check("condition 3 — a path git never tracked has no deletion commit, so no line",
-      spoken("docs/a/b.md", missed + [tm_wall_report()], table=()) is None,
-      "no deletion commit means no bound, so no backup can be shown to predate anything")
-check("condition 3 — every snapshot postdating the deletion means the password cannot help",
-      spoken("docs/a/b.md", missed + [tm_wall_report(snapshots=(SNAPSHOT_SAME_DAY_AFTER,))]) is None,
-      "18:31 is after a 12:00 deletion; comparing DATES rather than timestamps speaks wrongly here")
-check("condition 3 — the bound is a timestamp, so a same-day EARLIER snapshot does count",
-      spoken("docs/a/b.md",
-             missed + [tm_wall_report(snapshots=("com.apple.TimeMachine.2026-08-13-090000.backup",))])
-      is not None)
-check("condition 3 — skipping git skips the bound rather than asking git behind the flag's back",
-      spoken("docs/a/b.md", missed + [tm_wall_report()], skip={"git"}) is None)
-
-check("condition 4 — a bare filename could not have used the mount anyway",
-      spoken("b.md", missed + [tm_wall_report()]) is None)
-check("condition 4 — an absolute path is a known path and does qualify",
-      spoken("/Users/el/docs/a/b.md", missed + [tm_wall_report()]) is not None)
-
-SPEAKS = [
-    ("rev-parse --git-dir", (0, ".git\n", "")),
-    ("log --all --full-history -1 --format=%H", (0, "\n", "")),
-    ("--name-only", (0, "docs/other.md\0", "")),
-    DELETED_2026_08_13_NOON,
-    ("tmutil destinationinfo", DESTINATION_INFO),
-    ("diskutil info", DISKUTIL_MOUNTED),
-    ("diskutil apfs listSnapshots", SNAPSHOT_LIST),
-    ("sudo -n true", (1, "", "sudo: a password is required\n")),
-    ("sudo -n mount_apfs", (1, "", "sudo: a password is required\n")),
-    ("say", (0, "", "")),
-]
-
-speaking_runner = FakeRunner(SPEAKS)
-finder.build_report("docs/a/b.md", "/repo", "/nonexistent", "", "/snap", (),
-                    log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, skip={"localsnapshots", "transcripts", "box"}, runner=speaking_runner)
-said = [c for c in speaking_runner.calls if c.startswith("say ")]
-check("a whole run that hits the wall speaks, once, without an agent in between",
-      len(said) == 1 and "b.md" in said[0] and finder.SPOKEN_TOOL_NAME in said[0],
-      str(speaking_runner.calls))
-
-silent_runner = FakeRunner(SPEAKS + [("sudo mount_apfs", (0, "", "")),
-                                     ("diskutil unmount", (0, "", "")),
-                                     (TM_FIND, (0, "", ""))])
-finder.build_report("docs/a/b.md", "/repo", "/nonexistent", "", "/snap", (),
-                    log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, skip={"localsnapshots", "transcripts", "box"}, runner=silent_runner,
-                    prompt_for_root=True)
-check("--prompt-for-root never speaks: the person is already at the terminal",
-      not any(c.startswith("say ") for c in silent_runner.calls), str(silent_runner.calls))
-
-
-# --------------------------------------------------------------------------
 # The run the sudoers rule exists for, and the failure it must not be confused with
 # --------------------------------------------------------------------------
 
@@ -3005,7 +3248,7 @@ check("--prompt-for-root never speaks: the person is already at the terminal",
 # because the rule covers that one command. `sudo -n true` still FAILS here —
 # NOPASSWD applies to the commands in the entry and `true` is not one of them —
 # so a surface that stopped on that probe would report UNAVAILABLE for the very
-# run the rule was written for, and would speak about it.
+# run the rule was written for.
 RULE_INSTALLED = [
     ("tmutil destinationinfo", DESTINATION_INFO),
     ("diskutil info", DISKUTIL_MOUNTED),
@@ -3023,7 +3266,7 @@ check("with the sudoers rule installed the surface is searched with nobody prese
       report.status == FOUND,
       "`sudo -n true` fails with the rule installed too; only trying the mount can tell")
 check("... and no wall is declared, so nothing goes looking for the user",
-      not getattr(report, "root_credential_needed", False), str(report.lines))
+      not any("this is a real wall" in l for l in report.lines), str(report.lines))
 check("... and the report names the rule as what carried it, not a warm credential",
       any("the sudoers rule is installed" in l for l in report.lines)
       and not any("already-warm" in l for l in report.lines),
@@ -3032,17 +3275,6 @@ check("... and since the rule lets its printed sudo mount run with no password, 
       report.prints_copy_command and not report.copy_command_may_ask_password
       and "run the commands printed under time machine yourself" in finder.render_summary([report]),
       finder.render_summary([report]))
-
-rule_installed_run = FakeRunner(RULE_INSTALLED + [
-    ("rev-parse --git-dir", (0, ".git\n", "")),
-    ("log --all --full-history -1 --format=%H", (0, "\n", "")),
-    ("--name-only", (0, "docs/other.md\0", "")),
-    DELETED_2026_08_13_NOON,
-])
-finder.build_report("docs/a/b.md", "/repo", "/nonexistent", "", "/snap", (),
-                    log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, skip={"localsnapshots", "transcripts", "box"}, runner=rule_installed_run)
-check("with the rule installed nothing is spoken: the wall was never reached",
-      not any(c.startswith("say ") for c in rule_installed_run.calls), str(rule_installed_run.calls))
 
 
 class FirstCandidateBusyRunner(FakeRunner):
@@ -3063,7 +3295,7 @@ class FirstCandidateBusyRunner(FakeRunner):
 tm_busy_then_mounts = FirstCandidateBusyRunner(RULE_INSTALLED)
 report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_busy_then_mounts)
 check("a busy snapshot is one snapshot's problem, not a credential wall: the walk goes on",
-      report.status == FOUND and not getattr(report, "root_credential_needed", False),
+      report.status == FOUND,
       "%s %s" % (report.status, report.lines))
 check("... and the busy one is still reported, in mount_apfs's own words",
       any("could not search com.apple.TimeMachine.2026-08-13-183101.backup" in l and "Resource busy" in l
@@ -3079,7 +3311,7 @@ tm_busy_then_walled = FirstCandidateBusyRunner([
 ])
 report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_busy_then_walled)
 check("a wall reached after another failure reports that earlier one too, rather than dropping it",
-      getattr(report, "root_credential_needed", False)
+      any("this is a real wall" in l for l in report.lines)
       and any("Resource busy" in l for l in report.lines)
       and any("a password is required" in l for l in report.lines),
       str(report.lines))
@@ -3205,7 +3437,7 @@ check("cited query: ... and the summary says where the copy went, and that nothi
                        % os.path.dirname(copied_lines[0] if copied_lines else "")) for l in text.splitlines()),
       text)
 check("cited query: ... and the header shows the path searched and the form it was given in",
-      "Searching every history this fleet keeps for: %s (given as %s)" % (minutes, cited) in text, text)
+      "Searching every history the Mac and ned-box keep for: %s (given as %s)" % (minutes, cited) in text, text)
 
 with tempfile.TemporaryDirectory() as tmp:
     repo = git_fixture_repo(tmp)
@@ -3231,7 +3463,7 @@ with tempfile.TemporaryDirectory() as tmp:
             os.chdir(directory_before)
         check("cited query: ../a/b.md from a subdirectory, --repo %s, is searched as a/b.md and FOUND in git"
               % ("." if repo_argument == "." else "<top level>"),
-              code == 0 and "Searching every history this fleet keeps for: a/b.md (given as ../a/b.md)" in text
+              code == 0 and "Searching every history the Mac and ned-box keep for: a/b.md (given as ../a/b.md)" in text
               and "git             FOUND" in text,
               "exit=%s\n%s" % (code, text))
         check("cited query: ... and the copy this run made holds the file",
@@ -3245,20 +3477,6 @@ with tempfile.TemporaryDirectory() as tmp:
           finder._local_snapshot_probe_path("a/b.md", str(repo), finder.run_command)[0]
           == finder._below_data_volume(os.path.join(top_level, "a", "b.md")),
           str(finder._local_snapshot_probe_path("a/b.md", str(repo), finder.run_command)))
-    # PR 800's review comment 4139704743: the deletion lookup behind the spoken
-    # line reads the same top-level form, so it must run at the top level too.
-    os.chdir(str(subdirectory))
-    try:
-        stamp_from_subdirectory = finder._git_deletion_timestamp("a/b.md", ".", finder.run_command)
-        spoken_from_subdirectory = finder.speech_line_when_root_password_is_needed(
-            "a/b.md", missed + [tm_wall_report()], ".", (), finder.run_command)
-    finally:
-        os.chdir(directory_before)
-    check("cited query: ... and from that subdirectory, --repo ., the deletion lookup finds the 2026-08-14 12:00 deletion",
-          stamp_from_subdirectory == "20260814120000", repr(stamp_from_subdirectory))
-    check("cited query: ... so the password line still speaks there, bounded by that deletion",
-          spoken_from_subdirectory is not None and spoken_from_subdirectory.endswith("b.md"),
-          repr(spoken_from_subdirectory))
 
 # A FOUND stands alone: when the copy at the wanted path is newer than every
 # other name, nothing is listed beside it.
@@ -3367,11 +3585,11 @@ with tempfile.TemporaryDirectory() as tmp:
     box_runner = LocalShellRunner([], box_home)
     report = finder.search_transcripts(DASH_NAME, "/nonexistent-dir", "nedlern@ned-box", box_runner)
     check("transcripts: the box's grep script searches %r as text, and FINDS it" % DASH_NAME,
-          any(l.startswith("the box") and "1 session transcript(s) mention it" in l for l in report.lines),
+          any(l.startswith("ned-box (") and "1 session transcript(s) mention it" in l for l in report.lines),
           str(report.lines))
 
     store = Path(tmp, "store")
-    copy_session = Path(store, "transcripts", "mac", "projects", "-Users-el-x", "copy-session.jsonl")
+    copy_session = Path(store, "agent-session-files-by-machine", "mac", "projects", "-Users-el-x", "copy-session.jsonl")
     copy_session.parent.mkdir(parents=True)
     copy_session.write_text('{"text": "the Mac wrote -notes.md"}\n')
     on_box = RunsBashAndGrepHere([], box_home)
@@ -3556,6 +3774,394 @@ check("found copies: a fetch whose program is absent reports exit 127 and says s
 code, out, err = finder.fetch_bytes(["sleep", "5"], timeout=0.2)
 check("found copies: a fetch that runs past its time limit reports exit 124, instead of raising",
       code == 124 and "timed out after" in err, "%s %r" % (code, err))
+
+
+# -- a git blob id: git first, then the guarded-file hook's log and the first snapshot after it
+
+def blob_seen_line(seen, blob_id):
+    body = "\t".join(["seen", str(seen), "session", "owner", blob_id, blob_id, ""])
+    return "%s\t%s\n" % (body, "0" * 16)
+
+
+def local_nanoseconds(stamp):
+    return int(time.mktime(time.strptime(stamp, "%Y-%m-%d %H:%M:%S")) * 1e9)
+
+
+class RunsBashGitAndGrepHere(RunsBashAndGrepHere):
+    """RunsBashAndGrepHere that runs git for real too."""
+
+    def __call__(self, argv, timeout=None, cwd=None):
+        if argv[0] == "git":
+            self.calls.append(" ".join(argv))
+            return finder.run_command(argv, timeout=timeout or finder.SHORT_TIMEOUT_SECONDS)
+        return RunsBashAndGrepHere.__call__(self, argv, timeout, cwd)
+
+
+check("blob id: 40 lowercase hexadecimal characters are a git blob id",
+      finder.is_git_blob_id("0123456789abcdef0123456789abcdef01234567"))
+check("blob id: 39 characters, capitals, or a path are not",
+      not any(finder.is_git_blob_id(query) for query in (
+          "0123456789abcdef0123456789abcdef0123456", "0123456789ABCDEF0123456789ABCDEF01234567",
+          "docs/0123456789abcdef0123456789abcdef01234567")))
+
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp).resolve()
+    repo = tmp / "repo"
+    repo.mkdir()
+    git_clean("init", "-q", cwd=repo)
+    (repo / "CLAUDE.md").write_text("committed\n")
+    git_clean("add", "CLAUDE.md", cwd=repo)
+    git_clean("commit", "-q", "-m", "add CLAUDE.md", cwd=repo)
+    committed = finder.git_blob_id_of(b"committed\n")
+    (repo / "CLAUDE.md").write_text("only staged\n")
+    git_clean("add", "CLAUDE.md", cwd=repo)
+    staged = finder.git_blob_id_of(b"only staged\n")
+    absent = finder.git_blob_id_of(b"never in git\n")
+
+    log_store = tmp / "log-store"
+    path = "/home/nedlern/agents/seat/CLAUDE.md"
+    seen = local_nanoseconds("2026-10-15 12:21:12")
+    path_directory = log_store / "guarded-file-versions-and-approvals" / "ned-box" / path.lstrip("/")
+    path_directory.mkdir(parents=True)
+    (path_directory / "log").write_text(blob_seen_line(seen, absent) + blob_seen_line(seen + 10 ** 9, absent)
+                                        + blob_seen_line(seen, staged))
+    mac_directory = log_store / "guarded-file-versions-and-approvals" / "mac" / "Users/el/x/CLAUDE.md"
+    mac_directory.mkdir(parents=True)
+    (mac_directory / "log").write_text(blob_seen_line(seen, absent))
+    snapshots = tmp / "snapshots"
+    for name, text in (("2026-10-15_12-00-00", "never in git\n"), ("2026-10-15_13-00-00", "never in git\n"),
+                       ("2026-10-15_14-00-00", "later\n")):
+        (snapshots / name / "localhost" / path.lstrip("/")).parent.mkdir(parents=True)
+        (snapshots / name / "localhost" / path.lstrip("/")).write_text(text)
+    runner = RunsBashGitAndGrepHere([], tmp)
+
+    report = finder.search_git_for_blob(committed, str(repo), runner)
+    check("blob id: a blob a commit holds is FOUND in git, with the commit and the path, and copied",
+          report.status == FOUND and report.commit_holds and any("CLAUDE.md, added or removed by" in l
+                                                                 for l in report.lines)
+          and report.versions[0].source == committed, "%s %s" % (report.status, report.lines))
+    reports = finder.build_blob_report(committed, str(repo), "", str(snapshots), runner=runner,
+                                       log_store_root=str(log_store), on_ned_box=True)
+    check("blob id: when a commit holds it, nothing else is searched and the copy is the blob",
+          [r.surface for r in reports] == ["git"] and len(reports[0].copied) == 1
+          and Path(reports[0].copied[0]).read_bytes() == b"committed\n", "%s" % [r.render() for r in reports])
+
+    report = finder.search_git_for_blob(staged, str(repo), runner)
+    check("blob id: a blob git holds outside every commit is FOUND, and says no commit holds it",
+          report.status == FOUND and not report.commit_holds
+          and any("no commit and no reflog entry holds it" in l for l in report.lines), "%s" % report.lines)
+    reports = finder.build_blob_report(staged, str(repo), "", str(snapshots), runner=runner,
+                                       log_store_root=str(log_store), on_ned_box=True)
+    check("blob id: and the hook's log and Timeshift are searched after it",
+          [r.surface for r in reports] == ["git", "guarded-file log", "timeshift"], "%s" % [r.surface for r in reports])
+
+    commit_id = git_clean("rev-parse", "HEAD", cwd=repo).strip()
+    report = finder.search_git_for_blob(commit_id, str(repo), runner)
+    check("blob id: a commit's id is NOT FOUND in git, saying it is a commit, not a file's content",
+          report.status == NOT_FOUND and not report.commit_holds
+          and any("is a commit, not a file's content" in l for l in report.lines), "%s %s" % (report.status, report.lines))
+    report = finder.search_git_for_blob(absent, str(repo), FakeRunner([("cat-file -e", (0, "", "")),
+                                                                       ("cat-file -t", (128, "", "fatal: injected"))]))
+    check("blob id: a type lookup that fails is UNAVAILABLE in git",
+          report.status == UNAVAILABLE and any("injected" in l for l in report.lines), "%s" % report.lines)
+
+    report = finder.search_git_for_blob(absent, str(repo), runner)
+    check("blob id: a blob git does not hold is NOT FOUND in git", report.status == NOT_FOUND
+          and not report.commit_holds, "%s %s" % (report.status, report.lines))
+
+    report = finder.search_guarded_file_versions_log(absent, str(log_store), "", runner)
+    check("blob id: the hook's log gives each path and machine that saw it, with the first time, earliest first",
+          report.sightings == [("mac", "/Users/el/x/CLAUDE.md", seen), ("ned-box", path, seen)]
+          or report.sightings == [("ned-box", path, seen), ("mac", "/Users/el/x/CLAUDE.md", seen)],
+          "%s" % report.sightings)
+    check("blob id: with no copy in the store, the log surface is NOT FOUND and says so",
+          report.status == NOT_FOUND and "the store keeps no copy of it" in report.lines
+          and any("first at 2026-10-15 12:21:12" in l for l in report.lines), "%s" % report.lines)
+    (path_directory / absent).write_text("never in git\n")
+    report = finder.copy_found_versions(finder.search_guarded_file_versions_log(absent, str(log_store), "", runner))
+    check("blob id: a copy the store keeps is FOUND and copied",
+          report.status == FOUND and len(report.copied) == 1
+          and Path(report.copied[0]).read_bytes() == b"never in git\n", "%s" % report.lines)
+    (path_directory / absent).unlink()
+    report = finder.search_guarded_file_versions_log(finder.git_blob_id_of(b"unseen\n"), str(log_store), "", runner)
+    check("blob id: a blob no log line names is NOT FOUND, and there is no time for a snapshot",
+          report.status == NOT_FOUND and report.sightings == []
+          and any("no seen line" in l for l in report.lines), "%s" % report.lines)
+    failing = FakeRunner([("bash", (2, "", "grep: injected failure"))])
+    report = finder.search_guarded_file_versions_log(absent, str(log_store), "", failing)
+    check("blob id: a log search that fails is UNAVAILABLE, with grep's words",
+          report.status == UNAVAILABLE and any("injected failure" in l for l in report.lines), "%s" % report.lines)
+    # The inner grep reads each log file the outer one listed; its failure is the search's, not "no line".
+    stand_in_bin = tmp / "grep-fails-on-one-file"
+    stand_in_bin.mkdir()
+    (stand_in_bin / "grep").write_text(
+        '#!/bin/sh\nif [ "$1" = "-F" ]; then echo "grep: injected read failure" >&2; exit 2; fi\n'
+        'exec %s "$@"\n' % shlex.quote(shutil.which("grep")))
+    (stand_in_bin / "grep").chmod(0o755)
+    path_before = os.environ["PATH"]
+    os.environ["PATH"] = "%s%s%s" % (stand_in_bin, os.pathsep, path_before)
+    try:
+        report = finder.search_guarded_file_versions_log(absent, str(log_store), "", runner)
+    finally:
+        os.environ["PATH"] = path_before
+    check("blob id: a log file the inner grep cannot read makes the log surface UNAVAILABLE, with grep's words",
+          report.status == UNAVAILABLE and any("exited 2" in l and "injected read failure" in l
+                                               for l in report.lines), "%s %s" % (report.status, report.lines))
+    unreadable = log_store / "guarded-file-versions-and-approvals" / "ned-box" / "home"
+    unreadable.chmod(0)
+    try:
+        report = finder.search_guarded_file_versions_log(absent, str(log_store), "", runner)
+    finally:
+        unreadable.chmod(0o700)
+    check("blob id: a log directory grep cannot read makes the log surface UNAVAILABLE",
+          report.status == UNAVAILABLE and any("exited 2" in l for l in report.lines), "%s" % report.lines)
+    report = finder.search_guarded_file_versions_log(absent, str(tmp / "no-log-store"), "", runner,
+                                                     store_is_here=True)
+    check("blob id: a log-store without the hook's directory is UNAVAILABLE",
+          report.status == UNAVAILABLE and any("does not exist" in l for l in report.lines), "%s" % report.lines)
+
+    report = finder.copy_found_versions(finder.search_timeshift_after(absent, path, seen, "", str(snapshots), runner,
+                                                                      on_ned_box=True))
+    check("blob id: the first Timeshift snapshot after the time the hook saw it is opened, and kept when its id matches",
+          report.status == FOUND and any("is 2026-10-15_13-00-00" in l for l in report.lines)
+          and Path(report.copied[0]).read_bytes() == b"never in git\n", "%s" % report.lines)
+    report = finder.search_timeshift_after(finder.git_blob_id_of(b"other\n"), path, seen, "", str(snapshots), runner,
+                                           on_ned_box=True)
+    check("blob id: a snapshot holding another version is NOT FOUND, naming that version's id",
+          report.status == NOT_FOUND and any(finder.git_blob_id_of(b"never in git\n") in l for l in report.lines),
+          "%s" % report.lines)
+    report = finder.search_timeshift_after(absent, "/home/nedlern/elsewhere.md", seen, "", str(snapshots), runner,
+                                           on_ned_box=True)
+    check("blob id: a snapshot without the path is NOT FOUND", report.status == NOT_FOUND
+          and any("does not hold" in l for l in report.lines), "%s" % report.lines)
+    report = finder.search_timeshift_after(absent, path, local_nanoseconds("2026-10-15 15:00:00"), "",
+                                           str(snapshots), runner, on_ned_box=True)
+    check("blob id: no snapshot after the time is NOT FOUND, and says so", report.status == NOT_FOUND
+          and any("no snapshot" in l for l in report.lines), "%s" % report.lines)
+    report = finder.search_timeshift_after(absent, path, seen, "", str(tmp / "no-snapshots"), runner, on_ned_box=True)
+    check("blob id: a missing Timeshift root is UNAVAILABLE", report.status == UNAVAILABLE, "%s" % report.lines)
+    report = finder.search_timeshift_after(absent, path, seen, "", str(snapshots),
+                                           FakeRunner([("bash", (2, "", "ls: injected failure"))]), on_ned_box=True)
+    check("blob id: a snapshot listing that fails is UNAVAILABLE", report.status == UNAVAILABLE
+          and any("injected failure" in l for l in report.lines), "%s" % report.lines)
+    held_file = snapshots / "2026-10-15_13-00-00" / "localhost" / path.lstrip("/")
+    held_file.chmod(0)
+    try:
+        report = finder.search_timeshift_after(absent, path, seen, "", str(snapshots), runner, on_ned_box=True)
+    finally:
+        held_file.chmod(0o600)
+    check("blob id: a snapshot file that cannot be read is UNAVAILABLE, not NOT FOUND",
+          report.status == UNAVAILABLE and any("could not be read" in l for l in report.lines), "%s" % report.lines)
+    held_directory = held_file.parent
+    held_directory.chmod(0o600)
+    try:
+        report = finder.search_timeshift_after(absent, path, seen, "", str(snapshots), runner, on_ned_box=True)
+    finally:
+        held_directory.chmod(0o700)
+    check("blob id: a snapshot directory that cannot be searched is UNAVAILABLE, not NOT FOUND",
+          report.status == UNAVAILABLE and any("Permission denied" in l for l in report.lines), "%s" % report.lines)
+    check("blob id: a path under a file is missing, not unreadable",
+          finder._missing_on_this_machine(str(held_file / "below")), "")
+
+    report = finder.search_git_for_blob(absent, str(repo), FakeRunner([("cat-file -e", (128, "", "fatal: injected"))]))
+    check("blob id: git that fails is UNAVAILABLE in git, not NOT FOUND",
+          report.status == UNAVAILABLE and not report.commit_holds, "%s %s" % (report.status, report.lines))
+    report = finder.search_git_for_blob(committed, str(repo), FakeRunner([("cat-file -e", (0, "", "")),
+                                                                          ("cat-file -t", (0, "blob\n", "")),
+                                                                          ("--find-object", (128, "", "fatal: injected"))]))
+    check("blob id: a git log that fails after git holds the blob still copies it, and does not stop the search",
+          report.status == FOUND and not report.commit_holds and any("not known" in l for l in report.lines),
+          "%s" % report.lines)
+
+    tm_table = [("tmutil destinationinfo", (0, "Name : Backup\n", "")),
+                ("diskutil info", (0, "Device Node: /dev/disk5s2\nMount Point: /Volumes/Backup\n", "")),
+                ("listSnapshots", (0, "Name: com.apple.TimeMachine.2026-10-15-140000.backup\n"
+                                      "Name: com.apple.TimeMachine.2026-10-15-130000.backup\n"
+                                      "Name: com.apple.TimeMachine.2026-10-15-120000.backup\n", "")),
+                ("diskutil unmount", (0, "", "")), ("mkdir -p", (0, "", "")), ("mount_apfs", (0, "", "")),
+                ("test -d", (0, "", "")), ("test -e", (0, "", ""))]
+    tm = FakeRunner(tm_table)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen, tm)
+    check("blob id: the first Time Machine snapshot after the time is opened, and its copy command printed",
+          report.status == FOUND and any("2026-10-15-130000" in l for l in report.lines)
+          and report.prints_copy_command and any("git hash-object" in l for l in report.lines)
+          and any("2026-10-15-130000" in c for c in report.recovery), "%s %s" % (report.lines, report.recovery))
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen,
+                                              FakeRunner([("mount_apfs", (1, "", "sudo: a password is required"))]
+                                                         + tm_table))
+    check("blob id: a Time Machine mount refused for want of a password is UNAVAILABLE, with the command printed",
+          report.status == UNAVAILABLE and report.prints_copy_command, "%s" % report.lines)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen,
+                                              FakeRunner([("test -e", (1, "", ""))] + tm_table))
+    check("blob id: a Time Machine snapshot without the path is NOT FOUND", report.status == NOT_FOUND,
+          "%s" % report.lines)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen, FakeRunner([]))
+    check("blob id: with no Time Machine destination, as on ned-box, it is UNAVAILABLE and says to run on the Mac",
+          report.status == UNAVAILABLE and any("run this program there" in l for l in report.lines), "%s" % report.lines)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen,
+                                              FakeRunner([("diskutil info", (0, "Device Node: /dev/disk5s2\n", ""))]
+                                                         + tm_table))
+    check("blob id: a Time Machine disk that is not mounted is UNAVAILABLE, with the mount command",
+          report.status == UNAVAILABLE and report.recovery == ["diskutil mount Backup"], "%s" % report.recovery)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", local_nanoseconds("2026-10-15 15:00:00"),
+                                              tm)
+    check("blob id: no Time Machine snapshot after the time is NOT FOUND", report.status == NOT_FOUND,
+          "%s" % report.lines)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen,
+                                              FakeRunner([("listSnapshots", (1, "", "diskutil: injected failure"))]
+                                                         + tm_table))
+    check("blob id: a Time Machine snapshot listing that fails is UNAVAILABLE, with diskutil's words, not NOT FOUND",
+          report.status == UNAVAILABLE and any("injected failure" in l for l in report.lines), "%s" % report.lines)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen,
+                                              FakeRunner([("diskutil info", (0, "Mount Point: /Volumes/Backup\n", ""))]
+                                                         + tm_table))
+    check("blob id: a Time Machine disk whose device node is not known is UNAVAILABLE, not NOT FOUND",
+          report.status == UNAVAILABLE and any("device node is not known" in l for l in report.lines),
+          "%s" % report.lines)
+
+    finder.running_on_ned_box = lambda: True
+    try:
+        code, text = run_main([absent, "--repo", str(repo), "--log-store-root", str(log_store), "--box-ssh-host", "",
+                               "--timeshift-snapshot-root", str(snapshots), "--skip", "timemachine"], runner)
+    finally:
+        finder.running_on_ned_box = lambda: False
+    check("blob id: main reads 40 hexadecimal characters as a blob id, and exits 0 once Timeshift's copy is made",
+          code == 0 and "the version whose git blob id is %s" % absent in text and "timeshift       FOUND" in text,
+          "exit=%s\n%s" % (code, text))
+    code, text = run_main([finder.git_blob_id_of(b"unseen\n"), "--repo", str(repo), "--log-store-root",
+                           str(log_store), "--box-ssh-host", "", "--skip", "timemachine"], runner)
+    check("blob id: a blob neither git nor the hook's log knows exits 1", code == 1, "exit=%s\n%s" % (code, text))
+
+
+# --------------------------------------------------------------------------
+# The rerun command in the git-failure message, from a real run of the
+# program by its absolute path in another directory. Stand-in commands on
+# PATH answer from a table: git fails inside the repository.
+# --------------------------------------------------------------------------
+
+STAND_IN_COMMAND = """#!/usr/bin/env python3
+import json, os, sys
+joined = " ".join([os.path.basename(sys.argv[0])] + sys.argv[1:])
+with open(os.environ["STAND_IN_CALLS"], "a") as calls:
+    calls.write(joined + "\\n")
+for needle, (code, out, err) in json.load(open(os.environ["STAND_IN_TABLE"])):
+    if needle in joined:
+        sys.stdout.write(out)
+        sys.stderr.write(err)
+        sys.exit(code)
+sys.exit(1)
+"""
+
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp).resolve()
+    stand_ins, elsewhere, repo = tmp / "bin", tmp / "elsewhere", tmp / "repo"
+    for directory in (stand_ins, elsewhere, repo):
+        directory.mkdir()
+    for name in ("git",):
+        (stand_ins / name).write_text(STAND_IN_COMMAND)
+        (stand_ins / name).chmod(0o755)
+    table = tmp / "table.json"
+    table.write_text(json.dumps([
+        ["git -C %s rev-parse --git-dir" % repo, [0, ".git\n", ""]],
+        ["rev-parse --show-toplevel", [128, "", "fatal: unable to read index\n"]],
+    ]))
+    calls = tmp / "calls.txt"
+    program = str(Path(finder.__file__).resolve())
+    arguments = [str(repo / "a" / "b.md"), "--repo", str(repo), "--found-copies-root", str(tmp / "found"),
+                 "--skip", "box", "--skip", "localsnapshots", "--skip", "transcripts", "--skip", "logstore",
+                 "--skip", "timemachine"]
+    rerun_lines = finder.next_step_lines.git_failure_next_step_lines(
+        shlex.join(["python3", program] + arguments), "scripts/find-deleted-path-across-backups.py",
+        text_the_failure_line_contains="git's failure:", include_the_misspelt_branch_commit_or_path_line=True)
+    checkout = str(Path(program).parents[1])
+    for how, typed, directory in (("by absolute path from another directory", program, str(elsewhere)),
+                                  ("by a path relative to its checkout", os.path.relpath(program, checkout),
+                                   checkout)):
+        completed = subprocess.run(
+            [sys.executable, typed] + arguments, cwd=directory, capture_output=True, text=True,
+            env=dict(os.environ, PATH="%s%s%s" % (stand_ins, os.pathsep, os.environ["PATH"]),
+                     STAND_IN_TABLE=str(table), STAND_IN_CALLS=str(calls)))
+        check("a run %s says what a surface is, that only the git surfaces are unavailable and the others search "
+              "the absolute path" % how,
+              ("git could not find the top level of the repository at %s. This program searches several surfaces, "
+               "the places a deleted file may survive, such as local snapshots, git, git reflog, the log-store, "
+               "transcripts, Timeshift and Time Machine, and prints one result line per surface. The git and git "
+               "reflog surfaces cannot search, and their result lines will say UNAVAILABLE for this failure. Every "
+               "other surface that --skip did not leave out runs as usual, given the absolute path %s unchanged, "
+               "since git could not turn it into a path inside the repository; each such surface matches that path "
+               "in its own way, and its result line reports that surface's own result, which this git failure does "
+               "not affect, though a surface can still be UNAVAILABLE for a reason of its own.\n" % (repo, repo / "a" / "b.md")) in completed.stderr,
+              completed.stderr)
+        check("... gives the exit status for a find and for no find, and exits 3 when no surface finds the path",
+              "If some surface finds the path, this program exits 0 when this program copied a version, 5 when this "
+              "program copied no version but printed a command that copies one, and 4 otherwise. If no surface "
+              "finds the path, this program exits 3, for an incomplete search.\n" in completed.stderr
+              and completed.returncode == 3, "exit %s\n%s" % (completed.returncode, completed.stderr))
+        repo_rerun = shlex.join(["python3", program, "--repo", "<checkout>"]
+                                + [a for a in arguments if a not in ("--repo", str(repo))])
+        check("... and the wrong --repo line gives the whole command, with only the checkout to fill in",
+              ("run %s with <checkout> replaced by a checkout of the repository the path was deleted from.\n"
+               % repo_rerun) in completed.stderr, "%r\n%s" % (repo_rerun, completed.stderr))
+        check("... and names the program's absolute path, with every argument, as the command to rerun",
+              completed.stderr.count(rerun_lines) == 1, "%r\n%s" % (rerun_lines, completed.stderr))
+    # Both git surfaces skipped, and the path after a -- separator.
+    (tmp / "log-store").mkdir()
+    skip_both = ["--repo", str(repo), "--found-copies-root", str(tmp / "found"), "--log-store-root", str(tmp / "log-store"),
+                 "--skip", "box", "--skip", "localsnapshots", "--skip", "transcripts", "--skip", "timemachine",
+                 "--skip", "git", "--skip", "reflog", "--", str(repo / "a" / "b.md")]
+    stand_in_environment = dict(os.environ, PATH="%s%s%s" % (stand_ins, os.pathsep, os.environ["PATH"]),
+                                STAND_IN_TABLE=str(table), STAND_IN_CALLS=str(calls))
+    completed = subprocess.run([sys.executable, program] + skip_both, cwd=str(elsewhere), capture_output=True,
+                               text=True, env=stand_in_environment)
+    check("with both git surfaces skipped, a git top-level failure prints no git result line and the search exits 1 "
+          "when the one surface that ran reports NOT FOUND",
+          completed.returncode == 1
+          and not any(line.startswith(("git ", "git reflog")) for line in completed.stdout.splitlines()),
+          "exit %s\n%s\n%s" % (completed.returncode, completed.stdout, completed.stderr))
+    check("... and the message says --skip left both out and gives exit 1 or 3 for no find, not a bare 3",
+          "--skip left out the git and git reflog surfaces, so no surface prints a line for this failure." in completed.stderr
+          and "If no surface finds the path, this program exits 1, for a search that missed everywhere, when at least "
+              "one surface ran and every surface that ran reports NOT FOUND, and 3, for an incomplete search, "
+              "otherwise.\n" in completed.stderr
+          and "will say UNAVAILABLE" not in completed.stderr, completed.stderr)
+    printed = re.search(r"checkout, run (.*) with <checkout> replaced by", completed.stderr)
+    check("... and the printed --repo command puts --repo before the -- separator",
+          printed is not None and printed.group(1).index("--repo '<checkout>'") < printed.group(1).index(" -- "),
+          completed.stderr)
+    recovery = subprocess.run(printed.group(1).replace("'<checkout>'", shlex.quote(str(repo))) if printed else "false",
+                              shell=True, cwd=str(elsewhere), capture_output=True, text=True, env=stand_in_environment)
+    check("... and argparse accepts that command once <checkout> is filled in",
+          recovery.returncode != 2 and "usage:" not in recovery.stderr,
+          "exit %s\n%s" % (recovery.returncode, recovery.stderr))
+
+# A copy of this suite whose finder raises on import, as an unhandled error or a Ctrl-C would, still removes
+# its found-copies scratch folder.
+for raised in ("RuntimeError('a case raised')", "KeyboardInterrupt()"):
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        copy, copy_temp = tmp / "scripts", tmp / "temp"
+        copy.mkdir()
+        copy_temp.mkdir()
+        (tmp / "nc-systems" / "general-tools").mkdir(parents=True)
+        shutil.copy(__file__, copy / Path(__file__).name)
+        shutil.copy(Path(__file__).with_name("git-redirecting-environment-removal-test-fixture.py"), copy)
+        shutil.copy(Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+                    / "git-redirecting-environment-variables-removal-common.py", tmp / "nc-systems" / "general-tools")
+        (copy / "find-deleted-path-across-backups.py").write_text("raise %s\n" % raised)
+        completed = subprocess.run([sys.executable, str(copy / Path(__file__).name)], capture_output=True, text=True,
+                                   env=dict(os.environ, TMPDIR=str(copy_temp)))
+        left = sorted(entry.name for entry in copy_temp.iterdir())
+        check("a run whose finder raises %s exits nonzero and leaves no found-copies scratch folder" % raised,
+              completed.returncode != 0 and left == [] and raised.split("(")[0] in completed.stderr,
+              "exit %s, left %s\n%s" % (completed.returncode, left, completed.stderr[-2000:]))
+
+# Removed here, before the exit status is decided, so a failed removal fails the suite; an atexit
+# callback that raises leaves the exit status 0.
+try:
+    shutil.rmtree(FOUND_COPIES_SCRATCH)
+except OSError as error:
+    check("the found-copies scratch folder %s is removed" % FOUND_COPIES_SCRATCH, False,
+          "%s: %s" % (type(error).__name__, error))
 
 print()
 if failures:

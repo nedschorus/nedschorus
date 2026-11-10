@@ -2,7 +2,7 @@
 """Tests for work-snapshots: the hook, the shared module, the cleaner's step,
 and the handoff-supervisor's first-prompt list.
 
-Design: nc-systems/handoff/uncommitted-work-snapshots-across-crashes-design.md;
+Design: nc-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md;
 each section below is one bullet of its "How it will be tested".
 
 Every case works in a scratch clone with the programs copied into it, so the
@@ -19,6 +19,7 @@ No case sends a signal.
 Run: python3 nc-systems/handoff/tests/uncommitted-work-snapshots-test.py
 """
 
+import atexit
 import importlib.util
 import io
 import json
@@ -44,9 +45,29 @@ _fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 MODULE_RELATIVE = Path("nc-systems/handoff/uncommitted-work-snapshots.py")
 HOOK_RELATIVE = Path("scripts/uncommitted-work-snapshot-hook.py")
+OWNER_FILE_MODULE_RELATIVE = Path("scripts/worktree-owner-file-read-and-write.py")
 CLEANER_RELATIVE = Path("scripts/clean-worktrees.py")
 GIT_OUTPUT_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
+NEXT_STEP_LINES_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+LOG_STORE_WRITER_MODULE_RELATIVE = Path(
+    "nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py")
+NED_BOX_HOME_CONSTANTS_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+# The cleaner reads the review checkouts directory from the merge-lane helpers' common module,
+# which loads the test runner, which loads the git-redirecting variables module.
+MERGE_LANE_COMMON_MODULE_RELATIVE = Path(
+    "scripts/merge-lane-pull-request-helpers-common-options-paths-and-token.py")
+TEST_RUNNER_RELATIVE = Path("scripts/run-all-test-suites.py")
+GIT_REDIRECTING_REMOVAL_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py")
+
+# The cleaner's --remove run below would otherwise append to the real log-store's log of removals.
+_removals_log_directory = tempfile.mkdtemp(prefix="uncommitted-work-snapshots-test-removals-log-")
+atexit.register(shutil.rmtree, _removals_log_directory, ignore_errors=True)
+os.environ["CLEAN_WORKTREES_REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE"] = str(
+    Path(_removals_log_directory) / "log.txt")
 
 
 def load(path, name):
@@ -126,8 +147,11 @@ def new_clone():
     git(SCRATCH, "init", "-q", "--bare", str(origin))
     main = base / "main"
     git(SCRATCH, "clone", "-q", str(origin), str(main))
-    for relative in (MODULE_RELATIVE, HOOK_RELATIVE, CLEANER_RELATIVE,
-                     GIT_OUTPUT_MODULE_RELATIVE):
+    for relative in (MODULE_RELATIVE, HOOK_RELATIVE, CLEANER_RELATIVE, OWNER_FILE_MODULE_RELATIVE,
+                     GIT_OUTPUT_MODULE_RELATIVE, NEXT_STEP_LINES_MODULE_RELATIVE,
+                     LOG_STORE_WRITER_MODULE_RELATIVE, NED_BOX_HOME_CONSTANTS_MODULE_RELATIVE,
+                     MERGE_LANE_COMMON_MODULE_RELATIVE, TEST_RUNNER_RELATIVE,
+                     GIT_REDIRECTING_REMOVAL_MODULE_RELATIVE):
         (main / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPOSITORY_ROOT / relative, main / relative)
     (main / "tracked.txt").write_text("one\n")
@@ -340,6 +364,61 @@ def test_bash_commit_deletes_and_other_worktrees_follow():
     claude.end()
 
 
+def commit_objects_in(main):
+    return git(main, "cat-file", "--batch-all-objects", "--batch-check=%(objecttype)").split(
+        "\n").count("commit")
+
+
+def test_unchanged_worktree_writes_no_commit():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "same", "same-branch")
+    claude = FakeProcessTreeClaude(main)
+    ref = snapshots.work_snapshot_ref(claude.owner_key, worktree)
+    (worktree / "tracked.txt").write_text("draft\n")
+    (worktree / "new.txt").write_text("new\n")
+    claude.run_hook(edit(worktree / "tracked.txt"))
+    first = git(main, "rev-parse", ref)
+    commits = commit_objects_in(main)
+    # Each run a second later, as on a real machine, where an unchanged worktree would
+    # otherwise give a commit with a new date and so a new object.
+    for seconds, payload in enumerate((bash(worktree), edit(worktree / "tracked.txt"),
+                                       bash(worktree)), start=1):
+        claude.environment = {"GIT_AUTHOR_DATE": f"@{2_000_000_000 + seconds} +0000",
+                              "GIT_COMMITTER_DATE": f"@{2_000_000_000 + seconds} +0000"}
+        message = claude.run_hook(payload)
+        check(message is None, "a hook run on an unchanged worktree reports nothing", message)
+    check(git(main, "rev-parse", ref) == first and commit_objects_in(main) == commits,
+          "hook runs on an unchanged worktree leave the ref as it was and write no commit",
+          (first, git(main, "rev-parse", ref), commits, commit_objects_in(main)))
+    claude.environment = {}
+    check(snapshots.refresh_work_snapshot(
+        worktree, claude.owner_key,
+        os.environ.get(snapshots.AGENT_SEAT_ENVIRONMENT_VARIABLE, ""),
+        str(SCRATCH / "transcript.jsonl")) == "unchanged",
+          "refresh_work_snapshot says unchanged when it wrote nothing")
+    git(worktree, "add", "new.txt")
+    git(worktree, "commit", "-q", "-m", "part")
+    claude.run_hook(bash(worktree))
+    head = git(worktree, "rev-parse", "HEAD")
+    check(git(main, "rev-parse", f"{ref}^") == head
+          and files_in_snapshot(main, ref) == files_in_snapshot(main, first),
+          "a commit of part of the work, which leaves the tree the same, moves the "
+          "work-snapshot's parent to the new HEAD")
+    after_commit = git(main, "rev-parse", ref)
+    claude.run_hook(dict(bash(worktree), transcript_path=str(SCRATCH / "other.jsonl")))
+    check(git(main, "rev-parse", ref) != after_commit,
+          "the same tree and parent with another transcript writes a new work-snapshot")
+    (worktree / "tracked.txt").write_text("more\n")
+    claude.run_hook(edit(worktree / "tracked.txt"))
+    check(git(main, "show", f"{ref}:tracked.txt") == "more",
+          "an edit after unchanged runs is held")
+    git(worktree, "checkout", "-q", "--", "tracked.txt")
+    claude.run_hook(bash(worktree))
+    check(ref not in refs_of(main), "once nothing is uncommitted the ref is deleted",
+          refs_of(main))
+    claude.end()
+
+
 def test_overlapping_runs_end_on_the_final_state():
     name = "overlapping runs leave the ref on a work-snapshot of the final state"
     main = new_clone()
@@ -350,8 +429,8 @@ def test_overlapping_runs_end_on_the_final_state():
     real_build = snapshots.build_work_snapshot_commit
     interleaved = []
 
-    def build_while_another_run_lands(*arguments):
-        commit = real_build(*arguments)
+    def build_while_another_run_lands(*arguments, **keywords):
+        commit = real_build(*arguments, **keywords)
         if not interleaved:
             interleaved.append(True)
             (worktree / "tracked.txt").write_text("final\n")
@@ -376,6 +455,37 @@ def test_overlapping_runs_end_on_the_final_state():
           "two concurrent runs end on the worktree's state")
 
 
+def test_unchanged_run_overlapped_by_a_run_that_moves_the_ref_ends_on_the_worktree_state():
+    name = ("a run that finds its state already held, while an overlapping run moves the ref "
+            "to another state, leaves the ref on the worktree's state")
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
+    (worktree / "tracked.txt").write_text("state A\n")
+    owner = "3-3"
+    ref = snapshots.work_snapshot_ref(owner, worktree)
+    snapshots.refresh_work_snapshot(worktree, owner, "seat", "")
+    real_build = snapshots.build_work_snapshot_commit
+    interleaved = []
+
+    def build_while_another_run_lands_state_b(*arguments, **keywords):
+        commit = real_build(*arguments, **keywords)
+        if not interleaved:
+            interleaved.append(True)
+            (worktree / "tracked.txt").write_text("state B\n")
+            other = real_build(*arguments)
+            git(main, "update-ref", ref, other)
+            (worktree / "tracked.txt").write_text("state A\n")
+        return commit
+
+    snapshots.build_work_snapshot_commit = build_while_another_run_lands_state_b
+    try:
+        outcome = snapshots.refresh_work_snapshot(worktree, owner, "seat", "")
+    finally:
+        snapshots.build_work_snapshot_commit = real_build
+    check(interleaved and git(main, "show", f"{ref}:tracked.txt") == "state A", name,
+          (outcome, git(main, "show", f"{ref}:tracked.txt")))
+
+
 def test_operation_trailer():
     name = "during a merge with conflicts the operation trailer is merge"
     main = new_clone()
@@ -389,6 +499,52 @@ def test_operation_trailer():
     snapshots.refresh_work_snapshot(worktree, "2-2", "seat", "")
     found = [s for s in snapshots.all_work_snapshots(main) if s["owner_key"] == "2-2"]
     check(found and found[0]["operation"] == "merge", name, found)
+
+
+def test_each_operation_is_read_from_its_own_marker():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "markers", "markers-branch")
+    git_directory = Path(git(worktree, "rev-parse", "--path-format=absolute", "--git-dir"))
+    check(snapshots.operation_in_progress(worktree) is None, "with no marker no operation is under way")
+    for marker, is_directory, expected in (("MERGE_HEAD", False, "merge"),
+                                           ("CHERRY_PICK_HEAD", False, "cherry-pick"),
+                                           ("REVERT_HEAD", False, "revert"),
+                                           ("rebase-merge", True, "rebase"),
+                                           ("rebase-apply", True, "rebase")):
+        path = git_directory / marker
+        path.mkdir() if is_directory else path.write_text("0" * 40 + "\n")
+        found = snapshots.operation_in_progress(worktree)
+        check(found == expected, f"the {marker} marker reads as {expected}", found)
+        if marker == "rebase-apply":
+            (path / "applying").write_text("")
+            found = snapshots.operation_in_progress(worktree)
+            check(found == "am", "rebase-apply holding applying reads as am", found)
+        shutil.rmtree(path) if is_directory else path.unlink()
+
+def test_git_path_line_count_other_than_five_is_reported():
+    # A path holding a newline, or git printing less than asked, cannot be made for real here,
+    # so git's output gains one line or loses one.
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "newline", "newline-branch")
+    real_run_git = snapshots.run_git
+    for count, change in ((6, lambda text: text.replace("\n", "\nsplit\n", 1)),
+                          (4, lambda text: text.split("\n", 1)[1])):
+        def run_git_with_changed_output(directory, *arguments, **options):
+            result = real_run_git(directory, *arguments, **options)
+            if "--git-path" in arguments:
+                result.stdout = change(result.stdout)
+            return result
+        snapshots.run_git = run_git_with_changed_output
+        name = f"a rev-parse that prints {count} lines for 5 paths raises WorkSnapshotError saying so"
+        try:
+            snapshots.operation_in_progress(worktree)
+            check(False, name, "nothing raised")
+        except snapshots.WorkSnapshotError as error:
+            check(f"printed {count} lines where the 5 paths should give one line each" in str(error), name, str(error))
+        except ValueError as error:
+            check(False, name, f"ValueError: {error}")
+        finally:
+            snapshots.run_git = real_run_git
 
 
 def test_hook_failure_is_reported():
@@ -761,7 +917,7 @@ def test_supervisor_appends_the_list():
     supervisor.launch_agent_session = (
         lambda command, session_id, working_directory, prompt, **keywords:
         launched.append(prompt) or (_ for _ in ()).throw(StopIteration()))
-    supervisor.sync_working_branch_with_main = lambda working_directory: "branch sync: test"
+    supervisor.launch_time_git_sync = lambda working_directory: "launch-time-git-sync: test"
     settings = supervisor.SupervisorSettings(
         agent="seat-four", working_directory=main, handoff_directory=handoffs,
         agent_command="claude", first_prompt="Founding prompt.",
@@ -770,8 +926,10 @@ def test_supervisor_appends_the_list():
         supervisor.supervise_sessions(settings)
     except StopIteration:
         pass
-    check(launched and launched[0].startswith("Founding prompt.\n\nLeftover work-snapshots: 1"),
-          "every launch's prompt carries the leftover list after the prompt",
+    check(launched and launched[0].startswith(supervisor.first_prompt_from_launch_command_marked_not_typed_by_the_user("Founding prompt.")
+        + "\n\n" + supervisor.LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE
+        + "\n\nLeftover work-snapshots: 1"),
+          "a launch's prompt with no next step carries the leftover list after the prompt",
           launched[:1] and launched[0][:120])
 
 
@@ -1025,6 +1183,53 @@ def test_unreadable_head_is_reported():
           "an unborn HEAD is no commit, not a failure")
 
 
+def test_git_failures_are_not_read_as_answers():
+    """A git call whose exit 1 is an answer (unborn, detached, absent), failing
+    with 128 instead, raises with git's error."""
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "failing-git", "failing-git")
+    (worktree / "work.txt").write_text("work\n")
+    stub_directory = SCRATCH / "git-failing-on-one-call-bin"
+    stub_directory.mkdir(exist_ok=True)
+    stub = stub_directory / "git"
+    stub.write_text("#!/bin/sh\n"
+                    'case "$*" in\n'
+                    '  *"$FAIL_GIT_CALL_CONTAINING"*)\n'
+                    "    echo 'fatal: stub failure' >&2; exit 128 ;;\n"
+                    "esac\n"
+                    f'exec {shutil.which("git")} "$@"\n')
+    stub.chmod(0o755)
+    ref = snapshots.work_snapshot_ref("46-1", worktree)
+    check(snapshots.current_ref_value(worktree, ref) is None,
+          "a work-snapshot ref that does not exist reads as absent")
+
+    def raised_with(call, action):
+        path_before = os.environ["PATH"]
+        os.environ["PATH"] = f"{stub_directory}{os.pathsep}{path_before}"
+        os.environ["FAIL_GIT_CALL_CONTAINING"] = call
+        try:
+            action()
+        except snapshots.WorkSnapshotError as error:
+            return str(error)
+        finally:
+            os.environ["PATH"] = path_before
+            del os.environ["FAIL_GIT_CALL_CONTAINING"]
+        return None
+
+    for call, action in (
+            ("rev-parse --verify -q HEAD",
+             lambda: snapshots.build_work_snapshot_commit(worktree, "seat-x", "")),
+            ("symbolic-ref -q --short HEAD",
+             lambda: snapshots.build_work_snapshot_commit(worktree, "seat-x", "")),
+            (f"rev-parse --verify -q {ref}",
+             lambda: snapshots.current_ref_value(worktree, ref))):
+        raised = raised_with(call, action)
+        check(raised is not None and "fatal: stub failure" in raised,
+              f"a failed `git {call}` raises with git's error, not an answer", raised)
+    check(refs_of(main) == [], "no work-snapshot was written from a failed git call",
+          refs_of(main))
+
+
 def test_branch_ref_naming_a_missing_object_is_reported():
     main = new_clone()
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "bad-branch", "bad-branch")
@@ -1235,6 +1440,97 @@ def test_list_exits_nonzero_after_a_comparison_failure():
 # ---------------------------------------------------------------- replay
 
 
+def claude_code_subagent_lock(main, worktree, process_id):
+    """Lock the worktree as Claude Code locks a subagent's worktree while the subagent runs."""
+    git(main, "worktree", "lock", "--reason",
+        f"claude agent agent-a0123456789abcdef (pid {process_id} start 1)", str(worktree))
+
+
+def owner_file_of(worktree):
+    return Path(git(worktree, "rev-parse", "--absolute-git-dir")) / "worktree-owner.json"
+
+
+def fake_gh_listing_no_pull_requests():
+    """A directory holding a gh that lists no pull request, for the cleaner's PATH."""
+    directory = SCRATCH / "fake-gh-no-pull-requests"
+    if not directory.is_dir():
+        directory.mkdir()
+        (directory / "gh").write_text("#!/bin/sh\necho '[]'\n")
+        (directory / "gh").chmod(0o755)
+    return directory
+
+
+def test_hook_writes_the_owner_file_of_a_subagent_worktree():
+    main = new_clone()
+    claude = FakeProcessTreeClaude(main, {"GIT_AUTHOR_NAME": "seat-eight"})
+    mine = add_worktree(main, main / ".claude" / "worktrees" / "agent-mine", "agent-mine-branch")
+    claude_code_subagent_lock(main, mine, claude.helper.pid)
+    others = add_worktree(main, main / ".claude" / "worktrees" / "agent-other", "agent-other-branch")
+    claude_code_subagent_lock(main, others, dead_process_id())
+    unlocked = add_worktree(main, main / ".claude" / "worktrees" / "by-hand", "by-hand-branch")
+    for worktree in (mine, others, unlocked):
+        message = claude.run_hook(bash(worktree))
+        check(message is None, f"the hook says nothing after a Bash call in {worktree.name}", message)
+    written = json.loads(owner_file_of(mine).read_text()) if owner_file_of(mine).exists() else None
+    check(written == {"owner_kind": "agent-session", "agent_seat": "seat-eight",
+                      "owner_key": claude.owner_key},
+          "the hook names its own agent-session as the owner of the subagent worktree Claude "
+          "Code's lock names its process in", written)
+    check(not owner_file_of(others).exists() and not owner_file_of(unlocked).exists(),
+          "it writes no owner file where the lock names another process, or where there is no lock")
+    check(git(mine, "status", "--porcelain", "--untracked-files=all") == "",
+          "the owner file is not in the worktree's files, so git status lists nothing")
+    owner_file_of(mine).write_text('{"owner_kind": "agent-seat", "agent_seat": "kept"}\n')
+    claude.run_hook(bash(mine))
+    check("kept" in owner_file_of(mine).read_text(), "it never replaces an owner file")
+    # Another hook run of the same agent-session writes the file between this run's read and write.
+    real_loader = claude.hook.load_worktree_owner_file_read_and_write_module
+
+    def loader_that_reads_no_owner_file():
+        module = real_loader()
+        module.worktree_owner_file_read = lambda worktree: None
+        return module
+
+    claude.hook.load_worktree_owner_file_read_and_write_module = loader_that_reads_no_owner_file
+    message = claude.run_hook(bash(mine))
+    check(message is None and "kept" in owner_file_of(mine).read_text(),
+          "an owner file another hook run wrote first is left as it is, and the hook says nothing",
+          message)
+    claude.end()
+
+
+def test_hook_reports_an_owner_file_it_cannot_write():
+    main = new_clone()
+    claude = FakeProcessTreeClaude(main, {"GIT_AUTHOR_NAME": "seat-ten"})
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "agent-x", "agent-x-branch")
+    claude_code_subagent_lock(main, worktree, claude.helper.pid)
+    # The worktree's git directory cannot take a new file.
+    git_directory = owner_file_of(worktree).parent
+    git_directory.chmod(0o500)
+    try:
+        message = claude.run_hook(bash(worktree))
+    finally:
+        git_directory.chmod(0o755)
+    check(message is not None and "owner file of your worktree" in message
+          and "could not be written" in message and claude.last_exit == 0,
+          "an owner file the hook cannot write is reported to the agent, and the hook exits 0",
+          message)
+    claude.end()
+    unnamed_main = new_clone()
+    # No GIT_AUTHOR_NAME, as in a claude started by hand rather than by a launcher.
+    unnamed = FakeProcessTreeClaude(unnamed_main)
+    unnamed_worktree = add_worktree(unnamed_main, unnamed_main / ".claude" / "worktrees" / "agent-y",
+                                    "agent-y-branch")
+    claude_code_subagent_lock(unnamed_main, unnamed_worktree, unnamed.helper.pid)
+    message = unnamed.run_hook(bash(unnamed_worktree))
+    written = (json.loads(owner_file_of(unnamed_worktree).read_text())
+               if owner_file_of(unnamed_worktree).exists() else None)
+    check(message is None and written is not None and written["agent_seat"] == "unknown",
+          "with no agent-seat named, the hook still names the agent-session, under the agent-seat "
+          "unknown, as the work-snapshot does", (message, written))
+    unnamed.end()
+
+
 def test_the_2026_10_05_loss_replayed():
     name = "the 2026-10-05 loss replayed: the restore brings both files back as a commit"
     main = new_clone()
@@ -1243,16 +1539,24 @@ def test_the_2026_10_05_loss_replayed():
     (worktree / "tracked.txt").write_text("edited by the fork\n")
     (worktree / "new-test.py").write_text("print('a new test')\n")
     claude = FakeProcessTreeClaude(main, {"GIT_AUTHOR_NAME": "seat-seven"})
+    claude_code_subagent_lock(main, worktree, claude.helper.pid)
     claude.run_hook(edit(worktree / "tracked.txt"))
     claude.run_hook(edit(worktree / "new-test.py"))
+    # Claude Code unlocks the worktree when the subagent finishes; the crash ends its claude process.
+    git(main, "worktree", "unlock", str(worktree))
     claude.end()
+    environment = dict(os.environ, PATH=f"{fake_gh_listing_no_pull_requests()}:{os.environ['PATH']}")
     cleaner = subprocess.run([sys.executable, str(main / CLEANER_RELATIVE), "--remove"],
-                             capture_output=True, text=True, cwd=main)
-    check(not worktree.exists(), "the cleaner removes the dead fork's worktree, as on "
-          "2026-10-05", cleaner.stdout + cleaner.stderr)
+                             capture_output=True, text=True, cwd=main, env=environment)
+    check(not worktree.exists(), "the cleaner removes the dead fork's worktree, whose owner has "
+          "stopped and whose branch has no pull request", cleaner.stdout + cleaner.stderr)
     check("work-snapshot refs/work-snapshots/" in cleaner.stdout
           and "never listed in a first prompt" in cleaner.stdout,
           "the cleaner reports the work-snapshot it keeps", cleaner.stdout)
+    check(f"kept in the work-snapshot {snapshots.WORK_SNAPSHOT_REF_PREFIX}{claude.owner_key}/"
+          in cleaner.stdout,
+          "the cleaner writes no second work-snapshot when the hook's last one holds the files",
+          cleaner.stdout)
     handoffs = HOME / ".claude" / "handoffs"
     handoffs.mkdir(parents=True, exist_ok=True)
     text = snapshots.first_prompt_text(main, "seat-seven", handoffs)
@@ -1268,12 +1572,35 @@ def test_the_2026_10_05_loss_replayed():
         check(refs_of(main) == [], "step 4 deletes the ref")
 
 
+def test_cleaner_writes_a_work_snapshot_the_hook_never_wrote():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "agent-y", "agent-y-branch")
+    (worktree / "made-by-bash.txt").write_text("written outside any hook's sight\n")
+    owner_file_of(worktree).write_text(json.dumps({
+        "owner_kind": "agent-session", "agent_seat": "seat-nine",
+        "owner_key": dead_owner_key(dead_process_id())}) + "\n")
+    environment = dict(os.environ, PATH=f"{fake_gh_listing_no_pull_requests()}:{os.environ['PATH']}")
+    cleaner = subprocess.run([sys.executable, str(main / CLEANER_RELATIVE), "--remove"],
+                             capture_output=True, text=True, cwd=main, env=environment)
+    handoffs = HOME / ".claude" / "handoffs"
+    handoffs.mkdir(parents=True, exist_ok=True)
+    text = snapshots.first_prompt_text(main, "seat-nine", handoffs)
+    check(not worktree.exists() and "made-by-bash.txt" in text,
+          "the cleaner copies a stopped owner's untracked file to a work-snapshot of its own, "
+          "which the agent-seat's next first prompt lists", cleaner.stdout + text[:300])
+
+
 def main():
     try:
         for case in (test_what_a_work_snapshot_holds, test_same_size_edit_in_the_index_second,
                      test_ref_names,
                      test_bash_commit_deletes_and_other_worktrees_follow,
-                     test_overlapping_runs_end_on_the_final_state, test_operation_trailer,
+                     test_overlapping_runs_end_on_the_final_state,
+                     test_unchanged_run_overlapped_by_a_run_that_moves_the_ref_ends_on_the_worktree_state,
+                     test_operation_trailer,
+                     test_each_operation_is_read_from_its_own_marker,
+                     test_git_path_line_count_other_than_five_is_reported,
+                     test_unchanged_worktree_writes_no_commit,
                      test_hook_failure_is_reported, test_other_repository_is_untouched,
                      test_worktree_discovery_failure_is_reported,
                      test_names_read_from_git_are_the_files_as_stored,
@@ -1285,6 +1612,7 @@ def main():
                      test_in_place_and_duplicate_leftovers,
                      test_same_tree_on_another_head_is_not_a_duplicate,
                      test_unreadable_head_is_reported,
+                     test_git_failures_are_not_read_as_answers,
                      test_branch_ref_naming_a_missing_object_is_reported,
                      test_unborn_head_snapshot_stays_in_place,
                      test_duplicates_count_only_within_one_agent_seat,
@@ -1294,7 +1622,10 @@ def main():
                      test_empty_leftover_directory_is_not_the_worktree,
                      test_in_place_leftover_is_not_expired,
                      test_list_exits_nonzero_after_a_comparison_failure,
-                     test_the_2026_10_05_loss_replayed):
+                     test_hook_writes_the_owner_file_of_a_subagent_worktree,
+                     test_hook_reports_an_owner_file_it_cannot_write,
+                     test_the_2026_10_05_loss_replayed,
+                     test_cleaner_writes_a_work_snapshot_the_hook_never_wrote):
             try:
                 case()
             except Exception as error:

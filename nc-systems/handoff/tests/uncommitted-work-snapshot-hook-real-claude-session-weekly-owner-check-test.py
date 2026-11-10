@@ -71,7 +71,7 @@ if mode == "no-json":
     print("not json")
     sys.exit(0)
 clone = Path.cwd()
-settings = json.loads(Path(sys.argv[sys.argv.index("--settings") + 1]).read_text())
+settings = json.loads(sys.argv[sys.argv.index("--settings") + 1])
 Path(os.environ["FAKE_CLAUDE_ARGUMENTS_FILE"]).write_text(json.dumps({
     "arguments": sys.argv[1:], "settings": settings, "clone": str(clone)}))
 if mode == "breaks-clone":
@@ -178,11 +178,15 @@ def test_a_session_that_finds_itself_passes():
     check("record: " in completed.stdout, "the run prints the record's citation", completed.stdout)
     seen = json.loads(FAKE_CLAUDE_ARGUMENTS_FILE.read_text())
     arguments = seen["arguments"]
-    check(arguments[:2] == ["-p", weekly_owner_check.LIVE_CHECK_PROMPT]
+    check(arguments[:4] == ["-p", "--strict-mcp-config", "--permission-mode", "dontAsk"]
+          and arguments[6] == weekly_owner_check.LIVE_CHECK_PROMPT
           and arguments[arguments.index("--model") + 1] == "haiku"
           and arguments[arguments.index("--allowedTools") + 1] == "Bash"
           and "--no-session-persistence" in arguments,
-          "claude runs print mode on Haiku with Bash allowed and no saved session", arguments)
+          "claude runs print mode on Haiku, with no claude.ai connectors, in dontAsk mode, with Bash "
+          "allowed and no saved session", arguments)
+    check(arguments.count("--settings") == 1 and seen["settings"].get("advisorModel") == "",
+          "claude's one --settings turns the advisor off", arguments)
     entries = seen["settings"]["hooks"]["PostToolUse"]
     # The fake claude's cwd is resolved; on macOS the check's temporary path is not (/var is a
     # symlink to /private/var), so compare both resolved.
@@ -298,7 +302,7 @@ def test_an_interruption_after_claude_was_reaped_still_propagates():
             self.wait()
             raise KeyboardInterrupt
 
-    def start_a_claude_that_exits_at_once(program, clone, settings):
+    def start_a_claude_that_exits_at_once(program, clone):
         return ReapedThenInterrupted([sys.executable, "-c", "pass"], start_new_session=True)
 
     real = weekly_owner_check.start_claude
@@ -365,6 +369,17 @@ def test_a_scratch_clone_that_cannot_be_made_fails():
               name, record or completed.stderr)
 
 
+def test_the_scratch_clone_holds_the_owner_file_module_the_hook_loads():
+    clone = SCRATCH / "scratch-clone-module-check"
+    weekly_owner_check.make_scratch_clone(clone)
+    hook_text = (REPOSITORY_ROOT / weekly_owner_check.HOOK_RELATIVE).read_text()
+    check("worktree-owner-file-read-and-write.py" in hook_text
+          and (clone / "scripts" / "worktree-owner-file-read-and-write.py").is_file(),
+          "the scratch clone holds scripts/worktree-owner-file-read-and-write.py, which the hook "
+          "loads, so the weekly check does not pass over a FileNotFoundError",
+          str(sorted(path.relative_to(clone).as_posix() for path in clone.rglob("*.py"))))
+
+
 def test_a_check_that_cannot_run_fails():
     completed, record = run_check("breaks-clone")
     check(completed.returncode == 1 and "FAIL the check could not run: " in record,
@@ -378,7 +393,7 @@ def test_an_error_after_claude_started_is_not_reported_as_a_failed_start():
     real = weekly_owner_check.start_claude, weekly_owner_check.wait_for_claude
     records = SCRATCH / "records-error-after-start"
     try:
-        weekly_owner_check.start_claude = lambda program, clone, settings: object()
+        weekly_owner_check.start_claude = lambda program, clone: object()
         weekly_owner_check.wait_for_claude = raise_process_lookup_error
         with contextlib.redirect_stdout(io.StringIO()):
             exit_code = weekly_owner_check.main(
@@ -416,6 +431,7 @@ def main():
                      test_an_interruption_after_claude_was_reaped_still_propagates,
                      test_the_record_goes_to_the_log_store_by_default,
                      test_a_scratch_clone_that_cannot_be_made_fails,
+                     test_the_scratch_clone_holds_the_owner_file_module_the_hook_loads,
                      test_a_check_that_cannot_run_fails,
                      test_an_error_after_claude_started_is_not_reported_as_a_failed_start,
                      test_a_record_that_cannot_be_written_is_reported):

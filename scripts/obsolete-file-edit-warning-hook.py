@@ -43,7 +43,8 @@ with a pathspec counts the commit that deleted it.
 This hook runs that one diff itself, for the reason obsolete_path_set() gives —
 it needs to see the return code, which that function does not expose — and
 imports the rest of what it needs from that script: run_git(), read_stamp(),
-write_stamp() and head_state(). Its module level is imports and constants
+write_stamp(), head_state(), remote_branches_holding_own_commits() and its
+git_output module. Its module level is imports and constants
 only, its main() behind `if __name__ == "__main__"`, so importing runs
 nothing.
 
@@ -76,21 +77,28 @@ warning as it is and adds a line saying so, because the warning will then
 repeat.
 
 EVERY CLAUSE OF THE WARNING IS COMPUTED, never asserted: the commit count is
-measured and dropped if it cannot be, and the advice is chosen from the head's actual state, not
+measured, and said to have failed if it cannot be, and the advice is chosen from the head's actual state, not
 guessed. Note what the never-pushed advice does NOT say: that the Stop hook
 will rebase the branch at turn end. It will not, in this very case — an
 agent that just edited a file has a dirty tree, and
 rebase_never_pushed_branch() skips a dirty tree by design.
 
 NOTHING TO COMPARE AGAINST IS SILENCE, exit 0: a cwd in no repository, no
-origin/main, a git call that exits nonzero or times out, git missing, a file
-outside the checkout.
+HEAD or no origin/main, a file outside the checkout.
+
+A GIT STEP THAT FAILS after the file is known to be obsolete, such as the
+commit count or the overlap check, is said in the warning itself, and that
+warning is never held back as a repeat. Any other git failure, git missing or a
+git call timing out included, means the file was not checked: exit 0, with
+`additionalContext` naming the git command and its error, then the command that
+checks the file now. Not exit 1: Claude Code records the stderr of a
+PostToolUse exit 1 in the transcript but never passes it to the model, so the
+agent would never learn the file went unchecked.
 
 A FAULT OF THE HOOK ITSELF, such as stdin that is not a JSON object,
-checkout-freshness-catch-up.py failing to load or any exception: one line on
-stderr naming the hook and the fault, nothing on stdout, exit 1. Claude Code
-records a PostToolUse exit 1 as a non-blocking error and keeps the edit; exit 0
-would read as "this file is not obsolete".
+checkout-freshness-catch-up.py failing to load, or any exception: nothing on
+stdout, exit 1, and on stderr one line naming the hook and the fault. Claude
+Code records a PostToolUse exit 1 as a non-blocking error and keeps the edit.
 """
 
 import importlib.util
@@ -111,16 +119,14 @@ REV_PARSE_TIMEOUT_SECONDS = 15
 OBSOLETE_DIFF_TIMEOUT_SECONDS = 30
 COMMIT_COUNT_TIMEOUT_SECONDS = 15
 
-# Which head states mean "somebody else may have this branch". These are the
-# four of head_state()'s keys that imply a push of this branch happened; the
-# frozen-head rule in CLAUDE.md applies to every one of them.
-# Its others — unpushed, pushed-history, detached, unknown — are handled
-# separately in head_advice(). pushed-history is frozen too, but its commits
-# were pushed under another branch name, so "This branch is pushed" would be
-# false of it; it gets checkout-freshness-catch-up.py's PUSHED_HISTORY_ADVICE,
-# which says what was found.
-PUSHED_HEAD_STATE_KEYS = ("pushed", "pushed-with-local-commits",
-                          "behind-remote", "diverged-from-remote")
+# The two of head_state()'s keys where this checkout holds everything that was
+# pushed, so a new commit on top pushes cleanly. behind-remote and
+# diverged-from-remote are pushed too, but a commit on top there is a push git
+# rejects, so each gets advice of its own; a checkout on main gets its own
+# before any of these. pushed-history is frozen too, but its commits were
+# pushed under another branch name, so "This branch is pushed" would be false
+# of it; it gets checkout-freshness-catch-up.py's PUSHED_HISTORY_ADVICE.
+PUSHED_HEAD_STATE_KEYS = ("pushed", "pushed-with-local-commits")
 
 NEVER_PUSHED_ADVICE = (
     "This branch has never been pushed, so nobody else has it: commit or set aside "
@@ -128,16 +134,49 @@ NEVER_PUSHED_ADVICE = (
     "branch only when the tree is clean — then run `python3 scripts/run-all-test-suites.py "
     "--only-suites-whose-recorded-inputs-changed-since origin/main`."
 )
-# A pushed branch that conflicts with main is the one exception: no commit on
-# top can clear a conflict, so it is cleared by the hand-merge that
-# the VERDICT: CONFLICT report of scripts/branch-conflict-check.py describes.
-# Forbidding every merge here would send an agent with a conflict away from
-# the one move that clears it.
+# No commit on top can clear a conflict with main, so a pushed branch that
+# conflicts is sent to scripts/branch-conflict-check.py, whose report says
+# whether it is rebased or its pull request replaced.
 PUSHED_ADVICE = (
     "This branch is pushed, so its review may be running: do not rebase or amend "
     "it. A fix for this topic is a new commit on top. If it conflicts with main, "
-    "clear the conflict with the hand-merge that scripts/branch-conflict-check.py "
-    "describes. Your next topic starts with `git checkout -b <name> origin/main`."
+    "do what scripts/branch-conflict-check.py reports. Your next topic starts with "
+    "`git checkout -b <name> origin/main`."
+)
+# `git pull --rebase` moves only the commits origin/<branch> lacks, which are
+# this checkout's own and never pushed, so it rewrites nothing under review.
+BEHIND_REMOTE_ADVICE = (
+    "This branch is pushed, and origin/{branch} has commits this checkout lacks, "
+    "most likely a fix pushed from elsewhere, so a push from here is rejected until "
+    "this checkout has them. Commit your edit, then run `git pull --rebase origin "
+    "{branch}`: it moves only your new commit, which is on no remote yet, onto "
+    "origin/{branch}, and leaves the pushed commits as they are. Then push once. If "
+    "the branch conflicts with main, do what `python3 scripts/branch-conflict-check.py` "
+    "reports; never rebase the pushed commits."
+)
+DIVERGED_FROM_REMOTE_ADVICE = (
+    "This branch has diverged from origin/{branch}: each side has commits the other "
+    "lacks, so a push is rejected, and a force-push would move a pushed head that may "
+    "be under review. Do not push yet. Run `git log --oneline --left-right "
+    "origin/{branch}...HEAD`: lines marked < are only on origin/{branch}, lines marked "
+    "> only here. If every > commit is new work made here since the last push, commit "
+    "your edit and run `git pull --rebase origin {branch}`, which moves only the > "
+    "commits onto origin/{branch}; then push once. If a > commit is a rewritten copy "
+    "of a < commit, as an amend or a rebase after the push makes, do not push: tell "
+    "the user that the pushed history was rewritten in this checkout, list both "
+    "sides' commits, and recommend keeping origin/{branch} and adding this "
+    "checkout's changes as a new commit on top of it."
+)
+# A checkout on main is behind or beside origin/main whenever this warning
+# fires, and work reaches main only through a pull request, so the edit moves
+# to a topic branch. The new branch was never pushed, so rebasing it is safe.
+MAIN_CHECKOUT_ADVICE = (
+    "This checkout is on main, and a change reaches main only through a pull "
+    "request from a topic branch. Run `git switch -c <a-branch-name>`, with a name "
+    "for your change, which keeps your edit; commit the edit there, then run `git "
+    "rebase origin/main`, which is allowed because the new branch has never been "
+    "pushed. From now on, start each topic with `git switch -c <a-branch-name> "
+    "origin/main` before its first edit."
 )
 
 
@@ -149,6 +188,22 @@ DETACHED_HEAD_LINE = (
     "<a-branch-name>) before you commit, because a commit on a detached HEAD is on "
     "no branch."
 )
+# The shape a fix-round agent works in: a worktree detached at a pull
+# request's pushed head. Rebasing there rewrites commits under review, and
+# every hook allows it, so the pushed case never gets the rebase lines.
+DETACHED_PUSHED_HEAD_LINE = (
+    "This checkout is on a detached HEAD whose commits are already on {holders}, so "
+    "they may be a pull request's head under review: do not rebase or amend them. "
+    "Make a branch (git switch -c <a-branch-name>) before you commit, because a "
+    "commit on a detached HEAD is on no branch; your fix is a new commit on top."
+)
+DETACHED_PUSH_STATE_UNKNOWN_LINE = (
+    "This checkout is on a detached HEAD, and git could not check whether its "
+    "commits are already on a remote branch, so treat them as pushed: do not rebase "
+    "or amend them. Make a branch (git switch -c <a-branch-name>) before you commit, "
+    "because a commit on a detached HEAD is on no branch; your fix is a new commit on "
+    "top."
+)
 NO_OVERLAP_LINE = (
     "main's changes to {path} do not overlap this checkout's copy; a rebase merges "
     "them cleanly."
@@ -158,9 +213,47 @@ OVERLAP_LINE = (
     "and commit your edit, run git rebase origin/main, which will stop on this file, "
     "and resolve the conflict there."
 )
-MAIN_HAS_NO_FILE_LINE = (
-    "main no longer has a file at {path}: find out whether main moved or deleted it "
-    "(git log origin/main -- {path}) before you commit."
+PUSHED_NO_OVERLAP_LINE = (
+    "main's changes to {path} do not overlap this checkout's copy, so they merge "
+    "cleanly when the pull request merges: commit your edit on top, and do not "
+    "rebase to pick them up."
+)
+PUSHED_OVERLAP_LINE = (
+    "main's changes to {path} overlap this checkout's copy, so the pull request will "
+    "conflict with main on this file. Commit your edit on top first, and do not "
+    "rebase; then do what `python3 scripts/branch-conflict-check.py` reports."
+)
+# git's rename detection carries an edit at the old path to the new one, in a
+# rebase and in a merge alike, so a moved file needs no hand-carrying.
+MAIN_MOVED_FILE_LINE = (
+    "main moved {path} to {new_path}. After you make the branch and commit your edit "
+    "at {path}, run `git rebase origin/main`: git follows the move and applies your "
+    "edit to {new_path}. If the rebase stops on {new_path}, resolve the conflict there."
+)
+MAIN_MOVED_FILE_PUSHED_LINE = (
+    "main moved {path} to {new_path}. Commit your edit on top at {path}, and do not "
+    "rebase: when the pull request merges, git follows the move and carries your edit "
+    "to {new_path}. If `python3 scripts/branch-conflict-check.py` reports a conflict, "
+    "do what its report says."
+)
+MAIN_DELETED_FILE_LINE = (
+    "main deleted {path}{deleted_in}, so your edit has no file to land in. Read why "
+    "with `git log -1 --stat origin/main -- {path}`. If your fix is still needed, "
+    "drop this edit with `git checkout -- {path}`, start a topic branch with `git "
+    "switch -c <a-branch-name> origin/main`, and make the same fix in the file that "
+    "does that job on main now. If no file on main does that job, drop the edit and "
+    "do not make the fix."
+)
+MAIN_LOST_FILE_UNKNOWN_LINE = (
+    "main no longer has a file at {path}, and git could not tell whether main moved or "
+    "deleted it ({text}). Run `git log -1 --format=%h origin/main -- {path}` for the "
+    "commit that removed it, then `git show --name-status -M --format= <that commit>`. "
+    "If a line there starts with R and names {path}, main moved the file, and your "
+    "edit belongs at the second path on that line. Otherwise main deleted it: drop "
+    "this edit with `git checkout -- "
+    "{path}`, and if your fix is still needed, make it in the file that does that job "
+    "on main now, on a topic branch from origin/main (`git switch -c <a-branch-name> "
+    "origin/main`)."
 )
 MAIN_COPY_UNREADABLE_LINE = (
     "git could not read {path} on origin/main ({text}), so this warning cannot say "
@@ -171,6 +264,27 @@ BRANCH_STATE_UNKNOWN_LINE = (
     "git could not report this checkout's branch state ({text}): stop and tell the "
     "user before you commit."
 )
+OVERLAP_UNKNOWN_LINE = (
+    "git could not tell whether main's changes to {path} overlap this checkout's copy "
+    "({failure}): stop and tell the user before you make the branch or commit."
+)
+COMMIT_COUNT_FAILED_LINE = (
+    "git could not count the commits on origin/main that changed the file ({failure})."
+)
+GIT_FAILURE_CAUSE_LINE = (
+    "obsolete-file-edit-warning-hook: {failure}, so the edited file was not checked "
+    "against origin/main; the edit itself succeeded."
+)
+GIT_FAILURE_AGENT_FACING_MESSAGE_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW = (
+    "A later run of this hook checks only the file that run's Edit or Write touched, so check "
+    "{path} by running the command printed on its own line below this paragraph. If git's error "
+    "above names no lock file, run that "
+    "command now. {lock_file_condition}, {wait_for_lock_file}. The command "
+    "prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
+    "whose hookSpecificOutput.additionalContext field holds one of two texts: this hook's warning, "
+    "whose instructions you follow; or, when git fails again, a git-failure message like this one, "
+    "and the last line here says what to do then.\n"
+    "{rerun}")
 RECORD_WRITE_FAILED_LINE = (
     "obsolete-file-edit-warning could not record that it gave this warning, so it "
     "will give it again at your next edit of this file ({record}: {reason}). Nothing "
@@ -198,24 +312,51 @@ def _load_checkout_freshness_module():
     return module
 
 
+def git_step_failed(freshness, arguments, completed, directory: Path):
+    """The GitCommandFailed for a run_git call that did not give an answer."""
+    detail = (completed.stderr or "").strip().splitlines()
+    if completed.returncode == freshness.GIT_DID_NOT_RUN:
+        return freshness.git_output.GitCommandFailed(
+            arguments, directory, None, detail[0] if detail else "git did not run")
+    return freshness.git_output.GitCommandFailed(
+        arguments, directory, completed.returncode, detail[0] if detail else "")
+
+
 def checkout_facts(freshness, working_directory: Path):
-    """(checkout root, git directory, HEAD sha, origin/main sha), or None.
+    """(checkout root, git directory, HEAD sha, origin/main sha), or None when
+    there is nothing to compare against: no repository, no HEAD or no
+    origin/main. Raises GitCommandFailed when git cannot say.
 
     One `git rev-parse` for all four rather than the four calls
     checkout_root(), git_directory() and two rev-parses would cost: this is
     the whole of the cache-hit path, and it runs at every edit an agent
-    makes. rev-parse answers in argument order, and exits non-zero when any
-    of them has no answer — no origin/main, no HEAD, no repository — which
-    is the one check needed for all four.
+    makes. rev-parse answers in argument order, and exits 128 alike for a
+    revision that does not exist and for a git that failed, so only a failed
+    call pays for the questions that tell the two apart.
     """
-    resolved = freshness.run_git(
-        ["rev-parse", "--show-toplevel", "--absolute-git-dir", "HEAD", "origin/main"],
-        working_directory, timeout=REV_PARSE_TIMEOUT_SECONDS)
+    arguments = ["rev-parse", "--show-toplevel", "--absolute-git-dir", "HEAD", "origin/main"]
+    resolved = freshness.run_git(arguments, working_directory,
+                                 timeout=REV_PARSE_TIMEOUT_SECONDS)
+    if resolved.returncode == freshness.GIT_DID_NOT_RUN:
+        raise git_step_failed(freshness, arguments, resolved, working_directory)
     if resolved.returncode != 0:
-        return None
+        if freshness.git_output.git_stderr_says_outside_a_repository(resolved.stderr):
+            return None
+        for revision in ("HEAD", "origin/main"):
+            verify_arguments = ["rev-parse", "--verify", "--quiet", revision]
+            verified = freshness.run_git(verify_arguments, working_directory,
+                                         timeout=REV_PARSE_TIMEOUT_SECONDS)
+            # --verify --quiet exits 1, and only 1, for a revision that does not exist.
+            if verified.returncode == 1:
+                return None
+            if verified.returncode != 0:
+                raise git_step_failed(freshness, verify_arguments, verified, working_directory)
+        raise git_step_failed(freshness, arguments, resolved, working_directory)
     lines = [line.strip() for line in resolved.stdout.splitlines() if line.strip()]
     if len(lines) != 4:
-        return None
+        raise freshness.git_output.GitCommandFailed(
+            arguments, working_directory, 0,
+            f"printed {len(lines)} lines where it answers with 4")
     return Path(lines[0]), Path(lines[1]), lines[2], lines[3]
 
 
@@ -240,9 +381,9 @@ def path_within_checkout(file_path: str, checkout: Path):
 def obsolete_path_set(freshness, checkout: Path, git_directory: Path,
                       head_sha: str, main_sha: str):
     """(the paths main has moved that this checkout has not, {path: the last
-    warning given about it}), cached; or None when git could not answer, which
-    is NOT the same as nothing being obsolete. A recomputed set starts with no
-    warnings given.
+    warning given about it}), cached. Raises GitCommandFailed when git could not
+    answer, which is NOT the same as nothing being obsolete. A recomputed set
+    starts with no warnings given.
 
     The cache is valid only while BOTH origin/main's tip and this checkout's
     HEAD are what they were when it was written: a fetch that moves main
@@ -268,14 +409,12 @@ def obsolete_path_set(freshness, checkout: Path, git_directory: Path,
         warned = cached.get("warned")
         return set(cached["paths"]), (warned if isinstance(warned, dict) else {})
 
-    # run_git returns its own GIT_DID_NOT_RUN code rather than raising when
-    # git is missing or the timeout expires, so one non-zero test covers a
-    # failed diff, an absent binary and a hung one alike.
-    listed = freshness.run_git(
-        ["diff", "-z", "--name-only", "--no-renames", "HEAD...origin/main"],
-        checkout, timeout=OBSOLETE_DIFF_TIMEOUT_SECONDS)
+    # Without --exit-code, git diff has no nonzero answer: every nonzero is a
+    # failure, GIT_DID_NOT_RUN for a missing or hung git included.
+    arguments = ["diff", "-z", "--name-only", "--no-renames", "HEAD...origin/main"]
+    listed = freshness.run_git(arguments, checkout, timeout=OBSOLETE_DIFF_TIMEOUT_SECONDS)
     if listed.returncode != 0:
-        return None
+        raise git_step_failed(freshness, arguments, listed, checkout)
     paths = set(freshness.git_output.nul_separated_fields(listed.stdout))
     freshness.write_stamp(cache_path, {"head": head_sha, "main_tip": main_sha,
                                        "paths": sorted(paths), "warned": {}})
@@ -299,22 +438,23 @@ def warning_record_write(git_directory: Path, head_sha: str, main_sha: str,
 
 def commits_on_main_touching(freshness, checkout: Path, repository_path: str):
     """How many commits origin/main has that this checkout lacks touched this
-    file, or None when git cannot say.
+    file, or None when it counts none. Raises GitCommandFailed when git cannot
+    count them.
 
     Two dots here, where the path set uses three: `HEAD..origin/main` is the
     COMMITS reachable from main and not from HEAD, which is what "how many
     commits changed it since your merge base" counts. The three-dot form is a
     diff of trees and has no commit list to count.
     """
-    counted = freshness.run_git(
-        ["rev-list", "--count", "HEAD..origin/main", "--", repository_path],
-        checkout, timeout=COMMIT_COUNT_TIMEOUT_SECONDS)
+    arguments = ["rev-list", "--count", "HEAD..origin/main", "--", repository_path]
+    counted = freshness.run_git(arguments, checkout, timeout=COMMIT_COUNT_TIMEOUT_SECONDS)
     if counted.returncode != 0:
-        return None
+        raise git_step_failed(freshness, arguments, counted, checkout)
     try:
         count = int(counted.stdout.strip())
     except ValueError:
-        return None
+        raise freshness.git_output.GitCommandFailed(
+            arguments, checkout, 0, f"printed {counted.stdout.strip()!r}, not a count") from None
     return count if count > 0 else None
 
 
@@ -330,23 +470,60 @@ def git_operation_in_progress(freshness, git_directory: Path):
     return None
 
 
-def overlap_line(freshness, checkout: Path, repository_path: str):
+def main_lost_file_line(freshness, checkout: Path, merge_base: str,
+                        repository_path: str, pushed: bool):
+    """(line, whether the line reports a git failure) for an edit at a path
+    origin/main no longer has: the moved line naming main's new path when main
+    renamed the file, else the deleted line, naming the deleting commit when git
+    can find it; the unknown line, with git's text, when git could not list main's
+    renames."""
+    renamed = freshness.run_git(
+        ["diff", "-z", "--name-status", "-M", "--diff-filter=R", merge_base,
+         "origin/main"], checkout, timeout=OBSOLETE_DIFF_TIMEOUT_SECONDS)
+    if renamed.returncode != 0:
+        text = (renamed.stderr or "").strip() or "git diff exited %d" % renamed.returncode
+        return MAIN_LOST_FILE_UNKNOWN_LINE.format(path=repository_path, text=text), True
+    for entry in freshness.git_output.name_status_entries(renamed.stdout):
+        if entry.origin_path == repository_path and entry.path:
+            moved = MAIN_MOVED_FILE_PUSHED_LINE if pushed else MAIN_MOVED_FILE_LINE
+            return moved.format(path=repository_path, new_path=entry.path), False
+    deleting = freshness.run_git(
+        ["log", "-1", "--format=%h (%s)", "origin/main", "--", repository_path],
+        checkout, timeout=COMMIT_COUNT_TIMEOUT_SECONDS)
+    commit = deleting.stdout.strip() if deleting.returncode == 0 else ""
+    return MAIN_DELETED_FILE_LINE.format(
+        path=repository_path, deleted_in=f" in commit {commit}" if commit else ""), False
+
+
+def overlap_line(freshness, checkout: Path, repository_path: str, pushed: bool = False):
     """(line, whether the line reports a git failure): whether main's changes to
     the file overlap this checkout's copy.
 
-    The line is MAIN_HAS_NO_FILE_LINE when main's tree was read and lists no file at
-    the path, MAIN_COPY_UNREADABLE_LINE with git's text when main's copy or tree
-    cannot be read, and "" when another git step (merge base, base copy, merge-file)
-    fails.
+    The line is main_lost_file_line()'s when main's tree was read and lists no file
+    at the path, MAIN_COPY_UNREADABLE_LINE with git's text when main's copy or tree
+    cannot be read, OVERLAP_UNKNOWN_LINE when another git step (merge base, base
+    copy, merge-file) fails, and "" when there is no merge base, the merge base has
+    no file at the path, or the edited file is gone. When HEAD's commits are pushed,
+    no line tells the agent to rebase.
 
     A two-way diff against main cannot answer this, because the agent's own edit is
     part of it; a three-way merge of the file, with the merge base as the common
     ancestor, answers it directly. The verdict is textual: changes that do not
     overlap can still disagree.
     """
-    merge_base = freshness.run_git(["merge-base", "HEAD", "origin/main"], checkout,
+    def overlap_unknown(arguments, completed):
+        failure = git_step_failed(freshness, arguments, completed, checkout)
+        return OVERLAP_UNKNOWN_LINE.format(path=repository_path, failure=failure), True
+
+    merge_base_arguments = ["merge-base", "HEAD", "origin/main"]
+    merge_base = freshness.run_git(merge_base_arguments, checkout,
                                    timeout=REV_PARSE_TIMEOUT_SECONDS)
-    if merge_base.returncode != 0 or not merge_base.stdout.strip():
+    # git merge-base exits 1 when the two have no common ancestor.
+    if merge_base.returncode == 1:
+        return "", False
+    if merge_base.returncode != 0:
+        return overlap_unknown(merge_base_arguments, merge_base)
+    if not merge_base.stdout.strip():
         return "", False
     main_copy = freshness.run_git(["show", f"origin/main:{repository_path}"], checkout,
                                   timeout=REV_PARSE_TIMEOUT_SECONDS)
@@ -357,15 +534,21 @@ def overlap_line(freshness, checkout: Path, repository_path: str):
             ["ls-tree", "origin/main", "--", repository_path], checkout,
             timeout=REV_PARSE_TIMEOUT_SECONDS)
         if main_listing.returncode == 0 and not main_listing.stdout.strip():
-            return MAIN_HAS_NO_FILE_LINE.format(path=repository_path), False
+            return main_lost_file_line(freshness, checkout, merge_base.stdout.strip(),
+                                       repository_path, pushed)
         text = ((main_copy.stderr or "").strip()
                 or "git show exited %d" % main_copy.returncode)
         return MAIN_COPY_UNREADABLE_LINE.format(path=repository_path, text=text), True
-    base_copy = freshness.run_git(
-        ["show", f"{merge_base.stdout.strip()}:{repository_path}"], checkout,
-        timeout=REV_PARSE_TIMEOUT_SECONDS)
+    base_copy_arguments = ["show", f"{merge_base.stdout.strip()}:{repository_path}"]
+    base_copy = freshness.run_git(base_copy_arguments, checkout,
+                                  timeout=REV_PARSE_TIMEOUT_SECONDS)
     if base_copy.returncode != 0:
-        return "", False
+        base_listing = freshness.run_git(
+            ["ls-tree", merge_base.stdout.strip(), "--", repository_path], checkout,
+            timeout=REV_PARSE_TIMEOUT_SECONDS)
+        if base_listing.returncode == 0 and not base_listing.stdout.strip():
+            return "", False
+        return overlap_unknown(base_copy_arguments, base_copy)
     working_copy = checkout / repository_path
     if not working_copy.is_file():
         return "", False
@@ -375,14 +558,17 @@ def overlap_line(freshness, checkout: Path, repository_path: str):
         # run_git decodes with surrogateescape; writing the same way restores bytes that are not UTF-8.
         base_path.write_text(base_copy.stdout, encoding="utf-8", errors="surrogateescape")
         main_path.write_text(main_copy.stdout, encoding="utf-8", errors="surrogateescape")
-        merged = freshness.run_git(
-            ["merge-file", "-p", "-q", str(working_copy), str(base_path), str(main_path)],
-            checkout, timeout=MERGE_FILE_TIMEOUT_SECONDS)
+        merge_file_arguments = ["merge-file", "-p", "-q", str(working_copy),
+                                str(base_path), str(main_path)]
+        merged = freshness.run_git(merge_file_arguments, checkout,
+                                   timeout=MERGE_FILE_TIMEOUT_SECONDS)
     if merged.returncode == 0:
-        return NO_OVERLAP_LINE.format(path=repository_path), False
+        return (PUSHED_NO_OVERLAP_LINE if pushed else NO_OVERLAP_LINE).format(
+            path=repository_path), False
     if 0 < merged.returncode <= MERGE_FILE_HIGHEST_CONFLICT_COUNT:
-        return OVERLAP_LINE.format(path=repository_path), False
-    return "", False
+        return (PUSHED_OVERLAP_LINE if pushed else OVERLAP_LINE).format(
+            path=repository_path), False
+    return overlap_unknown(merge_file_arguments, merged)
 
 
 def head_advice(freshness, checkout: Path, git_directory: Path, repository_path: str):
@@ -400,6 +586,8 @@ def head_advice(freshness, checkout: Path, git_directory: Path, repository_path:
             "git rev-parse exited %d" % branch_answer.returncode)
         return BRANCH_STATE_UNKNOWN_LINE.format(text=text), True, True
     branch = branch_answer.stdout.strip()
+    if branch == "main":
+        return MAIN_CHECKOUT_ADVICE, False, False
     state_key, state_text = freshness.head_state(checkout, branch)
     if state_key == "unpushed":
         return NEVER_PUSHED_ADVICE, False, False
@@ -407,12 +595,25 @@ def head_advice(freshness, checkout: Path, git_directory: Path, repository_path:
         return freshness.PUSHED_HISTORY_ADVICE, False, False
     if state_key in PUSHED_HEAD_STATE_KEYS:
         return PUSHED_ADVICE, False, False
+    if state_key == "behind-remote":
+        return BEHIND_REMOTE_ADVICE.format(branch=branch), False, False
+    if state_key == "diverged-from-remote":
+        return DIVERGED_FROM_REMOTE_ADVICE.format(branch=branch), False, False
     if state_key == "detached":
         marker = git_operation_in_progress(freshness, git_directory)
         if marker is not None:
             return GIT_OPERATION_IN_PROGRESS_LINE.format(marker=marker), True, False
-        lines = [DETACHED_HEAD_LINE]
-        verdict, verdict_reports_failure = overlap_line(freshness, checkout, repository_path)
+        holders = freshness.remote_branches_holding_own_commits(checkout)
+        if holders is None:
+            lines = [DETACHED_PUSH_STATE_UNKNOWN_LINE]
+        elif holders:
+            named = ", ".join(holders[:freshness.PUSHED_HISTORY_BRANCHES_NAMED])
+            lines = [DETACHED_PUSHED_HEAD_LINE.format(holders=named)]
+        else:
+            lines = [DETACHED_HEAD_LINE]
+        verdict, verdict_reports_failure = overlap_line(
+            freshness, checkout, repository_path, pushed=holders != [])
+        verdict_reports_failure = verdict_reports_failure or holders is None
         if verdict:
             lines.append(verdict)
         return "\n".join(lines), True, verdict_reports_failure
@@ -420,7 +621,8 @@ def head_advice(freshness, checkout: Path, git_directory: Path, repository_path:
 
 
 def obsolete_file_warning_line(repository_path: str, commit_count, advice: str,
-                               advice_on_own_lines: bool = False) -> str:
+                               advice_on_own_lines: bool = False,
+                               count_failure=None) -> str:
     """What the agent reads. Every clause of it measured."""
     if commit_count is None:
         moved = ("which origin/main has changed since this checkout's merge base "
@@ -431,6 +633,8 @@ def obsolete_file_warning_line(repository_path: str, commit_count, advice: str,
     line = (f"obsolete-file-edit-warning: you just changed {repository_path}, "
             f"{moved} and this checkout does not have, so your edit is built on an "
             f"old copy of the file.")
+    if count_failure is not None:
+        line += " " + COMMIT_COUNT_FAILED_LINE.format(failure=count_failure)
     if not advice:
         return line
     return f"{line}\n{advice}" if advice_on_own_lines else f"{line} {advice}"
@@ -448,7 +652,7 @@ def main() -> int:
     # The session's OWN view of where it works. Never $CLAUDE_PROJECT_DIR:
     # that variable lies in forked sessions, naming the main checkout while
     # settings load from the worktree — the same reason
-    # checkout-freshness-catch-up.py and .claude/hooks/instruction-file-guard.py
+    # checkout-freshness-catch-up.py and .claude/guard-hooks/instruction-file-guard.py
     # both read cwd from the payload.
     working_directory = payload.get("cwd")
     if not working_directory or not isinstance(working_directory, str):
@@ -458,7 +662,27 @@ def main() -> int:
         return 0
 
     freshness = _load_checkout_freshness_module()
+    try:
+        return warn_about_edited_file(freshness, working_directory, file_path)
+    except freshness.git_output.GitCommandFailed as failure:
+        rerun = freshness.next_step_lines.file_edit_hook_shell_command_that_runs_the_hook_on_one_file_as_claude_code_would(
+            Path(__file__).resolve(), working_directory, file_path)
+        # The shared wording comes through checkout-freshness-catch-up's copy, so a
+        # hook copied away from it fails in the one load the top-level handler reports.
+        freshness.next_step_lines.post_tool_use_hook_additional_context_print_for_agent("\n".join((
+            GIT_FAILURE_CAUSE_LINE.format(failure=failure),
+            GIT_FAILURE_AGENT_FACING_MESSAGE_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW.format(
+                path=file_path, rerun=rerun,
+                lock_file_condition=freshness.next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION,
+                wait_for_lock_file=freshness.next_step_lines
+                .lock_file_named_by_git_error_wait_then_rerun_instruction("the command below this paragraph")),
+            freshness.next_step_lines
+            .hook_agent_instruction_if_rerun_command_reports_git_failure_tell_user_both_outputs_line(
+                "obsolete-file-edit-warning-hook:"))))
+        return 0
 
+
+def warn_about_edited_file(freshness, working_directory: Path, file_path: str) -> int:
     facts = checkout_facts(freshness, working_directory)
     if facts is None:
         return 0
@@ -468,32 +692,30 @@ def main() -> int:
     if repository_path is None:
         return 0
 
-    answer = obsolete_path_set(freshness, checkout, git_directory, head_sha, main_sha)
-    # None is git failing to answer, not an empty answer: both are silence
-    # here, but only the empty answer was cached.
-    if answer is None or repository_path not in answer[0]:
+    obsolete, warned = obsolete_path_set(freshness, checkout, git_directory, head_sha, main_sha)
+    if repository_path not in obsolete:
         return 0
-    obsolete, warned = answer
 
     # Only from here on does anything cost more than a lookup: the count and
     # the head state are measured for the one file that actually warned.
     advice, advice_on_own_lines, advice_reports_failure = head_advice(
         freshness, checkout, git_directory, repository_path)
+    try:
+        commit_count, count_failure = (
+            commits_on_main_touching(freshness, checkout, repository_path), None)
+    except freshness.git_output.GitCommandFailed as failure:
+        commit_count, count_failure = None, failure
     line = obsolete_file_warning_line(
-        repository_path,
-        commits_on_main_touching(freshness, checkout, repository_path),
-        advice, advice_on_own_lines)
-    if not advice_reports_failure and warned.get(repository_path) == line:
+        repository_path, commit_count, advice, advice_on_own_lines, count_failure)
+    if (not advice_reports_failure and count_failure is None
+            and warned.get(repository_path) == line):
         return 0
     warned[repository_path] = line
     write_failure = warning_record_write(git_directory, head_sha, main_sha, obsolete, warned)
     if write_failure is not None:
         line += "\n" + RECORD_WRITE_FAILED_LINE.format(
             record=git_directory / PATH_SET_CACHE_FILE_NAME, reason=write_failure)
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PostToolUse",
-        "additionalContext": line,
-    }}, ensure_ascii=False))
+    freshness.next_step_lines.post_tool_use_hook_additional_context_print_for_agent(line)
     return 0
 
 

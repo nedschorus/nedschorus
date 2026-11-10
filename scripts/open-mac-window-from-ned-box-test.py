@@ -18,7 +18,7 @@ import tempfile
 from pathlib import Path
 
 CALLER_PATH = Path(__file__).with_name("open-mac-window-from-ned-box.py")
-FORCED_COMMAND_PATH = Path(__file__).with_name("mac-window-opened-for-ned-box-forced-command.py")
+FORCED_COMMAND_PATH = Path(__file__).with_name("mac-request-from-ned-box-forced-command.py")
 
 failures = []
 

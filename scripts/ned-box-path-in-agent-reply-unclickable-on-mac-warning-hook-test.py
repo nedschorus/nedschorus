@@ -264,7 +264,7 @@ def run_hook(stdin_text):
                           text=True, timeout=60, env=environment)
 
 
-this_machine_is_ned_box = hook.daily_memory_review_mark().this_machine_is_ned_box()
+this_machine_is_ned_box = hook.handoff_user_review_of_agent_memory_stores_mark().this_machine_is_ned_box()
 result = run_hook(json.dumps(prompt_payload(FLAGGED_REPLY)))
 check("as a subprocess, the hook notes the reply on ned-box and is silent elsewhere "
       f"(this machine is {'ned-box' if this_machine_is_ned_box else 'not ned-box'})",
@@ -285,6 +285,19 @@ check("a payload that is not JSON is a fault: stderr says the reply was not chec
 result = run_hook(json.dumps({"hook_event_name": "Stop"}))
 check("as a subprocess, a payload with nothing to check prints nothing and exits 0",
       result.returncode == 0 and result.stdout == "" and result.stderr == "",
+      (result.returncode, result.stdout, result.stderr))
+
+scratch_root = SCRATCH / "hook-without-its-home-module"
+(scratch_root / "scripts").mkdir(parents=True)
+shutil.copy(HOOK_PATH, scratch_root / "scripts" / HOOK_PATH.name)
+result = subprocess.run([sys.executable, str(scratch_root / "scripts" / HOOK_PATH.name)],
+                        input="{}", capture_output=True, text=True, timeout=60)
+reason_prefix = hook.FAULT_LINES[0].split("{reason}")[0]
+check("a shared module that will not load is a fault: FAULT_LINES on stderr, "
+      "nothing on stdout, exit 1",
+      result.returncode == 1 and result.stdout == ""
+      and result.stderr.splitlines()[0].startswith(reason_prefix)
+      and result.stderr.splitlines()[1:] == list(hook.FAULT_LINES[1:]),
       (result.returncode, result.stdout, result.stderr))
 
 try:

@@ -4,10 +4,15 @@ list the agent-facing-messages the tool call added or changed, tell the agent
 to check each against the page on writing them, and give each listed message
 its cold-read-fast-read command: the hook writes each message's text to a file
 of its own under the temporary directory, because cold-read-fast-read.py reads
-only files, and the file's name becomes the cold-read-record's name.
+only files, and the file's name becomes the cold-read-record's name. The text
+written is the message as the agent reads it, without Python's quotes, with
+each placeholder shown as <its source>, or as its value when it names a
+module-level string constant, as the collector's
+text_as_agent_reads_it_with_placeholder_stand_ins says, so the reader is not handed
+Python source.
 
 Each target file is named by the source file's repository-relative path and a
-digest of the message's text alone, in one directory under the temporary
+digest of that written text alone, in one directory under the temporary
 directory. The hook writes a target file only when it is missing, and never
 removes one, so a command reads the text its reminder listed for as long as the
 temporary directory keeps the file; a rewritten message gets a new file and a
@@ -49,6 +54,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -213,27 +219,42 @@ def first_line_of(text: str) -> str:
 
 def messages_not_at_head(entries, file_path: Path):
     """The entries whose text the file at HEAD holds in no message, each line
-    and text once; an entry with no letter in it, such as a separator joined
-    into a message with +, is no message for a fast read."""
+    and text once; an entry with no letter in its literal text, outside
+    {...} placeholders, such as a separator like "-" * 20 or report.render() + "\n", is no
+    message for a fast read."""
     texts_at_head = message_texts_at_head(file_path)
     changed, seen = [], set()
     for entry in entries:
         key = (entry["line"], entry["text"])
-        if entry["text"] in texts_at_head or key in seen or not re.search(r"[A-Za-z]", entry["text"]):
+        if entry["text"] in texts_at_head or key in seen or not re.search(r"[A-Za-z]", entry["literal_text"]):
             continue
         seen.add(key)
         changed.append(entry)
     return changed
 
 
-def fast_read_target_path(relative_path: str, text: str) -> Path:
-    """The file for one message's text; its name becomes the cold-read-record's
-    name. The text's digest keeps checkouts sharing the temporary directory, and
-    source paths sharing a slug, from reading each other's texts."""
+def fast_read_target_file_name(relative_path: str, text: str) -> str:
+    """The name of the file for one message's text; it becomes the
+    cold-read-record's name. The text's digest keeps checkouts sharing the
+    temporary directory, and source paths sharing a slug, from reading each
+    other's texts. It needs no temporary directory, so it is known even when no
+    temporary directory can be found."""
     slug = re.sub(r"[^A-Za-z0-9]+", "-", relative_path.removesuffix(".py")).strip("-")
     digest = hashlib.sha256(text.encode()).hexdigest()[:16]
+    return f"{slug}-{digest}-agent-facing-message.md"
+
+
+def fast_read_target_path(relative_path: str, text: str) -> Path:
+    """The file for one message's text. tempfile.gettempdir() raises an OSError
+    when no temporary directory is usable."""
     return (Path(tempfile.gettempdir()) / FAST_READ_TARGET_DIRECTORY_NAME
-            / f"{slug}-{digest}-agent-facing-message.md")
+            / fast_read_target_file_name(relative_path, text))
+
+
+def cold_read_fast_read_review_command_line_for_target_file(target: Path) -> str:
+    """The cold-read-fast-read command for a target file, with the path shell-quoted
+    so a temporary directory with a space or a quote in its name still runs."""
+    return FAST_READ_COMMAND.format(target=shlex.quote(str(target)))
 
 
 def fast_read_target_written(relative_path: str, text: str) -> Path:
@@ -275,7 +296,8 @@ def reminder_text_listing(tool_name, relative_path, entries, listed_count, targe
             more=len(entries) - listed_count, path=relative_path))
     if targets_error is None:
         fast_read = FAST_READ_MESSAGE_TEMPLATE.format(commands="\n".join(
-            "  " + FAST_READ_COMMAND.format(target=targets[entry["text"]])
+            "  " + cold_read_fast_read_review_command_line_for_target_file(
+                targets[entry["text_as_agent_reads_it_with_placeholder_stand_ins"]])
             for entry in listed))
     else:
         fast_read = FAST_READ_FILES_NOT_WRITTEN_TEMPLATE.format(reason=targets_error)
@@ -312,8 +334,8 @@ def inspection_text(payload, relative_path: str):
     if not listed:
         return None
     try:
-        targets = {entry["text"]: fast_read_target_written(relative_path, entry["text"])
-                   for entry in listed}
+        targets = {entry["text_as_agent_reads_it_with_placeholder_stand_ins"]: fast_read_target_written(
+                       relative_path, entry["text_as_agent_reads_it_with_placeholder_stand_ins"]) for entry in listed}
         targets_error = None
     except OSError as error:
         targets, targets_error = {}, f"{type(error).__name__}: {error}"[:REASON_CHARACTER_LIMIT]

@@ -16,6 +16,7 @@ import importlib.util
 import json
 import os
 import resource
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -102,14 +103,24 @@ FAST_READ_COMMAND_PREFIX = "  python3 nc-systems/cold-read/cold-read-fast-read.p
 
 
 def fast_read_targets(text):
-    """The --target files of the cold-read-fast-read commands a reminder gives."""
-    return [Path(line[len(FAST_READ_COMMAND_PREFIX):]) for line in text.split("\n")
-            if line.startswith(FAST_READ_COMMAND_PREFIX)]
+    """The --target files of the cold-read-fast-read commands a reminder gives, each
+    read as a shell reads it, so a target the hook did not quote fails its case."""
+    targets = []
+    for line in text.split("\n"):
+        if line.startswith(FAST_READ_COMMAND_PREFIX):
+            try:
+                words = shlex.split(line)
+            except ValueError:
+                words = []  # An unquoted target can leave a quote unclosed.
+            targets.append(Path(words[-1]) if len(words) == 4 else None)
+    return targets
 
 
 def file_text(path):
-    """The file's text, or None when the file is missing, so a removed target
-    fails its case instead of stopping the run."""
+    """The file's text, or None when the file is missing or fast_read_targets()
+    could not read a target, so either fails its case instead of stopping the run."""
+    if path is None:
+        return None
     try:
         return path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -166,7 +177,9 @@ REMINDER_INSTRUCTION_LINES = (
 )
 
 with tempfile.TemporaryDirectory() as temporary:
-    hook_temporary_directory = Path(temporary) / "hook-tmp"
+    # A space, an apostrophe, a dollar sign, a backtick and a double quote in the temporary directory's
+    # name: each command must shell-quote its target, and double quotes would leave $, ` and " live.
+    hook_temporary_directory = Path(temporary) / "hook tmp's $HOME `id` \"q\""
     hook_temporary_directory.mkdir()
     repository = Path(temporary) / "repository"
     repository.mkdir()
@@ -229,7 +242,9 @@ with tempfile.TemporaryDirectory() as temporary:
           and file_text(first_targets[0]) == "second, reworded\n", first_targets)
 
     reset()
-    existing_target = targets[0] if targets else Path(temporary) / "none"
+    existing_target = targets[0] if targets and targets[0] is not None else Path(temporary) / "none"
+    if not existing_target.parent.is_dir():
+        existing_target = Path(temporary) / "none"  # A misquoted target names no real directory; the case then fails.
     existing_target.write_text("left by an earlier run\n", encoding="utf-8")
     edit_then_run(repository, program, COMMITTED_SOURCE, '"first message to the agent"',
                   '"first message, reworded"')
@@ -375,6 +390,23 @@ with tempfile.TemporaryDirectory() as temporary:
           "scripts/brand-new-tool.py:1  hello agent" in text
           and "scripts/brand-new-tool.py:2  stopped: the reason" in text, result)
 
+    rendered_program = repository / "scripts" / "rendered-tool.py"
+    targets = fast_read_targets(agent_text(write_then_run(
+        repository, rendered_program,
+        'NOTHING_CHANGED_LINE = "Nothing was changed."\n'
+        'def refuse(branch):\n'
+        '    raise SystemExit(f"Not on {branch}. {NOTHING_CHANGED_LINE}\\n" + "Run git switch " + branch)\n')))
+    check("a message's file holds the text the agent reads: no f-string quote or prefix, a module constant's "
+          "value, and <source> for any other value",
+          [file_text(target) for target in targets]
+          == ["Nothing was changed.\n", "Not on <branch>. Nothing was changed.\nRun git switch <branch>\n"], targets)
+
+    targets = fast_read_targets(agent_text(write_then_run(
+        repository, repository / "scripts" / "same-text-tool.py",
+        'print("Hello " + name)\nprint("Hello {name}")\n')))
+    check("two messages with the same text that the agent reads differently each get the file of their own text",
+          sorted(file_text(target) for target in targets) == ["Hello <name>\n", "Hello {name}\n"], targets)
+
     result = write_then_run(repository, program,
                             COMMITTED_SOURCE.replace("second message to the agent", "second, reworded"))
     text = agent_text(result)
@@ -429,10 +461,18 @@ with tempfile.TemporaryDirectory() as temporary:
           and "Before you write or change an agent-facing-message from now on" in text, len(text))
 
     result = write_then_run(repository, repository / "scripts" / "joined.py",
-                            'print("stopped: " + NAME + ".")\nprint("" + NAME)\n')
+                            'print("stopped: " + NAME + ".")\nprint("-" * 20)\n')
     text = agent_text(result)
-    check("a string with no letter in it, such as a separator joined with +, is not listed",
-          "scripts/joined.py:1  stopped:" in text and "scripts/joined.py:1  ." not in text
+    check("a + chain is listed as one message, and a string with no letter in it, such as a separator, is not listed",
+          "scripts/joined.py:1  stopped: {NAME}." in text and "scripts/joined.py:2" not in text
+          and "changed 1 " in text, text)
+
+    result = write_then_run(repository, repository / "scripts" / "rendered.py",
+                            'print(report.render() + "\\n")\nprint("Failed: " + name)\n')
+    text = agent_text(result)
+    check("a + chain whose literal text has no letter, such as report.render() + newline, is not listed, "
+          "while a chain with literal words is",
+          "scripts/rendered.py:1" not in text and "scripts/rendered.py:2  Failed: {name}" in text
           and "changed 1 " in text, text)
 
     reset()

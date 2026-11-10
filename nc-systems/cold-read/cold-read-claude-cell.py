@@ -9,9 +9,15 @@ contract, the write-detection rule, and why the reviewer writes a file rather
 than answering in chat.
 
 Usage:
-  nc-systems/cold-read/cold-read-claude-cell.py --cell restate --tier second \\
+  nc-systems/cold-read/cold-read-claude-cell.py --cell defect-hunt --tier second-strongest-model \\
       --target docs/drafts/foo.md \\
-      --report cold-read-records/foo-2026-01-01/claude-restate-second.md
+      --report cold-read-records/foo-2026-01-01/claude-defect-hunt-second-strongest-model.md
+
+The cold-read-tier `second-strongest-model` asks for the agent-binary's
+second-strongest model. The cold-read-tier `fast` runs Claude Sonnet at low
+effort.
+nc-systems/cold-read/cold-read-fast-read.py runs this tier as its backup when
+the Gemini cold-read-cell fails.
 
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.
@@ -33,8 +39,8 @@ it up with no change here.
 """
 
 import importlib.util
-import json
 import pathlib
+import re
 import sys
 
 _common_spec = importlib.util.spec_from_file_location(
@@ -42,26 +48,35 @@ _common_spec = importlib.util.spec_from_file_location(
 )
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
+_command_line_prefix_spec = importlib.util.spec_from_file_location(
+    "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+    pathlib.Path(__file__).resolve().parent.parent / "general-tools"
+    / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
+_command_line_prefix_spec.loader.exec_module(command_line_prefix)
 
 PROGRAM = "cold-read-claude-cell"
 
-# No fallback: each tier must use its pinned model rather than silently substitute a weaker reviewer.
+# No fallback within a tier: each tier must use its pinned model rather than silently substitute a weaker reviewer.
+# The fast tier is no such substitute: the fast read runs it only after its Gemini cell fails, and says so.
 TIER_TO_CLAUDE_MODEL_CHAIN = {
     "deep": ("claude-opus-5-5",),
-    "second": ("claude-fable-5-1",),
+    "second-strongest-model": ("claude-fable-5-1",),
+    "fast": ("claude-sonnet-5-5",),
 }
 
 # Pin effort so results do not depend on the machine's default.
 TIER_TO_REASONING_EFFORT = {
     "deep": "xhigh",
-    "second": "max",
+    "second-strongest-model": "max",
+    "fast": "low",
 }
 
 # Write is needed for the report; WebFetch lets the reviewer inspect linked pages.
 ALLOWED_TOOLS = "Read,Grep,Glob,Write,WebFetch"
 
-# --allowedTools adds permissions under auto mode; explicitly deny both Bash and Monitor
-# to remove shell access, including access to keychain credentials.
+# --allowedTools adds to the user's own allow rules, which may allow some Bash commands; explicitly
+# deny both Bash and Monitor to remove shell access, including access to keychain credentials.
 DISALLOWED_TOOLS = "Bash,Monitor"
 
 # Disable hooks without disabling CLAUDE.md: hooks can block reports or rebase the reviewed checkout.
@@ -72,22 +87,22 @@ CREDENTIAL_READ_DENY_RULES = (
     + [f"Read(//**/{pattern})" for pattern in common.CREDENTIAL_FILE_NAME_PATTERNS]
     + [f"Read(/{path})" for path in common.reviewer_program_login_files()]
 )
-SETTINGS = json.dumps({"disableAllHooks": True,
-                       "permissions": {"deny": CREDENTIAL_READ_DENY_RULES}})
+SETTINGS = {"disableAllHooks": True, "permissions": {"deny": CREDENTIAL_READ_DENY_RULES}}
 
 
 def invocation_builder(effort: str):
     """Return a callback yielding model argv and prompt input for the shared runner."""
     # Pass the prompt on stdin: variadic --allowedTools can swallow a trailing positional argument.
     def build_invocation(model: str, prompt: str):
+        # dontAsk: a tool call ALLOWED_TOOLS does not allow is refused, with no one to ask.
         command = [
-            "claude", "-p",
+            *command_line_prefix.claude_code_headless_run_command_line_prefix_build(
+                "dontAsk", caller_claude_code_session_settings=SETTINGS),
             "--model", model,
             "--effort", effort,
             "--output-format", "text",
             "--allowedTools", ALLOWED_TOOLS,
             "--disallowedTools", DISALLOWED_TOOLS,
-            "--settings", SETTINGS,
         ]
         return command, prompt
     return build_invocation
@@ -104,8 +119,8 @@ def recognised_failure_texts_for_model(model: str) -> list:
     family = model_family_name(model)
     return [
         common.RecognisedFailureText(
-            "account-limit", "You've hit your session limit",
-            common.DETAIL_IS_REST_OF_LINE),
+            "account-limit", "You've hit your ", common.DETAIL_IS_REST_OF_LINE,
+            re.compile(r"(?:\S+ ){0,3}limit\b")),
         common.RecognisedFailureText(
             "model-limit", f"You've reached your {family} limit", family),
         common.RecognisedFailureText(

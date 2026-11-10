@@ -1,0 +1,30 @@
+---
+name: find-info
+description: 'Use to find a stored file, record, transcript or walk-minutes file, or a past discussion, decision or approval. Use it also before saying any of these is missing, gone, or was never discussed or decided, and before asking the user to decide something he may already have decided. Runs scripts/locate-file-copies-across-machines.py for a file and scripts/log-store-past-discussions-regex-search-newest-first.py for a discussion.'
+---
+
+# Find info
+
+What agents call missing or undecided is usually somewhere they did not look: another checkout, the other machine, the log-store, an agent-session transcript, git history or a backup. Run each command below from the root of a checkout of this repository, on either machine.
+
+## A file
+
+1. Run `python3 scripts/locate-file-copies-across-machines.py '<name or path>'`. The locator, as this skill calls the program, searches both machines when run on the Mac, but only ned-box when run there. It counts as found only a file with the same name or path, listed under "Same name" or "Same path"; a file whose name only contains what you gave is listed under "Candidates only, not counted as found", so part of a name, such as `reusable-components`, finds a file whose full name you do not know. When it counts nothing as found, it runs the backup search, `scripts/find-deleted-path-across-backups.py`, which matches only a whole name or the end of a path.
+2. Read all of the output, and do what it says to check and report, with one exception: on ned-box, an instruction to run the locator on the Mac means telling the user the Mac was not searched. The backup search copies each version it finds into `~/Downloads/nedschorus-found-copies/`, and prints where; open those copies, and restore a file to its own path only when asked to.
+3. Before you rely on a listed file, open it and check that it is the file you were asked for; a transcript is often listed only because the name was typed in it. A listed file you cannot open is unchecked: neither found nor ruled out.
+4. If the locator listed files under "Same name" or "Same path" and none you could open is the one you were asked for, the backup search did not run: run `python3 scripts/find-deleted-path-across-backups.py '<name or path>'` yourself, and read its output as steps 2 and 3 say. If a candidate gives you the full name or path, run both programs again with it.
+
+## A discussion or decision
+
+5. Run `python3 scripts/log-store-past-discussions-regex-search-newest-first.py '<pattern>'`, the log-store search, as this skill calls it; from the Mac it runs on ned-box by itself. The pattern is a regular expression, matched case-insensitively, of words the discussion would have used, such as `maintenance (agent-)?seats?`, not a whole sentence; one that opens with a dash goes after `--`. To narrow it, `--kind` takes `walk` (walk-documents and walk-minutes), `cold-read-records`, `analysis`, `session-dialogs` or `user-messages` (the user's typed messages), repeated for several; `--since YYYY-MM-DD` and `--until YYYY-MM-DD` bound the date; `--seat <part of an agent-seat's name>`, `--machine mac` or `--machine ned-box` keeps those sessions and drops every kind but `session-dialogs` and `user-messages`. It shows 30 hits, and its closing line gives the `--skip` command for the next ones; a closing line saying older transcripts were not read ends a complete page.
+6. Hits come newest first, but a session-dialogs hit is dated by the session's last activity, so date a decision from the turn itself; page further only when no hit shown is relevant. Open each relevant hit's file and read on from the hit to where the discussion ends: the decision often comes a few turns later. When a hit names the file you were asked for, run step 1 with that name.
+
+## An approval
+
+7. The user's answer is usually just "y", so search for the subject of the question he answered: run `python3 scripts/locate-user-approval-by-question-subject.py` with one to three words naming that subject, and follow the instructions it prints. If it finds nothing, run step 5 with the same words. Finding no `.walk-approved` marker proves nothing: the instruction-file guard uses one up when it allows the call.
+
+## What to say
+
+8. If you found it, say where, citing a log-store file as `nedlern@ned-box:<path>` with the full path the hit shows. List each whole file on the subject, such as a design, first, then the passages found in transcripts and other files; give each hit its source, its date and, where it has one, who said it; and list the hits within each of those two groups newest first. A decision of the user's counts wherever he made it, but read it as narrowly as he said it: it covers the situation it answered, as things stood then. Use the newest one that bears on your question. Build on it only when your case is the one it answered; otherwise show it to him with its date and citation, say what has changed or is unclear, and ask. His new answer is then the newest ruling, found the same way next time.
+9. A search that failed is not a search that found nothing. Report each place a program says it did not search: a line opening `FAILED` from the log-store search, "NOT searched, or searched only in part:" from the locator or the approval search, "Could NOT search:" or UNAVAILABLE from the backup search. Quote any error, remedy included. A report missing its summary line did not finish: the locator's "Took N s.", the backup search's line opening "Recoverable from:" or "No surface that could be searched has it.", and the log-store search's line opening "Hits" or "No hits shown".
+10. If nothing is found, never say the thing does not exist or was never discussed: say it was not found in the places you name, with the names or patterns you gave, and which listed files you ruled out or could not open. Then ask the user whether to search wider, and suggest where: other words, an older date range, or a place no program here searches. If you searched before asking the user to decide something, ask that too. A claim you checked directly and state with its scope, such as "not on main", needs no search.

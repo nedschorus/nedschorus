@@ -52,6 +52,12 @@ _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
 git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
 _git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
 GIT_REDIRECTING_ENVIRONMENT_VARIABLES = git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
+_ned_box_home_spec = importlib.util.spec_from_file_location(
+    "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+    SCRIPTS_DIR.parent / "nc-systems" / "general-tools"
+    / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+ned_box_home_path_constants = importlib.util.module_from_spec(_ned_box_home_spec)
+_ned_box_home_spec.loader.exec_module(ned_box_home_path_constants)
 
 STAND_IN_SSH = """#!/usr/bin/env python3
 import json, os, subprocess, sys, time
@@ -95,17 +101,19 @@ parser.add_argument("path")
 parser.add_argument("--skip", action="append", default=[])
 arguments = parser.parse_args()
 mode = os.environ.get("FAKE_BACKUP_SEARCH_MODE", "not-found")
-print("Searching every history this fleet keeps for: " + arguments.path)
+print("Searching every history the Mac and ned-box keep for: " + arguments.path)
 print(flush=True)
 if mode == "killed":
     os.kill(os.getpid(), signal.SIGKILL)
 if mode == "raises":
     raise RuntimeError("stand-in backup search failed")
-if mode == "found":
+if mode in ("found", "found-some-unsearched"):
     print("log-store       FOUND")
     print("    copied to /scratch/found/logstore-x")
     print()
     print("Recoverable from: log-store.")
+    if mode == "found-some-unsearched":
+        print("Could NOT search: local snapshots -- see each one's line above.")
     sys.exit(0)
 if mode in ("copy-command-printed", "copy-command-printed-some-unsearched"):
     print("time machine    FOUND")
@@ -115,11 +123,13 @@ if mode in ("copy-command-printed", "copy-command-printed-some-unsearched"):
     if mode == "copy-command-printed-some-unsearched":
         print("Could NOT search: local snapshots -- see each one's line above.")
     sys.exit(5)
-if mode == "not-copied":
+if mode in ("not-copied", "not-copied-some-unsearched"):
     print("log-store       FOUND")
     print("    could NOT copy x — ssh exited 255: refused")
     print()
     print("Recoverable from: log-store.")
+    if mode == "not-copied-some-unsearched":
+        print("Could NOT search: local snapshots -- see each one's line above.")
     sys.exit(4)
 if mode == "incomplete":
     print("time machine    UNAVAILABLE")
@@ -169,6 +179,12 @@ program = load_program("locate_file_copies_under_test")
 check("the program's list of variables that redirect git is the shared module's",
       tuple(program.GIT_REDIRECTING_ENVIRONMENT_VARIABLES) == GIT_REDIRECTING_ENVIRONMENT_VARIABLES,
       (program.GIT_REDIRECTING_ENVIRONMENT_VARIABLES, GIT_REDIRECTING_ENVIRONMENT_VARIABLES))
+# It keeps its own copy of ned-box's home and the Mac's mount of it for the same reason.
+check("the program's spelling of ned-box's home on the Mac is the shared module's",
+      program.NED_BOX_SURFACES["spellings"]
+      == [[ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME, ned_box_home_path_constants.NED_BOX_HOME]]
+      and program.KNOWN_HOST_HOMES[program.NED_BOX_HOSTNAME] == ned_box_home_path_constants.NED_BOX_HOME,
+      (program.NED_BOX_SURFACES["spellings"], program.KNOWN_HOST_HOMES))
 _saved_redirecting = {name: os.environ.get(name) for name in GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
 try:
     for _name in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:
@@ -449,7 +465,7 @@ with scratch() as directory:
 with scratch() as directory:
     base = pathlib.Path(directory)
     make_stand_in_bin(base)
-    mirror = base / "box/logs/transcripts"
+    mirror = base / "box/logs/agent-session-files-by-machine"
     write(mirror / "mac/seat-briefs/some-seat/CLAUDE.local.md", "brief")
     write(mirror / "ned-box/tasks/nedschorus-some-seat-tasks/41.json", "task")
     write(mirror / "mac/CLAUDE.md", "global instructions")
@@ -600,7 +616,7 @@ with scratch() as directory:
                "/")], runs)
     order = [stdout.find(marker) for marker in (
         "\nTook ", "do not say the file does not exist", BACKUP_SEARCH_HEADER,
-        "Searching every history this fleet keeps for: nothing-anywhere.md",
+        "Searching every history the Mac and ned-box keep for: nothing-anywhere.md",
         "No surface that could be searched has it.")]
     check("the backup search's output follows this program's whole answer, "
           "closing lines included, and ends with its summary line",
@@ -670,7 +686,7 @@ with scratch() as directory:
           "the path and finishes",
           code == 1 and [one["argv"] for one in runs]
           == [[*skips, "-dash-led-never-anywhere.md"]]
-          and "Searching every history this fleet keeps for: "
+          and "Searching every history the Mac and ned-box keep for: "
               "-dash-led-never-anywhere.md" in output
           and "No surface that could be searched has it." in output
           and "did not finish" not in output, (runs, output))
@@ -715,6 +731,15 @@ with scratch() as directory:
           code == 1 and output.rstrip().splitlines()[-1].startswith(
               "It also could NOT search some places: tell the user which")
           and "The backup search found it but copied nothing yet" in output, output)
+    for unsearched_mode, exit_line in (
+            ("found-some-unsearched", "The backup search found it: open the copies"),
+            ("not-copied-some-unsearched", "The backup search found it but copied no version")):
+        code, output, runs = handed("never-anywhere.md", backup_mode=unsearched_mode)
+        check("when the backup search exits %s and could not search some "
+              "places, the last line also says to tell the user which" % unsearched_mode,
+              code == 1 and output.rstrip().splitlines()[-1].startswith(
+                  "It also could NOT search some places: tell the user which")
+              and exit_line in output, output)
     code, output, runs = handed("never-anywhere.md", backup_mode="incomplete")
     check("when the backup search could not search a place, the last line "
           "says to tell the user which, and why",
@@ -793,7 +818,9 @@ with scratch() as directory:
                         "answer"),
             ("remote-fails", "the search there exited 127: python3: command "
                              "not found")):
-        plan = make_plan(base, timeout_seconds=1)
+        # Only the hanging stand-in ssh is meant to reach the timeout; the others
+        # fail at once, but a loaded machine can take over 1 s just to start them.
+        plan = make_plan(base, timeout_seconds=1) if mode == "hang" else make_plan(base)
         code, stdout, stderr = run(base, "absent-everywhere.md", mode, plan)
         check(f"ned-box {mode}: nothing found exits 3, not 1",
               code == 3, stdout + stderr)
@@ -882,6 +909,21 @@ check("the production plan searches ned-box's scratch worktrees, "
       len(box_checkouts) == 2
       and all("/tmp/claude-1000" in roots for roots in box_checkouts),
       box_checkouts)
+supervisor_temp_parent = re.search(
+    r'^NED_BOX_CLAUDE_CODE_TMPDIR = "([^"]+)"$',
+    (pathlib.Path(__file__).resolve().parents[1] / "nc-systems" / "handoff"
+     / "handoff-supervisor.py").read_text(encoding="utf-8"), re.M).group(1)
+check("the production plan searches ned-box's temp folders under the "
+      "handoff-supervisor's CLAUDE_CODE_TMPDIR as well as under /tmp, and "
+      "places a scratch path under either",
+      len(box_checkouts) == 2
+      and all(supervisor_temp_parent + "/claude-1000" in roots
+              for roots in box_checkouts)
+      and program.place_in_this_repository(
+          supervisor_temp_parent + "/claude-1000/-p/s/scratchpad/a.md",
+          [program.NED_BOX_SURFACES["this_repository"]])
+      == ("scratch", ["claude-1000", "-p", "s", "scratchpad", "a.md"]),
+      (supervisor_temp_parent, box_checkouts))
 check("the production log-store surface searches the whole log-store, the "
       "transcript mirror included",
       log_store == [{"name": "log-store",
@@ -926,10 +968,10 @@ with scratch() as directory:
     check("a cut list tells the agent to narrow the name",
           "run again with more of the name" in stdout, stdout)
 
-# --- The git surface: a file added and deleted on a merged topic branch --------
+# --- The git surface: a file added and deleted on a merged nc-topic-branch --------
 # Every pull request reaches main as a merge commit. With a pathspec and no
 # --full-history, git log follows a merge's first parent alone when the path
-# is the same there, so a file that lived only on the topic branch is never
+# is the same there, so a file that lived only on the nc-topic-branch is never
 # reached once the branch and its worktree's reflog are gone.
 with scratch() as directory:
     base = pathlib.Path(directory)
@@ -959,7 +1001,7 @@ with scratch() as directory:
           "branch's commits, and with it does",
           simplified == "" and removal in full.split(), (simplified, full))
     code, stdout, stderr = run(base, "side-branch-draft.md")
-    check("a file that lived only on a merged topic branch is found at its "
+    check("a file that lived only on a merged nc-topic-branch is found at its "
           "deleting commit",
           code == 0
           and f'commit {removal[:12]} ("Remove the side-branch draft")' in stdout

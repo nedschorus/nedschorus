@@ -615,6 +615,31 @@ def run_cases_on_ned_box(workspace: Path):
           and PASSING_SUMMARY_LINE not in record_lines,
           f"{fixture.record_files()} {fixture.test_log('ned-box')!r}")
     record_of_the_failing_run = record
+    read_back = program.pull_request_head_test_run_test_log_split_into_records(fixture.test_log("ned-box"))
+    check("pull_request_head_test_run_test_log_split_into_records reads back both records, each with its start, "
+          "and says the passing one passed on the head and the failing one did not",
+          [started for started, _ in read_back] == ["2026-10-01T03:30:00Z"] * 2
+          and ["\n".join(lines) + "\n" for _, lines in read_back]
+          == [record_of_the_passing_run, record_of_the_failing_run]
+          and program.pull_request_head_test_run_record_passed_on_commit_check(read_back[0][1], fixture.head)
+          and not program.pull_request_head_test_run_record_passed_on_commit_check(read_back[0][1], fixture.merge_base)
+          and not program.pull_request_head_test_run_record_passed_on_commit_check(read_back[1][1], fixture.head),
+          repr(read_back))
+    zero_line_record = re.sub(r"a record of \d+ lines", "a record of 0 lines",
+                              record_of_the_passing_run, count=1)
+    torn_inside_the_next_first_line = (record_of_the_passing_run
+                                       + record_of_the_failing_run.split("\n", 1)[0][:40])
+    for text in ("", record_of_the_passing_run[:-1],
+                 record_of_the_passing_run.rsplit("\n", 2)[0] + "\n",
+                 "a line that begins no record\n", zero_line_record,
+                 torn_inside_the_next_first_line):
+        try:
+            program.pull_request_head_test_run_test_log_split_into_records(text)
+            raised = False
+        except program.PullRequestHeadTestRunTestLogNotWholeRecordsError:
+            raised = True
+        check(f"pull_request_head_test_run_test_log_split_into_records refuses a test log that is not whole "
+              f"records: {text[-40:]!r}", raised)
 
     # --- The two ways a later run used to replace an earlier result ---------------
     # A run told to select from the head itself selects no suite and passes.
@@ -1145,9 +1170,10 @@ def run_cases_on_ned_box(workspace: Path):
     record_lines = (fixture.record("ned-box", fixture.commit_of_main) or "").splitlines()
     check("with no --since and no merge base the runner is not run, and the program exits 4",
           result.code == 4 and result.runner_calls == [], repr(result))
+    # new_records holds the record of the stderr-closed run above, which is under mac/ on the Mac.
     check("that failed step is written to the record of that checkout's head, beside the "
           "other head's record",
-          fixture.record_files() == sorted([record_path, other_record_path])
+          fixture.record_files() == sorted({record_path, other_record_path, *new_records})
           and any(line.startswith(f"not run — git finds no merge base of "
                                   f"{fixture.commit_of_main} and refs/remotes/origin/main in "
                                   f"{cut_off}: ") for line in record_lines)

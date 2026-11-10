@@ -11,6 +11,7 @@ Prints one line per case and exits non-zero if any case fails.
 
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -118,9 +119,45 @@ with tempfile.TemporaryDirectory(prefix="edited-file-path-within-checkout-root-a
     check("an ignored file comes back as None",
           checks.file_lines_at_head_unless_git_ignores_file(checkout, "ignored/scratch.md") is None)
     message = raised(checks.file_lines_at_head_unless_git_ignores_file, broken_checkout, "notes.md")
-    check("a git that cannot say whether the file is ignored raises GitCommandFailed",
-          message is not None and "git check-ignore -q -- notes.md in" in message
+    check("a git that cannot read HEAD raises GitCommandFailed, not 'new at HEAD'",
+          message is not None and "git show HEAD:notes.md in" in message
           and "failed (exit 128" in message, message)
+
+    no_commit_checkout = scratch / "checkout-with-no-commit"
+    no_commit_checkout.mkdir()
+    git(no_commit_checkout, "init", "-q")
+    (no_commit_checkout / "first.md").write_text("first\n", encoding="utf-8")
+    check("a file in a checkout with no commit yet comes back as an empty set",
+          checks.file_lines_at_head_unless_git_ignores_file(no_commit_checkout, "first.md") == set())
+
+    def git_failing_when(name, condition):
+        """A directory holding a `git` that, when the shell test condition holds,
+        prints "fatal: shimmed <name>" and exits 128, and otherwise runs the real git."""
+        directory = scratch / name
+        directory.mkdir()
+        (directory / "git").write_text(
+            "#!/bin/sh\n"
+            f"if {condition}; then\n"
+            f'  printf "fatal: shimmed {name}\\n" >&2\n'
+            "  exit 128\n"
+            "fi\n"
+            f'exec "{shutil.which("git")}" "$@"\n', encoding="utf-8")
+        (directory / "git").chmod(0o755)
+        return directory
+
+    for case_name, shim_name, condition in (
+            ("a git show that fails on a file HEAD has", "show-failing-git", '[ "$1" = "show" ]'),
+            ("a git show and git ls-tree that both fail", "show-and-ls-tree-failing-git",
+             '[ "$1" = "show" ] || [ "$1" = "ls-tree" ]')):
+        os.environ["PATH"] = f"{git_failing_when(shim_name, condition)}{os.pathsep}{original_path}"
+        try:
+            message = raised(checks.file_lines_at_head_unless_git_ignores_file, checkout,
+                             "docs/committed.md")
+        finally:
+            os.environ["PATH"] = original_path
+        check(f"{case_name} raises GitCommandFailed with git show's error, not 'new at HEAD'",
+              message is not None and "git show HEAD:docs/committed.md in" in message
+              and f"exit 128: fatal: shimmed {shim_name}" in message, message)
 
     os.environ["PATH"] = str(scratch / "empty-path-directory")
     try:

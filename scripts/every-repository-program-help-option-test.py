@@ -9,8 +9,8 @@ moment it is committed:
 
 It leaves out the files no person or agent runs by hand, by kind:
 
-  - test suites, `*-test.py` and `*-test.sh`, which run-all-test-suites.py runs;
-  - Claude Code hooks, `*-hook.py` and everything under `.claude/hooks/`,
+  - nc-test-suites, `*-test.py` and `*-test.sh`, which run-all-test-suites.py runs;
+  - Claude Code hooks, `*-hook.py` or `*-hook-nbd.py` and everything under `.claude/guard-hooks/`,
     which Claude Code runs with a JSON payload on stdin;
   - git hooks, everything under `scripts/git-client-side-hooks/`, which git runs;
 
@@ -52,11 +52,21 @@ STUBBED_COMMANDS = ("claude", "codex", "agy", "gemini", "ssh", "scp", "rsync", "
                     "osascript", "open", "tmux", "launchctl", "crontab")
 STUB_CALLS_FILE_NAME = "stubbed-command-calls.log"
 
+
+
+def path_without_nice_but_dirty_suffix(path):
+    """The path with an -nbd suffix just before its extension dropped, so that the name an -nbd
+    file keeps still says its kind."""
+    stem, dot, extension = path.rpartition(".")
+    return f"{stem[:-len('-nbd')]}{dot}{extension}" if dot and stem.endswith("-nbd") else path
+
+
 EXCLUDED_KINDS = (
-    ("a test suite, run by run-all-test-suites.py",
+    ("an nc-test-suite, run by run-all-test-suites.py",
      lambda path: path.endswith(("-test.py", "-test.sh"))),
     ("a Claude Code hook, run by Claude Code with a JSON payload on stdin",
-     lambda path: path.endswith("-hook.py") or path.startswith(".claude/hooks/")),
+     lambda path: path_without_nice_but_dirty_suffix(path).endswith("-hook.py")
+     or path.startswith(".claude/guard-hooks/")),
     ("a git hook, run by git",
      lambda path: path.startswith("scripts/git-client-side-hooks/")),
 )
@@ -68,10 +78,9 @@ EXEMPT_PROGRAMS = {
     "scripts/git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py":
         "run only by the git pre-push hook scripts/git-client-side-hooks/pre-push, "
         "which hands it git's arguments and the refs being pushed on stdin",
-    "scripts/git-client-side-hooks-pre-push-selective-test-run.py":
-        "run only by the git pre-push hook scripts/git-client-side-hooks/pre-push, with no "
-        "arguments and nothing on stdin; it ignores its arguments, so --help would start a "
-        "selective test run",
+    "scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py":
+        "run only by the git pre-push hook scripts/git-client-side-hooks/pre-push, "
+        "which hands it git's arguments and the refs being pushed on stdin",
 }
 
 failures = []
@@ -196,6 +205,12 @@ def check_the_checker_reports_each_failure():
 
 def main():
     check_the_checker_reports_each_failure()
+    check("a hook renamed with the -nbd suffix is still left out as a hook",
+          excluded_kind("scripts/x-reminder-hook-nbd.py") == EXCLUDED_KINDS[1][0]
+          and excluded_kind("scripts/x-reminder-nbd.py") is None
+          and excluded_kind("scripts/x-nbd-hook.sh") is None,
+          [excluded_kind(path) for path in ("scripts/x-reminder-hook-nbd.py",
+                                            "scripts/x-reminder-nbd.py", "scripts/x-nbd-hook.sh")])
 
     programs = all_programs()
     check("the search finds programs", len(programs) > 0, "no program found")

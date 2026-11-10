@@ -81,7 +81,7 @@ it -- which is the correct refusal: nothing should judge anything until
 the user has read what the judge is told to do. The file's home once
 he has walked it is .claude/skills/cold-read/prompts/restater-judge.md,
 beside every other cold-read-cell's prompt, and .claude/ changes only
-through that walk (.claude/hooks/instruction-file-guard.py, user-walked
+through that walk (.claude/guard-hooks/instruction-file-guard.py, user-walked
 2026-08-07, nedschorus#45). This is not the cold-read-fast-read's ruling
 (nc-systems/cold-read/cold-read-fast-read.py holds its prompt in the file because the user
 ruled that for the fast cold-read-cell).
@@ -161,14 +161,14 @@ def build_judge_argument_parser():
     parser.add_argument(
         "--restater", required=True, metavar="CLASS",
         help="the restater class under judgment, named as the roster names "
-             "its models (gemini-3.8-flash-low, gpt-6-sol, claude-opus-5); "
+             "its models (gemini-3.8-flash-low, gpt-6.1-sol, claude-opus-5); "
              "lowercase letters and digits joined by single hyphens or dots",
     )
     parser.add_argument(
         "--case", required=True, action="append", nargs=4,
         metavar=("DRAFT", "PERFECT", "DEFECT_LIST", "RESTATEMENT"),
         help="one document's four files, in that order, each relative to the "
-             "repository root or absolute. Repeat once per document; the "
+             "current directory or absolute. Repeat once per document; the "
              "ruled campaign passes three. The cases are numbered in the "
              "order given, and the judge reports against those numbers",
     )
@@ -191,7 +191,7 @@ def build_judge_argument_parser():
         "--prompt-file", required=True, metavar="PATH",
         help="the file holding the judge's instructions, with "
              "{RESTATER_CLASS}, {CASES_BLOCK} and {REPORT_PATH} substituted "
-             "into it; relative to the repository root unless absolute. "
+             "into it; relative to the current directory unless absolute. "
              "Required: this program carries no prompt of its own, because "
              "the judge's instructions are prose the user reads before they "
              "land, not code that rides in on a pull request. The stamp "
@@ -223,9 +223,7 @@ def resolve_judge_prompt_file(path_argument: str) -> pathlib.Path:
 
 def resolve_case_file(case_number: int, role: str, path_argument: str) -> pathlib.Path:
     """Resolve a case path, reporting its case number and role on failure."""
-    path = pathlib.Path(path_argument)
-    if not path.is_absolute():
-        path = common.REPO_ROOT / path
+    path = pathlib.Path(path_argument).resolve()
     if not path.is_file():
         raise common.CellRefusal(
             f"case {case_number}: {role} not found: {path}")
@@ -313,6 +311,7 @@ def main() -> int:
         common.report_stray_writes(PROGRAM, baseline, report)
         return refusal.exit_code
 
+    common.record_directory_being_written_lock_hold_shared_until_exit_unless_parent_passed_descriptor(report.parent)
     uniform_effort = args.effort or JUDGE_MODEL_TO_REASONING_EFFORT[chain[0]]
     target_argument = ",".join(
         case_argument[JUDGED_ROLE_INDEX] for case_argument in args.case)

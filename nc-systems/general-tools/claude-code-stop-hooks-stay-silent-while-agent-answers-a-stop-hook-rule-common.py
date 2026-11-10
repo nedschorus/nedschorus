@@ -51,3 +51,4 @@ check still reports it.
 def stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
     """True when this Stop ends the agent's answer to a Stop hook's output: the hook must say nothing."""
     return isinstance(payload, dict) and payload.get("stop_hook_active") is True
+

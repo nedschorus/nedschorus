@@ -58,17 +58,14 @@ passing review.
   reached only through the main-gatekeeper, which logs every use). Dormant
   until its credential work lands.
 - **The PR process** — until the gate activates: each pull request
-  merges one atomic topic branch, and
+  merges one atomic nc-topic-branch, and
   the merge-lane agent-seat reviews and merges every PR (deputization, recorded
   at R13, is the ruled exception). Recorded in CLAUDE.md's PR-process paragraph.
   The earlier form — commits accumulating on a seat-branch, cherry-picked
   onto a fresh branch later — was retired 2026-08-28 after a three-commit
   topic written on a Tuesday took until Friday to reach main, every
   cherry-pick re-resolving conflicts against a head that had moved.
-- **The override markers** — `.walk-approved` (instruction-file guard) and
-  `.location-write-approved` (session-location guard), both gitignored,
-  each by convention holding the user's quoted approval words, consumed by
-  the one guarded call it approves (see Marker honesty).
+- **The override markers** — `.walk-approved` (instruction-file guard) and `.location-write-approved` (session-location guard), both gitignored, each by convention holding the user's quoted approval words, consumed by the one guarded call it approves (see Marker honesty); `.walk-approved` holds instead `#pre_approved_change` and the reason for a change that `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` does not require his approval for.
 - **The launchers** — `scripts/launch-claude-mac` and
   `scripts/launch-claude-ubuntu`.
 - **#N** — nedschorus's GitHub tracker; issue or pull request is labeled
@@ -178,13 +175,13 @@ repository as CLAUDE.md, so the print adds zero reach.
 
 **R3. Detached HEAD or sitting in the reference checkout refuses writes —
 BUILT (PR [session-location write guard: no file writes from a detached HEAD or the reference checkout](https://github.com/nedschorus/nedschorus/pull/88), merged 2026-08-17).**
-`.claude/hooks/session-location-write-guard.py`, PreToolUse block on
+`.claude/guard-hooks/session-location-write-guard.py`, PreToolUse block on
 Edit/Write/NotebookEdit; exception lane via `.location-write-approved`.
 Scope, corrected 2026-08-19: the detached-HEAD test governs writes into
 the session's *own* checkout; a write landing in the reference checkout is
 R6+R7's block, which applies to any session however its HEAD is set.
 Writes into another agent-seat's agent-home stay unbuilt (R6). The adjacent
-*starting-stale* block was ruled **not built**: launch-time sync plus the
+*starting-stale* block was ruled **not built**: launch-time-git-sync plus the
 catch-up hook (R15) shrink exposure to one turn, and the motivating
 incident was a stale *read*, which no write-guard sees. Revisit trigger: a real incident traced to
 the one-turn window.
@@ -241,11 +238,11 @@ carry no stamp; directory basenames are not globally unique across machines
 *first* handoff is written by its provisioner from elsewhere, the guard
 correctly refuses, and `--claim` is the sanctioned path.
 
-**R10. Agent-instructions files change only when approved-by-walk —
+**R10. Whether a change to an agent-instructions file needs the user's approval is set by the [approval page](nedschorus-which-changes-need-the-users-approval.md) —
 built-live (root-resolution fixed by PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86)).**
-`.claude/hooks/instruction-file-guard.py`: CLAUDE.md, per-seat
+`.claude/guard-hooks/instruction-file-guard.py`: CLAUDE.md, per-seat
 `CLAUDE.local.md`, `.claude/` (minus `worktrees/`, `jobs/` and `handoffs/`),
-reusable prompts, and the files the user reviews block on write; approval quoted into `.walk-approved`. **The shell-write gap is
+reusable prompts, and the files the user reviews block on write; approval quoted into `.walk-approved`, or, for a change `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` does not require his approval for, `#pre_approved_change` and the reason. **The shell-write gap is
 named and ruled unguarded** (2026-08-17): every recorded bypass was
 accidental, not adversarial. Build trigger: an actually observed
 shell-route bypass. A periodic drift sweep was rejected: it
@@ -257,7 +254,7 @@ decision, and consistent with CLAUDE.md's rule on guards, which landed alongside
 
 **R11. Backup stores are read-only to agents — built-live; lane removed
 (user-ruled 2026-08-17).**
-`.claude/hooks/backup-and-snapshot-write-guard.py`: the Timeshift store
+`.claude/guard-hooks/backup-and-snapshot-write-guard.py`: the Timeshift store
 and configuration and Time Machine state refuse agent tool-writes
 *unconditionally* — no marker lane; a real configuration need routes to
 the user's keyboard. Rationale: an undo store agents can write is not
@@ -311,7 +308,7 @@ activation: a push is a shell operation no file-write hook sees.
 2026-08-17; delivery ruling PR [catch-up: the abort-failed state alone is delivered to the agent as a forced turn](https://github.com/nedschorus/nedschorus/pull/90)).**
 `scripts/checkout-freshness-catch-up.py` is the delivery; the status
 line's `⇣N` shows the lag; the launchers freshen the reference checkout
-at boot; the supervisor's launch-time sync remains the floor. Coverage
+at boot; the supervisor's launch-time-git-sync remains the floor. Coverage
 stated exactly: delivery happens at turn boundaries when the agent-seat is
 clean and conflict-free — an
 agent-seat that lags says so on its status line rather than silently. **Who
@@ -418,8 +415,8 @@ scratchpad outside the repository in every system prompt. A remind-tier
 hook on scratch-shaped writes stays a recorded candidate sharing R26's
 hook-plus-config pattern.
 
-**R24. Branch surveys fetch before they conclude — text, encoded into
-R22's cleanup script when built.** Before concluding what exists or is
+**R24. Branch surveys fetch before they conclude — mostly encoded: the Stop hook `scripts/checkout-freshness-catch-up.py` fetches origin at the end of each turn, at most once every five minutes, so the remote-tracking refs are rarely more than a few minutes old; a survey that must be exact still fetches first.**
+Before concluding what exists or is
 merged: `git fetch --prune origin` and read remote-tracking refs; a
 survey that cannot reach the remote says so. Evidence: a prune list built
 from unfetched refs missed four merged branches (2026-08-17).
@@ -463,10 +460,10 @@ rulings; listed here to keep the numbering complete.
 | R6+R7 | No writes into the reference | block | built, PR [session-location guard: writes landing in the reference checkout are refused from any seat](https://github.com/nedschorus/nedschorus/pull/91) |
 | R8 | One live session per directory | — | waits on detection; build nothing |
 | R9 | One name = one agent-seat | default + block | built-live, PR [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72) |
-| R10 | Instruction files must be approved-by-walk | block | built-live; shell gap ruled unguarded |
+| R10 | The approval page sets which agent-instructions changes need approval | block | built-live; shell gap ruled unguarded |
 | R11 | Backups read-only to agents | block (no lane) | built-live; lane removed |
 | R12 | Agents never push to main | impossible (account tier) + text (agent tier) | partial; required reviews live 2026-08-20; C2 pending |
-| R13 | PR process + deputization | text (process) | built-live; deputization in CLAUDE.md, PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedschorus/nedschorus/pull/93) |
+| R13 | PR process + deputization | text (process) | built-live; deputization recorded at R13, PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedschorus/nedschorus/pull/93) |
 | R14 | One branch, one writer | default | satisfied by defaults; push check retired |
 | R15 | Landed changes reach running agent-seats | default + block (attention) | built, PRs [checkout freshness: mid-session catch-up Stop hook, status-line display, reference-checkout pull](https://github.com/nedschorus/nedschorus/pull/87)/PR [catch-up: the abort-failed state alone is delivered to the agent as a forced turn](https://github.com/nedschorus/nedschorus/pull/90) |
 | R16 | Binary updates at launch only | default | built-live; version check closed 2026-08-22, PR [Launcher update banner removed: background auto-update off fleet-wide, launch stays the one update moment](https://github.com/nedschorus/nedschorus/pull/135) — banner off via settings env |
@@ -477,7 +474,7 @@ rulings; listed here to keep the numbering complete.
 | R21 | Worktrees reaped when safe | detect + remind | built-live, PR [clean-worktrees: mechanical reaper for finished session worktrees, reporting at every seat launch](https://github.com/nedschorus/nedschorus/pull/73); vacancy proven, PR [worktree reaper: prove vacancy before reaping, instead of assuming it](https://github.com/nedschorus/nedschorus/pull/100) |
 | R22 | Junk ignored by pattern | default | ruled closed; issue [Worktree file hygiene: classify untracked files so junk is ignored rather than accumulating in search results](https://github.com/nedschorus/nedschorus/issues/50) closed |
 | R23 | Scratch lives in the scratchpad | default | satisfied by runtime default |
-| R24 | Surveys fetch before concluding | text | encode into R22's cleanup script when built |
+| R24 | Surveys fetch before concluding | default + text | mostly encoded: the checkout-freshness Stop hook fetches origin each turn; exact surveys still fetch first |
 | R25 | Dead registrations surfaced | remind (report) | built, PR [clean-worktrees: one report line names dead registrations and the prune command (R25)](https://github.com/nedschorus/nedschorus/pull/112) |
 | R26 | New MDs land in canonical locations | remind | ruled-unbuilt, issue [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11) |
 | R27 | On-machine records stay uncommitted | default | built-live |

@@ -136,6 +136,19 @@ if "dump_prompt" in step:
 if "report" in step:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(step["report"], encoding="utf-8")
+if "dump_record_directory_lock_held" in step:
+    # What the shipper's lock test sees while the judge writes: "held" when any process holds the
+    # record's being-written lock, so a shipment now would print FAILED and copy nothing.
+    import fcntl
+    probe = os.open(report_path.parent, os.O_RDONLY)
+    try:
+        fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held = "free"
+    except BlockingIOError:
+        held = "held"
+    finally:
+        os.close(probe)
+    pathlib.Path(step["dump_record_directory_lock_held"]).write_text(held, encoding="utf-8")
 if "stdout" in step:
     sys.stdout.write(step["stdout"])
 sys.exit(step.get("exit", 0))
@@ -189,7 +202,7 @@ def write_stub_prompt_file(repository, text=STUB_JUDGE_PROMPT):
 
 def run_judge_cell(repository, stub_directory, plan, report_path, *arguments,
                    cases=THREE_CASES, restater=RESTATER_CLASS,
-                   prompt_file=None):
+                   prompt_file=None, current_directory=None):
     stub_directory.mkdir(parents=True, exist_ok=True)
     stub = stub_directory / "claude"
     stub.write_text(STUB_CLAUDE, encoding="utf-8")
@@ -210,7 +223,8 @@ def run_judge_cell(repository, stub_directory, plan, report_path, *arguments,
         command += ["--case", *case]
     command += list(arguments)
     return subprocess.run(
-        command, capture_output=True, text=True, check=False, env=environment)
+        command, capture_output=True, text=True, check=False, env=environment,
+        cwd=current_directory or repository)
 
 
 def provenance_stamp_of(report):
@@ -319,7 +333,7 @@ with tempfile.TemporaryDirectory() as scratch:
          str(repository / "nc-systems" / "cold-read" / "cold-read-restater-judge-cell.py"),
          "--restater", RESTATER_CLASS, "--report", str(report),
          "--case", *THREE_CASES[0]],
-        capture_output=True, text=True, check=False, env=environment)
+        capture_output=True, text=True, check=False, env=environment, cwd=repository)
     check("omitting --prompt-file altogether is refused with exit 64, the way "
           "any missing required flag is",
           omitted.returncode == 64 and "--prompt-file" in omitted.stderr,
@@ -456,6 +470,44 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and " effort=high " in stamp
           and argv[argv.index("--effort") + 1] == "high",
           f"exit {result.returncode}; stamp={stamp!r}; argv={argv!r}")
+
+    # --- A relative --case path means the file under the current directory --
+    # Run from a directory other than the cell's checkout, holding its own
+    # files at the same relative paths: the judge must be pointed at those.
+    repository = build_scratch_repository(scratch)
+    other_directory = scratch / "another-current-directory"
+    for relative_path, text in CASE_FILE_CONTENTS.items():
+        path = other_directory / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"OTHER DIRECTORY COPY {text}", encoding="utf-8")
+    report = report_path_for(repository, "relative-case-path")
+    prompt_dump = scratch / "relative-case-path-prompt.txt"
+    result = run_judge_cell(
+        repository, stubs,
+        {"*": {"report": STUB_JUDGE_REPORT, "dump_prompt": str(prompt_dump)}},
+        report, current_directory=other_directory,
+    )
+    judged = prompt_dump.read_text(encoding="utf-8") if prompt_dump.is_file() else ""
+    check("a relative --case path is read under the current directory, not the cell's checkout",
+          result.returncode == 0
+          and str(other_directory / "test-cases/draft-one.md") in judged
+          and str(repository / "test-cases") not in judged,
+          f"exit {result.returncode}; stderr={result.stderr[-400:]!r}; prompt={judged[:300]!r}")
+
+    # A judge cell run directly holds its record's being-written lock while the judge writes, so
+    # no shipment copies the record half-written.
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "direct-lock")
+    lock_held_file = scratch / "direct-judge-record-directory-lock-held"
+    result = run_judge_cell(
+        repository, stubs,
+        {"*": {"report": STUB_JUDGE_REPORT, "dump_record_directory_lock_held": str(lock_held_file)}},
+        report,
+    )
+    lock_seen = lock_held_file.read_text(encoding="utf-8") if lock_held_file.exists() else "not written"
+    check("a judge cell run directly holds its record's being-written lock while the judge writes",
+          lock_seen == "held" and result.returncode == 0,
+          f"lock {lock_seen}; exit {result.returncode}; stderr={result.stderr[-1000:]!r}")
 
 print()
 if failures:

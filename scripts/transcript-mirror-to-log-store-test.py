@@ -25,7 +25,7 @@ SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 MIRROR = SCRIPTS_DIR / "transcript-mirror-to-log-store.py"
 DESTINATION_VARIABLE = "TRANSCRIPT_MIRROR_DESTINATION"
 SOURCE_HOME_VARIABLE = "TRANSCRIPT_MIRROR_SOURCE_HOME"
-RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/transcripts"
+RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine"
 RSYNC_SSH_TRANSPORT = ("ssh -o BatchMode=yes -o ConnectTimeout=10"
                        " -o ServerAliveInterval=15 -o ServerAliveCountMax=4")
 SERVER_ALIVE_OPTIONS = ("ServerAliveInterval=15", "ServerAliveCountMax=4")
@@ -53,6 +53,10 @@ with open(os.environ["MIRROR_TEST_ARGV_LOG"], "a") as log:
 if "--files-from=-" in sys.argv:
     with open(os.environ["MIRROR_TEST_STDIN_LOG"], "a") as log:
         log.write(json.dumps([sys.argv[-1], sys.stdin.read()]) + "\\n")
+if sys.argv[0].endswith("ssh") and "wc -l" in " ".join(sys.argv) and os.environ.get("MIRROR_TEST_FAILING_FIND_DIRECTORY"):
+    import subprocess
+    environment = dict(os.environ, PATH=os.environ["MIRROR_TEST_FAILING_FIND_DIRECTORY"] + os.pathsep + os.environ["PATH"])
+    sys.exit(subprocess.run(["bash", "-c", sys.argv[-1]], env=environment).returncode)
 if sys.argv[0].endswith("ssh") and "wc -l" in " ".join(sys.argv):
     print(os.environ.get("MIRROR_TEST_STORE_COUNT", "0"))
 if sys.argv[0].endswith("rsync") and os.environ.get("MIRROR_TEST_RSYNC_STDERR"):
@@ -117,7 +121,7 @@ QUIET = ("--failures-only",)
 with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_name:
     scratch = pathlib.Path(scratch_name).resolve()
     home = make_home(scratch)
-    store = scratch / "store" / "transcripts"
+    store = scratch / "store" / "agent-session-files-by-machine"
     machine = "ned-box" if os.uname().nodename.split(".")[0] == "ned-box" else "mac"
 
     # --- Local mode, real rsync ---------------------------------------------
@@ -127,16 +131,16 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
           result.returncode == 0 and len(lines) == 5
           and all(line.startswith("mirrored: ") for line in lines),
           result.stdout + result.stderr)
-    check("transcripts land under transcripts/<machine>/projects/ in Claude Code's own layout",
+    check("transcripts land under agent-session-files-by-machine/<machine>/projects/ in Claude Code's own layout",
           (store / machine / "projects" / "-Users-el-agents-MD-skills" / "aaaa.jsonl").is_file())
     check("the memory store rides along inside projects/",
           (store / machine / "projects" / "-Users-el-agents-MD-skills" / "memory" / "MEMORY.md").is_file())
-    check("handoffs land under transcripts/<machine>/handoffs/",
+    check("handoffs land under agent-session-files-by-machine/<machine>/handoffs/",
           (store / machine / "handoffs" / "MD-skills-dialog-0001.md").is_file())
-    check("task lists land under transcripts/<machine>/tasks/ in Claude Code's own layout, dotfiles included",
+    check("task lists land under agent-session-files-by-machine/<machine>/tasks/ in Claude Code's own layout, dotfiles included",
           (store / machine / "tasks" / "nedschorus-MD-skills-tasks" / "1.json").is_file()
           and (store / machine / "tasks" / "nedschorus-MD-skills-tasks" / ".highwatermark").is_file())
-    check("a seat-brief lands under transcripts/<machine>/seat-briefs/<seat>/CLAUDE.local.md",
+    check("a seat-brief lands under agent-session-files-by-machine/<machine>/seat-briefs/<seat>/CLAUDE.local.md",
           text_or_none(store / machine / "seat-briefs" / "MD-skills" / "CLAUDE.local.md")
           == "# MD-skills seat-brief\n")
     check("only seat-briefs are copied from ~/agents: nothing for a worktree without one, a deeper CLAUDE.local.md or a stray file",
@@ -144,7 +148,7 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
                  for p in (store / machine / "seat-briefs").rglob("*"))
           == ["MD-skills", "MD-skills/CLAUDE.local.md"],
           str(list((store / machine / "seat-briefs").rglob("*"))))
-    check("the global CLAUDE.md lands at transcripts/<machine>/CLAUDE.md, and nothing else of ~/.claude's top level does",
+    check("the global CLAUDE.md lands at agent-session-files-by-machine/<machine>/CLAUDE.md, and nothing else of ~/.claude's top level does",
           text_or_none(store / machine / "CLAUDE.md") == "# global instructions\n"
           and not (store / machine / ".transcript-mirror.lock").exists())
     stamp = store / machine / STAMP_NAME
@@ -325,7 +329,7 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
     rsync_calls = [c for c in calls if c[0].endswith("rsync")]
     ssh_calls = [c for c in calls if c[0].endswith("ssh")]
     stamp_calls = [c for c in ssh_calls if STAMP_NAME in " ".join(c)]
-    remote_stamp = f"/home/nedlern/nedschorus-logs/transcripts/{machine}/{STAMP_NAME}"
+    remote_stamp = f"/home/nedlern/nedschorus-logs/agent-session-files-by-machine/{machine}/{STAMP_NAME}"
     check("remote mode writes the stamp on ned-box once, after every rsync, through a .partial file renamed over it",
           len(stamp_calls) == 1 and calls[-1] == stamp_calls[0]
           and stamp_calls[0][-2] == "nedlern@ned-box"
@@ -343,7 +347,7 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
         (home / "agents", f"{machine}/seat-briefs/", True),
         (home / ".claude", f"{machine}/", True),
     ]
-    check("five rsync calls, -a, over batch-mode ssh, each source into its place under transcripts/<machine>/ on ned-box, a file list only for the seat-briefs and CLAUDE.md",
+    check("five rsync calls, -a, over batch-mode ssh, each source into its place under agent-session-files-by-machine/<machine>/ on ned-box, a file list only for the seat-briefs and CLAUDE.md",
           len(rsync_calls) == 5 and all(
               "-a" in c and RSYNC_SSH_TRANSPORT in c
               and c[-1] == f"{RULED_DESTINATION}/{target}"
@@ -365,9 +369,9 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
           and all(option in c[c.index("-e") + 1] for c in rsync_calls for option in SERVER_ALIVE_OPTIONS),
           str(calls))
 
-    # Files vanishing mid-run is exit 24 from GNU rsync (ned-box) and exit 23
-    # from openrsync (the Mac's /usr/bin/rsync); each is a note on its own
-    # implementation only, and the other implementation's code stays FAILED.
+    # Files vanishing mid-run is exit 24 from GNU rsync (ned-box), a note. The
+    # Mac's openrsync exits 23 for that and for every other partial transfer,
+    # so its 23 is FAILED, and so is its 24.
     GNU_VERSION_LINE = "rsync  version 3.4.1  protocol version 32"
     OPENRSYNC_VERSION_LINE = "openrsync: protocol version 29"
     argv_log.unlink()
@@ -387,9 +391,14 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
           argv_log.read_text())
     argv_log.unlink()
     result = run_mirror(home, RULED_DESTINATION, dict(
-        remote_env, MIRROR_TEST_RSYNC_VERSION_LINE=OPENRSYNC_VERSION_LINE, MIRROR_TEST_RSYNC_EXIT="23"))
-    check("openrsync exit 23, files vanished mid-run, is a mirrored line with a note, exit 0",
-          result.returncode == 0 and result.stdout.count("vanished mid-run") == 5, result.stdout)
+        remote_env, MIRROR_TEST_RSYNC_VERSION_LINE=OPENRSYNC_VERSION_LINE, MIRROR_TEST_RSYNC_EXIT="23",
+        MIRROR_TEST_RSYNC_STDERR="openrsync: error: some files could not be transferred"), QUIET)
+    check("openrsync exit 23 is FAILED naming the exit, with openrsync's stderr, exit 1, even "
+          "with --failures-only",
+          result.returncode == 1 and result.stdout.count("FAILED:") == 5
+          and "rsync exit 23" in result.stdout and "vanished mid-run" not in result.stdout
+          and result.stderr.count("openrsync: error: some files could not be transferred") == 5,
+          result.stdout + result.stderr)
     argv_log.unlink()
     result = run_mirror(home, RULED_DESTINATION, dict(
         remote_env, MIRROR_TEST_RSYNC_VERSION_LINE=OPENRSYNC_VERSION_LINE, MIRROR_TEST_RSYNC_EXIT="24"))
@@ -397,6 +406,21 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
           result.returncode == 1 and result.stdout.count("FAILED:") == 5
           and "rsync exit 24" in result.stdout and "ned-box unreachable" not in result.stdout,
           result.stdout)
+    failing_find_directory = scratch / "failing-find-bin"
+    failing_find_directory.mkdir()
+    failing_find = failing_find_directory / "find"
+    failing_find.write_text("#!/bin/sh\nprintf 'one\\ntwo\\n'\n"
+                            "echo 'find: injected: Permission denied' >&2\nexit 1\n")
+    failing_find.chmod(0o755)
+    argv_log.unlink()
+    result = run_mirror(home, RULED_DESTINATION, dict(
+        remote_env, MIRROR_TEST_FAILING_FIND_DIRECTORY=str(failing_find_directory)))
+    check("a store count whose find fails after counting two files is unknown, not 2, and "
+          "find's error is passed on",
+          result.returncode == 0 and result.stdout.count("store unknown files") == 5
+          and "store 2 files" not in result.stdout
+          and result.stderr.count("find: injected: Permission denied") == 5,
+          result.stdout + result.stderr)
     argv_log.unlink()
     result = run_mirror(home, RULED_DESTINATION, dict(remote_env, MIRROR_TEST_RSYNC_EXIT="255"))
     check("rsync exit 255 is FAILED naming ned-box unreachable, exit 1",
@@ -460,7 +484,7 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
           and "  ned-box: * * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
           "transcript-mirror-to-log-store.py --failures-only >>" in MIRROR.read_text())
     check("the destination constant in the script is the ruled one",
-          f'LOG_STORE_TRANSCRIPTS_DESTINATION = "{RULED_DESTINATION}"' in MIRROR.read_text())
+          f'LOG_STORE_AGENT_SESSION_FILES_DESTINATION = "{RULED_DESTINATION}"' in MIRROR.read_text())
 
 print()
 if failures:

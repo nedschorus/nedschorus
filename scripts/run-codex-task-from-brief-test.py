@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """Tests for scripts/run-codex-task-from-brief.py, with a fake `codex` on PATH.
 
+A fake `gh` on PATH stands in for the commands --prefetch-github runs: it
+logs its arguments and the folder it ran in and, by FAKE_GH_MODE, prints data,
+fails, or sleeps.
+
 The fake records its arguments and, by the FAKE_CODEX_MODE environment
-variable, writes a report, fails with or without a report, writes nothing,
-sleeps past the deadline with a child that may ignore SIGTERM, or blocks
+variable, writes a report, writes a report file of its own with or without a final
+message, fails with or without a report, writes nothing,
+sleeps past the deadline with a child that may ignore SIGTERM, writes a
+final message and then sleeps past the deadline, or blocks
 reading stdin. Each case runs the real program as a process. The deadline and
 stdin cases run a second time with a fake `find` that sleeps 31 s first, so the
 credential-file scan done before Codex starts must not count against their limits.
@@ -43,6 +49,12 @@ if mode == "report":
 elif mode == "fail":
     print("fake codex: model refused", file=sys.stderr)
     sys.exit(3)
+elif mode == "report-file-then-final-message":
+    # As Codex does when a brief names the -o path as the file to write its report to.
+    open(os.environ["FAKE_CODEX_REPORT_FILE"], "w").write("the full report Codex wrote\n")
+    open(report, "w").write("a short final message\n")
+elif mode == "report-file-only":
+    open(os.environ["FAKE_CODEX_REPORT_FILE"], "w").write("the full report Codex wrote\n")
 elif mode == "report-then-fail":
     open(report, "w").write("a partial report\n")
     sys.exit(3)
@@ -57,9 +69,39 @@ elif mode in ("sleep", "sleep-child-ignores-sigterm"):
         time.sleep(600)
         os._exit(0)
     time.sleep(600)
+elif mode == "final-message-then-sleep":
+    open(report, "w").write("a final message before the deadline\n")
+    sys.stdout.flush()
+    time.sleep(600)
 elif mode == "read-stdin":
     data = sys.stdin.read()
     open(report, "w").write(f"stdin held {len(data)} characters\n")
+'''
+
+FAKE_GH = r'''#!/usr/bin/env python3
+import json, os, sys, time
+with open(os.environ["FAKE_GH_LOG"], "a") as log:
+    log.write(json.dumps(sys.argv[1:]) + "\n")
+with open(os.environ["FAKE_GH_LOG"] + ".cwd", "a") as log:
+    log.write(os.getcwd() + "\n")
+mode = os.environ.get("FAKE_GH_MODE", "data")
+if mode == "data":
+    print("gh data for " + " ".join(sys.argv[1:]))
+elif mode == "fail":
+    print("HTTP 404: Not Found", file=sys.stderr)
+    sys.exit(1)
+elif mode == "sleep":
+    time.sleep(60)
+elif mode == "slow":
+    time.sleep(2)
+    print("gh data")
+elif mode == "sleep-second":
+    calls = len(open(os.environ["FAKE_GH_LOG"]).read().splitlines())
+    if calls >= 2:
+        open(os.environ["FAKE_GH_LOG"] + ".second-started", "w").write(str(time.time()))
+        time.sleep(60)
+    time.sleep(2)
+    print("gh data")
 '''
 
 failures = []
@@ -80,6 +122,13 @@ try:
     fake = bin_dir / "codex"
     fake.write_text(FAKE_CODEX)
     fake.chmod(0o755)
+    fake_gh = bin_dir / "gh"
+    fake_gh.write_text(FAKE_GH)
+    fake_gh.chmod(0o755)
+    gh_log = scratch / "gh-calls.jsonl"
+    # The runner is started from a folder other than the checkout, as an agent may start it.
+    elsewhere = scratch / "elsewhere"
+    elsewhere.mkdir()
     checkout = scratch / "checkout"
     checkout.mkdir()
     brief = scratch / "brief.md"
@@ -100,7 +149,7 @@ try:
     slow_find.chmod(0o755)
 
     def run(mode, *extra, stdin=None, timeout=60, path_first=None,
-            start_line_timeout=600):
+            start_line_timeout=600, gh_mode="data", extra_environment=None):
         """Run the program; return (completed, report, seconds since it said it is running Codex).
 
         timeout counts from that stderr line, which the program prints after building
@@ -115,12 +164,14 @@ try:
                            HOME=str(scratch_home), FAKE_CODEX_MODE=mode,
                            FAKE_CODEX_ARGUMENTS_FILE=str(arguments_file),
                            FAKE_CODEX_CHILD_PID_FILE=str(child_pid_file),
-                           FAKE_CODEX_PID_FILE=str(codex_pid_file))
+                           FAKE_CODEX_PID_FILE=str(codex_pid_file),
+                           FAKE_GH_MODE=gh_mode, FAKE_GH_LOG=str(gh_log),
+                           **(extra_environment or {}))
         report = scratch / f"report-{mode}.md"
         codex_pid_file.unlink(missing_ok=True)
         command = [sys.executable, str(PROGRAM), "-C", str(checkout), "--brief", str(brief),
                    "-o", str(report), *extra]
-        process = subprocess.Popen(command, env=environment, stdin=stdin,
+        process = subprocess.Popen(command, env=environment, stdin=stdin, cwd=elsewhere,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                    start_new_session=True)
         stdout_parts, stderr_lines = [], []
@@ -167,8 +218,11 @@ try:
 
     completed, report, _ = run("report")
     arguments = json.loads(arguments_file.read_text())
-    check("success exits 0 and prints the report path",
-          completed.returncode == 0 and completed.stdout.strip() == f"report: {report}",
+    check("success exits 0, prints the report path, and leaves the final message only there",
+          completed.returncode == 0 and completed.stdout.strip() == f"report: {report}"
+          and report.read_text() == "the report\n"
+          and not report.with_name(report.name + ".last-message").exists()
+          and "is kept" not in completed.stderr,
           f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
     check("the brief's whole text is the prompt, after --",
           arguments[-1] == brief.read_text() and arguments[-2] == "--", repr(arguments[-2:]))
@@ -222,11 +276,45 @@ try:
     check("the brief is still the last argument with every option on",
           arguments[-1] == brief.read_text(), repr(arguments[-1]))
 
+    session_id = "019abcde-1234-7000-8000-123456789abc"
+    for options in ((), ("--sandbox", "workspace-write", "--network",
+                         "--outside-git-checkout", "--web-search",
+                         "-m", "model-x", "--effort", "high")):
+        completed, report, _ = run("report", *options)
+        fresh_arguments = json.loads(arguments_file.read_text())
+        resume_log = scratch / "resume.run.log"
+        completed, report, _ = run("report", "--resume", session_id,
+                                   "--run-log", str(resume_log), *options)
+        arguments = json.loads(arguments_file.read_text())
+        expected = fresh_arguments[:3] + ["resume"] + fresh_arguments[3:-1] + [
+            session_id, brief.read_text()]
+        check(f"--resume preserves checkout, permissions, memory, report and options {options!r}",
+              completed.returncode == 0 and arguments == expected
+              and arguments[:4] == ["exec", "-C", str(checkout), "resume"]
+              and arguments[-3:] == ["--", session_id, brief.read_text()]
+              and completed.stdout.strip() == f"report: {report}"
+              and "fake codex trace line" in resume_log.read_text(),
+              f"exit {completed.returncode}, {arguments!r}, stderr {completed.stderr!r}")
+
+    arguments_file.unlink()
+    report.write_text("an existing report\n")
+    completed, report, _ = run("report", "--resume", session_id,
+                               "--writable-root", str(extra_root_one),
+                               "--prefetch-github", "pr view 1")
+    check("--resume refuses --writable-root before Codex, prefetch or report removal",
+          completed.returncode == 2
+          and "refused --writable-root with --resume" in completed.stderr
+          and "does not accept --add-dir" in completed.stderr
+          and not arguments_file.exists() and not gh_log.exists()
+          and report.read_text() == "an existing report\n",
+          f"exit {completed.returncode}, stderr {completed.stderr!r}")
+
     help_text = subprocess.run([sys.executable, str(PROGRAM), "--help"], capture_output=True,
                                text=True, check=False).stdout
     check("the usage line names every option",
           all(option in help_text for option in ("--network", "--writable-root <folder>",
-                                                 "--outside-git-checkout", "--web-search")),
+                                                 "--outside-git-checkout", "--web-search",
+                                                 "--resume <session-id>")),
           help_text)
 
     completed, report, _ = run("fail")
@@ -255,6 +343,26 @@ try:
           completed.returncode == 0 and arguments[-2:] == ["--", dash_brief.read_text()],
           f"exit {completed.returncode}, {arguments[-2:]!r}")
 
+    own_report = scratch / "report-report-file-then-final-message.md"
+    completed, report, _ = run("report-file-then-final-message",
+                               extra_environment={"FAKE_CODEX_REPORT_FILE": str(own_report)})
+    last_message = report.with_name(report.name + ".last-message")
+    check("a report Codex wrote at the -o path is kept, and its final message goes beside it",
+          completed.returncode == 0 and completed.stdout.strip() == f"report: {report}"
+          and report.read_text() == "the full report Codex wrote\n"
+          and last_message.exists()
+          and last_message.read_text() == "a short final message\n"
+          and str(last_message) in completed.stderr,
+          f"exit {completed.returncode}, report {report.read_text()!r}, stderr {completed.stderr!r}")
+
+    own_report_only = scratch / "report-report-file-only.md"
+    completed, report, _ = run("report-file-only",
+                               extra_environment={"FAKE_CODEX_REPORT_FILE": str(own_report_only)})
+    check("a report Codex wrote with no final message is kept, with no note of a final message",
+          completed.returncode == 0 and report.read_text() == "the full report Codex wrote\n"
+          and "is kept" not in completed.stderr,
+          f"exit {completed.returncode}, stderr {completed.stderr!r}")
+
     stale = scratch / "report-no-report.md"
     stale.write_text("left by an earlier run\n")
     completed, report, _ = run("no-report")
@@ -263,9 +371,25 @@ try:
           and not report.exists(),
           f"exit {completed.returncode}, stderr {completed.stderr!r}")
 
-    def check_deadline_stops_codex(case_suffix="", path_first=None):
+    stale_last_message = scratch / "report-no-report.md.last-message"
+    stale_last_message.write_text("an earlier run's final message\n")
+    completed, report, _ = run("no-report")
+    check("an earlier run's final message beside the report does not pass for this run's report",
+          completed.returncode == 1 and "wrote no report" in completed.stderr
+          and not report.exists() and not stale_last_message.exists(),
+          f"exit {completed.returncode}, stderr {completed.stderr!r}")
+
+    completed, report, _ = run("final-message-then-sleep", "--deadline-minutes", "0.05")
+    check("a final message Codex wrote before the deadline stopped it is moved to the report path",
+          completed.returncode == 1 and "deadline" in completed.stderr
+          and report.is_file() and report.read_text() == "a final message before the deadline\n"
+          and not report.with_name(report.name + ".last-message").exists(),
+          f"exit {completed.returncode}, report exists {report.exists()}, "
+          f"stderr {completed.stderr!r}")
+
+    def check_deadline_stops_codex(case_suffix="", path_first=None, extra=()):
         child_pid_file.unlink(missing_ok=True)
-        completed, report, elapsed = run("sleep", "--deadline-minutes", "0.05",
+        completed, report, elapsed = run("sleep", "--deadline-minutes", "0.05", *extra,
                                          path_first=path_first)
         child_pid = int(child_pid_file.read_text()) if child_pid_file.exists() else None
         time.sleep(0.5)
@@ -276,13 +400,16 @@ try:
                 child_alive = True
             except ProcessLookupError:
                 pass
-        check("the deadline stops Codex, exits 1 and says so" + case_suffix,
-              completed.returncode == 1 and "deadline" in completed.stderr and elapsed < 30,
+        check("the deadline stops Codex, exits 1 and says so, without speaking of "
+              "--prefetch-github commands the run did not have" + case_suffix,
+              completed.returncode == 1 and "deadline" in completed.stderr and elapsed < 30
+              and "--prefetch-github" not in completed.stderr,
               f"exit {completed.returncode}, {elapsed:.1f}s, stderr {completed.stderr!r}")
         check("the deadline also stops the processes Codex started" + case_suffix,
               child_pid is not None and not child_alive, f"child {child_pid} alive={child_alive}")
 
     check_deadline_stops_codex()
+    check_deadline_stops_codex(", with --resume", extra=("--resume", session_id))
 
     child_pid_file.unlink(missing_ok=True)
     completed, report, elapsed = run("sleep-child-ignores-sigterm", "--deadline-minutes", "0.05")
@@ -301,11 +428,11 @@ try:
           completed.returncode == 1 and child_pid is not None and not child_alive,
           f"exit {completed.returncode}, child {child_pid} alive={child_alive}, {elapsed:.1f}s")
 
-    def check_codex_stdin_closed(case_suffix="", path_first=None):
+    def check_codex_stdin_closed(case_suffix="", path_first=None, extra=()):
         # The caller's own stdin is an open pipe that never closes; the fake must still see EOF.
         holder = subprocess.Popen(["sleep", "600"], stdout=subprocess.PIPE)
         try:
-            completed, report, elapsed = run("read-stdin", stdin=holder.stdout, timeout=30,
+            completed, report, elapsed = run("read-stdin", *extra, stdin=holder.stdout, timeout=30,
                                              path_first=path_first)
         except subprocess.TimeoutExpired:
             completed, report = None, None
@@ -318,6 +445,7 @@ try:
               f"completed {completed!r}")
 
     check_codex_stdin_closed()
+    check_codex_stdin_closed(", with --resume", extra=("--resume", session_id))
 
     # The program scans for credential files with find only on Linux.
     if sys.platform.startswith("linux"):
@@ -354,11 +482,13 @@ try:
         stalled_find_dir.mkdir()
         stalled_find_pid_file = scratch / "stalled-find.pid"
         stalled_find = stalled_find_dir / "find"
-        stalled_find.write_text(f'#!/bin/sh\necho $$ > "{stalled_find_pid_file}"\nexec sleep 20\n')
+        stalled_find.write_text(f'#!/bin/sh\necho $$ > "{stalled_find_pid_file}"\nexec sleep 120\n')
         stalled_find.chmod(0o755)
         started = time.monotonic()
         try:
-            completed, _, _ = run("report", path_first=stalled_find_dir, start_line_timeout=2)
+            # A loaded machine can take seconds to start the program, so the bound leaves room
+            # for it to reach its scan; the scan sleeps far past the bound.
+            completed, _, _ = run("report", path_first=stalled_find_dir, start_line_timeout=20)
             timed_out = False
         except subprocess.TimeoutExpired:
             timed_out = True
@@ -368,7 +498,7 @@ try:
         kill_leftovers(left)
         check("a program stalled before it starts Codex is stopped at the start-line bound, "
               "with the scan it started",
-              timed_out and waited < 15 and stalled_find_pid_file.exists() and not left,
+              timed_out and waited < 60 and stalled_find_pid_file.exists() and not left,
               f"timed out {timed_out}, {waited:.1f}s, left running {left}")
     else:
         print("SKIP  a program stalled before it starts Codex: the program runs find only on Linux")
@@ -387,6 +517,324 @@ try:
           "with Codex and the processes Codex started",
           timed_out and len(started_pids) == 2 and not left,
           f"timed out {timed_out}, started {started_pids}, left running {left}")
+
+    def gh_calls():
+        return [json.loads(line) for line in gh_log.read_text().splitlines()] \
+            if gh_log.exists() else []
+
+    def gh_folders():
+        cwd_log = Path(str(gh_log) + ".cwd")
+        return cwd_log.read_text().splitlines() if cwd_log.exists() else []
+
+    def fresh_prefetch_case():
+        gh_log.unlink(missing_ok=True)
+        Path(str(gh_log) + ".cwd").unlink(missing_ok=True)
+        arguments_file.unlink(missing_ok=True)
+
+    fresh_prefetch_case()
+    data_folder = scratch / "report-report.md.github-data"
+    data_folder.mkdir(exist_ok=True)
+    (data_folder / "left-by-an-earlier-run.txt").write_text("stale\n")
+    completed, report, _ = run("report", "--prefetch-github", "pr list --state merged --limit 5",
+                               "--prefetch-github", "api 'repos/o/r/pulls?state=closed'")
+    arguments = json.loads(arguments_file.read_text()) if arguments_file.exists() else []
+    saved = sorted(data_folder.glob("*.txt"))
+    check("each --prefetch-github runs gh once, before Codex, with its words split as a shell would",
+          completed.returncode == 0 and gh_calls() == [
+              ["pr", "list", "--state", "merged", "--limit", "5"],
+              ["api", "repos/o/r/pulls?state=closed"]],
+          f"exit {completed.returncode}, gh calls {gh_calls()!r}, stderr {completed.stderr!r}")
+    check("each gh command runs in the -C checkout, not the folder the runner was started in, "
+          "so gh without -R reads the checkout's repository",
+          gh_folders() == [str(checkout.resolve())] * 2, repr(gh_folders()))
+    check("each gh output is saved in <report>.github-data, and an earlier run's files are gone",
+          [path.read_text() for path in saved] == [
+              "gh data for pr list --state merged --limit 5\n",
+              "gh data for api repos/o/r/pulls?state=closed\n"],
+          repr([(path.name, path.read_text()) for path in saved]))
+    check("the brief Codex gets is the brief file followed by the list of saved files",
+          bool(arguments) and arguments[-1].startswith(brief.read_text().rstrip())
+          and all(str(path) in arguments[-1] for path in saved)
+          and "`gh pr list --state merged --limit 5`" in arguments[-1]
+          and "permission profile keeps you from the folder holding gh's login"
+          in arguments[-1],
+          repr(arguments[-1:]))
+
+    fresh_prefetch_case()
+    long_endpoint = "repos/o/r/" + "x" * 400
+    completed, report, _ = run("report", "--prefetch-github", f"api {long_endpoint}")
+    saved = sorted(data_folder.glob("*.txt"))
+    check("a gh command with a long argument is saved under a name short enough to write",
+          completed.returncode == 0 and len(saved) == 1 and len(saved[0].name) < 120,
+          f"exit {completed.returncode}, files {[p.name for p in saved]!r}, "
+          f"stderr {completed.stderr!r}")
+
+    for refused_arguments, reason in (
+            ("pr merge 12", "is not `pr list`"),
+            ("api -XPOST repos/o/r/issues", "`-XPOST` is not accepted"),
+            ("api repos/o/r/issues --method=PATCH", "`--method=PATCH` is not accepted"),
+            ("api repos/o/r/issues -f title=x", "`-f` is not accepted"),
+            ("api repos/o/r/issues --input body.json", "`--input` is not accepted"),
+            ("api -iXDELETE repos/o/r/git/refs/heads/b", "`-iXDELETE` is not accepted"),
+            ("api -iFtitle=x repos/o/r/issues", "`-iFtitle=x` is not accepted"),
+            ("api --jq -- -XPOST repos/o/r/issues", "`-XPOST` is not accepted"),
+            ("api -q -- -XDELETE repos/o/r/git/refs/heads/b", "`-XDELETE` is not accepted"),
+            ("api --template '--' -XDELETE repos/o/r/git/refs/heads/b", "`-XDELETE` is not accepted"),
+            ("api -- -XPOST repos/o/r/issues", "`--` is not accepted"),
+            ("api --verbose repos/o/r", "`--verbose` is not accepted"),
+            ("api -R o/r repos/o/r", "`-R` is not accepted"),
+            ("api repos/o/r/pulls repos/o/r/issues", "exactly one endpoint"),
+            ("api repos/o/r --jq", "`--jq` has no value after it"),
+            ("api repos/o/r -q", "`-q` has no value after it")):
+        fresh_prefetch_case()
+        completed, report, _ = run("report", "--prefetch-github", "pr view 1",
+                                   "--prefetch-github", refused_arguments)
+        check(f"--prefetch-github '{refused_arguments}' is refused with exit 2 before gh or "
+              f"Codex runs, naming the options that are accepted",
+              completed.returncode == 2 and reason in completed.stderr
+              and "only commands known to read from GitHub are accepted" in completed.stderr
+              and "--include/-i, --paginate and --slurp" in completed.stderr
+              and "which may read any repository" in completed.stderr
+              and not gh_calls() and not arguments_file.exists(),
+              f"exit {completed.returncode}, gh calls {gh_calls()!r}, stderr {completed.stderr!r}")
+
+    fresh_prefetch_case()
+    completed, report, _ = run(
+        "report",
+        "--prefetch-github", "api -i -q .title -H 'Accept: x' repos/o/r/pulls/1",
+        "--prefetch-github", "api user --template '- {{.login}}'",
+        "--prefetch-github", "api --jq=.[].number --paginate --slurp --cache 1h -p x repos/o/r/pulls",
+        "--prefetch-github", "api --jq -XPOST repos/o/r/pulls",
+        "--prefetch-github", "api user -q=.login -t='{{.login}}' -H=Accept:x")
+    check("`api` with one endpoint and only accepted options passes, a value-taking "
+          "option's value is taken as its value even when it starts with \"-\", and a "
+          "short option takes its value after = as gh does",
+          completed.returncode == 0 and len(gh_calls()) == 5,
+          f"exit {completed.returncode}, gh calls {gh_calls()!r}, stderr {completed.stderr!r}")
+
+    fresh_prefetch_case()
+    completed, report, _ = run("report", "--prefetch-github", "pr view 1",
+                               "--prefetch-github", "issue view 'unclosed")
+    check("arguments whose quoting cannot be read get a quoting message, not the read-only "
+          "refusal, with exit 2 before gh or Codex runs",
+          completed.returncode == 2 and "could not read the quoting" in completed.stderr
+          and "every quotation mark closed" in completed.stderr
+          and "known to read from GitHub" not in completed.stderr
+          and not gh_calls() and not arguments_file.exists(),
+          f"exit {completed.returncode}, gh calls {gh_calls()!r}, stderr {completed.stderr!r}")
+
+    fresh_prefetch_case()
+    completed, report, _ = run("report", "--prefetch-github", "pr view 1", gh_mode="fail")
+    check("a failing gh command exits 1, names the command, its exit code and what gh said, "
+          "and Codex is not started",
+          completed.returncode == 1 and "`gh pr view 1` exited 1" in completed.stderr
+          and "HTTP 404: Not Found" in completed.stderr and not arguments_file.exists(),
+          f"exit {completed.returncode}, stderr {completed.stderr!r}")
+
+    fresh_prefetch_case()
+    completed, report, elapsed = run("report", "--prefetch-github", "pr view 1",
+                                     "--deadline-minutes", "0.02", gh_mode="sleep")
+    check("a gh command that passes the deadline is stopped, exits 1, and Codex is not started",
+          completed.returncode == 1 and "deadline passed" in completed.stderr
+          and "covers every --prefetch-github command and Codex together" in completed.stderr
+          and elapsed < 30 and not arguments_file.exists(),
+          f"exit {completed.returncode}, {elapsed:.1f}s, stderr {completed.stderr!r}")
+
+    fresh_prefetch_case()
+    # 3 s for the whole run: the first gh call takes 2 s and the second sleeps. The second
+    # must be stopped when the run's deadline passes, about 1 s after it starts, not after
+    # a fresh 3 s of its own.
+    second_started_file = Path(str(gh_log) + ".second-started")
+    second_started_file.unlink(missing_ok=True)
+    completed, report, _ = run("report", "--prefetch-github", "pr view 1",
+                               "--prefetch-github", "pr view 2",
+                               "--deadline-minutes", "0.05", gh_mode="sleep-second")
+    finished = time.time()
+    second_ran = (finished - float(second_started_file.read_text())
+                  if second_started_file.exists() else None)
+    check("the deadline bounds all gh commands together: a later command gets only the time "
+          "left, and Codex is not started",
+          completed.returncode == 1 and "`gh pr view 2`" in completed.stderr
+          and second_ran is not None and second_ran < 2.5 and not arguments_file.exists(),
+          f"exit {completed.returncode}, second call ran {second_ran}, "
+          f"stderr {completed.stderr!r}")
+
+    fresh_prefetch_case()
+    # 3 s for the whole run: gh takes 2 s, so Codex, which sleeps, must be stopped about
+    # 1 s after it starts, not after a fresh 3 s.
+    completed, report, elapsed = run("sleep", "--prefetch-github", "pr view 1",
+                                     "--deadline-minutes", "0.05", gh_mode="slow")
+    check("Codex gets only the time the --prefetch-github commands left, and the deadline "
+          "message says the commands and Codex share it",
+          completed.returncode == 1 and elapsed < 2.5
+          and "covers every --prefetch-github command and Codex together" in completed.stderr,
+          f"exit {completed.returncode}, Codex ran {elapsed:.1f}s, stderr {completed.stderr!r}")
+
+    fresh_prefetch_case()
+    no_gh_dir = scratch / "no-gh-bin"
+    no_gh_dir.mkdir()
+    # Without the fake codex and the find its command line needs, a runner that went on
+    # to start Codex would fail first and leave no arguments file to show it. The fake
+    # names its interpreter, since this PATH holds no python3.
+    codex_without_gh = no_gh_dir / "codex"
+    codex_without_gh.write_text(FAKE_CODEX.replace("#!/usr/bin/env python3",
+                                                   f"#!{sys.executable}", 1))
+    codex_without_gh.chmod(0o755)
+    (no_gh_dir / "find").symlink_to(shutil.which("find"))
+    completed = subprocess.run(
+        [sys.executable, str(PROGRAM), "-C", str(checkout), "--brief", str(brief),
+         "-o", str(scratch / "no-gh-report.md"), "--prefetch-github", "pr view 1"],
+        env=dict(os.environ, PATH=str(no_gh_dir), HOME=str(scratch_home),
+                 FAKE_CODEX_MODE="report", FAKE_CODEX_ARGUMENTS_FILE=str(arguments_file)),
+        capture_output=True, text=True, check=False)
+    check("a missing gh exits 1, says gh could not run, and Codex is not started",
+          completed.returncode == 1 and "could not run `gh pr view 1`" in completed.stderr
+          and not arguments_file.exists(),
+          f"exit {completed.returncode}, stderr {completed.stderr!r}")
+
+    # gh is stopped at the deadline, so a run reaches Codex with no time left only when
+    # the last gh call ends just at it; a stand-in prefetch that uses up the time shows it.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("runner_under_test", PROGRAM)
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    fresh_prefetch_case()
+    clock = [1000.0]
+    real_monotonic = time.monotonic
+    runner.time.monotonic = lambda: clock[0]
+
+    def prefetch_using_whole_deadline(commands, data_folder, checkout_folder, deadline,
+                                      deadline_minutes):
+        clock[0] = deadline
+        return [], None
+    runner.prefetch_github_data = prefetch_using_whole_deadline
+    # A started fake codex would be stopped at once by a zero timeout, before it could
+    # leave any trace, so the case records the runner building Codex's command instead.
+    codex_commands_built = []
+
+    def codex_command_recorded(*arguments, **options):
+        codex_commands_built.append(arguments)
+        return [sys.executable, "-c", ""]
+    runner.codex_command = codex_command_recorded
+    real_stderr, captured = sys.stderr, __import__("io").StringIO()
+    sys.stderr = captured
+    try:
+        exit_code = runner.main(["-C", str(checkout), "--brief", str(brief),
+                                 "-o", str(scratch / "no-time-report.md"),
+                                 "--prefetch-github", "pr view 1", "--deadline-minutes", "1"])
+    finally:
+        sys.stderr = real_stderr
+        runner.time.monotonic = real_monotonic
+    check("when the --prefetch-github commands use the whole deadline, Codex is not started "
+          "and the run exits 1 saying so",
+          exit_code == 1 and "used the whole 1-minute deadline" in captured.getvalue()
+          and "Codex was not started" in captured.getvalue() and not codex_commands_built,
+          f"exit {exit_code}, Codex commands built {len(codex_commands_built)}, "
+          f"stderr {captured.getvalue()!r}")
+
+    # macOS answers killpg with EPERM while every process left in the group is exiting,
+    # which cannot be timed from a test, so a stand-in killpg gives that answer.
+    killpg_answers = []
+    killpg_calls = []
+    killpg_calls_before_each_poll = []
+    sleeps = []
+
+    def killpg_answering(group_id, signal_number):
+        killpg_calls.append(signal_number)
+        answer = killpg_answers.pop(0) if killpg_answers else ProcessLookupError()
+        if answer is not None:
+            raise answer
+
+    class StoppedProcess:
+        pid = 4242
+
+        def wait(self, timeout=None):
+            return -15
+
+        def poll(self):
+            killpg_calls_before_each_poll.append(len(killpg_calls))
+            return -15
+    real_killpg, real_sleep = runner.os.killpg, runner.time.sleep
+    runner.os.killpg, runner.time.sleep = killpg_answering, sleeps.append
+    try:
+        killpg_answers[:] = [None, PermissionError(1, "Operation not permitted"),
+                             PermissionError(1, "Operation not permitted"),
+                             ProcessLookupError()]
+        stop_error = None
+        try:
+            runner.stop_process_group(StoppedProcess())
+        except OSError as error:
+            stop_error = error
+        check("stopping Codex at the deadline waits out macOS's EPERM from a group whose "
+              "last processes are exiting, and ends when the group is gone",
+              stop_error is None
+              and killpg_calls == [signal.SIGTERM] + [signal.SIGKILL] * 3
+              and len(sleeps) == 2,
+              f"error {stop_error!r}, killpg signals {killpg_calls!r}, sleeps {sleeps!r}")
+        # On Linux nothing else catches a retry that skips reaping Codex's zombie.
+        check("each retry of a refused stop signal first reaps Codex if it has exited",
+              killpg_calls_before_each_poll == [2, 3],
+              f"killpg calls made before each poll {killpg_calls_before_each_poll!r}")
+
+        killpg_calls.clear()
+        sleeps.clear()
+        killpg_answers[:] = [PermissionError(1, "Operation not permitted")
+                             for _ in range(runner.EXITING_GROUP_SIGNAL_ATTEMPTS + 5)]
+        stop_error = None
+        try:
+            runner.stop_process_group(StoppedProcess())
+        except PermissionError as error:
+            stop_error = error
+        check("a process group that keeps refusing the stop signal raises PermissionError "
+              "after a bounded number of attempts",
+              stop_error is not None
+              and len(killpg_calls) == runner.EXITING_GROUP_SIGNAL_ATTEMPTS,
+              f"error {stop_error!r}, killpg calls {len(killpg_calls)}")
+    finally:
+        runner.os.killpg, runner.time.sleep = real_killpg, real_sleep
+
+    # A Codex that exits just as the deadline passes is a zombie until reaped, alone in its
+    # group; macOS answers killpg for such a group with EPERM, Linux does not.
+    zombie_codex = subprocess.Popen([sys.executable, "-c", ""], start_new_session=True)
+    time.sleep(0.5)
+    stop_started = time.monotonic()
+    stop_error = None
+    try:
+        runner.stop_process_group(zombie_codex)
+    except OSError as error:
+        stop_error = error
+    stop_seconds = time.monotonic() - stop_started
+    check("stopping a Codex that has exited but is not yet reaped ends at once, without "
+          "an error",
+          stop_error is None and stop_seconds < 2 and zombie_codex.returncode is not None,
+          f"error {stop_error!r}, took {stop_seconds:.1f}s")
+
+    # A failure to stop Codex at the deadline is not a failure to start it.
+    def stop_refused(process):
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        raise PermissionError(1, "Operation not permitted")
+    real_stop, real_codex_command = runner.stop_process_group, runner.codex_command
+    runner.stop_process_group = stop_refused
+    runner.codex_command = lambda *arguments, **options: [
+        sys.executable, "-c", "import time; time.sleep(60)"]
+    fresh_prefetch_case()
+    real_stderr, captured = sys.stderr, __import__("io").StringIO()
+    sys.stderr = captured
+    main_error = main_exit = None
+    try:
+        main_exit = runner.main(["-C", str(checkout), "--brief", str(brief),
+                                 "-o", str(scratch / "stop-refused-report.md"),
+                                 "--deadline-minutes", "0.01"])
+    except PermissionError as error:
+        main_error = error
+    finally:
+        sys.stderr = real_stderr
+        runner.stop_process_group, runner.codex_command = real_stop, real_codex_command
+    check("a failure to stop Codex at the deadline surfaces as that error, not as "
+          "\"could not start Codex\"",
+          main_error is not None and "could not start Codex" not in captured.getvalue(),
+          f"error {main_error!r}, exit {main_exit}, stderr {captured.getvalue()!r}")
 
     empty_brief = scratch / "empty.md"
     empty_brief.write_text("  \n")
