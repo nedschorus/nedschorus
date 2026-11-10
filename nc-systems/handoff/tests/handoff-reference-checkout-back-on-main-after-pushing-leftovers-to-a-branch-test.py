@@ -407,13 +407,100 @@ def another_run_committed_onto_main_before_the_switch_case():
         status, out, err = run_program()
     finally:
         program.git = real
-    check("HEAD's commit held by neither origin/main nor a leftovers branch: exits 1 naming it, "
-          "without switching, and the commit stays on the local main",
-          status == 1 and landed and landed[0] in err and "was not switched" in err
-          and git("rev-parse", "refs/heads/main") == landed[0], out + err)
+    check("HEAD's commit held by neither origin/main nor a leftovers branch: the commit is saved "
+          "on a new pushed leftovers branch in the same run, then on main",
+          status == 0 and landed and origin_branch(f"{LEFTOVERS}-2") == landed[0]
+          and f"{LEFTOVERS}-2" in out and local_branches() == ["refs/heads/main"]
+          and on_main_at_origin_main_and_clean(), out + err)
+
+
+def another_run_committed_onto_main_before_the_switch_and_its_push_fails_case():
+    fresh_reference_checkout()
+    commit("local only")
+    landed = []
+    real = program.git
+
+    def stub(checkout, arguments, **options):
+        result = real(checkout, arguments, **options)
+        if arguments[0] == "push" and not landed:
+            git("switch", "-q", "-C", "main", "origin/main")
+            landed.append(commit("landed on main"))
+            refuse_every_push()
+        return result
+    program.git = stub
+    try:
+        status, out, err = run_program()
+    finally:
+        program.git = real
+        (ORIGIN / "hooks" / "pre-receive").unlink(missing_ok=True)
+    check("HEAD's commit held by no branch, and the push of the branch saving it fails: the "
+          "branch is kept locally, named with its commit, and the checkout is on main",
+          status == 1 and landed
+          and git("rev-parse", f"refs/heads/{LEFTOVERS}-2") == landed[0]
+          and f"The leftovers branch {LEFTOVERS}-2, at commit {landed[0]}" in err
+          and on_main_at_origin_main_and_clean(), out + err)
+
+
+def pending_file():
+    return Path(git("rev-parse", "--path-format=absolute", "--git-path",
+                    program.POST_MERGE_HOOK_PENDING_FILE_NAME))
+
+
+def pending_file_removed_while_the_hook_runs_case():
+    """As when a concurrent run ran the hook too and removed the file first."""
+    fresh_reference_checkout()
+    post_merge_hook(f"#!/bin/sh\nrm {pending_file()}\n")
+    commit("local only")
     status, out, err = run_program()
-    check("rerun after that: the commit is saved on a pushed leftovers branch, then on main",
-          status == 0 and origin_branch(f"{LEFTOVERS}-2") == landed[0]
+    check("pending file removed while the post-merge hook runs: the run succeeds",
+          status == 0 and not pending_file().exists() and on_main_at_origin_main_and_clean(),
+          out + err)
+
+
+def pending_file_unreadable_case():
+    fresh_reference_checkout()
+    pending_file().mkdir()
+    local = commit("local only")
+    status, out, err = run_program()
+    check("pending file that cannot be read: exits 1 naming it, the leftovers pushed, the checkout "
+          "not switched",
+          status == 1 and f"could not read {pending_file()}" in err
+          and origin_branch(LEFTOVERS) == local
+          and git("symbolic-ref", "HEAD") == f"refs/heads/{LEFTOVERS}", out + err)
+
+
+def pending_file_unwritable_case():
+    fresh_reference_checkout()
+    record = SCRATCH_HOME / "post-merge-ran"
+    record.unlink(missing_ok=True)
+    post_merge_hook(f"#!/bin/sh\ntouch {record}\n")
+    commit("local only")
+    real = program.git
+
+    def stub(checkout, arguments, **options):
+        result = real(checkout, arguments, **options)
+        if arguments[0] == "switch" and "-C" in arguments:
+            pending_file().mkdir()
+        return result
+    program.git = stub
+    try:
+        status, out, err = run_program()
+    finally:
+        program.git = real
+    check("pending file that cannot be written: exits 1 naming it, the hook run all the same, the "
+          "checkout on main",
+          status == 1 and f"could not write {pending_file()}" in err and record.is_file()
+          and on_main_at_origin_main_and_clean(), out + err)
+
+
+def pending_file_not_removable_case():
+    fresh_reference_checkout()
+    post_merge_hook(f"#!/bin/sh\nrm {pending_file()} && mkdir {pending_file()}\n")
+    commit("local only")
+    status, out, err = run_program()
+    check("pending file that cannot be removed after the hook succeeded: exits 1 naming it, the "
+          "checkout on main",
+          status == 1 and f"could not remove {pending_file()}" in err
           and on_main_at_origin_main_and_clean(), out + err)
 
 
@@ -562,6 +649,11 @@ post_merge_hook_kills_git_case()
 failed_push_then_failed_later_step_cases()
 failure_after_the_pushes_keeps_earlier_problems_cases()
 another_run_committed_onto_main_before_the_switch_case()
+another_run_committed_onto_main_before_the_switch_and_its_push_fails_case()
+pending_file_removed_while_the_hook_runs_case()
+pending_file_unreadable_case()
+pending_file_unwritable_case()
+pending_file_not_removable_case()
 leftovers_conflicting_with_origin_main_under_repository_hooks_case()
 branch_name_taken_case()
 head_off_main_case()
