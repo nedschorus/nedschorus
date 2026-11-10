@@ -458,7 +458,7 @@ with tempfile.TemporaryDirectory() as temporary:
     handoffs = root / "no-state-file"
     write_state(handoffs, "supervised-seat", STOP)
     (handoffs / "never-supervised-handoff.md").write_text(
-        "# Handoff\nrestart-counter: 1\n", encoding="utf-8")
+        "# Handoff\nsession-handoff-sequence-number: 1\n", encoding="utf-8")
     anchor, seen = verdicts(handoffs)
     check("only seats with a supervisor state file are considered",
           set(seen) == {"supervised-seat"}, seen)

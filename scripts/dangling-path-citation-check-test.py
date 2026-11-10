@@ -1045,7 +1045,7 @@ with tempfile.TemporaryDirectory() as workspace:
           "notes/naïve-dir" not in out, out)
 
 
-# --- an architecture overview is checked for paths only ---------------------
+# --- an nc-architecture-overview is checked for paths only ---------------------
 # md-drift-lint's overview checks query GitHub; this program reads only path
 # findings, so a changed overview must make no GitHub call.
 with tempfile.TemporaryDirectory() as workspace:
@@ -1071,7 +1071,7 @@ with tempfile.TemporaryDirectory() as workspace:
     completed = subprocess.run(
         [sys.executable, str(root / "scripts" / CHECK_SCRIPT.name), "--base", base],
         cwd=root, env=environment, capture_output=True, text=True, check=False)
-    check("a changed architecture overview makes no GitHub call",
+    check("a changed nc-architecture-overview makes no GitHub call",
           not gh_called.exists() and completed.returncode == 0
           and "GHI" not in completed.stdout,
           f"{completed.returncode} {completed.stdout!r} {completed.stderr!r}")

@@ -9,8 +9,8 @@ moment it is committed:
 
 It leaves out the files no person or agent runs by hand, by kind:
 
-  - test suites, `*-test.py` and `*-test.sh`, which run-all-test-suites.py runs;
-  - Claude Code hooks, `*-hook.py` or `*-hook-nbd.py` and everything under `.claude/hooks/`,
+  - nc-test-suites, `*-test.py` and `*-test.sh`, which run-all-test-suites.py runs;
+  - Claude Code hooks, `*-hook.py` or `*-hook-nbd.py` and everything under `.claude/guard-hooks/`,
     which Claude Code runs with a JSON payload on stdin;
   - git hooks, everything under `scripts/git-client-side-hooks/`, which git runs;
 
@@ -62,11 +62,11 @@ def path_without_nice_but_dirty_suffix(path):
 
 
 EXCLUDED_KINDS = (
-    ("a test suite, run by run-all-test-suites.py",
+    ("an nc-test-suite, run by run-all-test-suites.py",
      lambda path: path.endswith(("-test.py", "-test.sh"))),
     ("a Claude Code hook, run by Claude Code with a JSON payload on stdin",
      lambda path: path_without_nice_but_dirty_suffix(path).endswith("-hook.py")
-     or path.startswith(".claude/hooks/")),
+     or path.startswith(".claude/guard-hooks/")),
     ("a git hook, run by git",
      lambda path: path.startswith("scripts/git-client-side-hooks/")),
 )
@@ -81,10 +81,6 @@ EXEMPT_PROGRAMS = {
     "scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py":
         "run only by the git pre-push hook scripts/git-client-side-hooks/pre-push, "
         "which hands it git's arguments and the refs being pushed on stdin",
-    "scripts/git-client-side-hooks-pre-push-selective-test-run.py":
-        "run only by the git pre-push hook scripts/git-client-side-hooks/pre-push, with no "
-        "arguments and nothing on stdin; it ignores its arguments, so --help would start a "
-        "selective test run",
 }
 
 failures = []

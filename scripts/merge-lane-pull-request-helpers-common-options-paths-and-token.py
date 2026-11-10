@@ -1,6 +1,6 @@
 """What the merge-lane pull request helpers share: their directory options, path resolution and the merge account's token.
 
-Loaded by path by the seven merge-lane-pull-request-* and
+Loaded by path by the eight merge-lane-pull-request-* and
 merge-lane-code-review-* scripts beside it; not run on its own.
 
 Every path option is made absolute when the arguments are parsed, before any
@@ -86,6 +86,12 @@ def pull_request_head_worktree(arguments, number):
 
 def pull_request_merged_worktree(arguments, number):
     return arguments.merge_lane_review_worktrees_directory / f"pr{number}-merged"
+
+
+def pull_request_head_test_run_log_store_root_directory(arguments, number):
+    """The --log-store-root the head test run of pull request number is given."""
+    return (arguments.merge_lane_worktrees_and_outputs_directory / "hr" / f"pr{number}"
+            / "log-store")
 
 
 def review_tool_missing_message(arguments, relative_path):

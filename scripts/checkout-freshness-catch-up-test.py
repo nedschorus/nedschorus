@@ -360,7 +360,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           merge_note.endswith("\n" + NOT_FOR_THE_USER_LINE), merge_note)
     check("and only once",
           "merge commit(s) from main" not in agent_text(run_catch_up(["--cwd", str(merge_seat)])))
-    # A merge of another topic branch is not the banned thing.
+    # A merge of another nc-topic-branch is not the banned thing.
     topic_seat = tmp / "topic-merge-worktree"
     git(["worktree", "add", "-q", "-b", "topic-a", str(topic_seat), "main"], reference)
     configure_identity(topic_seat)
@@ -372,7 +372,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     commit_file(other, "topic-b.txt", "b\n", "topic b work")
     git(["-c", "core.editor=true", "merge", "--no-ff", "--no-edit", "topic-b"], topic_seat)
     result = run_catch_up(["--cwd", str(topic_seat)])
-    check("a merge of another topic branch is NOT reported as a merge from main",
+    check("a merge of another nc-topic-branch is NOT reported as a merge from main",
           "merge commit(s) from main" not in agent_text(result), agent_text(result))
 
     # -----------------------------------------------------------------------
@@ -404,15 +404,14 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "Do not rebase or amend it" in agent_text(result)
           and "git checkout -b <name> origin/main" in agent_text(result), agent_text(result))
     # A conflict with main is the one case a commit on top cannot clear; the
-    # pushed-branch advice sends it to the hand-merge that the VERDICT: CONFLICT
-    # report of scripts/branch-conflict-check.py describes.
+    # pushed-branch advice sends it to scripts/branch-conflict-check.py's report.
     check("a pushed branch is told how to clear a conflict with main, byte for byte",
-          "If it conflicts with main, clear the conflict with the hand-merge that "
-          "scripts/branch-conflict-check.py describes." in agent_text(result),
-          agent_text(result))
+          "If it conflicts with main, do what scripts/branch-conflict-check.py "
+          "reports." in agent_text(result), agent_text(result))
     check("the pushed head's status says how a conflict is cleared, byte for byte",
-          "(frozen: a fix is a new commit on top, never an amend; a conflict with "
-          "main is cleared by a hand-merge)" in agent_text(result), agent_text(result))
+          "(frozen: a fix is a new commit on top, never an amend; for a conflict with "
+          "main, do what scripts/branch-conflict-check.py reports)" in agent_text(result),
+          agent_text(result))
     check("the pushed-branch note ends by saying it is not for the user, byte for byte",
           agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
     check("the user hears nothing", display_text(result) == "", display_text(result))
@@ -516,8 +515,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "This branch's commits are already on GitHub under another branch name, so the "
           "branch is treated as pushed and is not rebased: a pushed head may be under "
           "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
-          "fix is a new commit on top. If it conflicts with main, clear the conflict with "
-          "the hand-merge that scripts/branch-conflict-check.py describes."
+          "fix is a new commit on top. If it conflicts with main, do what "
+          "scripts/branch-conflict-check.py reports."
           in agent_text(result), agent_text(result))
     check("the pushed-history note never tells the agent to rebase",
           "git rebase origin/main" not in agent_text(result), agent_text(result))
@@ -557,9 +556,12 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         "CLAUDE.md, the skills and the hooks load from this checkout, so until it moves, the "
         "files listed above stay older here than on main.")
     detached_work_line = (
-        "It holds work of its own: run `git switch -c <branch name>` to put that work on a "
-        "branch, and commit any uncommitted changes there; from then on the hook's rules for a "
-        "branch apply.")
+        "It holds work of its own.\n"
+        "If this checkout is an agent-home, git refuses commits in it: carry that work to a "
+        "worktree of your own on an nc-topic-branch, as the refusal of `git commit` here says "
+        "how.\n"
+        "Otherwise run `git switch -c <branch name>` to put that work on a branch, and commit "
+        "any uncommitted changes there; from then on the hook's rules for a branch apply.")
     detached_bisect_line = (
         "A bisect is in progress: finish it or abort it; the next turn's end moves the "
         "checkout forward.")
@@ -754,12 +756,12 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           agent_text(result))
     git(["cherry-pick", "--abort"], sequencing)
 
-    # The ghi-info shape (nedschorus#334): no commits of its own, far behind,
+    # The ghi-guide-agent shape (nedschorus#334): no commits of its own, far behind,
     # never pushed — so it is simply brought level, the same fast-forward the
-    # box's ghi-info-ask now does for itself (#375).
-    ghi = tmp / "ghi-info-worktree"
+    # box's ghi-guide-agent-ask now does for itself (#375).
+    ghi = tmp / "ghi-guide-agent-worktree"
     first_commit = git(["rev-list", "--max-parents=0", "main"], reference).stdout.strip()
-    git(["worktree", "add", "-q", "-b", "ghi-info", str(ghi), first_commit], reference)
+    git(["worktree", "add", "-q", "-b", "ghi-guide-agent", str(ghi), first_commit], reference)
     configure_identity(ghi)
     result = run_catch_up(["--cwd", str(ghi)])
     check("a never-pushed branch with no own commits, far behind, is brought level",
@@ -1079,6 +1081,28 @@ with tempfile.TemporaryDirectory() as reference_pull_scratch:
     check("a successful pull clears the reference's reason key",
           "last_reference_blockers" not in stamp_of(reference), str(stamp_of(reference)))
 
+    # Git exits 0 after a fast-forward whatever post-merge returns, so the
+    # hook's FAILED line reaches nobody unless the catch-up relays it.
+    hooks = tmp / "hooks"
+    hooks.mkdir()
+    (hooks / "post-merge").write_text(
+        "#!/bin/sh\necho 'restart-program: FAILED — the restart did not happen' >&2\nexit 1\n",
+        encoding="utf-8")
+    (hooks / "post-merge").chmod(0o755)
+    git(["config", "core.hooksPath", str(hooks)], reference)
+    commit_file(origin, "advance-again.txt", "two\n", "advance again")
+    pulled = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    check("a post-merge hook's FAILED line after a fast-forward of the reference is relayed",
+          (reference / "advance-again.txt").exists()
+          and "post-merge hook reported a failure" in pulled.stdout
+          and "restart-program: FAILED — the restart did not happen" in pulled.stdout,
+          pulled.stdout + pulled.stderr)
+    (hooks / "post-merge").write_text("#!/bin/sh\necho 'all went well' >&2\n", encoding="utf-8")
+    commit_file(origin, "advance-third.txt", "three\n", "advance a third time")
+    pulled = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    check("(control) a post-merge hook that reports no failure adds no line",
+          "post-merge hook" not in pulled.stdout, pulled.stdout)
+
 
 # ---------------------------------------------------------------------------
 # A reference whose fetch failed must not read as up to date. It computed
@@ -1220,8 +1244,13 @@ with tempfile.TemporaryDirectory() as naming_scratch:
           named())
     check("hooks and their wiring share one category, having one reason",
           "hooks and wiring that run on your work (2)"
-          in named((".claude/hooks/a-guard.py", "a hook"),
+          in named((".claude/guard-hooks/a-hook.py", "a hook"),
                    (".claude/settings.json", "wiring")), named())
+    guard_listing = named((".claude/guard-hooks/a-guard.py", "a guard hook"))
+    check("a guard under .claude/guard-hooks/ is named with the hooks",
+          any(line.startswith("  hooks and wiring that run on your work (3):")
+              and ".claude/guard-hooks/a-guard.py" in line
+              for line in guard_listing.splitlines()), guard_listing)
     check("an uncategorised path is still surfaced rather than hidden",
           "other files (1): Makefile" in named(("Makefile", "a makefile")), named())
 
@@ -2543,6 +2572,31 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
             raised = error
     check("a failed branch read in merge_blockers raises instead of reporting detached HEAD",
           raised is not None and INJECTED_STDERR in str(raised), str(raised))
+
+    # The never-pushed rebase is the shared rebase-or-replace answer's: a replace answer
+    # leaves the branch where it is, and the rebase answer moves it.
+    shared_answer = catch_up_module.rebase_or_replace
+    real_answer = shared_answer.pull_request_conflict_with_main_rebase_or_replace_answer
+    asked = []
+    for answer in (shared_answer.REPLACE_WITH_NEW_PULL_REQUEST, shared_answer.REBASE_ONTO_MAIN):
+        _, answered_seat = seat_behind_main(own_commit=True)
+        before = tip(answered_seat)
+
+        def injected_answer(open_pull_request_found, ever_marked_ready_read=None,
+                            answer=answer):
+            asked.append(open_pull_request_found)
+            return answer
+        shared_answer.pull_request_conflict_with_main_rebase_or_replace_answer = injected_answer
+        try:
+            catch_up_module.catch_up_session_checkout(answered_seat, 0)
+        finally:
+            shared_answer.pull_request_conflict_with_main_rebase_or_replace_answer = real_answer
+        moved = tip(answered_seat) != before
+        check(f"a never-pushed branch the shared answer gives '{answer}' is "
+              f"{'rebased' if answer == shared_answer.REBASE_ONTO_MAIN else 'left where it is'}",
+              moved == (answer == shared_answer.REBASE_ONTO_MAIN), f"{before} {tip(answered_seat)}")
+    check("checkout-freshness asks the shared answer for a branch with no open pull request",
+          asked == [False, False], repr(asked))
 
     # merges_from_main: a merge commit from main on the seat.
     _, merged_seat = seat_behind_main(own_commit=True)
