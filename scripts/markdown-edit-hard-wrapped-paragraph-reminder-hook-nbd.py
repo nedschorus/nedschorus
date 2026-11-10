@@ -16,7 +16,7 @@ turned into spaces, so it drops a line whose only change is a tab. A broken para
 the agent did not touch is left alone, because in a file the instruction-file guard
 protects, rejoining it would need the user's approval for whitespace. An Edit that only deleted lines adds none and gets no reminder. An Edit
 of a file holding a broken paragraph, whose added lines cannot be found that way,
-gets one line on stderr and exit 1, a non-blocking hook error, so the agent is told the
+gets a message on stderr and exit 1, a non-blocking hook error, so the agent is told the
 check was not made. An Edit of a file holding no broken paragraph needs no diff to be
 judged, so a payload lacking that text there is not reported. A replace_all Edit with an
 empty newString, where both texts Claude Code may have removed (oldString alone, or with
@@ -43,7 +43,7 @@ breaks needs rules this hook does not carry, so it stays silent rather than tell
 an agent to join lines that must stay apart.
 
 A fault, such as stdin that is not a JSON object, a written file that cannot be read
-or any exception: one line on stderr naming the hook and the fault, nothing on stdout,
+a git command that fails, or any exception: a message on stderr naming the hook and the fault, nothing on stdout,
 exit 1. Claude Code records a PostToolUse exit 1 as a non-blocking error and keeps the
 write; exit 0 would read as "no broken paragraph found". A file that is not UTF-8 is
 not a fault: the hook judges only UTF-8 text, and stays silent on other bytes."""
