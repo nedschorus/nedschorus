@@ -152,7 +152,7 @@ def cold_read_fast_read_scratch_repository_whose_stub_agy_answers_in_chat(scratc
         (stubs / name).write_text(text, encoding="utf-8")
         (stubs / name).chmod(0o755)
     install_fake_sandbox_programs(stubs)
-    # The agy cell scans HOME for credential files at launch, and the real home takes seconds to walk.
+    # A scratch HOME, so the agy cell's sandbox masks paths in it, not the real home's.
     home = scratch / "fast-read-scratch-home"
     home.mkdir()
     environment = dict(os.environ, HOME=str(home),
