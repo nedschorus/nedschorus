@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""What the three handoff-supervisor suites beside this file share.
+"""What the handoff-supervisor suites beside this file share.
 
 Each suite loads this file by path in a process of its own, so each gets its
 own copy of the supervisor module: the cases patch the module's globals, and
@@ -16,6 +16,7 @@ scripts/run-all-test-suites.py does not run it as a suite of its own.
 """
 
 import atexit
+import builtins
 import contextlib
 import importlib.util
 import os
@@ -52,6 +53,19 @@ _spec = importlib.util.spec_from_file_location("handoff_supervisor", SCRIPT_PATH
 supervisor = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(supervisor)
 
+# The supervisor refuses to start without the agent-seat's GitHub token, read from
+# ~/.config/nedschorus/<account>.token, so the scratch HOME holds a made-up token for
+# each account an agent-seat can act as, taken from the supervisor's own table. Never a
+# real credential.
+FIXTURE_GITHUB_TOKEN_BY_ACCOUNT = {
+    account: f"github_pat_{account.upper().replace('-', '_')}_TEST_ONLY_not-a-real-credential"
+    for account in {*supervisor.AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT.values(),
+                    "ubuntu-claude", "mac-claude"}}
+(SCRATCH_HOME_DIRECTORY / ".config" / "nedschorus").mkdir(parents=True)
+for _account, _token in FIXTURE_GITHUB_TOKEN_BY_ACCOUNT.items():
+    (SCRATCH_HOME_DIRECTORY / ".config" / "nedschorus" / f"{_account}.token").write_text(
+        _token + "\n", encoding="utf-8")
+
 failures = []
 
 os.environ["CLAUDE_CODE_TASK_LIST_ID"] = "handoff-supervisor-test-pin-tasks"
@@ -66,7 +80,7 @@ SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY = Path(
     tempfile.mkdtemp(prefix="ssh-that-never-reaches-ned-box-"))
 atexit.register(shutil.rmtree, SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY, True)
 (SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY / "ssh").write_text(
-    "#!/bin/sh\necho 'ssh: this test suite never reaches ned-box' >&2\nexit 255\n",
+    "#!/bin/sh\necho 'ssh: this nc-test-suite never reaches ned-box' >&2\nexit 255\n",
     encoding="utf-8")
 (SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY / "ssh").chmod(0o755)
 os.environ["PATH"] = (f"{SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY}{os.pathsep}"
@@ -83,13 +97,13 @@ os.environ["PATH"] = (f"{SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY}{os.pathsep}"
 # mark is ever written for, and it writes nothing; on the Mac the ssh above
 # refuses its read.
 SSH_TARGET_FOR_THIS_MACHINE_UNPATCHED = None
-if hasattr(supervisor, "daily_overview_refresh_reminder_mark"):
-    supervisor.daily_overview_refresh_reminder_mark \
+if hasattr(supervisor, "handoff_architecture_overview_refresh_user_shown_mark"):
+    supervisor.handoff_architecture_overview_refresh_user_shown_mark \
         .DAILY_OVERVIEW_REFRESH_REMINDER_MARKS_DIRECTORY = str(
             SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY / "no-overview-refresh-reminder-marks")
     SSH_TARGET_FOR_THIS_MACHINE_UNPATCHED = (
-        supervisor.daily_overview_refresh_reminder_mark.ssh_target_for_this_machine)
-    supervisor.daily_overview_refresh_reminder_mark.ssh_target_for_this_machine = (
+        supervisor.handoff_architecture_overview_refresh_user_shown_mark.ssh_target_for_this_machine)
+    supervisor.handoff_architecture_overview_refresh_user_shown_mark.ssh_target_for_this_machine = (
         lambda: None)
 
 # The agent-binary update cases take the machine-wide update lock, so the lock
@@ -180,8 +194,17 @@ class StubLaunchedSession:
 def supervisor_names_replaced(**replacements):
     """Replace module-level names the supervisor looks up when it runs — its
     functions, and `input`, which it otherwise finds in builtins — and a
-    terminal on stdin when `stdin_isatty` is given; everything is put back."""
+    terminal on stdin when `stdin_isatty` is given; everything is put back.
+
+    Raises NameError, replacing nothing, for a name that is neither the
+    supervisor's own nor a builtin: a stub under a name the supervisor no
+    longer defines would replace nothing, and the real code would run."""
     stdin_isatty = replacements.pop("stdin_isatty", None)
+    unknown = sorted(name for name in replacements
+                     if name not in supervisor.__dict__ and not hasattr(builtins, name))
+    if unknown:
+        raise NameError(f"supervisor_names_replaced: {', '.join(unknown)} not defined in "
+                        f"{SCRIPT_PATH} nor a builtin, so a stub under that name replaces nothing")
     missing = object()
     saved = {name: supervisor.__dict__.get(name, missing) for name in replacements}
     saved_stdin = sys.stdin

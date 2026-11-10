@@ -14,6 +14,7 @@ looking. Each blocked surface therefore has a case asserting both the status
 AND that the output says what to do about it.
 """
 
+import atexit
 import contextlib
 import importlib.util
 import io
@@ -41,6 +42,20 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 # Every copy this suite makes lands in a scratch folder, never in the user's Downloads.
 FOUND_COPIES_SCRATCH = tempfile.mkdtemp(prefix="find-deleted-path-found-copies-test-")
 os.environ["FIND_DELETED_PATH_FOUND_COPIES_ROOT"] = FOUND_COPIES_SCRATCH
+
+
+def remove_found_copies_scratch_left_by_a_run_that_raised():
+    # A run that reaches the end removes the folder there, where a failure can still fail the suite; this
+    # covers a run that raised or got Ctrl-C, whose exit status is already nonzero.
+    if os.path.isdir(FOUND_COPIES_SCRATCH):
+        try:
+            shutil.rmtree(FOUND_COPIES_SCRATCH)
+        except OSError as error:
+            print("the found-copies scratch folder %s could not be removed: %s: %s"
+                  % (FOUND_COPIES_SCRATCH, type(error).__name__, error), file=sys.stderr)
+
+
+atexit.register(remove_found_copies_scratch_left_by_a_run_that_raised)
 
 MODULE_PATH = Path(__file__).with_name("find-deleted-path-across-backups.py")
 spec = importlib.util.spec_from_file_location("find_deleted_path_across_backups", MODULE_PATH)
@@ -4055,7 +4070,9 @@ with tempfile.TemporaryDirectory() as tmp:
     arguments = [str(repo / "a" / "b.md"), "--repo", str(repo), "--found-copies-root", str(tmp / "found"),
                  "--skip", "box", "--skip", "localsnapshots", "--skip", "transcripts", "--skip", "logstore",
                  "--skip", "timemachine"]
-    rerun_line = "If none of the cases above applies, run exactly %s once more." % shlex.join(["python3", program] + arguments)
+    rerun_lines = finder.next_step_lines.git_failure_next_step_lines(
+        shlex.join(["python3", program] + arguments), "scripts/find-deleted-path-across-backups.py",
+        text_the_failure_line_contains="git's failure:", include_the_misspelt_branch_commit_or_path_line=True)
     checkout = str(Path(program).parents[1])
     for how, typed, directory in (("by absolute path from another directory", program, str(elsewhere)),
                                   ("by a path relative to its checkout", os.path.relpath(program, checkout),
@@ -4086,7 +4103,7 @@ with tempfile.TemporaryDirectory() as tmp:
               ("run %s with <checkout> replaced by a checkout of the repository the path was deleted from.\n"
                % repo_rerun) in completed.stderr, "%r\n%s" % (repo_rerun, completed.stderr))
         check("... and names the program's absolute path, with every argument, as the command to rerun",
-              completed.stderr.count(rerun_line) == 1, "%r\n%s" % (rerun_line, completed.stderr))
+              completed.stderr.count(rerun_lines) == 1, "%r\n%s" % (rerun_lines, completed.stderr))
     # Both git surfaces skipped, and the path after a -- separator.
     (tmp / "log-store").mkdir()
     skip_both = ["--repo", str(repo), "--found-copies-root", str(tmp / "found"), "--log-store-root", str(tmp / "log-store"),
@@ -4116,6 +4133,35 @@ with tempfile.TemporaryDirectory() as tmp:
     check("... and argparse accepts that command once <checkout> is filled in",
           recovery.returncode != 2 and "usage:" not in recovery.stderr,
           "exit %s\n%s" % (recovery.returncode, recovery.stderr))
+
+# A copy of this suite whose finder raises on import, as an unhandled error or a Ctrl-C would, still removes
+# its found-copies scratch folder.
+for raised in ("RuntimeError('a case raised')", "KeyboardInterrupt()"):
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        copy, copy_temp = tmp / "scripts", tmp / "temp"
+        copy.mkdir()
+        copy_temp.mkdir()
+        (tmp / "nc-systems" / "general-tools").mkdir(parents=True)
+        shutil.copy(__file__, copy / Path(__file__).name)
+        shutil.copy(Path(__file__).with_name("git-redirecting-environment-removal-test-fixture.py"), copy)
+        shutil.copy(Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+                    / "git-redirecting-environment-variables-removal-common.py", tmp / "nc-systems" / "general-tools")
+        (copy / "find-deleted-path-across-backups.py").write_text("raise %s\n" % raised)
+        completed = subprocess.run([sys.executable, str(copy / Path(__file__).name)], capture_output=True, text=True,
+                                   env=dict(os.environ, TMPDIR=str(copy_temp)))
+        left = sorted(entry.name for entry in copy_temp.iterdir())
+        check("a run whose finder raises %s exits nonzero and leaves no found-copies scratch folder" % raised,
+              completed.returncode != 0 and left == [] and raised.split("(")[0] in completed.stderr,
+              "exit %s, left %s\n%s" % (completed.returncode, left, completed.stderr[-2000:]))
+
+# Removed here, before the exit status is decided, so a failed removal fails the suite; an atexit
+# callback that raises leaves the exit status 0.
+try:
+    shutil.rmtree(FOUND_COPIES_SCRATCH)
+except OSError as error:
+    check("the found-copies scratch folder %s is removed" % FOUND_COPIES_SCRATCH, False,
+          "%s: %s" % (type(error).__name__, error))
 
 print()
 if failures:

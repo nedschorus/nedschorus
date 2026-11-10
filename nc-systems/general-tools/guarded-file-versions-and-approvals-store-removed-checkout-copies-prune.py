@@ -2,7 +2,7 @@
 """Delete the guarded-file hook's copies of versions a commit now holds, and its approved copies
 of files in checkouts that no longer exist.
 
-The hook, .claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py, keeps
+The hook, .claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py, keeps
 this machine's directory of the log-store kind guarded-file-versions-and-approvals/. For every
 guarded file it has seen, the directory mirrors the file's absolute path and holds `approved`,
 `log` and one copy per version git did not hold when the hook saw it, named by the version's
@@ -68,13 +68,13 @@ gone, rechecked just before each path's copies go. Each unlink is atomic. A chec
 every approved copy of that path, and the hook's next run there copies only the version then on
 disk.
 
-SCHEDULE. Once a day at 07:00, after the daily worktree cleanup at 06:30, on each machine.
+SCHEDULE. Once a day at 07:00, after the worktree cleanup at 06:30, on each machine.
 Installed by nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the table
 beside it, scheduled-jobs-on-each-machine.json, where a change to the schedule is made.
 
   ned-box: one cron line.
 
-    0 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py >> /home/nedlern/.claude/daily-guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.log 2>&1
+    0 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py >> /home/nedlern/.claude/guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.log 2>&1
 
   the Mac: a launchd job at the same time; a run missed while the Mac sleeps starts at the next
   wake.
@@ -94,7 +94,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOOK_PATH = (Path(__file__).resolve().parents[2] / ".claude" / "hooks"
+HOOK_PATH = (Path(__file__).resolve().parents[2] / ".claude" / "guard-hooks"
              / "guarded-file-unapproved-change-afterward-backup-and-ask-hook.py")
 _specification = importlib.util.spec_from_file_location(
     "guarded_file_unapproved_change_afterward_backup_and_ask_hook", HOOK_PATH)

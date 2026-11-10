@@ -1,5 +1,6 @@
 ---
 issue: "[Ask for the root cause at the moments a defect is fixed: fix pull requests, review fix-rounds, and code fixed a third time](https://github.com/nedschorus/nedschorus/issues/1154)"
+kind: design
 ---
 
 # Ask for the root cause at the moments a defect is fixed: fix pull requests, review fix-rounds, and code fixed a third time

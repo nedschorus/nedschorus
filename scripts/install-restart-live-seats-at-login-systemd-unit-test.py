@@ -252,9 +252,8 @@ with tempfile.TemporaryDirectory() as temporary:
           exit_code == 1 and "printing nothing on stderr" in errors
           and errors.splitlines()[-2:] == [
               f"Run `{rerun}` once more, on ned-box, the machine whose user manager runs the unit.",
-              'If the rerun prints a line containing "so whether t is enabled is unknown" again, '
-              "stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line "
-              'containing "so whether t is enabled is unknown" from the command that printed this message and from the rerun.'], (exit_code, errors))
+              installer.next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                  "so whether t is enabled is unknown")], (exit_code, errors))
     for state, code in (("not-found", 4), ("masked", 1)):
         answered = installer.unit_is_enabled(
             "t", run=lambda command, **_: subprocess.CompletedProcess(

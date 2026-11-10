@@ -58,7 +58,7 @@ passing review.
   reached only through the main-gatekeeper, which logs every use). Dormant
   until its credential work lands.
 - **The PR process** — until the gate activates: each pull request
-  merges one atomic topic branch, and
+  merges one atomic nc-topic-branch, and
   the merge-lane agent-seat reviews and merges every PR (deputization, recorded
   at R13, is the ruled exception). Recorded in CLAUDE.md's PR-process paragraph.
   The earlier form — commits accumulating on a seat-branch, cherry-picked
@@ -175,7 +175,7 @@ repository as CLAUDE.md, so the print adds zero reach.
 
 **R3. Detached HEAD or sitting in the reference checkout refuses writes —
 BUILT (PR [session-location write guard: no file writes from a detached HEAD or the reference checkout](https://github.com/nedschorus/nedschorus/pull/88), merged 2026-08-17).**
-`.claude/hooks/session-location-write-guard.py`, PreToolUse block on
+`.claude/guard-hooks/session-location-write-guard.py`, PreToolUse block on
 Edit/Write/NotebookEdit; exception lane via `.location-write-approved`.
 Scope, corrected 2026-08-19: the detached-HEAD test governs writes into
 the session's *own* checkout; a write landing in the reference checkout is
@@ -240,7 +240,7 @@ correctly refuses, and `--claim` is the sanctioned path.
 
 **R10. Whether a change to an agent-instructions file needs the user's approval is set by the [approval page](nedschorus-which-changes-need-the-users-approval.md) —
 built-live (root-resolution fixed by PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86)).**
-`.claude/hooks/instruction-file-guard.py`: CLAUDE.md, per-seat
+`.claude/guard-hooks/instruction-file-guard.py`: CLAUDE.md, per-seat
 `CLAUDE.local.md`, `.claude/` (minus `worktrees/`, `jobs/` and `handoffs/`),
 reusable prompts, and the files the user reviews block on write; approval quoted into `.walk-approved`, or, for a change `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` does not require his approval for, `#pre_approved_change` and the reason. **The shell-write gap is
 named and ruled unguarded** (2026-08-17): every recorded bypass was
@@ -254,7 +254,7 @@ decision, and consistent with CLAUDE.md's rule on guards, which landed alongside
 
 **R11. Backup stores are read-only to agents — built-live; lane removed
 (user-ruled 2026-08-17).**
-`.claude/hooks/backup-and-snapshot-write-guard.py`: the Timeshift store
+`.claude/guard-hooks/backup-and-snapshot-write-guard.py`: the Timeshift store
 and configuration and Time Machine state refuse agent tool-writes
 *unconditionally* — no marker lane; a real configuration need routes to
 the user's keyboard. Rationale: an undo store agents can write is not
@@ -415,8 +415,8 @@ scratchpad outside the repository in every system prompt. A remind-tier
 hook on scratch-shaped writes stays a recorded candidate sharing R26's
 hook-plus-config pattern.
 
-**R24. Branch surveys fetch before they conclude — text, encoded into
-R22's cleanup script when built.** Before concluding what exists or is
+**R24. Branch surveys fetch before they conclude — mostly encoded: the Stop hook `scripts/checkout-freshness-catch-up.py` fetches origin at the end of each turn, at most once every five minutes, so the remote-tracking refs are rarely more than a few minutes old; a survey that must be exact still fetches first.**
+Before concluding what exists or is
 merged: `git fetch --prune origin` and read remote-tracking refs; a
 survey that cannot reach the remote says so. Evidence: a prune list built
 from unfetched refs missed four merged branches (2026-08-17).
@@ -474,7 +474,7 @@ rulings; listed here to keep the numbering complete.
 | R21 | Worktrees reaped when safe | detect + remind | built-live, PR [clean-worktrees: mechanical reaper for finished session worktrees, reporting at every seat launch](https://github.com/nedschorus/nedschorus/pull/73); vacancy proven, PR [worktree reaper: prove vacancy before reaping, instead of assuming it](https://github.com/nedschorus/nedschorus/pull/100) |
 | R22 | Junk ignored by pattern | default | ruled closed; issue [Worktree file hygiene: classify untracked files so junk is ignored rather than accumulating in search results](https://github.com/nedschorus/nedschorus/issues/50) closed |
 | R23 | Scratch lives in the scratchpad | default | satisfied by runtime default |
-| R24 | Surveys fetch before concluding | text | encode into R22's cleanup script when built |
+| R24 | Surveys fetch before concluding | default + text | mostly encoded: the checkout-freshness Stop hook fetches origin each turn; exact surveys still fetch first |
 | R25 | Dead registrations surfaced | remind (report) | built, PR [clean-worktrees: one report line names dead registrations and the prune command (R25)](https://github.com/nedschorus/nedschorus/pull/112) |
 | R26 | New MDs land in canonical locations | remind | ruled-unbuilt, issue [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11) |
 | R27 | On-machine records stay uncommitted | default | built-live |

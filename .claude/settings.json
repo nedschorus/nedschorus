@@ -2,13 +2,15 @@
   "env": {
     "DISABLE_AUTOUPDATER": "1"
   },
+  "idleCompaction": false,
   "statusLine": {
     "type": "command",
     "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}\"/scripts/session-statusline-command.py"
   },
   "permissions": {
     "allow": [
-      "Bash(gh pr merge *)"
+      "Bash(gh pr merge *)",
+      "Bash(python3 */.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py --approve *)"
     ]
   },
   "hooks": {
@@ -45,6 +47,16 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/walk-me-through/walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/walk-me-through/walk-me-through-pending-user-alerts-claim-and-insert-as-approval-walk-items-user-prompt-submit-hook.py",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-and-forked-subagent-brief-hand-over-user-prompt-submit-hook.py",
+            "timeout": 10
           }
         ]
       }
@@ -59,6 +71,11 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/checkout-freshness-catch-up.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/checkout-freshness-changed-skill-invoke-again-refusal-stop-hook.py",
+            "timeout": 30
           },
           {
             "type": "command",
@@ -77,8 +94,13 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/walk-me-through/walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/walk-me-through/walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/skills/walk-me-through/walk-me-through-agent-question-to-user-outside-approval-walk-items-refusal-stop-hook.py",
+            "timeout": 60
           }
         ]
       }
@@ -100,38 +122,58 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/synthetic-keystroke-guard-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/synthetic-keystroke-guard-hook.py",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/force-push-with-open-pull-request-guard-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/search-file-argument-read-as-option-guard-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/hand-typed-codex-exec-command-refusal-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/pkill-killall-and-process-name-pattern-kill-refusal-hook.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py",
             "timeout": 30
           },
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/handoff-deferral-cold-read-full-run-launch-refusal-hook.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py",
+            "timeout": 300
           }
         ]
       },
@@ -140,15 +182,30 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/instruction-file-guard.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/instruction-file-guard.py"
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-location-write-guard.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/session-location-write-guard.py"
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/backup-and-snapshot-write-guard.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/backup-and-snapshot-write-guard.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Artifact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/claude-code-artifact-tool-claude-ai-page-delete-refusal-hook.py",
+            "timeout": 30
           }
         ]
       }
@@ -214,11 +271,21 @@
         ]
       },
       {
+        "matcher": "TaskCreate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/agent-seat-due-task-prerequisites-recording-reminder-after-task-create-hook.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
         "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
             "timeout": 30
           }
         ]
@@ -230,7 +297,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
             "timeout": 30
           }
         ]

@@ -414,13 +414,13 @@ def case_agent_seat_branch_in_its_agent_home_is_not_reported(root):
     _, topic = run_hook(agent_home, state_root, {"tool_name": "Bash", "session_id": "session-seat",
                                                  "tool_input": {"command": "git switch -c a-topic-in-the-agent-home"}},
                         home=home)
-    check("a topic branch in an agent-home is reported",
+    check("an nc-topic-branch in an agent-home is reported",
           reported_branches(topic) == {"a-topic-in-the-agent-home"}, topic)
     topic_worktree = home / "agents" / "some-seat-worktrees" / "a-named-topic"
     git(["worktree", "add", "-q", "-b", "a-named-topic", str(topic_worktree)], clone)
     _, named = run_hook(topic_worktree, state_root, {"tool_name": "Bash", "session_id": "session-topic",
                                                      "tool_input": {"command": "ls"}}, home=home)
-    check("a topic branch in a worktree named after it, below ~/agents but not directly in it, is reported",
+    check("an nc-topic-branch in a worktree named after it, below ~/agents but not directly in it, is reported",
           reported_branches(named) == {"a-named-topic"}, named)
 
 
@@ -583,10 +583,8 @@ def case_hook_git_failure_exits_1_with_the_cause_on_stderr(root):
               and "were not listed" in lines[0], repr(lines))
         check(f"a failing git {planted} gives the two next-step lines, which ask for no rerun",
               lines[1:] == ["Nothing needs rerunning: this check runs again at your next file edit or shell command.",
-                            'If a line starting "new-shared-names-reminder:" reports a git failure again at your next file edit or shell command, whether this error '
-                            "or another, tell the user, or, if you are a subagent, the agent that dispatched you, "
-                            "word for word, every line of this message and of the new one, before you go on. If "
-                            "the check finds no git failure then, this failure needs no report."], repr(lines))
+                            hook.next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
+                                "at your next file edit or shell command", "new-shared-names-reminder:")], repr(lines))
     (root / "detached").mkdir()
     detached = make_clone(root / "detached", BASE_MAIN_FILES)
     git(["remote", "set-head", "origin", "--delete"], detached)

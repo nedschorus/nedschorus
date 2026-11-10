@@ -3,7 +3,7 @@
 
 User-walked 2026-08-17 (git-infra rules walk, deployment-boundary item). The
 fleet already had the between-sessions half: handoff-supervisor.py's
-sync_working_branch_with_main fast-forwards a clean seat branch at launch,
+launch_time_git_sync fast-forwards a clean seat branch at launch,
 and its own docstring names the gap — "a long-lived session drifts
 arbitrarily far from main with nothing announcing it." This script is the
 announcing, and where safe the catching up, DURING a session:
@@ -18,15 +18,17 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
   3. Runs the MISBEHAVIOUR detectors, every turn, before anything else: a
      merge commit from main on the working branch whose parents merge cleanly
      both with git's rename detection and without it (one whose parents
-     CONFLICT either way is the allowed hand-merge and is not reported), or a
+     CONFLICT either way resolved a conflict, is no catch-up, and is not
+     reported), or a
      pushed head whose history was rewritten (an amend or rebase after a
      push). What they find is told to the AGENT, once per distinct finding,
      with what to do about it. Routine drift is never reported to the user;
      the stamp carries the numbers for the status line.
   4. If the branch is behind origin/main and has NEVER been pushed, REBASES
      it onto origin/main here, and tells the agent at its next turn what
-     moved and which files changed. Skips a dirty tree; aborts cleanly on a
-     conflict and names the files. This is not the merge #324 removed: that
+     moved and which files changed. Skips a dirty tree, and a tree holding an
+     ignored file that checking out origin/main would overwrite or delete,
+     naming those files; aborts cleanly on a conflict and names the files. This is not the merge #324 removed: that
      landed merge commits on FROZEN heads; this moves only heads nobody else
      has, creates no merge commit, and leaves the pushed-head rule untouched.
      Walked and ruled 2026-09-15 (docs/walk/keeping-branches-current-telling-
@@ -64,7 +66,9 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
      copy carries no work of its own by construction, and 2026-08-17 it sat
      33 commits stale, running a superseded extractor under every supervisor
      on the machine. A reference that cannot update — someone left work
-     there — is a user line; a success is silent.
+     there — is a user line; a success is silent, unless git's output from
+     the fast-forward carries a FAILED line from the post-merge hook, which
+     git does not count as a failure.
 
 The user's lines travel as the Stop hook's `systemMessage`. The agent's notes
 are NOT emitted at Stop: a Stop hook's `additionalContext` makes Claude Code
@@ -113,7 +117,7 @@ import os
 import subprocess
 import sys
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
@@ -136,6 +140,13 @@ _stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_locat
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
 stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
 _stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
+
+_rebase_or_replace_spec = importlib.util.spec_from_file_location(
+    "pull_request_conflict_with_main_rebase_or_replace_answer_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "pull-request-conflict-with-main-rebase-or-replace-answer-common.py")
+rebase_or_replace = importlib.util.module_from_spec(_rebase_or_replace_spec)
+_rebase_or_replace_spec.loader.exec_module(rebase_or_replace)
 
 STAMP_FILE_NAME = "checkout-freshness-stamp.json"
 
@@ -178,11 +189,9 @@ GIT_IN_PROGRESS_MARKERS = tuple(GIT_IN_PROGRESS_OPERATION_BY_MARKER)
 # itself, so REBASE_ADVICE is what the agent gets only when the hook could
 # not — a dirty tree, or a conflict it aborted. A pushed branch is never
 # moved by anyone but its author, and then only forward.
-# A pushed branch that conflicts with main is the one exception: no commit on
-# top can clear a conflict, so it is cleared by the hand-merge that
-# the VERDICT: CONFLICT report of scripts/branch-conflict-check.py describes.
-# Forbidding every merge here would send an agent with a conflict away from
-# the one move that clears it.
+# No commit on top can clear a conflict with main, so a pushed branch that
+# conflicts is sent to scripts/branch-conflict-check.py, whose report says
+# whether it is rebased or its pull request replaced.
 # The runner selects the suites a change can affect, so no agent picks them by hand.
 SELECTIVE_TEST_RUN_COMMAND = (
     "python3 scripts/run-all-test-suites.py "
@@ -204,11 +213,21 @@ REBASE_ADVICE = (
     "the user which files conflict: a conflict you cannot resolve changes the work "
     "you are doing with him, so the last line of this note does not forbid telling him."
 )
+# Told instead of REBASE_ADVICE when ignored files stopped the rebase, because
+# REBASE_ADVICE's `git rebase origin/main` would replace them.
+IGNORED_FILES_IN_THE_WAY_ADVICE = (
+    "`git rebase` overwrites or deletes an ignored file that is in the way of a file "
+    "origin/main tracks, and has no option to refuse, so the rebase was not started.\n"
+    "Move each file listed above out of this checkout, or copy what you need from it to "
+    "a path origin/main does not track; the next turn's end then rebases the branch.\n"
+    "Do not run `git rebase origin/main` yourself while those files are there: it would "
+    "overwrite or delete them."
+)
 LEAVE_IT_ADVICE = (
     "This branch is pushed, so its review may be running. Do not rebase or "
-    "amend it. A fix for this topic is a new commit on top, pushed once. If it "
-    "conflicts with main, clear the conflict with the hand-merge that "
-    "scripts/branch-conflict-check.py describes. "
+    "amend it. A fix for this topic is a new commit on top, pushed once. If the "
+    "branch conflicts with main, as python3 scripts/branch-conflict-check.py run "
+    "in its checkout reports, do what that report says. "
     "Start your next topic with `git checkout -b <name> origin/main`."
 )
 # A branch whose own commits are already on a remote branch, under another
@@ -221,8 +240,9 @@ PUSHED_HISTORY_ADVICE = (
     "This branch's commits are already on GitHub under another branch name, so the "
     "branch is treated as pushed and is not rebased: a pushed head may be under "
     "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
-    "fix is a new commit on top. If it conflicts with main, clear the conflict with "
-    "the hand-merge that scripts/branch-conflict-check.py describes."
+    "fix is a new commit on top. If the branch conflicts with main, as python3 "
+    "scripts/branch-conflict-check.py run in its checkout reports, do what that "
+    "report says."
 )
 # A detached HEAD with no work of its own is moved forward by this hook; these
 # are what the agent is told after a move (A) or when it could not be made (B).
@@ -247,9 +267,11 @@ DETACHED_OPERATION_IN_PROGRESS_LINE = (
     "checkout forward."
 )
 DETACHED_WORK_OF_ITS_OWN_LINE = (
-    "It holds work of its own: run `git switch -c <branch name>` to put that work on a "
-    "branch, and commit any uncommitted changes there; from then on the hook's rules for a "
-    "branch apply."
+    "It holds work of its own.\n"
+    "If this checkout is an agent-home, git refuses commits in it: carry that work to a "
+    "worktree of your own on an nc-topic-branch, as the refusal of `git commit` here says how.\n"
+    "Otherwise run `git switch -c <branch name>` to put that work on a branch, and commit any "
+    "uncommitted changes there; from then on the hook's rules for a branch apply."
 )
 DETACHED_FAST_FORWARD_REFUSED_LINES = (
     "Git refused the fast-forward: {error}\n"
@@ -278,7 +300,7 @@ GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES = (
     "{program} printed, git's error included."
 )
 GIT_FAILED_RERUN_NEXT_STEP_LINES = next_step_lines.git_failure_next_step_lines(
-    "{rerun}", "{program}", text_the_failure_line_contains="because a git command failed",
+    "{rerun}", text_the_failure_line_contains="because a git command failed",
     include_the_misspelt_branch_commit_or_path_line=False)
 
 
@@ -318,7 +340,8 @@ DRIFT_PATH_CATEGORIES = (
     ("skills you run under",
      lambda path: path.startswith(".claude/skills/")),
     ("hooks and wiring that run on your work",
-     lambda path: path.startswith(".claude/hooks/") or path == ".claude/settings.json"),
+     lambda path: path.startswith(".claude/guard-hooks/")
+     or path == ".claude/settings.json"),
     ("systems you build on, code and design of record",
      lambda path: path.startswith("nc-systems/")),
     ("scripts your tests run against",
@@ -827,7 +850,8 @@ def remote_branches_holding_own_commits(checkout: Path):
     Every remote-tracking ref counts, origin's and any other remote's, and so
     does a ref left behind by a branch deleted on GitHub: a commit that was
     ever pushed may be under review or in someone's hands, and leaving such a
-    branch unrebased costs only a hand-merge if it ever conflicts.
+    branch unrebased costs only what scripts/branch-conflict-check.py reports
+    if it ever conflicts.
     """
     own = run_git(["rev-list", "origin/main..HEAD"], checkout, timeout=30)
     if own.returncode != 0:
@@ -914,8 +938,8 @@ def head_state(checkout: Path, branch: str):
         return "unknown", f"head state unknowable ({failure('rev-parse', head)})"
     if remote.stdout.strip() == head.stdout.strip():
         return "pushed", (f"head pushed and equal to origin/{branch} (frozen: a fix is a "
-                          "new commit on top, never an amend; a conflict with main is "
-                          "cleared by a hand-merge)")
+                          "new commit on top, never an amend; for a conflict with main, "
+                          "do what scripts/branch-conflict-check.py reports)")
     local = run_git(["rev-list", "--count", f"origin/{branch}..HEAD"], checkout, timeout=30)
     if local.returncode != 0:
         return "unknown", f"head state unknowable ({failure('rev-list', local)})"
@@ -1027,7 +1051,7 @@ def move_detached_checkout_forward(checkout: Path, git_dir: Path, ahead: int):
         lines.append(DETACHED_WORK_OF_ITS_OWN_LINE)
     if reasons:
         return "blocked", reasons, lines, ""
-    moved = run_git(["merge", "--ff-only", "origin/main"], checkout, timeout=120)
+    moved = run_git(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"], checkout, timeout=120)
     if moved.returncode == 0:
         return "moved", [], [], ""
     # Every line, not the first: git names the untracked file on a later line.
@@ -1083,8 +1107,8 @@ def merge_parents_conflict(checkout: Path, first_parent: str, second_parent: str
     False when neither re-merge reports one, whether each was clean or errored.
 
     TWO RE-MERGES, BECAUSE EACH SEES CONFLICTS THE OTHER MERGES CLEANLY, and a
-    hand-merge of either kind is one the author had no choice about. The two
-    paragraphs below say which hand-merge each re-merge exists to recognise.
+    merge that resolved a conflict of either kind is no catch-up. The two
+    paragraphs below say which conflict each re-merge exists to recognise.
 
     -X NO-RENAMES IS LOAD-BEARING, not tidiness. When main renames a file out
     of a directory while the branch holds edits to the old path, git's default
@@ -1100,11 +1124,10 @@ def merge_parents_conflict(checkout: Path, first_parent: str, second_parent: str
     CONFLICT (file location), and -X no-renames merges it cleanly. Those are
     conflicts the author really faced, because scripts/branch-conflict-check.py
     asks git with detection on, and so do `git merge` and the pre-push hook that
-    runs that check: the check prints VERDICT: CONFLICT, its report sends the
-    author to the hand-merge, and git's own merge stops until it is resolved by
-    hand. With the no-renames re-merge alone this function would return False
-    for that hand-merge, and the agent would be told the branch had made a
-    banned catch-up merge. merges_from_main's docstring says why asking both
+    runs that check: the check prints VERDICT: CONFLICT, and git's own merge
+    stops until it is resolved by hand. With the no-renames re-merge alone this
+    function would return False for a merge that resolved such a conflict, and
+    the agent would be told the branch had made a banned catch-up merge. merges_from_main's docstring says why asking both
     ways loses nothing.
 
     EXIT 1 IS NOT ENOUGH ON ITS OWN, for either re-merge. merge-tree exits 1 for
@@ -1148,20 +1171,20 @@ def merges_from_main(checkout: Path):
     branch's merges. Raises GitCommandFailed when git cannot read a merge's
     second parent or cannot say whether that parent is on origin/main.
 
-    A merge of another topic branch is not the banned thing, so the second
+    A merge of another nc-topic-branch is not the banned thing, so the second
     parent is tested for being on main rather than every merge being flagged.
     A branch that carries older catch-up merges is flagged once, which is
     correct: those merges are real and the agent has not been told of them.
 
-    WHY A CLEAN RE-MERGE IS THE TEST. CLAUDE.md allows one exception: a branch
-    that genuinely CONFLICTS with main merges origin/main in by hand, once,
-    resolves only the conflict, reruns its tests and announces the new head.
-    That hand-merge has the same shape as the banned one — a merge commit whose
-    second parent is on main — so shape alone would report every author who
-    obeys the rule. Re-merging the parents tells the two apart: parents that
-    CONFLICT mean the author had no choice, so the merge is skipped; parents
-    that merge cleanly mean the merge was unnecessary, which is the banned
-    catch-up, and it is still reported. Over main's own history, the merges
+    WHY A CLEAN RE-MERGE IS THE TEST. A merge that resolved a real conflict
+    with main has the same shape as the banned catch-up — a merge commit whose
+    second parent is on main — but this detector reports catch-ups only; a
+    conflict with main is answered by the rebase or the replacement pull
+    request scripts/branch-conflict-check.py reports, never by this detector.
+    Re-merging the parents tells the two apart: parents that CONFLICT mean the
+    merge resolved a conflict, so it is skipped; parents that merge cleanly
+    mean the merge was unnecessary, which is the banned catch-up, and it is
+    still reported. Over main's own history, the merges
     this skips are, almost to a merge, ones whose commit messages say they
     resolved a conflict and whose recorded trees differ from the clean
     automatic merge of their parents.
@@ -1177,13 +1200,9 @@ def merges_from_main(checkout: Path):
     asking both ways loses no misbehaviour. merge_parents_conflict therefore
     re-merges both ways and the merge is skipped when either conflicts.
 
-    WHAT ASKING BOTH WAYS GIVES UP. The VERDICT: CONFLICT report of
-    scripts/branch-conflict-check.py gives two courses: a conflict with work
-    main deleted or replaced closes the pull request, and any other conflict
-    is cleared by a hand-merge. This detector does not tell
-    the two apart: a merge made over a modify/delete conflict is skipped, and
-    so is one made over a branch that RENAMED a file main deleted, which
-    conflicts only with rename detection.
+    WHAT ASKING BOTH WAYS GIVES UP. A merge made over a modify/delete conflict
+    is skipped, and so is one made over a branch that RENAMED a file main
+    deleted, which conflicts only with rename detection.
     """
     merges = run_git(["rev-list", "--merges", "origin/main..HEAD"], checkout, timeout=30)
     if merges.returncode != 0:
@@ -1209,10 +1228,34 @@ def merges_from_main(checkout: Path):
     return flagged
 
 
+def ignored_files_a_rebase_onto_main_would_replace(checkout: Path):
+    """The ignored files in the checkout that checking out origin/main would
+    replace, sorted. Raises GitCommandFailed when git cannot list them.
+
+    Three placements are replaced: the path origin/main tracks; a file inside
+    a directory where origin/main tracks a file; and a file where origin/main
+    tracks files under a directory of that name. A path HEAD tracks is in the
+    index, so it never appears among the ignored files.
+    """
+    main_paths = set(git_output.nul_separated_fields(run_git_or_raise(
+        ["ls-tree", "-r", "-z", "--name-only", "origin/main"], checkout, timeout=30).stdout))
+    main_directories = {parent for path in main_paths
+                        for parent in map(str, PurePosixPath(path).parents)} - {"."}
+    ignored = git_output.nul_separated_fields(run_git_or_raise(
+        ["ls-files", "-z", "--others", "--ignored", "--exclude-standard"], checkout,
+        timeout=30).stdout)
+    return sorted(path for path in ignored
+                  if path in main_paths or path in main_directories
+                  or any(str(parent) in main_paths
+                         for parent in PurePosixPath(path).parents))
+
+
 def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
     """Move a never-pushed branch onto origin/main, or say why not.
 
-    Returns (outcome, detail): "rebased"; "skipped" with the blockers; "conflict"
+    Returns (outcome, detail): "rebased"; "skipped" with the blockers;
+    "ignored-files-in-the-way" with the ignored files the rebase would replace,
+    git having been asked nothing that moves the tree; "conflict"
     with the conflicting paths, the tree put back exactly as it was; or
     "abort-failed", the one outcome that is a fault — the tree was left
     mid-rebase — and is reported to the user.
@@ -1233,6 +1276,9 @@ def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
     blockers, _ = merge_blockers(checkout, git_dir)
     if blockers:
         return "skipped", "; ".join(blockers)
+    in_the_way = ignored_files_a_rebase_onto_main_would_replace(checkout)
+    if in_the_way:
+        return "ignored-files-in-the-way", ", ".join(in_the_way)
     rebased = run_git(["rebase", "--no-autostash", "origin/main"], checkout, timeout=30)
     if rebased.returncode == 0:
         return "rebased", ""
@@ -1445,7 +1491,10 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     # files just changed under the agent, and that is never deduplicated. A
     # skip or a conflict is told once per key, but ATTEMPTED every turn end,
     # so the moment the tree is clean it goes.
-    if state_key == "unpushed":
+    # A never-pushed branch has no pull request on origin.
+    if state_key == "unpushed" and (
+            rebase_or_replace.pull_request_conflict_with_main_rebase_or_replace_answer(False)
+            == rebase_or_replace.REBASE_ONTO_MAIN):
         outcome, detail = rebase_never_pushed_branch(checkout, git_dir)
         if outcome == "rebased":
             stamp["behind"], stamp["ahead"] = 0, stamp.get("own")
@@ -1485,14 +1534,20 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
             stamp["last_action"] = f"rebase {outcome}: {detail}"
             if not already_told:
                 stamp["last_told"] = told
+                advice = REBASE_ADVICE
                 if outcome == "skipped":
                     reason = f"Not updated: {detail}."
+                elif outcome == "ignored-files-in-the-way":
+                    reason = (f"Not updated: a rebase onto origin/main would overwrite or "
+                              f"delete these ignored files, which are in the way of files "
+                              f"origin/main tracks: {detail}.")
+                    advice = IGNORED_FILES_IN_THE_WAY_ADVICE
                 elif outcome == "refused":
                     reason = f"Not updated: git refused — {detail}."
                 else:
                     reason = (f"A rebase onto origin/main was tried and put back: it "
                               f"conflicts on {detail}.")
-                tell(f"{heading} {reason}{changed_on_main_clause}{note}\n{REBASE_ADVICE}",
+                tell(f"{heading} {reason}{changed_on_main_clause}{note}\n{advice}",
                      kind=NOTE_KIND_BLOCKED)
         save_stamp_with_queued_notes(stamp_path, stamp)
         return
@@ -1641,7 +1696,7 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
         write_stamp(stamp_path, stamp)
         return
 
-    pulled = run_git(["merge", "--ff-only", "origin/main"], reference, timeout=120)
+    pulled = run_git(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"], reference, timeout=120)
     if pulled.returncode != 0:
         detail = pulled.stderr.strip() or "no detail"
         stamp["last_action"] = "reference ff-only refused"
@@ -1653,6 +1708,11 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
     stamp["behind"], stamp["last_action"] = 0, f"reference fast-forwarded {behind}"
     stamp.pop("last_reference_blockers", None)
     write_stamp(stamp_path, stamp)
+    # Git exits 0 whatever the post-merge hook returns, and puts the hook's
+    # output on its own stderr, so a hook's failure is seen only here.
+    if "FAILED" in pulled.stderr:
+        report(f"catch-up: reference checkout {reference} fast-forwarded {behind} commit(s), "
+               f"and its post-merge hook reported a failure:\n{pulled.stderr.strip()}")
     if operator_facing:
         report(f"catch-up: reference checkout {reference} fast-forwarded {behind} commit(s) "
                f"to origin/main")

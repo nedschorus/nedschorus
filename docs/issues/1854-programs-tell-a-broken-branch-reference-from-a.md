@@ -1,5 +1,6 @@
 ---
 issue: "[Programs tell a broken branch reference from a branch with no commits yet](https://github.com/nedschorus/nedschorus/issues/1854)"
+kind: design
 ---
 
 # Programs tell a broken branch reference from a branch with no commits yet

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Check new citations and citations of removed paths for dangling references.
 
+With --only-citations-of-removed-paths, check only the citations of removed paths.
+
 Run on a clean tree: diff line numbers come from HEAD, but citation text and
 existence checks read the working tree."""
 import argparse
@@ -374,12 +376,16 @@ def run_check(argv) -> int:
                         help="what to diff against (default: origin/main)")
     parser.add_argument("files", nargs="*", metavar="FILE",
                         help="limit the check to these paths (default: the diff's)")
+    parser.add_argument("--only-citations-of-removed-paths", action="store_true",
+                        help="report only the lines citing a path this change removed or "
+                             "renamed, and skip the check of the lines it touches")
     arguments = parser.parse_args(argv)
 
     lint = load_md_drift_lint()
     root_directories = repository_root_directories(REPOSITORY_ROOT)
     merge_base = merge_base_with_head(arguments.base, REPOSITORY_ROOT)
-    changed = changed_lines_by_file(merge_base, REPOSITORY_ROOT)
+    changed = ({} if arguments.only_citations_of_removed_paths
+               else changed_lines_by_file(merge_base, REPOSITORY_ROOT))
     if arguments.files:
         wanted = {str(pathlib.Path(name)) for name in arguments.files}
         changed = {name: lines for name, lines in changed.items() if name in wanted}

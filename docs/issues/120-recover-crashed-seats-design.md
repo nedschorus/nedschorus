@@ -2,6 +2,7 @@
 issue: "[Crash recovery for seats that died without a handoff: find the last live transcript, resume it supervised](https://github.com/nedschorus/nedschorus/issues/120)"
 status: overview of the tool as built; six changes ruled 2026-09-02, change 6 built 2026-09-11 — listed in § What this document proposes
 design-as-of: 2026-09-02
+kind: design
 ---
 
 # Crash recovery for seats — `recover-crashed-seats.py` (overview)

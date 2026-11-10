@@ -9,6 +9,8 @@ scratch checkout this suite made. The exit code is asserted on every case.
 
 import importlib.util
 import json
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -31,8 +33,11 @@ SUITE_ROOT = Path(tempfile.mkdtemp(prefix="short-answer-expansion-hook-test-")).
 WALK_NAME = "reboot-test-older-open-items-2026-10-15"
 CHECKOUT = HOOK_SCRIPT.parents[3]
 CHECK = f"python3 {CHECKOUT}/nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check"
-ONE_QUESTION_LINE = ("If your last message to the user left more than one question open, ask him which "
-                     "one this answer is for, naming each, and act on none of them until he says.")
+ONE_ITEM_AT_A_TIME_LINE = (
+    "Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add the "
+    "line `#next_to_present item <number> of 9` for it, with its number, as the minutes' last line, because the "
+    "walk-me-through skill has that line name one item, or one part such as `item 4.1 of 9`. Present the item "
+    "that `close` names only after the last answer is recorded.")
 failures = []
 
 WALK_DOCUMENT = """# A walk
@@ -40,6 +45,8 @@ WALK_DOCUMENT = """# A walk
 ## Item 3 of 9: the opening sentence
 
 The opening sentence changes.
+
+#case_against none.
 
 ## Item 4 of 9: a filter
 
@@ -83,6 +90,18 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
+class OutputLines(list):
+    """The hook's output lines, where a line the output lacks reads as "".
+
+    The checks index into these lines; a plain list would raise IndexError on a missing line, which ends the
+    suite with no FAIL naming the case and leaves every later case unrun."""
+
+    def __getitem__(self, index):
+        if isinstance(index, int) and not -len(self) <= index < len(self):
+            return ""
+        return super().__getitem__(index)
+
+
 class Case:
     """One case's own checkout and walk files."""
 
@@ -123,7 +142,36 @@ class Case:
         if (set(output) != {"hookSpecificOutput"} or specific.get("hookEventName") != "UserPromptSubmit"
                 or set(specific) != {"hookEventName", "additionalContext"}):
             return None
-        return specific["additionalContext"].split("\n")
+        context = specific["additionalContext"].replace(str(self.walk / f"{WALK_NAME}-minutes.md"), "<minutes>")
+        lines = context.split("\n")
+        # Most cases compare the answer's lines alone; the reply line every walk answer ends with is checked here.
+        if lines[-1].startswith(USER_REPLY_LINE_OPENING):
+            expected = USER_REPLY_LINE.format(reply=shlex.quote(" ".join(prompt.split())))
+            check(f"{prompt!r} ends with the line giving check its reply", lines[-1] == expected,
+                  f"{lines[-1]!r} != {expected!r}")
+            lines = lines[:-1]
+        return OutputLines(lines)
+
+
+USER_REPLY_LINE = (
+    "If you run the check step for this answer, give each run `--user-reply-as-typed {reply}`, the user's reply "
+    "as he typed it, which check writes into the minutes beside the answer it counts as.")
+USER_REPLY_LINE_OPENING = USER_REPLY_LINE.split("{")[0]
+
+
+def test_a_walk_answer_ends_with_the_reply_quoted_for_check_and_none_does_without_a_walk():
+    case = Case(next_to_present="item 4 of 9")
+    for prompt, quoted in (("a", "a"), ("A, but it's \"small\"\n now", "'A, but it'\"'\"'s \"small\" now'")):
+        result = case.run(prompt)
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"] if result.stdout else ""
+        check(f"{prompt!r} on an open approval-walk ends with the --user-reply-as-typed line, the reply squeezed "
+              "and quoted for the shell",
+              result.returncode == 0 and context.split("\n")[-1] == USER_REPLY_LINE.format(reply=quoted),
+              f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+    result = Case().run("a")
+    check("an answer with no approval-walk open gets no --user-reply-as-typed line",
+          result.returncode == 0 and result.stdout and "--user-reply-as-typed" not in result.stdout,
+          f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
 def unknown_line(item, problem, letter):
@@ -143,13 +191,48 @@ def test_each_single_answer_in_either_case_with_or_without_a_period():
             check(f"{prompt!r} is expanded",
                   lines is not None
                   and lines[0] == f"The user answered \"{prompt.strip().rstrip('.')}\"; no approval-walk is open."
-                  and lines[1].startswith(meaning) and lines[-1] == ONE_QUESTION_LINE,
+                  and lines[1].startswith(meaning) and not any("which one" in line for line in lines),
                   f"lines {lines!r}")
+
+
+def test_a_hyphen_between_the_letters_of_ao_o2_and_o3_is_read_as_that_letter():
+    case = Case(next_to_present="item 4 of 9")
+    for prompt, code, meaning in (
+            ("A-O.", "AO", "AO means approve as obvious"), ("a-o", "AO", "AO means approve as obvious"),
+            ("A - O", "AO", "AO means approve as obvious"), ("O-2", "O2", "O2 means the user approves option 2"),
+            ("o - 3.", "O3", "O3 means the user approves option 3")):
+        lines = case.lines(prompt)
+        check(f"{prompt!r} is {code}",
+              lines is not None
+              and lines[0] == f"The user answered \"{prompt.rstrip('.')}\" to item 4 of 9 of approval-walk {WALK_NAME}."
+              and lines[1].startswith(meaning), f"lines {lines!r}")
+    lines = case.lines("A-O, keep the old name")
+    check("'A-O, keep the old name' is a rider on AO",
+          lines is not None and lines[1] == "The user added to the answer: \"keep the old name\"."
+          and any(line.startswith("AO means approve as obvious") for line in lines), f"lines {lines!r}")
+    lines = Case(next_to_present="items 5 and 6 of 9").lines("5 a-o, 6 d")
+    check("'5 a-o, 6 d' gives item 5 AO",
+          lines is not None
+          and lines[1] == "The answer gives each item it names its own letter: item 5 of 9: AO, item 6 of 9: D.",
+          f"lines {lines!r}")
+    for prompt in ("all a-o", "a-o to all"):
+        lines = Case(next_to_present="items 5 and 6 of 9").lines(prompt)
+        check(f"{prompt!r} is AO to all", lines is not None
+              and lines[1].startswith(f"\"{prompt}\" means AO to every item now waiting"), f"lines {lines!r}")
+    for prompt in ("a-ok", "A-OK.", "O-ring", "a-one", "a-o-k", "a o", "o-4", "5 a-ok"):
+        result = case.run(prompt)
+        check(f"the hyphenated word {prompt!r} is not read as an answer",
+              result.returncode == 0 and result.stdout == "" and result.stderr == "",
+              f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+    lines = case.lines("a - other text")
+    check("'a - other text' stays a rider on A", lines is not None
+          and lines[1] == "The user added to the answer: \"other text\"."
+          and any(line.startswith("A means approve") for line in lines), f"lines {lines!r}")
 
 
 def test_retired_letters_o_and_other_prompts_print_nothing():
     case = Case(next_to_present="item 3 of 9")
-    for prompt in ("y", "n", "c", "l", "L.", "1 l", "l, later", "Y.", "all o", "1 o2", "o4", "oo", "all y", "1 y 2 n", "5 n, 6 y", "y but quickly",
+    for prompt in ("y", "n", "N", "next", "c", "l", "L.", "1 l", "l, later", "Y.", "all o", "1 o2", "o4", "oo", "all y", "1 y 2 n", "5 n, 6 y", "y but quickly",
                    "yes", "a a", "aaa", "A..", "X", "", ".", "a lot of things to do", "I think a",
                    "4", "1a2d", "1 c", "1 ab", "explain", "repeater", "deferred", "aol"):
         result = case.run(prompt)
@@ -172,8 +255,7 @@ def test_a_on_an_open_walk_names_the_item_its_recommendation_and_the_check_step(
           lines == [f"The user answered \"a\" to item 4 of 9 of approval-walk {WALK_NAME}.",
                     "A means approve: the user agrees with the recommendation of item 4 of 9 (leave the filter out). "
                     "Do what the recommendation says.",
-                    f"Whether or not that makes a change, first run `{CHECK}`, {CLOSE_END}",
-                    ONE_QUESTION_LINE], f"lines {lines!r}")
+                    f"Whether or not that makes a change, first run `{CHECK}`, {CLOSE_END}"], f"lines {lines!r}")
     lines = case.lines("Approved")
     check("approved is A", lines is not None and lines[1].startswith(
         "Approved means approve: the user agrees with the recommendation of item 4 of 9 (leave the filter out)."),
@@ -218,7 +300,7 @@ def test_aa_in_any_mix_of_capitals_runs_the_check_step_with_after_advisor():
           lines is not None and lines[1].startswith("Aa means approve after an advisor check")
           and any("the six questions listed in the walk-me-through skill's section \"Advisor\"" in line
                   for line in lines)
-          and lines[-2] == "Otherwise act exactly as for A.", f"lines {lines!r}")
+          and lines[-1] == "Otherwise act exactly as for A.", f"lines {lines!r}")
     for prompt, meaning in (("a", "A means approve:"), ("AO", "AO means approve as obvious:")):
         lines = case.lines(prompt)
         check(f"{prompt!r} still means what it meant before Aa", lines is not None and lines[1].startswith(meaning),
@@ -252,14 +334,15 @@ def test_o_asks_for_option_2_and_option_3_paragraphs():
                       "text and AI judgement" in line and "\"Option 3:\", a more creative option" in line
                       for line in lines)
               and any("how it differs from your recommendation, and its pluses and minuses" in line for line in lines)
-              and ("Replace the item's answer line in the walk-document with this one: \"Answer O2 or O3 to take "
-                   "that option; A still takes the recommendation, and the other answers work as before.\"") in lines
-              and lines[-2] == "Then show the item again in full, word for word as the walk-document has it."
+              and ("Below the two paragraphs, add this line: \"Answer O2 or O3 to take that option; A still takes "
+                   "the recommendation, and the other answers work as before.\"") in lines
+              and lines[-1] == ("Then republish the item's page as its new version, and show the item again in full, "
+                                "word for word as the walk-document has it.")
               and not any(line.startswith("The hook could not read") for line in lines), f"lines {lines!r}")
     lines = Case().lines("o")
     check("O with no approval-walk asks for the two options in the reply",
           lines is not None and lines[1].startswith("O asks for other options: the user is not answering your last")
-          and lines[-2] == "End with this line: \"Answer O2 or O3 to take that option; A still takes the recommendation.\"",
+          and lines[-1] == "End with this line: \"Answer O2 or O3 to take that option; A still takes the recommendation.\"",
           f"lines {lines!r}")
 
 
@@ -322,6 +405,35 @@ def test_lines_inside_code_are_neither_an_items_start_nor_its_recommendation():
               f"lines {lines!r}")
 
 
+def test_a_withdrawn_version_below_the_item_is_not_read_for_its_recommendation():
+    # The withdrawn version comes last, since the last recommendation of an item is the one read.
+    for level in ("###", "####"):
+        document = WALK_DOCUMENT.replace(
+            "**Recommendation: leave the filter out.**\n",
+            "**Recommendation: leave the filter out.**\n\n"
+            f"{level} Withdrawn version 1 of item 4\n\nThe filter's first draft.\n\n"
+            "Recommendation: add the filter.\n")
+        lines = Case(next_to_present="item 4 of 9", document=document).lines("a")
+        check(f"a {level} Withdrawn heading ends the item, so the live version's recommendation is read",
+              lines is not None and lines[1].startswith(
+                  "A means approve: the user agrees with the recommendation of item 4 of 9 (leave the filter out)."),
+              f"lines {lines!r}")
+    document = WALK_DOCUMENT.replace("## Item 4 of 9: a filter", "## Item 4 of 9: a withdrawn filter")
+    lines = Case(next_to_present="item 4 of 9", document=document).lines("a")
+    check("an item's heading that says withdrawn after its count is still the item's start",
+          lines is not None and lines[1].startswith(
+              "A means approve: the user agrees with the recommendation of item 4 of 9 (leave the filter out)."),
+          f"lines {lines!r}")
+    document = WALK_DOCUMENT.replace(
+        "**Recommendation: leave the filter out.**",
+        "Withdrawn rows stay hidden either way.\n\n**Recommendation: leave the filter out.**")
+    lines = Case(next_to_present="item 4 of 9", document=document).lines("a")
+    check("a paragraph, not a heading, that opens with Withdrawn does not end the item",
+          lines is not None and lines[1].startswith(
+              "A means approve: the user agrees with the recommendation of item 4 of 9 (leave the filter out)."),
+          f"lines {lines!r}")
+
+
 def test_a_quoted_count_is_not_an_items_start_for_the_recommendation():
     document = WALK_DOCUMENT.replace(
         "Item 5 of 9 fixes a path. Recommendation: fix the path.\n",
@@ -376,6 +488,18 @@ def test_an_item_without_a_recommendation_line_is_reported_for_a_ao_and_d():
               f"lines {lines!r}")
 
 
+def test_an_item_whose_heading_m_differs_from_the_minutes_has_its_recommendation_read():
+    document = WALK_DOCUMENT.replace("## Items 5 and 6 of 9", "## a case the walk missed\n\nRecommendation: add the "
+                                     "filter after all.\n\n## Items 5 and 6 of 9")
+    lines = Case(next_to_present="item 4 of 7", document=document).lines("a")
+    check("A on an item whose heading says `of 9` under minutes that say `of 7` reads its recommendation, which the "
+          "unnumbered item after it does not extend",
+          lines is not None and "A means approve: the user agrees with the recommendation of item 4 of 7 (leave the "
+                                "filter out). Do what the recommendation says." in lines
+          and not any(line.startswith("The hook could not read") for line in lines)
+          and not any("add the filter after all" in line for line in lines), f"lines {lines!r}")
+
+
 def test_an_empty_recommendation_line_is_no_recommendation():
     document = WALK_DOCUMENT + "\n## Item 8 of 9: an unfinished item\n\nRecommendation:\n"
     lines = Case(next_to_present="item 8 of 9", document=document).lines("a")
@@ -384,72 +508,291 @@ def test_an_empty_recommendation_line_is_no_recommendation():
           and not any("item 8 of 9 (" in line for line in lines), f"lines {lines!r}")
 
 
-def blocked_reason(result):
-    """The block's reason when the hook blocked the prompt with exit 0, or None."""
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
-    output = json.loads(result.stdout)
-    return output["reason"] if set(output) == {"decision", "reason"} and output["decision"] == "block" else None
+def not_blocked(result):
+    """Whether the hook exited 0 with output that holds no "decision" key, so it did not block the prompt."""
+    return (result.returncode == 0 and bool(result.stdout.strip())
+            and "decision" not in json.loads(result.stdout) and result.stderr == "")
 
 
-ITEM_4_SECTION = """## Item 4 of 9: a filter
+def r_meaning_lines(word, item):
+    """The lines R gives when the hook could not tell which item is waiting."""
+    return [f"\"{word}\" asks to see {item} again: reply with only its closing line, as the walk-me-through skill "
+            "writes it, with the link from the minutes' newest `#item_page` line for it, and wait for his answer.",
+            "If that line records a failed publish, leave the link out of the closing line, keeping only its link "
+            "text and what follows the link.",
+            "If the minutes have no `#item_page` line for it, first publish the item and record the line, as the "
+            "skill says."]
 
-A filter would hide old rows. The strongest case against: old rows confuse readers.
 
-**Recommendation: leave the filter out.**"""
+def r_lines(word, item, point=None, minutes=" <minutes>", count=None):
+    """The lines R gives for an item the walk-minutes record no page for: publish it first, then the closing line;
+    count is the item's running count in its `#item_page` and closing lines, item by default."""
+    count = count or item
+    label = "Item " + count[len("item "):] + (f", {point}" if point else "")
+    return [f"\"{word}\" asks to see {item} again, and the hook found no `#item_page` line for it in the "
+            f"walk-minutes{minutes}.",
+            "If the walk-minutes hold none, publish the item as the walk-me-through skill says, and add to them the "
+            f"line `#item_page {count} <page link>`, because the item's page is what shows the user the item in full.",
+            f"If the publish fails, add the line `#item_page {count} publish failed: <what the Artifact tool said>` "
+            "instead, and leave the link out of the closing line, keeping only its link text and what follows the "
+            "link.",
+            "Then reply with only the item's closing line, with the page's link in place of `<page link>`, or "
+            f"without the link if the publish failed, and wait for his answer: [{label}](<page link>) · "
+            f"{LETTERS_AFTER_LINK}"]
 
 
-def test_r_on_an_open_walk_is_blocked_and_shows_the_waiting_item_as_written():
+def numbered_r_lines(number, item, point=None, minutes=" <minutes>", count=None):
+    return r_lines(f"{number} R", item, point, minutes, count)
+
+
+def holds_in_order(lines, expected):
+    """Whether lines hold expected as a run of consecutive lines."""
+    return lines is not None and any(list(lines[index:index + len(expected)]) == expected
+                                     for index in range(len(lines)))
+
+
+def test_r_on_an_open_walk_goes_to_the_agent_and_does_not_block():
     case = Case(next_to_present="item 4 of 9")
     before = (case.walk / f"{WALK_NAME}-minutes.md").read_text()
-    for prompt in ("r", "R.", "repeat", "Repeat"):
+    for prompt, word in (("r", "R"), ("R.", "R"), ("repeat", "Repeat"), ("Repeat", "Repeat")):
         result = case.run(prompt)
-        check(f"{prompt!r} blocks the prompt with the waiting item's section, word for word",
-              blocked_reason(result) == ITEM_4_SECTION and result.stderr == "",
+        lines = case.lines(prompt)
+        check(f"{prompt!r} gives the agent additionalContext telling it to show the waiting item, and no decision",
+              not_blocked(result) and lines is not None
+              and lines[0] == f"The user answered \"{prompt.rstrip('.')}\" to item 4 of 9 of approval-walk {WALK_NAME}."
+              and lines[1:] == r_lines(word, "item 4 of 9", "a filter")
+              and not any("leave the filter out" in line or "old rows" in line for line in lines),
               f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
     check("R records nothing in the minutes", (case.walk / f"{WALK_NAME}-minutes.md").read_text() == before)
-    reason = blocked_reason(Case(next_to_present="items 5 and 6 of 9").run("r"))
-    check("R on items shown together shows their shared heading's whole unit",
-          reason is not None and reason.startswith("## Items 5 and 6 of 9: two small corrections")
-          and reason.endswith("Recommendation: Y."), repr(reason))
-    reason = blocked_reason(Case(next_to_present="items 3 and 4 of 9").run("r"))
-    check("R on waiting items under two headings shows both sections, in the walk-document's order",
-          reason is not None and reason.startswith("## Item 3 of 9: the opening sentence")
-          and reason.endswith(ITEM_4_SECTION), repr(reason))
+    lines = Case(next_to_present="items 5 and 6 of 9").lines("r")
+    check("R on items shown together and with no page tells the agent to publish each, in the one wording",
+          lines is not None and lines[1:] == (r_lines("R", "item 5 of 9", "two small corrections")
+                                              + r_lines("R", "item 6 of 9", "two small corrections")),
+          f"lines {lines!r}")
     case = Case(next_to_present="item 3 of 9")
     case.minutes("#next_to_present item 3 of 9\n\n#next_to_present none, closed")
     lines = case.lines("r")
-    check("R with only a closed approval-walk is not blocked and carries no note",
+    check("R with only a closed approval-walk asks for the last question again",
           lines is not None and lines[0] == "The user answered \"r\"; no approval-walk is open."
-          and not any(line.startswith("The hook could not show") for line in lines), f"lines {lines!r}")
+          and lines[1].startswith(NO_WALK_MEANINGS["R"]), f"lines {lines!r}")
     lines = Case(next_to_present="item 4 of 9").lines("r but shorter")
-    check("R with more text after it is not blocked: it goes to the agent as a rider",
+    check("R with more text after it goes to the agent as a rider",
           lines is not None and lines[1] == "The user added to the answer: \"but shorter\".", f"lines {lines!r}")
 
 
-def test_r_whose_item_cannot_be_read_goes_to_the_agent_with_the_reason():
-    shown_by_agent = "R asks to see "
-    for case, item, problem in (
-            (Case(next_to_present="item 7 of 9"), "item 7 of 9",
-             "its walk-document has no heading `Item 7 of 9`, which the minutes name."),
-            (Case(next_to_present="item 4 of 9", document=None), "item 4 of 9", "its walk-document "),
-            (Case(next_to_present="paused until rewritten"), "the waiting item",
-             "its minutes' last `#next_to_present` line, `paused until rewritten`, does not open with an item")):
+PAGE_1 = "https://claude.ai/artifact/PageOfItem4Old"
+PAGE_2 = "https://claude.ai/artifact/PageOfItem4New"
+LETTERS_AFTER_LINK = ("A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · "
+                      "Z defer · E explain · O other options")
+
+
+def page_line(answer, item, closing_line):
+    return (f"\"{answer}\" asks to see {item} again. Its page shows it in full, so reply with only this closing "
+            f"line, word for word, and wait for his answer: {closing_line}")
+
+
+def test_r_hands_the_agent_the_closing_line_of_the_items_newest_page():
+    case = Case(next_to_present="item 4 of 9")
+    minutes = case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n#item_page item 3 of 9 https://claude.ai/artifact/Three"
+                           f"\n\n#item_page item 4 of 9 {PAGE_2}\n\n#next_to_present item 4 of 9")
+    before = minutes.read_text()
+    closing = f"[Item 4 of 9, a filter]({PAGE_2}) · {LETTERS_AFTER_LINK}"
+    for prompt in ("r", "repeat"):
+        result = case.run(prompt)
+        lines = case.lines(prompt)
+        check(f"{prompt!r} with a recorded page hands the agent the newest page's closing line, and no decision",
+              not_blocked(result) and lines is not None
+              and lines[1] == page_line(prompt[:1].upper() + prompt[1:], "item 4 of 9", closing)
+              and not any(PAGE_1 in line for line in lines), f"lines {lines!r}")
+    check("R with a page records nothing in the minutes", minutes.read_text() == before)
+    lines = case.lines("3 r")
+    check("a numbered R hands the agent the closing line of the item it names",
+          lines is not None and page_line("3 R", "item 3 of 9",
+                                          f"[Item 3 of 9, the opening sentence](https://claude.ai/artifact/Three) · "
+                                          f"{LETTERS_AFTER_LINK}") in lines, f"lines {lines!r}")
+
+
+def test_r_on_an_item_with_no_page_tells_the_agent_to_publish_it_then_give_its_closing_line():
+    case = Case(next_to_present="item 4 of 9")
+    case.minutes(f"#item_page item 3 of 9 {PAGE_1}\n\n#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    check("R on an item the minutes record no page for tells the agent to publish it, then give its closing line",
+          lines is not None and lines[1:] == r_lines("R", "item 4 of 9", "a filter"), f"lines {lines!r}")
+    check("R on an item with no page never tells the agent to show the item in full instead",
+          lines is not None and not any("show it in full" in line for line in lines), f"lines {lines!r}")
+    lines = case.lines("4 r")
+    check("a numbered R on an item with no page tells the agent to publish it, then give its closing line",
+          holds_in_order(lines, numbered_r_lines(4, "item 4 of 9", "a filter")), f"lines {lines!r}")
+
+
+def test_r_on_an_item_whose_publish_failed_hands_the_closing_line_without_its_link():
+    case = Case(next_to_present="item 4 of 9")
+    case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n#item_page item 4 of 9 publish failed: the Artifact tool "
+                 "timed out\n\n#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    check("R on an item whose newest `#item_page` line records a failed publish hands the closing line without a link",
+          lines is not None
+          and lines[1:] == [page_line("R", "item 4 of 9", f"Item 4 of 9, a filter · {LETTERS_AFTER_LINK}")],
+          f"lines {lines!r}")
+    case.minutes("#item_page item 4 of 9 publish failed: the Artifact tool timed out\n\n"
+                 f"#item_page item 4 of 9 {PAGE_2}\n\n#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    check("a page recorded after a failed publish gives the closing line its link again",
+          lines is not None and lines[1:] == [
+              page_line("R", "item 4 of 9", f"[Item 4 of 9, a filter]({PAGE_2}) · {LETTERS_AFTER_LINK}")],
+          f"lines {lines!r}")
+    case.minutes("#item_page item 4 of 9 publish failed:\n\n#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    check("a publish-failed line with no reason is not read, so the agent is told to publish the item",
+          lines is not None and lines[1:] == r_lines("R", "item 4 of 9", "a filter"), f"lines {lines!r}")
+
+
+def test_r_on_two_waiting_items_with_a_page_for_one_hands_its_closing_line_and_has_the_other_published():
+    case = Case(next_to_present="items 5 and 6 of 9")
+    case.minutes(f"#item_page item 5 of 9 {PAGE_1}\n\n#next_to_present items 5 and 6 of 9")
+    lines = case.lines("r")
+    closing = f"[Item 5 of 9, two small corrections]({PAGE_1}) · {LETTERS_AFTER_LINK}"
+    check("R on items 5 and 6 with a page for item 5 alone hands item 5's closing line and has item 6 published",
+          lines is not None and lines[1:] == [page_line("R", "item 5 of 9", closing)]
+          + r_lines("R", "item 6 of 9", "two small corrections"), f"lines {lines!r}")
+
+
+def test_r_ignores_an_item_page_line_in_code_or_a_comment_of_the_minutes():
+    case = Case(next_to_present="item 4 of 9")
+    case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n```\n#item_page item 4 of 9 https://claude.ai/artifact/Fenced\n"
+                 "```\n\n<!--\n#item_page item 4 of 9 https://claude.ai/artifact/Commented\n-->\n\n"
+                 "#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    check("R reads the item's page from the minutes' prose, not from a fenced example or an HTML comment after it",
+          lines is not None
+          and lines[1] == page_line("R", "item 4 of 9", f"[Item 4 of 9, a filter]({PAGE_1}) · {LETTERS_AFTER_LINK}"),
+          f"lines {lines!r}")
+
+
+def test_r_closing_line_label_keeps_the_text_of_a_link_in_the_heading_and_drops_its_link():
+    document = WALK_DOCUMENT.replace(
+        "## Item 4 of 9: a filter",
+        "## Item 4 of 9: a [filter](https://claude.ai/artifact/Design) for `old` rows \\[draft\\] <https://example.com/x>")
+    case = Case(next_to_present="item 4 of 9", document=document)
+    case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    closing = f"[Item 4 of 9, a filter for `old` rows \\[draft\\] https://example.com/x]({PAGE_1}) · {LETTERS_AFTER_LINK}"
+    check("R's closing line holds no link inside its link, so the line stays clickable",
+          lines is not None and lines[1] == page_line("R", "item 4 of 9", closing), f"lines {lines!r}")
+
+
+DEFERRED_NOTE = "(deferred: moved to just before the summary item)"
+
+
+def test_r_closing_line_point_leaves_out_a_deferred_items_heading_note():
+    document = WALK_DOCUMENT.replace("## Item 4 of 9: a filter", f"## Item 4 of 9 {DEFERRED_NOTE}: a filter")
+    case = Case(next_to_present="item 4 of 9", document=document)
+    case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    closing = f"[Item 4 of 9, a filter]({PAGE_1}) · {LETTERS_AFTER_LINK}"
+    check("R's closing line gives a deferred item's point without the note its heading carries, whose colon "
+          "is not the count's",
+          lines is not None and lines[1] == page_line("R", "item 4 of 9", closing), f"lines {lines!r}")
+
+
+def test_the_finder_reads_a_heading_carrying_the_deferred_note_as_it_reads_one_without():
+    specification = importlib.util.spec_from_file_location("item_finder", FINDER_MODULE_FILE)
+    finder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(finder)
+    parser = finder.markdown_parser()
+    check("the finder's note constant is the text the close step writes and these tests use",
+          finder.APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT == DEFERRED_NOTE)
+    revised = (f"## Item 4 of 9: a filter\n\nRecommendation: old.\n\n"
+               f"## Item 4 of 9 {DEFERRED_NOTE} (revised): a filter\n\nRecommendation: new.\n")
+    spans = finder.item_unit_spans(revised, parser)
+    check("a heading that says `revised` after the deferred note still replaces the earlier unit for its item",
+          [(numbers, first) for numbers, _, _, first, _ in spans] == [(["4"], 4)], f"spans {spans!r}")
+    bold = f"**Item 4 of 9 {DEFERRED_NOTE}**: a filter\n\nRecommendation: new.\n"
+    check("a count with the deferred note in a bold paragraph still starts the item and is still its opening",
+          [(numbers, total) for numbers, total, _, _, _ in finder.item_unit_spans(bold, parser)] == [(["4"], "9")]
+          and finder.item_opening_lines(bold, parser) == {0: (["4"], "9")},
+          f"{finder.item_unit_spans(bold, parser)!r} {finder.item_opening_lines(bold, parser)!r}")
+    check("only the note and the space before it are taken out of a heading line",
+          finder.approval_walk_item_heading_with_deferred_note_removed(f"## Item 4 of 9 {DEFERRED_NOTE}: a filter")
+          == "## Item 4 of 9: a filter"
+          and finder.approval_walk_item_heading_with_deferred_note_removed("## Item 4 of 9: a filter")
+          == "## Item 4 of 9: a filter")
+
+
+def shown_as(markdown, parser):
+    """What the inline Markdown shows, as (type, content) pairs, with link tokens left out and the text on
+    either side of a link joined."""
+    shown = []
+    for token in parser.parseInline(markdown)[0].children:
+        if token.type in ("link_open", "link_close"):
+            continue
+        if token.type == "text" and shown and shown[-1][0] == "text":
+            shown[-1] = ("text", shown[-1][1] + token.content)
+        else:
+            shown.append((token.type, token.content))
+    return shown
+
+
+def closing_line_for_heading_point(point):
+    """The closing line R hands the agent for item 4 when its heading's point is the given Markdown."""
+    case = Case(next_to_present="item 4 of 9",
+                document=WALK_DOCUMENT.replace("## Item 4 of 9: a filter", f"## Item 4 of 9: {point}"))
+    case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    prefix = page_line("R", "item 4 of 9", "")
+    return lines[1][len(prefix):] if lines is not None and lines[1].startswith(prefix) else None
+
+
+def check_closing_line_shows_the_point(name, point, expected_label):
+    """Check the closing line is one link to the page, whose label shows what the heading's point shows."""
+    specification = importlib.util.spec_from_file_location("item_finder", FINDER_MODULE_FILE)
+    finder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(finder)
+    parser = finder.markdown_parser()
+    closing = closing_line_for_heading_point(point)
+    children = parser.parseInline(closing)[0].children if closing is not None else []
+    types = [token.type for token in children]
+    label = closing[1:closing.index(f"]({PAGE_1})")] if closing and f"]({PAGE_1})" in closing else ""
+    check(name, closing == f"[Item 4 of 9, {expected_label}]({PAGE_1}) · {LETTERS_AFTER_LINK}"
+          and types.count("link_open") == 1 and types[0] == "link_open" and children[0].attrGet("href") == PAGE_1
+          and types.index("link_close") == len(types) - 2 and children[-1].content == f" · {LETTERS_AFTER_LINK}"
+          and shown_as(label, parser) == shown_as(f"Item 4 of 9, {point}", parser),
+          f"closing line {closing!r}")
+
+
+def test_r_closing_line_label_keeps_a_code_span_that_starts_or_ends_with_a_backtick_or_a_space():
+    check_closing_line_shows_the_point(
+        "R's closing line keeps the padding of a code span whose content starts or ends with a backtick or a space",
+        "a `` ]` `` mark, `` `a `` and `` ab` `` and `` `c` ``, `  d  ` spaces, and ` `",
+        "a `` ]` `` mark, `` `a `` and `` ab` `` and `` `c` ``, `  d  ` spaces, and ` `")
+
+
+def test_r_closing_line_label_keeps_entities_and_escapes_as_the_heading_shows_them():
+    check_closing_line_shows_the_point(
+        "R's closing line shows an escaped entity, an ampersand and an escaped asterisk as the heading shows them",
+        "keep &amp;copy; and A & B, \\&amp; and \\* and &copy;",
+        "keep \\&copy; and A \\& B, \\&amp; and \\* and ©")
+
+
+def test_the_closing_line_letters_are_the_walk_skills():
+    check("SKILL.md writes the closing line with the letters the hook hands the agent",
+          f"](<page link>) · {LETTERS_AFTER_LINK}" in SKILL_FILE.read_text())
+
+
+def test_r_on_a_next_to_present_line_that_names_no_item_tells_the_agent_to_show_what_it_names():
+    lines = Case(next_to_present="the filter").lines("r")
+    check("R when the `#next_to_present` line names no item still tells the agent, in the one wording, to show it",
+          lines is not None and lines[1:] == r_meaning_lines(
+              "R", "the item its minutes' `#next_to_present` line names, `the filter`,"), f"lines {lines!r}")
+
+
+def test_r_whose_item_cannot_be_read_still_goes_to_the_agent():
+    for case, item in ((Case(next_to_present="item 7 of 9"), "item 7 of 9"),
+                       (Case(next_to_present="item 4 of 9", document=None), "item 4 of 9")):
         result = case.run("r")
         lines = case.lines("r")
-        check(f"R whose waiting item cannot be read ({problem[:40]}...) is not blocked, and says why",
-              blocked_reason(result) is None and lines is not None
-              and lines[1].startswith(f"The hook could not show {item} to the user itself: {problem}")
-              and lines[2] == "Show it to him as the lines for R below say; if you cannot find it either, tell him what the line above says, and ask him how to go on."
-              and any(line.startswith(shown_by_agent) for line in lines), f"lines {lines!r}")
-    case = Case(next_to_present="item 4 of 9")
-    (case.walk / f"{WALK_NAME}-minutes.md").write_bytes(b"#next_to_present item 4 of 9 \xff\xfe\n")
-    lines = case.lines("r")
-    check("R with minutes that cannot be read is not blocked, and names the failure",
-          lines is not None
-          and "The hook could not show the waiting item to the user itself: reading the walk files failed: "
-              "UnicodeDecodeError" in "\n".join(lines)
-          and "Show it to him as the lines for R below say; if you cannot find it either, tell him what the line above says, and ask him how to go on." in lines, f"lines {lines!r}")
+        check(f"R on {item}, whose walk-document holds no such item or does not exist, tells the agent to publish it",
+              not_blocked(result) and lines is not None and lines[1:] == r_lines("R", item), f"lines {lines!r}")
 
 
 def test_numbered_answers():
@@ -469,10 +812,7 @@ def test_numbered_answers():
                                         "Z defers the item, with the flag --deferred"))
           and ("Record the answers one item at a time, in the order given: for each, run the check step with that "
                "answer's flag, then close, and do what close prints, before the next.") in text
-          and ("Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add "
-               "the line `#next_to_present item <number> of 9` for it, with its number, as the minutes' last "
-               "line, as the walk-me-through skill allows. Present the item close names only after the last "
-               "answer is recorded.") in text
+          and ONE_ITEM_AT_A_TIME_LINE in text
           and ("If check or close refuses or fails, stop there and record none of the remaining answers: tell the "
                "user which answers were recorded and what was printed, and ask him how to go on.") in text
           and "makes a change waits for the check step" not in text, f"lines {lines!r}")
@@ -500,18 +840,23 @@ Recommendation: show it too."""
 NUMBERED_R_DOCUMENT = WALK_DOCUMENT + "\n" + ITEM_37_4_SECTION + "\n\n" + ITEM_38_SECTION + "\n"
 
 
-def test_numbered_r_alone_is_blocked_and_shows_the_items_it_names_as_written():
+def test_numbered_r_alone_tells_the_agent_to_show_the_items_it_names_and_records_nothing():
     case = Case(next_to_present="item 4 of 9", document=NUMBERED_R_DOCUMENT)
     before = (case.walk / f"{WALK_NAME}-minutes.md").read_text()
     for prompt in ("37.4 r", "37.4 R.", "item 37.4 - r", "37.4r"):
         result = case.run(prompt)
-        check(f"{prompt!r} blocks the prompt with item 37.4's section, word for word",
-              blocked_reason(result) == ITEM_37_4_SECTION and result.stderr == "",
-              f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
-    result = case.run("38 r, 37.4 r")
-    check("'38 r, 37.4 r' blocks with both sections, in the walk-document's order",
-          blocked_reason(result) == ITEM_37_4_SECTION + "\n\n" + ITEM_38_SECTION,
-          f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+        lines = case.lines(prompt)
+        check(f"{prompt!r} tells the agent to show item 37.4, then name the waiting item, and nothing else",
+              not_blocked(result) and lines is not None
+              and lines[1:] == numbered_r_lines("37.4", "item 37.4 of 9", "R with a number")
+              + ["Then end your message naming the item waiting for his answer, item 4 of 9."],
+              f"lines {lines!r}")
+    lines = case.lines("38 r, 37.4 r")
+    check("'38 r, 37.4 r' tells the agent to show both items, and gives no line for recording an answer",
+          lines is not None
+          and lines[1:9] == (numbered_r_lines("38", "item 38 of 9", "a second numbered item")
+                             + numbered_r_lines("37.4", "item 37.4 of 9", "R with a number"))
+          and not any("check step" in line or "`#next_to_present`" in line for line in lines), f"lines {lines!r}")
     check("numbered R records nothing in the minutes", (case.walk / f"{WALK_NAME}-minutes.md").read_text() == before)
 
 
@@ -523,12 +868,13 @@ Recommendation: show it."""
 def test_repeat_and_an_item_number_is_read_as_that_number_and_r():
     case = Case(next_to_present="item 4 of 9",
                 document=NUMBERED_R_DOCUMENT + "\n" + ITEM_37_53_SECTION + "\n")
-    for prompt, section in (("repeat 37.4", ITEM_37_4_SECTION), ("Repeat 37.53.", ITEM_37_53_SECTION),
-                            ("REPEAT item 37.4", ITEM_37_4_SECTION)):
-        result = case.run(prompt)
-        check(f"{prompt!r} blocks the prompt with that item's section, not the waiting item's",
-              blocked_reason(result) == section and result.stderr == "",
-              f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+    for prompt, number, point in (("repeat 37.4", "37.4", "R with a number"),
+                                  ("Repeat 37.53.", "37.53", "an item numbered 37.53"),
+                                  ("REPEAT item 37.4", "37.4", "R with a number")):
+        lines = case.lines(prompt)
+        check(f"{prompt!r} tells the agent to show that item, not the waiting item",
+              lines is not None and lines[1:5] == numbered_r_lines(number, f"item {number} of 9", point),
+              f"lines {lines!r}")
     result = case.run("repeat 99")
     check("'repeat 99' with no item 99 prints nothing",
           result.returncode == 0 and result.stdout == "" and result.stderr == "",
@@ -555,10 +901,11 @@ def test_an_answer_word_and_a_list_of_item_numbers_answers_each_when_each_names_
               lines is not None
               and lines[1] == "The answer gives each item it names its own letter: item 5 of 9: A, item 6 of 9: A."
               and not any(line.startswith("The user added to the answer") for line in lines), f"lines {lines!r}")
-    result = case.run("repeat 5 6")
-    check("'repeat 5 6' blocks with the unit holding items 5 and 6",
-          (blocked_reason(result) or "").startswith("## Items 5 and 6 of 9: two small corrections"),
-          f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+    lines = case.lines("repeat 5 6")
+    check("'repeat 5 6' tells the agent to show items 5 and 6",
+          lines is not None and lines[1:9] == (numbered_r_lines("5", "item 5 of 9", "two small corrections")
+                                               + numbered_r_lines("6", "item 6 of 9", "two small corrections")),
+          f"lines {lines!r}")
     for prompt in ("approve 5 and 99", "repeat 5 99", "approve 5 and 6 then more", "a, 5", "approve item 5 too",
                    "defer, 5 and 6"):
         result = case.run(prompt)
@@ -581,19 +928,6 @@ def test_an_answer_word_and_a_list_of_item_numbers_answers_each_when_each_names_
           lines is not None and lines[1] == "The user added to the answer: \"items are fine\".", f"lines {lines!r}")
 
 
-def test_numbered_r_alone_whose_section_cannot_be_read_goes_to_the_agent_with_the_reason():
-    case = Case(next_to_present="item 4 of 9", document=NUMBERED_R_DOCUMENT + "\n" + ITEM_37_4_SECTION + "\n")
-    lines = case.lines("37.4 r")
-    check("'37.4 r' on an item with two headings is not blocked, and says why",
-          lines is not None
-          and lines[1] == ("The hook could not show item 37.4 to the user itself: its walk-document has more than "
-                           "one heading for `Item 37.4 of 9`, so the hook cannot tell which one the minutes name.")
-          and "\"37.4 R\" asks to see item 37.4 of 9 again: show it in full, word for word as the "
-              "walk-document has it." in lines
-          and "Then end your message naming the item waiting for his answer, item 4 of 9." in lines,
-          f"lines {lines!r}")
-
-
 def test_numbered_r_on_a_number_no_item_has_passes_the_prompt_through():
     for case, prompt in ((Case(next_to_present="item 4 of 9"), "37.4 r"),
                          (Case(next_to_present="items 5 and 6 of 9"), "5 a, 7 r"),
@@ -610,8 +944,7 @@ def test_numbered_r_beside_other_numbered_answers():
           lines is not None
           and lines[1] == "The answer gives each item it names its own letter: item 5 of 9: A, item 6 of 9: R."
           and "R shows the item again" in lines[2]
-          and "\"6 R\" asks to see item 6 of 9 again: show it in full, word for word as the walk-document has it."
-              in lines
+          and holds_in_order(lines, numbered_r_lines("6", "item 6 of 9", "two small corrections"))
           and not any("item 5 of 9 again" in line for line in lines)
           and "Then end your message naming the item waiting for his answer, item 6 of 9." in lines,
           f"lines {lines!r}")
@@ -673,13 +1006,370 @@ def test_a_numbered_letter_other_than_r_for_an_item_not_waiting_is_refused():
           f"lines {lines!r}")
 
 
-def test_numbered_r_whose_walk_document_or_marker_cannot_be_read_goes_to_the_agent_with_the_reason():
-    for case, problem in ((Case(next_to_present="item 4 of 9", document=None), "walk-document "),
-                          (Case(next_to_present="paused until rewritten"), "`paused until rewritten`")):
+PARTS_DOCUMENT = """# A walk with parts
+
+## Item 4 of 9: three wording fixes in one file
+
+The fix changes three phrases in `docs/example.md`.
+
+Part 1. "item close names" becomes "item that `close` names".
+Part 2. "a walk" becomes "an approval-walk".
+
+Part 3. "fast read" becomes "cold-read-fast-read".
+
+Recommendation: make all three changes.
+
+## Item 7 of 9: parts in separate paragraphs, one ending with a hard break
+
+Part 1. drop a word.\\
+Part 2.
+
+Drop another.
+
+Recommendation: drop both.
+
+## Item 8 of 9: no parts
+
+A plain item. Recommendation: keep it.
+"""
+def parts_different_letters_lines(flags):
+    return [
+        "Each part's letter does for that part what it does for a whole item: A approves the part's recommendation, "
+        "so do what it says; AO does the same and marks the approval as obvious; D disapproves it, so do the "
+        "part's alternative.",
+        "If a part answered D gives no single alternative, ask the user what he wants done instead, and act on "
+        "nothing yet.",
+        f"Otherwise, whether or not the parts make a change, first run `{CHECK} {flags}`, which records each part's "
+        "answer, then the close command it prints, and do what close prints; write nothing in the minutes by hand."]
+
+
+def parts_deferred_beside_answered_lines(item="item 4 of 9"):
+    return [
+        "The check step cannot record this answer: `walk-me-through-answer-added-texts-cold-read-fast-read-check-and-"
+        "close.py check --part-answer` takes A, AO or D for a part, because the walk-me-through skill does not say where an "
+        "item goes in the walk when one of its parts is deferred and the others are answered.",
+        "Record nothing and act on none of the parts.",
+        "Tell the user that the walk-me-through check program cannot record a deferred part beside answered ones, "
+        f"and ask him to answer every part of {item} with A, AO or D, to answer Z to the whole item, or to say how "
+        "else to go on."]
+
+
+def parts_unanswered_lines(missing, item="item 4 of 9"):
+    return [
+        f"The answer does not name {missing}, and the walk-me-through skill keeps an item open while a part is "
+        f"unanswered, so record nothing in the minutes and act on none of the parts of {item}.",
+        f"Ask the user to answer every part of {item} in one reply, the parts he has answered included, "
+        "giving each part's number with its letter, as in `1 a 2 d`, because this hook reads each reply on its "
+        "own, so a reply that names only the parts still missing would leave the others unanswered."]
+
+
+def parts_read_line(pairs, item="item 4 of 9", last="3"):
+    return (f"The numbers are the part numbers of {item}, which holds parts 1 to {last} of one fix, as the "
+            f"walk-me-through skill lets an item do; the answer gives each part it names its own letter: {pairs}.")
+
+
+def test_a_numbered_answer_within_the_waiting_items_parts_answers_the_parts():
+    case = Case(next_to_present="item 4 of 9", document=PARTS_DOCUMENT)
+    for prompt, pairs, flags in (
+            ("1 a 2 d 3 a", "part 1: A, part 2: D, part 3: A", "--part-answer 1=A --part-answer 2=D --part-answer 3=A"),
+            ("3 a, 1 ao, 2 a", "part 3: A, part 1: AO, part 2: A", "--part-answer 1=AO --part-answer 2=A --part-answer 3=A")):
+        lines = case.lines(prompt)
+        check(f"{prompt!r} on an item with parts 1 to 3 names each part's letter and gives the check command "
+              "with one --part-answer flag per part, in part number order",
+              lines is not None
+              and lines[0] == f"The user answered \"{prompt}\" to item 4 of 9 of approval-walk {WALK_NAME}."
+              and lines[1:] == [parts_read_line(pairs)] + parts_different_letters_lines(flags), f"lines {lines!r}")
+    lines = case.lines("1 a 2 d")
+    check("'1 a 2 d' on an item with parts 1 to 3 leaves part 3 unanswered, so nothing is recorded, though the "
+          "letters differ",
+          lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: D")]
+          + parts_unanswered_lines("part 3"), f"lines {lines!r}")
+    for prompt, pairs in (("1 a 2 z 3 a", "part 1: A, part 2: Z, part 3: A"),
+                          ("1 z 2 z 3 d", "part 1: Z, part 2: Z, part 3: D")):
+        lines = case.lines(prompt)
+        check(f"{prompt!r} defers a part beside answered ones, which check cannot record, so nothing is recorded",
+              lines is not None and lines[1:] == [parts_read_line(pairs)] + parts_deferred_beside_answered_lines(),
+              f"lines {lines!r}")
+    lines = case.lines("1 a 2 d 3 a 2 r")
+    check("R on a part beside different letters for every part shows the item again and still gives the command",
+          lines is not None and lines[1:] == [
+              parts_read_line("part 1: A, part 2: D, part 3: A, part 2: R"),
+              *numbered_r_lines("2", "item 4 of 9", "three wording fixes in one file")]
+          + parts_different_letters_lines("--part-answer 1=A --part-answer 2=D --part-answer 3=A"),
+          f"lines {lines!r}")
+    lines = case.lines("1 a 2 a")
+    check("'1 a 2 a' leaves part 3 unanswered, so the item stays open and nothing is recorded",
+          lines is not None and lines[1:] == [
+              parts_read_line("part 1: A, part 2: A"),
+              "The answer does not name part 3, and the walk-me-through skill keeps an item open while a part is "
+              "unanswered, so record nothing in the minutes and act on none of the parts of item 4 of 9.",
+              "Ask the user to answer every part of item 4 of 9 in one reply, the parts he has answered included, "
+              "giving each part's number with its letter, as in `1 a 2 d`, because this hook reads each reply on its "
+              "own, so a reply that names only the parts still missing would leave the others unanswered."],
+          f"lines {lines!r}")
+    for prompt, letter, flag in (("1 a 2 a 3 a", "A", " check`"), ("approve 1, 2 and 3", "A", " check`"),
+                                 ("1 d 2 d 3 d", "D", " check --disapproved`")):
+        lines = case.lines(prompt)
+        check(f"{prompt!r} gives every part {letter}, so it is {letter} to the whole item, with that letter's "
+              "check command",
+              lines is not None and lines[1] == parts_read_line(", ".join(f"part {n}: {letter}" for n in "123"))
+              and lines[2] == (f"Every part has the answer {letter}, so the answer is {letter} to the whole of item 4 "
+                               "of 9, and means what the lines below say.")
+              and lines[3].startswith(f"{letter} means ") and "(make all three changes)" in lines[3]
+              and any(flag in line for line in lines[4:]), f"lines {lines!r}")
+    lines = case.lines("1 z 2 z 3 z")
+    check("'1 z 2 z 3 z' gives every part Z, so it is Z to the whole item, not a part deferred beside answered ones",
+          lines is not None and lines[1:] == [
+              parts_read_line("part 1: Z, part 2: Z, part 3: Z"),
+              "Every part has the answer Z, so the answer is Z to the whole of item 4 of 9, and means what the lines "
+              "below say.",
+              "Z means defer: move item 4 of 9 as the walk-me-through skill's sentence on Z says.",
+              "Then run the check step with --deferred, then close, and do what close prints."], f"lines {lines!r}")
+    lines = case.lines("1 a 1 d 2 a 3 a")
+    check("a part given two letters is refused whole",
+          lines is not None and lines[1:] == [
+              "The answer gives part 1 of item 4 of 9 more than one letter.",
+              "Record nothing and act on none of the answer, because the letters for that part contradict each other.",
+              "Ask the user to answer every part of item 4 of 9 again, giving each part's number once with its "
+              "letter, as in `1 a 2 d`."],
+          f"lines {lines!r}")
+    lines = case.lines("2 r")
+    check("R on a part has the waiting item published and its closing line given, and records nothing",
+          lines is not None and lines[1:] == [
+              parts_read_line("part 2: R"), *numbered_r_lines("2", "item 4 of 9", "three wording fixes in one file")],
+          f"lines {lines!r}")
+    lines = Case(next_to_present="item 7 of 9", document=PARTS_DOCUMENT).lines("1 a 2 d")
+    check("a `Part 2.` line after a hard break, with nothing after its period, is read as a part",
+          lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: D", "item 7 of 9", "2")]
+          + parts_different_letters_lines("--part-answer 1=A --part-answer 2=D"), f"lines {lines!r}")
+
+
+def test_numbers_are_item_numbers_when_the_waiting_item_has_no_parts_or_a_number_falls_outside_them():
+    for next_to_present, prompt, named in (
+            ("item 8 of 9", "1 a 2 d", "item 1 of 9, item 2 of 9, which are"),
+            ("item 4 of 9", "1 a 6 d", "item 1 of 9, item 6 of 9, which are"),
+            ("item 4 of 9", "1 a 2.1 d", "item 1 of 9, item 2.1 of 9, which are"),
+            ("item 4 of 9", "1 a 2 z", None)):
+        lines = Case(next_to_present=next_to_present, document=PARTS_DOCUMENT).lines(prompt)
+        if named is None:
+            check(f"{prompt!r} on an item with parts reads Z on a part as a part's letter",
+                  lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: Z")]
+                  + parts_unanswered_lines("part 3"),
+                  f"lines {lines!r}")
+            continue
+        check(f"{prompt!r} while {next_to_present} waits is read as item numbers and refused as today",
+              lines is not None
+              and lines[1] == (f"The answer gives a letter to {named} not waiting for an answer, and the minutes' "
+                               f"`#next_to_present` line names only {next_to_present}."), f"lines {lines!r}")
+    own_number_document = PARTS_DOCUMENT.replace("## Item 4 of 9:", "## Item 2 of 9:")
+    case = Case(next_to_present="item 2 of 9", document=own_number_document)
+    for prompt in ("2 a", "item 2 a", "approve item 2", "approve 2"):
+        lines = case.lines(prompt)
+        check(f"{prompt!r} while item 2, with parts 1 to 3, waits is A to item 2, not to its part 2",
+              lines is not None
+              and lines[1] == "The answer gives each item it names its own letter: item 2 of 9: A.", f"lines {lines!r}")
+    lines = case.lines("1 a 2 d")
+    check("'1 a 2 d' while item 2, with parts 1 to 3, waits still answers its parts",
+          lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: D", "item 2 of 9")]
+          + parts_unanswered_lines("part 3", "item 2 of 9"), f"lines {lines!r}")
+    lines = Case(next_to_present="item 4 of 9", document=PARTS_DOCUMENT).lines("item 1 a item 2 d")
+    check("an answer that says `item` names items, not parts",
+          lines is not None and lines[1].startswith("The answer gives a letter to item 1 of 9, item 2 of 9"),
+          f"lines {lines!r}")
+    lines = Case(next_to_present="items 4 and 7 of 9", document=PARTS_DOCUMENT).lines("1 a 2 d")
+    check("with two items with parts waiting, numbers stay item numbers",
+          lines is not None and lines[1].startswith("The answer gives a letter to item 1 of 9, item 2 of 9"),
+          f"lines {lines!r}")
+
+
+def test_part_numbers_are_read_only_from_part_n_lines_of_top_level_paragraphs_outside_code_and_as_a_run_from_1():
+    for name, body, prompt in (
+            ("plain numbered lines", "1. one\n2. two", "1 a 2 d"),
+            ("bold parts", "**Part 1.** one\n\n**Part 2:** two", "1 a 2 d"),
+            ("bold parts with underscores", "__Part 1__ one\n\n__Part 2__ two", "1 a 2 d"),
+            ("heading parts", "### Part 1\n\none\n\n### Part 2\n\ntwo", "1 a 2 d"),
+            ("parts with a colon", "Part 1: one\nPart 2: two", "1 a 2 d"),
+            ("parts in lower case", "part 1. one\npart 2. two", "1 a 2 d"),
+            ("parts inside a fenced code block", "```\nPart 1. one\nPart 2. two\n```", "1 a 2 d"),
+            ("parts in a nested list", "- a list\n  Part 1. one\n  Part 2. two", "1 a 2 d"),
+            ("parts in a quotation", "> Part 1. one\n> Part 2. two", "1 a 2 d"),
+            ("parts not at a line's start", "*x*Part 1. one\n`x`Part 2. two", "1 a 2 d"),
+            ("parts inside code spans that open their lines", "`Part 1. one`\n`Part 2. two`", "1 a 2 d"),
+            ("a single part", "Part 1. only one", "1 a"),
+            ("parts that do not start at 1", "Part 2. two\nPart 3. three", "2 a 3 d"),
+            ("more than five parts", "\n".join(f"Part {n}. x" for n in range(1, 7)), "1 a 2 d"),
+            ("a decimal after Part", "Part 1.5 litres\nPart 2.5 litres", "1 a 2 d")):
+        document = f"## Item 4 of 9: no real parts\n\n{body}\n\nRecommendation: keep it.\n"
+        lines = Case(next_to_present="item 4 of 9", document=document).lines(prompt)
+        first = prompt.split()[0]
+        check(f"{name} are not parts, so {prompt!r} is read as item numbers",
+              lines is not None and lines[1].startswith(f"The answer gives a letter to item {first} of 9"),
+              f"lines {lines!r}")
+
+
+def test_a_part_n_line_inside_a_multiline_code_span_is_not_a_part():
+    body = "Part 1. one `code that runs\nPart 3. on` here.\nPart 2. two"
+    document = f"## Item 4 of 9: two real parts\n\n{body}\n\nRecommendation: keep it.\n"
+    case = Case(next_to_present="item 4 of 9", document=document)
+    lines = case.lines("1 a 2 d")
+    check("`Part 1.` and `Part 2.` lines outside a code span are parts 1 and 2",
+          lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: D", last="2")]
+          + parts_different_letters_lines("--part-answer 1=A --part-answer 2=D"), f"lines {lines!r}")
+    lines = case.lines("1 a 2 d 3 a")
+    check("a `Part 3.` line inside a multiline code span is no part, so '1 a 2 d 3 a' is read as item numbers",
+          lines is not None and lines[1].startswith("The answer gives a letter to item 1 of 9"), f"lines {lines!r}")
+
+
+def test_parts_in_a_paragraph_that_runs_up_to_the_next_items_heading_are_read():
+    document = ("## Item 4 of 9: parts last\n\nRecommendation: keep it.\n\nPart 1. one\nPart 2. two\n"
+                "## Item 5 of 9: next\n\nRecommendation: do five.\n")
+    lines = Case(next_to_present="item 4 of 9", document=document).lines("1 a 2 d")
+    check("a parts paragraph with no blank line before the next item's heading still gives the item its parts",
+          lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: D", last="2")]
+          + parts_different_letters_lines("--part-answer 1=A --part-answer 2=D"), f"lines {lines!r}")
+
+
+def test_parts_in_an_items_opening_paragraph_under_a_shared_heading_are_that_items_alone():
+    document = shared_heading_document("**Item 5: the path.** Recommendation: fix the path.\n\n"
+                                       "**Item 6: the sentence.**\nPart 1. one\nPart 2. two\n\n"
+                                       "Recommendation: drop it.\n")
+    lines = Case(next_to_present="item 6 of 9", document=document).lines("1 a 2 d")
+    check("`Part N.` lines in item 6's opening paragraph are item 6's parts",
+          lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: D", "item 6 of 9", "2")]
+          + parts_different_letters_lines("--part-answer 1=A --part-answer 2=D"), f"lines {lines!r}")
+    lines = Case(next_to_present="item 5 of 9", document=document).lines("1 a 2 d")
+    check("`Part N.` lines in item 6's opening paragraph are not parts of item 5, which comes before it",
+          lines is not None and lines[1].startswith("The answer gives a letter to item 1 of 9"), f"lines {lines!r}")
+
+
+def test_a_withdrawn_version_under_a_shared_heading_ends_only_its_own_item():
+    withdrawn = "#### Withdrawn version 1 of item 5\n\nThe first path.\n\nRecommendation: add the filter.\n\n"
+    layouts = {
+        "with openings": shared_heading_document("**Item 5: the path.** Recommendation: fix the path.\n\n" + withdrawn
+                                                 + "**Item 6: the sentence.** Recommendation: drop it.\n"),
+    }
+    for layout, document in layouts.items():
+        for number, recommendation in (("5", "fix the path"), ("6", "drop it")):
+            lines = Case(next_to_present=f"item {number} of 9", document=document).lines("a")
+            check(f"under a shared heading {layout}, a Withdrawn version of item 5 ends only item 5, so item {number} "
+                  "reads its own live recommendation",
+                  lines is not None and lines[1].startswith(
+                      f"A means approve: the user agrees with the recommendation of item {number} of 9 ({recommendation})."),
+                  f"lines {lines!r}")
+    document = shared_heading_document("Both items share one recommendation. Recommendation: do both.\n\n" + withdrawn)
+    lines = Case(next_to_present="item 6 of 9", document=document).lines("a")
+    check("under a shared heading whose items have no openings, a Withdrawn heading ends the unit's text",
+          lines is not None and lines[1].startswith(
+              "A means approve: the user agrees with the recommendation of item 6 of 9 (do both)."), f"lines {lines!r}")
+    for heading, withdrawn_labels in (
+            ("#### Withdrawn version 1 of item 6", "**Item 6: the old sentence.** Recommendation: keep it.\n"),
+            ("#### Withdrawn version 1 of items 5 and 6",
+             "**Item 5: the old path.** Recommendation: keep it.\n\n"
+             "**Item 6: the old sentence.** Recommendation: keep it.\n")):
+        document = shared_heading_document(
+            "**Item 5: the path.** Recommendation: fix the path.\n\nThe sentence. Recommendation: drop it.\n\n"
+            + heading + "\n\n" + withdrawn_labels)
+        lines = Case(next_to_present="item 6 of 9", document=document).lines("a")
+        check(f"under a shared heading, every label of a Withdrawn version below `{heading}` that names an item the "
+              "heading names is no live item's opening, so item 6 gets no recommendation and the line saying why, "
+              "never the withdrawn one",
+              lines is not None
+              and lines[1] == "A means approve: the user agrees with the recommendation of item 6 of 9. "
+                              "Do what the recommendation says."
+              and not any("keep it" in line for line in lines)
+              and any("because item 6 has no opening it reads" in line for line in lines),
+              f"lines {lines!r}")
+    document = shared_heading_document(
+        "**Item 5: the path.** Recommendation: fix the path.\n\n#### Withdrawn version 1\n\n"
+        "The old path. Recommendation: move it.\n\n**Item 6: the sentence.** Recommendation: drop it.\n")
+    for number, recommendation in (("5", "fix the path"), ("6", "drop it")):
+        lines = Case(next_to_present=f"item {number} of 9", document=document).lines("a")
+        check(f"under a shared heading, a Withdrawn heading that names no item drops no label, so item {number} "
+              "reads its own live recommendation",
+              lines is not None and lines[1].startswith(
+                  f"A means approve: the user agrees with the recommendation of item {number} of 9 ({recommendation})."),
+              f"lines {lines!r}")
+
+
+def test_an_item_with_no_opening_below_another_items_withdrawn_version_reads_no_recommendation():
+    withdrawn = "#### Withdrawn version 1 of item 5\n\nThe first path.\n\nRecommendation: add the filter.\n\n"
+    document = shared_heading_document("**Item 5: the path.** Recommendation: fix the path.\n\n" + withdrawn
+                                       + "The sentence. Recommendation: drop it.\n")
+    lines = Case(next_to_present="item 6 of 9", document=document).lines("a")
+    check("under a shared heading, item 6 with no opening below item 5's Withdrawn version gets no recommendation "
+          "and the line saying why, never item 5's",
+          lines is not None
+          and lines[1] == "A means approve: the user agrees with the recommendation of item 6 of 9. "
+                          "Do what the recommendation says."
+          and not any("fix the path" in line for line in lines)
+          and any("because item 6 has no opening it reads" in line for line in lines),
+          f"lines {lines!r}")
+
+
+def test_a_label_below_consecutive_withdrawn_headings_naming_an_item_either_names_is_no_opening():
+    specification = importlib.util.spec_from_file_location("item_finder", FINDER_MODULE_FILE)
+    finder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(finder)
+    # A live label sits above its item's Withdrawn version, so below that version it is withdrawn text, even past
+    # another item's Withdrawn heading.
+    document = "\n\n".join((
+        "## Items 5 and 6 of 9: the path and the sentence",
+        "**Item 5: the path.** Recommendation: fix the path.", "**Item 6: the sentence.** Recommendation: drop it.",
+        "#### Withdrawn version 1 of item 5", "The first path.", "#### Withdrawn version 1 of item 6",
+        "**Item 5: the old path.** Recommendation: keep it.\n"))
+    openings = finder.item_opening_lines(document, finder.markdown_parser())
+    check("a label of item 5 below Withdrawn headings of item 5 and then item 6 is no opening",
+          openings == {2: (["5"], None), 4: (["6"], None), 6: ([], None), 10: ([], None)}, f"openings {openings!r}")
+
+
+def test_a_later_unit_that_names_a_withdrawn_item_again_reads_its_live_label():
+    specification = importlib.util.spec_from_file_location("item_finder", FINDER_MODULE_FILE)
+    finder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(finder)
+    parser = finder.markdown_parser()
+    # A heading's count is no opening of item_opening_lines; a paragraph's is.
+    for start, revised, count_opening in (
+            ("a paragraph", "**Items 6 and 7 of 9 revised: the sentence and the link**", {8: (["6", "7"], "9")}),
+            ("a heading", "## Items 6 and 7 of 9 revised: the sentence and the link", {})):
+        document = "\n\n".join((
+            "## Item 6 of 9: the sentence", "The sentence.", "#### Withdrawn version 1 of item 6",
+            "**Item 6: the old sentence.** Recommendation: keep it.", revised,
+            "**Item 6: the sentence.** Recommendation: reword it.",
+            "**Item 7: the link.** Recommendation: fix the link.\n"))
+        openings = finder.item_opening_lines(document, parser)
+        units = finder.item_unit_spans(document, parser)
+        ranges = [finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+            openings, first, end, "6", numbers, total) for numbers, total, _, first, end in units]
+        check(f"a unit started by {start} after a Withdrawn version of item 6 ends the Withdrawn version, so its "
+              "live `**Item 6:` label is item 6's opening and item 6's lines stop before item 7's",
+              openings == {4: ([], None), **count_opening, 10: (["6"], None), 12: (["7"], None)}
+              and units == [(["6", "7"], "9", None, 8, 14)] and ranges == [(10, 12)],
+              f"openings {openings!r}, units {units!r}, ranges {ranges!r}")
+        lines = Case(next_to_present="item 6 of 9", document=document).lines("a")
+        check(f"after a unit started by {start} names item 6 again, A on item 6 reads its live recommendation",
+              lines is not None and lines[1].startswith(
+                  "A means approve: the user agrees with the recommendation of item 6 of 9 (reword it)."),
+              f"lines {lines!r}")
+
+
+def test_numbered_r_whose_walk_document_or_marker_cannot_be_read_still_goes_to_the_agent():
+    for case, problem in ((Case(next_to_present="item 4 of 9", document=None), "no walk-document"),
+                          (Case(next_to_present="paused until rewritten"), "a marker naming no item")):
         lines = case.lines("4 r")
-        check(f"'4 r' when {problem!r} cannot be read expands and says why, instead of printing nothing",
-              lines is not None and any(line.startswith("The hook could not show ") and problem in line
-                                        for line in lines), f"lines {lines!r}")
+        check(f"'4 r' with {problem} tells the agent to show item 4, instead of printing nothing",
+              lines is not None and any(line.startswith("\"4 R\" asks to see item 4") for line in lines),
+              f"lines {lines!r}")
+
+
+def test_r_with_no_walk_total_gives_counts_with_an_m_placeholder():
+    lines = Case(next_to_present="item 4", document=None).lines("r") or []
+    check("R on an item whose walk total the hook cannot read gives the `#item_page` line with `of <M>`",
+          any("`#item_page item 4 of <M> <page link>`" in line for line in lines)
+          and any("`#item_page item 4 of <M> publish failed: <what the Artifact tool said>`" in line for line in lines),
+          f"lines {lines!r}")
+    check("R on an item whose walk total the hook cannot read gives the closing line with `of <M>`",
+          any(line.endswith(f"[Item 4 of <M>](<page link>) · {LETTERS_AFTER_LINK}") for line in lines),
+          f"lines {lines!r}")
 
 
 def test_numbered_r_reads_the_walk_in_the_payloads_cwd_not_the_hooks_own():
@@ -688,8 +1378,11 @@ def test_numbered_r_reads_the_walk_in_the_payloads_cwd_not_the_hooks_own():
                "cwd": str(case.checkout), "prompt": "37.4 r"}
     result = subprocess.run([sys.executable, str(HOOK_SCRIPT)], input=json.dumps(payload),
                             capture_output=True, text=True, cwd=SUITE_ROOT)
+    context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"] if not_blocked(result) else ""
     check("'37.4 r' run from outside the checkout still finds item 37.4 in the payload's cwd",
-          result.returncode == 0 and blocked_reason(result) == ITEM_37_4_SECTION,
+          context.startswith(f"The user answered \"37.4 r\" to item 4 of 9 of approval-walk {WALK_NAME}.\n"
+                             + "\n".join(numbered_r_lines("37.4", "item 37.4 of 9", "R with a number",
+                                                           f" {case.walk / (WALK_NAME + '-minutes.md')}"))),
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
@@ -700,8 +1393,8 @@ def test_numbered_r_on_unreadable_minutes_expands_and_says_so():
     check("'6 r' on minutes that cannot be read names the failure and still says to show item 6",
           lines is not None
           and "reading the approval-walk state failed: UnicodeDecodeError" in lines[0]
-          and "\"6 R\" asks to see item 6 again: show it in full, word for word as the walk-document has it."
-              in lines, f"lines {lines!r}")
+          and holds_in_order(lines, numbered_r_lines("6", "item 6", minutes="", count="item 6 of <M>"))
+          and not any("check step" in line for line in lines), f"lines {lines!r}")
 
 
 def test_all_a_and_all_ao():
@@ -714,10 +1407,7 @@ def test_all_a_and_all_ao():
                                "user agrees with each one's recommendation. Do what each recommends. For each item, "
                                "whether or not it makes a change, run the check step, then close, and do what close "
                                "prints; write nothing in the minutes by hand but the `#next_to_present` lines below.")
-              and lines[2] == ("Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add "
-               "the line `#next_to_present item <number> of 9` for it, with its number, as the minutes' last "
-               "line, as the walk-me-through skill allows. Present the item close names only after the last "
-               "answer is recorded."), f"lines {lines!r}")
+              and lines[2] == ONE_ITEM_AT_A_TIME_LINE, f"lines {lines!r}")
     for prompt in ("all ao", "ao to all"):
         lines = case.lines(prompt)
         check(f"{prompt!r} approves every waiting item as obvious",
@@ -725,10 +1415,7 @@ def test_all_a_and_all_ao():
               and lines[1].endswith("For each item, whether or not it makes a change, run the check step (with "
                                     "--obvious for `all ao`), then close, and do what close prints; write nothing in "
                                     "the minutes by hand but the `#next_to_present` lines below.")
-              and lines[2] == ("Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add "
-               "the line `#next_to_present item <number> of 9` for it, with its number, as the minutes' last "
-               "line, as the walk-me-through skill allows. Present the item close names only after the last "
-               "answer is recorded."), f"lines {lines!r}")
+              and lines[2] == ONE_ITEM_AT_A_TIME_LINE, f"lines {lines!r}")
     for prompt in ("all a", "all ao"):
         lines = Case().lines(prompt)
         check(f"{prompt} with no approval-walk acts on each open recommendation, with the single approval's fast "
@@ -789,40 +1476,51 @@ def test_named_programs_exist():
                                 "<that file>`, and apply the findings that hold." in lines[2], f"lines {lines!r}")
 
 
+def reply_arguments(case, prompt):
+    """The --user-reply-as-typed flag and its value from the last line the hook gives for the prompt."""
+    context = json.loads(case.run(prompt).stdout)["hookSpecificOutput"]["additionalContext"]
+    return shlex.split(context.split("\n")[-1].split("`")[1])
+
+
 def test_each_check_command_the_hook_names_runs_on_the_real_program():
-    """The command is run as the hook prints it, plus --counts-log, so no test line reaches the log-store.
-    Item 3 has no `#new` line, so no fast read, and no model, is called."""
-    for prompt, word in (("a", "approved ("), ("ao", "approved #approved_obvious ("),
-                         ("aa", "approved #approved_after_advisor ("),
-                         ("o2", "approved option 2 ("), ("o3", "approved option 3 (")):
+    """The command is run as the hook prints it, with the reply flag its last line gives, plus --counts-log,
+    so no test line reaches the log-store. Item 3 has no `#new` line, so no fast read, and no model, is
+    called."""
+    for prompt, word in (("a", "approved #case_against_none ("), ("ao", "approved #approved_obvious #case_against_none ("),
+                         ("aa", "approved #approved_after_advisor #case_against_none ("),
+                         ("o2", "approved option 2 #case_against_none ("), ("o3", "approved option 3 #case_against_none (")):
         case = Case(next_to_present="item 3 of 9")
         lines = case.lines(prompt) or []
         commands = [line.split("`")[1] for line in lines if "`python3 " in line and " check" in line]
         if not commands:
             check(f"the hook names a check command for {prompt!r}", False, f"lines {lines!r}")
             continue
-        result = subprocess.run(commands[0].split() + ["--counts-log", str(case.checkout.parent / "counts.tsv")],
+        result = subprocess.run(commands[0].split() + reply_arguments(case, prompt)
+                                + ["--counts-log", str(case.checkout.parent / "counts.tsv")],
                                 capture_output=True, text=True, cwd=case.checkout)
         minutes = (case.walk / f"{WALK_NAME}-minutes.md").read_text()
-        check(f"the check command the hook names for {prompt!r} runs and records the answer",
+        check(f"the check command the hook names for {prompt!r} runs and records the answer and his reply",
               result.returncode == 0 and result.stdout.startswith("no proposed text marked")
-              and f"item 3 of 9: the user answered {word}" in minutes,
+              and f"item 3 of 9: the user answered {word}" in minutes
+              and f') in his words "{prompt}", which makes its change.' in minutes,
               f"command {commands[0]!r}, exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
     case = Case(next_to_present="item 3 of 9")
     lines = case.lines("d") or []
     commands = [line.split("`")[1] for line in lines if "`python3 " in line and " check" in line]
-    result = subprocess.run((commands or ["false"])[0].split() + ["--counts-log", str(case.checkout.parent / "c.tsv")],
+    result = subprocess.run((commands or ["false"])[0].split() + reply_arguments(case, "d")
+                            + ["--counts-log", str(case.checkout.parent / "c.tsv")],
                             capture_output=True, text=True, cwd=case.checkout)
     check("the check command the hook names for 'd' runs and records the answer as disapproved",
-          result.returncode == 0 and "item 3 of 9: the user answered disapproved ("
+          result.returncode == 0 and "item 3 of 9: the user answered disapproved #case_against_none ("
           in (case.walk / f"{WALK_NAME}-minutes.md").read_text(), f"lines {lines!r}, stdout {result.stdout!r}")
     # Z's text names the check step and its flag, not the whole command.
     case = Case(next_to_present="item 3 of 9")
     lines = case.lines("z") or []
-    result = subprocess.run(CHECK.strip("`").split() + ["--deferred"], capture_output=True, text=True, cwd=case.checkout)
+    result = subprocess.run(CHECK.strip("`").split() + ["--deferred"] + reply_arguments(case, "z"),
+                            capture_output=True, text=True, cwd=case.checkout)
     check("Z's text names --deferred, and the check step run with it records the answer as deferred",
           any("--deferred" in line for line in lines) and result.returncode == 0
-          and "item 3 of 9: the user answered deferred (" in (case.walk / f"{WALK_NAME}-minutes.md").read_text(),
+          and "item 3 of 9: the user answered deferred #case_against_none (" in (case.walk / f"{WALK_NAME}-minutes.md").read_text(),
           f"lines {lines!r}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
@@ -838,6 +1536,19 @@ def test_unreadable_minutes_still_expand_and_say_so():
           and "If an approval-walk is open:" in lines and "If no approval-walk is open:" in lines
           and any(line.startswith("D means disapprove: the user disagrees with your last") for line in lines),
           f"lines {lines!r}")
+
+
+def test_two_unclosed_approval_walks_are_reported_naming_both():
+    case = Case(next_to_present="item 3 of 9")
+    second = case.minutes("#next_to_present item 5 of 9\n#approval_walk_paused stop order", name="a-second-walk")
+    lines = case.lines("a")
+    check("with two unclosed approval-walks the hook takes neither and names both walk-minutes files",
+          lines is not None
+          and lines[0].startswith("The user answered \"a\"; the hook could not tell whether an approval-walk "
+                                  "is open, because reading the approval-walk state failed: "
+                                  "MoreThanOneUnclosedApprovalWalk")
+          and re.search(rf"/docs/walk/{second.name}, (<minutes>|\S*/docs/walk/{WALK_NAME}-minutes\.md)'\)", lines[0])
+          and "If an approval-walk is open:" in lines, f"lines {lines!r}")
 
 
 def test_missing_walk_document_is_reported_for_a():

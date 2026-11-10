@@ -10,6 +10,6 @@ The deliverable: one wiki page — working name `sanity-checker-overview` (the u
 
 Timing: write it only after the include build and the fourth audit land, so it documents the settled shape instead of going stale on arrival. Destination per the artifact-lifecycle rule: wiki-bound; route through `docs/wiki/queue/` or straight to the wiki home at the drain's discretion.
 
-Search receipt: `gh issue list --state all --search "sanity-checker overview"` (2026-08-22) returned nothing; `docs/wiki/` holds only `queue/`; `scripts/ghi-info-ask.py` is absent from this checkout.
+Search receipt: `gh issue list --state all --search "sanity-checker overview"` (2026-08-22) returned nothing; `docs/wiki/` holds only `queue/`; `scripts/ghi-guide-agent-ask.py` is absent from this checkout.
 
 — filed from session https://claude.ai/code/session_01F9s9L5vPfehGRgrDHoc4Pk (doctrine-queue-drain seat)

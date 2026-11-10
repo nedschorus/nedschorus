@@ -1,5 +1,6 @@
 ---
 issue: "[Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedschorus/nedschorus/issues/45)"
+kind: design
 ---
 
 # Running named agents on the Ubuntu box, reachable from iTerm2 by name
