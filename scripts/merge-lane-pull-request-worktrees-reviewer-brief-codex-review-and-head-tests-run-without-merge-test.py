@@ -696,7 +696,7 @@ def main():
               "before any step runs, with the one instruction to tell the user and keep the "
               "changes, and not the generic one",
               completed.returncode == 2 and calls == []
-              and f"git checkout -q --detach {main_commit} in {checkout} exited"
+              and f"git checkout -q --no-overwrite-ignore --detach {main_commit} in {checkout} exited"
                   in completed.stdout
               and completed.stdout.rstrip().endswith(
                   f"Tell the user this message and wait for the user's answer. Leave the "
@@ -707,6 +707,31 @@ def main():
               and head_of(checkout) == merge_base,
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}")
 
+        # The same file, ignored: without --no-overwrite-ignore, git replaces it with main's,
+        # and the only copy is lost.
+        exclude = Path(git(checkout, "rev-parse", "--path-format=absolute",
+                           "--git-common-dir")) / "info" / "exclude"
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        exclude_before = exclude.read_text() if exclude.exists() else None
+        exclude.write_text("main-moved-on.txt\n")
+        in_the_way.write_text("the only copy\n")
+        completed, calls, _ = run_program(scratch, checkout, helpers, [first_round])
+        survived = in_the_way.read_text()
+        in_the_way.unlink()
+        if exclude_before is None:
+            exclude.unlink()
+        else:
+            exclude.write_text(exclude_before)
+        check("a checkout over an ignored file at a path main tracks exits 2 before any step runs, "
+              "with the instruction to tell the user and keep the changes, and the file survives",
+              completed.returncode == 2 and calls == []
+              and "main-moved-on.txt" in completed.stdout
+              and completed.stdout.rstrip().endswith(
+                  f"because they may be someone's unsaved work.")
+              and survived == "the only copy\n"
+              and head_of(checkout) == merge_base,
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}\n{survived}")
+
         # A held index lock makes the checkout fail for a reason other than local changes.
         index_lock = Path(git(checkout, "rev-parse", "--absolute-git-dir")) / "index.lock"
         index_lock.write_text("")
@@ -715,7 +740,7 @@ def main():
         check("a checkout that fails for another reason exits 2 with the generic instruction "
               "alone",
               completed.returncode == 2 and calls == []
-              and f"git checkout -q --detach {main_commit} in {checkout} exited"
+              and f"git checkout -q --no-overwrite-ignore --detach {main_commit} in {checkout} exited"
                   in completed.stdout
               and completed.stdout.rstrip().endswith(generic_instruction)
               and "leave the changes" not in completed.stdout

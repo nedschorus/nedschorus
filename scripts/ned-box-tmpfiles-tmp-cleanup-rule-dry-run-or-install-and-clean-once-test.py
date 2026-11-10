@@ -238,6 +238,39 @@ else:
           parsed.returncode == 0 and parsed.stderr == "",
           f"exit {parsed.returncode}: {parsed.stderr}")
 
+# The user's install command first fast-forwards the reference-checkout. Run that part on a
+# real clone holding an ignored file at a path main newly tracks: git must refuse and leave it.
+with tempfile.TemporaryDirectory() as scratch:
+    root = Path(scratch)
+
+    def git(arguments, cwd):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        *arguments], cwd=cwd, check=True, capture_output=True)
+
+    origin = root / "origin"
+    origin.mkdir()
+    git(["init", "-q", "-b", "main"], origin)
+    git(["commit", "-q", "--allow-empty", "-m", "first"], origin)
+    clone = root / "clone"
+    git(["clone", "-q", str(origin), str(clone)], root)
+    (origin / "ignored-here").mkdir()
+    (origin / "ignored-here" / "notes.txt").write_text("main's copy\n")
+    git(["add", "-A"], origin)
+    git(["commit", "-q", "-m", "main tracks a file the clone ignores"], origin)
+    (clone / "ignored-here").mkdir()
+    (clone / "ignored-here" / ".gitignore").write_text("*\n")
+    (clone / "ignored-here" / "notes.txt").write_text("the only copy\n")
+    on_ned_box = installer.USER_INSTALL_COMMAND_LINE.split("'")[1]
+    fast_forward = on_ned_box.split(" && python3 ")[0].replace(
+        "~/Projects/nedschorus", str(clone))
+    ran = subprocess.run(fast_forward, shell=True, capture_output=True, text=True)
+    survived = (clone / "ignored-here" / "notes.txt").read_text()
+check("the install command's fast-forward over an ignored file at a path main tracks fails, "
+      "naming the file",
+      ran.returncode != 0 and "ignored-here/notes.txt" in ran.stderr,
+      (fast_forward, ran.returncode, ran.stderr))
+check("and the ignored file survives", survived == "the only copy\n", survived)
+
 if failures:
     print(f"\n{len(failures)} failed: {', '.join(failures)}")
     sys.exit(1)

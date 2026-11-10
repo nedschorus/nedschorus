@@ -357,7 +357,7 @@ def main(argv=None):
                 f"could not write the brief specifications with head and main filled in to "
                 f"{filled_in_specifications_file}: {failure}") from failure
         try:
-            git(checkout, "checkout", "-q", "--detach", main_commit)
+            git(checkout, "checkout", "-q", "--no-overwrite-ignore", "--detach", main_commit)
         except RefusedBeforeAnyStep as failure:
             if CHECKOUT_WOULD_OVERWRITE_CHANGES not in str(failure):
                 raise

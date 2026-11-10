@@ -40,6 +40,45 @@ _spec.loader.exec_module(installer)
 failures = 0
 
 
+
+def fast_forward_command_over_an_ignored_file_cases():
+    """The fast-forward command the advice hands out, run on a real clone holding an ignored
+    file at a path main newly tracks: git must refuse and leave the file, not replace it."""
+    real_reference_checkout = installer.REFERENCE_CHECKOUT
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+
+        def git(arguments, cwd):
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                            *arguments], cwd=cwd, check=True, capture_output=True)
+
+        origin = root / "origin"
+        origin.mkdir()
+        git(["init", "-q", "-b", "main"], origin)
+        git(["commit", "-q", "--allow-empty", "-m", "first"], origin)
+        clone = root / "clone"
+        git(["clone", "-q", str(origin), str(clone)], root)
+        (origin / "ignored-here").mkdir()
+        (origin / "ignored-here" / "notes.txt").write_text("main's copy\n")
+        git(["add", "-A"], origin)
+        git(["commit", "-q", "-m", "main tracks a file the clone ignores"], origin)
+        (clone / "ignored-here").mkdir()
+        (clone / "ignored-here" / ".gitignore").write_text("*\n")
+        (clone / "ignored-here" / "notes.txt").write_text("the only copy\n")
+        installer.REFERENCE_CHECKOUT = shlex.quote(str(clone))
+        try:
+            advice = installer.reference_checkout_missing_commit_failure_advice("mac", "")
+        finally:
+            installer.REFERENCE_CHECKOUT = real_reference_checkout
+        command = advice.split("`")[1]
+        ran = subprocess.run(command, shell=True, capture_output=True, text=True)
+        check("the advised fast-forward over an ignored file at a path main tracks fails, "
+              "naming the file",
+              ran.returncode != 0 and "ignored-here/notes.txt" in ran.stderr,
+              (command, ran.returncode, ran.stderr))
+        check("and the ignored file survives",
+              (clone / "ignored-here" / "notes.txt").read_text() == "the only copy\n")
+
 def check(name, condition, detail=None):
     global failures
     if condition:
@@ -144,8 +183,10 @@ with tempfile.TemporaryDirectory() as directory:
     code, out, err = run_main(runner)
     check("a ned-box reference-checkout without main's commit gets the fast-forward command, "
           "through ssh",
-          code == 1 and "`ssh nedlern@ned-box 'git -C ~/Projects/nedschorus pull --ff-only'`"
+          code == 1 and "`ssh nedlern@ned-box 'git -C ~/Projects/nedschorus fetch origin && "
+          "git -C ~/Projects/nedschorus merge --ff-only --no-overwrite-ignore origin/main'`"
           in err, err)
+    fast_forward_command_over_an_ignored_file_cases()
 
     runner = FakeRunner({10: (0, "401", "")})
     code, out, err = run_main(runner)
