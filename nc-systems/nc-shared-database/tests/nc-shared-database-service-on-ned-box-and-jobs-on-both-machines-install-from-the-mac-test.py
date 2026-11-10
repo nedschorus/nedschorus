@@ -84,6 +84,19 @@ def fast_forward_command_over_an_ignored_file_cases():
               (command, ran.returncode, ran.stderr))
         check("and the ignored file survives",
               (clone / "ignored-here" / "notes.txt").read_text() == "the only copy\n")
+        (clone / "ignored-here" / "notes.txt").unlink()
+        git(["switch", "-q", "-c", "some-topic-branch"], clone)
+        topic_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone,
+                                      capture_output=True, text=True).stdout
+        ran = subprocess.run(command, shell=True, capture_output=True, text=True)
+        topic_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone,
+                                     capture_output=True, text=True).stdout
+        check("the advised fast-forward stops when the reference-checkout is on a branch other "
+              "than main, saying so",
+              ran.returncode != 0 and "is not on main" in ran.stderr,
+              (command, ran.returncode, ran.stderr))
+        check("and that branch is not fast-forwarded", topic_after == topic_before,
+              (topic_before, topic_after))
 
 def check(name, condition, detail=None):
     global failures
@@ -189,7 +202,9 @@ with tempfile.TemporaryDirectory() as directory:
     code, out, err = run_main(runner)
     check("a ned-box reference-checkout without main's commit gets the fast-forward command, "
           "through ssh",
-          code == 1 and "`ssh nedlern@ned-box 'git -C ~/Projects/nedschorus fetch origin && "
+          code == 1 and "`ssh nedlern@ned-box '{ [ \"$(git -C ~/Projects/nedschorus branch "
+          "--show-current)\" = main ] || " in err
+          and "git -C ~/Projects/nedschorus fetch origin && "
           "git -C ~/Projects/nedschorus merge --ff-only --no-overwrite-ignore origin/main'`"
           in err, err)
     fast_forward_command_over_an_ignored_file_cases()
