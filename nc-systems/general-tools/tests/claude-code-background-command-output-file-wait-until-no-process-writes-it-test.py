@@ -174,9 +174,11 @@ check("the time limit running out during a later look exits 1, naming the writer
       (code, message, given))
 list_writers, _ = lister_answering(wait.WritersLookTimeLimitReached("lsof had not listed them"))
 code, message = wait.wait_until_no_process_writes(str(output_file), 1, list_writers, sleep=no_sleep)
-check("the time limit running out during the first look exits 2, saying to give a longer time limit",
+check("the time limit running out during the first look exits 2, giving the command that runs with the default limit, "
+      "which is longer than one lsof look",
       code == wait.EXIT_CANNOT_WAIT and "lsof had not listed them" in message
-      and "longer --time-limit-seconds" in message, (code, message))
+      and f"Run python3 {PROGRAM} {os.path.realpath(output_file)} instead, without --time-limit-seconds"
+      in message and wait.DEFAULT_TIME_LIMIT_SECONDS > wait.LSOF_TIMEOUT_SECONDS, (code, message))
 list_writers, _ = lister_answering({7}, wait.WritersCannotBeListed("lsof exited 2"))
 clock_values = iter([100.0, 101.0, 102.0])
 code, message = wait.wait_until_no_process_writes(

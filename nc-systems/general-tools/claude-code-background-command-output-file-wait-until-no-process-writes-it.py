@@ -137,9 +137,11 @@ def wait_until_no_process_writes(path, time_limit_seconds, list_writers,
             writers = list_writers(path, time_limit_seconds)
         except WritersLookTimeLimitReached as error:
             return EXIT_CANNOT_WAIT, (
-                f"Not waiting: the processes writing to {path} could not be listed within the time "
-                f"limit of {time_limit_seconds:g} seconds: {error}\n"
-                f"Run the same command again with a longer --time-limit-seconds.")
+                f"Not waiting: the processes writing to {path} could not be listed within "
+                f"--time-limit-seconds {time_limit_seconds:g}: {error}\n"
+                f"Run python3 {Path(__file__).resolve()} {path} instead, without "
+                f"--time-limit-seconds: its default of {DEFAULT_TIME_LIMIT_SECONDS} seconds leaves "
+                f"lsof the {LSOF_TIMEOUT_SECONDS} seconds one look may take.")
         if not writers:
             return EXIT_CANNOT_WAIT, (
                 f"Not waiting: no process has {path} open for writing, so this program cannot tell "
