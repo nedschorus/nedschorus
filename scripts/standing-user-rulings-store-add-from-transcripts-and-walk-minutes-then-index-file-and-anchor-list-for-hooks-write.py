@@ -34,8 +34,9 @@ WHAT IT READS.
   copies scripts/walk-files-ship.py ships; <log-store>/walk/superseded/ is not read. A line is a user-ruling
   when it is the answer line that walk-me-through's check program writes for an approved or disapproved
   answer (ANSWER_LINE_WITH_TIME below; a deferred answer decides nothing), or when it holds the project's
-  citation of a decision of his with its date (USER_RULED_CITATION below). The answer line's time is local
-  time in WALK_MINUTES_LOCAL_TIME_ZONE and is stored as UTC; a citation's date is stored as written, a date
+  citation of a decision of his with its date (USER_RULED_CITATION below). The answer line's time is UTC
+  when it ends in Z, as in (YYYY-MM-DD HH:MMZ), and otherwise local time in WALK_MINUTES_LOCAL_TIME_ZONE,
+  the form older walk-minutes hold; either is stored as UTC. A citation's date is stored as written, a date
   alone or a UTC time.
 
 WHAT IT STORES. One entry per message of his, kind user-words, with its UTC time, his text verbatim, the
@@ -263,7 +264,7 @@ AGENT_SEAT_DIRECTORY = re.compile(r"/agents/(?P<seat>[^/]+)/docs/walk/[^/]+$")
 # The answer line walk-me-through's check program writes (its CHECK_MINUTES); "deferred" has no such line.
 ANSWER_LINE_WITH_TIME = re.compile(
     r"^(?P<item>items? .+?): the user answered (?P<answered>.+?)(?: #approved_(?:obvious|after_advisor))?"
-    r"(?: #case_against_[a-z_]+)? \((?P<when>\d{4}-\d\d-\d\d \d\d:\d\d)\)(?: in his words \".*\")?, "
+    r"(?: #case_against_[a-z_]+)? \((?P<when>\d{4}-\d\d-\d\d \d\d:\d\d)(?P<utc>Z)?\)(?: in his words \".*\")?, "
     r"which makes its change\. Fast reads:$", re.IGNORECASE)
 USER_RULED_CITATION = re.compile(r"\buser-ruled (?P<date>\d{4}-\d\d-\d\d)(?P<time>T\d\d:\d\d(?::\d\d)?Z)?")
 
@@ -620,9 +621,9 @@ def read_transcript(connection, machine, path, repository, known_seats):
 def walk_minutes_said_at(line):
     match = ANSWER_LINE_WITH_TIME.match(line)
     if match:
-        local = datetime.datetime.strptime(match.group("when"), "%Y-%m-%d %H:%M").replace(
-            tzinfo=ZoneInfo(WALK_MINUTES_LOCAL_TIME_ZONE))
-        return local.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+        zone = datetime.timezone.utc if match.group("utc") else ZoneInfo(WALK_MINUTES_LOCAL_TIME_ZONE)
+        when = datetime.datetime.strptime(match.group("when"), "%Y-%m-%d %H:%M").replace(tzinfo=zone)
+        return when.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
     match = USER_RULED_CITATION.search(line)
     if match:
         return match.group("date") + (match.group("time") or "")

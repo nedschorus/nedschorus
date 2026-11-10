@@ -352,7 +352,7 @@ def test_missing_fast_reads_are_run_and_reported():
           repr(case.calls.read_text()))
     minutes = case.minutes.read_text()
     check("check records the answer as approved, and the status lines, in the minutes",
-          re.search(r"\nitem 3 of 9: the user answered approved #case_against_weak \(\d{4}-\d\d-\d\d \d\d:\d\d\) in his words \"`a`\", which makes "
+          re.search(r"\nitem 3 of 9: the user answered approved #case_against_weak \(\d{4}-\d\d-\d\d \d\d:\d\dZ\) in his words \"`a`\", which makes "
                     r"its change\. Fast reads:\n", minutes) is not None
           and minutes.count("\n- `#new` text ") == 2, minutes)
     log = case.counts_log.read_text().split("\t")
@@ -1412,7 +1412,7 @@ def test_a_deferral_is_recorded_and_the_item_comes_back_before_the_summary_item(
     checked = case.run("check", "--deferred")
     check("check --deferred runs no fast read, logs no counts, and writes the no-change answer line",
           checked.returncode == 0 and case.calls.read_text() == "" and not case.counts_log.exists()
-          and re.search(r"\nitem 2 of 5: the user answered deferred #case_against_none \(\d{4}-\d\d-\d\d \d\d:\d\d\) in his words \"`a`\", which makes no "
+          and re.search(r"\nitem 2 of 5: the user answered deferred #case_against_none \(\d{4}-\d\d-\d\d \d\d:\d\dZ\) in his words \"`a`\", which makes no "
                         r"change\.\n$", case.minutes.read_text()) is not None
           and checked.stdout.rstrip().endswith(f"close --cwd {shlex.quote(str(case.checkout.resolve()))}` and do what "
                                                "it prints."), described(checked))
@@ -2304,7 +2304,7 @@ def test_each_parts_answer_is_recorded_and_close_records_each_parts_outcome():
         minutes = case.minutes.read_text()
         check(f"check {' '.join(flags)} writes each part's answer as its word, in part number order",
               checked.returncode == 0 and re.search(
-                  rf"\nitem 4 of 9: the user answered {re.escape(answered)} #case_against_none \(\d{{4}}-\d\d-\d\d \d\d:\d\d\) in his "
+                  rf"\nitem 4 of 9: the user answered {re.escape(answered)} #case_against_none \(\d{{4}}-\d\d-\d\d \d\d:\d\dZ\) in his "
                   r"words \"`a`\", which makes its change\. Fast reads:\n- no proposed text marked\n$", minutes) is not None,
               described(checked) + minutes)
         closed = case.run("close")
@@ -2484,7 +2484,7 @@ def test_each_kind_with_its_evidence_settles_without_the_user_and_close_records_
         check(f"kind {kind} with its evidence is settled: the minutes say not asked, its kind and its rating",
               result.returncode == 0
               and re.search(rf"\nitem {kind} of 7: settled without asking the user, not asked, kind {kind} "
-                            rf"#case_against_(?:none|weak) \(\d{{4}}-\d\d-\d\d \d\d:\d\d\), which makes its change\. "
+                            rf"#case_against_(?:none|weak) \(\d{{4}}-\d\d-\d\d \d\d:\d\dZ\), which makes its change\. "
                             r"Fast reads:\n", minutes) is not None
               and f"Before you run close, ask the advisor whether a later ruling or another open item overtakes item "
                   f"{kind} of 7" in result.stdout, described(result) + minutes)
@@ -2553,7 +2553,7 @@ def test_an_item_of_no_kind_rated_none_settles_without_the_user_and_close_record
     check("an item of no kind rated none is settled: the minutes say not asked, case against none, and its rating",
           result.returncode == 0
           and re.search(r"\nitem 1 of 3: settled without asking the user, not asked, case against none "
-                        r"#case_against_none \(\d{4}-\d\d-\d\d \d\d:\d\d\), which makes its change\. Fast reads:\n",
+                        r"#case_against_none \(\d{4}-\d\d-\d\d \d\d:\d\dZ\), which makes its change\. Fast reads:\n",
                         minutes) is not None
           and "item 1 of 3 is recorded as settled without asking the user, case against none;" in result.stdout
           and "Before you run close, ask the advisor whether a later ruling or another open item overtakes item 1 of 3"
@@ -2860,7 +2860,7 @@ def test_an_item_an_earlier_ruling_decides_is_fast_read_recorded_and_not_shown()
     check("check --already-decided fast-reads the `#new` texts, as A does, and writes a not-asked answer line",
           checked.returncode == 0 and case.calls.read_text() == NEW_TEXTS
           and re.search(r"\nitem 3 of 9: settled without asking the user, already decided by `walk x's minutes, item 3 "
-                        r"\(2026-10-20\)` #case_against_weak \(\d{4}-\d\d-\d\d \d\d:\d\d\), which makes its change\. Fast reads:\n",
+                        r"\(2026-10-20\)` #case_against_weak \(\d{4}-\d\d-\d\d \d\d:\d\dZ\), which makes its change\. Fast reads:\n",
                         case.minutes.read_text()) is not None, described(checked))
     closed = case.run("close")
     lines = closed.stdout.rstrip("\n").split("\n")
@@ -2882,7 +2882,7 @@ def test_an_item_the_walk_moves_on_from_is_recorded_without_a_fast_read_and_not_
     check("check --moved-on runs no fast read, logs no counts, and writes a no-change answer line",
           checked.returncode == 0 and case.calls.read_text() == "" and not case.counts_log.exists()
           and re.search(r"\nitem 1 of 5: settled without asking the user, moved on, no decision: `the question went "
-                        r"to walk y` #case_against_none \(\d{4}-\d\d-\d\d \d\d:\d\d\), which makes no change\.\n$",
+                        r"to walk y` #case_against_none \(\d{4}-\d\d-\d\d \d\d:\d\dZ\), which makes no change\.\n$",
                         case.minutes.read_text()) is not None, described(checked))
     closed = case.run("close")
     check("close records the move on, tells the agent to list it, and names the next item",
@@ -3025,7 +3025,7 @@ def test_moving_on_from_an_item_that_asks_no_decision_records_it_and_presents_th
     check("check --moved-on-no-decision on an item with no case against writes the no-change line with his "
           "words, runs no fast read, and close records <moved on, no decision> and names the next item",
           checked.returncode == 0 and closed.returncode == 0 and case.calls.read_text() == ""
-          and re.search(r'\nitem 1 of 3: the user answered moved on, no decision \(\d{4}-\d\d-\d\d \d\d:\d\d\) '
+          and re.search(r'\nitem 1 of 3: the user answered moved on, no decision \(\d{4}-\d\d-\d\d \d\d:\d\dZ\) '
                         r'in his words "`next`", which makes no change\.\n', minutes)
           and minutes.rstrip().endswith("item 1 of 3: moved on; the item asked for no decision. "
                                         "<moved on, no decision>\n#next_to_present item 3 of 3")
@@ -3119,7 +3119,7 @@ def test_the_users_reply_is_written_beside_his_answer_and_close_still_reads_the_
               "close reads the answer line as before",
               checked.returncode == 0 and closed.returncode == 0
               and re.search(rf'\nitem 4 of 9: the user answered {re.escape(word)} #case_against_none '
-                            rf'\(\d{{4}}-\d\d-\d\d \d\d:\d\d\) in his words "`{re.escape(written)}`", which makes ', minutes)
+                            rf'\(\d{{4}}-\d\d-\d\d \d\d:\d\dZ\) in his words "`{re.escape(written)}`", which makes ', minutes)
               and f"\nitem 4 of 9: {outcome}\n" in minutes, described(checked) + described(closed) + minutes)
 
 
@@ -4022,6 +4022,36 @@ def test_a_comment_that_fails_is_reported_with_its_command_and_the_others_are_st
               "held on it."]
           and "item 4 of 9: approved; every text the change adds" in case.minutes.read_text(),
           described(closed))
+
+
+
+def test_check_writes_the_time_of_the_answer_in_utc_marked_z_whatever_the_local_time_zone():
+    environment = dict(os.environ, TZ="Pacific/Kiritimati")
+    for flags, written in ((("check",), "which makes its change"), (("check", "--deferred"), "which makes no change")):
+        case = Case()
+        before = datetime.datetime.now(datetime.timezone.utc).replace(second=0, microsecond=0)
+        result = case.run(*flags, environment=environment)
+        after = datetime.datetime.now(datetime.timezone.utc)
+        found = re.search(r"\nitem 3 of 9: the user answered .*\((\d{4}-\d\d-\d\d \d\d:\d\d)Z\)[^\n]*" + written,
+                          case.minutes.read_text())
+        when = (datetime.datetime.strptime(found[1], "%Y-%m-%d %H:%M").replace(tzinfo=datetime.timezone.utc)
+                if found else None)
+        check(f"{' '.join(flags)} writes the time of the answer in UTC marked Z, though the local time zone is "
+              "14 hours ahead of UTC", result.returncode == 0 and when is not None and before <= when <= after,
+              described(result) + case.minutes.read_text())
+
+
+def test_close_reads_an_answer_line_whose_time_is_the_old_local_form_or_the_utc_form():
+    for when in ("2026-10-23 10:00", "2026-11-05 17:03Z"):
+        case = Case()
+        case.run("check")
+        minutes = case.minutes.read_text()
+        case.minutes.write_text(re.sub(r"\(\d{4}-\d\d-\d\d \d\d:\d\dZ\)", f"({when})", minutes, count=1))
+        closed = case.run("close")
+        check(f"close reads an answer line whose time is written ({when})",
+              closed.returncode == 0 and f"({when})" in case.minutes.read_text()
+              and "\nitem 3 of 9: approved; every text the change adds has had a fast read." in case.minutes.read_text(),
+              described(closed) + case.minutes.read_text())
 
 
 
