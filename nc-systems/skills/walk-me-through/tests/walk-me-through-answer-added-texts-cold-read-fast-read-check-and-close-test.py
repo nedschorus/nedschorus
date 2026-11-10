@@ -1807,6 +1807,78 @@ def test_dotted_sub_step_headings_one_level_down_do_not_stop_an_added_item_being
           described(closed) + walk_document(case))
 
 
+SUB_STEPS_THEN_ITEMS_WAITING_ON_THEIR_ITEM_DOCUMENT = """# A walk whose item 2 is shown as sub-steps, with added items waiting on item 2
+
+## Item 1 of 2: one
+
+#case_against none.
+
+## Item 2 of 2: The restore task finds its commit
+
+### Item 2.1 of 2: why
+
+No decision here.
+
+### Item 2.2 of 2: the new sentences
+
+#case_against none.
+
+## Nothing reports a renamed constant
+
+#approval_walk_item_in_category_file_an_improvement_feature_or_change
+#approval_walk_item_waits_on The restore task finds its commit
+
+#case_against none.
+
+## What this walk decided
+
+#approval_walk_item_in_category_file_an_improvement_feature_or_change
+#approval_walk_item_waits_on The restore task finds its commit
+#approval_walk_item_waits_on Nothing reports a renamed constant
+
+The walk in short.
+"""
+
+
+def test_an_item_whose_sub_steps_are_all_decided_is_not_named_again_and_the_items_waiting_on_it_are_numbered():
+    case = Case(next_to_present="item 2.2 of 2", document=SUB_STEPS_THEN_ITEMS_WAITING_ON_THEIR_ITEM_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n" + approved_line("item 1 of 2")
+                            + "item 2.1 of 2: moved on; the item asked for no decision. <moved on, no decision>\n"
+                            + "#next_to_present item 2.2 of 2\n")
+    case.run("check")
+    closed = case.run("close")
+    check("once its last sub-step is decided, item 2 is not named again, and the item waiting on it is numbered and "
+          "named next",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 3 of 4"
+          and "\n## Item 3 of 4: Nothing reports a renamed constant\n" in walk_document(case),
+          described(closed) + case.minutes.read_text() + walk_document(case))
+    case.run("check")
+    closed = case.run("close")
+    check("the item that waits on items 2 and 3 is numbered and named once both are decided",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 4 of 4"
+          and "\n## Item 4 of 4: What this walk decided\n" in walk_document(case),
+          described(closed) + case.minutes.read_text() + walk_document(case))
+    case.run("check", "--moved-on-no-decision", reply="next")
+    closed = case.run("close")
+    check("with every item and sub-step decided, close closes the walk",
+          closed.returncode == 0 and marker(case) == "#next_to_present none, closed",
+          described(closed) + case.minutes.read_text())
+
+
+def test_close_hold_answer_numbers_a_new_item_that_waits_on_the_item_whose_last_sub_step_it_holds():
+    case = Case(next_to_present="item 2.2 of 2", document=SUB_STEPS_THEN_ITEMS_WAITING_ON_THEIR_ITEM_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n" + approved_line("item 1 of 2")
+                            + "item 2.1 of 2: moved on; the item asked for no decision. <moved on, no decision>\n"
+                            + "#next_to_present item 2.2 of 2\n")
+    case.run("check")
+    closed = case.run("close", "--hold-answer-until-new-item-answered")
+    check("close --hold-answer-until-new-item-answered numbers a new item that waits on item 2, whose other sub-steps "
+          "the minutes decide and whose last sub-step's answer it holds",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 3 of 4"
+          and "\n## Item 3 of 4: Nothing reports a renamed constant\n" in walk_document(case),
+          described(closed) + walk_document(case))
+
+
 def test_close_numbers_the_new_item_a_finding_raised_and_holds_the_answer():
     case = Case(next_to_present="item 1 of 4", document=UNNUMBERED_ITEMS_DOCUMENT)
     case.run("check")

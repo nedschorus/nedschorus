@@ -207,7 +207,8 @@ minutes' last line, naming the next item: walking the walk-document's items in
 order, unnumbered items included, a once-deferred item placed just before the
 summary item, from the item after the answered one, and round again from the
 first, the first item the minutes do not record; `none, closed` when there is
-none. The summary item is the one whose heading's point, after its running
+none. The minutes record an item with sub-steps, such as 3 with 3.1 and 3.2,
+once they decide every one of its sub-steps. The summary item is the one whose heading's point, after its running
 count, or its whole title when it has no number, opens with "summary". When
 the next item is unnumbered, a `## <title>` heading as the walk finder reads
 one, CLOSE first writes its running count into that heading, `## Item K of M:
@@ -2122,7 +2123,8 @@ def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numb
     HOLD_ANSWER_FLAG asks, and return the `#next_to_present` value naming it; raise Failure, writing nothing, when
     the unit right after is not unnumbered, or when it waits on an item still to come: an unshown item of placing,
     the walk-document's placing of its unshown items, the summary item, or a numbered item that is neither answered
-    now nor among decided, the items the minutes decide."""
+    now nor among decided, the items the minutes decide, an item whose sub-steps are all answered now or decided
+    counting as decided."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     text = document.read_text(encoding="utf-8")
     units = walk_finder.item_unit_spans(text, parser)
@@ -2137,10 +2139,12 @@ def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numb
         raise Failure(NO_UNNUMBERED_ITEM_AFTER.format(document=document, item=" and ".join(answered_numbers),
                                                       found=found))
     lines = text.split(NEWLINE)
+    decided = decided_with_items_whose_sub_steps_are_all_decided(
+        [number for unit in units for number in unit[0]], decided | set(answered_numbers))
     # An unnumbered item is keyed by its heading's line index, an int; a numbered one by its number, a str.
     to_come = sorted((other for other in placing.get(units[after][3], (None, set()))[1]
                       if other in placing or other == summary
-                      or (isinstance(other, str) and other not in decided and other not in answered_numbers)),
+                      or (isinstance(other, str) and other not in decided)),
                      key=str)
     if to_come:
         raise Failure(HELD_NEW_ITEM_WAITS_ON_UNSHOWN.format(
@@ -2199,6 +2203,19 @@ def minutes_record(walk_finder, minutes_text, parser):
     return decided, deferrals
 
 
+def decided_with_items_whose_sub_steps_are_all_decided(items, decided):
+    """decided, plus each item of items, such as 3, that has sub-steps among items, such as 3.1 and 3.2, every one
+    of them in decided or, deeper, decided through its own sub-steps; an item is never decided through its parent."""
+    decided = set(decided)
+    numbered = [item for item in items if isinstance(item, str)]
+    # Deepest first, so a sub-step decided through its own sub-steps, as 5.2 through 5.2.1, counts for its parent.
+    for item in sorted(numbered, key=lambda number: -number.count(".")):
+        sub_steps = [other for other in numbered if other.rsplit(".", 1)[0] == item and other != item]
+        if sub_steps and all(other in decided for other in sub_steps):
+            decided.add(item)
+    return decided
+
+
 def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals, placing=None):
     """Return the item numbers the `#next_to_present` line must name next, or [] when the minutes record
     every item.
@@ -2211,9 +2228,11 @@ def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferr
     item after it in the walk-document that is not deferred, and goes round once. The unshown items placing
     holds come together, in the order unshown_items_in_walk_order gives, where the first of them comes on that
     round, or just before the summary item or a deferred item when one of those comes sooner; an item is passed
-    over while an item it waits on is still to come.
+    over while an item it waits on is still to come. An item whose sub-steps are all decided counts as decided,
+    as decided_with_items_whose_sub_steps_are_all_decided says.
     """
     placing = placing or {}
+    decided = decided_with_items_whose_sub_steps_are_all_decided(order, decided)
     recorded = {item for item in order if item in decided or deferrals[item] > 1}
     still_waiting = [item for item in waiting_numbers if item not in recorded and item not in answered_numbers]
     if still_waiting:
