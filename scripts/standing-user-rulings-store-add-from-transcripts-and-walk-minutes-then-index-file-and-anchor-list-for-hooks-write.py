@@ -26,7 +26,8 @@ WHAT IT READS.
   message found in more than one copy links to the current mirror. Subagent transcripts are not read: their
   user turns are the parent agent's prompts. A user turn is his when
   scripts/search-user-messages-in-transcripts.py's TurnReader says so, queued_command attachments included,
-  read with keep_text_recognized_prompts, so a turn it tells is a program's prompt by its text alone is kept.
+  read with include_user_turns_whose_text_shows_a_compaction_summary_or_launch_prompt,
+  so a turn it tells is a program's prompt by its text alone is kept.
   ned-box's own ~/.claude/projects is not read: the mirror copies it each minute, and one copy keeps one
   link per message.
 - The walk-minutes: <agents-directory>/*/docs/walk/*-minutes.md, then <log-store>/walk/*-minutes.md, the
@@ -556,7 +557,9 @@ def read_transcript(connection, machine, path, repository, known_seats):
             return 0
         if (device, inode) == (status.st_dev, status.st_ino) and status.st_size >= size_read:
             offset, line_number, state = size_read, lines_read, json.loads(reader_state)
-    reader = transcript_reader.TurnReader(state.get("turn_reader"), keep_text_recognized_prompts=True)
+    reader = transcript_reader.TurnReader(
+        state.get("turn_reader"),
+        include_user_turns_whose_text_shows_a_compaction_summary_or_launch_prompt=True)
     agent_text = state.get("agent_message_since_user_message", "")
     cwd = state.get("cwd", "")
     added = 0
