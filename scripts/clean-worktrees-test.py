@@ -2811,7 +2811,7 @@ with tempfile.TemporaryDirectory() as scratch:
     module = load_clean_worktrees_module()
 
     def record_of(path):
-        record_file = module.removal_record_file(checkout, path)
+        record_file = module.unfinished_worktree_removal_record_file(checkout, path)
         return json.loads(record_file.read_text(encoding="utf-8")) if record_file.exists() else None
 
     def registration_of(path):
@@ -2872,7 +2872,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and record_of(held) is None,
           held_again.stdout + held_again.stderr)
 
-    records_directory = module.removal_records_directory(checkout)
+    records_directory = module.unfinished_worktree_removal_records_directory(checkout)
     undeleted, _ = stopped_partway("stopped-partway-record-undeletable-wt")
     records_directory.chmod(0o500)
     try:
@@ -2898,7 +2898,7 @@ with tempfile.TemporaryDirectory() as scratch:
         # No owner file, so --remove keeps the worktree without a failure of its own.
         path = managed / name
         git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
-        record_file = module.removal_record_file(checkout, path)
+        record_file = module.unfinished_worktree_removal_record_file(checkout, path)
         record_file.parent.mkdir(exist_ok=True)
         record_file.write_text(json.dumps({
             "worktree": str(path.resolve()),
@@ -2926,7 +2926,7 @@ with tempfile.TemporaryDirectory() as scratch:
     never_began = managed / "removal-never-began-wt"
     git(checkout, "worktree", "add", "-b", "removal-never-began-wt-branch", str(never_began),
         "origin/main")
-    stale_record = module.removal_record_file(checkout, never_began)
+    stale_record = module.unfinished_worktree_removal_record_file(checkout, never_began)
     stale_record.parent.mkdir(exist_ok=True)
     stale_record.write_text(json.dumps({
         "worktree": str(never_began.resolve()),
@@ -2939,7 +2939,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and "removal-never-began-wt: removed" not in dropped.stdout,
           dropped.stdout + dropped.stderr)
 
-    broken_record = module.removal_records_directory(checkout) / "0123456789abcdef.json"
+    broken_record = module.unfinished_worktree_removal_records_directory(checkout) / "0123456789abcdef.json"
     broken_record.write_text("{not json", encoding="utf-8")
     broken_run = run_clean(checkout, "--remove")
     broken_record.unlink()
@@ -2949,13 +2949,13 @@ with tempfile.TemporaryDirectory() as scratch:
               "removal record" in broken_run.stdout,
           broken_run.stdout + broken_run.stderr)
 
-    records_directory = module.removal_records_directory(checkout)
+    records_directory = module.unfinished_worktree_removal_records_directory(checkout)
     (records_directory / "a-no-worktree.json").write_text(json.dumps({"registration": "x"}),
                                                           encoding="utf-8")
     (records_directory / "b-a-list.json").write_text("[]", encoding="utf-8")
     (records_directory / "c-a-directory.json").mkdir()
     try:
-        _, unreadable_records = module.removal_records(checkout)
+        _, unreadable_records = module.unfinished_worktree_removal_records(checkout)
     finally:
         (records_directory / "a-no-worktree.json").unlink()
         (records_directory / "b-a-list.json").unlink()
@@ -2973,23 +2973,23 @@ with tempfile.TemporaryDirectory() as scratch:
     (reused_registration / "gitdir").write_text(
         os.path.relpath(reused / ".git", reused_registration) + "\n", encoding="utf-8")
     check("a registration whose relative gitdir names the worktree is the worktree's own",
-          module.registration_names_worktree_or_nothing(reused_registration, reused), "")
+          module.registration_points_to_worktree_or_has_no_gitdir_file(reused_registration, reused), "")
     check("a registration whose gitdir names another worktree is not the worktree's",
-          not module.registration_names_worktree_or_nothing(reused_registration, managed / "other-wt"),
+          not module.registration_points_to_worktree_or_has_no_gitdir_file(reused_registration, managed / "other-wt"),
           "")
     unreadable_gitdir_registration = scratch / "unreadable-gitdir-registration"
     (unreadable_gitdir_registration / "gitdir").mkdir(parents=True)
     check("a registration whose gitdir file cannot be read is not the worktree's",
-          not module.registration_names_worktree_or_nothing(unreadable_gitdir_registration, reused),
+          not module.registration_points_to_worktree_or_has_no_gitdir_file(unreadable_gitdir_registration, reused),
           "")
     check("a registration whose gitdir file is gone is deleted as the worktree's",
-          module.registration_names_worktree_or_nothing(scratch / "no-such-registration", reused), "")
+          module.registration_points_to_worktree_or_has_no_gitdir_file(scratch / "no-such-registration", reused), "")
 
     unwritable = managed / "removal-file-unwritable-wt"
     git(checkout, "worktree", "add", "-b", "removal-file-unwritable-wt-branch", str(unwritable),
         "origin/main")
     give_stopped_owner(unwritable)
-    records_directory = module.removal_records_directory(checkout)
+    records_directory = module.unfinished_worktree_removal_records_directory(checkout)
     records_directory.mkdir(exist_ok=True)
     records_directory.chmod(0o500)
     try:
