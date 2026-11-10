@@ -104,7 +104,7 @@ non-blocking error and keeps the write and the prompt; stderr after exit 0 is
 recorded nowhere, so a fault reported that way would read as "no bare numbers".
 """
 
-# Agent-facing messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# Tool-messages-to-agent follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 
 import functools
 import importlib.util
@@ -832,9 +832,9 @@ def previous_reply_note(payload: dict, environment):
 
 def _load_failed_command_next_step_lines():
     specification = importlib.util.spec_from_file_location(
-        "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+        "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
         Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-        / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+        / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module

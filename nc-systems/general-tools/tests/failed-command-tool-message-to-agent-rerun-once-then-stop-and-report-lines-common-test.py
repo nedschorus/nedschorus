@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Tests for nc-systems/general-tools/failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py.
+"""Tests for nc-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py.
 
 The programs that print these lines reach this module through their own
 suites. These cases pin the wording itself, word for word, so a change to it
 is a change a reviewer sees here, and pin the rerun command and the printer
 that the file-edit hooks take from the module.
 
-Run: python3 nc-systems/general-tools/tests/failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common-test.py
+Run: python3 nc-systems/general-tools/tests/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -21,9 +21,9 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
     REPOSITORY_ROOT / "nc-systems" / "general-tools"
-    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(next_step_lines)
 

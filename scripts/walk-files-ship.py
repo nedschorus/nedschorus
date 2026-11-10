@@ -653,7 +653,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
     others = sorted(p.name for p in directory.glob(f"{name}-*.md")
                     if p.name not in role_names)
     if others:
-        # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md
+        # docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md
         print(f"{PROGRAM}: not shipped: {', '.join(others)}. Each of these names "
               f"begins with \"{name}-\", but none is a name a file of walk {name} "
               f"can have, so this run does not ship them and leaves them in "

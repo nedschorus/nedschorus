@@ -346,7 +346,7 @@ def run_missing_launcher_case(workspace: Path):
             "tmux-target-or-server-does-not-exist-error-pattern-common.py",
             "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py",
             "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py",
-            "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py",
+            "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py",
             "pull-request-conflict-with-main-rebase-or-replace-answer-common.py"):
         (general_tools_home / general_tools_module).write_text(
             (SUPERVISOR_SCRIPT.parents[1] / "general-tools" / general_tools_module)

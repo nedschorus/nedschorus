@@ -35,8 +35,8 @@ Claude Code shows the user, says that alerts may be waiting unseen, since an ale
 him, and that an agent on ned-box should fix the cause; additionalContext tells the agent what failed and
 that the user has been told.
 
-Agent-facing messages follow
-docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+Tool-messages-to-agent follow
+docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 """
 import importlib.util
 import json

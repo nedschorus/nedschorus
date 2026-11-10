@@ -266,7 +266,7 @@ ANSWER_LINE_WITH_TIME = re.compile(
     r"which makes its change\. Fast reads:$", re.IGNORECASE)
 USER_RULED_CITATION = re.compile(r"\buser-ruled (?P<date>\d{4}-\d\d-\d\d)(?P<time>T\d\d:\d\d(?::\d\d)?Z)?")
 
-# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 FAILED_LINE = "FAILED: {what}: {error}"
 OWNER_REPORT_INSTRUCTION = ("If it fails the same way at the next run, send prime-intellect, the agent-seat that owns "
                             "this program, the FAILED line above with SendMessage.")

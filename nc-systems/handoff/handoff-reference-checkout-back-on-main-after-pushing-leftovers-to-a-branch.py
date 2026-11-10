@@ -77,7 +77,7 @@ _reference_checkout_steps_spec = importlib.util.spec_from_file_location(
 reference_checkout_steps = importlib.util.module_from_spec(_reference_checkout_steps_spec)
 _reference_checkout_steps_spec.loader.exec_module(reference_checkout_steps)
 
-# Its messages reach an agent: docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md
+# Its messages reach an agent: docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md
 PROGRAM = "handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch"
 LEFTOVERS_BRANCH_PREFIX = "reference-checkout-leftovers-"
 LEFTOVERS_COMMIT_MESSAGE = "Leftovers found in the reference-checkout"

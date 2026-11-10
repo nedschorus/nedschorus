@@ -8,8 +8,8 @@ and a citation only says who decided and when. The suite reads the hooks
 .claude/settings.json registers, and in each every module-level string
 constant, or tuple or list of strings, whose name is in capitals, whatever the
 name ends in: a hook's message reaches the agent whether or not its name ends
-in one of the suffixes the agent-facing-message collector recognizes,
-nc-systems/general-tools/python-source-agent-facing-string-collector-common.py.
+in one of the suffixes the tool-message-to-agent collector recognizes,
+nc-systems/general-tools/python-source-tool-message-to-agent-string-collector-common.py.
 It reads only registered hooks: across all programs and tests a citation
 pattern also matches dates and issue numbers that are data, while in hook
 constants every match so far was a citation.
@@ -35,8 +35,8 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 SETTINGS = REPOSITORY / ".claude" / "settings.json"
 
 _collector_spec = importlib.util.spec_from_file_location(
-    "python_source_agent_facing_string_collector_common",
-    REPOSITORY / "nc-systems" / "general-tools" / "python-source-agent-facing-string-collector-common.py")
+    "python_source_tool_message_to_agent_string_collector_common",
+    REPOSITORY / "nc-systems" / "general-tools" / "python-source-tool-message-to-agent-string-collector-common.py")
 collector = importlib.util.module_from_spec(_collector_spec)
 _collector_spec.loader.exec_module(collector)
 
@@ -78,7 +78,7 @@ def registered_hook_paths():
 
 
 def is_message_name(name):
-    return name.isupper() and collector.variable_name_has_agent_facing_message_suffix(name)
+    return name.isupper() and collector.variable_name_has_tool_message_to_agent_suffix(name)
 
 
 def constant_texts(module):
