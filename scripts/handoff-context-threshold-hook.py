@@ -604,7 +604,7 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
                             launching_subagent_id_by_task_id.setdefault(
                                 tool_result[BACKGROUND_TASK_LAUNCH_KEY],
                                 path.stem[len(SUBAGENT_TRANSCRIPT_PREFIX):])
-                    if MONITOR_LAUNCH_KEY in tool_result and tool_result.get("taskId") in shell_ids:
+                    if MONITOR_LAUNCH_KEY in tool_result and tool_result.get("taskId") in shell_ids:  # pragma: no mutate, only a Monitor's result carries timeoutMs and it always carries a taskId, while the other results with a taskId are task-list updates, whose numeric ids no shell task has, so or acts as and
                         monitor_ids.add(tool_result["taskId"])
         except OSError as problem:
             raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem

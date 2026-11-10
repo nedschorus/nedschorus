@@ -902,7 +902,7 @@ def main(argv=None) -> int:
                        verbatim_lines=verbatim_lines,
                        handoff_deferral_lines=handoff_deferral_lines)
     # Flushed at once: the supervisor may end this session soon after the handoff file appears.
-    print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (session-handoff-sequence-number {counter})", flush=True)
+    print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (session-handoff-sequence-number {counter})", flush=True)  # pragma: no mutate, the next line's print flushes the same buffer at once, so flush=False changes no output
     print(f"handoff-write-and-check-supervisor: {roster_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {handoff_deferral_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {prune_report}", flush=True)
