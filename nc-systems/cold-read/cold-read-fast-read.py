@@ -774,11 +774,12 @@ def fast_read_report_path_for_target(
         target, checkout_root_holding(target))
     if suggestions is not None:
         return suggestions
-    record_dir, store_unlisted = record_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
-        RECORDS_DIR / record_directory_name_for_target(target, now))
+    record_dir, store_unclaimed = record_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_claimed_in_log_store_and_log_store_claim_failure_reason_or_none(
+        RECORDS_DIR / record_directory_name_for_target(target, now),
+        *record_shipper.destination_for_this_machine())
     record_shipper.record_directory_being_written_lock_take(record_dir)
-    if store_unlisted is not None:
-        print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(PROGRAM, record_dir, store_unlisted),
+    if store_unclaimed is not None:
+        print(record_shipper.log_store_claim_failed_so_record_name_may_collide_warning_line(PROGRAM, record_dir, store_unclaimed),
               file=sys.stderr)
     return record_dir / record_names.COLD_READ_FAST_READ_REPORT_FILE_NAME
 
