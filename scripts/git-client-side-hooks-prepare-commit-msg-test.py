@@ -79,8 +79,10 @@ class ThrowawayRepository:
         self.empty_global_config = parent / f"{name}-empty-gitconfig"
         self.empty_global_config.write_text("")
         self.git(None, "init", "--quiet", "--initial-branch=main")
-        self.git(None, "config", "user.name", "Hook Test")
-        self.git(None, "config", "user.email", "hook-test@example.invalid")
+        # The tripwire the pre-commit hook in the same directory requires;
+        # environment() gives every commit its own identity, as a launcher does.
+        self.git(None, "config", "user.name", "unconfigured-agent")
+        self.git(None, "config", "user.email", "unconfigured-agent@nedschorus.invalid")
         self.git(None, "config", "core.hooksPath", str(HOOK_DIRECTORY))
         self.write_and_commit(None, "base.txt", "base\n", "Base commit")
 
@@ -94,6 +96,9 @@ class ThrowawayRepository:
             env[LOCAL_SESSION_VARIABLE] = local_session_id
         env["GIT_CONFIG_GLOBAL"] = str(self.empty_global_config)
         env["GIT_CONFIG_NOSYSTEM"] = "1"
+        for role in ("AUTHOR", "COMMITTER"):
+            env[f"GIT_{role}_NAME"] = "Hook Test"
+            env[f"GIT_{role}_EMAIL"] = "hook-test@example.invalid"
         return env
 
     def git(self, session_id, *arguments, cwd=None, local_session_id=None):

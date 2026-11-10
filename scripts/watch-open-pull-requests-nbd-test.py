@@ -52,6 +52,14 @@ FIXTURE_TOKEN = "fixture-token-never-a-real-credential-0123456789"
 
 CONTROL_DIRECTORY_VARIABLE = "WATCH_OPEN_PULL_REQUESTS_TEST_CONTROL_DIR"
 
+# Every wait returns as soon as its event happens, so this limit only stops a
+# wait whose event never comes. Each poll starts a Python process for the fake
+# gh, which takes seconds on a busy ned-box: 10 s failed a correct watcher
+# there. 60 s keeps a total failure, every wait timing out, inside the
+# runner's 600 s suite limit only because wait_for and wait_for_calls give up
+# when the watcher has exited.
+EVENT_WAIT_BACKSTOP_SECONDS = 60.0
+
 # The fake gh. It answers from control.json (one file, so a phase change is
 # atomic), records the token it was handed, and logs each call. A call
 # carrying a `cursor=` argument answers from control-next-page.json instead,
@@ -164,12 +172,15 @@ class WatcherProcess:
         for line in stream:
             sink.append(line.rstrip("\n"))
 
-    def wait_for(self, fragment, timeout=10.0):
-        """True once some stdout line contains the fragment; False on timeout."""
+    def wait_for(self, fragment, timeout=EVENT_WAIT_BACKSTOP_SECONDS):
+        """True once some stdout line contains the fragment; False on timeout,
+        or once the watcher has exited and its stdout is drained without it."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if any(fragment in line for line in self.lines):
                 return True
+            if self.process.poll() is not None and not self._threads[0].is_alive():
+                return any(fragment in line for line in self.lines)
             time.sleep(0.02)
         return False
 
@@ -188,8 +199,11 @@ class WatcherProcess:
         return list(self.lines)
 
 
-def wait_for_calls(fake_gh, wanted, timeout=10.0):
+def wait_for_calls(fake_gh, wanted, watcher, timeout=EVENT_WAIT_BACKSTOP_SECONDS):
     """Block until the fake `gh` has been called `wanted` times, and CHECK it.
+
+    Gives up early once the watcher process has exited, since no more calls
+    can come.
 
     This used to return a boolean that every one of its call sites discarded,
     which made the polls it waits for unproven. The damage was not theoretical:
@@ -208,8 +222,13 @@ def wait_for_calls(fake_gh, wanted, timeout=10.0):
     while time.monotonic() < deadline:
         if fake_gh.call_count() >= wanted:
             return True
+        if watcher.process.poll() is not None:
+            break
         time.sleep(0.02)
-    check(f"the fake gh was called at least {wanted} time(s) within {timeout}s "
+    if fake_gh.call_count() >= wanted:
+        return True
+    check(f"the fake gh was called at least {wanted} time(s) within {timeout:g}s, "
+          "while the watcher ran "
           "— everything asserted after this point depends on those polls",
           False, f"call_count={fake_gh.call_count()}")
     return False
@@ -217,33 +236,59 @@ def wait_for_calls(fake_gh, wanted, timeout=10.0):
 
 def run_unit_cases():
     # ------------------------------------------------------------------
-    # The event key is (number, head sha) and nothing else.
+    # The event key is (number, head sha, is_draft) and nothing else.
     # ------------------------------------------------------------------
     events_for_poll = watcher_module.events_for_poll
-    unchanged = [{"number": 7, "head_sha": "aaaaaaaaaaaa", "title": "t",
-                  "is_draft": False, "author": "nedlern"}]
-    retitled = [{"number": 7, "head_sha": "aaaaaaaaaaaa", "title": "EDITED",
-                 "is_draft": True, "author": "someone-else"}]
-    moved = [{"number": 7, "head_sha": "bbbbbbbbbbbb", "title": "t",
-              "is_draft": False, "author": "nedlern"}]
+    by_number = watcher_module.pull_requests_by_number
+
+    def state(head_sha="aaaaaaaaaaaa", is_draft=False, title="t",
+              author="nedlern"):
+        return [{"number": 7, "head_sha": head_sha, "title": title,
+                 "is_draft": is_draft, "author": author}]
+
+    unchanged = state()
+    retitled = state(title="EDITED", author="someone-else")
+    moved = state(head_sha="bbbbbbbbbbbb")
+    draft = state(is_draft=True)
+    draft_moved = state(head_sha="bbbbbbbbbbbb", is_draft=True)
 
     check("a pull request not seen before is OPENED",
           events_for_poll({}, unchanged) == [
               "PR #7 OPENED aaaaaaaa nedlern: t"],
           str(events_for_poll({}, unchanged)))
     check("the same head sha again is not an event",
-          events_for_poll({7: "aaaaaaaaaaaa"}, unchanged) == [], "")
-    check("a title, draft or author change alone is not an event",
-          events_for_poll({7: "aaaaaaaaaaaa"}, retitled) == [],
-          str(events_for_poll({7: "aaaaaaaaaaaa"}, retitled)))
+          events_for_poll(by_number(unchanged), unchanged) == [], "")
+    check("a title or author change alone is not an event",
+          events_for_poll(by_number(unchanged), retitled) == [],
+          str(events_for_poll(by_number(unchanged), retitled)))
     check("a changed head sha is NEW-HEAD",
-          events_for_poll({7: "aaaaaaaaaaaa"}, moved) == [
+          events_for_poll(by_number(unchanged), moved) == [
               "PR #7 NEW-HEAD bbbbbbbb nedlern: t"],
-          str(events_for_poll({7: "aaaaaaaaaaaa"}, moved)))
-    check("a draft is marked, not filtered out",
-          events_for_poll({}, retitled) == [
-              "PR #7 OPENED aaaaaaaa someone-else [draft]: EDITED"],
-          str(events_for_poll({}, retitled)))
+          str(events_for_poll(by_number(unchanged), moved)))
+    check("a draft not seen before raises no event",
+          events_for_poll({}, draft) == [], str(events_for_poll({}, draft)))
+    check("a new head commit on a draft raises no event",
+          events_for_poll(by_number(draft), draft_moved) == [],
+          str(events_for_poll(by_number(draft), draft_moved)))
+    check("a draft marked ready is one READY line",
+          events_for_poll(by_number(draft), unchanged) == [
+              "PR #7 READY aaaaaaaa nedlern: t"],
+          str(events_for_poll(by_number(draft), unchanged)))
+    check("a draft marked ready with a moved head is one READY line, "
+          "carrying the current head",
+          events_for_poll(by_number(draft), moved) == [
+              "PR #7 READY bbbbbbbb nedlern: t"],
+          str(events_for_poll(by_number(draft), moved)))
+    check("a pull request turned back into a draft raises no event",
+          events_for_poll(by_number(unchanged), draft) == [],
+          str(events_for_poll(by_number(unchanged), draft)))
+    baseline_with_draft = watcher_module.baseline_line(
+        "o/n", 60, [unchanged[0], {**draft[0], "number": 8}], False)
+    check("the baseline line lists a draft apart, as not to be reviewed",
+          "1 open at baseline: #7 " in baseline_with_draft
+          and "1 draft(s), not to be reviewed until marked ready, which "
+              "raises READY: #8" in baseline_with_draft,
+          baseline_with_draft)
 
     # ------------------------------------------------------------------
     # Redaction: every printed line goes through it, so it must replace
@@ -364,18 +409,19 @@ def run_bad_invocation_cases(token_file, missing_token_file):
             result = subprocess.run(
                 [sys.executable, str(WATCH_SCRIPT),
                  "--token-file", str(token_file), *flags],
-                capture_output=True, text=True, timeout=15)
+                capture_output=True, text=True, timeout=EVENT_WAIT_BACKSTOP_SECONDS)
             ok = (result.returncode == 2
                   and len(result.stderr.strip().splitlines()) == 1)
             detail = f"rc={result.returncode} stderr={result.stderr!r}"
         except subprocess.TimeoutExpired:
-            ok, detail = False, "still running after 15s — validation never fired"
+            ok, detail = False, (f"still running after {EVENT_WAIT_BACKSTOP_SECONDS:g}s"
+                                  " — validation never fired")
         check(f"bad invocation {label} exits 2 with one stderr line", ok, detail)
 
     result = subprocess.run(
         [sys.executable, str(WATCH_SCRIPT),
          "--token-file", str(missing_token_file)],
-        capture_output=True, text=True, timeout=15)
+        capture_output=True, text=True, timeout=EVENT_WAIT_BACKSTOP_SECONDS)
     check("an unreadable token file exits 2 and names the path",
           result.returncode == 2 and str(missing_token_file) in result.stderr,
           f"rc={result.returncode} stderr={result.stderr!r}")
@@ -404,7 +450,7 @@ def run_subprocess_cases():
         check("the first poll prints a baseline line naming what is open",
               baseline, "\n".join(watcher.lines))
 
-        wait_for_calls(fake_gh, 4)
+        wait_for_calls(fake_gh, 4, watcher)
         check("a pull request open at the first poll is not an event",
               watcher.count("PR #145") == 0, "\n".join(watcher.lines))
 
@@ -414,14 +460,14 @@ def run_subprocess_cases():
 
         fake_gh.answer(graphql_body([
             pull_request_node(145, "a" * 40, "already open"),
-            pull_request_node(146, "b" * 40, "newly opened", draft=True)]))
-        opened = watcher.wait_for("PR #146 OPENED bbbbbbbb nedlern [draft]: "
+            pull_request_node(146, "b" * 40, "newly opened")]))
+        opened = watcher.wait_for("PR #146 OPENED bbbbbbbb nedlern: "
                                   "newly opened")
         check("a newly opened pull request is one OPENED line", opened,
               "\n".join(watcher.lines))
 
         calls_now = fake_gh.call_count()
-        wait_for_calls(fake_gh, calls_now + 4)
+        wait_for_calls(fake_gh, calls_now + 4, watcher)
         check("polls that change nothing produce no further lines",
               watcher.count("PR #146") == 1 and watcher.count("PR #145") == 0,
               "\n".join(watcher.lines))
@@ -429,16 +475,16 @@ def run_subprocess_cases():
         # A title edit on both pull requests, no head movement.
         fake_gh.answer(graphql_body([
             pull_request_node(145, "a" * 40, "RETITLED 145"),
-            pull_request_node(146, "b" * 40, "RETITLED 146", draft=True)]))
+            pull_request_node(146, "b" * 40, "RETITLED 146")]))
         calls_now = fake_gh.call_count()
-        wait_for_calls(fake_gh, calls_now + 4)
+        wait_for_calls(fake_gh, calls_now + 4, watcher)
         check("a changed title is not an event",
               "RETITLED" not in "\n".join(watcher.lines), "\n".join(watcher.lines))
 
         # A new head commit on 146 only.
         fake_gh.answer(graphql_body([
             pull_request_node(145, "a" * 40, "RETITLED 145"),
-            pull_request_node(146, "c" * 40, "RETITLED 146", draft=True)]))
+            pull_request_node(146, "c" * 40, "RETITLED 146")]))
         moved = watcher.wait_for("PR #146 NEW-HEAD cccccccc")
         check("a new head commit on an open pull request is one NEW-HEAD line",
               moved and watcher.count("PR #146 NEW-HEAD") == 1,
@@ -449,19 +495,96 @@ def run_subprocess_cases():
         # A closed pull request that reopens is announced again — the
         # documented choice, since the seat must look at it again.
         fake_gh.answer(graphql_body([pull_request_node(146, "c" * 40,
-                                                       "RETITLED 146",
-                                                       draft=True)]))
+                                                       "RETITLED 146")]))
         calls_now = fake_gh.call_count()
-        wait_for_calls(fake_gh, calls_now + 3)
+        wait_for_calls(fake_gh, calls_now + 3, watcher)
         fake_gh.answer(graphql_body([
             pull_request_node(145, "a" * 40, "reopened"),
-            pull_request_node(146, "c" * 40, "RETITLED 146", draft=True)]))
+            pull_request_node(146, "c" * 40, "RETITLED 146")]))
         reopened = watcher.wait_for("PR #145 OPENED aaaaaaaa nedlern: reopened")
         lines = watcher.stop()
         check("a pull request that closes and reopens is announced again",
               reopened, "\n".join(lines))
         check("closing a pull request is not itself announced",
               not any("CLOSED" in line for line in lines), "\n".join(lines))
+
+        # ------------------------------------------------------------------
+        # Drafts: one open at baseline and one opened later raise nothing,
+        # nor does a new head commit on a draft; each raises one READY line
+        # when marked ready, and nothing more after.
+        # ------------------------------------------------------------------
+        fake_gh = FakeGitHubCommand(scratch / "drafts")
+        fake_gh.answer(graphql_body([
+            pull_request_node(170, "a" * 40, "draft at baseline", draft=True)]))
+        watcher = WatcherProcess(environment=fake_gh.environment(),
+                                 token_file=token_file)
+        baseline = watcher.wait_for("0 open at baseline")
+        check("a draft at baseline is listed apart in the baseline line",
+              baseline and any("not to be reviewed until marked ready"
+                               in line and "#170" in line
+                               for line in watcher.lines),
+              "\n".join(watcher.lines))
+        fake_gh.answer(graphql_body([
+            pull_request_node(170, "a" * 40, "draft at baseline", draft=True),
+            pull_request_node(171, "b" * 40, "opened as a draft", draft=True)]))
+        calls_now = fake_gh.call_count()
+        wait_for_calls(fake_gh, calls_now + 4, watcher)
+        check("a pull request opened as a draft raises no line",
+              watcher.count("PR #171") == 0, "\n".join(watcher.lines))
+        fake_gh.answer(graphql_body([
+            pull_request_node(170, "a" * 40, "draft at baseline", draft=True),
+            pull_request_node(171, "c" * 40, "opened as a draft", draft=True)]))
+        calls_now = fake_gh.call_count()
+        wait_for_calls(fake_gh, calls_now + 4, watcher)
+        check("a new head commit on a draft raises no line",
+              watcher.count("PR #171") == 0, "\n".join(watcher.lines))
+        fake_gh.answer(graphql_body([
+            pull_request_node(170, "a" * 40, "draft at baseline"),
+            pull_request_node(171, "c" * 40, "opened as a draft")]))
+        ready_baseline = watcher.wait_for("PR #170 READY aaaaaaaa nedlern: "
+                                          "draft at baseline")
+        ready_later = watcher.wait_for("PR #171 READY cccccccc nedlern: "
+                                       "opened as a draft")
+        calls_now = fake_gh.call_count()
+        wait_for_calls(fake_gh, calls_now + 4, watcher)
+        lines = watcher.stop()
+        check("a draft open at baseline and marked ready is one READY line",
+              ready_baseline and watcher.count("PR #170") == 1,
+              "\n".join(lines))
+        check("a draft opened later and marked ready is one READY line, "
+              "carrying the current head",
+              ready_later and watcher.count("PR #171") == 1, "\n".join(lines))
+
+        # ------------------------------------------------------------------
+        # --exit-after-first-poll-with-events does not exit for a draft, and
+        # does exit for the draft marked ready.
+        # ------------------------------------------------------------------
+        fake_gh = FakeGitHubCommand(scratch / "exit-on-ready")
+        fake_gh.answer(graphql_body([]))
+        watcher = WatcherProcess("--exit-after-first-poll-with-events",
+                                 environment=fake_gh.environment(),
+                                 token_file=token_file)
+        watcher.wait_for("0 open at baseline")
+        fake_gh.answer(graphql_body([
+            pull_request_node(172, "d" * 40, "a draft", draft=True)]))
+        calls_now = fake_gh.call_count()
+        wait_for_calls(fake_gh, calls_now + 4, watcher)
+        check("--exit-after-first-poll-with-events keeps polling when only a "
+              "draft opened",
+              watcher.process.poll() is None and watcher.count("PR #172") == 0,
+              "\n".join(watcher.lines))
+        fake_gh.answer(graphql_body([
+            pull_request_node(172, "d" * 40, "a draft")]))
+        try:
+            exit_code = watcher.process.wait(timeout=EVENT_WAIT_BACKSTOP_SECONDS)
+        except subprocess.TimeoutExpired:
+            exit_code = None
+        lines = watcher.stop()
+        check("--exit-after-first-poll-with-events exits 0 on a draft marked "
+              "ready, printing its READY line",
+              exit_code == 0
+              and any("PR #172 READY dddddddd" in line for line in lines),
+              f"exit {exit_code}\n" + "\n".join(lines))
 
         # ------------------------------------------------------------------
         # --exit-after-first-poll-with-events: polls on through a silent baseline, then
@@ -472,14 +595,14 @@ def run_subprocess_cases():
         watcher = WatcherProcess("--exit-after-first-poll-with-events",
                                  environment=fake_gh.environment(),
                                  token_file=token_file)
-        wait_for_calls(fake_gh, 3)
+        wait_for_calls(fake_gh, 3, watcher)
         check("--exit-after-first-poll-with-events keeps polling while no event comes",
               watcher.process.poll() is None, "\n".join(watcher.lines))
         fake_gh.answer(graphql_body([
             pull_request_node(145, "d" * 40, "open"),
             pull_request_node(147, "e" * 40, "opened with the move")]))
         try:
-            exit_code = watcher.process.wait(timeout=10)
+            exit_code = watcher.process.wait(timeout=EVENT_WAIT_BACKSTOP_SECONDS)
         except subprocess.TimeoutExpired:
             exit_code = None
         lines = watcher.stop()
@@ -522,7 +645,7 @@ def run_subprocess_cases():
               "\n".join(watcher.lines))
 
         calls_now = fake_gh.call_count()
-        wait_for_calls(fake_gh, calls_now + 5)
+        wait_for_calls(fake_gh, calls_now + 5, watcher)
         check("the blind line is printed once per episode, not once per poll",
               watcher.count("WATCH: query failed") == 1,
               "\n".join(watcher.lines))
@@ -582,7 +705,7 @@ def run_subprocess_cases():
         recovered = watcher.wait_for("WATCH: query recovered after ")
         watcher.wait_for("open at baseline")
         calls_now = fake_gh.call_count()
-        wait_for_calls(fake_gh, calls_now + 3)
+        wait_for_calls(fake_gh, calls_now + 3, watcher)
         lines = watcher.stop()
         check("recovering with no baseline says the openings are absorbed",
               recovered and any("query recovered" in line and "NO BASELINE" in line
@@ -751,7 +874,7 @@ def run_subprocess_cases():
         first = watcher.wait_for("PR #145 OPENED aaaaaaaa nedlern: first")
         second = watcher.wait_for("PR #146 OPENED bbbbbbbb nedlern: second")
         calls_now = fake_gh.call_count()
-        wait_for_calls(fake_gh, calls_now + 4)
+        wait_for_calls(fake_gh, calls_now + 4, watcher)
         lines = watcher.stop()
         check("--from-start reports every already-open pull request",
               first and second, "\n".join(lines))

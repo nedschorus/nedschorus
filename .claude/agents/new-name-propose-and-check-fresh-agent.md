@@ -16,10 +16,10 @@ You receive a list with one entry per line, in one of two forms:
 1. **Blind guess.** Run a separate Gemini call that is given only the name, so its reader has nothing else:
 
    ```
-   cd "$(mktemp -d)" && agy --model gemini-3.8-flash-medium --output-format text --print "This name comes from a software project you cannot see. Guess from the name alone: do not look for files and do not ask a question. In one sentence, say what kind of thing it names and what it does or holds. Name: <the name>" < /dev/null
+   nc-systems/general-tools/agy-print-prompt-run-in-empty-home-sandbox.py --model gemini-3.8-flash-medium "This name comes from a software project you cannot see. Guess from the name alone: do not look for files and do not ask a question. In one sentence, say what kind of thing it names and what it does or holds. Name: <the name>"
    ```
 
-   Run it from that empty folder, so that nothing from the repository reaches the reader.
+   The program runs `agy` in an empty working folder, inside a sandbox, so that nothing from the repository reaches the reader.
 
 2. **Compare.** The guess matches when it names the same kind of thing and the same job as the sender's sentence. A guess that is vague where the sentence is specific does not match.
 
@@ -27,7 +27,7 @@ You receive a list with one entry per line, in one of two forms:
 
 4. **Verdict.** The name passes when the guess matches and the checklist holds. Otherwise build a new name by the page and run steps 1 to 3 on it. Build at most two new names; report the best one.
 
-If `agy`, `git` or `gh` fails for an entry, report it under "Not checked" with the error, unless a check that did run already failed, in which case report it under "Rename".
+If the program in step 1, `git` or `gh` fails for an entry, report it under "Not checked" with the error, unless a check that did run already failed, in which case report it under "Rename".
 
 ## For a thing to describe
 

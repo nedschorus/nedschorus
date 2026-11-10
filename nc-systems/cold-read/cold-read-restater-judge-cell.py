@@ -81,7 +81,7 @@ it -- which is the correct refusal: nothing should judge anything until
 the user has read what the judge is told to do. The file's home once
 he has walked it is .claude/skills/cold-read/prompts/restater-judge.md,
 beside every other cold-read-cell's prompt, and .claude/ changes only
-through that walk (.claude/hooks/instruction-file-guard.py, user-walked
+through that walk (.claude/guard-hooks/instruction-file-guard.py, user-walked
 2026-08-07, nedschorus#45). This is not the cold-read-fast-read's ruling
 (nc-systems/cold-read/cold-read-fast-read.py holds its prompt in the file because the user
 ruled that for the fast cold-read-cell).
@@ -311,6 +311,7 @@ def main() -> int:
         common.report_stray_writes(PROGRAM, baseline, report)
         return refusal.exit_code
 
+    common.record_directory_being_written_lock_hold_shared_until_exit_unless_parent_passed_descriptor(report.parent)
     uniform_effort = args.effort or JUDGE_MODEL_TO_REASONING_EFFORT[chain[0]]
     target_argument = ",".join(
         case_argument[JUDGED_ROLE_INDEX] for case_argument in args.case)

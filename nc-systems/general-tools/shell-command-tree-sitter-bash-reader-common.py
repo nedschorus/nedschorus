@@ -62,6 +62,11 @@ _python_libraries_pinned_requirements_install_if_missing_then_import_spec = impo
     Path(__file__).resolve().with_name("python-libraries-pinned-requirements-install-if-missing-then-import-common.py"))
 python_libraries_pinned_requirements_install_if_missing_then_import_common = importlib.util.module_from_spec(_python_libraries_pinned_requirements_install_if_missing_then_import_spec)
 _python_libraries_pinned_requirements_install_if_missing_then_import_spec.loader.exec_module(python_libraries_pinned_requirements_install_if_missing_then_import_common)
+_failed_command_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().with_name("failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py"))
+_failed_command_lines = importlib.util.module_from_spec(_failed_command_lines_spec)
+_failed_command_lines_spec.loader.exec_module(_failed_command_lines)
 
 REQUIREMENTS_FILE = python_libraries_pinned_requirements_install_if_missing_then_import_common.PINNED_REQUIREMENTS_FILE
 # The Bash guards run in parallel with a 30-second hook timeout; a cached wheel installs in about a second.
@@ -261,7 +266,8 @@ def simple_command_program_index_skipping_wrappers(words):
     The program is the first word after environment assignments and after
     wrappers such as sudo, timeout and xargs with their options and operands;
     a later word, such as the file of `tee /tmp/bash`, is not the program.
-    index is None when no word is left to be the program. receives_standard_input
+    index is None when no word is left to be the program, and for `command -v`
+    and `command -V`, which run nothing. receives_standard_input
     is false when a wrapper, such as xargs, keeps its standard input from the
     program.
     """
@@ -296,10 +302,19 @@ def _wrappers_read(words):
         own = []
         options.append((name, own))
         index = _index_after_options(words, index + 1, wrapper, own)
+        if name == "command" and any(_is_short_option_cluster_holding(option, "vV")
+                                     for option, _ in own):
+            # command -v and command -V only describe the next word; they run nothing.
+            return None, receives_standard_input, options
         if wrapper.operands:
             # Options may follow the operand too, as in timeout 60 --signal=KILL.
             index = _index_after_options(words, index + wrapper.operands, wrapper, own)
     return None, receives_standard_input, options
+
+
+def _is_short_option_cluster_holding(option, letters):
+    return (option.startswith("-") and not option.startswith("--")
+            and any(letter in option[1:] for letter in letters))
 
 
 def _index_after_options(words, index, wrapper, options):
@@ -576,8 +591,7 @@ def report_to_user_or_dispatching_agent_instruction_build(words, environment=os.
                 f"a subagent, skip the rest of this message and go on with your task.\n"
                 f"If you are a subagent, tell the agent that dispatched you, in these words: "
                 f"{words}")
-    return (f"Tell the user, or, if you are a subagent, the agent that dispatched you, in these "
-            f"words: {words}")
+    return f"Tell {_failed_command_lines.REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT} in these words: {words}"
 
 
 def _text(node):

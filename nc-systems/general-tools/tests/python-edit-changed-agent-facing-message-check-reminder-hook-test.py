@@ -390,6 +390,23 @@ with tempfile.TemporaryDirectory() as temporary:
           "scripts/brand-new-tool.py:1  hello agent" in text
           and "scripts/brand-new-tool.py:2  stopped: the reason" in text, result)
 
+    rendered_program = repository / "scripts" / "rendered-tool.py"
+    targets = fast_read_targets(agent_text(write_then_run(
+        repository, rendered_program,
+        'NOTHING_CHANGED_LINE = "Nothing was changed."\n'
+        'def refuse(branch):\n'
+        '    raise SystemExit(f"Not on {branch}. {NOTHING_CHANGED_LINE}\\n" + "Run git switch " + branch)\n')))
+    check("a message's file holds the text the agent reads: no f-string quote or prefix, a module constant's "
+          "value, and <source> for any other value",
+          [file_text(target) for target in targets]
+          == ["Nothing was changed.\n", "Not on <branch>. Nothing was changed.\nRun git switch <branch>\n"], targets)
+
+    targets = fast_read_targets(agent_text(write_then_run(
+        repository, repository / "scripts" / "same-text-tool.py",
+        'print("Hello " + name)\nprint("Hello {name}")\n')))
+    check("two messages with the same text that the agent reads differently each get the file of their own text",
+          sorted(file_text(target) for target in targets) == ["Hello <name>\n", "Hello {name}\n"], targets)
+
     result = write_then_run(repository, program,
                             COMMITTED_SOURCE.replace("second message to the agent", "second, reworded"))
     text = agent_text(result)

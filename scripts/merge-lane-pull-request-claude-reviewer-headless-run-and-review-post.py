@@ -9,20 +9,22 @@ before the reviewer ran.
 
 Usage:
   scripts/merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py
-      <pull request number> <tag> <head commit>
+      <pull request number> <tag> <nc-head-commit>
       [--merge-lane-worktrees-and-outputs-directory DIR] [--merge-lane-review-worktrees-directory DIR] [--review-tools-worktree-at-main DIR]
       [--time-limit-seconds N]
 
-The review program runs this as its fifth step, after the head test run. The
+The review program runs this as its fifth step, at the same time as the Codex
+review and the head test run. The
 reviewer's prompt is the brief step 2 wrote, briefs/brief-<tag>-mac-claude.md
 under the worktrees and outputs directory, given on stdin, because
 --allowedTools takes several values and would swallow a prompt after it. The
 reviewer runs as
 
-  claude -p --json-schema <schema> --output-format json --permission-mode dontAsk
-      --allowedTools Read Grep Glob Bash WebFetch WebSearch
+  claude -p --strict-mcp-config --permission-mode dontAsk --settings <main's project settings>
+      --setting-sources user --add-dir <pr<n>-head>
+      --json-schema <schema> --output-format json --allowedTools Read Grep Glob Bash WebFetch WebSearch
 
-in pr<n>-head, which step 1 built detached at the head commit; a refused
+in pr<n>-head, which step 1 built detached at the nc-head-commit; a refused
 tool call does not wait for anyone, and is listed in the output's
 permission_denials, each of which is printed. The reviewer's environment has no
 GH_TOKEN or GITHUB_TOKEN, and GH_CONFIG_DIR is an empty directory, so gh has no
@@ -31,16 +33,36 @@ wait for it ends, at the time limit, on an interrupt or SIGTERM, or when claude
 exits, the run's whole process group is killed and reaped, before the cleanup
 below: the reviewer runs in its own session, so nothing else would stop it.
 
+The reviewer runs main's project settings and hooks, never the head's, which
+may predate a fix on main. --setting-sources user keeps claude from loading
+pr<n>-head's .claude/settings.json; in its place, --settings carries
+.claude/settings.json of --review-tools-worktree-at-main, with every
+$CLAUDE_PROJECT_DIR, ${CLAUDE_PROJECT_DIR} and ${CLAUDE_PROJECT_DIR:-...} in
+it replaced by that worktree's path, so each hook command runs main's script;
+claude would otherwise expand them to pr<n>-head. A hook still sees pr<n>-head
+as the session's cwd. With the project source left out, claude loads no
+CLAUDE.md from its directory, so --add-dir pr<n>-head and
+CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 load the head's CLAUDE.md, as
+before. Main's settings file missing, not a JSON object, or naming
+CLAUDE_PROJECT_DIR in any other form refuses before the reviewer runs.
+
 claude exits 0 with subtype "success" even when the reviewer never produced an
-answer the schema accepts; only structured_output being null shows that. So
-the answer is checked here against
-merge-lane-pull-request-claude-reviewer-review-schema.json's rules, and never
-taken on claude's exit code. A COULD_NOT_REVIEW verdict is a review that did not
-finish. After the run, the head worktree must still be at the head commit:
+answer the schema accepts; only structured_output being null or absent, as
+after a refusal, shows that. claude checks the answer against the schema too,
+but this program does not rely on claude, whose checks it cannot see: the
+answer is checked here against every rule of
+merge-lane-pull-request-claude-reviewer-review-schema.json, the one place the
+answer's fields are defined, minLength and minimum included. A
+schema that uses a keyword, type or keyword value this check does not know,
+such as additionalProperties given as a schema or items given as a list, or
+that does not require every key this program reads from the answer, is refused
+before the reviewer runs, so no rule of the schema goes unchecked. A COULD_NOT_REVIEW
+verdict is a review that did not
+finish. After the run, the head worktree must still be at the nc-head-commit:
 the project's freshness hook fast-forwards a detached checkout with no commits
 of its own, and a review of a moved checkout is not of this head.
 
-Each run's records are kept in claude-reviews/pr<n>-<head commit>/ under the
+Each run's records are kept in claude-reviews/pr<n>-<nc-head-commit>/ under the
 worktrees and outputs directory, or -2, -3 and on for later runs on the same
 head: run.json, claude's whole output; run-stderr.txt; resume.txt, the session
 id and the directory the run started in; note.txt, the answer's note for
@@ -76,6 +98,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -84,10 +107,19 @@ from pathlib import Path
 
 SCHEMA_FILE_NAME = "merge-lane-pull-request-claude-reviewer-review-schema.json"
 POST_SCRIPT_NAME = "merge-lane-pull-request-reviewer-review-post-and-read-back.py"
-VERDICTS = ("APPROVE", "REQUEST_CHANGES", "COULD_NOT_REVIEW")
+CHECKED_SCHEMA_KEYWORDS = {"description", "type", "enum", "minLength", "minimum", "required",
+                           "additionalProperties", "properties", "items"}
+JSON_TYPES = {"object": dict, "array": list, "string": str, "integer": int}
+ANSWER_KEYS_READ = ("verdict", "body", "comments", "note")
 DEFAULT_TIME_LIMIT_SECONDS = 5400
 ALLOWED_TOOLS = ("Read", "Grep", "Glob", "Bash", "WebFetch", "WebSearch")
 REMOVED_ENVIRONMENT_VARIABLES = ("GH_TOKEN", "GITHUB_TOKEN")
+PROJECT_SETTINGS_FILE = Path(".claude") / "settings.json"
+PROJECT_DIRECTORY_REFERENCE = re.compile(
+    r"\$\{CLAUDE_PROJECT_DIR(?::-[^}]*)?\}|\$CLAUDE_PROJECT_DIR(?![A-Za-z0-9_])")
+# Without the project setting source, claude loads CLAUDE.md only from --add-dir
+# directories, and from those only when this is set.
+ADDED_DIRECTORY_CLAUDE_MD_ENVIRONMENT = {"CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD": "1"}
 
 EXIT_POSTED = 0
 EXIT_NOT_DONE = 1
@@ -98,6 +130,12 @@ _common_spec = importlib.util.spec_from_file_location(
         "merge-lane-pull-request-helpers-common-options-paths-and-token.py"))
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
+_command_line_prefix_spec = importlib.util.spec_from_file_location(
+    "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+    Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
+    / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
+_command_line_prefix_spec.loader.exec_module(command_line_prefix)
 run_all_test_suites = common.run_all_test_suites
 
 REFUSED = ("PR {number}: Claude review not run: {reason}.\n"
@@ -129,7 +167,7 @@ def parse_arguments(argv):
                     "its answer against the review schema, and post it as mac-claude.")
     parser.add_argument("pull_request", type=int, help="the pull request's number")
     parser.add_argument("tag", help="the brief's tag, as in briefs/brief-<tag>-mac-claude.md")
-    parser.add_argument("head_commit", help="the full hash of the head commit under review")
+    parser.add_argument("head_commit", help="the full hash of the nc-head-commit under review")
     parser.add_argument("--time-limit-seconds", type=float, default=DEFAULT_TIME_LIMIT_SECONDS,
                         help=f"how long the reviewer may run (default: "
                              f"{DEFAULT_TIME_LIMIT_SECONDS})")
@@ -151,29 +189,50 @@ def read_text(path):
         raise Refused(f"could not read {path}: {error}")
 
 
-def answer_problems(answer):
-    """Return what makes answer not a review the schema accepts; empty when it is one."""
-    if not isinstance(answer, dict):
-        return [f"the answer is {type(answer).__name__}, not an object"]
+def review_schema_keywords_and_types_the_answer_check_does_not_enforce(schema, where="the schema"):
+    """Return each keyword, type or keyword value in schema that answer_problems does not check."""
+    found = [f"{where}: {keyword}" for keyword in schema if keyword not in CHECKED_SCHEMA_KEYWORDS]
+    if "type" in schema and schema["type"] not in JSON_TYPES:
+        found.append(f"{where}: type {schema['type']}")
+    if "additionalProperties" in schema and not isinstance(schema["additionalProperties"], bool):
+        found.append(f"{where}: additionalProperties given as a schema")
+    if "items" in schema and not isinstance(schema["items"], dict):
+        found.append(f"{where}: items given as a list")
+    nested = [(property_schema, f"{where}.{name}")
+              for name, property_schema in schema.get("properties", {}).items()]
+    if isinstance(schema.get("items"), dict):
+        nested.append((schema["items"], f"{where}[]"))
+    for nested_schema, nested_where in nested:
+        found += review_schema_keywords_and_types_the_answer_check_does_not_enforce(
+            nested_schema, nested_where)
+    return found
+
+
+def answer_problems(value, schema, where="the answer"):
+    """Return what makes value not one the schema accepts; empty when the schema accepts it."""
+    expected = schema.get("type")
+    if expected and (not isinstance(value, JSON_TYPES[expected]) or isinstance(value, bool)):
+        return [f"{where} is {type(value).__name__}, not {expected}"]
     problems = []
-    if set(answer) != {"verdict", "body", "comments", "note"}:
-        problems.append(f"its keys are {sorted(answer)}, not verdict, body, comments and note")
-    if not isinstance(answer.get("note"), str):
-        problems.append("its note is not text")
-    if answer.get("verdict") not in VERDICTS:
-        problems.append(f"its verdict {answer.get('verdict')!r} is not one of "
-                        f"{', '.join(VERDICTS)}")
-    if not isinstance(answer.get("body"), str) or not answer.get("body", "").strip():
-        problems.append("its body is not text")
-    comments = answer.get("comments")
-    if not isinstance(comments, list) or not all(
-            isinstance(comment, dict) and set(comment) == {"path", "line", "body"}
-            and isinstance(comment["path"], str) and comment["path"]
-            and isinstance(comment["line"], int) and not isinstance(comment["line"], bool)
-            and comment["line"] >= 1
-            and isinstance(comment["body"], str) and comment["body"]
-            for comment in comments):
-        problems.append("its comments are not a list of path, line and body")
+    if "enum" in schema and value not in schema["enum"]:
+        problems.append(f"{where} {value!r} is not one of {', '.join(schema['enum'])}")
+    if "minLength" in schema and len(value) < schema["minLength"]:
+        problems.append(f"{where} is shorter than {schema['minLength']} characters")
+    if "minimum" in schema and value < schema["minimum"]:
+        problems.append(f"{where} {value} is below the minimum {schema['minimum']}")
+    if isinstance(value, dict):
+        properties = schema.get("properties", {})
+        problems += [f"{where} has no {key}" for key in schema.get("required", [])
+                     if key not in value]
+        if schema.get("additionalProperties") is False:
+            problems += [f"{where} has {key}, which the schema does not allow"
+                         for key in sorted(set(value) - set(properties))]
+        for key, property_schema in properties.items():
+            if key in value:
+                problems += answer_problems(value[key], property_schema, f"{where}'s {key}")
+    if isinstance(value, list) and "items" in schema:
+        for index, item in enumerate(value):
+            problems += answer_problems(item, schema["items"], f"{where}[{index}]")
     return problems
 
 
@@ -185,6 +244,49 @@ def hand_over_note(note, record, number):
               f"posted to the pull request; also saved in {note_file}:\n{note}", flush=True)
     else:
         print(f"PR {number}: the reviewer left no note for merge-lane-2.", flush=True)
+
+
+def claude_code_project_settings_read_from_review_tools_worktree_at_main_with_claude_project_dir_replaced_by_its_path(
+        review_tools_worktree_at_main):
+    """Return its project settings with each project directory reference naming it."""
+    settings_file = review_tools_worktree_at_main / PROJECT_SETTINGS_FILE
+    text = read_text(settings_file)
+    try:
+        settings = json.loads(text)
+    except ValueError as error:
+        raise Refused(f"main's project settings file {settings_file} is not JSON ({error}), so "
+                      f"the reviewer could not be given main's hooks")
+    if not isinstance(settings, dict):
+        raise Refused(f"main's project settings file {settings_file} is JSON but not a JSON "
+                      f"object, so the reviewer could not be given main's hooks")
+
+    def rewritten(value):
+        if isinstance(value, dict):
+            return {key: rewritten(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [rewritten(item) for item in value]
+        if isinstance(value, str):
+            return PROJECT_DIRECTORY_REFERENCE.sub(
+                lambda _: str(review_tools_worktree_at_main), value)
+        return value
+    settings = rewritten(settings)
+    if "CLAUDE_PROJECT_DIR" in json.dumps(settings):
+        raise Refused(f"main's project settings file {settings_file} still names "
+                      f"CLAUDE_PROJECT_DIR after each $CLAUDE_PROJECT_DIR, ${{CLAUDE_PROJECT_DIR}} "
+                      f"and ${{CLAUDE_PROJECT_DIR:-...}} in it was replaced by "
+                      f"{review_tools_worktree_at_main}, "
+                      f"so a command would run the head worktree's script.\n"
+                      f"Write each such command with one of those three forms, in "
+                      f"{PROJECT_SETTINGS_FILE} on main, or add its form to "
+                      f"PROJECT_DIRECTORY_REFERENCE in {Path(__file__).resolve()}")
+    return settings
+
+
+def reviewer_command_line_start(main_project_settings, head_worktree):
+    """The claude command line up to the flags each use of it adds."""
+    return [*command_line_prefix.claude_code_headless_run_command_line_prefix_build(
+                "dontAsk", caller_claude_code_session_settings=main_project_settings),
+            "--setting-sources", "user", "--add-dir", str(head_worktree)]
 
 
 def record_directory(helpers, number, head):
@@ -208,14 +310,15 @@ def reviewer_environment(record):
     empty_gh_config = record / "gh-config-empty"
     empty_gh_config.mkdir()
     environment["GH_CONFIG_DIR"] = str(empty_gh_config)
-    return environment
+    return {**environment, **ADDED_DIRECTORY_CLAUDE_MD_ENVIRONMENT}
 
 
-def run_reviewer(schema_text, brief, head_worktree, environment, time_limit):
+def run_reviewer(schema_text, brief, main_project_settings, head_worktree, environment,
+                 time_limit):
     """Return (exit code or None when killed at the time limit, stdout, stderr)."""
     process = subprocess.Popen(
-        ["claude", "-p", "--json-schema", schema_text, "--output-format", "json",
-         "--permission-mode", "dontAsk", "--allowedTools", *ALLOWED_TOOLS],
+        [*reviewer_command_line_start(main_project_settings, head_worktree), "--json-schema",
+         schema_text, "--output-format", "json", "--allowedTools", *ALLOWED_TOOLS],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         cwd=head_worktree, env=environment, start_new_session=True)
     timed_out = False
@@ -259,9 +362,11 @@ def remove_reviewer_worktrees(head_worktree, number):
                       f"{removed.stderr.strip()}; remove it yourself.", flush=True)
 
 
-def resume_command(session_id):
-    return shlex.join(["claude", "-p", "--resume", session_id, "--permission-mode", "dontAsk",
-                       "--allowedTools", *ALLOWED_TOOLS])
+def resume_command(session_id, main_project_settings, head_worktree):
+    return shlex.join([*(f"{name}={value}" for name, value in
+                         ADDED_DIRECTORY_CLAUDE_MD_ENVIRONMENT.items()),
+                       *reviewer_command_line_start(main_project_settings, head_worktree),
+                       "--resume", session_id, "--allowedTools", *ALLOWED_TOOLS])
 
 
 def exit_on_sigterm(signal_number, frame):
@@ -280,12 +385,39 @@ def main(argv=None):
     try:
         brief_file = helpers / "briefs" / f"brief-{tag}-mac-claude.md"
         brief = read_text(brief_file)
-        schema_text = read_text(here / SCHEMA_FILE_NAME)
+        schema_file = here / SCHEMA_FILE_NAME
+        schema_text = read_text(schema_file)
+        try:
+            schema = json.loads(schema_text)
+        except ValueError as error:
+            raise Refused(f"the review schema {schema_file} is not JSON ({error}), so the "
+                          f"reviewer's answer could not be checked against it")
+        if not isinstance(schema, dict):
+            raise Refused(f"the review schema {schema_file} is JSON but not a JSON object, so the "
+                          f"reviewer's answer could not be checked against it")
+        not_enforced = review_schema_keywords_and_types_the_answer_check_does_not_enforce(schema)
+        if not_enforced:
+            raise Refused(
+                f"the review schema {schema_file} uses JSON-schema keywords or types that this "
+                f"program's answer check does not enforce, so an answer could break those rules "
+                f"unnoticed: {'; '.join(not_enforced)}. Remove each from the schema, unless "
+                f"the reviewer's answer must keep to it; to keep a rule, add a keyword to "
+                f"CHECKED_SCHEMA_KEYWORDS, or a type to JSON_TYPES, and enforce it in "
+                f"answer_problems, both in {Path(__file__).resolve()}")
+        not_required = [key for key in ANSWER_KEYS_READ if key not in schema.get("required", [])]
+        if not_required:
+            raise Refused(
+                f"the review schema {schema_file} does not require {', '.join(not_required)}, "
+                f"which this program reads from every answer, so an answer missing any of them "
+                f"would fail after the reviewer ran.\nAdd each key named above to the schema's "
+                f"top-level \"required\" list, making the list if the schema has none")
+        main_project_settings = claude_code_project_settings_read_from_review_tools_worktree_at_main_with_claude_project_dir_replaced_by_its_path(
+            arguments.review_tools_worktree_at_main)
         if not (here / POST_SCRIPT_NAME).is_file():
             raise Refused(f"the posting script {here / POST_SCRIPT_NAME} is missing")
         at = git(head_worktree, "rev-parse", "HEAD")
         if at.returncode != 0 or at.stdout.strip() != head:
-            raise Refused(f"the head worktree {head_worktree} is not at the head commit {head}"
+            raise Refused(f"the head worktree {head_worktree} is not at the nc-head-commit {head}"
                           f" ({at.stdout.strip() or at.stderr.strip()})")
     except Refused as refusal:
         print(REFUSED.format(number=number, reason=refusal), flush=True)
@@ -293,17 +425,18 @@ def main(argv=None):
 
     record = record_directory(helpers, number, head)
     try:
-        return review_and_post(arguments, number, head, brief, schema_text, head_worktree,
-                               record, here)
+        return review_and_post(arguments, number, head, brief, schema_text, schema,
+                               main_project_settings, head_worktree, record, here)
     finally:
         remove_reviewer_worktrees(head_worktree, number)
 
 
-def review_and_post(arguments, number, head, brief, schema_text, head_worktree, record, here):
+def review_and_post(arguments, number, head, brief, schema_text, schema, main_project_settings,
+                    head_worktree, record, here):
     print(f"PR {number}: Claude reviewer running in {head_worktree}, records in {record}",
           flush=True)
-    exit_code, stdout, stderr = run_reviewer(schema_text, brief, head_worktree,
-                                             reviewer_environment(record),
+    exit_code, stdout, stderr = run_reviewer(schema_text, brief, main_project_settings,
+                                             head_worktree, reviewer_environment(record),
                                              arguments.time_limit_seconds)
     (record / "run.json").write_text(stdout)
     (record / "run-stderr.txt").write_text(stderr)
@@ -316,7 +449,8 @@ def review_and_post(arguments, number, head, brief, schema_text, head_worktree, 
     if session_id:
         (record / "resume.txt").write_text(f"{session_id}\n{head_worktree}\n")
         print(f"PR {number}: to ask the reviewer a follow-up question, run from "
-              f"{head_worktree}, with the question on stdin:\n  {resume_command(session_id)}",
+              f"{head_worktree}, with the question on stdin:\n  "
+              f"{resume_command(session_id, main_project_settings, head_worktree)}",
               flush=True)
     for denial in output.get("permission_denials") or []:
         if not isinstance(denial, dict):
@@ -328,6 +462,7 @@ def review_and_post(arguments, number, head, brief, schema_text, head_worktree, 
               f"it asked for: {what}", flush=True)
 
     answer = output.get("structured_output")
+    problems = answer_problems(answer, schema) if answer is not None else []
     if exit_code is None:
         reason = f"the reviewer ran past its {arguments.time_limit_seconds:g}-second limit and was killed"
     elif exit_code != 0:
@@ -336,9 +471,8 @@ def review_and_post(arguments, number, head, brief, schema_text, head_worktree, 
         reason = "claude printed no JSON output"
     elif answer is None:
         reason = "the reviewer finished without an answer the review schema accepts"
-    elif answer_problems(answer):
-        reason = "the reviewer's answer is not a valid review: " + "; ".join(
-            answer_problems(answer))
+    elif problems:
+        reason = "the reviewer's answer is not a valid review: " + "; ".join(problems)
     elif answer["verdict"] == "COULD_NOT_REVIEW":
         reason = "the reviewer could not finish the review, and says why below"
     else:
@@ -347,8 +481,8 @@ def review_and_post(arguments, number, head, brief, schema_text, head_worktree, 
     if reason is None and (at.returncode != 0 or at.stdout.strip() != head):
         reason = (f"the head worktree {head_worktree} moved to "
                   f"{at.stdout.strip() or at.stderr.strip()} during the review, so the review "
-                  f"is not of the head commit {head}")
-    if isinstance(answer, dict) and not answer_problems(answer):
+                  f"is not of the nc-head-commit {head}")
+    if answer is not None and not problems:
         hand_over_note(answer["note"], record, number)
     if reason is not None:
         last = (answer.get("body") if isinstance(answer, dict) else None) or output.get("result")

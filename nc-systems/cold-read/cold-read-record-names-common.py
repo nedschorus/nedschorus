@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Define shared cold-read-record names and paths."""
+"""Define shared cold-read-record names and paths, and the one rewrite both cold reads apply to the copy a reviewer reads."""
 
 import datetime
+import importlib.util
 import json
+import os
 import pathlib
 import re
 
@@ -12,10 +14,22 @@ RECORDS_DIRECTORY_NAME = "cold-read-records"
 RECORDS_DIR = REPO_ROOT / RECORDS_DIRECTORY_NAME
 FROZEN_TARGET_DIRECTORY_NAME = "target"
 RECORD_DATE_PATTERN = r"\d{4}-\d{2}-\d{2}"
+# The files a cold-read-record holds under these names. A record written
+# before they took the cold-read- prefix holds them under the name each maps
+# to in COLD_READ_RECORD_FILE_NAME_TO_ITS_NAME_BEFORE_COLD_READ_PREFIX; readers find either with
+# cold_read_record_file_path_prefixed_name_else_name_before_prefix.
+COLD_READ_FAST_READ_REPORT_FILE_NAME = "cold-read-fast-read.md"
+COLD_READ_TRIAGE_FILE_NAME = "cold-read-triage.md"
+COLD_READ_REFERENCE_CHECK_REPORT_FILE_NAME = "cold-read-reference-check.md"
+COLD_READ_RECORD_FILE_NAME_TO_ITS_NAME_BEFORE_COLD_READ_PREFIX = {
+    COLD_READ_FAST_READ_REPORT_FILE_NAME: "fast-read.md",
+    COLD_READ_TRIAGE_FILE_NAME: "triage.md",
+    COLD_READ_REFERENCE_CHECK_REPORT_FILE_NAME: "reference-check.md",
+}
 # A finished read leaves one of these at the top of its record; a read that
 # failed after freezing its target leaves target/ and no report. Older records
 # prefix each report with "<record name>--", and older fast reads named the
-# report "<name>-fast-read.md".
+# report "<name>-fast-read.md" or "fast-read.md".
 COMPLETED_REPORT_NAME_PATTERN = re.compile(
     r"^(?:.*--)?(?:(?:claude|codex|agy|gemini)-.*|(?:.*-)?fast-read)\.md$")
 # The marked copy of the cold-read-target that a fast read writes into its
@@ -29,6 +43,24 @@ GENERATED_INPUT_COPY_SUFFIXES = (SENTENCE_ID_MARKED_COPY_SUFFIX,)
 # Bash environment; a subagent's Bash sees its parent's ID.
 COLD_READ_FAST_READ_REPORT_AGENT_SESSION_ID_FILE_SUFFIX = ".agent-session.json"
 AGENT_SESSION_ID_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_SESSION_ID"
+
+
+def cold_read_record_file_name_prefixed_name_else_name_before_prefix(
+    record_dir: pathlib.Path, name: str,
+) -> str:
+    """The name record_dir holds the file called name under: name itself, or
+    its name before the cold-read- prefix when only that file is there."""
+    old_name = COLD_READ_RECORD_FILE_NAME_TO_ITS_NAME_BEFORE_COLD_READ_PREFIX[name]
+    if not (record_dir / name).is_file() and (record_dir / old_name).is_file():
+        return old_name
+    return name
+
+
+def cold_read_record_file_path_prefixed_name_else_name_before_prefix(
+    record_dir: pathlib.Path, name: str,
+) -> pathlib.Path:
+    """record_dir's file called name, under whichever of its two names it holds; name when it holds neither."""
+    return record_dir / cold_read_record_file_name_prefixed_name_else_name_before_prefix(record_dir, name)
 
 
 def frozen_target_path(
@@ -137,12 +169,93 @@ def record_directory_name_for_target(
     return f"{record_name_for_target(target)}-{now.strftime('%Y-%m-%d')}"
 
 
-def fresh_record_directory(base: pathlib.Path) -> pathlib.Path:
-    """Return an unused base or numbered suffix without creating the directory."""
+def fresh_record_directory(base: pathlib.Path, names_taken_in_log_store) -> pathlib.Path:
+    """Return the first of base, base-2, base-3 ... that is neither a path on
+    disk, a symlink included, nor one of names_taken_in_log_store, the record directory names the
+    log-store holds, without creating the directory."""
     # Each read needs its own directory so a same-day rerun cannot overwrite earlier reports.
+    # A name free only on disk can be another checkout's record in the store,
+    # and shipping would then put two reads in one record.
     record_directory = base
     suffix = 2
-    while record_directory.exists():
+    # lexists, not exists: a dangling symlink or a symlink loop is false for exists(), and mkdir on it fails.
+    while os.path.lexists(record_directory) or record_directory.name in names_taken_in_log_store:
         record_directory = base.with_name(f"{base.name}-{suffix}")
         suffix += 1
     return record_directory
+
+
+def cold_read_record_directory_at_first_free_name_created_atomically(base: pathlib.Path, names_taken_in_log_store) -> pathlib.Path:
+    """Create and return the directory fresh_record_directory names; when
+    another run creates that name first, take the next free one, so two runs
+    started at once never share a record directory."""
+    # Choosing a free name and creating it later lets two runs choose the same
+    # name; mkdir without exist_ok is the atomic claim.
+    base.parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        record_directory = fresh_record_directory(base, names_taken_in_log_store)
+        try:
+            record_directory.mkdir()
+        except FileExistsError:
+            continue
+        return record_directory
+
+
+_ned_box_home_spec = importlib.util.spec_from_file_location(
+    "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+_ned_box_home = importlib.util.module_from_spec(_ned_box_home_spec)
+_ned_box_home_spec.loader.exec_module(_ned_box_home)
+MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY = _ned_box_home.MAC_MOUNT_OF_NED_BOX_HOME
+MAC_MOUNT_OF_NED_BOX_HOME_LINK_PREFIX = f"file://{MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY}/"
+NED_BOX_HOME_PATH_PREFIX = f"{_ned_box_home.NED_BOX_HOME}/"
+# Names the directory probed in place of MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY,
+# so a test can run either machine's case on either machine.
+MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE = (
+    "COLD_READ_MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE")
+
+
+def record_directory_being_written_lock_pass_fds_for_child_writers(record_dir: pathlib.Path) -> tuple:
+    """The pass_fds for subprocess.Popen of a child that writes into record_dir: every descriptor this
+    process has open on record_dir, the lock it took or the one it was passed by the writer that started
+    it. The child then holds the being-written lock too, so the lock stays held until every writer down
+    the chain has exited. Empty when this process has no descriptor open on record_dir."""
+    record = os.stat(record_dir)
+    descriptors = []
+    # /dev/fd lists this process's open descriptors on Linux and on macOS alike.
+    for name in os.listdir("/dev/fd"):
+        try:
+            opened = os.fstat(int(name))
+        except OSError:
+            continue  # the descriptor listdir itself used, closed by now
+        if (opened.st_dev, opened.st_ino) == (record.st_dev, record.st_ino):
+            descriptors.append(int(name))
+    return tuple(sorted(descriptors))
+
+
+def text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(text: str) -> str:
+    """Return text with each file:///Volumes/nedhome/ link prefix replaced by /home/nedlern/.
+
+    A bare /Volumes/nedhome/ path without file:// is left alone. This is the
+    rewrite on every machine; a program that compares a frozen copy with its
+    document applies it whichever machine made the copy.
+    """
+    return text.replace(MAC_MOUNT_OF_NED_BOX_HOME_LINK_PREFIX, NED_BOX_HOME_PATH_PREFIX)
+
+
+def cold_read_reviewer_copy_text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths_where_mac_mount_absent(
+        text: str) -> str:
+    """Return the text a reviewer on this machine reads, for a cold read run here.
+
+    Reviewers run on the machine that runs the cold read. Where the Mac's mount
+    of ned-box's home is not a directory, as on ned-box, a file:///Volumes/nedhome/
+    link does not open, so it is rewritten to the /home/nedlern/ path that does;
+    where the mount is a directory, as on the Mac, the text is returned unchanged.
+    Apply it only to the copy a reviewer reads, never to the user's document.
+    """
+    mount = (os.environ.get(MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE)
+             or MAC_MOUNT_OF_NED_BOX_HOME_DIRECTORY)
+    if pathlib.Path(mount).is_dir():
+        return text
+    return text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(text)

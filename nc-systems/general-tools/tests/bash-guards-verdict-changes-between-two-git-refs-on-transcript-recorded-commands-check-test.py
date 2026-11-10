@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Tests for nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py.
 
-Replays a small fixture of commands, never the real transcripts, at this checkout's HEAD and at
-commits made for the test from HEAD with one guard changed: a changed verdict exits 1, a changed
+Replays a small fixture of commands, never the real transcripts, in a repository of the test's own whose
+HEAD holds this checkout's copy of every file a replay reads, and at commits made for the test from that
+HEAD with one guard changed: a changed verdict exits 1, a changed
 message alone exits 0, and every way the replay can fail to get a verdict exits 2.
 
 Run: python3 nc-systems/general-tools/tests/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check-test.py
@@ -14,6 +15,7 @@ import importlib.util
 import io
 import json
 import os
+import pickle
 import re
 import signal
 import subprocess
@@ -23,10 +25,18 @@ import time
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    REPOSITORY_ROOT / "scripts" / "git-redirecting-environment-removal-test-fixture.py")
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py"
-TMUX_KILL_GUARD = "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py"
-ISSUE_WRITE_GUARD = ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py"
-SEARCH_FILE_GUARD = "scripts/search-file-argument-read-as-option-guard-hook.py"
+TMUX_KILL_GUARD = ".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py"
+ISSUE_WRITE_GUARD = ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py"
+SEARCH_FILE_GUARD = ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py"
 SHELL_READER = "nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py"
 
 spec = importlib.util.spec_from_file_location("bash_guards_replay", SCRIPT_PATH)
@@ -56,10 +66,10 @@ def git(*arguments, cwd=None, check=True):
     return completed.stdout.strip()
 
 
-def commit_with_change(change, scratch):
-    """Return a commit made from HEAD with change(worktree) applied; HEAD itself is untouched."""
+def commit_with_change(change, scratch, start="HEAD"):
+    """Return a commit made from start with change(worktree) applied; start itself is untouched."""
     worktree = Path(scratch) / f"changed-{len(os.listdir(scratch))}"
-    git("worktree", "add", "--detach", str(worktree), "HEAD")
+    git("worktree", "add", "--detach", str(worktree), start)
     try:
         change(worktree)
         git("-c", "core.hooksPath=/dev/null", "-c", "user.name=replay test", "-c", "user.email=replay@test.invalid",
@@ -128,10 +138,14 @@ def commit_with_one_command_per_process_reader_changed(code_on_ls, scratch):
 
 
 def commit_with_guard_changed(guard_path, appended_code, scratch):
+    return commit_with_guard_changed_from("HEAD", guard_path, appended_code, scratch)
+
+
+def commit_with_guard_changed_from(start, guard_path, appended_code, scratch):
     def append(worktree):
         with open(worktree / guard_path, "a") as handle:
             handle.write("\n" + appended_code + "\n")
-    return commit_with_change(append, scratch)
+    return commit_with_change(append, scratch, start)
 
 
 def scratch_directory_removal_failures(directory):
@@ -147,6 +161,17 @@ def check_scratch_directory_removed(directory, record=None):
     record = check if record is None else record
     could_not_remove = scratch_directory_removal_failures(directory)
     record("the scratch directory is removed after the run", not could_not_remove, "\n".join(could_not_remove))
+
+
+def remove_scratch_directory_ignoring_stop_signals(directory, record=None):
+    """Ignore stop signals from here on, then remove directory as check_scratch_directory_removed does.
+
+    A first stop's SystemExit is what brings a stopped run here; a second, such as the SIGTERM that `timeout` also
+    sends to the process group, would raise again inside the removal and leave the directory half removed in /tmp.
+    """
+    for number in replay.STOP_SIGNALS:
+        signal.signal(number, signal.SIG_IGN)
+    check_scratch_directory_removed(directory, record)
 
 
 def worktrees_registered_under(directory):
@@ -189,7 +214,26 @@ def default_scratch_replay(head_ref, scratch, *extra, base_ref="HEAD", pairs=FIX
     return status, out, err, sorted(os.listdir(temporary)), sorted(runs.iterdir())
 
 
-def run_replay(head_ref, scratch, *extra, base_ref="HEAD", scratch_directory=True, pairs=FIXTURE_PAIRS):
+def commit_with_tree_of_parented_on(ref, parent):
+    """Return a commit with ref's tree whose one parent is parent.
+
+    A case's base made from HEAD is a child of HEAD, so the replay's merge of HEAD, or of another child of HEAD,
+    with that base would hold the base's tree; a head parented on the base merges to its own tree, as a head
+    cut from the base does."""
+    return git("-c", "user.name=replay test", "-c", "user.email=replay@test.invalid", "commit-tree", "--no-gpg-sign",
+               f"{ref}^{{tree}}", "-p", parent, "-m", "replay test: a head cut from the base")
+
+
+def head_ref_cut_from_base(head_ref, base_ref, head_cut_from_base):
+    """Return head_ref, or, when the base is not HEAD, which every head of the suite's own is made from, a commit
+    with head_ref's tree parented on the base."""
+    return commit_with_tree_of_parented_on(head_ref, base_ref) \
+        if head_cut_from_base and base_ref != "HEAD" and head_ref != base_ref else head_ref
+
+
+def run_replay(head_ref, scratch, *extra, base_ref="HEAD", scratch_directory=True, pairs=FIXTURE_PAIRS,
+               head_cut_from_base=True):
+    head_ref = head_ref_cut_from_base(head_ref, base_ref, head_cut_from_base)
     pairs_file = Path(scratch) / "fixture-pairs.json"
     pairs_file.write_text(json.dumps(pairs))
     arguments = ["--repository", str(TEST_REPOSITORY), "--base-ref", base_ref, "--head-ref", head_ref,
@@ -211,6 +255,7 @@ def run_replay_within(deadline_seconds, head_ref, scratch, *extra, base_ref="HEA
     the replay gets SIGTERM, which makes it stop its steps and remove its checkouts, then SIGKILL if it is
     still running; the status returned is then None.
     """
+    head_ref = head_ref_cut_from_base(head_ref, base_ref, True)
     pairs_file = Path(scratch) / "fixture-pairs.json"
     pairs_file.write_text(json.dumps(pairs))
     arguments = ["--repository", str(TEST_REPOSITORY), "--base-ref", base_ref, "--head-ref", head_ref,
@@ -275,21 +320,81 @@ def stopped_by_sigterm(*_):
     raise SystemExit(1)  # So the temporary directory and its worktrees are removed below.
 
 
+def files_the_replay_reads_in_a_checkout():
+    """Return the paths, relative to REPOSITORY_ROOT, of the files of this checkout that a replay of the fixture
+    pairs reads: .claude/settings.json; every file the guards open while they load and read each fixture pair,
+    in-process and through the search-file guard's main(); and every file a loaded module names in a
+    module-level Path, such as the shell reader's pinned requirements, which only a machine missing a library
+    reads."""
+    root = str(REPOSITORY_ROOT)
+    opened, recording = set(), [True]
+
+    def record(event, arguments):
+        if recording[0] and event == "open" and arguments and isinstance(arguments[0], (str, os.PathLike)):
+            opened.add(os.path.abspath(os.fspath(arguments[0])))
+    # An audit hook cannot be removed, so it stops recording through the flag instead.
+    sys.addaudithook(record)
+    alarm_handler = signal.signal(signal.SIGALRM, replay.raise_pair_timed_out)
+    worker_as_found = dict(replay.WORKER)
+    try:
+        guards, _, _, _ = replay.guards_loaded(REPOSITORY_ROOT, False)
+        replay.WORKER["checkout"] = root
+        with tempfile.TemporaryDirectory() as search_file_directory:
+            for command, working_directory in FIXTURE_PAIRS:
+                replay.guard_readings(guards, command, working_directory, search_file_directory)
+                replay.search_file_main_outcome(guards[replay.SEARCH_FILE_GUARD], command, working_directory)
+    finally:
+        recording[0] = False
+        signal.signal(signal.SIGALRM, alarm_handler)
+        replay.WORKER.clear()
+        replay.WORKER.update(worker_as_found)
+    named, seen, modules = set(), set(), list(guards.values())
+    while modules:
+        module = modules.pop()
+        if id(module) in seen:
+            continue
+        seen.add(id(module))
+        for value in vars(module).values():
+            if type(value).__name__ == "module" and str(getattr(value, "__file__", "")).startswith(root + os.sep):
+                modules.append(value)
+            elif isinstance(value, Path) and value.is_absolute():
+                named.add(str(value))
+    # An import that finds a valid cache opens the .pyc and never the source, so a .pyc stands for its source.
+    sources = {importlib.util.source_from_cache(path) if path.endswith(".pyc") else path for path in opened | named}
+    return sorted({os.path.relpath(path, root) for path in sources
+                   if path.startswith(root + os.sep) and os.path.isfile(path)} | {".claude/settings.json"})
+
+
+def make_test_repository(directory):
+    """Make directory a repository of its own whose one commit holds this checkout's copy of every file a replay
+    reads, so the suite runs no git on this checkout: git on the checkout selects the suite in every change's
+    test run, where the files it copies select it only when one of them changes."""
+    files = files_the_replay_reads_in_a_checkout()
+    for relative in files:
+        (directory / relative).parent.mkdir(parents=True, exist_ok=True)
+        (directory / relative).write_bytes((REPOSITORY_ROOT / relative).read_bytes())
+    git("init", "--quiet", cwd=directory)
+    git("add", "--", *files, cwd=directory)
+    git("-c", "core.hooksPath=/dev/null", "-c", "user.name=replay test", "-c", "user.email=replay@test.invalid",
+        "commit", "--quiet", "-m", "replay test: the files a replay reads", cwd=directory)
+
+
 # The hung-child case takes about 23 s on an idle machine: one 20 s timeout, then the reading again. A sender
 # that kept the hung child would time out each later pair on that guard and each reading again, at least
 # 9 more timeouts (180 s), so this deadline fails it by name with room for a loaded machine's slower readings.
 HUNG_CHILD_CASE_DEADLINE_SECONDS = 150
 # Long enough for a stopped replay to stop its steps and remove its checkouts.
 REPLAY_STOP_SECONDS = 60
-signal.signal(signal.SIGTERM, stopped_by_sigterm)
+for stop_signal_number in replay.STOP_SIGNALS:
+    signal.signal(stop_signal_number, stopped_by_sigterm)
 scratch = tempfile.mkdtemp(prefix="bash-guards-replay-test-")
-# The test's checkouts are registered in a clone of its own inside the scratch directory, never in the
+# The test's checkouts are registered in a repository of its own inside the scratch directory, never in the
 # clone this checkout belongs to, whose worktree list other agent-seats and concurrent runs share; a run
 # that is killed leaves its registrations in the scratch directory alone.
 TEST_REPOSITORY = Path(scratch) / "repository"
 try:
-    git("clone", "--quiet", "--shared", "--no-checkout", str(REPOSITORY_ROOT), str(TEST_REPOSITORY), cwd=scratch)
-    git("update-ref", "--no-deref", "HEAD", git("rev-parse", "HEAD", cwd=REPOSITORY_ROOT))
+    TEST_REPOSITORY.mkdir()
+    make_test_repository(TEST_REPOSITORY)
     status, out, err = run_replay("HEAD", scratch)
     check("the same commit at base and head: exit 0 and no verdict changed",
           status == 0 and "NO VERDICT CHANGED" in out, f"status {status}\n{out}\n{err}")
@@ -298,8 +403,9 @@ try:
               for mode in ("in-process", "search-file main()", "new-process")), out)
     check("the same commit: no message differs, though the codex exec refusal names a file in each checkout",
           "in-process: rows whose message differs and verdict does not: 0" in out, out)
-    check("a replay that returns puts back the SIGTERM handler its caller had",
-          signal.getsignal(signal.SIGTERM) is stopped_by_sigterm, signal.getsignal(signal.SIGTERM))
+    check("a replay that returns puts back the SIGTERM and SIGHUP handlers its caller had",
+          all(signal.getsignal(number) is stopped_by_sigterm for number in replay.STOP_SIGNALS),
+          [signal.getsignal(number) for number in replay.STOP_SIGNALS])
     check("the same commit: new-process mode reads every pair by default",
           f"new-process pairs: {len(FIXTURE_PAIRS)}" in out, out)
     check("the same commit: new-process mode reads through a new process at both refs, in-process mode does not",
@@ -330,6 +436,19 @@ try:
     check("a head that rewords the end of a refusal only: exit 0, and the message difference is printed",
           status == 0 and "in-process: rows whose message differs and verdict does not: 1" in out
           and "Reworded at the end." in out, f"status {status}\n{out}\n{err}")
+
+    # The shell reader is loaded by file path, so its classes cannot be pickled by name between processes.
+    verdict_of_path_loaded_class = commit_with_guard_changed(
+        ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py", (
+            "_analyze_command_text_as_written = analyze_command_text\n"
+            "def analyze_command_text(command, payload_cwd, guard):\n"
+            "    if command == 'ls -la':\n"
+            "        return shell_reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand('~/refused'), None\n"
+            "    return _analyze_command_text_as_written(command, payload_cwd, guard)"), scratch)
+    status, out, err = run_replay(verdict_of_path_loaded_class, scratch, "--new-process-pairs", "none")
+    check("a verdict holding a value of a class from a path-loaded module crosses from the pool worker: exit 1",
+          status == 1 and "in-process: rows whose verdict differs: 1" in out and "~/refused" in out
+          and "PicklingError" not in out + err, f"status {status}\n{out}\n{err}")
 
     main_refusing_all = commit_with_guard_changed(SEARCH_FILE_GUARD, (
         "def main(stdin=sys.stdin, clock=time.monotonic):\n"
@@ -392,7 +511,7 @@ try:
     check("a guard whose own `except Exception` surrounds a timed-out read: exit 2, the timeout is not swallowed",
           status == 2 and "TIMEOUT" in out and "NO VERDICT CHANGED" not in out, f"status {status}\n{out}\n{err}")
 
-    codex_guard = "scripts/hand-typed-codex-exec-command-refusal-hook.py"
+    codex_guard = ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py"
     calls_file = Path(scratch) / "codex-guard-calls-on-tmux-kill-server"
 
     def codex_guard_on_tmux_kill_server(code_on_tmux_kill_server):
@@ -479,6 +598,52 @@ try:
           == (3 + 9) * (len(replay.GUARDS) + 1) * 7 + replay.STEP_DEADLINE_MARGIN_SECONDS,
           replay.step_deadline_seconds(9, 3, 7))
 
+    class GhiMdGuardNaming:
+        def __init__(self, replaced):
+            self.replaced = replaced
+
+        def ghi_md_replaced_by_command(self, command, working_directory):
+            return self.replaced
+
+    for replaced, expected in (("/c/docs/issues/46-a.md", ("refused", "replaces /c/docs/issues/46-a.md")),
+                               (None, ("passed", None))):
+        reading = replay.read_ghi_md_whole_file_replacement(GhiMdGuardNaming(replaced), "cp a b", "/c", None)
+        check(f"the GHI-MD soft-block's reading when its guard names {replaced}", reading == expected, reading)
+
+    class WorktreeRemoveGuardReading:
+        def __init__(self, removes):
+            self.removes = removes
+
+        def command_runs_git_worktree_remove(self, command):
+            return self.removes
+
+    for removes, expected in ((True, ("ships every worktree's records first", None)), (False, ("passed", None))):
+        reading = replay.read_git_worktree_remove_records_ship_first(
+            WorktreeRemoveGuardReading(removes), "git worktree remove wt", "/c", None)
+        check(f"the worktree-removal guard's reading when its guard answers {removes}", reading == expected, reading)
+    # The real guard's answer crosses the replay's process pool, so it must pickle.
+    real_guard_spec = importlib.util.spec_from_file_location("worktree_remove_guard", REPOSITORY_ROOT / ".claude" / "guard-hooks" / "git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py")
+    real_guard = importlib.util.module_from_spec(real_guard_spec)
+    real_guard_spec.loader.exec_module(real_guard)
+    for command in ("git worktree remove ~/$X", "git --git-dir ~/r/.git worktree remove wt"):
+        reading = replay.read_git_worktree_remove_records_ship_first(real_guard, command, "/c", None)
+        check(f"the real worktree-removal guard's reading of {command!r} pickles", pickle.loads(pickle.dumps(reading)) == reading, reading)
+
+    grid_guard_path = ".claude/guard-hooks/handoff-deferral-cold-read-full-run-launch-refusal-hook.py"
+    check("the handoff-deferral grid-launch guard is read by its own reading function",
+          replay.GUARDS.get(grid_guard_path) is replay.read_handoff_deferral_cold_read_full_run_launch,
+          replay.GUARDS.get(grid_guard_path))
+    grid_guard_spec = importlib.util.spec_from_file_location("grid_launch_guard", REPOSITORY_ROOT / grid_guard_path)
+    grid_guard = importlib.util.module_from_spec(grid_guard_spec)
+    grid_guard_spec.loader.exec_module(grid_guard)
+    for command, expected in (
+            ("python3 nc-systems/cold-read/cold-read-grid.py --target a.md",
+             ("refused", grid_guard.COLD_READ_FULL_RUN_REFUSED_AND_SAVED_REASON)),
+            ("sed -n 1,9p nc-systems/cold-read/cold-read-grid.py", ("passed", None))):
+        reading = replay.read_handoff_deferral_cold_read_full_run_launch(grid_guard, command, "/c", None)
+        check(f"the handoff-deferral grid-launch guard's reading of {command!r}, as if a deferral were on",
+              reading == expected and pickle.loads(pickle.dumps(reading)) == reading, reading)
+
     def add_bash_hook(worktree):
         path = worktree / ".claude" / "settings.json"
         settings = json.loads(path.read_text())
@@ -541,7 +706,7 @@ try:
     fewer_hooks = commit_with_change(drop_codex_hook, scratch)
     status, out, err = run_replay(fewer_hooks, scratch)
     check("a head whose settings.json lacks a Bash hook the replay reads: exit 2, naming the hook",
-          status == 2 and "replayed but not a Bash hook: ['scripts/hand-typed-codex-exec-command-refusal-hook.py']" in err,
+          status == 2 and "replayed but not a Bash hook: ['.claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py']" in err,
           f"status {status}\n{out}\n{err}")
 
     # In the guard's own directory, so the files it loads beside itself are still found.
@@ -590,11 +755,34 @@ try:
     check("a head that adds a guard refusing a recorded command: exit 1, the merge is blocked",
           status == 1 and "NEW GUARD REFUSES RECORDED COMMANDS" in out and "VERDICT CHANGED" not in out,
           f"status {status}\n{out}\n{err}")
-    check("a head that adds a guard refusing a recorded command: the section names the guard, the count, the command "
-          "and its working directory",
-          f"in-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command, listed with its "
-          "working directory\n  1. command: 'tmux kill-server'\n     working directory: /tmp\n" in out
-          and f"new-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command" in out, out)
+    tmux_kill_refusal = (TMUX_KILL_GUARD, replay.read_tmux_kill(
+        replay.load_module(REPOSITORY_ROOT, TMUX_KILL_GUARD, "tmux_kill_guard"), "tmux kill-server", "/tmp", None)[1])
+    tmux_kill_group = replay.refusal_group_ids_assign_to_bash_guard_path_and_message_pairs_by_shortest_unique_digest_prefix(
+        [tmux_kill_refusal])[tmux_kill_refusal]
+    check("a head that adds a guard refusing a recorded command: each mode counts its refusals, and the one refusal "
+          "group, which both modes refuse, names its id, the guard, the command and its working directory",
+          f"in-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command\n" in out
+          and f"new-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command\n" in out
+          and "refusal groups of the guards the head adds: 1, holding 1 refused recorded command; every group in "
+          "full is in " in out
+          and f"  {tmux_kill_group}: {TMUX_KILL_GUARD} refuses 1 recorded command, in in-process, new-process\n"
+          "    reason: " in out
+          and "    command: 'tmux kill-server'\n      working directory: /tmp\n" in out, out)
+    # As Codex found on pull request 2468: two refusal messages whose digests share their first eight hex digits.
+    digest_as_written = replay.refusal_group_digest_compute_from_bash_guard_path_and_message
+    replay.refusal_group_digest_compute_from_bash_guard_path_and_message = lambda guard, reason: "8ee5bdb8" + ("1" if reason.endswith("4768") else "2") * 56
+    try:
+        colliding = replay.added_guard_refusal_groups([("in-process", [
+            (("git push --force origin topic-4768", "/tmp"), "force-push-guard.py", ("refused", "topic-4768")),
+            (("git push --force origin topic-111837", "/tmp"), "force-push-guard.py", ("refused", "topic-111837"))])])
+    finally:
+        replay.refusal_group_digest_compute_from_bash_guard_path_and_message = digest_as_written
+    check("two refusal messages whose ids would share their first eight hex digits: two refusal groups, each with "
+          "its own message, its own command and an id of its own",
+          sorted((group["reason"], group["refused commands"]) for group in colliding)
+          == [("topic-111837", [["git push --force origin topic-111837", "/tmp"]]),
+              ("topic-4768", [["git push --force origin topic-4768", "/tmp"]])]
+          and len({group["group"] for group in colliding}) == 2, str(colliding))
     check("a head that adds a guard refusing a recorded command, and changes no verdict: merge-lane-2 may merge "
           "once each refusal is accepted",
           replay.NEW_GUARD_REFUSES_ONLY_ENDING in out
@@ -619,15 +807,78 @@ try:
           f"guards the head adds, read at the head only: ['{TMUX_KILL_GUARD}']" in out
           and "in-process: rows whose verdict differs: 0" in out, out)
 
-    # Longer than the 300 characters a printed reading is cut to, and different from its twin only at the end.
-    long_refused = ["tmux kill-server; echo " + "x" * 320 + " first", "/tmp"]
-    long_refused_twin = ["tmux kill-server; echo " + "x" * 320 + " second", "/tmp"]
+    # As on pull request 2446, where the added guard refused 296 recorded commands with one message: commands longer
+    # than the 300 characters a printed text is cut to, which differ only at the end.
+    many_long_refused = [["tmux kill-server; echo " + "x" * 400 + f" {number}", f"/tmp/{number}"]
+                         for number in range(300)]
     status, out, err = run_replay("HEAD", scratch, "--new-process-pairs", "none", base_ref=before_tmux_kill_guard,
-                                  pairs=[long_refused, long_refused_twin])
-    check("a head that adds a guard refusing two long commands that differ only at the end: each is listed in full",
-          status == 1 and f"would refuse 2 recorded commands" in out
-          and f"command: {long_refused[0]!r}\n" in out and f"command: {long_refused_twin[0]!r}\n" in out,
-          f"status {status}\n{out}\n{err}")
+                                  pairs=many_long_refused)
+    groups_file = Path(out.splitlines()[0].removeprefix("run log directory: ")) / replay.REFUSAL_GROUPS_FILE_NAME
+    groups = json.loads(groups_file.read_text()) if groups_file.exists() else []
+    check("a head that adds a guard refusing 300 long commands with one message: exit 1, and the report fits in a "
+          "GitHub review body, which holds 65,536 characters",
+          status == 1 and len(out) < 65536 and "NEW GUARD REFUSES RECORDED COMMANDS" in out,
+          f"status {status}, {len(out)} characters\n{out[:3000]}\n{err}")
+    check("a head that adds a guard refusing 300 long commands with one message: one refusal group is printed, with "
+          "3 of its commands, cut short, and the count of the 297 left out",
+          "refusal groups of the guards the head adds: 1, holding 300 refused recorded commands" in out
+          and out.count("    command: ") == 3 and "297 more commands of this group are left out here" in out
+          and many_long_refused[0][0] not in out, out[:3000])
+    check("a head that adds a guard refusing 300 long commands with one message: the printed group carries its "
+          "\"refusal right\" line, ready to copy",
+          f"    answer if every command of this group is rightly refused: refusal right: {TMUX_KILL_GUARD} | "
+          f"{tmux_kill_group}\n" in out, out[:3000])
+    check("a head that adds a guard refusing 300 long commands with one message: the refusal groups file holds the "
+          "group with every command in full",
+          [(group["group"], group["guard"], group["modes"], group["refused commands"]) for group in groups]
+          == [(tmux_kill_group, TMUX_KILL_GUARD, ["in-process"], many_long_refused)], f"{groups_file}: {groups}"[:3000])
+
+    refusing_each_command_with_its_own_message = commit_with_guard_changed(TMUX_KILL_GUARD, (
+        "_refusal_for_as_written = refusal_for\n"
+        "def refusal_for(command):\n"
+        "    reason = _refusal_for_as_written(command)\n"
+        "    return reason + ' ' + command if reason else reason"), scratch)
+    status, out, err = run_replay(refusing_each_command_with_its_own_message, scratch, "--new-process-pairs", "none",
+                                  base_ref=before_tmux_kill_guard, pairs=many_long_refused)
+    groups_file = Path(out.splitlines()[0].removeprefix("run log directory: ")) / replay.REFUSAL_GROUPS_FILE_NAME
+    groups = json.loads(groups_file.read_text()) if groups_file.exists() else []
+    check("a head that adds a guard refusing 300 long commands, each with its own message: exit 1, the report fits in "
+          "a GitHub review body, and 10 of the 300 refusal groups are printed, with the count of the 290 left out",
+          status == 1 and len(out) < 65536
+          and "refusal groups of the guards the head adds: 300, holding 300 refused recorded commands" in out
+          and out.count(f": {TMUX_KILL_GUARD} refuses 1 recorded command, in in-process\n") == 10
+          and "  290 more refusal groups are left out here, holding 290 refused recorded commands\n" in out
+          and len(groups) == 300, f"status {status}, {len(out)} characters\n{out[:3000]}\n{err}")
+    lines_file = groups_file.with_name(replay.REFUSAL_RIGHT_LINES_FILE_NAME)
+    lines = lines_file.read_text().splitlines() if lines_file.exists() else []
+    check("a head that adds a guard refusing 300 long commands, each with its own message: the refusal right lines "
+          "file holds the ready line of every one of the 300 groups, the 290 the list leaves out included",
+          lines == [f"refusal right: {TMUX_KILL_GUARD} | {group['group']}" for group in groups] and len(lines) == 300,
+          f"{lines_file}: {lines[:5]}")
+    check("a head that adds a guard refusing 300 long commands, each with its own message: the message names the "
+          "groups file and the refusal right lines file by their full paths",
+          f"every group in the file {groups_file}, including" in out
+          and f"the file {lines_file} holds that line for every group" in " ".join(out.split()), out[-6000:])
+
+    one_command_more = replay.REFUSED_COMMANDS_PRINTED_PER_GROUP + 1
+    one_left_out_group = [{"group": f"refusal-group-{number:08x}", "guard": "g.py", "reason": f"r{number}",
+                           "modes": ["in-process"], "refused commands": [[f"c{number}", "/tmp"]]}
+                          for number in range(replay.REFUSAL_GROUPS_PRINTED + 1)]
+    one_left_out_group[0]["refused commands"] = [[f"c{number}", "/tmp"] for number in range(one_command_more)]
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        replay.print_added_guard_refusal_groups(one_left_out_group, "groups.json")
+    check("a group with one command more than is printed, and one refusal group more than is printed: each count "
+          "of one left out is in the singular",
+          "    1 more command of this group is left out here\n" in printed.getvalue()
+          and "  1 more refusal group is left out here, holding 1 refused recorded command\n" in printed.getvalue(),
+          printed.getvalue())
+    message = " ".join(replay.NEW_GUARD_REFUSES_MESSAGE.split())
+    check("the message says the refusal right lines file holds the line of every group, the ones the list leaves "
+          "out included, and that a group still refused after a fix-round needs one line, not one per command",
+          "holds that line for every group, the ones the list leaves out included" in message
+          and "such a group needs its one \"refusal right\" line in the review of the fix-round's head" in message,
+          replay.NEW_GUARD_REFUSES_MESSAGE)
 
     before_search_file_guard = commit_without_guard(SEARCH_FILE_GUARD)
     status, out, err = run_replay(main_refusing_all, scratch, "--new-process-pairs", "none",
@@ -646,6 +897,53 @@ try:
           status == 0 and "NO VERDICT CHANGED" in out and "would refuse" not in out
           and f"guards the head adds, read at the head only: ['{ISSUE_WRITE_GUARD}']" in out,
           f"status {status}\n{out}\n{err}")
+
+    # As on pull requests 2707 and 2731, whose heads were cut before the base gained the pkill guard.
+    base_with_tmux_kill_guard_added = commit_with_tree_of_parented_on("HEAD", before_tmux_kill_guard)
+    head_cut_before_tmux_kill_guard = commit_with_guard_changed_from(
+        before_tmux_kill_guard, ISSUE_WRITE_GUARD, "# changed by a head cut before the tmux kill guard", scratch)
+    status, out, err = run_replay(head_cut_before_tmux_kill_guard, scratch,
+                                  base_ref=base_with_tmux_kill_guard_added, head_cut_from_base=False)
+    check("a head cut before the base gained a guard: the head merged with the base is replayed, so the guard is "
+          "compared at both refs and not reported missing at the head; exit 0",
+          status == 0 and "NO VERDICT CHANGED" in out and "guards the head adds, read at the head only: none" in out
+          and f"head: {head_cut_before_tmux_kill_guard} at {head_cut_before_tmux_kill_guard}, replayed as its merge "
+          "with the base, " in out, f"status {status}\n{out}\n{err}")
+
+    conflicting_base = commit_with_guard_changed(TMUX_KILL_GUARD, "# the base's last line", scratch)
+    conflicting_head = commit_with_guard_changed(TMUX_KILL_GUARD, "# the head's last line", scratch)
+    status, out, err = run_replay(conflicting_head, scratch, base_ref=conflicting_base, head_cut_from_base=False)
+    check("a head that does not merge cleanly with the base: exit 2, naming the conflicted file and the head's "
+          "author as the agent-seat to tell",
+          status == 2 and "does not merge cleanly with the base" in err and f"in: ['{TMUX_KILL_GUARD}']" in err
+          and "the head's commit names replay test as its author." in err
+          and "VERDICT" not in out, f"status {status}\n{out}\n{err}")
+
+    unrelated_head = git("-c", "user.name=replay test", "-c", "user.email=replay@test.invalid", "commit-tree",
+                         "--no-gpg-sign", "HEAD^{tree}", "-m", "replay test: a head with no history in common")
+    status, out, err = run_replay(unrelated_head, scratch, head_cut_from_base=False)
+    check("a head that shares no history with the base: exit 2, passing on git merge-tree's reason and only "
+          "the step for unrelated histories",
+          status == 2 and "git merge-tree of the base" in err
+          and "no guard was replayed: fatal: refusing to merge unrelated histories.\n" in err
+          and "naming commits that share history" in err and "with every option you gave it" not in err,
+          f"status {status}\n{out}\n{err}")
+
+    # Injected: no real pair of commits makes git merge-tree fail for any reason but unrelated histories.
+    real_run_git = replay.run_git_returning_completed_process_without_exit_code_check
+    replay.run_git_returning_completed_process_without_exit_code_check = (
+        lambda *_: subprocess.CompletedProcess([], 128, "", "fatal: unable to read tree 1234\n"))
+    try:
+        replay.head_merged_with_base_commit_make_or_raise_on_conflict(Path("."), "base1", "head1")
+        raised = ""
+    except replay.ReplayFailed as error:
+        raised = str(error)
+    finally:
+        replay.run_git_returning_completed_process_without_exit_code_check = real_run_git
+    check("git merge-tree failing for another reason: the message gives only the run-once-more step",
+          "no guard was replayed: fatal: unable to read tree 1234.\n" in raised
+          and "with every option you gave it this time unchanged" in raised
+          and "naming commits that share history" not in raised, raised)
 
     uncallable = commit_with_guard_changed(ISSUE_WRITE_GUARD, "del analyze_command_text", scratch)
     status, out, err = run_replay(uncallable, scratch)
@@ -898,7 +1196,7 @@ try:
         subprocess.run(["pkill", "-f", str(Path(scratch) / "run-exiting")])
 
     codex_guard, _, _, _ = replay.guards_loaded(REPOSITORY_ROOT, False)
-    codex_path = "scripts/hand-typed-codex-exec-command-refusal-hook.py"
+    codex_path = ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py"
     check("the codex exec guard's reading refuses a hand-typed codex exec and passes ls",
           replay.GUARDS[codex_path](codex_guard[codex_path], 'codex exec -C /tmp/x "do the task"', "/", "/")[0] == "refused"
           and replay.GUARDS[codex_path](codex_guard[codex_path], "ls -la", "/", "/")[0] == "passed",
@@ -980,6 +1278,12 @@ try:
               stopped.returncode == 2 and not worktrees_registered_under(stopped_scratch) and not still_running,
               f"exit {stopped.returncode}; registered {worktrees_registered_under(stopped_scratch)}; "
               f"running {still_running}\n{stopped_output}")
+        records = sorted(stopped_scratch.glob("multiprocessing-directory-*"))
+        recorded = [Path(record.read_text()) for record in records]
+        check(f"a replay stopped by {stop_signal.name} in the middle of a step: the killed step's multiprocessing "
+              f"directory is removed",
+              bool(recorded) and not any(directory.exists() for directory in recorded),
+              f"records {records}; recorded {recorded}")
 
     # SystemExit raised by the stop handler between Popen._wait()'s lock acquire and its try used to leave
     # the lock held, so the next wait() on that process blocked forever. The signal is delivered at exactly
@@ -999,7 +1303,7 @@ try:
     gap_directory = Path(scratch) / "gap"
     gap_directory.mkdir()
     (gap_directory / "stand-in-step.py").write_text("import time\ntime.sleep(1000)\n")
-    for gap_call, gap_extra in (("step", []), ("git", [str(REPOSITORY_ROOT)])):
+    for gap_call, gap_extra in (("step", []), ("git", [str(TEST_REPOSITORY)])):
         try:
             gap = subprocess.run([sys.executable, "-c", gap_script, str(SCRIPT_PATH),
                                   str(gap_directory / "stand-in-step.py"), gap_call.split()[0], *gap_extra],
@@ -1242,11 +1546,8 @@ try:
     locked = Path(scratch) / "locked-checkout"
     git("worktree", "add", "--detach", str(locked), "HEAD")
     git("worktree", "lock", str(locked))
-    shared_registrations = [line for line in git("worktree", "list", "--porcelain", cwd=REPOSITORY_ROOT).splitlines()
-                            if line.startswith("worktree ") and os.path.realpath(scratch) in line]
-    check("a checkout the test made is registered in the test's own clone, not in the clone this checkout belongs to",
-          worktrees_registered_under(locked) and not shared_registrations,
-          f"own clone {worktrees_registered_under(locked)}; shared clone {shared_registrations}")
+    check("a checkout the test made is registered in the test's own repository",
+          worktrees_registered_under(locked), worktrees_registered_under(locked))
     not_removed = replay.remove_checkouts(str(TEST_REPOSITORY), [locked])
     git("worktree", "unlock", str(locked))
     check("a checkout git cannot remove is reported, with git's reason",
@@ -1326,6 +1627,16 @@ try:
           pairs == [["ls", "/a"], ["ls", "/b"]], pairs)
     check("transcripts: a line that is not JSON is counted, not dropped silently", lines_not_json == 1, lines_not_json)
 
+    subagent_transcript = transcripts / "a" / "subagents" / "agent-1.jsonl"
+    subagent_transcript.parent.mkdir(parents=True)
+    subagent_transcript.write_text(bash_call("ls", "/e") + "\n")
+    pairs, _ = replay.recorded_command_pairs([str(Path(scratch) / "transcripts")])
+    check("transcripts: a Bash call found only in a subagent's transcript is read too",
+          sorted(pairs) == [["ls", "/a"], ["ls", "/b"], ["ls", "/e"]], pairs)
+    subagent_transcript.unlink()
+    subagent_transcript.parent.rmdir()
+    subagent_transcript.parent.parent.rmdir()
+
     unreadable = transcripts / "unreadable.jsonl"
     unreadable.write_text(bash_call("ls", "/d"))
     unreadable.chmod(0)
@@ -1402,9 +1713,96 @@ try:
     check("the end-of-run cleanup fails the suite when the scratch directory cannot be removed, naming the path",
           len(recorded) == 1 and recorded[0][1] is False and str(left_behind / "locked" / "file") in recorded[0][2],
           recorded)
+
+    # A killed step's record of its multiprocessing directory: only an absolute pymp- path is ever removed.
+    record_cases = Path(scratch) / "multiprocessing-records"
+    working = record_cases / "working-directory"
+    (working / "pymp-relative").mkdir(parents=True)
+    (working / "kept").write_text("x")
+    previous_directory = os.getcwd()
+    os.chdir(working)
+    try:
+        for recorded_text, case in (("", "an empty record"), ("pymp-relative", "a relative record"),
+                                    (str(working), "a record naming a directory that is not pymp-")):
+            record = record_cases / "record"
+            record.write_text(recorded_text)
+            try:
+                replay.remove_recorded_multiprocessing_directory(record)
+                outcome = "returned"
+            except replay.ReplayFailed as error:
+                outcome = f"ReplayFailed: {error}"
+            check(f"{case} of a step's multiprocessing directory removes nothing and fails the replay",
+                  outcome.startswith("ReplayFailed") and (working / "kept").exists()
+                  and (working / "pymp-relative").is_dir(), outcome)
+    finally:
+        os.chdir(previous_directory)
+    recorded_directory = record_cases / "pymp-recorded"
+    (recorded_directory / "socket").mkdir(parents=True)
+    record.write_text(str(recorded_directory))
+    replay.remove_recorded_multiprocessing_directory(record)
+    check("a record of an absolute pymp- directory removes that directory", not recorded_directory.exists())
+    (recorded_directory / "locked").mkdir(parents=True)
+    (recorded_directory / "locked" / "file").write_text("x")
+    (recorded_directory / "locked").chmod(0o500)
+    try:
+        try:
+            replay.remove_recorded_multiprocessing_directory(record)
+            outcome = "returned"
+        except replay.ReplayFailed as error:
+            outcome = f"ReplayFailed: {error}"
+    finally:
+        (recorded_directory / "locked").chmod(0o700)
+    check("a multiprocessing directory that cannot be removed fails the replay, naming the directory",
+          outcome.startswith("ReplayFailed") and str(recorded_directory) in outcome, outcome)
+
+    # A stop signal during a failing step: stop_deferred() replaces the failure with SystemExit(2), so it
+    # prints the failure first.
+    printed = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(printed):
+            with replay.stop_deferred():
+                replay.STOP_STATE["stop_requested"] = True
+                raise replay.ReplayFailed("the test's leftover directory /tmp/pymp-test")
+        outcome = "no exception"
+    except SystemExit as stopped:
+        outcome = f"SystemExit({stopped.code})"
+    except replay.ReplayFailed:
+        outcome = "ReplayFailed"
+    finally:
+        replay.STOP_STATE["stop_requested"] = False
+    check("a failure that a stop signal replaces with exit 2 is printed first",
+          outcome == "SystemExit(2)" and "REPLAY FAILED: the test's leftover directory /tmp/pymp-test"
+          in printed.getvalue(), f"{outcome}; stderr {printed.getvalue()!r}")
+    for second_stop in replay.STOP_SIGNALS:
+        stopped_twice = Path(scratch) / f"second-{second_stop.name}-during-removal"
+        for run in range(5):
+            (stopped_twice / f"run-{run}").mkdir(parents=True)
+            (stopped_twice / f"run-{run}" / "file").write_text("x")
+        # Not os.rmdir: rmtree compares the os.rmdir it queued with the current one, so swapping it breaks rmtree.
+        real_unlink = os.unlink
+
+        def unlink_after_a_second_stop(path, *arguments, second_stop=second_stop, **keywords):
+            os.unlink = real_unlink
+            os.kill(os.getpid(), second_stop)
+            return real_unlink(path, *arguments, **keywords)
+
+        recorded = []
+        outcome = "no exception"
+        os.unlink = unlink_after_a_second_stop
+        try:
+            remove_scratch_directory_ignoring_stop_signals(stopped_twice, lambda *result: recorded.append(result))
+        except SystemExit as stopped:
+            outcome = f"SystemExit({stopped.code})"
+        finally:
+            os.unlink = real_unlink
+            for number in replay.STOP_SIGNALS:
+                signal.signal(number, stopped_by_sigterm)
+        check(f"a {second_stop.name} landing during the final removal does not stop it, so nothing is left",
+              outcome == "no exception" and not stopped_twice.exists() and len(recorded) == 1
+              and recorded[0][1] is True, f"{outcome}; left: {stopped_twice.exists()}; recorded {recorded}")
 finally:
-    # The test's checkouts are registered only in its own clone, which goes with the scratch directory.
-    check_scratch_directory_removed(scratch)
+    # The test's checkouts are registered only in its own repository, which goes with the scratch directory.
+    remove_scratch_directory_ignoring_stop_signals(scratch)
 
 check("the default transcript folders are this machine's and the three copies the mirror keeps on ned-box",
       replay.DEFAULT_TRANSCRIPT_DIRECTORIES == [

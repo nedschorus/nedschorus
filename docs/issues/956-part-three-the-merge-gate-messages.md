@@ -1,4 +1,5 @@
 ---
+issue: "[Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956)"
 kind: design
 ---
 
@@ -60,7 +61,7 @@ GATE COULD NOT RUN: usage: merge-gate.sh <pr-number> <expected-head-sha> <review
 
 ```
 GATE COULD NOT RUN: merge-gate.sh takes exactly three arguments and was given {count}.
-Call it as: scripts/merge-gate.sh <pull request number> <the head commit, all 40 characters> <reviewed-since: the submitted_at of your latest review as the merge account, or of the pin if that is later>
+Call it as: scripts/merge-gate.sh <pull request number> <the nc-head-commit, all 40 characters> <reviewed-since: the submitted_at of your latest review as the merge account, or of the pin if that is later>
 ```
 
 #### 2 and 3. The expected head commit is not a full commit hash
@@ -80,12 +81,12 @@ GATE COULD NOT RUN: expected-head-sha is 8 characters, not 40: 0d55173b
 
 ```
 GATE COULD NOT RUN: expected-head-sha is not a full 40-character hex sha: {value}
-Pass the head commit's full hash in lower case, as gh pr view {pr} --json headRefOid --jq .headRefOid prints it, then run the gate again.
+Pass the nc-head-commit's full hash in lower case, as gh pr view {pr} --json headRefOid --jq .headRefOid prints it, then run the gate again.
 ```
 
 ```
 GATE COULD NOT RUN: expected-head-sha is {length} characters, not 40: {value}
-Pass the head commit's full hash in lower case, as gh pr view {pr} --json headRefOid --jq .headRefOid prints it, then run the gate again.
+Pass the nc-head-commit's full hash in lower case, as gh pr view {pr} --json headRefOid --jq .headRefOid prints it, then run the gate again.
 ```
 
 #### 4. reviewed-since is not a time in GitHub's form
@@ -259,9 +260,9 @@ GATE REFUSED (#1074): no APPROVED review found
 
 ```
 GATE REFUSED (#{pr}): no APPROVED review found; the gate prints a merge command only for a commit an approving review covers.
-If the head commit has not been reviewed yet, commission its review, and run the gate again once the head commit is approved.
-If its review found a defect, do not merge until the defect is fixed and the new head commit is approved.
-If its review found no defect, approve the head commit as an account other than the pull request's author: the merge account, or mac-claude when the merge account opened the pull request. Then run the gate again.
+If the nc-head-commit has not been reviewed yet, commission its review, and run the gate again once the nc-head-commit is approved.
+If its review found a defect, do not merge until the defect is fixed and the new nc-head-commit is approved.
+If its review found no defect, approve the nc-head-commit as an account other than the pull request's author: the merge account, or mac-claude when the merge account opened the pull request. Then run the gate again.
 ```
 
 #### 18. The pin records no commit
@@ -320,8 +321,8 @@ GATE REFUSED (#1074): head moved: reviewed 0d55173b2c4e8a9f1b6d3e7a5c9f2b4d8e1a6
 **Proposed text:**
 
 ```
-GATE REFUSED (#{pr}): head moved: you passed {expected}, and the head commit is now {head}.
-If an approving review covers {head}, run the gate again with {head} as the expected head commit and a reviewed-since from after you read that review.
+GATE REFUSED (#{pr}): head moved: you passed {expected}, and the nc-head-commit is now {head}.
+If an approving review covers {head}, run the gate again with {head} as the expected nc-head-commit and a reviewed-since from after you read that review.
 Otherwise, have {head} reviewed and approved, then run the gate again the same way.
 ```
 
@@ -340,7 +341,7 @@ GATE REFUSED (#1074): the approval covers 0d55173b2c4e8a9f1b6d3e7a5c9f2b4d8e1a6c
 **Proposed text:**
 
 ```
-GATE REFUSED (#{pr}): the approval covers {approved} but the head commit is now {head}.
+GATE REFUSED (#{pr}): the approval covers {approved} but the nc-head-commit is now {head}.
 Have {head} reviewed, and approved by an account other than the pull request's author, then run the gate again.
 ```
 
@@ -422,7 +423,7 @@ Then one line, by value:
 
 ```
 UNKNOWN: GitHub has not computed it, or the pull request is already merged or closed. If the pull request is open, run the gate again in a minute; if it still reads UNKNOWN five minutes later, tell the user this message.
-DIRTY: the branch conflicts with main. Tell the pull request's author; the author clears the conflict as CLAUDE.md says, and the new head commit then needs its own approving review.
+DIRTY: the branch conflicts with main. Tell the pull request's author; the author clears the conflict as CLAUDE.md says, and the new nc-head-commit then needs its own approving review.
 BEHIND: the branch is behind main. Tell the user this message.
 BLOCKED: a branch rule on main blocks the merge, such as a required check that failed or is still running. Read the pull request's checks on GitHub: if one is running, run the gate again when it finishes; if one failed, tell the pull request's author; if you find no cause, tell the user this message.
 For any other value, read the pull request on GitHub; if you find no cause, tell the user this message.
@@ -449,7 +450,7 @@ GATE REFUSED (#1074): 1 NEW review(s) since 2026-10-05T15:58:12Z -- read them be
 ```
 GATE REFUSED (#{pr}): {count} inline comment(s) posted or edited since {since} -- read them before merging
 Read everything posted or edited since {since}: the inline comments, the issue comments and the reviews.
-If any raises a finding, do not merge until the finding is fixed, or answered with a reason that shows it does not hold; a fix moves the head commit, which then needs its own approving review.
+If any raises a finding, do not merge until the finding is fixed, or answered with a reason that shows it does not hold; a fix moves the nc-head-commit, which then needs its own approving review.
 When nothing is left open, post a review as the merge account saying what you read, check that nothing was posted between your reading and that review; if something was, read it and repeat from the first line. Then run the gate again with the review's submitted_at as reviewed-since.
 ```
 
