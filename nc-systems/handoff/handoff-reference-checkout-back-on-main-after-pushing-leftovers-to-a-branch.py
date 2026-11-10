@@ -22,14 +22,18 @@ The program:
   if there are any;
 - pushes every local leftovers branch to origin, and deletes the local copy of each one pushed;
 - when HEAD is not on main, or was moved off it to save leftovers, checks that origin/main or a
-  leftovers branch holds HEAD's commit, then runs `git switch --no-overwrite-ignore -C main
+  leftovers branch holds HEAD's commit, and when neither does, as when another run of this
+  program committed onto main after this one looked for leftovers, saves that commit on a new
+  leftovers branch and pushes it as above; then runs `git switch --no-overwrite-ignore -C main
   origin/main`, which puts the local main at origin/main and checks it out, whether or not every
   push succeeded, because every agent-seat's git hooks and the cron jobs run from this checkout;
   and then runs the clone's post-merge hook, with ORIG_HEAD at the commit HEAD left, as a merge
-  would have, since the switch runs none. Until the hook succeeds, a file in the clone's git
-  directory keeps that commit, and each later run runs the hook again with it;
+  would have, since the switch runs none. Until the hook succeeds, the file
+  ~/Projects/nedschorus/.git/handoff-reference-checkout-failed-post-merge-hook-orig-head-to-rerun,
+  in the clone's git directory, keeps that commit, and each later run runs the hook again with it;
 - fast-forwards to origin/main and checks that HEAD is origin/main with no changed tracked file,
-  with the same shared function as the restart program's step 0.
+  with the same shared function as step 0 of the restart program,
+  nc-systems/handoff/handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout.py.
 It prints the pushed leftovers branches, or that there were none. On a checkout already on main, at
 origin/main, with nothing uncommitted, no local leftovers branch and no post-merge hook still to
 run, it changes nothing, so it can be run again to check a fix.
@@ -45,16 +49,16 @@ What it does not handle:
 
 How it fails: it prints what failed, with what git or the hook printed, to standard error and exits
 1. A failed fetch, or local main's own commits, change nothing. Any other failed step stops the
-program, except a failed push, which still lets the checkout go back on main: the unpushed branch
+program, except a failed push of a leftovers branch, the new one that saves HEAD's commit just
+before the switch included, which still lets the checkout go back on main: the unpushed branch
 stays in the checkout, and the message names it and its commit; run again, the program pushes that
 same branch. Every failure after the pushes is reported together with each failed push before it.
-When neither origin/main nor a leftovers branch holds HEAD's commit, as when another run of this
-program committed onto main at the same moment, the program fails without switching; run again, it
-saves that commit on a leftovers branch. A failed post-merge hook leaves the checkout on main, its
-message is the hook's, and the next run runs the hook again. The push skips the clone's pre-push hook, so leftovers that conflict with
-origin/main, the usual state of a stuck reference-checkout, are pushed all the same. It changes the
-clone every agent-seat's worktrees hang off, but moves main only after a branch holds whatever main
-is moved away from.
+A failed post-merge hook leaves the checkout on main, the program's message quotes what the hook
+printed, and the next run runs the hook again. A failed read of the pending file stops the program
+before the switch; a failed write or removal of it is reported, and the run goes on. The push
+skips the clone's pre-push hook, so leftovers that conflict with origin/main, the usual state of a
+stuck reference-checkout, are pushed all the same. It changes the clone every agent-seat's
+worktrees hang off, but moves main only after a branch holds whatever main is moved away from.
 
 Exit status: 0 on main at origin/main with every leftovers branch pushed; 1 a step failed.
 """
@@ -137,38 +141,72 @@ def post_merge_hook_run_as_after_a_merge(checkout: Path, head_before_the_switch:
             f"was put on main; the hook printed:\n{(finished.stdout + finished.stderr).strip()}")
 
 
-def head_held_by_origin_main_or_a_leftovers_branch_or_raise(checkout: Path, head: str) -> None:
-    holders = git(checkout, ["for-each-ref", "--contains", head, "--format=%(refname)",
-                             "refs/remotes/origin/main", f"refs/heads/{LEFTOVERS_BRANCH_PREFIX}*",
-                             f"refs/remotes/origin/{LEFTOVERS_BRANCH_PREFIX}*"])
-    if not holders:
-        raise StepFailed(
-            f"HEAD of {checkout} is at {head}, which neither origin/main nor a leftovers branch "
-            "holds, so putting main at origin/main would lose it; the checkout was not switched. "
-            f"Run this program again, as python3 {Path(__file__).resolve()}: it saves that commit "
-            "on a leftovers branch first.")
+def leftovers_branch_push_or_record_failure(checkout: Path, branch: str, pushed: list,
+                                            problems: list) -> None:
+    # The pre-push hook's conflict check would refuse the very leftovers this saves; the branch
+    # is an archive, never a pull request's head.
+    try:
+        git(checkout, ["push", "--no-verify", "origin", f"refs/heads/{branch}"],
+            timeout_seconds=TREE_STEP_TIMEOUT_SECONDS)
+        pushed.append(branch)
+    except StepFailed as error:
+        problems.append(push_failure_text(checkout, branch, error))
+
+
+def head_held_by_origin_main_or_a_leftovers_branch(checkout: Path, head: str) -> bool:
+    return bool(git(checkout, ["for-each-ref", "--contains", head, "--format=%(refname)",
+                               "refs/remotes/origin/main", f"refs/heads/{LEFTOVERS_BRANCH_PREFIX}*",
+                               f"refs/remotes/origin/{LEFTOVERS_BRANCH_PREFIX}*"]))
 
 
 def switch_to_main_run_pending_post_merge_hook_delete_pushed_leftovers_branches_and_fast_forward(
-        checkout: Path, switch_to_main: bool, pushed: list, problems: list) -> str:
-    """Return origin/main's commit; append a post-merge hook failure to problems; raise StepFailed."""
+        checkout: Path, switch_to_main: bool, today: date, pushed: list, problems: list) -> str:
+    """Return origin/main's commit; append a failed push, a post-merge hook failure or a failed
+    write or removal of the pending file to problems; raise StepFailed."""
     pending_file = Path(git(checkout, ["rev-parse", "--path-format=absolute", "--git-path",
                                        FAILED_POST_MERGE_HOOK_ORIG_HEAD_FILE_NAME]))
-    orig_head = pending_file.read_text().strip() if pending_file.is_file() else ""
+    try:
+        orig_head = pending_file.read_text().strip()
+    except FileNotFoundError:
+        orig_head = ""
+    except OSError as error:
+        raise StepFailed(
+            f"could not read {pending_file}, which keeps the commit the clone's post-merge hook "
+            f"is still to be run with, so the checkout was not switched: {error}\nFix what stopped "
+            f"the read, then run this program again, as python3 {Path(__file__).resolve()}."
+        ) from error
     if switch_to_main:
         head_before_the_switch = git(checkout, ["rev-parse", "HEAD"])
-        head_held_by_origin_main_or_a_leftovers_branch_or_raise(checkout, head_before_the_switch)
+        if not head_held_by_origin_main_or_a_leftovers_branch(checkout, head_before_the_switch):
+            # Another run moved HEAD after this run looked for leftovers, as by committing onto
+            # main; switching main to origin/main would lose that commit.
+            branch = free_leftovers_branch_name(checkout, today)
+            git(checkout, ["branch", branch, head_before_the_switch])
+            leftovers_branch_push_or_record_failure(checkout, branch, pushed, problems)
         git(checkout, ["switch", "--no-overwrite-ignore", "-C", "main", "origin/main"],
             timeout_seconds=TREE_STEP_TIMEOUT_SECONDS)
         if not orig_head and head_before_the_switch != git(checkout, ["rev-parse", "HEAD"]):
             orig_head = head_before_the_switch
     if orig_head:
-        pending_file.write_text(f"{orig_head}\n")
+        try:
+            pending_file.write_text(f"{orig_head}\n")
+        except OSError as error:
+            problems.append(
+                f"could not write {pending_file}, which keeps the commit {orig_head} so that a "
+                f"later run runs the clone's post-merge hook again should it fail: {error}\nThe "
+                "hook was run all the same.")
         hook_failure = post_merge_hook_run_as_after_a_merge(checkout, orig_head)
         if hook_failure:
             problems.append(hook_failure)
         else:
-            pending_file.unlink()
+            try:
+                # A concurrent run that ran the hook too may have removed it already.
+                pending_file.unlink(missing_ok=True)
+            except OSError as error:
+                problems.append(
+                    f"could not remove {pending_file} after the clone's post-merge hook "
+                    f"succeeded: {error}\nRemove it by hand: until it is gone, each run of this "
+                    "program runs the hook again.")
     for branch in pushed:
         git(checkout, ["branch", "-D", "-q", branch])
     return reference_checkout_steps.fast_forward_to_origin_main_and_check_or_raise(checkout)
@@ -198,17 +236,10 @@ def put_reference_checkout_back_on_main(checkout: Path, today: date):
             git(checkout, ["commit", "-q", "-m", LEFTOVERS_COMMIT_MESSAGE])
     problems, pushed = [], []
     for branch in local_leftovers_branches(checkout):
-        # The pre-push hook's conflict check would refuse the very leftovers this saves; the branch
-        # is an archive, never a pull request's head.
-        try:
-            git(checkout, ["push", "--no-verify", "origin", f"refs/heads/{branch}"],
-                timeout_seconds=TREE_STEP_TIMEOUT_SECONDS)
-            pushed.append(branch)
-        except StepFailed as error:
-            problems.append(push_failure_text(checkout, branch, error))
+        leftovers_branch_push_or_record_failure(checkout, branch, pushed, problems)
     try:
         main = switch_to_main_run_pending_post_merge_hook_delete_pushed_leftovers_branches_and_fast_forward(
-            checkout, switch_to_main, pushed, problems)
+            checkout, switch_to_main, today, pushed, problems)
     except StepFailed as error:
         raise StepFailed("\n".join(problems + [str(error)])) from error
     if problems:

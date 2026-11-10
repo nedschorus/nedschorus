@@ -1043,6 +1043,14 @@ check("each child shell says its kind: a subshell, a substitution, or a pipeline
           [("pipeline stage", True)], [("pipeline stage", False)]]
       and [f.inside_substitution() for f in found] == [False, True, False, False],
       [(list(f), f.child_shell) for f in found])
+found = reader.simple_commands(
+    "until ! kill -0 $(pgrep -f x); do sleep 5; done; while `pgrep -af y`; do :; done; pgrep -f z")
+check("a command in a while or until loop's condition, a substitution there included, is marked; one in the "
+      "loop's body or outside a loop is not",
+      [(f[0], f.in_while_or_until_loop_condition) for f in found]
+      == [("pgrep", True), ("kill", True), ("sleep", False), ("pgrep", True), ("`pgrep -af y`", True),
+          (":", False), ("pgrep", False)],
+      [(list(f), f.in_while_or_until_loop_condition) for f in found])
 found = reader.simple_commands("x | cd /a && ls >o | head")
 check("each stage of both pipelines in `x | cd /a && ls >o | head` runs in a child shell",
       all(f.child_shell != () for f in found) and found[2].redirects == [(">", "o")],
