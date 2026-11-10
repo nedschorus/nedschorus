@@ -111,5 +111,4 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **user-approved-change** — a specific change the user approved before an agent makes it, approved-by-walk or approved in conversation, as `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` defines it.
 - **user-block** — a refusal that only the user's approval, quoted into the marker the refusal names, clears.
 - **user-ruling** — a decision by the user, recorded where it applies in the form (user-ruled YYYY-MM-DD), or recorded with his words and its date elsewhere, such as in walk-minutes.
-- **walk-runner** — the program that will run an approval-walk's bookkeeping: it hands the agent the current item, counts its words, and records each ruling in the walk-minutes.
 - **work-snapshot** — a git commit, kept under `refs/work-snapshots/` and never on a branch, that copies one worktree's uncommitted changes so they survive a crash; an agent-seat's leftover work-snapshots that hold lost work are listed in the initial-agent-instructions of its next agent-session, and by `python3 nc-systems/handoff/uncommitted-work-snapshots.py list --agent-seat <name>`.

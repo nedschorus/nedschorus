@@ -1919,7 +1919,7 @@ def test_a_note_naming_later_items_with_approved_as_a_modifier_does_not_skip_the
           described(closed) + case.minutes.read_text())
 
 
-# Item 5.2.2, once deferred, sits just before the summary item, as the walk-runner moves a deferred item. Its
+# Item 5.2.2, once deferred, sits just before the summary item, as the walk check program moves a deferred item. Its
 # headings say `of 24`; close counts M as 3, the whole numbers 5, 6 and 7, as it does for every dotted walk below.
 SUB_ITEMS_DOCUMENT = """# A walk whose item 5.2 has sub-items
 
