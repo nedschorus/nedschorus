@@ -3,7 +3,10 @@
 
 Real git in a scratch directory: a repository whose nc-head-commit is checked
 out, detached, as wt/pr7-head under a scratch review worktrees directory,
-as step 1 builds it, with the brief step 2 writes beside it. A stand-in claude
+as step 1 builds it, with the brief step 2 writes beside it, and a review
+tools worktree at main that holds only main's .claude/settings.json, whose
+commands name the project directory in each form a command can, each running
+a script the head worktree does not have. A stand-in claude
 and a stand-in gh go first on PATH, and HOME holds a mac-claude token file, so
 no case runs a model or reaches GitHub. The stand-in claude logs its
 arguments, standard input, directory and environment, and answers as
@@ -32,6 +35,7 @@ import importlib.util
 import io
 import json
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -53,6 +57,30 @@ PROGRAM = Path(__file__).with_name(
     "merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py")
 SCHEMA = Path(__file__).with_name("merge-lane-pull-request-claude-reviewer-review-schema.json")
 BRIEF = "Review pull request 7.\nThe brief's last line.\n"
+MAIN_PROJECT_SETTINGS = {
+    "env": {"DISABLE_AUTOUPDATER": "1"},
+    "statusLine": {"type": "command",
+                   "command": 'python3 "${CLAUDE_PROJECT_DIR:-.}"/scripts/status-line.py'},
+    "hooks": {"UserPromptSubmit": [{"hooks": [
+        {"type": "command",
+         "command": 'python3 "$CLAUDE_PROJECT_DIR"/scripts/user-alerts-fixed-on-main-hook.py'}]}],
+              "Stop": [{"matcher": "", "hooks": [
+        {"type": "command",
+         "command": 'python3 "${CLAUDE_PROJECT_DIR}"/scripts/stop-hook.py --quiet'}]}]}}
+
+
+def expected_main_project_settings_for_reviewer(main_worktree):
+    """MAIN_PROJECT_SETTINGS as the reviewer must get them: every command runs main's script."""
+    return {
+        "env": {"DISABLE_AUTOUPDATER": "1"},
+        "statusLine": {"type": "command",
+                       "command": f'python3 "{main_worktree}"/scripts/status-line.py'},
+        "hooks": {"UserPromptSubmit": [{"hooks": [
+            {"type": "command",
+             "command": f'python3 "{main_worktree}"/scripts/user-alerts-fixed-on-main-hook.py'}]}],
+                  "Stop": [{"matcher": "", "hooks": [
+            {"type": "command",
+             "command": f'python3 "{main_worktree}"/scripts/stop-hook.py --quiet'}]}]}}
 GIT_ENVIRONMENT = {
     **{key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
     "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@example.invalid",
@@ -68,7 +96,8 @@ prompt = sys.stdin.read()
 with open(state / "claude-calls.jsonl", "a") as log:
     log.write(json.dumps({"argv": sys.argv[1:], "stdin": prompt, "cwd": os.getcwd(),
                           "env": {key: os.environ.get(key) for key in
-                                  ("GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR")}}) + "\n")
+                                  ("GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR",
+                                   "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD")}}) + "\n")
 subprocess.run(["git", "worktree", "add", "-q", "--detach",
                 str(state / "reviewer-scratch" / "wt" / "mac-claude-pr7-mutation"), "HEAD"],
                check=True, capture_output=True)
@@ -240,6 +269,10 @@ class Case:
         git(repository, "worktree", "add", "-q", "--detach", str(self.head_worktree), self.head)
         (self.helpers / "briefs").mkdir(parents=True)
         (self.helpers / "briefs" / "brief-7a-mac-claude.md").write_text(BRIEF)
+        self.main_worktree = self.helpers / "wt" / "main"
+        self.main_settings_file = self.main_worktree / ".claude" / "settings.json"
+        self.main_settings_file.parent.mkdir(parents=True)
+        self.main_settings_file.write_text(json.dumps(MAIN_PROJECT_SETTINGS))
         (home / ".config" / "nedschorus").mkdir(parents=True)
         (home / ".config" / "nedschorus" / "mac-claude.token").write_text("stand-in-token\n")
         for name, text in (("claude", FAKE_CLAUDE), ("gh", FAKE_GH)):
@@ -258,7 +291,7 @@ class Case:
         return [sys.executable, str(PROGRAM), "7", tag, head or self.head, *options,
                 "--merge-lane-worktrees-and-outputs-directory", str(self.helpers),
                 "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(self.helpers)),
-                "--review-tools-worktree-at-main", str(self.helpers / "wt" / "main")]
+                "--review-tools-worktree-at-main", str(self.main_worktree)]
 
     def run(self, mode="valid", *options, tag="7a", head=None, **environment):
         completed = subprocess.run(
@@ -438,13 +471,19 @@ def main():
         check("a valid answer is posted as mac-claude, and the step exits 0",
               lambda: case.code == 0 and case.posted()
               and "PR 7: Claude review posted, verdict APPROVE." in case.stdout, case.detail)
-        check("claude runs headless with no claude.ai connectors, dontAsk, the schema, JSON output "
+        main_settings_argument = json.dumps(
+            {**expected_main_project_settings_for_reviewer(case.main_worktree), "advisorModel": ""})
+        check("claude runs headless with no claude.ai connectors, dontAsk, main's project settings "
+              "and hooks in place of the head's, the head's CLAUDE.md, the schema, JSON output "
               "and the six tools, and no prompt argument after them",
               lambda: call.get("argv") == ["-p", "--strict-mcp-config", "--permission-mode", "dontAsk",
-                                           "--settings", '{"advisorModel": ""}',
+                                           "--settings", main_settings_argument,
+                                           "--setting-sources", "user",
+                                           "--add-dir", str(case.head_worktree),
                                            "--json-schema", SCHEMA.read_text(),
                                            "--output-format", "json", "--allowedTools", "Read", "Grep",
-                                           "Glob", "Bash", "WebFetch", "WebSearch"],
+                                           "Glob", "Bash", "WebFetch", "WebSearch"]
+              and call.get("env", {}).get("CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD") == "1",
               case.detail)
         check("the brief is the reviewer's standard input, and it runs in the head worktree",
               lambda: call.get("stdin") == BRIEF and call.get("cwd") == str(case.head_worktree),
@@ -475,9 +514,12 @@ def main():
               == f"session-77\n{case.head_worktree}\n", case.detail)
         check("the follow-up command is printed whole, with where to run it",
               lambda: f"run from {case.head_worktree}" in case.stdout
-              and "claude -p --strict-mcp-config --permission-mode dontAsk "
-                  "--settings '{\"advisorModel\": \"\"}' --resume session-77 "
-                  "--allowedTools Read Grep Glob Bash WebFetch WebSearch" in case.stdout, case.detail)
+              and shlex.join(["CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1", "claude", "-p",
+                              "--strict-mcp-config", "--permission-mode", "dontAsk",
+                              "--settings", main_settings_argument, "--setting-sources", "user",
+                              "--add-dir", str(case.head_worktree), "--resume", "session-77",
+                              "--allowedTools", "Read", "Grep", "Glob", "Bash", "WebFetch",
+                              "WebSearch"]) in case.stdout, case.detail)
         check("each refused tool call is printed",
               lambda: "the reviewer was refused a Bash call it asked for: rm -rf /tmp/x"
               in case.stdout, case.detail)
@@ -662,6 +704,36 @@ def main():
         check("a head worktree not at the nc-head-commit refuses with exit 2 before the reviewer runs",
               lambda: case.code == 2 and not case.claude_calls
               and "is not at the nc-head-commit" in case.stdout, case.detail)
+
+        for name, settings_text, expected in (
+                ("missing", None, "could not read"),
+                ("not JSON", "{", "is not JSON ("),
+                ("not a JSON object", "[]", "is JSON but not a JSON object"),
+                ("naming the project directory in a form this program does not rewrite",
+                 json.dumps({"hooks": {"Stop": [{"hooks": [
+                     {"type": "command",
+                      "command": 'python3 "${CLAUDE_PROJECT_DIR%/}"/scripts/stop-hook.py'}]}]}}),
+                 "still names CLAUDE_PROJECT_DIR")):
+            case = Case(scratch)
+            if settings_text is None:
+                case.main_settings_file.unlink()
+            else:
+                case.main_settings_file.write_text(settings_text)
+            case.run("valid")
+            check(f"main's project settings file {name} refuses with exit 2 before the reviewer "
+                  f"runs",
+                  lambda: case.code == 2 and not case.claude_calls
+                  and "PR 7: Claude review not run: " in case.stdout
+                  and str(case.main_settings_file) in case.stdout
+                  and expected in case.stdout, case.detail)
+
+        repository_settings = load_program().claude_code_project_settings_read_from_review_tools_worktree_at_main_with_claude_project_dir_replaced_by_its_path(
+            PROGRAM.resolve().parents[1])
+        check("this repository's own .claude/settings.json is rewritten whole, so no command in "
+              "it runs a head worktree's script",
+              lambda: "CLAUDE_PROJECT_DIR" not in json.dumps(repository_settings)
+              and str(PROGRAM.resolve().parents[1]) in json.dumps(repository_settings["hooks"]),
+              json.dumps(repository_settings)[:2000])
 
         schema_driven_cases(scratch)
     finally:
