@@ -1154,6 +1154,55 @@ def test_restore_refusals_change_nothing():
           "the merge refusal names the worktree and the operation, and keeps the ref", lines)
 
 
+def git_client_side_hooks_installed_for_agent_seat(main, agent_seat):
+    """Set up main's clone as a launcher-started agent-seat's clone on ned-box: core.hooksPath
+    names the repository's git-client-side hooks, the clone's config holds the tripwire identity
+    the pre-commit hook asks for, the environment names agent_seat as a launcher does, and HOME
+    holds the session-handoff that makes the post-checkout hook take agent_seat for an
+    agent-seat. Returns the function that undoes the environment and the HOME records."""
+    git(main, "config", "core.hooksPath", str(REPOSITORY_ROOT / "scripts" / "git-client-side-hooks"))
+    git(main, "config", "user.name", "unconfigured-agent")
+    git(main, "config", "user.email", "unconfigured-agent@nedschorus.invalid")
+    home = Path(os.environ["HOME"])
+    (home / "agents" / agent_seat).mkdir(parents=True, exist_ok=True)
+    record = home / ".claude" / "handoffs" / f"{agent_seat}-handoff.md"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text("# session-handoff\n")
+    identity = {"GIT_AUTHOR_NAME": agent_seat, "GIT_COMMITTER_NAME": agent_seat,
+                "GIT_AUTHOR_EMAIL": f"{agent_seat}@nedschorus.invalid",
+                "GIT_COMMITTER_EMAIL": f"{agent_seat}@nedschorus.invalid"}
+    real = {name: os.environ.get(name) for name in identity}
+    os.environ.update(identity)
+
+    def undo():
+        for name, value in real.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        record.unlink(missing_ok=True)
+        shutil.rmtree(home / "agents" / agent_seat, ignore_errors=True)
+    return undo
+
+
+def test_restore_accepts_the_owner_file_git_worktree_add_wrote_naming_its_agent_seat():
+    empty_restore_task_list()
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "hook-owner", {"new.txt": "work\n"}, "9-6")
+    undo = git_client_side_hooks_installed_for_agent_seat(main, RESTORE_ENVIRONMENT["GIT_AUTHOR_NAME"])
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        undo()
+    target = restored_worktree_of(main, ref)
+    owner = json.loads(owner_file_of(target).read_text()) if target.is_dir() else None
+    check(code == 0 and owner == {"owner_kind": "agent-seat", "agent_seat": "seat-five"}
+          and snapshots.current_ref_value(main, ref) is None
+          and git(target, "log", "-1", "--format=%s") == f"Restore work from {ref}",
+          "restore accepts the owner file scripts/git-client-side-hooks/post-checkout wrote during "
+          "git worktree add naming restore's agent-seat, and restores", lines)
+
+
 def test_restore_step_failures():
     def failing_case(name, prepare, expected_text, keep=("new.txt",), files=None):
         empty_restore_task_list()
@@ -1167,7 +1216,9 @@ def test_restore_step_failures():
               and not target.exists()
               and snapshots.current_ref_value(main, f"refs/heads/{branch}") is None
               and snapshots.current_ref_value(main, ref) is not None and not restored_branch_tasks()
-              and not any("could not be" in line for line in lines),
+              and not any("could not be" in line for line in lines)
+              and f"Neither the worktree {target} nor the branch {branch} is left, so "
+                  f"restore can be run again once the cause is fixed." in lines,
               f"restore {name}: removes the worktree and the branch it made and keeps the ref", lines)
         if undo:
             undo()
@@ -1222,6 +1273,15 @@ def test_restore_step_failures():
     failing_case("whose owner file cannot be written", owner_file_write_fails,
                  "writing the owner file of")
 
+    def worktree_add_writes_another_seats_owner_file(main):
+        return git_client_side_hooks_installed_for_agent_seat(main, "seat-six")
+
+    failing_case("whose git worktree add wrote an owner file naming another agent-seat",
+                 worktree_add_writes_another_seats_owner_file,
+                 '{"owner_kind": "agent-seat", "agent_seat": "seat-six"}, where restore names '
+                 '{"owner_kind": "agent-seat", "agent_seat": "seat-five"}. '
+                 'scripts/git-client-side-hooks/post-checkout writes that file')
+
     real_run_git = snapshots.run_git
 
     def undo_fails(main):
@@ -1245,7 +1305,8 @@ def test_restore_step_failures():
     check(code == 1 and any(f"remove it with: git worktree remove --force --force {target}" in line
                             for line in lines)
           and any(f"delete it with: git branch -D {branch}" in line for line in lines)
-          and snapshots.current_ref_value(main, ref) is not None,
+          and snapshots.current_ref_value(main, ref) is not None
+          and not any(line.startswith("Neither the worktree") for line in lines),
           "a worktree or branch restore cannot remove is named, with the command that removes it",
           lines)
 
@@ -2149,6 +2210,7 @@ def main():
                      test_supervisor_appends_the_list, test_restore_a_subset,
                      test_task_written_beside_one_claude_code_writes_at_the_same_moment,
                      test_restore_refusals_change_nothing, test_restore_step_failures,
+                     test_restore_accepts_the_owner_file_git_worktree_add_wrote_naming_its_agent_seat,
                      test_restore_task_and_ref_deletion_failures, test_discard,
                      test_command_line_of_restore_and_discard, test_entries_end_with_their_command,
                      test_the_cleaner_closes_a_restored_branch_task_by_its_commit,

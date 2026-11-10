@@ -854,7 +854,8 @@ def restore_refusal(repo, snapshot, keep, environment):
 
 
 def restore_undo(repo, worktree, branch, out):
-    """Remove the worktree and the branch restore made; name each that cannot be removed."""
+    """Remove the worktree and the branch restore made; name each that cannot be removed, and
+    say so when neither is left."""
     if worktree.exists():
         removal = run_git(repo, "worktree", "remove", "--force", "--force", str(worktree))
         if removal.returncode:
@@ -866,6 +867,9 @@ def restore_undo(repo, worktree, branch, out):
         if deletion.returncode:
             out(f"The branch {branch} restore made could not be deleted "
                 f"({git_failure_text(deletion)}); delete it with: git branch -D {branch}")
+    if not worktree.exists() and current_ref_value(repo, f"refs/heads/{branch}") is None:
+        out(f"Neither the worktree {worktree} nor the branch {branch} is left, "
+            f"so restore can be run again once the cause is fixed.")
 
 
 def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
@@ -892,8 +896,22 @@ def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
     if added.returncode:
         return undo_after(f"git worktree add -b {branch} {worktree} {ref}^", git_failure_text(added))
     owners = owner_file_module()
+    owner = {"owner_kind": owners.OWNER_AGENT_SEAT, "agent_seat": agent_seat}
     try:
-        owners.worktree_owner_file_write(worktree, owners.OWNER_AGENT_SEAT, agent_seat)
+        try:
+            owners.worktree_owner_file_write(worktree, owners.OWNER_AGENT_SEAT, agent_seat)
+        except owners.WorktreeOwnerFileAlreadyExistsError:
+            # The post-checkout hook, in a clone whose core.hooksPath names it, writes the owner
+            # file during `git worktree add`, naming GIT_AUTHOR_NAME's agent-seat as restore does.
+            written = owners.worktree_owner_file_read(worktree)
+            if written != owner:
+                raise owners.WorktreeOwnerFileError(
+                    f"git worktree add left an owner file naming {json.dumps(written)}, where "
+                    f"restore names {json.dumps(owner)}. scripts/git-client-side-hooks/post-checkout "
+                    f"writes that file, naming GIT_AUTHOR_NAME's agent-seat as restore does, and "
+                    f"restore cannot tell why the two differ. restore never overwrites an owner file "
+                    f"that names another owner, because scripts/clean-worktrees.py decides from the "
+                    f"owner when to remove the worktree") from None
     except Exception as error:
         return undo_after(f"writing the owner file of {worktree}", f"{type(error).__name__}: {error}")
     diff = subprocess.run(["git", "-C", str(worktree), "diff", "--binary", f"{ref}^", ref, "--",
