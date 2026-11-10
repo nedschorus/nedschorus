@@ -18,18 +18,20 @@ whether a draft was ever ready, which it was when its timeline holds a ready_for
 or a convert_to_draft event, the only record left by a pull request opened ready and later
 turned back into a draft.
 git rejects an unforced non-fast-forward update before this hook runs, so the updates this
-check refuses are forced ones, whatever command spelling sent them.
+check refuses are forced ones, whatever command spelling sent them. GitHub's ruleset refuses
+every non-fast-forward update to any branch, so this check only refuses one first, with the
+remedy; the ruleset does not refuse a deletion.
 
 Only branches on origin are checked. A new branch and a fast-forward are let through without
 asking GitHub. Every other update to a branch is let through only when `gh pr list` answers
 that the branch has no open pull request, or the rebase-or-replace answer for its open pull
-request is rebase. A deletion is let through only when the
+request is rebase; GitHub then refuses it. A deletion is let through only when the
 branch has no open pull request. When gh cannot answer either question, the push is refused,
 because a forced update cannot be undone by the agent that sent it. A remote commit
 missing from the local repository cannot be shown to be an ancestor, so the update counts as
 not a fast-forward.
 
-A forced update this check lets through goes through only after its replaced commit is saved
+A forced update this check lets through is sent only after its replaced commit is saved
 under refs/force-pushed-old-heads/<branch>/<commit hash>, fetched from origin first when this
 repository lacks it; when it cannot be saved, the push is refused. Nothing deletes these refs.
 A push made with --no-verify skips this hook, and so skips the save.
