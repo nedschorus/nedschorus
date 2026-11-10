@@ -1220,6 +1220,32 @@ PULL_REQUEST_2620_MERGE_LANE_2_COMMENTS = [
      "body": ('The continuation-join line `elif comments: comments[-1]["body"] += "\\n" + line` has no test: replacing it with `elif False: pass` leaves both test files passing (mac-claude, mutant M4). A round-trip case with a multi-line comment on a line outside the diff would kill it.')}]
 
 
+def moved_into_body_cases(root, repository, base, frozen_head):
+    """merge-lane-2's review whose only Block the review poster moved into the body, being outside the diff,
+    beside the commissioned reviewer's inline Block, which merge-lane-2 graded fix-next."""
+    reviewer = review(state="COMMENTED", review_id=20, commit_id=frozen_head, login="mac-claude", body="REQUEST_CHANGES")
+    grading_body = ("REQUEST_CHANGES\n\n**Blocking: 1**\n\nmerge-lane-2's graded review.\n\n"
+                    "Comments on lines outside this pull request's diff:\n"
+                    "- `setup.py:3`: **Blocks** setup.py drops the exit code.\n  Second line of the finding.\n"
+                    "- `setup.py:9`: **fix-next** a note.")
+    grading = review(review_id=21, commit_id=frozen_head, body=grading_body)
+    routes = {**routes_for(frozen_head, [reviewer, grading],
+                           comments=[comment("run.py", "**fix-next** the reviewer's finding.", line=40, comment_id=33)],
+                           review_id=21),
+              **comments_route(20, [comment("run.py", "**Blocks.** the reviewer's finding.", line=40, comment_id=31)])}
+    code, out, err = run(root, repository, routes)
+    check("a Block merge-lane-2's review moved into its body refuses the brief, naming it, though the other "
+          "reviews' Blocks match the stated count",
+          code == 1 and "setup.py:3" in err and "setup.py:9" not in err and "Blocking findings" not in out, err + out)
+
+    moved_fix_next = dict(routes, **{REVIEWS: {"stdout": lines([reviewer, dict(grading, body=grading_body.replace(
+        "**Blocks** setup.py", "**fix-next** setup.py"))])}})
+    code, out, err = run(root, repository, moved_fix_next)
+    check("a moved comment that does not block leaves the brief to the stated count",
+          code == 0 and "Blocking findings (1)" in out, err + out)
+    del base
+
+
 def stated_count_position_cases(root, repository, base, frozen_head):
     """Pull request 2620's round 1, its reviews and their comments as GitHub returned them, in order.
 
@@ -1972,6 +1998,7 @@ case("commissioned reviewer", commissioned_reviewer_cases)
 case("split review", split_review_cases)
 case("rounds on one head", rounds_on_one_head_cases)
 case("stated count position", stated_count_position_cases)
+case("moved into body", moved_into_body_cases)
 case("replaces", replaces_cases)
 print(f"{'FAILED' if failures else 'PASSED'}: {len(failures)} failed")
 sys.exit(1 if failures else 0)

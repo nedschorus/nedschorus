@@ -63,8 +63,8 @@ under a heading, as `path:line: comment`, each line of the comment after its
 first indented, so that no line of a comment's text can be read back as the
 start of another; the success line ends with how many were moved. A file whose diff GitHub does not show, such as a binary
 file, takes no inline comments. A must-fix-now comment moved into the body
-still counts in N but carries no inline mark, so the fix-round program's count
-check refuses that round instead of missing the finding.
+still counts in N but carries no inline mark; the fix-round program refuses a
+round whose review's body holds one, instead of missing the finding.
 
 The body starts with a line APPROVE or REQUEST_CHANGES, so the verdict shows
 even when the review is posted as a comment. The posted review is then read
@@ -113,9 +113,9 @@ NIT_CATEGORY = "fix-in-maintenance"
 BLOCKING_MARK = "**Blocks** "
 NON_BLOCKING_CATEGORY_MARK_FORMAT = "**{category}** "
 BLOCKING_COUNT_FORMAT = "**Blocking: {count}**"
-OUTSIDE_THE_DIFF_HEADING = "Comments on lines outside this pull request's diff:"
+OUTSIDE_THE_DIFF_HEADING = fix_round.OUTSIDE_THE_DIFF_HEADING
 OUTSIDE_THE_DIFF_LINE_FORMAT = "- `{path}:{line}`: {body}"
-OUTSIDE_THE_DIFF_LINE_PATTERN = re.compile(r"^- `(?P<path>[^`]+):(?P<line>\d+)`: (?P<body>.*)$")
+OUTSIDE_THE_DIFF_LINE_PATTERN = fix_round.OUTSIDE_THE_DIFF_LINE_PATTERN
 # Two spaces also keep a continuation line inside its list item when GitHub renders the body.
 OUTSIDE_THE_DIFF_CONTINUATION_INDENT = "  "
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
