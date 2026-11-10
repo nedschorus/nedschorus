@@ -2011,7 +2011,7 @@ with tempfile.TemporaryDirectory() as notes_scratch:
     (diff_fails / "git").write_text(
         "#!/bin/sh\n"
         'for argument in "$@"; do\n'
-        '  if [ "$argument" = "--name-only" ]; then\n'
+        '  if [ "$1" = "diff" ] && [ "$argument" = "--name-only" ]; then\n'
         '    echo "fatal: shimmed diff failure" >&2; exit 128\n'
         "  fi\n"
         "done\n"
@@ -2707,6 +2707,116 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
           run.returncode == 0 and INJECTED_STDERR in run.stdout
           and "--reference-pull --repo" in run.stdout and "once more." in run.stdout
           and "Nothing needs rerunning" not in run.stdout, run.stdout + run.stderr)
+
+# ---------------------------------------------------------------------------
+# An IGNORED file at a path origin/main tracks. `git rebase` replaces such a
+# file with main's copy and exits 0, and has no --no-overwrite-ignore to make
+# it refuse, so the hook must not start the rebase while one is there. Three
+# placements lose the file: the same path; inside a directory where main
+# tracks a file; and a file where main needs a directory.
+# ---------------------------------------------------------------------------
+with tempfile.TemporaryDirectory() as ignored_scratch:
+    ignored_tmp = Path(ignored_scratch).resolve()
+    ignored_real_git = shutil.which("git")
+
+    def never_pushed_seat_with_ignored_files(name):
+        """(origin, seat): a never-pushed seat one own commit ahead, whose
+        .gitignore ignores what main is about to track."""
+        root = ignored_tmp / name
+        origin_repo = root / "origin"
+        origin_repo.mkdir(parents=True)
+        git(["init", "-q", "-b", "main"], origin_repo)
+        configure_identity(origin_repo)
+        commit_file(origin_repo, "shared.txt", "first\n", "add shared.txt")
+        clone = root / "clone"
+        git(["clone", "-q", str(origin_repo), str(clone)], root)
+        configure_identity(clone)
+        seat_path = root / "seat"
+        git(["worktree", "add", "-q", "-b", "seat", str(seat_path), "main"], clone)
+        configure_identity(seat_path)
+        commit_file(seat_path, ".gitignore", "*.log\nbuild-cache/\nlogs\nscratch.txt\n",
+                    "the seat ignores its local files")
+        commit_file(origin_repo, "notes.log", "main's notes\n", "main tracks notes.log")
+        commit_file(origin_repo, "build-cache", "main's file\n", "main tracks build-cache")
+        commit_file(origin_repo, "logs/today.txt", "main's log\n", "main tracks logs/today.txt")
+        (seat_path / "notes.log").write_text("local notes\n", encoding="utf-8")
+        (seat_path / "build-cache").mkdir()
+        (seat_path / "build-cache/inner.txt").write_text("local cache\n", encoding="utf-8")
+        (seat_path / "logs").write_text("local log\n", encoding="utf-8")
+        (seat_path / "scratch.txt").write_text("keep me\n", encoding="utf-8")
+        return origin_repo, seat_path
+
+    def local_files_kept(seat_path):
+        return ((seat_path / "notes.log").read_text(encoding="utf-8") == "local notes\n"
+                and (seat_path / "build-cache/inner.txt").read_text(encoding="utf-8")
+                == "local cache\n"
+                and (seat_path / "logs").read_text(encoding="utf-8") == "local log\n"
+                and (seat_path / "scratch.txt").read_text(encoding="utf-8") == "keep me\n")
+
+    _, ignored_seat = never_pushed_seat_with_ignored_files("collisions")
+    ignored_seat_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], ignored_seat).stdout.strip())
+    head_before = git(["rev-parse", "HEAD"], ignored_seat).stdout.strip()
+    result = run_catch_up(["--cwd", str(ignored_seat)])
+    check("an ignored file at a path origin/main tracks stops the rebase: HEAD unchanged, "
+          "no rebase state",
+          git(["rev-parse", "HEAD"], ignored_seat).stdout.strip() == head_before
+          and rebase_state_dirs_absent(ignored_seat_git_dir), result.stdout + result.stderr)
+    check("and every ignored file keeps its content: the same path, inside a directory "
+          "where main tracks a file, and a file where main needs a directory",
+          local_files_kept(ignored_seat), git(["status", "--ignored"], ignored_seat).stdout)
+    check("the agent is told which ignored files are in the way, and to move them",
+          "Not updated: a rebase onto origin/main would overwrite or delete these ignored "
+          "files, which are in the way of files origin/main tracks: build-cache/inner.txt, "
+          "logs, notes.log." in agent_text(result)
+          and "Move each file listed above out of this checkout" in agent_text(result),
+          agent_text(result))
+    check("an ignored file at a path origin/main does not track is not named",
+          "scratch.txt" not in agent_text(result), agent_text(result))
+    check("and is not told to run `git rebase origin/main` by hand, which would replace them",
+          catch_up_module.REBASE_ADVICE not in agent_text(result)
+          and "Do not run `git rebase origin/main` yourself" in agent_text(result),
+          agent_text(result))
+    check("the ignored-files note ends by saying it is not for the user, byte for byte",
+          agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
+    check("the user hears nothing about it", display_text(result) == "", display_text(result))
+    check("the stamp says why",
+          stamp_of(ignored_seat).get("last_action", "").startswith("rebase ignored-files-in-the-way"),
+          str(stamp_of(ignored_seat)))
+    again = run_catch_up(["--cwd", str(ignored_seat)])
+    check("the ignored files are told once: the next turn end is silent",
+          again.stdout.strip() == "" and local_files_kept(ignored_seat), again.stdout)
+    for moved in ("notes.log", "build-cache/inner.txt", "logs"):
+        (ignored_seat / moved).unlink()
+    (ignored_seat / "build-cache").rmdir()
+    cleared = run_catch_up(["--cwd", str(ignored_seat)])
+    check("with the ignored files moved, the next turn end rebases, keeping the ignored file "
+          "at a path main does not track",
+          "was rebased" in agent_text(cleared)
+          and (ignored_seat / "notes.log").read_text(encoding="utf-8") == "main's notes\n"
+          and (ignored_seat / "logs/today.txt").read_text(encoding="utf-8") == "main's log\n"
+          and (ignored_seat / "scratch.txt").read_text(encoding="utf-8") == "keep me\n",
+          agent_text(cleared) + cleared.stderr)
+
+    # A listing git cannot make is a failure, never "no ignored file in the way".
+    for failing_listing, shell_pattern in (("ls-files", '*" ls-files "*'),
+                                           ("ls-tree", '*" ls-tree "*')):
+        listing_fails = ignored_tmp / f"{failing_listing}-fails-shim"
+        listing_fails.mkdir()
+        (listing_fails / "git").write_text(
+            "#!/bin/sh\n"
+            f'case " $* " in {shell_pattern}) echo "fatal: injected {failing_listing} '
+            'failure" >&2; exit 128;; esac\n'
+            f'exec "{ignored_real_git}" "$@"\n', encoding="utf-8")
+        (listing_fails / "git").chmod(0o755)
+        _, failing_seat = never_pushed_seat_with_ignored_files(f"{failing_listing}-fails")
+        head_before = git(["rev-parse", "HEAD"], failing_seat).stdout.strip()
+        result = run_catch_up(["--cwd", str(failing_seat)], path_prefix=str(listing_fails))
+        check(f"a failed `git {failing_listing}` stops the rebase and keeps every ignored file",
+              git(["rev-parse", "HEAD"], failing_seat).stdout.strip() == head_before
+              and local_files_kept(failing_seat), result.stdout + result.stderr)
+        check(f"and the failed `git {failing_listing}` is reported, git's error included",
+              f"fatal: injected {failing_listing} failure" in result.stdout
+              and "because a git command failed" in result.stdout, result.stdout)
 
 print()
 if failures:
