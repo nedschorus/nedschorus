@@ -9,7 +9,7 @@ the waiting item as settled without showing it to him.
 Usage, from the agent-session's checkout:
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check
       [--obvious | --after-advisor | --disapproved | --deferred | --option N
-       | --part-answer N=ANSWER ... | --moved-on-no-decision | --not-asked KIND|none
+       | --part-answer N=ANSWER ... | --moved-on-no-decision | --not-asked EXCEPTION|none
        | --already-decided USER_RULING | --moved-on REASON]
       --user-reply-as-typed REPLY    (every answer but --not-asked, --already-decided and --moved-on)
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py close
@@ -23,8 +23,12 @@ for O2 or O3, which approve the item's "Option N" paragraph instead of its
 recommendation. R, E and O decide nothing, so the program takes no flag for
 them. --part-answer, given once for each part of an item that holds parts, as
 in `--part-answer 1=A --part-answer 2=D`, gives that part its own answer, A, AO
-or D. Z is not taken for a part, and a part number given twice is refused,
-writing nothing. Two flags record an item the user is not shown, so that no
+or D. Z is not taken for a part. A part number given twice is refused, writing
+nothing, and so is a set of part answers that leaves out a part of the item,
+names a part the item does not hold, or is given for an item that holds no
+parts, the item's parts read as the short-answer hook reads them, from its
+lines that open with `Part N.`: an unanswered part keeps the item waiting,
+with nothing recorded for it. Two flags record an item the user is not shown, so that no
 agent writes a deciding line by hand: --already-decided for an item an earlier
 user-ruling decides as the item recommends, USER_RULING citing that ruling,
 which adds the `#new` texts as A does; and --moved-on for an item the walk
@@ -69,8 +73,10 @@ answer but those five, writing nothing. A
 `#case_against` line that opens with no rating is refused for every answer,
 those five included.
 
-`--not-asked KIND` settles the item without the user, as kind KIND, 1 to 6, of
-the walk-me-through skill's list of items that need no answer, after checking
+`--not-asked EXCEPTION` settles the item without the user, as the exception
+numbered EXCEPTION in the list "Exceptions: changes that need no approval" on
+docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md, any
+but 13, which is the rule that settling an item carries out, after checking
 what code can from the item's evidence lines, each opening with its marker:
 `#not_asked_touches` lists the files the change edits or deletes;
 `#not_asked_test` names the test that fails before a fix and passes after it;
@@ -79,25 +85,30 @@ names a thing removed; `#not_asked_rename` gives the old name, then the new one,
 separated by a space, each in backquotes when it holds a space itself, as in
 #not_asked_rename `instruction guard` `instruction-file guard`; `#not_asked_glossary_term`
 names each glossary term the change puts in, in backquotes when it holds a space;
-`#not_asked_hashtag_marker` names each hashtag marker the change adds. Every kind needs a case against rated none or weak. Kind 1, text caught up,
-needs touches, a source and a `#new` text; kind 2, a code fix, needs touches
-and a test, and every touched file must exist except that test; kind 3, a
-removal, needs touches, and each unused name must appear, by `git grep`, in no
-file outside the touched ones and docs/walk/, or, with no unused line, every
-touched file must be Markdown; kind 4, a rename, needs touches and a rename
-line, the new name as the term of an entry, a line opening `- **<new name>**`
-or, with an alias, `- **<new name> (aka <alias>)**`, in a `*-glossary.md` file,
-and the old name in no file outside the touched ones and docs/walk/; kind 5,
-carrying out a ruling, needs a source; kind 6, a glossary term put in or a
-hashtag marker added, needs touches and a term or a marker line, every touched
-file Markdown and not a `*-glossary.md` file, each term as the term of an entry
-as for kind 4, and each marker, `#` then letters, digits, `_` or `-`, found
-in no file but Markdown, in any letter case, either whole or as a part of it
-that ends just before a `-` or ends with a `_` followed by no letter or digit,
-so that no program reads it, by name or by a pattern such as
-`#case_against_[a-z_]+`; for kinds 1 to 4
-and 6 every touched file but a kind 2 test must exist. An unused or old name is searched for as written and,
-when it has two or more words, with its words joined by hyphens, by underscores
+`#not_asked_hashtag_marker` names each hashtag marker the change adds. Every
+exception needs a case against rated none or weak. Exception 14, text caught
+up, needs touches, a source and a `#new` text; 15, a code fix, needs touches
+and a test, and every touched file must exist except that test; 16, removing
+what nothing uses, needs touches and an unused line, and each unused name must
+appear, by `git grep`, in no file outside the touched ones and docs/walk/; 10,
+history removed from standing instructions, needs touches, every touched file
+Markdown; 7, a rename, needs touches and a rename line, the new name as the
+term of an entry, a line opening `- **<new name>**` or, with an alias,
+`- **<new name> (aka <alias>)**`, in a `*-glossary.md` file, and the old name
+in no file outside the touched ones and docs/walk/; 12, carrying out a
+decision, needs a source; 8, a glossary term put in, needs touches and a term
+line, and 9, a hashtag marker added, needs touches and a marker line; for 8
+and 9 every touched file is Markdown and not a `*-glossary.md` file, each term
+named is the term of an entry as for 7, and each marker named, `#` then
+letters, digits, `_` or `-`, is found in no file but Markdown, in any letter
+case, either whole or as a part of it that ends just before a `-` or ends with
+a `_` followed by no letter or digit, so that no program reads it, by name or
+by a pattern such as `#case_against_[a-z_]+`; 17, prose instructions turned
+into code, needs touches naming at least one Markdown file and at least one
+file that is not Markdown. Every other exception needs touches. For every
+exception but 12, every touched file must exist, except a test of 15 and a
+file of 17 that is not Markdown. An unused or old name is searched for as written and, when it has two
+or more words, with its words joined by hyphens, by underscores
 and by nothing, a run of digits both kept with the letters before it and
 split off as a word of its own; every
 spelling ignores case and matches even inside a longer name, so `poem-list` is
@@ -106,13 +117,13 @@ also found in `poem_list_path`, `POEM_LIST` and `PoemList`, `sha256_of` in
 failed check is refused, writing nothing, with every problem listed; a `git
 grep` that fails is a failure too. Otherwise CHECK fast-reads the `#new` texts as
 for A, writes the line `<item>: settled without asking the user, not asked,
-kind KIND #case_against_<rating> (...)`, and tells the agent to ask the advisor
+exception EXCEPTION #case_against_<rating> (...)`, and tells the agent to ask the advisor
 and judge what code cannot before running CLOSE, which records the item as
 `<accepted>`. The checks cannot tell a case against that names only cost from
 another weak one, or a fix that matches its design from one that does not;
 the agent judges those.
 
-`--not-asked none` settles an item of none of those kinds, only when its
+`--not-asked none` settles an item that is none of those exceptions, only when its
 `#case_against` line rates the case against none. It needs a touches line,
 which may be empty for a change that touches no file, such as doing nothing;
 it refuses a touched file that is not in the checkout, and one the instruction-file guard,
@@ -282,9 +293,13 @@ the new item approved, disapproved or already decided, it also writes the
 already-decided line, with the same outcome, for each item a held-answer line
 holds for it that no close line decides yet; after a deferral, a move on or
 answers to parts, the held item stays waiting, so the walk comes back to it.
-Either way it prints the lines the agent's next message must include, the
-status lines among them, and, when an item waits, the command that gives that
-item its cold-read-fast-read before it is presented.
+Either way, for an answer the user gave, it prints the lines the agent's next
+message must include, the status lines among them; for an item settled
+without showing it, with --not-asked, --already-decided or --moved-on, it
+prints that the item is settled, and the status lines, if any, with no lines
+for that message, since the user need not hear of a settled item; and, when an
+item waits, the command that gives that item its cold-read-fast-read before it
+is presented.
 
 READ AHEAD. When CLOSE names a next item, it also starts the cold-read-fast-read
 of the item the walk would present after that one, found as CLOSE finds the
@@ -379,6 +394,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPOSITORY_TOP = HERE.parents[2]
 WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
+SHORT_ANSWER_HOOK_FILE = HERE / "walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py"
 FAST_READ_PROGRAM = REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-fast-read.py"
 RECORD_SHIPPER_FILE = REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-record-ship.py"
 RECORD_NAMES_FILE = REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-record-names-common.py"
@@ -403,7 +419,33 @@ CASE_AGAINST_LINE = re.compile(rf"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*#case_aga
 CASE_AGAINST_RATING = re.compile(r"(very strong|none|weak|medium|strong)\b", re.I)
 CASE_AGAINST_HASHTAG = " #case_against_{rating}"
 NOT_ASKED_RATINGS = ("none", "weak")
-NOT_ASKED_KINDS = (1, 2, 3, 4, 5, 6)
+APPROVAL_PAGE_PATH = "docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md"
+# The numbered exceptions on APPROVAL_PAGE_PATH, each by the words it opens with; a test fails when the page disagrees.
+NO_APPROVAL_NEEDED_EXCEPTION_OPENING_WORDS_BY_NUMBER = {
+    1: "A user-approved-change.",
+    2: "Deleting a guarded-file,",
+    3: "An obvious-error-fix,",
+    4: "A cosmetic-change;",
+    5: "The wording of a message a program prints,",
+    6: "In prose: renumbering headings, steps or items;",
+    7: "Renaming a page, a file of any kind or a title to a term",
+    8: "Respelling a word or phrase in prose",
+    9: "Adding to prose a hashtag marker that no program reads,",
+    10: "Removing a citation, a date or history from standing instructions,",
+    11: "Rewording a sentence of prose to remove an ambiguity or a contradiction,",
+    12: "Carrying out a decision the user already made:",
+    13: "A change an approval-walk item makes",
+    14: "Changing text to state a cited user-ruling,",
+    15: "A code fix, a hook's or a setting's included,",
+    16: "Removing code, a file or a setting that a program shows nothing uses.",
+    17: "Turning agent-instructions into code",
+}
+(GLOSSARY_RENAME, GLOSSARY_RESPELLING, HASHTAG_MARKER_ADDED, HISTORY_REMOVED, DECISION_CARRIED_OUT,
+ SETTLED_BY_APPROVAL_WALK, TEXT_CAUGHT_UP, CODE_FIX, UNUSED_REMOVED, PROSE_INTO_CODE) = (
+    7, 8, 9, 10, 12, 13, 14, 15, 16, 17)
+NOT_ASKED_EXCEPTIONS = tuple(number for number in NO_APPROVAL_NEEDED_EXCEPTION_OPENING_WORDS_BY_NUMBER if number != SETTLED_BY_APPROVAL_WALK)
+# Walk-minutes closed before the page numbered its exceptions name the walk-me-through skill's six kinds of then.
+OLD_NOT_ASKED_KINDS = (1, 2, 3, 4, 5, 6)
 NOT_ASKED_RATED_NONE = "none"
 INSTRUCTION_FILE_GUARD_FILE = REPOSITORY_TOP / ".claude" / "guard-hooks" / "instruction-file-guard.py"
 OPTION_NUMBERS = (2, 3)
@@ -419,6 +461,7 @@ OBVIOUS_HASHTAG = " #approved_obvious"
 AFTER_ADVISOR_HASHTAG = " #approved_after_advisor"
 APPROVED, DISAPPROVED, DEFERRED, MOVED_ON = "approved", "disapproved", "deferred", "moved on, no decision"
 ALREADY_DECIDED_PREFIX, MOVED_ON_PREFIX = "already decided by ", "moved on, no decision: "
+NOT_ASKED_PREFIX = "not asked, "
 NAVIGATION_WORD_ALONE = re.compile(r"^(?:next|n|continue|go)[.!]*$", re.I)
 OUTCOMES = {APPROVED: "<accepted>", DISAPPROVED: "<rejected>"}
 PART_WORDS = {"A": APPROVED, "AO": APPROVED + OBVIOUS_HASHTAG, "D": DISAPPROVED}
@@ -429,6 +472,20 @@ PART_ARGUMENT_PROBLEM = ("`{value}` is not a part's answer: give the part's numb
                          "`1=A`; a part takes no Z, so a deferral is given to the whole item with --deferred")
 PART_REPEATED = ("nothing written: --part-answer gives {parts} more than one answer.\n"
                  "Run check again giving each part's number once, with the letter the user gave that part.")
+PARTS_NOT_ALL_ANSWERED = (
+    "nothing written: {item} holds parts {parts}, and --part-answer {problem}. A part left unanswered keeps the "
+    "item open, so check records no answer to any of its parts.\n"
+    "If the user has answered every part: run check again with one --part-answer for each part, with the letter "
+    "he gave it.\n"
+    "If he has not: ask him to answer each part he left unanswered, and run check once he has answered every "
+    "part.")
+PARTS_UNANSWERED = "leaves {parts} unanswered"
+PARTS_NOT_HELD = "answers {parts}, which the item does not hold"
+NO_PARTS_HELD = (
+    "nothing written: --part-answer answers parts of {item}, but {item} holds no parts: no lines of it open with "
+    "`Part 1.`, `Part 2.` and so on, up to five, as the walk-me-through skill starts each part.\n"
+    "If the user answered the whole item: run check with the flag for that answer, as `--help` lists it.\n"
+    "If the item is meant to hold parts: start each part on a line of its own with `Part N.`, and run check again.")
 
 NO_PROPOSED_TEXT = "no proposed text marked"
 STATUS_ALREADY_DONE = "`{mark}` text {number}, \"{excerpt}\": fast read already done ({record})."
@@ -571,7 +628,8 @@ _PART_VALUE = r"part \d+ " + _one_of(f"{word} {outcome}" for word, outcome in OU
 # The values close fills each placeholder with; {ruling} and {reason} carry the agent's own words, so any text.
 PLACEHOLDER_VALUES = {
     "answered": _one_of([APPROVED, DISAPPROVED] + [f"{APPROVED} option {number}" for number in OPTION_NUMBERS]
-                        + [f"not asked, kind {kind}" for kind in NOT_ASKED_KINDS]
+                        + [f"not asked, exception {number}" for number in NOT_ASKED_EXCEPTIONS]
+                        + [f"not asked, kind {kind}" for kind in OLD_NOT_ASKED_KINDS]
                         + [f"not asked, case against {NOT_ASKED_RATED_NONE}"]),
     "outcome": _one_of(OUTCOMES.values()),
     "parts": rf"{_PART_VALUE}(?:, {_PART_VALUE})*",
@@ -739,33 +797,52 @@ NOT_ASKED_REFUSED = (
     "usual, then run check with the flag for his answer, as `--help` lists it.\n"
     "If the item fits and only its evidence lines are missing or wrong, fix them in {document} and run "
     "`python3 {program} check --not-asked {kind}` again.")
+NOT_ASKED_GIVE_A_NUMBER = (
+    "The numbers --not-asked accepts besides `none`, each with the first words of its exception; {page} gives each "
+    "exception's full conditions:\n{exceptions}\n"
+    "If the item's change is one of these exceptions, and its `#case_against` line rates the case against none, or "
+    "weak naming only cost: run `python3 {program} check --not-asked <its number>`; the docstring at the top of "
+    "{program} lists the evidence lines each number needs in the item.\n"
+    "If the change is none of them and the item's `#case_against` line rates the case against none: run "
+    "`python3 {program} check --not-asked none`.\n"
+    "Otherwise: show the item to the user, then run check with the flag for his answer and --user-reply-as-typed, "
+    "as `python3 {program} --help` lists them.")
+NOT_ASKED_NOT_AN_EXCEPTION_REFUSED = (
+    "nothing written: --not-asked does not accept `{value}`. It accepts the number of an exception on {page}, "
+    "any but {settled_by_walk}, or `none`.\n" + NOT_ASKED_GIVE_A_NUMBER)
+NOT_ASKED_SETTLED_BY_APPROVAL_WALK_REFUSED = (
+    "nothing written: --not-asked does not accept {settled_by_walk}. Exception {settled_by_walk} on {page} is the "
+    "rule that lets an approval-walk settle an item without asking the user, which every --not-asked run carries "
+    "out; it is not a kind of change an item makes.\n" + NOT_ASKED_GIVE_A_NUMBER)
 NOT_ASKED_RATING_PROBLEM = ("- its `#case_against` line rates the case against {rating}; only an item rated none, "
                             "or weak with a case against that names only cost, settles without the user.")
 NOT_ASKED_NO_LINE_PROBLEM = "- it has no `{marker}` line; {why}"
-NOT_ASKED_NOT_RATED_NONE_PROBLEM = ("- its `#case_against` line rates the case against {rating}; an item of none of "
-                                    "the kinds settles without the user only when its case against is rated none.")
+NOT_ASKED_NOT_RATED_NONE_PROBLEM = ("- its `#case_against` line rates the case against {rating}; an item that is "
+                                    "none of the exceptions settles without the user only when its case against is "
+                                    "rated none.")
 NOT_ASKED_GUARDED_FILE_PROBLEM = ("- `{marker}` names {path}, which the instruction-file guard protects; an item "
                                   "that adds words the user has not approved to such a file is shown to him, and "
-                                  "one whose words a ruling of his gives settles as kind 1.")
+                                  "one whose words a ruling of his gives settles as exception 14.")
 NOT_ASKED_MISSING_PATH_PROBLEM = "- `{marker}` names {path}, which is not in the checkout {top}."
 NOT_ASKED_NEW_FILE_PROBLEM = ("- `{marker}` names {path}, which is not in the checkout {top}; a code fix that "
                               "settles without the user adds no file but a test.")
+NOT_ASKED_PROSE_INTO_CODE_PROBLEM = ("- `{touches}` names no {missing}; prose instructions turned into code touch "
+                                     "both the Markdown file whose prose is cut down and the code that now does "
+                                     "what it said.")
 NOT_ASKED_NOT_A_TEST_PROBLEM = "- `{marker}` names {path}, which is not a test file in the checkout {top}."
 NOT_ASKED_NO_NEW_TEXT_PROBLEM = "- it has no `#new` line holding the changed text."
 NOT_ASKED_STILL_USED_PROBLEM = ("- `{word}`, named on its `{marker}` line, is still named in {files}, which "
                                 "its `{touches}` line does not list.")
-NOT_ASKED_NOT_MARKDOWN_PROBLEM = ("- it has no `{marker}` line, and `{touches}` names {paths}, which are not "
-                                  "Markdown standing instructions; name each thing removed on a `{marker}` line.")
+NOT_ASKED_NOT_MARKDOWN_PROBLEM = ("- `{touches}` names {paths}, which are not Markdown standing instructions; a "
+                                  "removal of what nothing uses settles as exception 16, with each thing removed "
+                                  "named on a `{marker}` line.")
 NOT_ASKED_RENAME_SHAPE_PROBLEM = ("- its `{marker}` line `{value}` does not give the old name, then the new name, "
                                   "each in backquotes when it holds a space.")
 NOT_ASKED_NOT_IN_GLOSSARY_PROBLEM = ("- the new name `{new}` is the term of no entry, a line opening `- **{new}**` "
                                      "or `- **{new} (aka ...)**`, in a glossary file ({pattern}) in the checkout.")
-NOT_ASKED_NO_TERM_OR_MARKER_PROBLEM = ("- it has neither a `{term}` line nor a `{marker}` line; name on a `{term}` line "
-                                       "each glossary term the change puts in, and on a `{marker}` line each hashtag "
-                                       "marker it adds.")
 NOT_ASKED_GLOSSARY_OR_NOT_MARKDOWN_PROBLEM = (
-    "- `{touches}` names {path}, which is not Markdown prose outside a glossary; kind 6 changes no code and no "
-    "glossary, because a glossary entry decides what a term means.")
+    "- `{touches}` names {path}, which is not Markdown prose outside a glossary; exception {number} changes no code "
+    "and no glossary, because a glossary entry decides what a term means.")
 NOT_ASKED_TERM_NOT_IN_GLOSSARY_PROBLEM = ("- the term `{term}` is the term of no entry, a line opening `- **{term}**` "
                                           "or `- **{term} (aka ...)**`, in a glossary file ({pattern}) in the "
                                           "checkout.")
@@ -778,6 +855,9 @@ NOT_ASKED_WHY = {
     TEST: "name on it the test that fails before the fix and passes after it.",
     SOURCE: "cite on it the ruling, the merged code or the command that shows the fact.",
     RENAME: "give on it the old name, then the new name, each in backquotes when it holds a space.",
+    UNUSED: "name on it each thing the change removes.",
+    GLOSSARY_TERM: "name on it each glossary term the change puts in, in backquotes when it holds a space.",
+    ADDED_HASHTAG_MARKER: "name on it each hashtag marker the change adds.",
 }
 NOT_ASKED_JUDGEMENT_LINES = (
     "{item} is recorded as settled without asking the user, {label}; the program checked only what code can.",
@@ -791,11 +871,8 @@ NOT_ASKED_JUDGEMENT_LINES = (
 GIT_GREP_FAILED = ("`git grep` failed with exit {code} in {top} while checking {item}'s evidence: {error}\n"
                    "Run `python3 {program} check --not-asked {kind}` again once; if it fails the same way, "
                    "present {item} to the user and run check with the flag for his answer, as `--help` lists it.")
-CLOSE_NOT_SHOWN_LINES = (
-    "{item} is recorded in the minutes as settled without being shown to the user.",
-    "List it, with its number, in one line of your next message to the user.",
-)
-CLOSE_ALREADY_DECIDED_CHANGE = "Its change may now be made; the fast reads of the texts it adds:"
+CLOSE_NOT_SHOWN_LINE = "{item} is recorded in the minutes as settled without being shown to the user."
+CLOSE_NOT_SHOWN_CHANGE = "Its change may now be made; the fast reads of the texts it adds:"
 # Both line formats are agreed with merge-lane-2, whose hold command writes the first into its review and whose
 # pull request intake reads the second; change neither without changing those programs.
 HELD_ON_RULING_LINE = "#held_on_ruling {walk} item {number}"
@@ -1247,19 +1324,24 @@ def part_answer(value):
 
 
 def not_asked_kind(value):
-    """Return the --not-asked value: a kind, 1 to 6, or `none` for an item of no kind whose case against is
-    rated none."""
+    """Return the --not-asked value: the number of an exception on the approval page, or `none` for an item that
+    is none of them and whose case against is rated none."""
     if value.strip().lower() == NOT_ASKED_RATED_NONE:
         return NOT_ASKED_RATED_NONE
-    if value.strip() in {str(kind) for kind in NOT_ASKED_KINDS}:
+    if value.strip() in {str(number) for number in NOT_ASKED_EXCEPTIONS}:
         return int(value)
-    kinds = ", ".join(str(kind) for kind in NOT_ASKED_KINDS)
-    raise argparse.ArgumentTypeError(f"`{value}` is not a kind: give {kinds} or none")
+    refusal = (NOT_ASKED_SETTLED_BY_APPROVAL_WALK_REFUSED if value.strip() == str(SETTLED_BY_APPROVAL_WALK)
+               else NOT_ASKED_NOT_AN_EXCEPTION_REFUSED)
+    exceptions = "\n".join(f"  {number}: {NO_APPROVAL_NEEDED_EXCEPTION_OPENING_WORDS_BY_NUMBER[number]}"
+                           for number in NOT_ASKED_EXCEPTIONS)
+    raise argparse.ArgumentTypeError(refusal.format(value=value, page=APPROVAL_PAGE_PATH, exceptions=exceptions,
+                                                    settled_by_walk=SETTLED_BY_APPROVAL_WALK,
+                                                    program=Path(__file__).resolve()))
 
 
 def not_asked_label(kind):
-    """How the minutes and messages name a --not-asked value: `kind 3`, or `case against none`."""
-    return "case against none" if kind == NOT_ASKED_RATED_NONE else f"kind {kind}"
+    """How the minutes and messages name a --not-asked value: `exception 14`, or `case against none`."""
+    return "case against none" if kind == NOT_ASKED_RATED_NONE else f"exception {kind}"
 
 
 def guarded_paths(top, paths):
@@ -1283,7 +1365,7 @@ def answered_word(arguments):
     if arguments.option is not None:
         return f"{APPROVED} option {arguments.option}"
     if arguments.not_asked is not None:
-        return f"not asked, {not_asked_label(arguments.not_asked)}"
+        return NOT_ASKED_PREFIX + not_asked_label(arguments.not_asked)
     if arguments.already_decided is not None:
         return ALREADY_DECIDED_PREFIX + arguments.already_decided
     if arguments.moved_on is not None:
@@ -1422,7 +1504,8 @@ def glossary_entry_files(top, name, item, kind):
 
 
 def not_asked_problems(kind, rating, lines, marks, top, item):
-    """Return the lines saying why the item cannot be settled as the kind given, from what code can check."""
+    """Return the lines saying why the item cannot be settled as the approval page's exception numbered kind, or as
+    `none`, from what code can check."""
     problems = []
     found = evidence(lines)
     if kind == NOT_ASKED_RATED_NONE:
@@ -1440,38 +1523,41 @@ def not_asked_problems(kind, rating, lines, marks, top, item):
         return problems
     if rating not in NOT_ASKED_RATINGS:
         problems.append(NOT_ASKED_RATING_PROBLEM.format(rating=rating))
-    needed = {1: (TOUCHES, SOURCE), 2: (TOUCHES, TEST), 3: (TOUCHES,), 4: (TOUCHES, RENAME), 5: (SOURCE,),
-              6: (TOUCHES,)}[kind]
+    needed = {TEXT_CAUGHT_UP: (TOUCHES, SOURCE), CODE_FIX: (TOUCHES, TEST), UNUSED_REMOVED: (TOUCHES, UNUSED),
+              GLOSSARY_RENAME: (TOUCHES, RENAME), DECISION_CARRIED_OUT: (SOURCE,),
+              GLOSSARY_RESPELLING: (TOUCHES, GLOSSARY_TERM),
+              HASHTAG_MARKER_ADDED: (TOUCHES, ADDED_HASHTAG_MARKER)}.get(kind, (TOUCHES,))
     for marker in needed:
         if not words(found[marker]):
             problems.append(NOT_ASKED_NO_LINE_PROBLEM.format(marker=marker, why=NOT_ASKED_WHY[marker]))
     touched = words(found[TOUCHES])
-    if kind == 1 and not proposed_texts(marks, {NEW_MARK}):
+    if kind == TEXT_CAUGHT_UP and not proposed_texts(marks, {NEW_MARK}):
         problems.append(NOT_ASKED_NO_NEW_TEXT_PROBLEM)
     tests = words(found[TEST])
-    for path in touched if kind != 5 else []:
+    for path in touched if kind != DECISION_CARRIED_OUT else []:
         if not (top / path).exists():
-            # A code fix may add the test that shows it; any other new file is an addition the user sees.
-            if kind == 2 and path in tests:
+            # A code fix may add the test that shows it, and prose turned into code the code; any other new file is an
+            # addition the user sees.
+            if (kind == CODE_FIX and path in tests) or (kind == PROSE_INTO_CODE and not path.endswith(".md")):
                 continue
-            problem = NOT_ASKED_NEW_FILE_PROBLEM if kind == 2 else NOT_ASKED_MISSING_PATH_PROBLEM
+            problem = NOT_ASKED_NEW_FILE_PROBLEM if kind == CODE_FIX else NOT_ASKED_MISSING_PATH_PROBLEM
             problems.append(problem.format(marker=TOUCHES, path=path, top=top))
-    if kind == 2:
+    if kind == CODE_FIX:
         for path in tests:
             if "test" not in Path(path).name or not ((top / path).is_file() or path in touched):
                 problems.append(NOT_ASKED_NOT_A_TEST_PROBLEM.format(marker=TEST, path=path, top=top))
-    if kind == 3:
-        unused = words(found[UNUSED])
-        for word in unused:
+    if kind == UNUSED_REMOVED:
+        for word in words(found[UNUSED]):
             others = sorted(files_naming(top, word, item, kind) - set(touched))
             if others:
                 problems.append(NOT_ASKED_STILL_USED_PROBLEM.format(word=word, marker=UNUSED, files=", ".join(others),
                                                                    touches=TOUCHES))
+    if kind == HISTORY_REMOVED:
         not_markdown = [path for path in touched if not path.endswith(".md")]
-        if not unused and not_markdown:
+        if not_markdown:
             problems.append(NOT_ASKED_NOT_MARKDOWN_PROBLEM.format(marker=UNUSED, touches=TOUCHES,
                                                                   paths=", ".join(not_markdown)))
-    if kind == 4:
+    if kind == GLOSSARY_RENAME:
         for value in found[RENAME]:
             names = rename_names(value)
             if len(names) != 2:
@@ -1484,8 +1570,13 @@ def not_asked_problems(kind, rating, lines, marks, top, item):
             if others:
                 problems.append(NOT_ASKED_STILL_USED_PROBLEM.format(word=old, marker=RENAME, files=", ".join(others),
                                                                    touches=TOUCHES))
-    if kind == 6:
-        problems += glossary_term_or_marker_problems(found, touched, top, item)
+    if kind == PROSE_INTO_CODE and touched:
+        for missing, present in (("Markdown file", any(path.endswith(".md") for path in touched)),
+                                 ("file that is not Markdown", not all(path.endswith(".md") for path in touched))):
+            if not present:
+                problems.append(NOT_ASKED_PROSE_INTO_CODE_PROBLEM.format(touches=TOUCHES, missing=missing))
+    if kind in (GLOSSARY_RESPELLING, HASHTAG_MARKER_ADDED):
+        problems += glossary_term_or_marker_problems(kind, found, touched, top, item)
     return problems
 
 
@@ -1503,27 +1594,48 @@ def marker_reader_pattern(marker):
     return "|".join(f"({part})" for part in parts)
 
 
-def glossary_term_or_marker_problems(found, touched, top, item):
-    """Return why a kind 6 item, a glossary term put in or a hashtag marker added to Markdown prose, cannot settle."""
+def glossary_term_or_marker_problems(kind, found, touched, top, item):
+    """Return why an item of exception 8 or 9, a glossary term put in or a hashtag marker added to Markdown prose,
+    cannot settle; each term and each marker its lines name is checked, whichever of the two it is."""
     problems = []
     terms = [name for value in found[GLOSSARY_TERM] for name in rename_names(value)]
     markers = words(found[ADDED_HASHTAG_MARKER])
-    if not terms and not markers:
-        problems.append(NOT_ASKED_NO_TERM_OR_MARKER_PROBLEM.format(term=GLOSSARY_TERM, marker=ADDED_HASHTAG_MARKER))
     for path in touched:
         if not path.endswith(".md") or fnmatch.fnmatch(Path(path).name, GLOSSARY_FILES):
-            problems.append(NOT_ASKED_GLOSSARY_OR_NOT_MARKDOWN_PROBLEM.format(touches=TOUCHES, path=path))
+            problems.append(NOT_ASKED_GLOSSARY_OR_NOT_MARKDOWN_PROBLEM.format(touches=TOUCHES, path=path, number=kind))
     for term in terms:
-        if not glossary_entry_files(top, term, item, 6):
+        if not glossary_entry_files(top, term, item, kind):
             problems.append(NOT_ASKED_TERM_NOT_IN_GLOSSARY_PROBLEM.format(term=term, pattern=GLOSSARY_FILES))
     for value in markers:
         if not HASHTAG_MARKER.fullmatch(value):
             problems.append(NOT_ASKED_MARKER_SHAPE_PROBLEM.format(value=value, marker=ADDED_HASHTAG_MARKER))
             continue
-        readers = sorted(files_matching(top, ["-E", "-i"], marker_reader_pattern(value), item, 6, NOT_MARKDOWN_FILES))
+        readers = sorted(files_matching(top, ["-E", "-i"], marker_reader_pattern(value), item, kind,
+                                        NOT_MARKDOWN_FILES))
         if readers:
             problems.append(NOT_ASKED_MARKER_READ_PROBLEM.format(value=value, files=", ".join(readers)))
     return problems
+
+
+def part_answer_problem(walk_finder, minutes, value, numbers, total, parser, item, answered_parts):
+    """Return why the part answers cannot be recorded for the item, or None when they answer each of its parts,
+    the parts read by the short-answer hook's part_starts and part_numbers."""
+    hook = load_module("walk_me_through_short_answer_hook", SHORT_ANSWER_HOOK_FILE)
+    _, _, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
+    starts = hook.part_starts(tokens)
+    held = sorted({number for first, end in ranges for number in hook.part_numbers(starts, first, end)})
+    if not held:
+        return NO_PARTS_HELD.format(item=item)
+
+    def named(parts):
+        return ", ".join(f"part {number}" for number in parts)
+    unanswered = [number for number in held if number not in answered_parts]
+    not_held = sorted(set(answered_parts) - set(held))
+    if not unanswered and not not_held:
+        return None
+    problems = ([PARTS_UNANSWERED.format(parts=named(unanswered))] if unanswered else []) + (
+        [PARTS_NOT_HELD.format(parts=named(not_held))] if not_held else [])
+    return PARTS_NOT_ALL_ANSWERED.format(item=item, parts=f"1 to {held[-1]}", problem=" and ".join(problems))
 
 
 def check(arguments):
@@ -1553,6 +1665,10 @@ def check(arguments):
     document, lines, marks, unreadable = item_lines(walk_finder, minutes, value, numbers, total, parser)
     rating = case_against_rating(lines, item, document, arguments)
     rated = CASE_AGAINST_HASHTAG.format(rating=rating.replace(" ", "_")) if rating else ""
+    if part_numbers:
+        problem = part_answer_problem(walk_finder, minutes, value, numbers, total, parser, item, part_numbers)
+        if problem:
+            raise Failure(problem)
     if arguments.deferred or arguments.moved_on_no_decision or arguments.moved_on is not None:
         now = datetime.datetime.now().astimezone()
         no_change = CHECK_MOVED_ON_MINUTES if arguments.moved_on is not None else CHECK_DEFERRED_MINUTES
@@ -2380,13 +2496,12 @@ def close(arguments):
     elif answered.startswith(MOVED_ON_PREFIX):
         recorded = CLOSE_MOVED_ON_MINUTES.format(item=item, reason=answered[len(MOVED_ON_PREFIX):])
         word = RULING_GIVEN_MOVED_ON
-        output = [line.format(item=item) for line in CLOSE_NOT_SHOWN_LINES]
+        output = [CLOSE_NOT_SHOWN_LINE.format(item=item)]
     elif answered.startswith(ALREADY_DECIDED_PREFIX):
         held_outcome = OUTCOMES[APPROVED]
         recorded = CLOSE_ALREADY_DECIDED_MINUTES.format(item=item, ruling=answered[len(ALREADY_DECIDED_PREFIX):],
                                                       outcome=held_outcome)
-        output = ([line.format(item=item) for line in CLOSE_NOT_SHOWN_LINES] + [CLOSE_ALREADY_DECIDED_CHANGE]
-                  + statuses + list(CLOSE_TOOK_EFFECT_NEXT))
+        output = [CLOSE_NOT_SHOWN_LINE.format(item=item), CLOSE_NOT_SHOWN_CHANGE] + statuses + list(CLOSE_TOOK_EFFECT_NEXT)
     else:
         parts = PART_IN_ANSWER.findall(answered)
         if parts:
@@ -2396,8 +2511,10 @@ def close(arguments):
         else:
             held_outcome = OUTCOMES[DISAPPROVED if answered == DISAPPROVED else APPROVED]
             recorded = CLOSE_TOOK_EFFECT_MINUTES.format(item=item, answered=answered, outcome=held_outcome)
-        output = ([line.format(item=item) for line in CLOSE_TOOK_EFFECT_LINES] + statuses
-                  + list(CLOSE_TOOK_EFFECT_NEXT))
+        shown = ([line.format(item=item) for line in CLOSE_TOOK_EFFECT_LINES]
+                 if not answered.startswith(NOT_ASKED_PREFIX)
+                 else [CLOSE_NOT_SHOWN_LINE.format(item=item), CLOSE_NOT_SHOWN_CHANGE])
+        output = shown + statuses + list(CLOSE_TOOK_EFFECT_NEXT)
     if answered != DEFERRED:
         deferred_item_heading_noted(walk_finder, minutes, answered_numbers, total, parser, noted=False)
     append_to_minutes(minutes, [recorded])
@@ -2457,10 +2574,10 @@ def main(argv=None):
                         help="check: not shown, and the walk moves on from the item with no decision, for REASON")
     answer.add_argument("--part-answer", type=part_answer, action="append", metavar="N=ANSWER",
                         help="check: part N of the item was answered ANSWER, A, AO or D; give it once for each part")
-    answer.add_argument("--not-asked", type=not_asked_kind, metavar="KIND",
-                        help="check: the user is not asked; settle the item as kind KIND, 1 to 6, of the "
-                             "walk-me-through skill's list of items that need no answer, if its evidence lines pass, "
-                             "or, as `none`, an item of no kind whose case against is rated none")
+    answer.add_argument("--not-asked", type=not_asked_kind, metavar="EXCEPTION",
+                        help="check: the user is not asked; settle the item as the exception numbered EXCEPTION on "
+                             f"{APPROVAL_PAGE_PATH}, any but {SETTLED_BY_APPROVAL_WALK}, if its evidence lines pass, or, as "
+                             "`none`, an item that is none of them whose case against is rated none")
     parser.add_argument("--user-reply-as-typed", metavar="REPLY",
                         help="check: the user's reply exactly as he typed it, written into the minutes beside the "
                              "answer; needed for every answer but --not-asked, --already-decided and --moved-on")
