@@ -64,6 +64,9 @@ if sys.argv[0].endswith("rsync") and os.environ.get("MIRROR_TEST_RSYNC_STDERR"):
 if sys.argv[0].endswith("ssh") and "last-complete-mirror-pass-utc.txt" in " ".join(sys.argv) and os.environ.get("MIRROR_TEST_SSH_STAMP_EXIT"):
     sys.stderr.write(os.environ.get("MIRROR_TEST_SSH_STDERR", "") + "\\n")
     sys.exit(int(os.environ["MIRROR_TEST_SSH_STAMP_EXIT"]))
+if sys.argv[0].endswith("ssh") and "mkdir -p" in " ".join(sys.argv) and os.environ.get("MIRROR_TEST_SSH_MKDIR_KILLED"):
+    import signal
+    os.kill(os.getpid(), signal.SIGKILL)
 if sys.argv[0].endswith("ssh") and "mkdir -p" in " ".join(sys.argv) and os.environ.get("MIRROR_TEST_SSH_MKDIR_EXIT"):
     sys.stderr.write(os.environ.get("MIRROR_TEST_SSH_STDERR", "") + "\\n")
     sys.exit(int(os.environ["MIRROR_TEST_SSH_MKDIR_EXIT"]))
@@ -476,6 +479,15 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
     check("--failures-only: a failed preparation's ssh stderr still reaches the log",
           result.stderr.count("ssh: connect to host ned-box port 22: Operation timed out") == 5,
           repr(result.stderr))
+    argv_log.unlink()
+    result = run_mirror(home, RULED_DESTINATION, dict(remote_env, MIRROR_TEST_SSH_MKDIR_KILLED="1"), QUIET)
+    prepare_calls = [json.loads(line) for line in argv_log.read_text().splitlines()]
+    check("--failures-only: an ssh killed by a signal while preparing the store is a could-not-prepare "
+          "FAILED line naming the negative exit, exit 1, and rsync never runs",
+          result.returncode == 1 and result.stdout.count("could not prepare") >= 1
+          and all(line.startswith("FAILED: ") and line.endswith("(exit -9)") for line in result.stdout.splitlines())
+          and not any(c[0].endswith("rsync") for c in prepare_calls),
+          result.stdout + str(prepare_calls))
     argv_log.unlink()
     result = run_mirror(home, RULED_DESTINATION, dict(
         remote_env, MIRROR_TEST_SSH_STAMP_EXIT="255",
