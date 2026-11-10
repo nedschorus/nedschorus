@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Find file copies by name across both machines, then search backups if none are found."""
+"""Find file copies by name across both machines, then search backups if none are found.
+
+When nothing is found and every candidate has one and the same name, other than the
+query's own, the search and the backup search run once more with that full name.
+"""
 
 from __future__ import annotations
 
@@ -837,7 +841,7 @@ def render_group(group, lines):
 
 
 def render(query, target, results, not_searched, elapsed):
-    """Return (report text, exit code) for both machines."""
+    """Return (report text, exit code, the distinct names of the candidates) for both machines."""
     stem = query_stem(query)
     name = query_name(query)
     kind, wanted = target["kind"], target["parts"]
@@ -998,7 +1002,9 @@ def render(query, target, results, not_searched, elapsed):
         code = 3
     else:
         code = 1
-    return "\n".join(lines) + "\n", code
+    candidate_names = sorted({os.path.basename(entry["hit"]["path"])
+                              for group in other for entry in group})
+    return "\n".join(lines) + "\n", code, candidate_names
 
 
 def write_text(text):
@@ -1093,7 +1099,11 @@ def main(argv=None) -> int:
                         "extension is the same, so report finds report.md; a name "
                         "with a dot anywhere, such as .gitignore, counts only that "
                         "name. A name that opens with a "
-                        "dash goes after --, as in -- -nbd-test.py")
+                        "dash goes after --, as in -- -nbd-test.py. When nothing "
+                        "is found and every candidate has one and the same name, "
+                        "other than the query's own, the program runs again with "
+                        "that full name, says so, and exits as that second "
+                        "run does")
     parser.add_argument(THIS_MACHINE_JSON_FLAG, metavar="SURFACES_JSON",
                         help="search only this machine, over these surfaces, "
                              "and print the answer as JSON: what the program "
@@ -1127,8 +1137,25 @@ def main(argv=None) -> int:
         json.dump(result, sys.stdout)
         return 0
 
-    started_at = time.monotonic()
     plan = plan_for_this_run()
+    code, candidate_names = search_and_report(query, plan)
+    if code == 0 or len(candidate_names) != 1 or is_same_name(
+            candidate_names[0], name):
+        return code
+    full_name = candidate_names[0]
+    write_text(f"\nNo copy was found, and every candidate is named "
+               f"{full_name}, so this program runs again with that full name "
+               f"in place of {query}.\n\n")
+    return search_and_report(full_name, plan)[0]
+
+
+def search_and_report(query, plan):
+    """Search both machines for `query`, print the answer, run the backup search when
+    nothing is found, and return (exit code, the distinct names of the candidates)."""
+    stem = query_stem(query)
+    name = query_name(query)
+    check_tracked = len(parts_of(query)) > 1
+    started_at = time.monotonic()
     other = plan.get("other")
     not_searched = []
     remote = None
@@ -1149,15 +1176,15 @@ def main(argv=None) -> int:
             not_searched.append((other["machine"], answer))
 
     target = query_target(query, *layouts_and_spellings(plan))
-    text, code = render(query, target, results, not_searched,
-                        time.monotonic() - started_at)
+    text, code, candidate_names = render(query, target, results, not_searched,
+                                         time.monotonic() - started_at)
     write_text(text)
     if code != 0:
         closing = run_backup_search_after_nothing_found(
             target.get("canonical", target["path"]), code == 1)
         if closing:
             write_text("\n" + "\n".join(closing) + "\n")
-    return code
+    return code, candidate_names
 
 
 if __name__ == "__main__":

@@ -2,7 +2,8 @@
 """Tests for scripts/locate-file-copies-across-machines.py: what it finds on
 each machine, what it leaves out, how it ranks and collapses copies, the git
 surface's reflog and deleted-file hits, every way the other machine can fail
-to answer, and the exit code each outcome gives.
+to answer, the second search it runs with the full name when every
+candidate has one name, and the exit code each outcome gives.
 
 Every case runs against scratch trees. The program's surfaces are replaced
 through LOCATE_FILE_COPIES_ACROSS_MACHINES_PLAN, and the other machine is a
@@ -65,7 +66,9 @@ arguments = sys.argv[1:]
 with open(os.environ["FAKE_SSH_ARGV_LOG"], "a") as log:
     log.write(json.dumps(arguments) + "\\n")
 mode = os.environ.get("FAKE_SSH_MODE", "ok")
-if mode == "unreachable":
+with open(os.environ["FAKE_SSH_ARGV_LOG"]) as log:
+    runs_so_far = len(log.readlines())
+if mode == "unreachable" or (mode == "unreachable-on-second-run" and runs_so_far >= 2):
     sys.stderr.write("ssh: connect to host fake-box port 22: No route to host\\n")
     sys.exit(255)
 if mode == "hang":
@@ -101,6 +104,10 @@ parser.add_argument("path")
 parser.add_argument("--skip", action="append", default=[])
 arguments = parser.parse_args()
 mode = os.environ.get("FAKE_BACKUP_SEARCH_MODE", "not-found")
+with open(os.environ["FAKE_BACKUP_SEARCH_LOG"]) as log:
+    runs_so_far = len(log.readlines())
+if mode == "killed-on-second-run" and runs_so_far >= 2:
+    mode = "killed"
 print("Searching every history the Mac and ned-box keep for: " + arguments.path)
 print(flush=True)
 if mode == "killed":
@@ -1016,6 +1023,8 @@ with scratch() as directory:
     make_stand_in_bin(base)
     write(base / "mac" / "agents" / "c" / "candidate-probe-notes.md", "n")
     write(base / "box" / "logs" / "seats" / "x" / "candidate-probe-old.md", "o")
+    # Two names on the Mac too, so a run that reaches only the Mac does not rerun with one.
+    write(base / "mac" / "agents" / "c" / "candidate-probe-draft.md", "d")
     code, stdout, stderr = run(base, "candidate-probe.md")
     same, other, _ = sections(stdout)
     check("names that only contain the stem exit 1, not 0, when every surface "
@@ -1036,6 +1045,91 @@ with scratch() as directory:
                                make_plan(base))
     check("candidates alone, with ned-box unreachable, exit 3",
           code == 3, stdout + stderr)
+
+# --- One candidate name: the search runs again with that full name --------------
+RERUN_LINE_OPENING = "No copy was found, and every candidate is named "
+
+
+def ssh_runs(base):
+    """How many times the stand-in ssh was started, and empties its record."""
+    record = base / "ssh-argv.log"
+    if not record.exists():
+        return 0
+    count = len(record.read_text(encoding="utf-8").splitlines())
+    record.unlink()
+    return count
+
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    full_name = "rerun-probe-page-and-reuse-checks-minutes.md"
+    write(base / "mac" / "agents" / "c" / "docs" / full_name, "draft", NOW - 100)
+    write(base / "box" / "logs" / "seats" / "x" / full_name, "shipped", NOW - 10)
+    code, stdout, stderr = run(base, "rerun-probe")
+    first, _, second = stdout.partition(RERUN_LINE_OPENING)
+    same_first, other_first, _ = sections(first)
+    same_second, other_second, _ = sections(second)
+    check("one candidate name, held by two different copies, reruns the search "
+          "with that full name, which finds both and exits 0",
+          code == 0 and not same_first and full_name in other_first
+          and second.startswith(f"{full_name}, so this program runs again with "
+                                f"that full name in place of rerun-probe.")
+          and f"Same name ({full_name})" in second
+          and len(entry_lines(same_second)) == 2 and not other_second,
+          stdout + stderr)
+    runs = backup_search_runs(base)
+    check("the first search's backup search runs on the query as given, and the "
+          "rerun, which finds the file, runs none",
+          [one["argv"][-1] for one in runs] == ["rerun-probe"]
+          and stdout.find(BACKUP_SEARCH_HEADER) < stdout.find(RERUN_LINE_OPENING),
+          (runs, stdout))
+    check("the rerun searches ned-box again", ssh_runs(base) == 2, stdout)
+
+    write(base / "mac" / "agents" / "c" / "rerun-probe-other-notes.md", "n")
+    code, stdout, stderr = run(base, "rerun-probe")
+    check("two candidate names do not rerun",
+          code == 1 and RERUN_LINE_OPENING not in stdout
+          and len(backup_search_runs(base)) == 1 and ssh_runs(base) == 1,
+          stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    write(base / "mac" / "agents" / "seat-a" / "notes" / "rerun-path-probe.md", "x")
+    code, stdout, stderr = run(
+        base, str(base / "mac" / "agents" / "seat-a" / "docs" / "rerun-path-probe.md"))
+    _, other, _ = sections(stdout)
+    check("a path query whose one candidate has the query's own name does not "
+          "rerun by name, which would count a file at another path as found",
+          code == 1 and "rerun-path-probe.md" in other
+          and RERUN_LINE_OPENING not in stdout
+          and len(backup_search_runs(base)) == 1, stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    full_name = "rerun-failure-probe-minutes.md"
+    write(base / "box" / "logs" / "seats" / "x" / full_name, "only on ned-box")
+    code, stdout, stderr = run(base, "rerun-failure-probe",
+                               mode="unreachable-on-second-run",
+                               backup_mode="killed-on-second-run")
+    first, _, second = stdout.partition(RERUN_LINE_OPENING)
+    runs = backup_search_runs(base)
+    check("a rerun that cannot reach ned-box reports it as the first search "
+          "would, after the rerun line, and exits 3",
+          code == 3 and "NOT searched" not in first
+          and "NOT searched, or searched only in part:" in second
+          and "Tell the user ned-box was not searched" in second
+          and "do not say the file does not exist" in second, stdout + stderr)
+    check("a rerun that finds nothing runs the backup search again, on the full "
+          "name, and a backup search that dies there is reported as not "
+          "finished",
+          [one["argv"][-1] for one in runs] == ["rerun-failure-probe", full_name]
+          and "did not finish" not in first
+          and second.rstrip().splitlines()[-1].startswith(
+              "The backup search did not finish (it was stopped by signal 9 "
+              "before its summary line)"), (runs, stdout))
 
 # --- A query with directories is found only at its own path ---------------------
 # The log-store reuses generic names across records (40 dispositions.md on
