@@ -32,7 +32,13 @@ is the nc-head-commit, which predates main's newer merges and so selects more
 suites, never fewer; the program prints that it fell back. The run's suite logs and test-run-report.txt go in
 <merge-lane-worktrees-and-outputs-directory>/pr<n>-after-merge-test-run-logs-<the
 merge commit's first 12 characters>. The program prints the run's SUMMARY line,
-each failed suite's line, and that directory, then removes the worktree.
+each failed suite's line, and that directory. Then, in that worktree, it adopts
+into hr/store, the recordings every merge-lane head test run selects by, each
+suite's first recording that passed and matches the merge commit's files, from
+hr/pr<n>/recorded-inputs, where this pull request's head test runs saved theirs,
+and then from the runner's default recorded-inputs directory, where the
+after-merge test run saved its own; it prints how many it adopted. Then it
+removes the worktree.
 
 The merge command deletes the pull request's branch, and GitHub closes every
 open pull request whose base branch is deleted. The retarget is here, not in
@@ -56,8 +62,8 @@ a code it does not document, or a read or a retarget on GitHub failed, each
 before any merge; 3 merged, but a step after the merge was not done: a review
 worktree or the pr<n>-merge-commit-on-main-worktree worktree could not be removed, or the
 after-merge test run did not pass, because a suite failed, the runner gave no
-full verdict, or the merge commit could not be read or its worktree made; stdout
-names which.
+full verdict, or the merge commit could not be read or its worktree made, or the
+recordings could not be adopted; stdout names which.
 """
 
 import argparse
@@ -346,6 +352,25 @@ def after_merge_test_run(arguments, merge_commit):
               f"If that run also prints no {runner.SUMMARY_LINE_PREFIX} line, tell the user "
               f"this message.")
         exit_code = EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
+
+    store = common.merge_lane_recorded_inputs_store_directory(arguments)
+    try:
+        adopted = runner.adopt_passing_recordings_that_match_the_checkout(
+            worktree, store,
+            [common.pull_request_head_test_run_saved_recorded_inputs_directory(
+                arguments, arguments.pull_request),
+             runner.DEFAULT_RECORDED_INPUTS_DIRECTORY])
+    except (runner.CouldNotRun, OSError) as error:
+        print(f"STOP: merged, but no recording that matches the merge commit was adopted "
+              f"into {store}: {error}\n"
+              f"Until a later merge adopts them, merge-lane head test runs select the suites "
+              f"whose recordings in {store} are stale, and so run more suites than they need.\n"
+              f"If the error names a cause you can fix, fix it; the next merge then adopts "
+              f"them. Otherwise, tell the user this message.")
+        exit_code = EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
+    else:
+        print(f"adopted into {store} {len(adopted)} recordings that passed and match the "
+              f"merge commit")
 
     removal = git("worktree", "remove", "--force", str(worktree))
     if removal.returncode != 0:

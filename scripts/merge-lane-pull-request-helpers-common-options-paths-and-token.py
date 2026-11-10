@@ -94,6 +94,19 @@ def pull_request_head_test_run_log_store_root_directory(arguments, number):
             / "log-store")
 
 
+def merge_lane_recorded_inputs_store_directory(arguments):
+    """The --recorded-inputs-directory every merge-lane head test run selects by; only a
+    recording that matches a merge commit on main is saved there."""
+    return arguments.merge_lane_worktrees_and_outputs_directory / "hr" / "store"
+
+
+def pull_request_head_test_run_saved_recorded_inputs_directory(arguments, number):
+    """Where the head test runs of pull request number save their recordings, kept apart
+    from the store until the merge program adopts those that match the merge commit."""
+    return (arguments.merge_lane_worktrees_and_outputs_directory / "hr" / f"pr{number}"
+            / "recorded-inputs")
+
+
 def review_tool_missing_message(arguments, relative_path):
     """Return None when the review tools worktree holds relative_path; else what to do."""
     worktree = arguments.review_tools_worktree_at_main
