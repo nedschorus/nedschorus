@@ -227,21 +227,42 @@ def head_on_an_unpushed_leftovers_branch_case():
           out + err)
 
 
+def track_on_origin(path, content):
+    (OTHER_CLONE / path).write_text(content)
+    git("add", path, cwd=OTHER_CLONE)
+    git("commit", "-q", "-m", f"track {path}", cwd=OTHER_CLONE)
+    git("push", "-q", "origin", "HEAD:main", cwd=OTHER_CLONE)
+
+
 def ignored_file_at_a_path_origin_main_tracks_case():
     fresh_reference_checkout()
-    (OTHER_CLONE / "kept.log").write_text("from origin\n")
-    git("add", "kept.log", cwd=OTHER_CLONE)
-    git("commit", "-q", "-m", "track kept.log", cwd=OTHER_CLONE)
-    git("push", "-q", "origin", "HEAD:main", cwd=OTHER_CLONE)
+    track_on_origin("kept.log", "from origin\n")
     (CHECKOUT / ".git" / "info" / "exclude").write_text("*.log\n")
     (CHECKOUT / "kept.log").write_text("ignored, and only here\n")
     head = git("rev-parse", "HEAD")
     status, out, err = run_program()
-    check("ignored file at a path origin/main tracks: exits 1 naming it, and changes nothing",
-          status == 1 and "kept.log" in err and "would overwrite" in err
+    check("ignored file at a path origin/main tracks: git refuses the fast-forward, the program "
+          "exits 1 naming the file, and the file and HEAD are unchanged",
+          status == 1 and "kept.log" in err and "--no-overwrite-ignore" in err
           and git("rev-parse", "HEAD") == head
           and (CHECKOUT / "kept.log").read_text() == "ignored, and only here\n"
           and local_branches() == ["refs/heads/main"], out + err)
+
+
+def ignored_directory_where_origin_main_tracks_a_file_cases():
+    for case, make_leftovers in (("the fast-forward", False), ("the switch", True)):
+        fresh_reference_checkout()
+        track_on_origin("cache", "a file on origin\n")
+        (CHECKOUT / ".git" / "info" / "exclude").write_text("cache/\n")
+        (CHECKOUT / "cache").mkdir()
+        (CHECKOUT / "cache" / "private.log").write_text("ignored, and only here\n")
+        local = commit("local only") if make_leftovers else None
+        status, out, err = run_program()
+        check(f"ignored directory where origin/main tracks a file, at {case}: git refuses, the "
+              "program exits 1, and the ignored data is kept",
+              status == 1 and "a step failed" in err
+              and (CHECKOUT / "cache" / "private.log").read_text() == "ignored, and only here\n"
+              and (not make_leftovers or origin_branch(LEFTOVERS) == local), out + err)
 
 
 def post_merge_hook(body):
@@ -276,6 +297,24 @@ def post_merge_hook_failure_case():
           "the leftovers pushed",
           status == 1 and "FAILED by the test hook" in err and "post-merge" in err
           and origin_branch(LEFTOVERS) and on_main_at_origin_main_and_clean(), out + err)
+
+
+def post_merge_hook_rerun_after_a_failure_case():
+    fresh_reference_checkout()
+    record = SCRATCH_HOME / "post-merge-ran"
+    record.unlink(missing_ok=True)
+    post_merge_hook("#!/bin/sh\necho FAILED by the test hook >&2\nexit 1\n")
+    local = commit("local only")
+    first_status, _, _ = run_program()
+    post_merge_hook(f"#!/bin/sh\ngit rev-parse ORIG_HEAD HEAD > {record}\n")
+    status, out, err = run_program()
+    ran_on_rerun = record.is_file() and record.read_text().split() == [local, git("rev-parse", "HEAD")]
+    record.unlink(missing_ok=True)
+    third_status, _, _ = run_program()
+    check("rerun after a failed post-merge hook: the hook runs again with the same ORIG_HEAD, the "
+          "run succeeds, and the run after it does not run the hook",
+          first_status == 1 and status == 0 and ran_on_rerun and third_status == 0
+          and not record.is_file() and on_main_at_origin_main_and_clean(), out + err)
 
 
 def post_merge_hook_kills_git_case():
@@ -314,8 +353,9 @@ def step_failing(name, fail):
 
 def failed_push_then_failed_later_step_cases():
     for case, name, fail, injected in (
-            ("the switch to main", "git", lambda arguments: arguments[:2] == ["switch", "-C"],
-             "injected failure of git switch -C main origin/main"),
+            ("the switch to main", "git",
+             lambda arguments: arguments[0] == "switch" and "-C" in arguments,
+             "injected failure of git switch --no-overwrite-ignore -C main origin/main"),
             ("the fast-forward and check", "fast_forward_to_origin_main_and_check_or_raise",
              None, "injected failure of the fast-forward and check")):
         fresh_reference_checkout()
@@ -327,6 +367,54 @@ def failed_push_then_failed_later_step_cases():
         check(f"failed push, then a failure of {case}: exits 1 reporting both",
               status == 1 and "refused by the test hook" in err and injected in err
               and f"The leftovers branch {LEFTOVERS}" in err, out + err)
+
+
+def failure_after_the_pushes_keeps_earlier_problems_cases():
+    for case, set_up, fail, injected, earlier in (
+            ("a failed push, then a failed update-ref", refuse_every_push,
+             lambda arguments: arguments[0] == "update-ref",
+             "injected failure of git update-ref", "refused by the test hook"),
+            ("a failed post-merge hook, then a failed branch -D",
+             lambda: post_merge_hook("#!/bin/sh\necho FAILED by the test hook >&2\nexit 1\n"),
+             lambda arguments: arguments[:2] == ["branch", "-D"],
+             "injected failure of git branch -D", "FAILED by the test hook")):
+        fresh_reference_checkout()
+        commit("local only")
+        made = set_up()
+        with step_failing("git", fail):
+            status, out, err = run_program()
+        if isinstance(made, Path):
+            made.unlink()
+        check(f"{case}: exits 1 reporting both",
+              status == 1 and injected in err and earlier in err, out + err)
+
+
+def another_run_committed_onto_main_before_the_switch_case():
+    """As when a concurrent run's switch carried this run's changes onto main before its commit."""
+    fresh_reference_checkout()
+    (CHECKOUT / "untracked.txt").write_text("new by hand\n")
+    landed = []
+    real = program.git
+
+    def stub(checkout, arguments, **options):
+        result = real(checkout, arguments, **options)
+        if arguments[0] == "push" and not landed:
+            git("switch", "-q", "-C", "main", "origin/main")
+            landed.append(commit("landed on main"))
+        return result
+    program.git = stub
+    try:
+        status, out, err = run_program()
+    finally:
+        program.git = real
+    check("HEAD's commit held by neither origin/main nor a leftovers branch: exits 1 naming it, "
+          "without switching, and the commit stays on the local main",
+          status == 1 and landed and landed[0] in err and "was not switched" in err
+          and git("rev-parse", "refs/heads/main") == landed[0], out + err)
+    status, out, err = run_program()
+    check("rerun after that: the commit is saved on a pushed leftovers branch, then on main",
+          status == 0 and origin_branch(f"{LEFTOVERS}-2") == landed[0]
+          and on_main_at_origin_main_and_clean(), out + err)
 
 
 def post_merge_hook_timeout_case():
@@ -465,11 +553,15 @@ behind_origin_only_case()
 failed_push_then_rerun_case()
 head_on_an_unpushed_leftovers_branch_case()
 ignored_file_at_a_path_origin_main_tracks_case()
+ignored_directory_where_origin_main_tracks_a_file_cases()
 post_merge_hook_run_after_the_switch_case()
 post_merge_hook_failure_case()
+post_merge_hook_rerun_after_a_failure_case()
 post_merge_hook_timeout_case()
 post_merge_hook_kills_git_case()
 failed_push_then_failed_later_step_cases()
+failure_after_the_pushes_keeps_earlier_problems_cases()
+another_run_committed_onto_main_before_the_switch_case()
 leftovers_conflicting_with_origin_main_under_repository_hooks_case()
 branch_name_taken_case()
 head_off_main_case()

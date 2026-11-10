@@ -69,9 +69,10 @@ def git_fetch_origin_or_raise(checkout: Path) -> None:
 
 def fast_forward_to_origin_main_and_check_or_raise(checkout: Path) -> str:
     """Fast-forward the checked-out branch to origin/main, as last fetched, and check that HEAD
-    is origin/main and that no tracked file is changed; return origin/main's commit."""
+    is origin/main and that no tracked file is changed; return origin/main's commit. An ignored
+    file or directory at a path origin/main tracks makes git refuse, rather than overwrite it."""
     reference_checkout_git_output_or_raise(
-        checkout, ["merge", "--ff-only", "origin/main"],
+        checkout, ["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"],
         timeout_seconds=NETWORK_OR_TREE_GIT_STEP_TIMEOUT_SECONDS)
     head = reference_checkout_git_output_or_raise(checkout, ["rev-parse", "HEAD"])
     main = reference_checkout_git_output_or_raise(checkout, ["rev-parse", "origin/main"])

@@ -29,7 +29,8 @@ The cycle, per reincarnation:
      successor nor the user is told of such a branch. When the checkout cannot be fast-forwarded,
      when that program fails, or when os.execv fails, this process prints
      why, carries on with the code it started with, and the successor's
-     initial agent instructions say why too, with what the program printed.
+     initial agent instructions say why too, and, when that program
+     failed, what it printed.
   3. Extract its dialog to disk before anything else proceeds. When the
      extraction fails, the successor's prompt is a recovery note saying the
      session-dialog could not be extracted and where the retiring session's

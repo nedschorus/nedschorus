@@ -272,7 +272,8 @@ def step_0_cases():
               "no failure")
     except program.RestartFailure as error:
         check("step 0: a reference-checkout that cannot fast-forward fails, quoting git",
-              "git merge --ff-only origin/main in" in str(error) and "failed (exit" in str(error),
+              "git merge --ff-only --no-overwrite-ignore origin/main in" in str(error)
+              and "failed (exit" in str(error),
               str(error))
     git("reset", "-q", "--hard", "origin/main", cwd=checkout)
 
