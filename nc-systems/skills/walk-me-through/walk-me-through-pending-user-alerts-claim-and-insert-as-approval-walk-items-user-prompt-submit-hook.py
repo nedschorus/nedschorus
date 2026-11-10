@@ -8,8 +8,8 @@ Mac agent-sessions take no alerts until a renaming test over /Volumes/nedhome sa
 ONLY A PROMPT THE USER TYPED claims, so only an agent-session he can see claims. A headless `claude -p`
 agent-session claims nothing: Claude Code sets CLAUDE_CODE_SESSION_ATTENDED to "0" for its hooks, even when it
 inherited "1" from the agent-seat that started it, and a caller's headless child may also carry
-NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER; either silences the hook, as in
-scripts/agent-seat-due-task-raise-hook.py. A missing CLAUDE_CODE_SESSION_ATTENDED does not. The transcript cannot
+NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER; either silences the hook, as
+nc-systems/general-tools/agent-session-unattended-by-user-check-common.py decides. A missing CLAUDE_CODE_SESSION_ATTENDED does not. The transcript cannot
 tell: on a session's first prompt Claude Code may not have written the prompt's record when this hook runs.
 In an attended agent-session Claude Code also starts this hook for a background-task notice and for another
 agent-session's message. The transcript's newest record carrying `turnOrigin` decides, `human` for his own, when
@@ -57,9 +57,7 @@ TRANSCRIPT_READER_FILE = CHECKOUT / "scripts" / "claude-code-session-transcript-
 # the hook after the alerts are claimed; a test checks.
 INSERT_TIMEOUT_SECONDS = 5
 USER_TURN_ORIGIN = "human"
-REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
-SESSION_ATTENDED_VARIABLE = "CLAUDE_CODE_SESSION_ATTENDED"
-SESSION_UNATTENDED_VALUE = "0"
+ATTENDANCE_CHECK_FILE = CHECKOUT / "nc-systems" / "general-tools" / "agent-session-unattended-by-user-check-common.py"
 # How Claude Code opens a background-task notice, another agent-session's message and a subagent's hand-back.
 NOT_TYPED_PROMPT_OPENINGS = ("<task-notification>", "<cross-session-message", "<agent-message",
                              "Another Claude session sent a message", "A peer session sent a message")
@@ -191,8 +189,8 @@ def insert_lines(walk, cwd, alert_ids):
 
 
 def headless(environment):
-    return bool(environment.get(REINCARNATION_OWNED_BY_CALLER_VARIABLE)
-                or environment.get(SESSION_ATTENDED_VARIABLE) == SESSION_UNATTENDED_VALUE)
+    return load_module("agent_session_unattended_by_user_check_common",
+                       ATTENDANCE_CHECK_FILE).agent_session_has_no_user_attending(environment)
 
 
 def output_for(payload, environment, user_alerts=None):

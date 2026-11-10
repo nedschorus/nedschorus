@@ -178,6 +178,8 @@ try:
         "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
     ned_box_home_path_constants = _load_general_tools_module(
         "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+    agent_session_unattended_by_user_check_common = _load_general_tools_module(
+        "agent-session-unattended-by-user-check-common.py")
     git_runner = _load_general_tools_module(
         "git-machine-readable-output-runner-and-parser-common.py")
 except Exception as error:
@@ -527,8 +529,7 @@ def run(stdin_text, environment):
     payload = json.loads(stdin_text)
     if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
-    if (environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
-            or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0"):
+    if agent_session_unattended_by_user_check_common.agent_session_has_no_user_attending(environment):
         return None
     transcript_path = payload.get("transcript_path")
     if not transcript_path or not Path(transcript_path).expanduser().is_file():

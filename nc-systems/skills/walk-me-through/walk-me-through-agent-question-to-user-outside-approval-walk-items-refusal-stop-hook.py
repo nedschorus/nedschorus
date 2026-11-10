@@ -180,6 +180,8 @@ REPOSITORY_TOP = HERE.parents[2]
 STOP_HOOKS_STAY_SILENT_RULE_FILE = (
     REPOSITORY_TOP / "nc-systems" / "general-tools"
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+ATTENDANCE_CHECK_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
+                         / "agent-session-unattended-by-user-check-common.py")
 PATH_CONSTANTS_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
                        / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 CLAUDE_CODE_COMMAND_LINE_PREFIX_FILE = (
@@ -664,8 +666,8 @@ def run(stdin_text, environment):
 
 def output_for(payload, environment, model=model_judgement):
     """A block naming the sentence that asks the user something outside the walk's items, or None."""
-    if (environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
-            or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0"):
+    if load_module("agent_session_unattended_by_user_check_common",
+                   ATTENDANCE_CHECK_FILE).agent_session_has_no_user_attending(environment):
         return None
     transcript_path = payload.get("transcript_path")
     if not transcript_path or not Path(transcript_path).expanduser().is_file() or not payload.get("cwd"):

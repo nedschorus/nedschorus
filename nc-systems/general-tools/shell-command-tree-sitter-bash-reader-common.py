@@ -67,6 +67,11 @@ _failed_command_lines_spec = importlib.util.spec_from_file_location(
     Path(__file__).resolve().with_name("failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py"))
 _failed_command_lines = importlib.util.module_from_spec(_failed_command_lines_spec)
 _failed_command_lines_spec.loader.exec_module(_failed_command_lines)
+_attendance_check_spec = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().with_name("agent-session-unattended-by-user-check-common.py"))
+_attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
+_attendance_check_spec.loader.exec_module(_attendance_check)
 
 REQUIREMENTS_FILE = python_libraries_pinned_requirements_install_if_missing_then_import_common.PINNED_REQUIREMENTS_FILE
 # The Bash guards run in parallel with a 30-second hook timeout; a cached wheel installs in about a second.
@@ -481,8 +486,7 @@ def parser():
 
 
 def _session_unattended(environment):
-    return bool(environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
-                or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0")
+    return _attendance_check.agent_session_has_no_user_attending(environment)
 
 
 @contextlib.contextmanager
@@ -492,8 +496,8 @@ def agent_session_attendance_environment_variables_temporarily_set_for_test(atte
     A test of a message that names whom to tell sets both, so it reads the same in any
     agent-session it runs in.
     """
-    values = {"CLAUDE_CODE_SESSION_ATTENDED": attended,
-              "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": reincarnation_owned_by_caller}
+    values = {_attendance_check.SESSION_ATTENDED_VARIABLE: attended,
+              _attendance_check.REINCARNATION_OWNED_BY_CALLER_VARIABLE: reincarnation_owned_by_caller}
     saved = {name: os.environ.get(name) for name in values}
 
     def put(settings):
