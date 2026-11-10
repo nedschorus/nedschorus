@@ -305,6 +305,20 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
           and result.stdout.startswith(f"FAILED: pass-time stamp — could not write {locked_machine / STAMP_NAME}")
           and len(result.stdout.splitlines()) == 1 and "Traceback" not in result.stderr,
           repr(result.stdout + result.stderr))
+    # On ned-box the store's folders are made locally too.
+    store_is_a_file = scratch / "store-is-a-file"
+    store_is_a_file.write_text("")
+    result = run_mirror(home, str(store_is_a_file), args=QUIET)
+    printed = result.stdout.splitlines()
+    check("--failures-only: a local store folder that cannot be made is a FAILED line "
+          "naming the folder and the error, exit 1, no traceback",
+          result.returncode == 1
+          and printed[:1] == [f"FAILED: projects — could not prepare {store_is_a_file / machine / 'projects'} "
+                              f"([Errno 20] Not a directory: '{store_is_a_file / machine / 'projects'}')"]
+          and all(line.startswith("FAILED: ") and "could not prepare" in line and "Not a directory" in line
+                  for line in printed)
+          and "Traceback" not in result.stderr,
+          repr(result.stdout + result.stderr))
     with lock_path.open("w") as held:
         fcntl.flock(held, fcntl.LOCK_EX)
         result = run_mirror(home, str(store), args=QUIET)
