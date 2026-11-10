@@ -96,6 +96,6 @@ def scratch_directory_after_removing_ones_killed_runs_left(prefix, temp_dir=None
         print(f"{prefix}: could not remove {directory}, which an earlier killed run of this test "
               f"left ({reason}). This notice is for information only and needs no action: the failed "
               f"removal does not fail the test, whose result depends only on its own checks. The test goes "
-              f"on in a new scratch directory. Nothing retries now: this test's next run, whenever it comes, "
+              f"on in a new scratch directory. Nothing tries the removal again now: this test's next run, whenever it comes, "
               f"tries again to remove the leftover directory.", file=sys.stderr)
     return Path(tempfile.mkdtemp(prefix=prefix, dir=temp_dir)).resolve()
