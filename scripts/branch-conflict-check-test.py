@@ -19,6 +19,7 @@ Exit codes: 0 all passed, 1 any failed.
 """
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -61,7 +62,8 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
                 full_refs=None, gh_base="main", gh_base_status=0,
                 missing_at_base=(), unlookable_at_base=(), current_branch=None,
                 open_pull_requests=(0, "[]"), main_side_logs=None, merges_log=(0, ""),
-                ls_remote=(0, "")):
+                ls_remote=(0, ""), own_commits=(0, ""), unpushed_commits=(0, ""),
+                holder_refs=(0, ""), open_pull_requests_by_branch=None):
     """A runner that answers git and gh without touching either.
 
     base_resolves and head_resolves override `resolves` for one side, so a case
@@ -90,6 +92,12 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
     to the answer of the --no-merges log of the base's commits that changed it
     (none, by default); merges_log answers the first-parent merge lookup;
     ls_remote answers `git ls-remote`, by default with the branch missing.
+
+    own_commits answers `git rev-list <base>..<head>`, unpushed_commits `git
+    rev-list <head> --not --remotes`, and holder_refs `git for-each-ref
+    --contains`; by default the branch has no commits of its own.
+    open_pull_requests_by_branch maps a branch to its `gh pr list` answer, in
+    place of open_pull_requests for that branch.
     """
     refs = dict(full_refs or {})
     gh_queue = list(gh_results or [])
@@ -115,6 +123,10 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
             return 0, RESOLVED_BASE if is_base else RESOLVED_HEAD
         if command[:2] == ["git", "ls-remote"]:
             return ls_remote
+        if command[:2] == ["git", "rev-list"]:
+            return unpushed_commits if "--not" in command else own_commits
+        if command[:2] == ["git", "for-each-ref"]:
+            return holder_refs
         if command[:2] == ["git", "merge-tree"]:
             return merge_tree_status, merge_tree_output
         if command[:2] == ["git", "symbolic-ref"]:
@@ -135,7 +147,8 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
             subject = COMMIT_SUBJECTS.get(command[-1])
             return (0, subject) if subject else (128, "")
         if command[:3] == ["gh", "pr", "list"]:
-            return open_pull_requests
+            branch = command[command.index("--head") + 1]
+            return (open_pull_requests_by_branch or {}).get(branch, open_pull_requests)
         if command[:2] == ["gh", "pr"]:
             if "headRefOid" in command:
                 return gh_head_status, (gh_head or "")
@@ -729,6 +742,34 @@ def merge_lines(branch="topic", base="origin/main", remote="origin"):
     ] + give_up_lines("merge", base) + [
         "Push it with git push, without --force, then carry on with what you "
         "were doing.",
+    ]
+
+
+def pushed_history_replace_lines(branch, holder, number, base="origin/main"):
+    return [
+        "ANSWER: replace -- branch %s has no open pull request, but its commits "
+        "are already on origin's branch %s, whose pull request #%s is open, so "
+        "pull request #%s is replaced by a new pull request; neither branch is "
+        "rebased, merged into or force-pushed." % (branch, holder, number, number),
+        "If branch %s was not cut to fix pull request #%s, do not close or "
+        "replace that pull request; ask its author with SendMessage how to clear "
+        "the conflict." % (branch, number),
+    ] + replace_lines(number, base)[1:]
+
+
+def pushed_history_merge_lines(branch, named, base="origin/main", remote="origin"):
+    return [
+        "ANSWER: merge -- branch %s has no open pull request and %s does not have "
+        "it, but its commits are already on %s, and no branch of %s holding them "
+        "has an open pull request, so %s is merged into it rather than rebased, "
+        "which would rewrite commits already pushed."
+        % (branch, remote, named, remote, base),
+    ] + understand_lines(base) + [
+        "Run git merge %s, resolving each conflict so that both changes work."
+        % base,
+    ] + give_up_lines("merge", base) + [
+        "Push it with git push -u %s %s, without --force, then carry on with what "
+        "you were doing." % (remote, branch),
     ]
 
 
@@ -1463,12 +1504,18 @@ REAL_ENV.update(
 
 # The stub answers `gh pr view <n> --json <field> -q .<field>` from
 # STUB_GH_<FIELD>, exits 1 when STUB_GH_FAIL is set, and logs every call.
-STUB_GH_PROGRAM = '''import os, sys
+# STUB_GH_NUMBER_BY_HEAD, a JSON object, answers `gh pr list --head <branch>`
+# for the branches it names, ahead of STUB_GH_NUMBER.
+STUB_GH_PROGRAM = '''import json, os, sys
 with open(os.environ["STUB_GH_LOG"], "a") as log:
     log.write(" ".join(sys.argv[1:]) + "\\n")
 if os.environ.get("STUB_GH_FAIL"):
     sys.exit(1)
 field = sys.argv[sys.argv.index("--json") + 1]
+by_head = json.loads(os.environ.get("STUB_GH_NUMBER_BY_HEAD", "{}"))
+if "--head" in sys.argv and sys.argv[sys.argv.index("--head") + 1] in by_head:
+    print(by_head[sys.argv[sys.argv.index("--head") + 1]])
+    sys.exit(0)
 print(os.environ.get("STUB_GH_" + field.upper(), ""))
 '''
 
@@ -1982,6 +2029,29 @@ def real_repository_cases(root):
          and without_main_side(lines)[1:] == rebase_lines("conflict-topic")
          and any("--head conflict-topic" in call for call in calls))
 
+    # A fix-round branch cut under a new name at a pull request's pushed head,
+    # with a fix commit on top, run bare as the checkout-freshness hook's
+    # pushed-history advice says: it has no open pull request and origin lacks
+    # it, yet it must get the pull request's answer, never rebase.
+    git_in(work, "push", "-q", "origin", "conflict-topic:pr-branch")
+    git_in(work, "fetch", "-q", "origin")
+    fix_checkout = root / "pr-branch-fix"
+    git_in(work, "worktree", "add", "-q", "-b", "pr-branch-fix", str(fix_checkout),
+           "origin/pr-branch")
+    commit_in(fix_checkout, "fix.txt", "the fix\n", "fix on top")
+    for gh_answer, want, label in (
+            ('[{"number": 905}]',
+             pushed_history_replace_lines("pr-branch-fix", "pr-branch", 905),
+             "the pull request's replace answer"),
+            ("[]", pushed_history_merge_lines("pr-branch-fix", "origin/pr-branch"),
+             "the merge answer when that branch has no open pull request")):
+        status, lines, calls = run_here(cwd=fix_checkout, gh=dict(
+            NUMBER_BY_HEAD=json.dumps({"pr-branch-fix": "[]", "pr-branch": gh_answer})))
+        case("real: a branch cut at a pushed head, run bare, gets %s, not rebase" % label,
+             status == CHECK.EXIT_CONFLICT
+             and without_main_side(lines)[1:] == want
+             and any("--head pr-branch " in call + " " for call in calls))
+
     # main's side came in through a pull request's merge, by another agent-seat.
     git_in(origin, "checkout", "-q", "-b", "side-work", "main")
     (origin / "shared-by-pull-request.txt").write_text("main's side\n")
@@ -2191,6 +2261,83 @@ case("--branch: git ls-remote killed by a signal (negative exit status): no answ
      "not the rebase steps of a branch origin lacks",
      status == CHECK.EXIT_CONFLICT
      and "git ls-remote exited -9" in lines[1])
+
+# --- a branch origin lacks, whose commits a remote branch already holds -------
+FIX_COMMIT, PUSHED_COMMIT = "f" * 40, "e" * 40
+OWN_COMMITS = (0, FIX_COMMIT + "\n" + PUSHED_COMMIT)
+ONLY_FIX_UNPUSHED = (0, FIX_COMMIT)
+PR_BRANCH_HOLDS = (0, "refs/remotes/origin/HEAD\nrefs/remotes/origin/pr-branch")
+
+
+def run_pushed_history(log=None, **answers):
+    defaults = dict(merge_tree_status=1, log=log, own_commits=OWN_COMMITS,
+                    unpushed_commits=ONLY_FIX_UNPUSHED, holder_refs=PR_BRANCH_HOLDS)
+    defaults.update(answers)
+    return run_branch(fake_runner(**defaults), branch="topic")
+
+
+log = []
+status, lines = run_pushed_history(
+    log, open_pull_requests_by_branch={"pr-branch": (0, '[{"number": 905}]')})
+case("pushed history: a holder branch's open pull request gives its replace answer",
+     status == CHECK.EXIT_CONFLICT
+     and lines[1:] == pushed_history_replace_lines("topic", "pr-branch", 905))
+case("pushed history: the holder is the remote branch that has the newest pushed "
+     "commit, and origin/HEAD is not asked about",
+     ["git", "for-each-ref", "--format=%(refname)", "--contains", PUSHED_COMMIT,
+      "refs/remotes"] in log
+     and ["gh", "pr", "list", "--state", "open", "--head", "pr-branch", "--json",
+          "number"] in log
+     and not any(c[:3] == ["gh", "pr", "list"] and "HEAD" in c for c in log))
+
+status, lines = run_pushed_history()
+case("pushed history: a holder branch with no open pull request: main is merged in",
+     status == CHECK.EXIT_CONFLICT
+     and lines[1:] == pushed_history_merge_lines("topic", "origin/pr-branch"))
+
+log = []
+status, lines = run_pushed_history(
+    log, holder_refs=(0, "refs/remotes/upstream/pr-branch\nrefs/remotes/origin/a\n"
+                         "refs/remotes/origin/b"),
+    open_pull_requests_by_branch={"pr-branch": (0, '[{"number": 905}]')})
+case("pushed history: a holder on another remote is not asked about, and past two "
+     "holders the rest are counted",
+     lines[1:] == pushed_history_merge_lines(
+         "topic", "upstream/pr-branch, origin/a and 1 more")
+     and not any(c[:3] == ["gh", "pr", "list"] and "pr-branch" in c for c in log))
+
+status, lines = run_pushed_history(unpushed_commits=OWN_COMMITS)
+case("pushed history: none of the branch's commits on a remote: still rebased",
+     lines[1:] == rebase_lines())
+
+PUSHED_HISTORY_UNKNOWN = [
+    "ANSWER: none -- branch topic has no open pull request and origin does not "
+    "have it, but whether its commits are already on another remote branch could "
+    "not be looked up (git failed), so this run cannot say whether it is rebased "
+    "or origin/main is merged into it.",
+    "Run git rev-list %s..%s --not --remotes to see the git error, fix it, then "
+    "rerun." % (RESOLVED_BASE[:12], RESOLVED_HEAD[:12]),
+]
+for label, failing in (("listing the branch's commits", "own_commits"),
+                       ("listing its unpushed commits", "unpushed_commits"),
+                       ("listing the holder branches", "holder_refs")):
+    # -9 is git killed by a signal, a negative exit status.
+    for exit_status in (128, -9):
+        status, lines = run_pushed_history(**{failing: (exit_status, "")})
+        case("pushed history: git exiting %d at %s gives no answer, never rebase"
+             % (exit_status, label),
+             status == CHECK.EXIT_CONFLICT and lines[1:] == PUSHED_HISTORY_UNKNOWN)
+
+status, lines = run_pushed_history(
+    open_pull_requests_by_branch={"pr-branch": (1, "")})
+case("pushed history: gh failing on the holder branch gives no answer, saying why",
+     status == CHECK.EXIT_CONFLICT and lines[1:] == [
+         "ANSWER: none -- branch topic's commits are already on origin's branch "
+         "pr-branch, but whether that branch has an open pull request could not be "
+         "looked up (gh pr list exited 1), so this run cannot say how the conflict "
+         "is cleared.",
+         "If gh is logged out or cannot reach GitHub, fix that, then rerun.",
+     ])
 
 
 # --- the original defect, pinned so it cannot come back ----------------------
