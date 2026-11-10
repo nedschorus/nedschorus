@@ -1078,7 +1078,8 @@ def test_task_written_beside_one_claude_code_writes_at_the_same_moment():
 
     snapshots.os.link = link_racing_claude_code
     try:
-        task_id = snapshots.task_list_new_pending_task_write(list_directory, "subject", "description")
+        task_id = snapshots.agent_seat_task_list_new_pending_task_write(list_directory, "subject",
+                                                                         "description")
     finally:
         snapshots.os.link = real_link
     check(task_id == 3 and json.loads((list_directory / "2.json").read_text())["by"] == "claude code"
@@ -1257,7 +1258,7 @@ def test_restore_step_failures():
     failing_case("whose git worktree add fails", worktrees_directory_is_a_file,
                  "git worktree add -b")
 
-    real_module = snapshots.owner_file_module()
+    real_module = snapshots.load_worktree_owner_file_read_and_write_module()
 
     class OwnerFileWriteFails:
         OWNER_AGENT_SEAT = real_module.OWNER_AGENT_SEAT
@@ -1267,8 +1268,8 @@ def test_restore_step_failures():
             raise real_module.WorktreeOwnerFileError("the disk is full, as the test says")
 
     def owner_file_write_fails(main):
-        snapshots._owner_file_module = OwnerFileWriteFails
-        return lambda: setattr(snapshots, "_owner_file_module", real_module)
+        snapshots._worktree_owner_file_read_and_write_module = OwnerFileWriteFails
+        return lambda: setattr(snapshots, "_worktree_owner_file_read_and_write_module", real_module)
 
     failing_case("whose owner file cannot be written", owner_file_write_fails,
                  "writing the owner file of")
@@ -1295,11 +1296,11 @@ def test_restore_step_failures():
 
     main = new_clone()
     ref, _worktree = leftover_snapshot(main, "undo", {"new.txt": "trailing space \n"}, "9-4")
-    restore_undo = undo_fails(main)
+    put_real_run_git_back = undo_fails(main)
     try:
         code, lines = run_restore(main, ref, ["new.txt"])
     finally:
-        restore_undo()
+        put_real_run_git_back()
     target = restored_worktree_of(main, ref)
     branch = snapshots.restored_branch_name(ref)
     check(code == 1 and any(f"remove it with: git worktree remove --force --force {target}" in line
@@ -1539,13 +1540,13 @@ def test_the_cleaner_reports_each_task_it_cannot_judge():
           and json.loads(later_task.read_text())["status"] == "completed",
           "a task file that cannot be read is reported, and the next task is still judged", lines)
     later_task.unlink()
-    real_timeout = cleaner.RESTORED_BRANCH_TASK_FETCH_TIMEOUT_SECONDS
-    cleaner.RESTORED_BRANCH_TASK_FETCH_TIMEOUT_SECONDS = 0.0001
+    real_timeout = cleaner.RESTORED_BRANCH_TASKS_CLOSE_GIT_FETCH_TIMEOUT_SECONDS
+    cleaner.RESTORED_BRANCH_TASKS_CLOSE_GIT_FETCH_TIMEOUT_SECONDS = 0.0001
     task_file.write_text(original)
     try:
         failures_seen, lines = close_tasks(main, remove=True)
     finally:
-        cleaner.RESTORED_BRANCH_TASK_FETCH_TIMEOUT_SECONDS = real_timeout
+        cleaner.RESTORED_BRANCH_TASKS_CLOSE_GIT_FETCH_TIMEOUT_SECONDS = real_timeout
     check(failures_seen == 1 and lines and lines[0].startswith(
         "FAILED: git fetch --prune origin ran past 0.0001 seconds")
           and json.loads(task_file.read_text())["status"] == "pending",

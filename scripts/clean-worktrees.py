@@ -206,9 +206,10 @@ origin/main, or when `git for-each-ref --contains` names no ref holding it.
 Any other such task stays open. The report modes name each task --remove
 would mark and change none; they do not fetch, and judge the refs as last
 fetched, so a stale origin only keeps more open. When the fetch fails or runs
-past RESTORED_BRANCH_TASK_FETCH_TIMEOUT_SECONDS, a task list or a task file
-cannot be read, a task file cannot be rewritten, a task has no `Restore commit: ` line, or git cannot judge its
-commit, the task is left as it was and a line opening `FAILED: ` says so.
+past RESTORED_BRANCH_TASKS_CLOSE_GIT_FETCH_TIMEOUT_SECONDS, a task list or a
+task file cannot be read, a task file cannot be rewritten, a task has no
+`Restore commit: ` line, or git cannot judge its commit, the task is left as
+it was and a line opening `FAILED: ` says so.
 
 Modes:
   (default)    report every worktree, one line each, then the count lines
@@ -1475,7 +1476,7 @@ def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
 
 TASK_LISTS_DIRECTORY = Path.home() / ".claude" / "tasks"
 NEDSCHORUS_TASK_LISTS_GLOB = "nedschorus-*-tasks"
-RESTORED_BRANCH_TASK_FETCH_TIMEOUT_SECONDS = 300
+RESTORED_BRANCH_TASKS_CLOSE_GIT_FETCH_TIMEOUT_SECONDS = 300
 
 
 def open_restored_branch_tasks(task_lists_directory, out):
@@ -1511,9 +1512,10 @@ def open_restored_branch_tasks(task_lists_directory, out):
 
 
 def restore_commit_of_task(task):
+    prefix = work_snapshots.RESTORED_BRANCH_TASK_DESCRIPTION_RESTORE_COMMIT_LINE_PREFIX
     for line in str(task.get("description", "")).splitlines():
-        if line.startswith(work_snapshots.RESTORE_COMMIT_LINE_PREFIX):
-            return line[len(work_snapshots.RESTORE_COMMIT_LINE_PREFIX):].strip()
+        if line.startswith(prefix):
+            return line[len(prefix):].strip()
     return None
 
 
@@ -1546,11 +1548,12 @@ def close_restored_branch_tasks(repo, remove, only_done, task_lists_directory=No
         try:
             fetched = subprocess.run(["git", "-C", str(repo), "fetch", "--prune", "origin"],
                                      capture_output=True, text=True, check=False,
-                                     timeout=RESTORED_BRANCH_TASK_FETCH_TIMEOUT_SECONDS)
+                                     timeout=RESTORED_BRANCH_TASKS_CLOSE_GIT_FETCH_TIMEOUT_SECONDS)
             fetch_failure = (work_snapshots.git_failure_text(fetched) if fetched.returncode
                              else None)
         except subprocess.TimeoutExpired:
-            fetch_failure = f"ran past {RESTORED_BRANCH_TASK_FETCH_TIMEOUT_SECONDS} seconds"
+            fetch_failure = (f"ran past {RESTORED_BRANCH_TASKS_CLOSE_GIT_FETCH_TIMEOUT_SECONDS} "
+                             f"seconds")
         if fetch_failure:
             out(f"FAILED: git fetch --prune origin {fetch_failure}, so the restored branches' "
                 f"tasks were not judged and are left as they were: "
@@ -1561,8 +1564,8 @@ def close_restored_branch_tasks(repo, remove, only_done, task_lists_directory=No
         commit = restore_commit_of_task(task)
         if commit is None:
             out(f"FAILED: {name} has no line opening "
-                f"\"{work_snapshots.RESTORE_COMMIT_LINE_PREFIX}\", so its restore commit is "
-                f"unknown; it is left as it was")
+                f"\"{work_snapshots.RESTORED_BRANCH_TASK_DESCRIPTION_RESTORE_COMMIT_LINE_PREFIX}\", "
+                f"so its restore commit is unknown; it is left as it was")
             failures += 1
             continue
         reason, git_failure = restore_commit_done_reason(repo, commit)

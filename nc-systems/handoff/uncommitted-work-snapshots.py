@@ -87,7 +87,7 @@ RESTORED_BRANCH_NAME_PREFIX = "restored-"
 RESTORE_COMMIT_MESSAGE_TEMPLATE = "Restore work from {ref}"
 # scripts/clean-worktrees.py finds the tasks restore opens by these two.
 RESTORED_BRANCH_TASK_SUBJECT_PREFIX = "Restored branch "
-RESTORE_COMMIT_LINE_PREFIX = "Restore commit: "
+RESTORED_BRANCH_TASK_DESCRIPTION_RESTORE_COMMIT_LINE_PREFIX = "Restore commit: "
 TASK_LIST_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
 TASK_FILE_NAME_PATTERN = re.compile(r"[1-9][0-9]*\.json")
 TASK_HIGH_WATER_MARK_FILE_NAME = ".highwatermark"
@@ -712,20 +712,20 @@ def first_prompt_text(repo, agent_seat, handoff_directory, now=None, is_alive=No
 # ---------------------------------------------------------------- restore and discard
 
 
-_owner_file_module = None
+_worktree_owner_file_read_and_write_module = None
 
 
-def owner_file_module():
+def load_worktree_owner_file_read_and_write_module():
     """scripts/worktree-owner-file-read-and-write.py, loaded on first use: it loads this module
     itself, so loading it at import would be circular."""
-    global _owner_file_module
-    if _owner_file_module is None:
+    global _worktree_owner_file_read_and_write_module
+    if _worktree_owner_file_read_and_write_module is None:
         spec = importlib.util.spec_from_file_location(
             "worktree_owner_file_read_and_write",
             MODULE_PATH.parents[2] / "scripts" / "worktree-owner-file-read-and-write.py")
-        _owner_file_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(_owner_file_module)
-    return _owner_file_module
+        _worktree_owner_file_read_and_write_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_worktree_owner_file_read_and_write_module)
+    return _worktree_owner_file_read_and_write_module
 
 
 def restored_branch_name(ref):
@@ -744,19 +744,22 @@ def restored_branch_task_description(snapshot, kept, worktree, restore_commit):
         f"{snapshot['transcript'] or '(none recorded)'}.",
         f"Kept files: {', '.join(kept)}.",
         f"Restored worktree: {worktree}",
-        f"{RESTORE_COMMIT_LINE_PREFIX}{restore_commit}",
+        f"{RESTORED_BRANCH_TASK_DESCRIPTION_RESTORE_COMMIT_LINE_PREFIX}{restore_commit}",
         "Carry the branch on to a pull request, or delete it. Leave this task open: "
         "scripts/clean-worktrees.py marks it completed once that commit is on main or no branch "
         "holds it any more.",
     ])
 
 
-def task_list_new_pending_task_write(list_directory, subject, description):
+def agent_seat_task_list_new_pending_task_write(list_directory, subject, description):
     """Write a new pending task into the Claude Code task list; return its id. Raises OSError.
 
     The id is one more than the highest of the list's task ids and its .highwatermark, as
     Claude Code numbers a new task; the file is linked into place only where no file of that
-    name exists, so a task Claude Code creates at the same moment is not overwritten.
+    name exists, so a task Claude Code creates at the same moment is not overwritten. It creates
+    the list directory, which an agent-session that has made no task yet lacks; the function of
+    the same name in scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-
+    tasks-open.py raises there instead.
     """
     list_directory = Path(list_directory)
     list_directory.mkdir(parents=True, exist_ok=True)
@@ -853,7 +856,7 @@ def restore_refusal(repo, snapshot, keep, environment):
     return None
 
 
-def restore_undo(repo, worktree, branch, out):
+def remove_worktree_and_branch_of_failed_work_snapshot_restore(repo, worktree, branch, out):
     """Remove the worktree and the branch restore made; name each that cannot be removed, and
     say so when neither is left."""
     if worktree.exists():
@@ -888,14 +891,14 @@ def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
 
     def undo_after(step, detail):
         out(f"FAILED: {step} failed ({detail}).")
-        restore_undo(repo, worktree, branch, out)
+        remove_worktree_and_branch_of_failed_work_snapshot_restore(repo, worktree, branch, out)
         out(f"The ref {ref} is kept, so nothing is lost. Tell the user what failed.")
         return EXIT_STEP_FAILED
 
     added = run_git(repo, "worktree", "add", "-b", branch, str(worktree), f"{ref}^")
     if added.returncode:
         return undo_after(f"git worktree add -b {branch} {worktree} {ref}^", git_failure_text(added))
-    owners = owner_file_module()
+    owners = load_worktree_owner_file_read_and_write_module()
     owner = {"owner_kind": owners.OWNER_AGENT_SEAT, "agent_seat": agent_seat}
     try:
         try:
@@ -934,7 +937,7 @@ def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
     description = restored_branch_task_description(snapshot, keep, worktree, restore_commit)
     task_list = Path.home() / ".claude" / "tasks" / environment[TASK_LIST_ENVIRONMENT_VARIABLE]
     try:
-        task_id = task_list_new_pending_task_write(task_list, subject, description)
+        task_id = agent_seat_task_list_new_pending_task_write(task_list, subject, description)
     except OSError as error:
         task_id = None
         exit_code = EXIT_STEP_FAILED
