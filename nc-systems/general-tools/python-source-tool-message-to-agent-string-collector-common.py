@@ -57,10 +57,13 @@ except ... as or a match capture, hides the function's local of the same name
 everywhere in the class body, lambdas nested in it included. So when the class body assigns
 `text`, a lambda in the class does not follow the function's local `text`, though Python's own
 scoping would let it. A name a nested function, lambda or class body declares global hides the
-function's local of the same name there. A comprehension's target hides the function's local of
-the same name in the comprehension's later parts, though not in its first iterable, which Python
-evaluates outside; a name read inside the target, as text is in `for messages[text] in items`, is
-not bound by it. A function's or lambda's defaults and decorators, and a class's decorators, are
+function's local of the same name there. A comprehension's target hides the function's local, and
+the module's constant, of the same name where the comprehension's later parts read it, though not in
+its first iterable, which Python evaluates outside; a local bound outside the comprehension still
+carries the function's local, so in text = "shown"; message = f"{text}"; [print(message) for text
+in items] "shown" is a message. Only the target's own names, through tuples, lists and starred
+names, are bound by it: a name read inside the target, as text is in `for messages[text] in
+items`, is not, nor is a name a comprehension nested in that subscript binds. A function's or lambda's defaults and decorators, and a class's decorators, are
 read in the scope the definition stands in; so are a function's annotations and a class's bases
 and keywords, unless the definition has type parameters, as in class Holder[T]: then those, and
 each type parameter's bound and default, are read with the type parameters' names hiding the
@@ -368,6 +371,9 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
         self.helper_printers = helper_printers or {}
         # For each enclosing function, its local name -> the string expressions bound to it.
         self.enclosing_local_string_bindings = []
+        # The names a comprehension's target or a type parameter hides where the visit stands. Only a
+        # name read there is hidden: a local's binding made outside still carries the function's local.
+        self.hidden_names_stack = [frozenset()]
         # Functions whose returned strings are collected, and those this pass found called for text.
         self.text_returning_function_names = set(text_returning_function_names)
         self.function_names_called_for_text = set()
@@ -422,6 +428,9 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
             bindings = local_string_bindings(node)
         self.enclosing_parameter_names.append(parameters)
         self.enclosing_local_string_bindings.append(bindings)
+        # A function's body has names of its own; a lambda or class body still sees the names hidden around it.
+        self.hidden_names_stack.append(self.hidden_names_stack[-1] if isinstance(node, (ast.Lambda, ast.ClassDef))
+                                       else frozenset())
         if isinstance(node, ast.Lambda):
             self.visit(node.body)
         else:
@@ -429,6 +438,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
             for statement in node.body:
                 self.visit(statement)
             self.enclosing_names.pop()
+        self.hidden_names_stack.pop()
         self.enclosing_local_string_bindings.pop()
         self.enclosing_parameter_names.pop()
 
@@ -438,20 +448,14 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
     visit_ClassDef = visit_scope
 
     def visit_with_names_hidden(self, nodes, hidden):
-        """Visit the nodes with the innermost function's locals of the hidden names not followed."""
-        if not hidden:
-            for node in nodes:
-                self.visit(node)
-            return
-        has_locals = bool(self.enclosing_local_string_bindings)
-        if has_locals:
-            outer = self.enclosing_local_string_bindings[-1]
-            self.enclosing_local_string_bindings.append(
-                {name: values for name, values in outer.items() if name not in hidden})
+        """Visit the nodes with the hidden names, where the nodes read them, meaning neither the
+        innermost function's locals nor the module's constants of those names. A local's binding
+        made outside the nodes, and carried into them by another name, still means the function's
+        local."""
+        self.hidden_names_stack.append(self.hidden_names_stack[-1] | hidden)
         for node in nodes:
             self.visit(node)
-        if has_locals:
-            self.enclosing_local_string_bindings.pop()
+        self.hidden_names_stack.pop()
 
     def visit_comprehension_parts(self, node):
         """Visit a comprehension's parts, each with the targets bound before it hiding the
@@ -472,7 +476,10 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
         if expression is None or not self.enclosing_local_string_bindings:
             return
         bindings = self.enclosing_local_string_bindings[-1]
-        pending = [(name, is_prompt) for name in names_carried_as_text(expression)]
+        # A hidden name is hidden only where the expression reads it; the bindings followed from
+        # there were made outside, where the name means the function's local.
+        pending = [(name, is_prompt) for name in names_carried_as_text(expression)
+                   if name not in self.hidden_names_stack[-1]]
         followed = set()
         while pending:
             name, reached_as_prompt = pending.pop()
@@ -529,7 +536,9 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
                 continue
             label = f'"{key.value}" value'
             if isinstance(value, ast.Name):
-                if self.enclosing_local_string_bindings and value.id in self.enclosing_local_string_bindings[-1]:
+                if value.id in self.hidden_names_stack[-1]:
+                    pass  # A comprehension's own target: neither the function's local nor the module's constant.
+                elif self.enclosing_local_string_bindings and value.id in self.enclosing_local_string_bindings[-1]:
                     self.collect_local_strings_reaching(value)
                 # A name ending in a suffix is collected already, at its assignment.
                 elif value.id in self.module_string_values and not variable_name_has_tool_message_to_agent_suffix(value.id):
@@ -665,9 +674,17 @@ def type_parameter_names(definition):
 
 
 def comprehension_target_names(target):
-    """The names a comprehension's target binds: those it stores to. A name read inside the
-    target, as text is in `for messages[text] in items`, is not bound."""
-    return {node.id for node in ast.walk(target) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)}
+    """The names a comprehension's target binds: the names of its assignment structure, through
+    tuples, lists and starred names. A subscript's or attribute's target binds no name, so neither
+    text in `for messages[text] in items` nor a name a comprehension nested in such a target binds
+    is bound."""
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, ast.Starred):
+        return comprehension_target_names(target.value)
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return set().union(*(comprehension_target_names(element) for element in target.elts))
+    return set()
 
 
 def comprehension_parts_with_names_they_hide(comprehension):
