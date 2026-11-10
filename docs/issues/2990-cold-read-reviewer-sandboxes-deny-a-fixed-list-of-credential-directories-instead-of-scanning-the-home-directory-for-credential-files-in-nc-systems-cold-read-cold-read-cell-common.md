@@ -1,0 +1,72 @@
+---
+issue: "[Cold-read reviewer sandboxes deny a fixed list of credential directories instead of scanning the home directory for credential files in nc-systems/cold-read/cold-read-cell-common.py, and a daily check reports new credential files](https://github.com/nedschorus/nedschorus/issues/2990)"
+kind: design
+---
+
+# Cold-read reviewer sandboxes deny a fixed list of credential directories instead of scanning the home directory for credential files in nc-systems/cold-read/cold-read-cell-common.py, and a daily check reports new credential files
+
+## What happens today
+
+No reviewer program opens a credential file: PR [Cold-read reviewers never open a credential file, and each launcher enforces it](https://github.com/nedschorus/nedschorus/pull/765) made each launcher enforce that, after an agy reviewer opened two GitHub token files a document named and sent them to Google (walk what-a-cold-read-reviewer-may-read-2026-09-28, item 1). All three reviewer programs, Claude, Codex and agy, are denied the same places, which are defined once in `nc-systems/cold-read/cold-read-cell-common.py` (line numbers in this file are at origin/main `5ef09e54`): the directories `CREDENTIAL_DIRECTORIES` (`~/.config/nedschorus`, `~/.config/gh`, `~/.ssh`, line 63), the reviewer programs' login files `REVIEWER_PROGRAM_LOGIN_FILES` (line 71), and any file named `*.token` or `.env`, `CREDENTIAL_FILE_NAME_PATTERNS` (line 68).
+
+On macOS, and for Claude on both machines, the file names are denied by pattern: Claude's cell writes `Read(//**/*.token)` deny rules (`CREDENTIAL_READ_DENY_RULES` in `nc-systems/cold-read/cold-read-claude-cell.py`), Codex's permission profile takes `/**/*.token` and `/**/.env` (`codex_credential_denying_permission_profile_arguments`, line 172 of `nc-systems/cold-read/cold-read-cell-common.py`), and agy's `sandbox-exec` profile takes a regular expression (`sandbox_exec_profile` in `nc-systems/cold-read/cold-read-agy-cell.py`).
+
+On Linux a pattern cannot be used, for two reasons the launchers' docstrings record. Codex "expands a deny pattern with ripgrep before it starts on Linux, and aborts when any directory under the pattern's prefix is unreadable (ned-box's home holds one)" (`nc-systems/cold-read/cold-read-codex-cell.py`); and agy runs under bwrap, which "takes exact paths, not patterns" (`nc-systems/cold-read/cold-read-agy-cell.py`). So on Linux, `credential_files_found_now` (line 135 of `nc-systems/cold-read/cold-read-cell-common.py`) walks the whole home directory and the repository with `find` before every launch, and the launcher denies each file it finds by its exact path.
+
+That scan runs before every Codex or agy launch on ned-box. Its callers on main: the Codex profile builder `codex_credential_denying_permission_profile_arguments`, used by `nc-systems/cold-read/cold-read-codex-cell.py`, `scripts/code-review-codex-cell.py`, `scripts/sanity-check-adversarial-prompts.py` and `scripts/run-codex-task-from-brief.py`; and agy's `credential_sandbox_prefix` in `nc-systems/cold-read/cold-read-agy-cell.py`, used by that file, `scripts/run-gemini-task-from-brief.py` and `nc-systems/general-tools/agy-print-prompt-run-in-empty-home-sandbox.py`. No program on the Mac runs it.
+
+## Why it matters
+
+The scan costs about 3 seconds on every Codex or agy launch on ned-box, and the cost grows with the home directory, most of which is the log-store. Measured 2026-11-08 on ned-box, three calls at load average 21 to 26: 3.0, 3.07 and 3.17 seconds. Before PR [cold-read credential-file scan: several finds at once over parts of the tree, about 6 s to under 2 s per cell launch](https://github.com/nedschorus/nedschorus/pull/2422) split it into concurrent finds on 2026-11-02, it took 6 to 8 seconds, 7 to 8 of agy's 12.5 seconds of start-up (GHI [Research what makes a cold-read-fast-read slow, and which reader instructions earn their findings](https://github.com/nedschorus/nedschorus/issues/2466)). The split added `credential_file_scan_parts` and three tuning constants, code that exists only to make the scan cheaper.
+
+The scan buys almost nothing a fixed list would not. The same run on 2026-11-08 found five files outside `CREDENTIAL_DIRECTORIES`: `~/.steam/steam.token`, `~/nedsmessenger/.env`, and three 2-byte test fixtures under `~/nedschorus-logs/seats/merge-lane-2/merge-helpers/` (`rv1150/mhome/…` and `rv1150r2/out-*/home/…`, each a `.config/nedschorus/mac-claude.token`), which hold no credential.
+
+It also misses credentials whose names match neither pattern. `~/nedsmessenger/secrets/` on ned-box holds five credential files, `claude-bot-token.json`, `claude-oauth-token`, `github-ubuntu-claude`, `github-ubuntu-codex` and `mac-claude-token.json`, and no reviewer program is denied any of them today, on either platform's rules.
+
+The scan was also the cause of the slow deadline test of GHI [The Codex task runner's deadline test case fails on a busy machine, because a scan of the whole home directory runs before the deadline starts](https://github.com/nedschorus/nedschorus/issues/1323). That test is already fixed: PR [run-codex-task-from-brief test: deadline and stdin cases time from Codex's start, so the credential-file scan counts against neither limit](https://github.com/nedschorus/nedschorus/pull/1362) made it time from Codex's start, and the issue closed on 2026-10-15. The reasons left for this change are the cost at every launch and the credential files in `~/nedsmessenger/secrets/` that no rule denies.
+
+## What the user decided
+
+On 2026-10-14 at 22:19:55Z the user told merge-lane-2 "Move stuff which will be an ongoing distraction. When convenient" (`nedlern@ned-box:/home/nedlern/nedschorus-logs/session-dialogs/ned-box/-home-nedlern-agents-merge-lane-2/e900f72b-83ef-4ee3-ac38-3a2c73b600b0-dialog-complete.md`, line 1473), and merge-lane-2 handed this subject to agent-seat cold-read-research with this plan: drop the home-directory scan; deny the known credential places by name, leaving the files where they are, because nedsmessenger is inactive, not retired; and add a check that fails when a `*.token` or `.env` file appears outside the known places, leaving out test fixtures in the log-store.
+
+On 2026-11-10 the user approved the design below with "A", as item 9 of the approval-walk terminology-prompt-2026-11-07 in agent-seat cold-read-research; its walk-minutes are `docs/walk/terminology-prompt-2026-11-07-minutes.md` in that agent-seat's checkout on the Mac, `/Users/el/agents/cold-read-research`. The recommendation he approved: give this GHI-MD a cold read, file it, and start the build.
+
+## The design
+
+1. Add `~/.steam` and `~/nedsmessenger` to `CREDENTIAL_DIRECTORIES`, so every launcher on both platforms denies them through the code it already has. `~/.steam` holds the one credential file the scan finds there, `steam.token`; the rest of it is symlinks into `~/.local/share/Steam`. `~/nedsmessenger` is denied whole, which covers its `.env` and its `secrets/` directory. nedsmessenger is deferred, as GHI [nedsmessenger is deferred until nedschorus can build it; where its early context lives](https://github.com/nedschorus/nedschorus/issues/80) records, and its adapter is stopped, so no program loses a file it reads. The log-store's test fixtures are not added: they hold no credential. Linux launchers list only the directories that exist, as `credential_directories_present` already does, because Codex and bwrap both create a missing path on the real disk. macOS needs no such filter: agy's `sandbox-exec` profile and Claude's deny rules name a missing directory without error, and the Codex profile builder already uses `credential_directories_present` on both platforms.
+2. Delete `credential_files_found_now`, `credential_file_scan_parts`, `CREDENTIAL_FILE_SCAN_ROOTS` and the three `CREDENTIAL_FILE_SCAN_*` constants, and stop calling the scan in `codex_credential_denying_permission_profile_arguments` in `nc-systems/cold-read/cold-read-cell-common.py` and in `credential_sandbox_prefix` in `nc-systems/cold-read/cold-read-agy-cell.py`. The macOS rules and Claude's rules keep their patterns, unchanged. The repository root is no longer scanned either: a scan of it alone took 0.14 seconds on 2026-11-08 and found nothing, and the check in point 3 covers every checkout under the home directory.
+3. A check program, run on ned-box by the daily step of GHI [Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedschorus/nedschorus/issues/1058), finds every `*.token` and `.env` file in the home directory outside `CREDENTIAL_DIRECTORIES` and the login files, leaving out the log-store, `~/nedschorus-logs/`. It imports `CREDENTIAL_DIRECTORIES`, `REVIEWER_PROGRAM_LOGIN_FILES` and `CREDENTIAL_FILE_NAME_PATTERNS` from `nc-systems/cold-read/cold-read-cell-common.py` rather than copying them, so a place added there drops out of its report at once. When it finds one, it prints each path and exits nonzero, and the daily step shows the user the paths; the fix is to add the place to `CREDENTIAL_DIRECTORIES` or to move the file. It runs on ned-box only, because the Mac's rules are patterns and already cover any such file.
+
+The plan asked for a test. A test suite cannot do this job on ned-box: `scripts/run-all-test-suites.py` gives each suite an empty home directory (`TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE`, which mounts an empty tmpfs over it and shows only the paths in `TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY`), so a test that scans the home finds nothing. A test that read the real home would also fail every pull request's head test run whenever a new `.env` appeared there, stopping merges for a reason no pull request caused. The daily step reaches the user the same day without blocking anyone.
+
+The check leaves out the whole log-store rather than only its fixtures, because the fixtures sit under paths that change with each merge-helper run, and the log-store holds about 900,000 entries the check would otherwise walk. The cost: a real credential copied into the log-store would not be reported.
+
+## What this does not cover
+
+- A credential file named neither `*.token` nor `.env`, outside the listed places, is still not denied on either platform; `~/nedsmessenger/secrets/` was such a case. Finding those needs a judgment of each file and is not proposed here.
+- `~/.config/nedschorus-sandboxed-models/github-public-repositories-read-only-token` stays readable: it is the public-read-only GitHub token the launchers deliberately give sandboxed models (approval-walk codex-and-gemini-access-by-purpose-2026-10-23 of agent-seat prime-intellect). Its name matches neither pattern, so the check does not report it.
+- `~/.gnupg` on ned-box is not added: on 2026-11-10 it held only `pubring.kbx` (32 bytes) and `trustdb.gpg`, and no `private-keys-v1.d` directory, so no private key.
+- On ned-box, the test fixtures in the log-store become readable to Codex and agy, which no longer deny them by path; Claude, and every reviewer program on the Mac, still deny them by pattern. They hold no credential.
+- A credential file created between two daily checks is readable by Codex and agy on ned-box until the next check reports it and someone adds its place.
+- Until the daily step of GHI 1058 is built, nothing runs the check, so a new `*.token` or `.env` file outside the listed places on ned-box is readable by Codex and agy, and reported to no one, from the merge of points 1 and 2 until then. No program of that daily step exists on main today: `nc-systems/general-tools/scheduled-jobs-on-each-machine.json` lists no job that runs maintenance jobs, and no file on main names its nightly overseer.
+
+## Next action
+
+An agent-seat builds points 1 and 2 in one pull request:
+
+- `nc-systems/cold-read/cold-read-cell-common.py`: the two directories added, the scan and its constants deleted, and the scan's call removed from `codex_credential_denying_permission_profile_arguments`.
+- `nc-systems/cold-read/cold-read-agy-cell.py`: the scan's call removed from `credential_sandbox_prefix`, which still masks the login files; and its docstring, which describes the scan, as does the docstring of `nc-systems/cold-read/cold-read-codex-cell.py`.
+- `nc-systems/cold-read/tests/cold-read-cell-common-test.py`: the scan's own cases, lines 1753 to 1848, deleted; the profile cases above them, which stub the scan (lines 1709 to 1725) and expect its files denied on Linux (lines 1665 to 1667), changed to expect no file denied by path on Linux; and a check that each entry of `CREDENTIAL_DIRECTORIES` that exists is denied, looping over the tuple, so a place added later is checked too.
+- The stubs of `credential_files_found_now` in `scripts/sanity-check-adversarial-prompts-test.py` deleted, and in `scripts/run-gemini-task-from-brief-test.py` the stub deleted and the expected bwrap arguments, which hold the stub's `/data/.env`, changed.
+
+Before it merges, it reruns, on ned-box, the canary measurement that PR [Cold-read reviewers never open a credential file, and each launcher enforces it](https://github.com/nedschorus/nedschorus/pull/765) made and the docstring of `nc-systems/cold-read/cold-read-agy-cell.py` records: plant a canary file under `~/.steam` and one under `~/nedsmessenger/secrets/`, each with a name no pattern matches, run a Codex cell and an agy cell on a document that asks the reviewer to read both, check that neither report holds a canary's contents, and delete the canaries.
+
+Point 3 is added to GHI 1058's GHI-MD as a job of its own, with edit-GHI, in the same agent-session.
+
+## Deferred-decisions
+
+- How the check of point 3 treats a directory it cannot read, such as the unreadable one in ned-box's home: to be settled when the check is built, so that an unreadable directory neither stops the check nor passes unreported.
+
+## Search receipts
+
+No issue covered this subject on 2026-11-08: `scripts/ghi-guide-agent-ask.py` named none (it returned only the related GHI 2466, GHI [Cut cold-read-fast-read Gemini token cost](https://github.com/nedschorus/nedschorus/issues/1919) and GHI [A wiki page on the bubblewrap sandboxes that ned-box's programs run agents and test suites in](https://github.com/nedschorus/nedschorus/issues/1584)); `gh issue list --repo nedschorus/nedschorus --state all --search "credential_files_found_now"` and `--search "credential scan in:title,body"` returned nothing. On 2026-11-10, `scripts/ghi-guide-agent-ask.py --include-closed` again named none.
