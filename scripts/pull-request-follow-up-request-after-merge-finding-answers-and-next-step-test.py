@@ -345,7 +345,7 @@ def test_start():
                   "<n>[,<n>...]\n" in err
               and "again once" not in err
               and err.endswith(fails_line("start-topic-branch", start="Otherwise pass")
-                               + f"git switch -c topic-one origin/main in {worktree} failed (exit 128: fatal: a branch "
+                               + f"git switch --no-overwrite-ignore -c topic-one origin/main in {worktree} failed (exit 128: fatal: a branch "
                                  "named 'topic-one' already exists)" + SUBAGENT_END)
               and git(worktree, "branch", "--show-current") == "topic-two"
               and [record["branch"] for record in case.topic_branches()] == ["topic-one", "topic-two"]
@@ -366,6 +366,24 @@ def test_start():
         check("start goes on in a worktree whose only change is an untracked file",
               code == 0 and git(worktree, "branch", "--show-current") == "topic-untracked", err)
         (worktree / "untracked.txt").unlink()
+        # An ignored directory at a path main newly tracks: without --no-overwrite-ignore,
+        # git switch replaces its file with main's, and the only copy is lost.
+        (case.repository / "ignored-here").mkdir()
+        (case.repository / "ignored-here" / "notes.txt").write_text("main's copy\n")
+        git(case.repository, "add", "ignored-here/notes.txt")
+        git(case.repository, "commit", "-q", "-m", "main tracks a file the worktree ignores")
+        git(case.repository, "push", "-q", "origin", "main")
+        (worktree / "ignored-here").mkdir()
+        (worktree / "ignored-here" / ".gitignore").write_text("*\n")
+        (worktree / "ignored-here" / "notes.txt").write_text("the only copy\n")
+        code, out, err = case.run(worktree, "start-topic-branch", "topic-ignored", "--finding-numbers", "1")
+        check("start over an ignored file at a path main tracks is FAILED with exit 2, naming the file, "
+              "records no branch, and the file survives",
+              code == 2 and err.startswith("FAILED: ") and "ignored-here/notes.txt" in err
+              and git(worktree, "branch", "--show-current") == "topic-untracked"
+              and len(case.topic_branches()) == 3
+              and (worktree / "ignored-here" / "notes.txt").read_text() == "the only copy\n", err)
+        shutil.rmtree(worktree / "ignored-here")
         case.run(worktree, "record-finding-leave-out-reason", "2", "--reason", "fixed")
         for label, findings, words in (
                 ("a finding that does not exist", "3", "so there is no finding 3, and no topic branch was made.\n"),

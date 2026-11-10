@@ -849,6 +849,25 @@ def run_launch_time_git_sync_cases(workspace: Path):
           report)
     check("the untracked file survives the fast-forward", (home / "work-in-progress.txt").is_file())
 
+    # An ignored file at a path main newly tracks: without --no-overwrite-ignore,
+    # git replaces it with main's file, and its only copy is lost.
+    (seed / "notes.txt").write_text("main's notes\n", encoding="utf-8")
+    git_in(["add", "-A"], seed)
+    git_in(["commit", "--quiet", "-m", "main tracks notes.txt"], seed)
+    git_in(["push", "--quiet", "origin", "main"], seed)
+    home_exclude = home / ".git" / "info" / "exclude"
+    home_exclude.write_text("notes.txt\n", encoding="utf-8")
+    (home / "notes.txt").write_text("the only copy\n", encoding="utf-8")
+
+    report = supervisor.launch_time_git_sync(home)
+    check("an ignored file at a path main tracks stops the fast-forward, and the report names it",
+          report.startswith("launch-time-git-sync: agent-branch left as is — ")
+          and "notes.txt" in report, report)
+    check("the ignored file survives the refused fast-forward",
+          (home / "notes.txt").read_text(encoding="utf-8") == "the only copy\n")
+    (home / "notes.txt").unlink()
+    home_exclude.write_text("", encoding="utf-8")
+
     # A tracked change is never disturbed, however far behind the branch is.
     (seed / "README.md").write_text("seed\nfrom main\nfurther\nagain\n", encoding="utf-8")
     git_in(["add", "-A"], seed)

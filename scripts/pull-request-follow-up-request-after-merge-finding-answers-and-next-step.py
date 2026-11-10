@@ -37,7 +37,7 @@ runs once the user has answered. The judging and the change stay with the subage
 
 start-topic-branch, in the subagent's worktree: refuse a finding that does not exist or already has an answer, and a
 worktree with uncommitted changes to tracked files, which git switch could refuse to carry over; git
-fetch origin and git switch -c <topic-branch> origin/main; then record the branch and the worktree's path in
+fetch origin and git switch --no-overwrite-ignore -c <topic-branch> origin/main; then record the branch and the worktree's path in
 TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT, so remove-topic-branches-and-worktrees can remove them, and
 record under "started" in FINDING_ANSWERS_FILE_NAME_FORMAT that the branch takes on the findings, so next-step and
 open-pull-request know them; a finding named again moves to the new branch. A branch git could not make is not
@@ -488,7 +488,7 @@ def start_topic_branch(number, branch, findings):
     records = read_json(branches_file, [])
     git(".", ["fetch", "origin"], timeout_seconds=FETCH_TIMEOUT_SECONDS)
     try:
-        git(".", ["switch", "-c", branch, "origin/main"])
+        git(".", ["switch", "--no-overwrite-ignore", "-c", branch, "origin/main"])
     except StepFailed as failure:
         raise StepFailed(str(failure),
                          "If git says the branch already exists or is not a valid branch name, run "

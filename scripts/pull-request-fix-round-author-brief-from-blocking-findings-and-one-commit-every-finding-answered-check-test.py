@@ -1382,6 +1382,32 @@ def move_cases(root, _repository, _base, _frozen_head):
           and answers.read_text() == ANSWERS_TEXT and not state_file.exists()
           and git(repository, "branch", "--show-current") == LOCAL_BRANCH, out + err)
     git(repository, "branch", "-q", "-D", NEW_BRANCH)
+    # An ignored directory at a path origin/main newly tracks: without --no-overwrite-ignore,
+    # git switch replaces its file with main's, and the only copy is lost.
+    main_clone = root / "move-main-clone"
+    git(root, "clone", "-q", str(root / "origin.git"), str(main_clone))
+    (main_clone / "ignored-here").mkdir()
+    (main_clone / "ignored-here" / "notes.txt").write_text("main's copy\n")
+    git(main_clone, "add", "-A")
+    git(main_clone, "-c", "user.email=test@example.invalid", "-c", "user.name=test",
+        "commit", "-q", "-m", "main tracks a file the worktree ignores")
+    git(main_clone, "push", "-q", "origin", "main")
+    git(repository, "fetch", "-q", "origin")
+    (repository / "ignored-here").mkdir()
+    (repository / "ignored-here" / ".gitignore").write_text("*\n")
+    (repository / "ignored-here" / "notes.txt").write_text("the only copy\n")
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch",
+                         NEW_BRANCH, "moved.py")
+    check("move-start: a switch over an ignored file at a path origin/main tracks fails with exit 2, naming the "
+          "file, leaving nothing recorded, and the file survives",
+          code == 2 and "ignored-here/notes.txt" in err and not state_file.exists()
+          and answers.read_text() == ANSWERS_TEXT
+          and git(repository, "branch", "--show-current") == LOCAL_BRANCH
+          and (repository / "ignored-here" / "notes.txt").read_text() == "the only copy\n", out + err)
+    shutil.rmtree(repository / "ignored-here")
+    # Put origin/main back, so the cases below see the main they were written for.
+    git(main_clone, "push", "-q", "--force", "origin", "HEAD~1:main")
+    git(repository, "fetch", "-q", "origin")
 
     code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
     check("move-start: switches to the new topic branch cut from origin/main, with the named file copied whole",

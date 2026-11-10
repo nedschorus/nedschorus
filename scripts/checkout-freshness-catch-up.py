@@ -1036,7 +1036,7 @@ def move_detached_checkout_forward(checkout: Path, git_dir: Path, ahead: int):
         lines.append(DETACHED_WORK_OF_ITS_OWN_LINE)
     if reasons:
         return "blocked", reasons, lines, ""
-    moved = run_git(["merge", "--ff-only", "origin/main"], checkout, timeout=120)
+    moved = run_git(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"], checkout, timeout=120)
     if moved.returncode == 0:
         return "moved", [], [], ""
     # Every line, not the first: git names the untracked file on a later line.
@@ -1653,7 +1653,7 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
         write_stamp(stamp_path, stamp)
         return
 
-    pulled = run_git(["merge", "--ff-only", "origin/main"], reference, timeout=120)
+    pulled = run_git(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"], reference, timeout=120)
     if pulled.returncode != 0:
         detail = pulled.stderr.strip() or "no detail"
         stamp["last_action"] = "reference ff-only refused"

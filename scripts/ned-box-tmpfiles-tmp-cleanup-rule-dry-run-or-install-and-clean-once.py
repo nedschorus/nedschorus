@@ -50,8 +50,10 @@ DAILY_CLEANER = "systemd-tmpfiles-clean.timer"
 INSTALL_COMMAND_LINE = f"{DRY_RUN_COMMAND_LINE} --install-and-clean-once"
 # sudo cannot ask for the password without a terminal, as in an agent's shell.
 # The durable checkout, not this file's path: an agent may run this from a worktree removed later.
+# git pull rejects --no-overwrite-ignore, and without it the merge replaces an ignored file at a path main tracks.
 USER_INSTALL_COMMAND_LINE = (
-    "ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && git pull --ff-only && python3 "
+    "ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && git fetch origin && "
+    "git merge --ff-only --no-overwrite-ignore origin/main && python3 "
     "scripts/ned-box-tmpfiles-tmp-cleanup-rule-dry-run-or-install-and-clean-once.py "
     "--install-and-clean-once'")
 SUDO_NEEDS_THE_USER_LINE = (

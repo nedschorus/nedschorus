@@ -684,6 +684,26 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("and a refusal over an untracked file is not sent to the user",
           display_text(result) == "", display_text(result))
 
+    # An ignored directory at a path main newly tracks: without
+    # --no-overwrite-ignore, git replaces its file with main's, and the only copy is lost.
+    commit_file(origin, "detached-ignored/notes.txt", "main's copy\n",
+                "main adds a file inside a directory a detached checkout ignores")
+    ignoring = detached_worktree_behind_main("detached-ignored-collision-worktree")
+    (ignoring / "detached-ignored").mkdir()
+    (ignoring / "detached-ignored/.gitignore").write_text("*\n", encoding="utf-8")
+    (ignoring / "detached-ignored/notes.txt").write_text("the only copy\n", encoding="utf-8")
+    ignoring_head = head_of(ignoring)
+    result = run_catch_up(["--cwd", str(ignoring)])
+    check("a fast-forward over an ignored file at a path main tracks is refused, and the "
+          "file survives",
+          head_of(ignoring) == ignoring_head
+          and (ignoring / "detached-ignored/notes.txt").read_text(encoding="utf-8")
+          == "the only copy\n", agent_text(result))
+    check("and message B gives git's error, naming the ignored file",
+          any(line.startswith("Git refused the fast-forward: ")
+              and "detached-ignored/notes.txt" in line
+              for line in agent_text(result).splitlines()), agent_text(result))
+
     locked = detached_worktree_behind_main("detached-index-locked-worktree")
     locked_head = head_of(locked)
     locked_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], locked).stdout.strip())
@@ -1102,6 +1122,21 @@ with tempfile.TemporaryDirectory() as reference_pull_scratch:
     pulled = run_catch_up(["--reference-pull", "--repo", str(reference)])
     check("(control) a post-merge hook that reports no failure adds no line",
           "post-merge hook" not in pulled.stdout, pulled.stdout)
+
+    # An ignored directory at a path main newly tracks: without
+    # --no-overwrite-ignore, git replaces its file with main's, and the only copy is lost.
+    commit_file(origin, "reference-ignored/notes.txt", "main's copy\n",
+                "main adds a file inside a directory the reference ignores")
+    (reference / "reference-ignored").mkdir()
+    (reference / "reference-ignored/.gitignore").write_text("*\n", encoding="utf-8")
+    (reference / "reference-ignored/notes.txt").write_text("the only copy\n", encoding="utf-8")
+    pulled = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    check("a reference fast-forward over an ignored file at a path main tracks is refused, "
+          "the operator is told, and the file survives",
+          "could not fast-forward" in pulled.stdout
+          and "reference-ignored/notes.txt" in pulled.stdout
+          and (reference / "reference-ignored/notes.txt").read_text(encoding="utf-8")
+          == "the only copy\n", pulled.stdout + pulled.stderr)
 
 
 # ---------------------------------------------------------------------------

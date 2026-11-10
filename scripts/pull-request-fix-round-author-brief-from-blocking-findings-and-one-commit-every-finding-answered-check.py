@@ -1059,7 +1059,7 @@ def move_start(number, reviewer_login, new_branch, whole_file_paths):
                       "branch must start with nothing but the moved change.")
     answers = root / answers_name
     set_aside = state_path.parent / ANSWERS_SET_ASIDE_DIRECTORY_NAME / answers_name
-    git(["switch", "-q", "-c", new_branch, "origin/main"])
+    git(["switch", "-q", "--no-overwrite-ignore", "-c", new_branch, "origin/main"])
     if whole_file_paths:
         git(["checkout", frozen_head, "--", *whole_file_paths])
     state_path.write_text(json.dumps({"new_branch": new_branch, "return_branch": local_branch,
