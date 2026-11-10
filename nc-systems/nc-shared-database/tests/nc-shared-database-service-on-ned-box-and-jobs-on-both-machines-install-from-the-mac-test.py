@@ -36,6 +36,12 @@ _spec = importlib.util.spec_from_file_location(
     "nc_shared_database_service_on_ned_box_and_jobs_on_both_machines_install_from_the_mac", PROGRAM_PATH)
 installer = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(installer)
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    REPOSITORY_ROOT / "scripts" / "git-redirecting-environment-removal-test-fixture.py")
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 failures = 0
 

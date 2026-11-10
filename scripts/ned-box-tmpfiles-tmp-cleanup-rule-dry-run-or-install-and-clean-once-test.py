@@ -25,6 +25,12 @@ SCRIPT_PATH = Path(__file__).with_name(
 _spec = importlib.util.spec_from_file_location("tmp_cleanup_rule_installer", SCRIPT_PATH)
 installer = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(installer)
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().with_name("git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 RULE = Path("/checkout/config/rule.conf")
 failures = []
