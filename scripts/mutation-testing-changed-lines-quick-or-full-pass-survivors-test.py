@@ -1208,7 +1208,8 @@ def run_parallel_mutant_workers_cases_with_fake_cosmic_ray_package():
               f"rc={completed.returncode} err={completed.stderr} ran_in={ran_in}")
     for case_name, operators, worktree_names, wanted in [
         ("a worker that exits nonzero", ["first", "worker-exits-3"], ["one", "two"],
-         "work item job-1: the worker exited 3; its last line on standard error: last line"),
+         "work item job-1: the worker exited 3; it printed on standard error:\n"
+         "      first line\n      last line\n"),
         ("a worker that prints no JSON", ["first", "worker-prints-no-json"], ["one"],
          "work item job-1: Expecting value"),
         ("a worker that cannot be started", ["first", "second"], ["missing-worktree"],
