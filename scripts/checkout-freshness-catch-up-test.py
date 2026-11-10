@@ -2832,6 +2832,68 @@ with tempfile.TemporaryDirectory() as ignored_scratch:
           and (ignored_seat / "scratch.txt").read_text(encoding="utf-8") == "keep me\n",
           agent_text(cleared) + cleared.stderr)
 
+    # An ignored nested git repository is listed by `git ls-files --others
+    # --ignored` as "<directory>/", with a trailing slash, not file by file.
+    nested_root = ignored_tmp / "nested-repository"
+    nested_origin = nested_root / "origin"
+    nested_origin.mkdir(parents=True)
+    git(["init", "-q", "-b", "main"], nested_origin)
+    configure_identity(nested_origin)
+    commit_file(nested_origin, "shared.txt", "first\n", "add shared.txt")
+    nested_clone = nested_root / "clone"
+    git(["clone", "-q", str(nested_origin), str(nested_clone)], nested_root)
+    configure_identity(nested_clone)
+    nested_seat = nested_root / "seat"
+    git(["worktree", "add", "-q", "-b", "seat", str(nested_seat), "main"], nested_clone)
+    configure_identity(nested_seat)
+    commit_file(nested_seat, ".gitignore", "vendor/\n", "the seat ignores vendor/")
+    commit_file(nested_origin, "vendor/library.txt", "main's library\n",
+                "main tracks vendor/library.txt")
+    (nested_seat / "vendor").mkdir()
+    git(["init", "-q"], nested_seat / "vendor")
+    (nested_seat / "vendor/library.txt").write_text("local library\n", encoding="utf-8")
+    head_before = git(["rev-parse", "HEAD"], nested_seat).stdout.strip()
+    result = run_catch_up(["--cwd", str(nested_seat)])
+    check("an ignored nested git repository where origin/main tracks files stops the rebase, "
+          "and its files keep their content",
+          git(["rev-parse", "HEAD"], nested_seat).stdout.strip() == head_before
+          and (nested_seat / "vendor/library.txt").read_text(encoding="utf-8")
+          == "local library\n", result.stdout + result.stderr)
+    check("and the agent is told the nested repository is in the way",
+          "which are in the way of files origin/main tracks: vendor/." in agent_text(result),
+          agent_text(result))
+
+    # A note told for one outcome does not silence the note for another: a
+    # dirty tree skipped first, then cleaned with the ignored files still there.
+    _, dirty_then_ignored_seat = never_pushed_seat_with_ignored_files("dirty-then-ignored")
+    (dirty_then_ignored_seat / "shared.txt").write_text("edited\n", encoding="utf-8")
+    dirty_result = run_catch_up(["--cwd", str(dirty_then_ignored_seat)])
+    check("a dirty tree with ignored files in the way is told it is dirty first",
+          "Not updated: 1 uncommitted tracked change(s)" in agent_text(dirty_result),
+          agent_text(dirty_result))
+    git(["checkout", "--", "shared.txt"], dirty_then_ignored_seat)
+    cleaned_result = run_catch_up(["--cwd", str(dirty_then_ignored_seat)])
+    check("once the tree is clean, the ignored files in the way are told, not left unsaid "
+          "behind the earlier advice to rebase by hand",
+          "would overwrite or delete these ignored files" in agent_text(cleaned_result)
+          and "Do not run `git rebase origin/main` yourself" in agent_text(cleaned_result)
+          and local_files_kept(dirty_then_ignored_seat), agent_text(cleaned_result))
+
+    # A list of ignored files too long for one delivery still reaches the agent.
+    _, many_ignored_seat = never_pushed_seat_with_ignored_files("many-ignored")
+    for number in range(400):
+        (many_ignored_seat / "build-cache" / f"cached-file-number-{number:04d}.txt").write_text(
+            "local\n", encoding="utf-8")
+    many_result = run_catch_up(["--cwd", str(many_ignored_seat)])
+    delivered = agent_text(many_result)
+    check("a note naming too many ignored files for one delivery is delivered in a short form "
+          "that still says the rebase was not started and what to do",
+          "would overwrite or delete these ignored files" in delivered
+          and "Do not run `git rebase origin/main` yourself" in delivered
+          and "git status --ignored" in delivered
+          and len(delivered) <= catch_up_module.DELIVERY_CHARACTER_LIMIT,
+          delivered[:600] + many_result.stderr)
+
     # A listing git cannot make is a failure, never "no ignored file in the way".
     for failing_listing, shell_pattern in (("ls-files", '*" ls-files "*'),
                                            ("ls-tree", '*" ls-tree "*')):
