@@ -124,6 +124,12 @@ def run_ask_user_before_restart_without_a_terminal_case(workspace: Path):
           result.returncode == 0 and "EOFError" not in result.stderr, result.stderr[-300:])
     check("ask-user-before-restart without a terminal says why it stopped",
           "no terminal to ask on" in result.stdout, result.stdout[-300:])
+    check("ask-user-before-restart without a terminal names the agent-seat, its launcher and the handoff file",
+          "the agent-seat noterm's session-handoff" in result.stdout
+          and "`launch-claude-ubuntu noterm`" in result.stdout
+          and "`launch-claude-mac noterm`" in result.stdout
+          and str(handoff_directory / "noterm-handoff.md") in result.stdout,
+          result.stdout[-600:])
 
     state = supervisor.read_supervisor_state(handoff_directory / "noterm-supervisor-state.json")
     check("the consumed counter is recorded before stopping",
@@ -282,7 +288,8 @@ def run_agent_exit_record_cases(workspace: Path):
     )
     state = supervisor.read_supervisor_state(handoff_directory / f"{name}-supervisor-state.json")
     check("EXIT RECORD: the in-cycle ask-user-before-restart stop records the terminated session's code",
-          result.returncode == 0 and "no terminal to ask on; stopping" in result.stdout
+          result.returncode == 0 and f"stopped {name} without restarting it" in result.stdout
+          and f"`launch-claude-ubuntu {name}`" in result.stdout
           and state.get("consumed_counter") == 1
           and supervisor.agent_exit_record_from_supervisor_state(state) is not None
           and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15
