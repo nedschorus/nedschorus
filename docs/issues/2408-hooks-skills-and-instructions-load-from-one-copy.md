@@ -31,9 +31,9 @@ The reference-checkout is already kept on main, and code already runs from it. `
 
 ## Requirements
 
-A branch can still test a change to a hook or a skill from its own checkout before it merges. For example, a pull request that changes `scripts/handoff-context-threshold-hook.py` runs that hook's test from its own checkout today. The design keeps that working. Without it, a bad hook is first run only after it merges, by the canary agent-seat, and reaches every other agent-seat if no nc-test-suite catches it before the next promotion.
+A branch can still test a change to a hook or a skill from its own checkout before it merges. For example, a pull request that changes `scripts/handoff-context-threshold-hook.py` runs that hook's test from its own checkout today. The design keeps that working. If a branch could not test such a change from its own checkout before it merges, a bad hook is first run only after it merges, by the canary agent-seat, and reaches every other agent-seat if no nc-test-suite catches it before the next promotion.
 
-When the program that keeps the reference-checkout current, such as `scripts/checkout-freshness-catch-up.py --reference-pull`, cannot bring it to the last known good commit, for example over uncommitted changes or a failed fetch, it exits nonzero and says so where the agent-session sees it. The design also says when the copy moves: only at a session-handoff, as the handoff-supervisor does, or between turns, as the checkout-freshness hook does.
+When the program that keeps the reference-checkout current, such as `scripts/checkout-freshness-catch-up.py --reference-pull`, cannot bring it to the last known good commit, for example over uncommitted changes or a failed fetch, it exits nonzero and says so where the agent-session sees it. Today `--reference-pull` does not do this: it exits 0 whether or not it updated the reference-checkout, and prints the reason it did not on its standard output. The design also says when the copy moves: only at a session-handoff, as the handoff-supervisor does, or between turns, as the checkout-freshness hook does.
 
 ## Related
 
