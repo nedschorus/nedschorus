@@ -2055,8 +2055,8 @@ try:
           f"exit {result.returncode}; {record_lines!r}; stderr={result.stderr[-400:]!r}")
 
     # --- A shipment made while the run is still writing its record ----------
-    # The pre-remove hook ships every worktree's records whenever any
-    # agent-seat runs `git worktree remove`. A shipment made mid-run holds
+    # The pre-remove hook ships a worktree's records whenever an
+    # agent-seat runs `git worktree remove` on it. A shipment made mid-run holds
     # files the run then rewrites or deletes, such as a cell's .stderr.log,
     # so the run's own shipment, and every later one, was refused. The run
     # holds its record's being-written lock, so that shipment copies nothing.

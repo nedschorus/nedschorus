@@ -559,7 +559,7 @@ def read_handoff_deferral_cold_read_full_run_launch(guard, command, working_dire
 def read_git_worktree_remove_records_ship_first(guard, command, working_directory, search_file_directory):
     # Only whether the command removes a worktree is read: running the shippers would copy real records during a replay.
     if guard.command_runs_git_worktree_remove(command):
-        return "ships every worktree's records first", None
+        return "ships the removed worktree's records first", None
     return "passed", None
 
 

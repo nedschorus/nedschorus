@@ -617,7 +617,7 @@ try:
         def command_runs_git_worktree_remove(self, command):
             return self.removes
 
-    for removes, expected in ((True, ("ships every worktree's records first", None)), (False, ("passed", None))):
+    for removes, expected in ((True, ("ships the removed worktree's records first", None)), (False, ("passed", None))):
         reading = replay.read_git_worktree_remove_records_ship_first(
             WorktreeRemoveGuardReading(removes), "git worktree remove wt", "/c", None)
         check(f"the worktree-removal guard's reading when its guard answers {removes}", reading == expected, reading)
