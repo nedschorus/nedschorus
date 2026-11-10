@@ -4,8 +4,8 @@
 Usage:
   scripts/run-codex-task-from-brief.py -C <checkout> --brief <file> -o <report>
       [--sandbox read-only|workspace-write] [-m <model>] [--effort <effort>]
-      [--network] [--writable-root <folder>]... [--outside-git-checkout]
-      [--web-search] [--deadline-minutes <minutes>] [--run-log <file>]
+      [--no-network] [--writable-root <folder>]... [--outside-git-checkout]
+      [--deadline-minutes <minutes>] [--run-log <file>]
       [--prefetch-github '<gh arguments>']... [--resume <session-id>]
 
 The program an agent uses to hand Codex a task. It always:
@@ -21,14 +21,23 @@ The program an agent uses to hand Codex a task. It always:
   - stops Codex, and every process Codex started, when the deadline passes;
   - runs Codex under a permission profile that denies credential files,
     extending `:read-only`, or `:workspace` with `--sandbox workspace-write`,
-    and with Codex's memory store off.
+    and with Codex's memory store off;
+  - lets Codex's commands reach the network and gives Codex its live web
+    search tool, unless given --no-network, which takes both away;
+  - removes the agent-seat's GitHub tokens from Codex's environment, which
+    can push and merge, and sets GH_TOKEN to the read-only token in
+    ~/.config/nedschorus-sandboxed-models/, so that Codex's `gh` reads public
+    GitHub. When that token cannot be read, Codex runs without one, and the
+    run log's first line says why;
+  - when the log-store is on this machine, lets Codex write in its run's
+    subfolder <agent-seat>/<brief file name without its extension> of
+    ~/nedschorus-logs/codex-and-gemini-sandboxed-task-runs-shared-writable-folder/,
+    and ends the brief with that folder's path.
 
 Options that widen what Codex may do, each off by default:
-  --network               let Codex's commands reach the network;
   --writable-root <folder>  let Codex write in this folder as well as the
                           checkout, with --sandbox workspace-write; repeatable;
-  --outside-git-checkout  let -C name a folder that is not a git checkout;
-  --web-search            give Codex its live web search tool.
+  --outside-git-checkout  let -C name a folder that is not a git checkout.
 
   --prefetch-github '<gh arguments>'  run `gh <gh arguments>` in the -C
                           checkout before Codex starts, and give Codex its
@@ -47,10 +56,10 @@ Options that widen what Codex may do, each off by default:
                           --paginate and --slurp; `api` has no -R. Any other
                           `api` option is refused. The endpoint `graphql` is
                           accepted, but it cannot send a query, because a
-                          query needs -f, -F or --input. Codex
-                          cannot run `gh` itself, because its permission
-                          profile denies the folder holding
-                          gh's login. The files go in
+                          query needs -f, -F or --input. The commands
+                          run with the agent-seat's own login, so they
+                          also work when the read-only token is missing
+                          or the run has --no-network. The files go in
                           `<report>.github-data/`, and the brief Codex gets
                           ends with a list of them.
 
@@ -116,6 +125,16 @@ PREFETCH_API_ACCEPTED_OPTIONS_TEXT = (
     "its value as the next word or after =, and --include/-i, --paginate and --slurp")
 # Keeps a saved file's name well under the 255-byte limit of most file systems.
 PREFETCH_FILE_NAME_WORDS_MAX_CHARACTERS = 80
+# Its parent is the log-store, present only on ned-box.
+CODEX_AND_GEMINI_SHARED_WRITABLE_FOLDER = (
+    pathlib.Path.home() / "nedschorus-logs"
+    / "codex-and-gemini-sandboxed-task-runs-shared-writable-folder")
+NO_AGENT_SEAT_NAME = "no-agent-seat-name"
+_seat_shared_file_ship_spec = importlib.util.spec_from_file_location(
+    "seat_shared_file_ship",
+    pathlib.Path(__file__).resolve().parent / "seat-shared-file-ship.py")
+seat_shared_file_ship = importlib.util.module_from_spec(_seat_shared_file_ship_spec)
+_seat_shared_file_ship_spec.loader.exec_module(seat_shared_file_ship)
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -135,14 +154,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
                         default="read-only")
     parser.add_argument("-m", dest="model", help="Codex model id")
     parser.add_argument("--effort", help="reasoning effort, such as medium or xhigh")
-    parser.add_argument("--network", action="store_true",
-                        help="let Codex's commands reach the network")
+    parser.add_argument("--no-network", action="store_true",
+                        help="keep Codex's commands off the network and take away its "
+                             "web search tool")
     parser.add_argument("--writable-root", action="append", default=[], metavar="FOLDER",
                         help="a folder Codex may write in besides the checkout; repeatable")
     parser.add_argument("--outside-git-checkout", action="store_true",
                         help="let -C name a folder that is not a git checkout")
-    parser.add_argument("--web-search", action="store_true",
-                        help="give Codex its live web search tool")
     parser.add_argument("--deadline-minutes", type=float,
                         default=DEFAULT_DEADLINE_MINUTES,
                         help="stop the run, the --prefetch-github commands and Codex "
@@ -245,23 +263,40 @@ def prefetch_github_data(commands, data_folder: pathlib.Path, checkout: pathlib.
 def brief_with_prefetched_files(prompt: str, files) -> str:
     listing = "\n".join(f"- {path}: the output of `gh {arguments}`" for path, arguments in files)
     return (f"{prompt.rstrip()}\n\n"
-            f"You cannot run `gh` yourself: your permission profile keeps you from the "
-            f"folder holding gh's login. So the GitHub data below was fetched for you "
-            f"before you started, one file per command. Read these files instead:\n"
+            f"The GitHub data below was fetched for you before you started, one file "
+            f"per command:\n"
             f"{listing}\n")
 
 
+def codex_or_gemini_task_run_subfolder_in_shared_writable_folder_create(brief: pathlib.Path):
+    """Create and return this run's subfolder of the shared writable folder, or None
+    when the log-store is not on this machine."""
+    if not CODEX_AND_GEMINI_SHARED_WRITABLE_FOLDER.parent.is_dir():
+        return None
+    seat = seat_shared_file_ship.seat_name_from_environment() or NO_AGENT_SEAT_NAME
+    subfolder = CODEX_AND_GEMINI_SHARED_WRITABLE_FOLDER / seat / brief.stem
+    subfolder.mkdir(parents=True, exist_ok=True)
+    return subfolder
+
+
+def brief_with_shared_writable_subfolder(prompt: str, subfolder: pathlib.Path) -> str:
+    return (f"{prompt.rstrip()}\n\n"
+            f"Write any notes or outputs of this task, other than the report and the "
+            f"code you are asked to change, in this folder: {subfolder}\n")
+
+
 def codex_command(checkout: pathlib.Path, last_message: pathlib.Path, sandbox: str,
-                  model, effort, prompt: str, network: bool = False,
+                  model, effort, prompt: str, network: bool = True,
                   writable_roots=(), outside_git_checkout: bool = False,
-                  web_search: bool = False, resume=None) -> list:
+                  resume=None, shared_subfolder=None) -> list:
     # Resume accepts no -C; exec's working directory applies to its subcommand.
     command = ["codex", "exec", "-C", str(checkout)]
     if resume is not None:
         command.append("resume")
     command += [
         *common.codex_credential_denying_permission_profile_arguments(
-            PERMISSION_PROFILE_NAME, SANDBOX_TO_PROFILE_BASE[sandbox], network=network),
+            PERMISSION_PROFILE_NAME, SANDBOX_TO_PROFILE_BASE[sandbox], network=network,
+            writable_paths=[shared_subfolder] if shared_subfolder else []),
         "--disable", "memories",
         "-o", str(last_message),
     ]
@@ -269,7 +304,7 @@ def codex_command(checkout: pathlib.Path, last_message: pathlib.Path, sandbox: s
         command += ["--add-dir", str(root)]
     if outside_git_checkout:
         command.append("--skip-git-repo-check")
-    if web_search:
+    if network:
         # `codex exec` does not accept --search; this config key is what that flag sets.
         command += ["-c", 'web_search="live"']
     if model:
@@ -389,19 +424,32 @@ def main(argv=None) -> int:
                         f"The deadline covers every --prefetch-github command and Codex "
                         f"together. If the run needs longer, run it again with a larger "
                         f"--deadline-minutes.")
+    try:
+        shared_subfolder = codex_or_gemini_task_run_subfolder_in_shared_writable_folder_create(brief)
+    except OSError as error:
+        return fail(f"could not create the run's folder in "
+                    f"{CODEX_AND_GEMINI_SHARED_WRITABLE_FOLDER}: {error}")
+    if shared_subfolder:
+        prompt = brief_with_shared_writable_subfolder(prompt, shared_subfolder)
     command = codex_command(
         checkout, last_message, args.sandbox, args.model, args.effort, prompt,
-        network=args.network,
+        network=not args.no_network,
         writable_roots=[pathlib.Path(root).resolve() for root in args.writable_root],
-        outside_git_checkout=args.outside_git_checkout, web_search=args.web_search,
-        resume=args.resume)
+        outside_git_checkout=args.outside_git_checkout, resume=args.resume,
+        shared_subfolder=shared_subfolder)
+    environment, token_note = (
+        common.process_environment_copy_with_agent_seat_github_tokens_replaced_by_read_only_github_token(
+            os.environ))
     print(f"{PROGRAM}: running Codex in {checkout}; log {run_log}", file=sys.stderr)
     try:
         with open(run_log, "w", encoding="utf-8") as log:
+            if token_note:
+                log.write(f"{PROGRAM}: {token_note}\n")
+                log.flush()
             # Its own process group, so the deadline stops every process Codex started.
             process = subprocess.Popen(
                 command, stdin=subprocess.DEVNULL, stdout=log,
-                stderr=subprocess.STDOUT, start_new_session=True)
+                stderr=subprocess.STDOUT, start_new_session=True, env=environment)
     except OSError as error:
         return fail(f"could not start Codex: {error}")
     try:

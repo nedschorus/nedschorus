@@ -126,6 +126,9 @@ if os.environ.get("COLD_READ_CODEX_CELL_TEST_STUB_ARGV_PATH"):
     with open(os.environ["COLD_READ_CODEX_CELL_TEST_STUB_ARGV_PATH"], "w",
               encoding="utf-8") as argv_handle:
         json.dump(sys.argv, argv_handle)
+    with open(os.environ["COLD_READ_CODEX_CELL_TEST_STUB_ARGV_PATH"] + ".github-tokens", "w",
+              encoding="utf-8") as tokens_handle:
+        json.dump([os.environ.get("GH_TOKEN"), os.environ.get("GITHUB_TOKEN")], tokens_handle)
 report_path = os.environ["COLD_READ_CODEX_CELL_TEST_STUB_REPORT_PATH"]
 # A report outside the checkout is written into the directory the cell adds.
 if "--add-dir" in sys.argv:
@@ -182,6 +185,8 @@ def run_cell(stub_directory, stub_body, report_path, *arguments, argv_path=None,
     environment["HOME"] = str(scratch_home)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment["COLD_READ_CODEX_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
+    # Each run starts with the agent-seat's tokens set, as a cell started by an agent-seat does.
+    environment["GH_TOKEN"] = environment["GITHUB_TOKEN"] = "agent-seat-token"
     if argv_path is not None:
         environment["COLD_READ_CODEX_CELL_TEST_STUB_ARGV_PATH"] = str(argv_path)
     if added_listing_path is not None:
@@ -347,6 +352,13 @@ with tempfile.TemporaryDirectory() as scratch:
                       argv_path=argv_dump, added_listing_path=added_listing_dump)
     check("a cell whose codex succeeds exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    tokens_dump = Path(f"{argv_dump}.github-tokens")
+    check("codex is given none of the agent-seat's GitHub tokens, and stderr says it has no "
+          "read-only one",
+          tokens_dump.is_file()
+          and json.loads(tokens_dump.read_text(encoding="utf-8")) == [None, None]
+          and "cold-read-codex-cell: no read-only GitHub token (" in result.stderr,
+          f"stderr={result.stderr!r}")
     report_text = report.read_text(encoding="utf-8") if report.is_file() else ""
     check("the report is written to --report under its provenance stamp",
           report_text.startswith("<!-- provenance: runtime=codex")

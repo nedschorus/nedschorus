@@ -77,6 +77,41 @@ REVIEWER_PROGRAM_LOGIN_FILES = {
 }
 
 
+# Outside the denied ~/.config/nedschorus: a denied directory hides only its own subtree,
+# not siblings sharing its name as a prefix (measured with Codex's profile and bwrap).
+SANDBOXED_MODELS_READ_ONLY_GITHUB_TOKEN_FILE = (
+    pathlib.Path.home() / ".config" / "nedschorus-sandboxed-models"
+    / "github-public-repositories-read-only-token")
+# The agent-seats' tokens can push and merge; gh and git read any of these.
+AGENT_SEAT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES = (
+    "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
+
+
+def process_environment_copy_with_agent_seat_github_tokens_replaced_by_read_only_github_token(
+        environment, token_file: pathlib.Path = None) -> tuple:
+    """Return (environment copy for a sandboxed model, note or None).
+
+    The copy has no agent-seat GitHub token. When token_file holds a token, the
+    copy's GH_TOKEN is that token and GH_CONFIG_DIR is the token's folder, since
+    gh stops on its usual config folder, which the sandboxes deny. Otherwise the
+    note says why the model reads GitHub unauthenticated.
+    """
+    token_file = token_file or SANDBOXED_MODELS_READ_ONLY_GITHUB_TOKEN_FILE
+    copy = {name: value for name, value in environment.items()
+            if name not in AGENT_SEAT_GITHUB_TOKEN_ENVIRONMENT_VARIABLES}
+    try:
+        token = token_file.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError) as error:
+        return copy, (f"no read-only GitHub token ({error}); the model reads GitHub "
+                      f"unauthenticated, and gh does not run.")
+    if not token:
+        return copy, (f"the read-only GitHub token file {token_file} is empty; the model "
+                      f"reads GitHub unauthenticated, and gh does not run.")
+    copy["GH_TOKEN"] = token
+    copy["GH_CONFIG_DIR"] = str(token_file.parent)
+    return copy, None
+
+
 def reviewer_program_login_files(except_program: str = None,
                                  only_present: bool = False) -> list:
     """Return login paths, optionally excluding one program and absent files."""
@@ -171,11 +206,16 @@ def credential_files_found_now() -> list:
 
 def codex_credential_denying_permission_profile_arguments(
         profile_name: str, extends: str, platform: str = sys.platform,
-        network: bool = False) -> list:
-    """Return Codex permission-profile overrides denying credential paths."""
+        network: bool = False, writable_paths=()) -> list:
+    """Return Codex permission-profile overrides denying credential paths.
+
+    writable_paths are folders Codex may write in, whatever profile is extended;
+    a credential path inside one stays denied.
+    """
     # JSON string escaping also works for TOML basic strings used as path keys.
     entries = ({":slash_tmp": "read", ":tmpdir": "read"}
                if platform.startswith("linux") and extends == ":workspace" else {})
+    entries.update((str(path), "write") for path in writable_paths)
     denied = credential_directories_present()
     denied += reviewer_program_login_files(only_present=True)
     if platform.startswith("linux"):

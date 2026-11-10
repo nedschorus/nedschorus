@@ -31,6 +31,8 @@ args = sys.argv[1:]
 mode = os.environ.get("FAKE_AGY_MODE", "report")
 with open(os.environ["FAKE_CALLS"], "a") as f:
     f.write(json.dumps([os.getcwd(), args, sys.stdin.read()]) + "\n")
+with open(os.environ["FAKE_CALLS"] + ".environment", "w") as f:
+    json.dump({name: os.environ.get(name) for name in ("GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR")}, f)
 print("agy stderr", file=sys.stderr, flush=True)
 if "GEMINI_API_KEY" in os.environ:
     print("agy was given GEMINI_API_KEY", flush=True)
@@ -99,6 +101,17 @@ class GeminiTaskTests(unittest.TestCase):
                         FAKE_SANDBOX_CALLS=str(self.sandbox_calls))
         self.args = ["-C", str(self.checkout), "--brief", str(self.brief), "-o", str(self.report),
                      "--run-log", str(self.log)]
+        # Runs in this process read these paths, which the module set from the real home.
+        self.shared_folder = (self.home / "nedschorus-logs"
+                              / "codex-and-gemini-sandboxed-task-runs-shared-writable-folder")
+        self.token_file = (self.home / ".config" / "nedschorus-sandboxed-models"
+                           / "github-public-repositories-read-only-token")
+        for module, name, value in (
+                (runner.codex_task, "CODEX_AND_GEMINI_SHARED_WRITABLE_FOLDER", self.shared_folder),
+                (runner.agy_cell.common, "SANDBOXED_MODELS_READ_ONLY_GITHUB_TOKEN_FILE", self.token_file)):
+            patcher = patch.object(module, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def run_cli(self, mode="report", extra=(), **kwargs):
         return subprocess.run([sys.executable, str(PROGRAM), *self.args, *extra],
@@ -110,7 +123,7 @@ class GeminiTaskTests(unittest.TestCase):
         first.mkdir()
         second.mkdir()
         result = self.run_cli(extra=("--sandbox", "workspace-write", "--writable-root", str(first),
-                                    "--writable-root", str(second), "--network", "--effort", "medium",
+                                    "--writable-root", str(second), "--effort", "medium",
                                     "-m", "gemini-3.8-flash-medium", "--deadline-minutes", "10"),
                               input="caller stdin must not reach agy")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -164,6 +177,57 @@ class GeminiTaskTests(unittest.TestCase):
         result = self.run_cli()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("test-key-from-caller", self.log.read_text())
+
+    def environment_agy_saw(self):
+        return json.loads(Path(str(self.calls) + ".environment").read_text())
+
+    def test_agy_gets_the_read_only_github_token_and_the_network(self):
+        self.token_file.parent.mkdir(parents=True)
+        self.token_file.write_text("read-only-token\n")
+        self.env.update(GH_TOKEN="agent-seat-token", GITHUB_TOKEN="agent-seat-token")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.environment_agy_saw(), {
+            "GH_TOKEN": "read-only-token", "GITHUB_TOKEN": None,
+            "GH_CONFIG_DIR": str(self.token_file.parent)})
+        self.assertNotIn("GitHub token", self.log.read_text())
+        prefix = json.loads(self.sandbox_calls.read_text().splitlines()[-1])
+        self.assertNotIn("--unshare-net", prefix)
+        self.assertFalse(any("deny network" in argument for argument in prefix))
+
+    def test_missing_read_only_token_runs_without_one_and_logs_it_after_the_model_listing(self):
+        self.env.update(GH_TOKEN="agent-seat-token")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.environment_agy_saw(), {
+            "GH_TOKEN": None, "GITHUB_TOKEN": None, "GH_CONFIG_DIR": None})
+        log = self.log.read_text()
+        self.assertIn("run-gemini-task-from-brief: no read-only GitHub token (", log)
+        self.assertLess(log.index("Available models"), log.index("no read-only GitHub token"))
+
+    def test_shared_writable_subfolder_is_bound_writable_and_named_in_the_brief(self):
+        self.shared_folder.parent.mkdir()
+        self.env["CLAUDE_CODE_TASK_LIST_ID"] = "nedschorus-test-seat-tasks"
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        run_folder = self.shared_folder / "test-seat" / "brief"
+        self.assertTrue(run_folder.is_dir())
+        args = json.loads(self.calls.read_text().splitlines()[1])[1]
+        self.assertIn(f"in this folder: {run_folder}\n", args[-1])
+        prefix = json.loads(self.sandbox_calls.read_text().splitlines()[-1])
+        if sys.platform == "darwin":
+            self.assertIn(f'(require-not (subpath {json.dumps(str(run_folder))}))', prefix[2])
+        else:
+            self.assertEqual([prefix[i + 1] for i, arg in enumerate(prefix) if arg == "--bind"],
+                             [str(self.report), str(run_folder)])
+
+    def test_shared_writable_subfolder_that_cannot_be_created_stops_the_run(self):
+        self.shared_folder.parent.mkdir()
+        self.shared_folder.write_text("a file where the shared folder belongs")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("creating the run's folder in the shared writable folder", result.stderr)
+        self.assertFalse(self.calls.exists())
 
     def test_unknown_model_stops_before_task(self):
         result = self.run_cli(extra=("-m", "gemini-4-argon"))
@@ -232,7 +296,7 @@ class GeminiTaskTests(unittest.TestCase):
                 self.assertEqual(self.run_cli(extra=extra).returncode, 2)
         result = subprocess.run([sys.executable, str(PROGRAM), "--help"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0)
-        self.assertIn("--network", result.stdout)
+        self.assertNotIn("--network", result.stdout)
 
     def test_file_failures(self):
         self.brief.unlink()
@@ -267,21 +331,19 @@ class GeminiTaskTests(unittest.TestCase):
                 patch.object(common, "credential_files_found_now", return_value=["/data/.env"]), \
                 patch.object(common, "reviewer_program_login_files", return_value=["/codex/auth.json"]) as login:
             prefix = runner.agy_cell.credential_sandbox_prefix("linux", writable_paths=[
-                (self.report, False), (self.base, True)], network=False)
+                (self.report, False), (self.base, True)])
             self.assertEqual(prefix, ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--bind", str(self.report),
                                      str(self.report), "--bind", str(self.base), str(self.base),
-                                     "--unshare-net", "--tmpfs", "/credentials", "--ro-bind", "/dev/null",
+                                     "--tmpfs", "/credentials", "--ro-bind", "/dev/null",
                                      "/data/.env", "--ro-bind", "/dev/null", "/codex/auth.json"])
             login.assert_called_with(except_program="agy", only_present=True)
             legacy = runner.agy_cell.credential_sandbox_prefix("linux")
             self.assertEqual(legacy[:4], ["bwrap", "--dev-bind", "/", "/"])
-            self.assertNotIn("--unshare-net", legacy)
         prefix = runner.agy_cell.credential_sandbox_prefix("darwin", writable_paths=[
-            (Path('/report"file'), False), (Path("/data"), True)], network=False)
+            (Path('/report"file'), False), (Path("/data"), True)])
         self.assertEqual(prefix[:2], ["sandbox-exec", "-p"])
         self.assertIn('(require-not (literal "/report\\"file"))', prefix[2])
         self.assertIn('(require-not (subpath "/data"))', prefix[2])
-        self.assertIn('(deny network*)', prefix[2])
         self.assertIn('(deny file-read* file-write*', prefix[2])
         self.assertEqual(runner.agy_cell.credential_sandbox_prefix("darwin"),
                          ["sandbox-exec", "-p", runner.agy_cell.sandbox_exec_profile()])

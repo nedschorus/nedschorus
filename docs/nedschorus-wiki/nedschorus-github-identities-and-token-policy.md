@@ -47,6 +47,7 @@ box's GitHub account is `ubuntu-claude` and the Mac's Unix user is `el`. A bare
 | `ned-git-gatekeeper` | this Mac's keychain, item `nedschorus-git-gatekeeper-github-token` (created 2026-08-29; present 2026-09-28) | fine-grained | 2027-08-30, as the main-gatekeeper design records it; not re-measured |
 | `mac-claude` | `~/.config/nedschorus/mac-claude.token`, on this Mac and on ned-box | fine-grained | 2027-08-25 |
 | `ubuntu-claude` | ned-box: `~/.config/nedschorus/ubuntu-claude.token`, which ned-box agent-seats other than merge-lane-2 use; a classic token also remains in `gh`'s own store there | fine-grained (the file); classic (`gh`'s store) | 2027-09-24 (the file); 2027-08-24 (`gh`'s store) |
+| `nedlern`, token `nc-sandboxed-models-public-read-only` | `~/.config/nedschorus-sandboxed-models/github-public-repositories-read-only-token`, on ned-box (present 2026-11-10; the Mac's copy not checked). The Codex and Gemini launchers and cells give it to the model as `GH_TOKEN`, in place of the agent-seat's token; see [the Codex and Gemini operating notes](nedschorus-codex-and-gemini-operating-notes.md). It reads public repositories and cannot write (measured 2026-10-23: a create-issue request got HTTP 403) | fine-grained | 2027-10-22, as GitHub's `github-authentication-token-expiration` header gave it on 2026-11-10 |
 
 Token files are mode 600.
 

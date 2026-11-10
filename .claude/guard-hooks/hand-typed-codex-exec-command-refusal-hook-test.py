@@ -216,8 +216,8 @@ check("the refusal writes Codex's configuration keys with their -c",
           "web_search", "model_reasoning_effort")), hook.REFUSAL)
 
 check("the refusal maps Codex's own widening options to the program's",
-      all(option in hook.REFUSAL for option in ("--network", "--writable-root",
-                                                "--outside-git-checkout", "--web-search")))
+      all(option in hook.REFUSAL for option in ("--no-network", "--writable-root",
+                                                "--outside-git-checkout")))
 
 saved_simple_commands = hook.shell_reader.simple_commands
 
@@ -247,8 +247,8 @@ check("without the shell parser the next step names the program by its absolute 
 program_help = subprocess.run(
     [sys.executable, str(HOOK_SCRIPT.resolve().parents[2] / "scripts" / "run-codex-task-from-brief.py"), "--help"],
     capture_output=True, text=True, check=False)
-for flag in ("-C", "--brief", "-o", "--sandbox", "-m", "--effort", "--network",
-             "--writable-root", "--outside-git-checkout", "--web-search",
+for flag in ("-C", "--brief", "-o", "--sandbox", "-m", "--effort", "--no-network",
+             "--writable-root", "--outside-git-checkout",
              "--deadline-minutes", "--run-log", "--prefetch-github", "--resume"):
     check(f"the usage line's flag {flag} is one the program accepts",
           flag in hook.USAGE_LINE and flag in program_help.stdout,
