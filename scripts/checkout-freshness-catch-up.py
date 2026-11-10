@@ -1263,15 +1263,16 @@ def shortened_file_list(file_list: str) -> str:
     if len(file_list) <= IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT:
         return file_list
     kept = file_list[:IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT].rsplit(", ", 1)[0]
-    return f"{kept}, and more; run `git status --ignored` to see them all"
+    return f"{kept}, and more; run `git status --ignored --untracked-files=all` to see them all"
 
 
 def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
     """Move a never-pushed branch onto origin/main, or say why not.
 
-    Returns (outcome, detail): "rebased"; "skipped" with the blockers;
-    "ignored-files-in-the-way" with the ignored files the rebase would replace,
-    git having been asked nothing that moves the tree; "conflict"
+    Returns (outcome, detail): "rebased"; "ignored-files-in-the-way" with the
+    ignored files the rebase would replace, whatever else blocks it, git having
+    been asked nothing that moves the tree; "skipped" with the blockers;
+    "conflict"
     with the conflicting paths, the tree put back exactly as it was; or
     "abort-failed", the one outcome that is a fault — the tree was left
     mid-rebase — and is reported to the user.
@@ -1289,12 +1290,15 @@ def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
     because the Stop hook has a budget of its own and a rebase of a few commits
     is sub-second; a rebase that takes longer is one to abort, not wait on.
     """
-    blockers, _ = merge_blockers(checkout, git_dir)
-    if blockers:
-        return "skipped", "; ".join(blockers)
+    # Ignored files are checked before the other blockers: a "skipped" note
+    # carries REBASE_ADVICE, which tells the agent to rebase by hand, and that
+    # rebase would overwrite them.
     in_the_way = ignored_files_a_rebase_onto_main_would_replace(checkout)
     if in_the_way:
         return "ignored-files-in-the-way", ", ".join(in_the_way)
+    blockers, _ = merge_blockers(checkout, git_dir)
+    if blockers:
+        return "skipped", "; ".join(blockers)
     rebased = run_git(["rebase", "--no-autostash", "origin/main"], checkout, timeout=30)
     if rebased.returncode == 0:
         return "rebased", ""

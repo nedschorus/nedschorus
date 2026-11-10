@@ -2863,21 +2863,59 @@ with tempfile.TemporaryDirectory() as ignored_scratch:
           "which are in the way of files origin/main tracks: vendor/." in agent_text(result),
           agent_text(result))
 
+    # Ignored files in the way are told whatever else blocks the rebase: the
+    # dirty-tree note's advice to rebase by hand would overwrite them.
+    _, ignored_then_dirty_seat = never_pushed_seat_with_ignored_files("ignored-then-dirty")
+    ignored_first = run_catch_up(["--cwd", str(ignored_then_dirty_seat)])
+    check("a clean tree with ignored files in the way is told about them",
+          "would overwrite or delete these ignored files" in agent_text(ignored_first),
+          agent_text(ignored_first))
+    (ignored_then_dirty_seat / "shared.txt").write_text("edited\n", encoding="utf-8")
+    dirty_after = run_catch_up(["--cwd", str(ignored_then_dirty_seat)])
+    check("a tracked edit made while the ignored files are still in the way brings no "
+          "advice to rebase by hand: the ignored-files note stands",
+          "git rebase origin/main`, then run" not in agent_text(dirty_after)
+          and "Not updated: 1 uncommitted tracked change(s)" not in agent_text(dirty_after)
+          and stamp_of(ignored_then_dirty_seat).get("last_action", "").startswith(
+              "rebase ignored-files-in-the-way")
+          and local_files_kept(ignored_then_dirty_seat),
+          agent_text(dirty_after) + str(stamp_of(ignored_then_dirty_seat)))
+    for moved in ("notes.log", "build-cache/inner.txt", "logs"):
+        (ignored_then_dirty_seat / moved).unlink()
+    (ignored_then_dirty_seat / "build-cache").rmdir()
+    dirty_only = run_catch_up(["--cwd", str(ignored_then_dirty_seat)])
+    check("once the ignored files are moved, the dirty tree is told, its advice now safe",
+          "Not updated: 1 uncommitted tracked change(s)" in agent_text(dirty_only),
+          agent_text(dirty_only))
+
+    _, dirty_and_ignored_seat = never_pushed_seat_with_ignored_files("dirty-and-ignored")
+    (dirty_and_ignored_seat / "shared.txt").write_text("edited\n", encoding="utf-8")
+    dirty_and_ignored = run_catch_up(["--cwd", str(dirty_and_ignored_seat)])
+    check("a dirty tree with ignored files in the way is told about the ignored files, "
+          "not told to rebase by hand",
+          "would overwrite or delete these ignored files" in agent_text(dirty_and_ignored)
+          and "Do not run `git rebase origin/main` yourself" in agent_text(dirty_and_ignored)
+          and "git rebase origin/main`, then run" not in agent_text(dirty_and_ignored),
+          agent_text(dirty_and_ignored))
+
     # A note told for one outcome does not silence the note for another: a
-    # dirty tree skipped first, then cleaned with the ignored files still there.
+    # dirty tree skipped first, then an ignored file put in the way.
     _, dirty_then_ignored_seat = never_pushed_seat_with_ignored_files("dirty-then-ignored")
+    for moved in ("notes.log", "build-cache/inner.txt", "logs"):
+        (dirty_then_ignored_seat / moved).rename(ignored_tmp / f"dirty-then-ignored-{moved.replace('/', '-')}")
+    (dirty_then_ignored_seat / "build-cache").rmdir()
     (dirty_then_ignored_seat / "shared.txt").write_text("edited\n", encoding="utf-8")
     dirty_result = run_catch_up(["--cwd", str(dirty_then_ignored_seat)])
-    check("a dirty tree with ignored files in the way is told it is dirty first",
+    check("a dirty tree with no ignored file in the way is told it is dirty",
           "Not updated: 1 uncommitted tracked change(s)" in agent_text(dirty_result),
           agent_text(dirty_result))
-    git(["checkout", "--", "shared.txt"], dirty_then_ignored_seat)
-    cleaned_result = run_catch_up(["--cwd", str(dirty_then_ignored_seat)])
-    check("once the tree is clean, the ignored files in the way are told, not left unsaid "
-          "behind the earlier advice to rebase by hand",
-          "would overwrite or delete these ignored files" in agent_text(cleaned_result)
-          and "Do not run `git rebase origin/main` yourself" in agent_text(cleaned_result)
-          and local_files_kept(dirty_then_ignored_seat), agent_text(cleaned_result))
+    (dirty_then_ignored_seat / "notes.log").write_text("local notes\n", encoding="utf-8")
+    ignored_later = run_catch_up(["--cwd", str(dirty_then_ignored_seat)])
+    check("an ignored file put in the way afterwards is told, not left unsaid behind the "
+          "earlier advice to rebase by hand",
+          "would overwrite or delete these ignored files" in agent_text(ignored_later)
+          and "Do not run `git rebase origin/main` yourself" in agent_text(ignored_later),
+          agent_text(ignored_later))
 
     # A list of ignored files too long for one delivery still reaches the agent.
     _, many_ignored_seat = never_pushed_seat_with_ignored_files("many-ignored")
@@ -2890,9 +2928,12 @@ with tempfile.TemporaryDirectory() as ignored_scratch:
           "that still says the rebase was not started and what to do",
           "would overwrite or delete these ignored files" in delivered
           and "Do not run `git rebase origin/main` yourself" in delivered
-          and "git status --ignored" in delivered
+          and "git status --ignored --untracked-files=all" in delivered
           and len(delivered) <= catch_up_module.DELIVERY_CHARACTER_LIMIT,
           delivered[:600] + many_result.stderr)
+    listed = git(["status", "--ignored", "--untracked-files=all"], many_ignored_seat).stdout
+    check("and the command the short form names lists the ignored files it left out",
+          "build-cache/cached-file-number-0399.txt" in listed, listed[-600:])
 
     # A listing git cannot make is a failure, never "no ignored file in the way".
     for failing_listing, shell_pattern in (("ls-files", '*" ls-files "*'),
