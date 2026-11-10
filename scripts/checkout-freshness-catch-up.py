@@ -25,8 +25,9 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
      the stamp carries the numbers for the status line.
   4. If the branch is behind origin/main and has NEVER been pushed, REBASES
      it onto origin/main here, and tells the agent at its next turn what
-     moved and which files changed. Skips a dirty tree; aborts cleanly on a
-     conflict and names the files. This is not the merge #324 removed: that
+     moved and which files changed. Skips a dirty tree, and a tree holding an
+     ignored file that checking out origin/main would overwrite or delete,
+     naming those files; aborts cleanly on a conflict and names the files. This is not the merge #324 removed: that
      landed merge commits on FROZEN heads; this moves only heads nobody else
      has, creates no merge commit, and leaves the pushed-head rule untouched.
      Walked and ruled 2026-09-15 (docs/walk/keeping-branches-current-telling-
@@ -115,7 +116,7 @@ import os
 import subprocess
 import sys
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
@@ -210,6 +211,16 @@ REBASE_ADVICE = (
     "names the conflicting commit; if you cannot resolve that conflict, stop and tell "
     "the user which files conflict: a conflict you cannot resolve changes the work "
     "you are doing with him, so the last line of this note does not forbid telling him."
+)
+# Told instead of REBASE_ADVICE when ignored files stopped the rebase, because
+# REBASE_ADVICE's `git rebase origin/main` would replace them.
+IGNORED_FILES_IN_THE_WAY_ADVICE = (
+    "`git rebase` overwrites or deletes an ignored file that is in the way of a file "
+    "origin/main tracks, and has no option to refuse, so the rebase was not started.\n"
+    "Move each file listed above out of this checkout, or copy what you need from it to "
+    "a path origin/main does not track; the next turn's end then rebases the branch.\n"
+    "Do not run `git rebase origin/main` yourself while those files are there: it would "
+    "overwrite or delete them."
 )
 LEAVE_IT_ADVICE = (
     "This branch is pushed, so its review may be running. Do not rebase or "
@@ -1218,10 +1229,34 @@ def merges_from_main(checkout: Path):
     return flagged
 
 
+def ignored_files_a_rebase_onto_main_would_replace(checkout: Path):
+    """The ignored files in the checkout that checking out origin/main would
+    replace, sorted. Raises GitCommandFailed when git cannot list them.
+
+    Three placements are replaced: the path origin/main tracks; a file inside
+    a directory where origin/main tracks a file; and a file where origin/main
+    tracks files under a directory of that name. A path HEAD tracks is in the
+    index, so it never appears among the ignored files.
+    """
+    main_paths = set(git_output.nul_separated_fields(run_git_or_raise(
+        ["ls-tree", "-r", "-z", "--name-only", "origin/main"], checkout, timeout=30).stdout))
+    main_directories = {parent for path in main_paths
+                        for parent in map(str, PurePosixPath(path).parents)} - {"."}
+    ignored = git_output.nul_separated_fields(run_git_or_raise(
+        ["ls-files", "-z", "--others", "--ignored", "--exclude-standard"], checkout,
+        timeout=30).stdout)
+    return sorted(path for path in ignored
+                  if path in main_paths or path in main_directories
+                  or any(str(parent) in main_paths
+                         for parent in PurePosixPath(path).parents))
+
+
 def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
     """Move a never-pushed branch onto origin/main, or say why not.
 
-    Returns (outcome, detail): "rebased"; "skipped" with the blockers; "conflict"
+    Returns (outcome, detail): "rebased"; "skipped" with the blockers;
+    "ignored-files-in-the-way" with the ignored files the rebase would replace,
+    git having been asked nothing that moves the tree; "conflict"
     with the conflicting paths, the tree put back exactly as it was; or
     "abort-failed", the one outcome that is a fault — the tree was left
     mid-rebase — and is reported to the user.
@@ -1242,6 +1277,9 @@ def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
     blockers, _ = merge_blockers(checkout, git_dir)
     if blockers:
         return "skipped", "; ".join(blockers)
+    in_the_way = ignored_files_a_rebase_onto_main_would_replace(checkout)
+    if in_the_way:
+        return "ignored-files-in-the-way", ", ".join(in_the_way)
     rebased = run_git(["rebase", "--no-autostash", "origin/main"], checkout, timeout=30)
     if rebased.returncode == 0:
         return "rebased", ""
@@ -1497,14 +1535,20 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
             stamp["last_action"] = f"rebase {outcome}: {detail}"
             if not already_told:
                 stamp["last_told"] = told
+                advice = REBASE_ADVICE
                 if outcome == "skipped":
                     reason = f"Not updated: {detail}."
+                elif outcome == "ignored-files-in-the-way":
+                    reason = (f"Not updated: a rebase onto origin/main would overwrite or "
+                              f"delete these ignored files, which are in the way of files "
+                              f"origin/main tracks: {detail}.")
+                    advice = IGNORED_FILES_IN_THE_WAY_ADVICE
                 elif outcome == "refused":
                     reason = f"Not updated: git refused — {detail}."
                 else:
                     reason = (f"A rebase onto origin/main was tried and put back: it "
                               f"conflicts on {detail}.")
-                tell(f"{heading} {reason}{changed_on_main_clause}{note}\n{REBASE_ADVICE}",
+                tell(f"{heading} {reason}{changed_on_main_clause}{note}\n{advice}",
                      kind=NOTE_KIND_BLOCKED)
         save_stamp_with_queued_notes(stamp_path, stamp)
         return
