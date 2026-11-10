@@ -316,9 +316,9 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
     check("--failures-only: a local store folder that cannot be made is a FAILED line "
           "naming the folder and the error, exit 1, no traceback",
           result.returncode == 1
-          and printed[:1] == [f"FAILED: projects — could not prepare {store_is_a_file / machine / 'projects'} "
+          and printed[:1] == [f"FAILED: projects — could not make the store folder {store_is_a_file / machine / 'projects'} "
                               f"([Errno 20] Not a directory: '{store_is_a_file / machine / 'projects'}')"]
-          and all(line.startswith("FAILED: ") and "could not prepare" in line and "Not a directory" in line
+          and all(line.startswith("FAILED: ") and "could not make the store folder" in line and "Not a directory" in line
                   for line in printed)
           and "Traceback" not in result.stderr,
           repr(result.stdout + result.stderr))
@@ -471,9 +471,9 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
         remote_env, MIRROR_TEST_SSH_MKDIR_EXIT="255",
         MIRROR_TEST_SSH_STDERR="ssh: connect to host ned-box port 22: Operation timed out"), QUIET)
     prepare_calls = [json.loads(line) for line in argv_log.read_text().splitlines()]
-    check("--failures-only: ssh failing to prepare the store prints every could-not-prepare FAILED line, exit 1, and rsync never runs",
+    check("--failures-only: ssh failing to prepare the store prints every could-not-make-the-store-folder FAILED line, exit 1, and rsync never runs",
           result.returncode == 1 and result.stdout.count("FAILED:") == 5
-          and result.stdout.count("could not prepare") == 5 and "(exit 255)" in result.stdout
+          and result.stdout.count("could not make the store folder") == 5 and "(exit 255)" in result.stdout
           and not any(c[0].endswith("rsync") for c in prepare_calls),
           result.stdout + str(prepare_calls))
     check("--failures-only: a failed preparation's ssh stderr still reaches the log",
@@ -482,9 +482,9 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
     argv_log.unlink()
     result = run_mirror(home, RULED_DESTINATION, dict(remote_env, MIRROR_TEST_SSH_MKDIR_KILLED="1"), QUIET)
     prepare_calls = [json.loads(line) for line in argv_log.read_text().splitlines()]
-    check("--failures-only: an ssh killed by a signal while preparing the store is a could-not-prepare "
+    check("--failures-only: an ssh killed by a signal while preparing the store is a could-not-make-the-store-folder "
           "FAILED line naming the negative exit, exit 1, and rsync never runs",
-          result.returncode == 1 and result.stdout.count("could not prepare") >= 1
+          result.returncode == 1 and result.stdout.count("could not make the store folder") >= 1
           and all(line.startswith("FAILED: ") and line.endswith("(exit -9)") for line in result.stdout.splitlines())
           and not any(c[0].endswith("rsync") for c in prepare_calls),
           result.stdout + str(prepare_calls))

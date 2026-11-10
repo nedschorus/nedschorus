@@ -306,7 +306,7 @@ def mirror_one(host, target: pathlib.PurePosixPath, name: str, source: pathlib.P
         return NOTHING_TO_MIRROR
     problem = ensure_directory(host, target)
     if problem is not None:
-        print(f"FAILED: {name} — could not prepare {f'{host}:' if host else ''}{target} ({problem})")
+        print(f"FAILED: {name} — could not make the store folder {f'{host}:' if host else ''}{target} ({problem})")
         return EXIT_FAILED
     # The file list goes on rsync's stdin (--files-from=-); a whole tree gets an empty stdin.
     completed = subprocess.run(rsync_command(host, source, target, files is not None),
