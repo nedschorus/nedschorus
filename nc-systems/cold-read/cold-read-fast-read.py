@@ -96,8 +96,8 @@ record's being-written lock, a flock on the record directory taken with
 cold-read-record-ship.py's record_directory_being_written_lock_take, from
 the record's creation until it ships the record. While it is held,
 cold-read-record-ship.py prints FAILED for the record and copies nothing,
-and the hook that ships every worktree's records before a
-`git worktree remove` skips it. A shipper that does not test the lock, such
+and the hook that ships a worktree's records before a
+`git worktree remove` of it skips it. A shipper that does not test the lock, such
 as an older checkout's, may still ship it mid-read; that shipment holds at
 most target/ and the marked copy, and a shipment only adds files, so the
 read's own shipment adds the rest. Before
@@ -774,11 +774,12 @@ def fast_read_report_path_for_target(
         target, checkout_root_holding(target))
     if suggestions is not None:
         return suggestions
-    record_dir, store_unlisted = record_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
-        RECORDS_DIR / record_directory_name_for_target(target, now))
+    record_dir, store_unclaimed = record_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_claimed_in_log_store_and_log_store_claim_failure_reason_or_none(
+        RECORDS_DIR / record_directory_name_for_target(target, now),
+        *record_shipper.destination_for_this_machine())
     record_shipper.record_directory_being_written_lock_take(record_dir)
-    if store_unlisted is not None:
-        print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(PROGRAM, record_dir, store_unlisted),
+    if store_unclaimed is not None:
+        print(record_shipper.log_store_claim_failed_so_record_name_may_collide_warning_line(PROGRAM, record_dir, store_unclaimed),
               file=sys.stderr)
     return record_dir / record_names.COLD_READ_FAST_READ_REPORT_FILE_NAME
 

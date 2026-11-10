@@ -196,8 +196,12 @@ class SimpleCommand(list):
     command whose child_shell starts with another's runs inside it, so it sees
     that shell's cd but its own cd does not leak out. redirects holds
     (operator, target) pairs, heredocs the heredocs fed to this command or to
-    the pipeline that starts on its heredoc line.
+    the pipeline that starts on its heredoc line. in_while_or_until_loop_condition
+    is True for a command in the condition of a while or until loop, including
+    one inside a substitution there, and False for one in the loop's body.
     """
+
+    in_while_or_until_loop_condition = False
 
     def __init__(self, words, child_shell, redirects, heredocs):
         super().__init__(words)
@@ -1021,6 +1025,15 @@ class _Collector:
                 node.start_byte, SUBSHELL if kind == "subshell" else SUBSTITUTION),)
         if kind in SEQUENCE_NODE_TYPES or kind in SIMPLE_COMMAND_NODE_TYPES:
             self.sequence(node, child_shell, heredocs)
+            return
+        if kind == "while_statement":
+            # tree-sitter-bash reads an until loop as a while_statement too.
+            for index, child in enumerate(node.children):
+                first = len(self.commands)
+                self.visit(child, child_shell, heredocs)
+                if node.field_name_for_child(index) == "condition":
+                    for command in self.commands[first:]:
+                        command.in_while_or_until_loop_condition = True
             return
         if kind == "expansion":
             for child in node.children:

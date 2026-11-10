@@ -326,7 +326,10 @@ reports what its suites wait for. A failure to decide, such as a machine
 reading that fails or a slot file that cannot be opened, stops the run with
 exit 2. Every suite runs at nice 10, in a cgroup scope of its own
 (`systemd-run --user --scope`), whose counters give the suite's CPU seconds
-and peak memory, every process it starts included. Every scope is in one
+and peak memory, every process it starts included. systemd-run reaches the
+user's systemd through $XDG_RUNTIME_DIR/bus; when the run is started without
+XDG_RUNTIME_DIR, as cron and an agent-seat cron started start it, the run sets
+it to /run/user/<uid> if /run/user/<uid>/bus exists. Every scope is in one
 slice of the user's systemd, TEST_SUITE_CGROUP_SLICE, at CPU weight 10, a
 sibling of app.slice and of the tmux-spawn scopes tmux puts agent-seats in,
 whose weight is 100: while an agent-seat in such a scope wants the CPU, the
@@ -334,9 +337,11 @@ suites together get a tenth of its share. Nice orders a process only against
 processes in the same cgroup, here the suite's own scope, so nice 10 gives an
 agent-seat no priority over any suite: only the slice's weight does. That
 weight counts only within user@1000.service, so an agent-seat whose tmux
-server runs in system.slice, such as one cron started, competes with the
-suites at the weight of user.slice against system.slice, which only root can
-change.
+server runs in system.slice, such as one cron started without systemd-run,
+competes with the suites at the weight of user.slice against system.slice,
+which only root can change; one in an ssh login's session scope, as
+scripts/launch-claude-ubuntu starts it, competes at the weight of that scope
+against all of user@1000.service.
 
 MEMORY CEILING, where suites run in cgroup scopes. A suite's scope may hold
 TEST_SUITE_MEMORY_CEILING_BYTES, 4 GB, or what
@@ -384,7 +389,14 @@ has its process group killed with SIGKILL; each suite starts in a session of
 its own, so the group holds every process it started except one that starts a
 session of its own. In an nc-test-sandbox the group holds the init of the suite's
 PID namespace, whose end ends every process inside, so nothing is left; outside
-one, such a process is not reached. It is reported FAIL with `TIMEOUT after
+one, such a process is not reached. A suite outside an nc-test-sandbox runs
+with TMPDIR set to a directory of its own in the system temp directory, which
+the runner removes once the suite has ended, however it ended, so what a
+killed suite made through TMPDIR is not left behind; when that removal fails,
+the suite's line is followed by one naming the directory and the command that
+removes it. A runner killed with SIGKILL leaves that directory; a later run
+that uses the default --lock-file removes it once nothing in it has changed for
+two days, on every platform. It is reported FAIL with `TIMEOUT after
 <n>s (limit <m>s, <k> times recorded <r>s)`, `(limit <m>s, the floor, more than
 <k> times recorded <r>s)` or `(limit <m>s from no passing recording)`; its
 cgroup counters are lost with the shell that keeps them, and the other suites
@@ -847,6 +859,9 @@ SUITES_RUN_WITHOUT_ANY_SANDBOX = {
         "it builds nc-test-sandboxes itself with bwrap, which cannot start inside bwrap",
     "scripts/run-all-test-suites-overlapping-runs-real-process-test.py":
         "it starts this program, whose suites run in bwrap, which cannot start inside bwrap",
+    "scripts/recover-crashed-seats-started-tmux-server-lands-in-user-systemd-manager-cgroup-without-xdg-runtime-dir-real-process-test.py":
+        "it starts a tmux server in a scope of the user's systemd, whose session bus "
+        "the nc-test-sandbox's empty /run hides",
     "scripts/mac-request-from-ned-box-forced-command-test.py":
         "it runs the real ssh, which refuses its root-owned config files because "
         "inside the sandbox's user namespace they show as owned by nobody",
@@ -892,6 +907,9 @@ TEST_SUITE_ADMISSION_SLOT_FILE_PREFIX = "slot-"
 # The file keeps its earlier name because runners of different versions share the lock.
 SUITES_RUN_WITHOUT_ANY_SANDBOX_LOCK_FILE_NAME = "suites-run-outside-the-signal-sandbox.lock"
 TEST_SUITE_NICE_INCREMENT = 10
+# Short, because a suite binds AF_UNIX sockets under its TMPDIR and macOS caps a socket path at
+# 104 bytes; mkdtemp adds 8 characters to it.
+SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX = "rts-"
 MACHINE_READINGS_INTERVAL_SECONDS = 1
 MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME = "machine-cpu-and-memory-readings.tsv"
 TEST_SUITE_RESOURCE_USE_FILE_NAME = "test-suite-resource-use.tsv"
@@ -1776,7 +1794,9 @@ def remove_old_temporary_log_directories_without_run_records(
     directory a caller chose with --log-dir holds the log-directory lock file and
     is the caller's to remove, so it is never touched. A directory counts as old
     only when nothing anywhere under it changed for retention_seconds, because a
-    suite of an old run may still be appending to a trace deep inside it."""
+    suite of an old run may still be appending to a trace deep inside it. A
+    directory whose tree cannot be read is kept and returned among the failures
+    with the reason; one that vanished while it was read is skipped."""
     now = time.time() if now is None else now
     temp_dir = Path(tempfile.gettempdir() if temp_dir is None else temp_dir)
     named = set()
@@ -1791,7 +1811,11 @@ def remove_old_temporary_log_directories_without_run_records(
             continue
         try:
             newest = newest_modification_time_in_tree(log_dir)
-        except OSError:
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            failures.append((log_dir, f"could not read it to tell whether a run still "
+                                      f"uses it: {error}"))
             continue
         if now - newest >= retention_seconds:
             why = remove_tree_or_say_why(log_dir)
@@ -1802,6 +1826,42 @@ def remove_old_temporary_log_directories_without_run_records(
     return removed, failures
 
 
+def remove_old_suite_temporary_directories_left_by_killed_runners(
+        now=None, temp_dir=None, retention_seconds=FINISHED_RUN_LOG_RETENTION_SECONDS):
+    """Remove the per-suite TMPDIRs a runner killed with SIGKILL left; return (removed, failures).
+
+    Only a directory of this account whose name has mkdtemp's shape after the
+    prefix is touched, since the prefix is short enough for another program to
+    share it, and only once nothing under it changed for retention_seconds, since
+    a suite of a running run may still be writing in it. A directory whose tree
+    cannot be read is kept and returned among the failures with the reason; one
+    that vanished while it was read, as when another run removed it, is skipped."""
+    now = time.time() if now is None else now
+    temp_dir = Path(tempfile.gettempdir() if temp_dir is None else temp_dir)
+    shape = re.compile(re.escape(SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX)
+                       + r"[a-z0-9_]{8}")
+    removed, failures = [], []
+    for directory in sorted(temp_dir.glob(f"{SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX}*")):
+        try:
+            if (not shape.fullmatch(directory.name) or directory.is_symlink()
+                    or not directory.is_dir() or directory.stat().st_uid != os.getuid()):
+                continue
+            newest = newest_modification_time_in_tree(directory)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            failures.append((directory, f"could not read it to tell whether a suite still "
+                                        f"uses it: {error}"))
+            continue
+        if now - newest >= retention_seconds:
+            why = remove_tree_or_say_why(directory)
+            if why is None:
+                removed.append(directory)
+            else:
+                failures.append((directory, why))
+    return removed, failures
+
+
 def clean_up_after_earlier_runs(lock_file, previous_holder, platform=None):
     """Remove what earlier runs left, once nothing of theirs still runs; return report lines.
 
@@ -1809,12 +1869,20 @@ def clean_up_after_earlier_runs(lock_file, previous_holder, platform=None):
     other platforms there is no /proc to read start times from, so the lock's
     last holder is cleaned up after, as before."""
     platform = sys.platform if platform is None else platform
+    lines = []
+    if Path(lock_file) == DEFAULT_LOCK_FILE:
+        # A test's own --lock-file runs must not sweep the machine's shared temp directory.
+        removed, failures = remove_old_suite_temporary_directories_left_by_killed_runners()
+        lines += [f"removed the temporary directory {directory}, given to a suite by a run that "
+                  f"was killed" for directory in removed]
+        lines += [f"could not remove the temporary directory {directory}, given to a suite by a "
+                  f"run that was killed ({why})" for directory, why in failures]
     if not platform.startswith("linux"):
         left = remove_traces_the_last_lock_holder_left(previous_holder)
-        return ([f"removed {len(left)} strace directories the run before this one left "
-                 f"in {left[0].parent}"] if left else [])
+        return lines + ([f"removed {len(left)} strace directories the run before this one left "
+                         f"in {left[0].parent}"] if left else [])
     runs_dir = run_records_directory_for_lock_file(lock_file)
-    lines = remove_leftovers_of_ended_runs_named_in_run_records(runs_dir)
+    lines += remove_leftovers_of_ended_runs_named_in_run_records(runs_dir)
     if Path(lock_file) == DEFAULT_LOCK_FILE:
         # Only the machine's own runs share the system temp directory with records this old.
         removed, failures = remove_old_temporary_log_directories_without_run_records(runs_dir)
@@ -2117,12 +2185,36 @@ def psutil_imported_or_why_not():
     return psutil, None
 
 
+def environment_with_user_runtime_directory_when_the_user_session_bus_exists(
+        environment, platform=None, uid=None, path_exists=os.path.exists):
+    """Return the environment, with XDG_RUNTIME_DIR added when the user's session bus is there.
+
+    systemd-run --user and systemctl --user find the user manager's bus at
+    $XDG_RUNTIME_DIR/bus, and cron, an agent-seat cron started and an agent's hook give
+    no XDG_RUNTIME_DIR. The variable is added only on Linux, only when it is missing,
+    and only when /run/user/<uid>/bus exists."""
+    platform = sys.platform if platform is None else platform
+    uid = os.getuid() if uid is None else uid
+    runtime_directory = f"/run/user/{uid}"
+    if (platform.startswith("linux") and "XDG_RUNTIME_DIR" not in environment
+            and path_exists(f"{runtime_directory}/bus")):
+        return {**environment, "XDG_RUNTIME_DIR": runtime_directory}
+    return environment
+
+
 def why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(which=shutil.which,
-                                                                        runner=subprocess.run):
+                                                                        runner=subprocess.run,
+                                                                        environment=None):
     """None when each suite can run in a cgroup scope of its own, or why it cannot.
 
-    It first sets TEST_SUITE_CGROUP_SLICE's CPU weight, which lasts until the user's
+    It first adds XDG_RUNTIME_DIR to environment, default this process's, as
+    environment_with_user_runtime_directory_when_the_user_session_bus_exists adds it, so
+    every suite started after it reaches the user manager whoever started this program.
+    Then it sets TEST_SUITE_CGROUP_SLICE's CPU weight, which lasts until the user's
     systemd restarts, so every run sets it again."""
+    environment = os.environ if environment is None else environment
+    environment.update(
+        environment_with_user_runtime_directory_when_the_user_session_bus_exists(dict(environment)))
     for program in ("systemd-run", "systemctl", "setpriv", "bash"):
         if which(program) is None:
             return f"{program} is not on PATH"
@@ -2376,13 +2468,17 @@ def is_credential_environment_variable(name):
 
 
 def launch_environment_for_a_test_suite_with_git_redirecting_agent_session_attendance_and_credential_variables_removed():
-    """Return the environment every path that launches an nc-test-suite gives the suite."""
+    """Return the environment every path that launches an nc-test-suite gives the suite.
+
+    It carries XDG_RUNTIME_DIR as environment_with_user_runtime_directory_when_the_user_session_bus_exists
+    adds it, so the suite's systemd-run reaches the user manager even when this environment
+    is built before the cgroup check adds the variable to this process's own."""
     environment = environment_without_git_redirecting_variables()
     for variable in AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES:
         environment.pop(variable, None)
     for variable in [name for name in environment if is_credential_environment_variable(name)]:
         del environment[variable]
-    return environment
+    return environment_with_user_runtime_directory_when_the_user_session_bus_exists(environment)
 
 
 def being_traced():
@@ -2915,7 +3011,9 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
     suite_timeout_and_the_recorded_seconds_it_came_from(); a suite still running at its limit
     has its process group killed, and its result carries "timeout". Once run_stops,
     a list naming what stopped the run, is not empty, the suite is killed the same way,
-    and its result carries "stopped by".
+    and its result carries "stopped by". A suite outside an nc-test-sandbox gets TMPDIR set to
+    a directory of its own, removed once the suite has ended; a removal that fails is named,
+    with its command, in the result's "output_note".
 
     With in_cgroup_scope, the suite runs in a cgroup scope of its own and its CPU seconds
     and peak memory are read from there; with nice, at low priority. Inside its
@@ -2958,6 +3056,13 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                 [interpreter])
         sandbox_prefix = command_prefix_starting_one_suite_in_its_test_sandbox(
             sandbox_prefix, top, writable_paths, suite, read_only_paths)
+    suite_temporary_directory = None
+    if not does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix):
+        # Outside an nc-test-sandbox's private /tmp, a suite killed with SIGKILL leaves what it
+        # made in the shared temp directory, so it gets a directory this function removes.
+        suite_temporary_directory = tempfile.mkdtemp(
+            prefix=SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX)
+        environment["TMPDIR"] = suite_temporary_directory
     status_read = status_write = None
     if sandbox_prefix and note_suite_process is not None:
         status_read_fd, status_write = os.pipe()
@@ -3052,6 +3157,16 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         # Closed only after bwrap exits: bwrap writes its exit status to this pipe last.
         if status_read is not None:
             status_read.close()
+        temporary_directory_left = (None if suite_temporary_directory is None
+                                    else remove_tree_or_say_why(suite_temporary_directory))
+    if temporary_directory_left is not None:
+        output_note = "; ".join(filter(None, (
+            output_note,
+            f"the temporary directory the suite was given, {suite_temporary_directory}, could not "
+            f"be removed ({temporary_directory_left}), so it uses space and inodes in the "
+            f"machine's shared temp directory; remove it with "
+            f"`chmod -R u+rwx {shlex.quote(suite_temporary_directory)} && "
+            f"rm -rf {shlex.quote(suite_temporary_directory)}`")))
     if copy_failures:
         raise OSError(f"the log of {suite}, {log_file}, could not be written while the suite "
                       f"ran, so its output is incomplete: {copy_failures[0]}")

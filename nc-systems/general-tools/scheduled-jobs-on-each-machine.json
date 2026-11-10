@@ -45,7 +45,7 @@
           "label": "com.nedschorus.daily-full-test-run-of-main",
           "launchd_keys": {"StartCalendarInterval": {"Hour": 3, "Minute": 30}}
         },
-        "ned-box": {"scheduler": "cron", "schedule": "30 3 * * *"}
+        "ned-box": {"scheduler": "cron", "schedule": "0 0 * * *"}
       }
     },
     {
@@ -85,6 +85,15 @@
       "program": "nc-systems/handoff/handoff-agent-crash-watcher.py",
       "arguments": [],
       "output": ".claude/handoff-agent-crash-watcher.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "* * * * *"}
+      }
+    },
+    {
+      "name": "agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write",
+      "program": "scripts/agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.py",
+      "arguments": [],
+      "output": ".claude/agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.log",
       "on": {
         "ned-box": {"scheduler": "cron", "schedule": "* * * * *"}
       }

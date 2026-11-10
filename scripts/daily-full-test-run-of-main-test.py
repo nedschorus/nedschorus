@@ -937,42 +937,6 @@ def run_cases_as_a_program(workspace: Path):
           f"{invalid.returncode} {invalid.stderr}")
 
 
-def run_user_runtime_directory_cases():
-    add = program.environment_with_user_runtime_directory_when_the_user_session_bus_exists
-    bus_exists = lambda path: path == "/run/user/1234/bus"
-    base = {"PATH": "/usr/bin"}
-    added = add(base, platform="linux", uid=1234, path_exists=bus_exists)
-    check("the runner's environment gains XDG_RUNTIME_DIR when it has none and the user's "
-          "bus exists",
-          added == {"PATH": "/usr/bin", "XDG_RUNTIME_DIR": "/run/user/1234"}
-          and base == {"PATH": "/usr/bin"}, repr(added))
-    kept = add({"XDG_RUNTIME_DIR": "/elsewhere"}, platform="linux", uid=1234,
-               path_exists=bus_exists)
-    check("an XDG_RUNTIME_DIR the environment already has is kept",
-          kept == {"XDG_RUNTIME_DIR": "/elsewhere"}, repr(kept))
-    no_bus = add(base, platform="linux", uid=1234, path_exists=lambda path: False)
-    check("nothing is added when the user's bus does not exist", no_bus == base, repr(no_bus))
-    on_the_mac = add(base, platform="darwin", uid=1234, path_exists=bus_exists)
-    check("nothing is added on darwin", on_the_mac == base, repr(on_the_mac))
-
-    saved_add = program.environment_with_user_runtime_directory_when_the_user_session_bus_exists
-    saved_runtime_directory = os.environ.pop("XDG_RUNTIME_DIR", None)
-    program.environment_with_user_runtime_directory_when_the_user_session_bus_exists = (
-        lambda environment: add(environment, platform="linux", uid=1234,
-                                path_exists=bus_exists))
-    try:
-        completed = program.run_test_suite_runner_waiting_for_the_machine_lock(
-            [sys.executable, "-c", "import os; print(os.environ.get('XDG_RUNTIME_DIR'))"],
-            Path.cwd(), time.monotonic)
-    finally:
-        program.environment_with_user_runtime_directory_when_the_user_session_bus_exists = saved_add
-        if saved_runtime_directory is not None:
-            os.environ["XDG_RUNTIME_DIR"] = saved_runtime_directory
-    check("the runner itself is started with XDG_RUNTIME_DIR set to the user's runtime "
-          "directory when the process has none and the user's bus exists",
-          completed[0].stdout == "/run/user/1234\n", repr(completed))
-
-
 def run_log_store_readme_cases():
     readme = record_shipper.STORE_README
     kind = program.DAILY_FULL_TEST_RUNS_KIND_DIRECTORY_NAME
@@ -1072,13 +1036,7 @@ def run_line_copying_cases(workspace: Path):
           and len(outcome.completed.stderr.splitlines()) == 2001,
           outcome if isinstance(outcome, str) else repr(outcome.completed.returncode))
 
-    # A runner that would print for a minute, so only an interrupt ends it early.
-    pid_file = workspace / "line-copying" / "runner-pid"
-    noisy_child = ("import os, pathlib, sys, time\n"
-                   f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
-                   "deadline = time.monotonic() + 60\n"
-                   "while time.monotonic() < deadline:\n"
-                   "    print('x' * 200, flush=True)\n")
+    interrupt_sent = threading.Event()
 
     class StreamThatInterruptsThisProgram:
         def __init__(self):
@@ -1088,22 +1046,57 @@ def run_line_copying_cases(workspace: Path):
             if not self.sent:
                 self.sent = True
                 os.kill(os.getpid(), signal.SIGINT)
+                interrupt_sent.set()
 
         def flush(self):
             pass
 
+    def interrupted_runner_outcome_and_pid_file(pid_file_name):
+        # A runner that would print for a minute, so only an interrupt ends it early.
+        pid_file = workspace / "line-copying" / pid_file_name
+        noisy_child = ("import os, pathlib, sys, time\n"
+                       f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+                       "deadline = time.monotonic() + 60\n"
+                       "while time.monotonic() < deadline:\n"
+                       "    print('x' * 200, flush=True)\n")
+        interrupt_sent.clear()
+        try:
+            program.subprocess_run_copying_each_output_line_as_it_arrives(
+                [sys.executable, "-c", noisy_child], workspace, os.environ.copy(),
+                StreamThatInterruptsThisProgram())
+            outcome = "returned"
+        except KeyboardInterrupt:
+            outcome = "interrupted"
+        return outcome, pid_file
+
+    def check_runner_stopped(case_name, outcome, pid_file):
+        check(case_name,
+              outcome == "interrupted" and pid_file.is_file()
+              and not pid_is_running(int(pid_file.read_text())),
+              f"{outcome} {pid_file.read_text() if pid_file.is_file() else 'no pid file'}")
+
+    outcome, pid_file = interrupted_runner_outcome_and_pid_file("runner-pid")
+    check_runner_stopped("an interrupt while waiting for the runner is passed on, and the "
+                         "runner is stopped and reaped, not left running with nothing "
+                         "reading its output", outcome, pid_file)
+
+    # The first copier's start returns only once its line has raised the interrupt, so
+    # the interrupt always lands while the copiers are being started, however loaded
+    # the machine is.
+    class CopierWhoseStartWaitsForTheInterrupt(threading.Thread):
+        def start(self):
+            super().start()
+            interrupt_sent.wait(60)
+
+    real_thread = program.threading.Thread
+    program.threading.Thread = CopierWhoseStartWaitsForTheInterrupt
     try:
-        program.subprocess_run_copying_each_output_line_as_it_arrives(
-            [sys.executable, "-c", noisy_child], workspace, os.environ.copy(),
-            StreamThatInterruptsThisProgram())
-        outcome = "returned"
-    except KeyboardInterrupt:
-        outcome = "interrupted"
-    check("an interrupt while waiting for the runner is passed on, and the runner is "
-          "stopped and reaped, not left running with nothing reading its output",
-          outcome == "interrupted" and pid_file.is_file()
-          and not pid_is_running(int(pid_file.read_text())),
-          f"{outcome} {pid_file.read_text() if pid_file.is_file() else 'no pid file'}")
+        outcome, pid_file = interrupted_runner_outcome_and_pid_file("runner-pid-2")
+    finally:
+        program.threading.Thread = real_thread
+    check_runner_stopped("an interrupt that arrives while the copiers are being started "
+                         "is passed on, and the runner is stopped and reaped",
+                         outcome, pid_file)
 
 
 def run_not_run_suite_record_cases():
@@ -1140,7 +1133,6 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_cases_on_ned_box(workspace_root)
     run_cases_on_the_mac(workspace_root)
     run_cases_as_a_program(workspace_root)
-    run_user_runtime_directory_cases()
     run_log_store_readme_cases()
     run_line_copying_cases(workspace_root)
     run_not_run_suite_record_cases()

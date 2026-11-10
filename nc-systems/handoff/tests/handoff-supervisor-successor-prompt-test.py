@@ -975,11 +975,17 @@ def run_launch_time_git_sync_cases(workspace: Path):
     git_in(["clone", "--quiet", str(remote), str(pushed_history_home)], root)
     git_in(["checkout", "--quiet", "-b", "fix-round-branch", "origin/agent-branch"],
            pushed_history_home)
+    # A checkout behind its own origin branch, as a fix pushed from elsewhere leaves it, is pushed.
+    behind_remote_home = root / "behind-remote-home"
+    git_in(["clone", "--quiet", str(remote), str(behind_remote_home)], root)
+    git_in(["checkout", "--quiet", "-b", "agent-branch", "origin/agent-branch~1"], behind_remote_home)
     for case, checkout, expected in (
             ("a branch on origin gets the pushed instruction", home,
              supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION),
             ("a branch whose commits are on origin under another name gets the pushed "
              "instruction, not the rebase", pushed_history_home,
+             supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION),
+            ("a branch behind its origin branch gets the pushed instruction", behind_remote_home,
              supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION),
             ("a checkout on main gets no branch-state instruction", seed, ""),
             ("a detached checkout gets no branch-state instruction", detached_home, ""),
@@ -1086,10 +1092,10 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
     topic_home = root / "failing-git-topic-home"
     git_in(["clone", "--quiet", str(remote), str(topic_home)], root)
     git_in(["checkout", "--quiet", "-b", "topic-branch"], topic_home)
-    for call, what_is_printed in (
-            ("rev-parse --abbrev-ref HEAD",
+    for call, branch_named, what_is_printed in (
+            ("rev-parse --abbrev-ref HEAD", f"the branch checked out in {topic_home}",
              f"why: `git -C {topic_home} rev-parse --abbrev-ref HEAD` failed (exit 128): fatal: stub failure\n"),
-            ("--verify --quiet origin/topic-branch",
+            ("--verify --quiet origin/topic-branch", f"branch topic-branch in {topic_home}",
              f"why: git could not tell whether branch topic-branch in {topic_home} is pushed to origin: "
              "head state unknowable (git rev-parse exited 128: fatal: stub failure)\n")):
         original_path = os.environ.get("PATH", "")
@@ -1102,10 +1108,16 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
         finally:
             os.environ["PATH"] = original_path
             del os.environ["FAIL_GIT_CALL_CONTAINING"]
-        check(f"a failed `git {call}` leaves the branch-state instruction out and prints why",
+        check(f"a failed `git {call}` leaves the branch-state instruction out and prints which branch and why",
               instruction == "" and what_is_printed in console.getvalue()
-              and "handoff-supervisor: if this console shows the same why line when the handoff-supervisor "
-              "next launches this agent-seat, fix the git error it names; if the cause was passing" in console.getvalue(),
+              and f"handoff-supervisor: could not tell whether {branch_named} is pushed, " in console.getvalue()
+              and "handoff-supervisor: this launch goes ahead without either instruction, and nobody needs to act on "
+              "this message: a git error that persists also fails the new agent-session's own git commands, "
+              "which show it the error; once an error has cleared, the Stop hook "
+              "scripts/checkout-freshness-catch-up.py, at the end of each of the agent-session's turns, rebases "
+              "a never-pushed branch onto origin/main, and tells the agent-session when the agent-session has "
+              "rewritten a pushed branch's history."
+              in console.getvalue(),
               (instruction, console.getvalue()))
 
     # A git killed by a signal exits with a negative returncode and prints nothing.

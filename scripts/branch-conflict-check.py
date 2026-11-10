@@ -16,8 +16,11 @@ brought the commit in. It then says how the conflict is cleared, by the answer
 of nc-systems/general-tools/pull-request-conflict-with-main-rebase-or-replace-answer-common.py
 for the branch's open pull request: --pull-request names one; otherwise `gh pr
 list` is asked about --branch, or, with neither --head nor --branch, about the
-current branch. When no branch can be asked about, or gh cannot answer, the
-report gives no answer and says how to rerun for one."""
+current branch. A branch with no open pull request is rebased onto the base
+when `git ls-remote` finds it missing from --fetch-remote, and has the base
+merged into it when the remote has it. When no branch can be asked about, or
+gh or the remote cannot answer, the report gives no answer and says how to
+rerun for one."""
 
 import argparse
 import importlib.util
@@ -160,7 +163,8 @@ def paths_deleted_on_base(stages):
 
 
 def deleting_commit(path, base_hash, head_hash, runner=run):
-    """Return the base-side commit that deleted path, or None."""
+    """Return the base-side commit that deleted path, or None when git failed
+    or named none."""
     status, out = runner(["git", "log", "-1", "--format=%H", "--diff-filter=D",
                           "%s..%s" % (head_hash, base_hash), "--", path])
     return out if status == 0 and out else None
@@ -295,16 +299,22 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
         "the branch changes." % (commit_label(head_hash, runner), base, base,
                                  len(deleted)),
     ]
-    unnamed = False
     renamed = 0
     checks = []
     for staged in deleted:
         path = own_path(staged, messages, RENAMES_FOR_A_FILE_THE_BASE_DELETED)
         commit = deleting_commit(path, base_hash, head_hash, runner)
         if commit is None:
-            unnamed = True
+            # Without the deleting commit no rename lookup runs, so the file
+            # may have been renamed as much as deleted.
             lines.append("DELETED ON %s: %s, by a commit this run could not find"
                          % (base, path))
+            checks.append(
+                "RENAME CHECK: git did not name the commit on %s that deleted "
+                "%s, so %s may have been renamed to a name this run could not "
+                "find; check with git log --full-history --diff-filter=D "
+                "--name-status %s..%s -- %s."
+                % (base, path, path, head_hash[:12], base_hash[:12], path))
             continue
         found, unlisted, unfollowed, unchecked = candidates_at_base(
             path, commit, base_hash, runner)
@@ -334,7 +344,7 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
             "could not find; check with git log --full-history --diff-filter=D "
             "%s..%s -- %s." % (base, commit_label(after, runner), candidate, path,
                                after[:12], base_hash[:12], candidate)
-            for candidate, after in dict.fromkeys(unfollowed)]
+            for candidate, after in unfollowed]
         checks += [
             "RENAME CHECK: git could not tell whether %s holds %s, so %s may "
             "have been renamed to it; check with git ls-tree --full-tree "
@@ -361,10 +371,6 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
             "RENAME CHECK that names it. A file with no \"possibly\" on its line and "
             "no RENAME CHECK naming it was deleted."
             % (marked, base, base))
-    if unnamed:
-        lines.append(
-            "If a deleting commit is not named above, find it with git log "
-            "--diff-filter=D %s -- <file>." % base)
     if renamed or checks:
         lines.append("Carry the branch's change to each renamed file onto its new name.")
     lines.append(
@@ -563,7 +569,7 @@ def open_pull_request_of_branch(branch, runner=run):
         return None, "gh pr list printed what this run could not read"
 
 
-def clearing_lines(pull_request, branch, head, base, runner=run):
+def clearing_lines(pull_request, branch, head, base, remote, runner=run):
     """Return the lines that say how this conflict is cleared."""
     if pull_request is None:
         if branch is None and head is None:
@@ -610,21 +616,58 @@ def clearing_lines(pull_request, branch, head, base, runner=run):
             "followed by pull request #%s's URL, then close pull request #%s with a "
             "comment naming the new one." % (pull_request, pull_request),
         ]
-    return [
-        "ANSWER: rebase -- the branch has no open pull request, so it is rebased "
-        "onto %s if it is not on origin yet; if it is, %s is merged into it, "
-        "because GitHub refuses every force-push to this repository." % (base, base),
-    ] + understand + [
-        "If the branch is not on origin, run git rebase %s, resolving each conflict "
-        "so that both changes work." % base,
-        "If the branch is not on origin and is built on another branch, run git "
-        "rebase --onto %s <the other branch's head> instead." % base,
-        "If the branch is already on origin, run git merge %s, resolving each "
-        "conflict so that both changes work." % base,
+    on_origin, why = branch_on_remote(branch, remote, runner)
+    if on_origin is None:
+        return [
+            "ANSWER: none -- branch %s has no open pull request, but whether %s "
+            "has it could not be looked up (%s), so this run cannot say whether "
+            "it is rebased or %s is merged into it." % (branch, remote, why, base),
+            "If %s cannot be reached, fix that, then rerun." % remote,
+        ]
+    give_up = [
+        "If you cannot make both changes work, run git %s --abort, which puts the "
+        "branch back as it was, and ask the agent-seat the MAIN'S SIDE line names, "
+        "with SendMessage, naming the file and what you could not reconcile."
+        % ("merge" if on_origin else "rebase"),
         "Run python3 scripts/run-all-test-suites.py "
         "--only-suites-whose-recorded-inputs-changed-since %s." % base,
-        "If the branch is already on origin, push it with git push, without --force.",
+        "If a suite fails, fix the branch until every suite passes; do not push "
+        "it before then.",
     ]
+    if on_origin:
+        return [
+            "ANSWER: merge -- branch %s has no open pull request and %s already has "
+            "it, so %s is merged into it, because GitHub refuses every force-push "
+            "to this repository." % (branch, remote, base),
+        ] + understand + [
+            "Run git merge %s, resolving each conflict so that both changes work."
+            % base,
+        ] + give_up + [
+            "Push it with git push, without --force, then carry on with what you "
+            "were doing.",
+        ]
+    return [
+        "ANSWER: rebase -- branch %s has no open pull request and %s does not have "
+        "it yet, so it is rebased onto %s." % (branch, remote, base),
+    ] + understand + [
+        "Run git rebase %s, resolving each conflict so that both changes work."
+        % base,
+        "If the branch was cut from another branch whose commits %s does not hold "
+        "as they were, run git log --oneline %s..HEAD instead, find the newest "
+        "commit that is the other branch's work rather than this branch's, and run "
+        "git rebase --onto %s <that commit's hash>." % (base, base, base),
+    ] + give_up + [
+        "Then carry on with what you were doing; if that was a push, push again.",
+    ]
+
+
+def branch_on_remote(branch, remote, runner=run):
+    """Return (True or False, None) for whether the remote has the branch, or
+    (None, why) when git cannot ask it."""
+    exit_status, out = runner(["git", "ls-remote", "--heads", remote, "refs/heads/" + branch])
+    if exit_status != 0:
+        return None, "git ls-remote exited %d" % exit_status
+    return bool(out.strip()), None
 
 
 def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
@@ -755,7 +798,8 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
                               else RENAMES_FOR_ANY_OTHER_CONFLICT)
                      for path in stages]
         report += main_side_change_lines(own_paths, head_hash, base, base_hash, runner)
-        report += clearing_lines(pull_request, branch, head_given, base, runner)
+        report += clearing_lines(pull_request, branch, head_given, base, remote,
+                                 runner)
         lines[0:0] = report
         return EXIT_CONFLICT, lines
 

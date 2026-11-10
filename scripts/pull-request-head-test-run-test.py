@@ -625,9 +625,14 @@ def run_cases_on_ned_box(workspace: Path):
           and not program.pull_request_head_test_run_record_passed_on_commit_check(read_back[0][1], fixture.merge_base)
           and not program.pull_request_head_test_run_record_passed_on_commit_check(read_back[1][1], fixture.head),
           repr(read_back))
+    zero_line_record = re.sub(r"a record of \d+ lines", "a record of 0 lines",
+                              record_of_the_passing_run, count=1)
+    torn_inside_the_next_first_line = (record_of_the_passing_run
+                                       + record_of_the_failing_run.split("\n", 1)[0][:40])
     for text in ("", record_of_the_passing_run[:-1],
                  record_of_the_passing_run.rsplit("\n", 2)[0] + "\n",
-                 "a line that begins no record\n"):
+                 "a line that begins no record\n", zero_line_record,
+                 torn_inside_the_next_first_line):
         try:
             program.pull_request_head_test_run_test_log_split_into_records(text)
             raised = False

@@ -615,6 +615,42 @@ with tempfile.TemporaryDirectory() as scratch_name:
     def os_error(command):
         raise OSError("Permission denied")
 
+    add = runner.environment_with_user_runtime_directory_when_the_user_session_bus_exists
+    bus_exists = lambda path: path == "/run/user/1234/bus"
+    base = {"PATH": "/usr/bin"}
+    added = add(base, platform="linux", uid=1234, path_exists=bus_exists)
+    check("the environment gains XDG_RUNTIME_DIR when it has none and the user's bus exists, "
+          "and the environment given is left as it was",
+          added == {"PATH": "/usr/bin", "XDG_RUNTIME_DIR": "/run/user/1234"}
+          and base == {"PATH": "/usr/bin"}, repr(added))
+    kept = add({"XDG_RUNTIME_DIR": "/elsewhere"}, platform="linux", uid=1234,
+               path_exists=bus_exists)
+    check("an XDG_RUNTIME_DIR the environment already has is kept",
+          kept == {"XDG_RUNTIME_DIR": "/elsewhere"}, repr(kept))
+    no_bus = add(base, platform="linux", uid=1234, path_exists=lambda path: False)
+    check("nothing is added when the user's bus does not exist", no_bus == base, repr(no_bus))
+    on_the_mac = add(base, platform="darwin", uid=1234, path_exists=bus_exists)
+    check("nothing is added on darwin", on_the_mac == base, repr(on_the_mac))
+
+    # No nc-test-sandbox has /run/user/<uid>/bus, so the check is handed a machine where it is.
+    seen_by_systemctl = []
+    runner.environment_with_user_runtime_directory_when_the_user_session_bus_exists = (
+        lambda environment: add(environment, platform="linux", uid=1234, path_exists=bus_exists))
+    started_by_cron = {"PATH": "/usr/bin"}
+    try:
+        why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
+            which=lambda name: f"/usr/bin/{name}",
+            runner=lambda command, *a, **k: seen_by_systemctl.append(
+                started_by_cron.get("XDG_RUNTIME_DIR")) or Succeeded(),
+            environment=started_by_cron)
+    finally:
+        runner.environment_with_user_runtime_directory_when_the_user_session_bus_exists = add
+    check("a run started without XDG_RUNTIME_DIR, as cron starts it, sets it before its first "
+          "systemctl --user, so its suites run in scopes in the suites' slice",
+          why is None and seen_by_systemctl[:1] == ["/run/user/1234"]
+          and started_by_cron["XDG_RUNTIME_DIR"] == "/run/user/1234",
+          (why, seen_by_systemctl, started_by_cron))
+
     why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
         which=lambda name: f"/usr/bin/{name}", runner=failing_only("systemd-run", lambda c: Failed()))
     check("a systemd-run that cannot start a scope gives its own error as the reason",

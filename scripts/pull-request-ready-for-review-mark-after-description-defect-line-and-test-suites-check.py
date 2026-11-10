@@ -13,8 +13,8 @@ Run it from the pull request's own checkout, with its nc-head-commit checked out
 3. refuses a description with no defect line (#root_cause, #root_cause_not_fixed or
    #no_defect_fixed), read by the same reader scripts/merge-gate.sh uses; a placeholder
    description has none;
-4. runs this checkout's test suites, with this checkout's own scripts/run-all-test-suites.py, as
-   CLAUDE.md says to before pushing, and refuses when any fails;
+4. runs this checkout's test suites whose recorded inputs changed since origin/main, with this
+   checkout's own scripts/run-all-test-suites.py, and refuses when any fails;
 5. marks the pull request ready for review with gh pr ready.
 
 It does not check what scripts/merge-gate.sh checks again before merging, such as a not-fixed
@@ -28,6 +28,7 @@ Exit codes: 0 marked ready for review, or already was; 1 refused or failed; 2 ba
 import argparse
 import importlib.util
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -63,8 +64,9 @@ class StepFailed(Exception):
 
 
 def selective_test_run_command(checkout):
-    """The test run CLAUDE.md asks for before a push, with checkout's own runner, which tests
-    the checkout it sits in; the runner beside this program may sit in another checkout."""
+    """The run of the suites whose recorded inputs changed since origin/main, with checkout's own
+    runner, which tests the checkout it sits in; the runner beside this program may sit in another
+    checkout."""
     return ["python3", str(Path(checkout) / "scripts" / "run-all-test-suites.py"),
             "--only-suites-whose-recorded-inputs-changed-since", "origin/main"]
 
@@ -73,23 +75,30 @@ def first_stderr_line(completed):
     return ((completed.stderr or "").strip().splitlines() or [""])[0]
 
 
-def run_command(argv, runner, timeout, what, instructions):
-    """Run argv for its output; raise StepFailed, ending with instructions, when it cannot run
-    or exits nonzero."""
+def run_or_failure_cause(argv, runner, timeout, ok_codes):
+    """Run argv; return (completed, None) when it exits with one of ok_codes, else (None, the
+    cause of the failure in words)."""
     try:
         completed = runner(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                            timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
-        cause = f"{' '.join(argv[:3])} did not answer within {timeout:.0f} seconds"
+        return None, f"{' '.join(argv[:3])} did not answer within {timeout:.0f} seconds"
     except OSError as error:
-        cause = f"{argv[0]} could not be run ({error})"
-    else:
-        if completed.returncode == 0:
-            return completed.stdout or ""
-        line = first_stderr_line(completed)
-        cause = (f"{' '.join(argv[:3])} exited with status {completed.returncode}"
-                 + (f": {line}" if line else ", printing no error"))
-    raise StepFailed(f"{what} failed: {cause}.\n{instructions}")
+        return None, f"{argv[0]} could not be run ({error})"
+    if completed.returncode in ok_codes:
+        return completed, None
+    line = first_stderr_line(completed)
+    return None, (f"{' '.join(argv[:3])} exited with status {completed.returncode}"
+                  + (f": {line}" if line else ", printing no error"))
+
+
+def run_command(argv, runner, timeout, what, instructions):
+    """Run argv for its output; raise StepFailed, ending with instructions, when it cannot run
+    or exits nonzero."""
+    completed, cause = run_or_failure_cause(argv, runner, timeout, (0,))
+    if cause:
+        raise StepFailed(f"{what} failed: {cause}.\n{instructions}")
+    return completed.stdout or ""
 
 
 def read_pull_request(number, runner):
@@ -111,57 +120,52 @@ def read_pull_request(number, runner):
 
 def git_answers_yes(argv, runner, what, instructions,
                     no_codes=(GIT_MERGE_BASE_IS_ANCESTOR_NO,)):
-    """Run a git command that answers yes by exiting 0 and no by exiting with one of no_codes;
-    raise StepFailed when it exits otherwise or cannot run."""
-    try:
-        completed = runner(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                           timeout=GIT_TIMEOUT_SECONDS, check=False)
-    except subprocess.TimeoutExpired:
-        cause = f"{' '.join(argv[:3])} did not answer within {GIT_TIMEOUT_SECONDS:.0f} seconds"
-    except OSError as error:
-        cause = f"{argv[0]} could not be run ({error})"
-    else:
-        if completed.returncode == 0:
-            return True
-        if completed.returncode in no_codes:
-            return False
-        line = first_stderr_line(completed)
-        cause = (f"{' '.join(argv[:3])} exited with status {completed.returncode}"
-                 + (f": {line}" if line else ", printing no error"))
-    raise StepFailed(f"{what} failed: {cause}.\n{instructions}")
+    """Run a git command that answers yes by exiting 0 and no by exiting silently with one of
+    no_codes; raise StepFailed when it exits otherwise, prints an error, or cannot run."""
+    completed, cause = run_or_failure_cause(argv, runner, GIT_TIMEOUT_SECONDS,
+                                            (0, *no_codes))
+    if not cause and completed.returncode in no_codes and first_stderr_line(completed):
+        cause = (f"{' '.join(argv[:3])} exited with status {completed.returncode}: "
+                 f"{first_stderr_line(completed)}")
+    if cause:
+        raise StepFailed(f"{what} failed: {cause}.\n{instructions}")
+    return completed.returncode == 0
 
 
 def head_mismatch_next_steps(pull_request, head, runner, git_failed):
     """What to do when the checkout's HEAD is not the pushed head: only the case that applies,
     with commands that name the pull request's branch."""
     branch = pull_request["headRefName"]
+    quoted = shlex.quote(branch)
     pushed = str(pull_request["headRefOid"])
     current = run_command(["git", "branch", "--show-current"], runner, GIT_TIMEOUT_SECONDS,
                           "reading this checkout's branch", git_failed).strip()
     if current != branch:
         on = f"branch {current}" if current else "a detached HEAD"
         return (f"This checkout is on {on}, not the pull request's branch {branch}: run this "
-                f"again from the checkout that has {branch} checked out.")
-    # cat-file -e exits nonzero, with or without an error, for a commit this clone lacks.
+                f"again from the checkout that has {branch} checked out; git worktree list "
+                f"names each checkout of this clone with its branch. If no checkout has it, make "
+                f"one with git worktree add <a new directory> {quoted} and run this again there.")
+    # rev-parse --verify --quiet exits 1 silently only for a commit this clone lacks; an object
+    # that is there but unreadable prints an error, with exit 128 or, for a hash mismatch, 1.
     pushed_is_here = git_answers_yes(
-        ["git", "cat-file", "-e", pushed + "^{commit}"], runner,
-        "looking for the pushed nc-head-commit in this checkout", git_failed,
-        no_codes=range(1, 256))
+        ["git", "rev-parse", "--verify", "--quiet", pushed + "^{commit}"], runner,
+        "looking for the pushed nc-head-commit in this checkout", git_failed)
     if not pushed_is_here:
         return (f"This checkout does not have the pushed commit yet: run git fetch origin "
-                f"{branch}, then run this again, and it names what to do next.")
+                f"{quoted}, then run this again, and it names what to do next.")
     comparing = "comparing this checkout's HEAD with the pushed nc-head-commit"
     if git_answers_yes(["git", "merge-base", "--is-ancestor", pushed, head], runner, comparing,
                        git_failed):
         return (f"This checkout has commits the pull request lacks: push them with git push "
-                f"origin HEAD:{branch}, then run this again.")
+                f"origin HEAD:{quoted}, then run this again.")
     if git_answers_yes(["git", "merge-base", "--is-ancestor", head, pushed], runner, comparing,
                        git_failed):
         return (f"The pull request has commits this checkout lacks: run git pull --ff-only "
-                f"origin {branch}, then run this again.")
+                f"origin {quoted}, then run this again.")
     return (f"This checkout and the pull request each have commits the other lacks: run git "
-            f"pull --no-rebase origin {branch}, which merges the pull request's commits into "
-            f"this checkout, then git push origin HEAD:{branch}, then run this again.\n"
+            f"pull --no-rebase origin {quoted}, which merges the pull request's commits into "
+            f"this checkout, then git push origin HEAD:{quoted}, then run this again.\n"
             "If git reports a merge conflict: stop, run git merge --abort, and tell the user, or "
             "the agent that dispatched you, which files conflict.")
 
@@ -220,16 +224,19 @@ def check_and_mark_ready(number, runner, output):
             f"test files that are not in {name}'s pushed commits. {NOTHING_CHANGED_LINE}\n"
             "The changes, as git status --porcelain lists them:\n"
             + "".join(f"  {line.strip()}\n" for line in changed)
-            + "If the changes belong in the pull request: commit and push them, then run this "
-            "again.\n"
-            "If they do not: set them aside with git stash push -u -m <a name of your own>, then "
-            "run this again. Afterwards bring them back: find your entry's commit, the first "
-            "word of the line that ends with your name, with git stash list --format='%H %gs', "
+            + "If the changes belong in the pull request: commit them, run the test suites and "
+            "the mutation pass that CLAUDE.md asks for before a push, push with git push origin "
+            f"HEAD:{shlex.quote(pull_request['headRefName'])}, then run this again.\n"
+            "If they do not: set them aside with git stash push -u -m <a name no entry in git "
+            "stash list has>, then run this again. Keep them stashed until this command has "
+            "marked the pull request ready, even if it refuses again for another reason; then "
+            "bring them back: find your entry's commit, the first "
+            "word of the line that ends with the name you gave with -m, with git stash list --format='%H %gs', "
             "and run git stash apply <that commit>.\n"
             "If the apply reports a conflict: keep the stash entry, and tell the user, or the "
             "agent that dispatched you, which files conflict.\n"
             "If the apply succeeds: find the entry's current stash@{<n>} on the line that ends "
-            "with your name, with git stash list, and drop it with git stash drop "
+            "with the name you gave with -m, with git stash list, and drop it with git stash drop "
             "stash@{<n>}.")
     if not defect_line_reader.pull_request_description_defect_lines(pull_request.get("body") or ""):
         raise StepFailed(
@@ -267,10 +274,10 @@ def check_and_mark_ready(number, runner, output):
             f"the test suites exited with status {status}, {stays_a_draft} The failing suites "
             "are named above.\n"
             "Fix the cause of each suite's failure and commit the fix. Before you push it, run "
-            "the test suites and the mutation pass that CLAUDE.md asks for before a push; then "
-            "push, and run this again.\n"
-            "If git or a pre-push hook refuses the push: do what its message says, then run this "
-            "again; if it names nothing to do, tell the user, or the agent that dispatched you, "
+            "the mutation pass that CLAUDE.md asks for before a push; then push, and run this "
+            "again, which runs the test suites again.\n"
+            "If git or a pre-push hook refuses the push: do what its message says, push again, then "
+            "run this again; if it names nothing to do, tell the user, or the agent that dispatched you, "
             "what it printed.")
     if status != 0:
         raise StepFailed(

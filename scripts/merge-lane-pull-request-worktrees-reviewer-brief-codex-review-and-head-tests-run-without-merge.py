@@ -24,8 +24,9 @@ filled in is written to
 briefs/reviewer-brief-specifications-pr<n>-with-head-and-main-commits-from-origin.json under the
 worktrees and outputs directory, and step 2 reads that copy. Last,
 --review-tools-worktree-at-main is checked out, detached, at the main commit
-read from origin, so every step runs main's scripts, and only then is each
-step script looked for there.
+read from origin, so every step runs main's scripts, and step 5's Claude
+reviewer, though it reviews in pr<n>-head, runs main's project settings and
+hooks from there; only then is each step script looked for there.
 
 Runs at the same time need separate --review-tools-worktree-at-main
 worktrees: each run checks its worktree out at main, and moving a worktree

@@ -30,7 +30,7 @@ _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 HOOK_SCRIPT = (Path(__file__).resolve().parents[1]
-               / "walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py")
+               / "walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py")
 SUITE_ROOT = Path(tempfile.mkdtemp(prefix="approval-walk-current-item-hook-test-")).resolve()
 failures = []
 

@@ -274,13 +274,16 @@ def after_merge_test_run(arguments, merge_commit):
     since, why_not = head_test_run_passed_merged_commit(arguments)
     if since is None:
         since = arguments.head_commit
-        print(f"selecting since the head commit {since[:12]}, which runs more suites than "
+        print(f"selecting the nc-test-suites whose recorded inputs changed since the head "
+              f"commit {since[:12]}, which selects more suites than "
               f"the merge changed: {why_not}.\n"
               f"Nothing to do: this run still tests every suite the merge could have changed.",
               flush=True)
     else:
-        print(f"selecting since {since[:12]}, the pr{arguments.pull_request}-merged commit "
-              f"the head test run passed on", flush=True)
+        print(f"selecting the nc-test-suites whose recorded inputs changed since "
+              f"{since[:12]}, the commit the head test run passed on: "
+              f"pull request {arguments.pull_request}'s head merged with main as main was "
+              f"when that run started", flush=True)
     by_hand = (f"python3 scripts/run-all-test-suites.py "
                f"--only-suites-whose-recorded-inputs-changed-since {since}")
     if not merge_commit:
