@@ -933,9 +933,10 @@ with tempfile.TemporaryDirectory() as workspace:
         check("the deferral names the work it waits for",
               "(subagent a2573a7737ae643dc)" in result.stderr, result.stderr[:600])
         check("the instruction on new work says the handoff writer, not the agent, adds stopped work to the session-handoff",
-              "the handoff writer script, nc-systems/handoff/handoff-write-and-check-supervisor.py,"
-              " names each subagent and each background Bash task still running in your"
-              " session-handoff for your successor, so you need not add that work to your task list."
+              "When you run the handoff writer script, nc-systems/handoff/handoff-write-and-check-supervisor.py,"
+              " before this agent-session ends, it names in your session-handoff each subagent still working,"
+              " whenever it started, and each background Bash task that started since this handoff-deferral"
+              " began and is still running, so you need not add that work to your task list"
               in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
               hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION)
         # Agents read "handoff" in the notice and ran the skill anyway.
