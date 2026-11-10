@@ -90,6 +90,7 @@ if rechecking:
                                                                "survived"), "why": "fake"}}
                 for name in diff_files}}}}))
     print(step.get("stdout", "RECORDED MUTANTS: fake"))
+    print(step.get("stderr", ""), file=sys.stderr)
     sys.exit(step.get("exit", 1))
 if "json" in step:
     pathlib.Path(arguments[arguments.index("--survived-and-errored-mutants-json-file") + 1]
@@ -464,11 +465,12 @@ def run_carry_on_and_job_failure_task_cases():
               and tasks[0]["subject"] == f"Nightly full mutation pass stopped at a failed step: "
                                          f"merge {merge[:12]} (change scripts/thing.py): the "
                                          f"mutation testing program exited 2 without saying "
-                                         f"whether each mutant was killed: mutation-testing: not "
-                                         f"run — cosmic-ray is missing. The next run tries this "
-                                         f"merge again."[:len("Nightly full mutation pass stopped "
-                                                               "at a failed step: ") + 200]
-              and "If it fails the same way again" in tasks[0]["description"]
+                                         f"whether each mutant was killed. The next run tries "
+                                         f"this merge again. It printed:"[
+                                             :len("Nightly full mutation pass stopped at a "
+                                                  "failed step: ") + 200]
+              and "It printed:\n    mutation-testing: not run — cosmic-ray is missing\nIf it "
+                  "fails the same way again" in tasks[0]["description"]
               and str(fixture.records()[0]) in tasks[0]["description"],
               f"rc={completed.returncode} tasks={tasks}")
         fixture.run(step)
@@ -767,8 +769,17 @@ def run_cases():
     for case_name, step, timeout_seconds, wanted in [
         ("the mutation testing program exits 2",
          {"exit": 2, "stderr": "mutation-testing: not run — cosmic-ray is missing"}, None,
-         "exited 2 without saying whether each mutant was killed: mutation-testing: not run — "
-         "cosmic-ray is missing"),
+         "exited 2 without saying whether each mutant was killed. The next run tries this merge "
+         "again. It printed:\n    mutation-testing: not run — cosmic-ray is missing"),
+        # git puts the cause before its last line.
+        ("the mutation testing program exits 2 with the cause before its last line of stderr",
+         {"exit": 2, "stderr": "mutation-testing: git worktree add failed (exit 128): "
+                               "Preparing worktree (detached HEAD 557f938)\n"
+                               "error: unable to write file README: No space left on device\n"
+                               "fatal: Could not reset index file to revision 'HEAD'."}, None,
+         "It printed:\n    mutation-testing: git worktree add failed (exit 128): Preparing "
+         "worktree (detached HEAD 557f938)\n    error: unable to write file README: No space "
+         "left on device\n    fatal: Could not reset index file to revision 'HEAD'.\n"),
         ("the mutation testing program writes no JSON file",
          {"exit": 0}, None, "but its JSON file"),
         ("the JSON file lacks a key",
@@ -1409,7 +1420,19 @@ def run_cases():
     for case_name, plan_step, flags, wanted in [
         ("the recorded mutant killed check writes no verdicts", {"no_verdicts": True, "exit": 2,
                                                                   "stdout": "could not run"},
-         (), "the recorded mutant killed check exited 2 without verdicts"),
+         (), "the recorded mutant killed check exited 2 without verdicts (FileNotFoundError: "),
+        ("with nothing on standard error, the recorded mutant killed check's last line of "
+         "standard output is named", {"no_verdicts": True, "exit": 2,
+                                      "stdout": "checking\ncould not run"},
+         (), "; it printed:\n    could not run\n"),
+        ("the recorded mutant killed check's whole standard error is named",
+         {"no_verdicts": True, "exit": 2, "stdout": "checking",
+          "stderr": "mutation-testing: git worktree add failed (exit 128): Preparing worktree\n"
+                    "error: unable to write file README: No space left on device\n"
+                    "fatal: Could not reset index file to revision 'HEAD'."},
+         (), "; it printed:\n    mutation-testing: git worktree add failed (exit 128): "
+             "Preparing worktree\n    error: unable to write file README: No space left on "
+             "device\n    fatal: Could not reset index file to revision 'HEAD'.\n"),
         ("the recorded mutant killed check runs past its limit", {"sleep": 30}, (
             "--survivor-task-recorded-mutant-killed-check-timeout-seconds", "1"),
          "the recorded mutant killed check ran past the limit of 1 s without verdicts"),

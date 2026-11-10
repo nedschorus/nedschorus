@@ -708,6 +708,15 @@ def last_line_said(stdout, stderr):
     return (stderr.strip() or stdout.strip() or "nothing").splitlines()[-1]
 
 
+def all_said_on_stderr_or_last_line_of_stdout_indented(stdout, stderr):
+    """Every line of standard error, or, when it is empty, the last line of standard output,
+    each indented under the sentence that introduces it. Not the last line alone: a refusal's
+    first line says what failed, and the error it quotes, such as git's, can put the cause
+    before its last line."""
+    said = stderr.strip() or last_line_said(stdout, "")
+    return "\n".join(f"    {line}" for line in said.splitlines())
+
+
 def survivor_tasks_rechecked(state, state_file, arguments, main_commit, record, record_citation,
                              scratch):
     """Run the recorded mutant killed check on main for each task the state names; drop each
@@ -740,8 +749,8 @@ def survivor_tasks_rechecked(state, state_file, arguments, main_commit, record, 
                    else f"exited {exit_code}")
             not_rechecked.append(
                 f"{named} ({task_file}): the recorded mutant killed check {how} without "
-                f"verdicts ({type(error).__name__}: {error}); its last line: "
-                f"{last_line_said(stdout, stderr)}")
+                f"verdicts ({type(error).__name__}: {error}); it printed:\n"
+                f"{all_said_on_stderr_or_last_line_of_stdout_indented(stdout, stderr)}")
             record.append(f"NOT RECHECKED: {not_rechecked[-1]}")
             continue
         surviving = [key for key in keys if verdict_of[key] not in ("killed", "no longer exists")]
@@ -848,8 +857,9 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
     if exit_code not in MUTATION_TESTING_EXITS_WITH_A_VERDICT:
         raise StepFailed(
             f"merge {merge[:12]} ({merge_subject}): the mutation testing program exited "
-            f"{exit_code} without saying whether each mutant was killed: {said}. The next run "
-            f"tries this merge again.\n"
+            f"{exit_code} without saying whether each mutant was killed. The next run tries "
+            f"this merge again. It printed:\n"
+            f"{all_said_on_stderr_or_last_line_of_stdout_indented(stdout, stderr)}\n"
             f"If it fails the same way again, run this command by hand on ned-box, do what it "
             f"prints in its log, and fix the cause: {command_shown}")
     try:
