@@ -6,13 +6,16 @@ Run: python3 nc-systems/handoff/tests/handoff-write-and-check-supervisor-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 # This suite sits at nc-systems/handoff/tests/; the system it tests is one
 # directory up. A with_name() lookup here would resolve inside tests/.
@@ -306,6 +309,20 @@ def run_invocation_cases(workspace: Path):
     check("--help exits 0 without a verdict",
           result.returncode == 0 and "VERDICT: nothing written" not in result.stdout.splitlines()[-1:],
           f"exit {result.returncode}")
+
+    # Only argparse's own stop, status 2, is a refusal before anything is written; any other
+    # SystemExit status must reach the caller unchanged and print no verdict.
+    printed = io.StringIO()
+    with mock.patch.object(writer, "write_handoff_and_report_supervisor", side_effect=SystemExit(3)), \
+            contextlib.redirect_stdout(printed):
+        try:
+            writer.main([])
+            stopped_with = None
+        except SystemExit as stop:
+            stopped_with = stop.code
+    check("a SystemExit other than argparse's status 2 passes through, without a verdict",
+          stopped_with == 3 and "VERDICT" not in printed.getvalue(),
+          f"stopped with {stopped_with}: {printed.getvalue()!r}")
 
     check("no partial file is left behind",
           not list(workspace.glob("*.partial")), str(list(workspace.glob("*.partial"))))
