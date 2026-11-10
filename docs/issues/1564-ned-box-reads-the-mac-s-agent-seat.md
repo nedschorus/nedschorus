@@ -1,5 +1,6 @@
 ---
 issue: "[ned-box reads the Mac's agent-seat task lists live, through the Mac's forced command for ned-box](https://github.com/nedschorus/nedschorus/issues/1564)"
+kind: design
 ---
 
 # ned-box reads the Mac's agent-seat task lists live, through the Mac's forced command for ned-box

@@ -1,5 +1,6 @@
 ---
 issue: "[Nudge the author of a pull request whose review findings have gone unanswered for hours](https://github.com/nedschorus/nedschorus/issues/1203)"
+kind: design
 ---
 
 # Nudge the author of a pull request whose review findings have gone unanswered for hours
@@ -48,6 +49,8 @@ The user decided these on 2026-10-14 and 2026-10-15, in prime-intellect's approv
 3. **An author waiting on the user**: whether the nudge also brings the user a question the author is waiting on, how the program would tell that the author is waiting, and how the question would reach the user.
 4. **How the program hands a nudge to a busy author's hook, and how it tells a busy author agent-seat from an idle one.** The user ruled that a hook nudges a busy agent-seat and a message wakes an idle one; the mechanism between the program and the hook, and the check that a message reached a live agent-session rather than a stale entry (GHI 1115 above), are the build's.
 
+5. **Telling merge-lane-2 when the hour after a nudge has passed.** Whether the program also raises an event for merge-lane-2 when, an hour after its nudge, the author has still pushed nothing and said nothing, as `scripts/watch-open-pull-requests-nbd.py` raises one for a new head commit, so that merge-lane-2 hands the pull request to an idle agent-seat without watching the clock or reading the log. Handing the pull request on stays merge-lane-2's work, as the user decided. This point is idea 8 of Question 4 in the cold-read-fast-read of merge-lane-2's rewritten seat-brief, `nedlern@ned-box:/home/nedlern/agents/agent-instructions-editor/cold-read-records/draft-2026-11-01/cold-read-fast-read.md`; the user approved adding it here on 2026-11-04 ("A"), as item 18 of agent-instructions-editor's approval-walk merge-lane-2-seat-brief-rewrite-without-history-2026-11-02, whose walk-minutes are `nedlern@ned-box:/home/nedlern/agents/agent-instructions-editor/docs/walk/merge-lane-2-seat-brief-rewrite-without-history-2026-11-02-minutes.md`.
+
 ## Next action
 
-Put points 1 to 3 under "Deferred-decisions" to the user; point 4 is the build's. Then build the nudge with a test that feeds it a pull request with a change request older than the threshold and no later commit, and checks that it sends one nudge naming that pull request to its author agent-seat, and none for a pull request that has a newer commit.
+Put points 1 to 3 under "Deferred-decisions" to the user; points 4 and 5 are the build's. Then build the nudge with a test that feeds it a pull request with a change request older than the threshold and no later commit, and checks that it sends one nudge naming that pull request to its author agent-seat, and none for a pull request that has a newer commit.

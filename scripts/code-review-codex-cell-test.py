@@ -63,6 +63,11 @@ What is pinned here:
     file notices, while every review from then on runs contaminated -- which
     is why the flag is pinned here and not left to the docstring.
 
+  - Each finding heading's priority label, "- [P2] " at the start of a
+    line, is spelled out as "- [Codex priority P2 (P0 highest)] ", for P0
+    to P3; a label in a finding's body or in quoted code is left as Codex
+    wrote it.
+
 Run: python3 scripts/code-review-codex-cell-test.py
 """
 
@@ -95,6 +100,28 @@ import sys
 argv = sys.argv
 target = argv[argv.index("--output-last-message") + 1]
 open(target, "w", encoding="utf-8").write("STUB CODEX REPORT: P3 nothing to see\\n")
+sys.exit(0)
+"""
+
+# A stub codex that writes a report in Codex's finding format: one heading
+# per priority, then label-shaped text that is not a heading, in an indented
+# body line and in quoted code.
+CODEX_REPORT_WITH_FINDINGS = """Review comment:
+
+- [P0] Stop deleting the checkout — scripts/a.py:1-2
+  The body cites [P1] in prose.
+- [P1] Report the failure — scripts/b.py:3
+      label = "[P2] "
+  - [P3] an indented list item in the body
+- [P2] Check the exit code — scripts/c.py:4
+- [P3] Name the flag — scripts/d.py:5
+[P2] at the start of a line without the list marker
+"""
+STUB_CODEX_WRITES_FINDINGS = f"""#!/usr/bin/env python3
+import sys
+argv = sys.argv
+target = argv[argv.index("--output-last-message") + 1]
+open(target, "w", encoding="utf-8").write({CODEX_REPORT_WITH_FINDINGS!r})
 sys.exit(0)
 """
 
@@ -291,6 +318,22 @@ with tempfile.TemporaryDirectory() as scratch:
           text.startswith("<!-- provenance: runtime=codex-exec-review"), repr(text[:120]))
     check("the report carries what codex wrote",
           "STUB CODEX REPORT" in text, repr(text[:200]))
+
+    # Each finding heading's priority label is spelled out; label-shaped text
+    # anywhere else is left as Codex wrote it.
+    findings_report = scratch / "findings-report.md"
+    result = run_cell(stubs, STUB_CODEX_WRITES_FINDINGS,
+                      "--commit", head_sha, "--repo", str(checkout),
+                      "--output", str(findings_report))
+    text = findings_report.read_text(encoding="utf-8") if findings_report.is_file() else ""
+    expected_body = (CODEX_REPORT_WITH_FINDINGS
+                     .replace("- [P0] Stop", "- [Codex priority P0 (P0 highest)] Stop")
+                     .replace("- [P1] Report", "- [Codex priority P1 (P0 highest)] Report")
+                     .replace("- [P2] Check", "- [Codex priority P2 (P0 highest)] Check")
+                     .replace("- [P3] Name", "- [Codex priority P3 (P0 highest)] Name"))
+    check("each finding heading's priority label is spelled out, and nothing else is changed",
+          result.returncode == 0 and text.partition("\n")[2] == expected_body,
+          f"exit {result.returncode}; report={text!r}")
 
     # An --output that already holds a file is still accepted, and the file
     # is replaced rather than appended to.

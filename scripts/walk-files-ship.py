@@ -5,76 +5,105 @@ Usage:
   scripts/walk-files-ship.py <walk name>
   scripts/walk-files-ship.py docs/walk/<walk name>-minutes.md    (any one of its files)
 
-WHY (user-ruled 2026-09-18, item 7 of the walk
-cold-read-and-walk-file-names-and-dispositions; nedschorus#335). A walk-me-through
-walk writes its files into docs/walk/, gitignored since PR #308, and until this
-program every walk file in the store was put there by hand at the walk's close,
-the interim rule the .gitignore comment stated. The minutes are the record of
-the user's rulings and the mechanism by which an interrupted walk resumes, so a
-directory nothing preserves is the wrong place for their only copy.
+WHY. A walk-me-through walk writes its files into docs/walk/, which is
+gitignored, so neither Git nor anything else preserves them there. The
+minutes are the record of the user-rulings and the mechanism by which an
+interrupted walk resumes, so a directory nothing preserves is the wrong place
+for their only copy.
 
 WHAT A WALK'S FILES ARE. Five, flat in docs/walk/ and flat in the store's
 walk/, each named by the walk's name and a role suffix
 (.claude/skills/walk-me-through/SKILL.md):
 
   <name>-draft.md          the walk as first written, before the fast read
-  <name>-suggestions.md    the fast read's suggestions on the draft
+  <name>-cold-read-fast-read.md
+                           the fast read's report on the draft; a walk
+                           started before that name holds it as
+                           <name>-suggestions.md, which ships under its own
+                           name in this role's place
   <name>.md                the walk text presented to the user
   <name>-minutes.md        the rulings and the recovery position, written as
                            the walk proceeds
   <name>-dispositions.md   a cold-read walk's fifth file, written at its close
                            and updated after it as the findings' status moves
 
-The five paths are built from the name; nothing here globs docs/walk/<name>*,
-because one walk's name can be a prefix of another's. A walk lacking its walk
-text or its minutes is not shippable (exit 64). A missing draft or suggestions
-file is noted on stderr and the rest ships. Dispositions ships when present.
-Other files that begin with the walk's name are noted on stderr and not
-shipped; they are either another walk's or a shape the ruling did not name.
+The paths are built from the name, never found by a glob of
+docs/walk/<name>*, because one walk's name can be a prefix of another's; a
+glob of <name>-*.md is used only for the stderr note below. A walk lacking its walk
+text or its minutes is not shippable (exit 64). A missing draft, or a fast
+read's report missing under both its names, is noted on stderr and the rest
+ships. Dispositions ships when present,
+and its absence is not noted.
+Every other file in the walk's directory whose name is the walk's name, a
+hyphen, anything, then .md -- what the glob <name>-*.md matches -- is noted on
+stderr and not shipped; it is either another walk's or a file none of the
+roles covers.
 
-THE RULES. The first ruling (item 7 above) said "draft, suggestions and walk
-text add-only like records; the minutes are the one file it replaces", and
-this program shipped dispositions add-only because that ruling listed nothing
-else. The user then ruled (2026-09-18, walk
-skill-sentences-and-shipper-questions-2026-09-18, item 5) that the
-dispositions file is replaced exactly like the minutes, because a cold-read
-walk's dispositions "is not just a historical log to be preserved, it is a
-sometimes updated status file". The rules are PER FILE:
+In the store, and only there, the walk text can also have revised copies,
+<name>-revised-<n>.md, which REVISED COPIES below describes.
 
-  ADD-ONLY: draft, suggestions, walk text. A file not yet in the
+THE RULES. The minutes and the dispositions are replaced in the store; the
+draft, the fast read's report and the walk text are add-only, as a
+cold-read-record's files are, and a walk text the store would refuse ships
+as a revised copy instead. The dispositions are replaced because a
+cold-read walk's dispositions file is a status file updated after the walk
+closes, not only a record kept as first written. The rules are PER FILE:
+
+  ADD-ONLY: draft, fast read's report, walk text. A file not yet in the
     store is added; one already there with the same bytes is left alone; one
     already there with DIFFERENT bytes is refused BY NAME -- the one stdout line
     opens REFUSED:, names each such file with the store's sha256 and the local
     one, and the exit is 2 -- while the other files still ship. The record
-    shipper refuses a whole record before copying anything. A walk differs
-    because the ruling says to run this "again if the walk is reopened and
-    closed", and a reopened walk that re-planned has a changed walk text; a
-    whole-walk refusal would then never deliver the one thing the second run
-    exists for, the minutes. The walk text has one exception, APPENDED TO
-    below; draft and suggestions have none.
+    shipper, nc-systems/cold-read/cold-read-record-ship.py (see WHAT THIS
+    IS), refuses a whole record before copying anything. A walk differs
+    because the walk-me-through skill runs this program again whenever a
+    walk is reopened and closed, and a reopened walk that re-planned has a
+    changed walk text; a whole-walk refusal would then never deliver the one
+    thing the second shipment exists for, the minutes. The walk text has two
+    exceptions, APPENDED TO and REVISED COPIES below, so it is never refused
+    except when another shipment changes the store while this one runs;
+    draft and the fast read's report have none.
   APPENDED TO: the walk text, and it alone. A stored walk text whose bytes
     are an exact PREFIX of the local one -- the local file only had content
-    added after it -- is replaced instead of refused (user-ruled 2026-09-21,
-    item 3 of the walk md-skills-seat-questions-and-concerns-2026-09-21). A
-    walk text grows as its items are presented, so shipping mid-walk and
-    again at the close is ordinary, and the close refused a file nothing had
-    rewritten: the store's copy of the walk
-    md-skills-seat-open-decisions-2026-09-20 held 134 lines of the local
-    copy's 341, not one of the 134 changed, and the store held four of that
-    walk's fifteen items until it was re-shipped under this rule.
+    added after the stored bytes -- is replaced instead of refused. A walk text grows as
+    its items are presented, so a shipment before the close, which WHO CALLS
+    IT allows, followed by the close's own is ordinary; refusing the grown
+    file would leave the store holding only the items presented before the
+    first shipment.
     THE TEST IS THE BYTES, never lines and never a diff: the stored size says
     how many leading bytes of the local file to hash, and they must hash to
     the sha256 the store reported for the whole stored file. Identical bytes
     are not an append -- they are the already-there case above, and a run
     that finds them copies nothing. A shorter local file is content removed
     and a same-length difference is content changed; both fail this test and
-    are refused with the text above. So is a longer file with a byte changed
-    before its added part, which is the whole difference between this test
-    and "the local file is longer": the refusal exists to catch a session
-    overwriting the store with a stale copy, and a stale copy that also grew
-    is exactly that. A store listing that reports a digest and no size cannot
-    be tested and is refused, as before.
-  REPLACED: the minutes and the dispositions, each on its own. A stored copy
+    ship as a revised copy, under REVISED COPIES below. So does a longer file
+    with a byte changed before its added part, which is the whole difference
+    between this test and "the local file is longer": a session must never
+    overwrite the store's copy with a stale one, and a stale copy that also
+    grew is exactly that. A store listing that reports a digest and no size
+    cannot be tested, and the walk text ships as a revised copy.
+  REVISED COPIES: the walk text, when the store's latest copy is neither
+    the same bytes as the local one nor an exact prefix of it, as when the
+    agent rewrites an item the user did not follow. The local walk text is
+    added beside the store's copies as <name>-revised-<n>.md, n one more than
+    the highest the store holds, starting at 1, and a stderr line names the
+    copy it differs from and the copy it ships as. The store's latest copy
+    is the highest-numbered revised copy, or the walk text itself while there
+    is none, and the same bytes and APPENDED TO tests above are made against
+    it, never against an older copy: so a walk text whose bytes match an
+    older copy, as after an edit is undone, ships as a new revised copy, and
+    the highest-numbered copy is always the walk text as last shipped. A
+    revised copy is add-only like the walk text, placed by hard link; only
+    the latest one is ever replaced, under APPENDED TO. A file is a revised
+    copy only when n is written in digits with no leading zero, so
+    <name>-revised-01.md and <name>-revised-a.md are not counted; the walk
+    text of another walk named <name>-revised-<n>, n so written, is counted
+    as a revised copy of this walk. The store's copies are listed by a shell glob on the store,
+    before the digests are read; a listing that fails is FAILED, exit 1,
+    with nothing copied.
+  REPLACED: the minutes and the dispositions, each on its own. A minutes
+    or dispositions file the store does not hold yet is added, and counted as added on the stdout
+    line, with no stderr line. A stored copy
     with different bytes is overwritten, and each displaced copy's sha256 is
     announced on its own stderr line, as scripts/seat-shared-file-ship.py
     announces a replacement, so a fresh session shipping an older local copy
@@ -82,17 +111,20 @@ sometimes updated status file". The rules are PER FILE:
     found by digest in the store's Timeshift snapshots while one taken before
     the replacement is still kept; the line states no cadence, for the reason
     scripts/seat-shared-file-ship.py's docstring records under THE SNAPSHOT
-    CADENCE IS NOT A PROMISE. An appended-to walk
-    text is announced on the same line in the same form, its own ruling
-    named. The copy passes
-    --ignore-times, for the reason that program's rsync_one_file records:
+    CADENCE IS NOT A PROMISE. A walk text replaced under APPENDED TO is
+    announced the same way, on a stderr line of its own. Each such stderr
+    line also names the walk in which the user decided the rule that allowed
+    the replacement; that walk's walk-minutes are at
+    nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/<the walk the stderr line names>-minutes.md.
+    The copy passes
+    --ignore-times, for the reason rsync_one_file in
+    scripts/seat-shared-file-ship.py records:
     openrsync on this Mac silently skips a same-size, same-second revision
     otherwise.
   FAIL LOUDLY: an unreachable ned-box prints a line opening FAILED and exits 1
     with the files still on disk; ssh runs in batch mode with a connect
     timeout. Shipping is the only thing between a walk's rulings and their
-    loss, so a failure to ship is never a clean result -- the rule
-    report_stray_writes states in nc-systems/cold-read/cold-read-cell-common.py.
+    loss, so a failure to ship is never reported as a clean result.
 
 TWO SHIPMENTS OF ONE WALK AT ONCE. The rules above are decided on the
 store's listing, and the copy takes seconds over ssh; a second shipment of the
@@ -105,74 +137,96 @@ shipper). So the files are copied into a staging directory in walk/
 place by the record shipper's two steps: an add-only file by hard link, which
 is never made over an existing file (link_staged_files_never_over_existing),
 and a replaced file by rename, the store's digest of what it displaces read
-in the same step (replace_with_staged_files). A walk text the walk only added to is renamed
-in only while the store still holds the copy it was tested against. The
+in the same step (replace_with_staged_files). For a walk text the walk only
+added to, that step makes two checks in the one shell that renames, just
+before the rename, and renames only when both hold: the store's copy still has
+the sha256 the APPENDED TO test was made against, and the revised copy the
+next shipment would add, <name>-revised-<n+1>.md with n the highest the
+listing at the start of this run found (<name>-revised-1.md when it found
+none), does not exist. Copies are numbered one after another, so that file's
+absence shows no newer revised copy was added (PlannedWalkFileReplacement
+says how the two are passed). When either check fails, the walk text is not
+renamed and the store's copy stays as it was. The
 outcome is judged on what the store holds afterwards: an add-only file
 holding another shipment's bytes is REFUSED by name, a walk text changed in
 the store meanwhile is REFUSED by name, a minutes or dispositions file another
 shipment landed first is replaced and its digest announced as any
-replacement is, and a file that does not hold this run's bytes afterwards --
+replacement is, a walk text whose latest copy another shipment followed with
+a newer revised copy is REFUSED by name, and a file that does not hold this run's bytes afterwards --
 another shipment's rename came after this one's, or the file is missing --
-makes the line FAILED, exit 1. The replace step takes no lock: a walk's
+makes the line FAILED, exit 1. A walk text REFUSED either way was never
+renamed in: the REFUSED line names the store's copy this run tested,
+<name>.md or its highest-numbered revised copy, and for the second check also
+the revised copy that overtook it. As for any REFUSED file (ADD-ONLY above),
+the run's other files are still placed under their own rules. The replace step takes no lock: a walk's
 files are shipped by the seat that runs the walk, one shipment after
 another. A read-back cannot see a rename that runs after it, so instead the
 replace step renames nothing while another staging directory for the same
 walk exists, and the line is FAILED naming it (see NO LOCK; A CHECK INSTEAD
 in the record shipper's replace_with_staged_files).
 
-The minutes' citation at the end of the stdout line is the minutes' still,
-never the dispositions': the minutes are the record of the rulings and what a
-resumed walk reads.
+A LEFTOVER STAGING DIRECTORY. A shipment that is killed, or loses ned-box
+partway, can leave its staging directory behind; nothing removes it later. A
+shipment that cannot remove its own staging directory says so: its line is
+FAILED, exit 1, naming the directory and the command that deletes it.
+Only the replace step looks for another staging directory, and it runs
+whenever the minutes or the dispositions differ from the store's copy or
+are not in the store yet, or the walk text was only added to. So a leftover
+one stops nearly every later shipment of that walk, with the FAILED line
+above; a shipment whose minutes, dispositions and walk text the store
+already holds unchanged does not look, and is not stopped. The stderr line
+printed with that FAILED line says what to do: when no other shipment of the walk is
+running, which `pgrep -lf walk-files-ship` on both machines shows, delete
+the directory the FAILED line names and run this program again. The
+directory is on ned-box: there delete it with
+`rm -rf -- <the path the FAILED line names>`, and from the Mac with
+`ssh nedlern@ned-box 'rm -rf -- <the path the FAILED line names>'`.
 
 WHO CALLS IT. The agent running a walk, when the walk's closing sentence is
-delivered, and again if the walk is reopened and closed. The one stdout line
-ends with the minutes' citation in scp form, which is the link that closing
-sentence wants.
-
-THE WALK-CLOSED MARKER. When this run puts minutes into the store, added or
-replaced, whose last `#next_to_present` line says the walk is closed
-(`none, closed`, read by the walk-me-through item finder), it writes
-~/.claude/handoffs/<session id>-handoff-due-at-lower-context-threshold-after-approval-walk-closed,
-the session id read from CLAUDE_CODE_SESSION_ID. The marker's name is
-scripts/handoff-context-threshold-hook.py's, and that Stop hook, finding it,
-asks the agent to run /handoff when the context used plus the tokens the
-session's compactions dropped is at least 20%. The close is recognised from
-the minutes, which /walk-me-through closes before it runs this program, so no
-flag is needed; a later run that finds the closed minutes already in the
-store, such as a dispositions update, writes no marker. Only a run that adds
-or replaces the closed minutes in the store writes the marker. That includes a
-run whose stdout line opens with `REFUSED:` or `FAILED:` because some other
-file did not ship, since the closed minutes are the close and a re-run finds
-them unchanged. A `FAILED:` run that stops before the rename step, the
-record shipper's replace_with_staged_files, because preparing the store,
-listing it or the copy failed, writes no marker, and so does a run whose
-rename step renamed nothing because it found another shipment's staging
-directory. A `FAILED:` run whose rename
-step failed, at any point in it, a directory it makes, a rename or the
-read-back after the renames, without saying which renames were done, writes
-the marker when the closed minutes were among the files it was to rename,
-since they may be in the store and a re-run would find them unchanged. With no
-session id, as in a terminal, no marker is written, the files still ship, the
-exit code is unchanged, and stderr says so. A marker that cannot be written
-adds a FAILED line on stderr and makes the exit 1, on a REFUSED run too: the
-exit code reports the marker, not the stdout line, which stays the one
-`shipped:`, `REFUSED:` or `FAILED:` line the files earned. The files need no
-re-run; the stderr line tells the agent to run /handoff itself.
+delivered, and again if the walk is reopened and closed. The agent may also
+run this program before the close, such as before a handoff, so that the
+store holds the walk so far; the close's run then ships the grown files. The
+stdout line ends with the minutes' citation in scp form, which the closing
+sentence turns into its link to the walk-minutes; OUTPUT says which FAILED
+lines carry no citation.
 
 WHAT THIS IS: the THIRD CALLER of nc-systems/cold-read/cold-read-record-ship.py, imported by
 importlib the way scripts/seat-shared-file-ship.py and
 scripts/sanity-check-record-ship.py import it, so the store's location, the ssh
 and rsync invocations and the store's README stay defined in one place (the
 user, 2026-09-11: "I don't want 3 varients of the same thing"). The copy host
-and the citation host are kept apart as the seats shipper keeps them: on
+and the citation host are kept apart as scripts/seat-shared-file-ship.py
+keeps them: on
 ned-box the copy is local and the citation still names the host.
 
-OUTPUT. Exactly one line on stdout -- `shipped:`, `REFUSED:` or `FAILED:` --
-ending, when anything reached the store, with the minutes' citation. Everything
-else is on stderr. Exit 0 when every file shipped or was already there, 2 when
-any add-only file was refused, 1 when the store could not be reached or written,
-a file does not hold this run's bytes after the copy, or the walk-closed marker
-could not be written, 64 for a bad invocation.
+OUTPUT. Exactly one line on stdout, opening `shipped:`, `REFUSED:` or
+`FAILED:`. Everything else is on stderr. The line ends with the minutes'
+citation whenever the shipment judged every file: `shipped:`, even when
+nothing was copied because every file was already there with the same
+bytes; `REFUSED:`; and the `FAILED:` line that names files not holding this
+shipment's bytes, or this run's staging directory left behind after the files
+were placed. A `FAILED:` line that stops the shipment before then says what stopped the shipment and carries no citation:
+a bad invocation, a store that could not be reached, prepared or listed, a
+copy or placing step that failed, another staging directory, or ssh or rsync
+that could not be started. A FAILED line for a copy or placing step that
+failed ends with the command that reruns the shipment. That line, and the one
+for another staging directory, also names this run's own staging directory
+when it could not be removed, with the command that deletes it, which loses
+nothing and is to be run before the rerun. A
+walk that cannot be shipped is a FAILED line naming the missing files.
+The citation is always the minutes', never the dispositions': the minutes
+are the record of the rulings and what a resumed walk reads.
+
+Exit 0 when every file shipped or was already there; 2 when an add-only file
+was refused, which for the walk text happens only when another shipment
+changed the store while this one ran; 1 when the store could not be reached or written, a file does
+not hold this shipment's bytes after the copy, another staging directory for
+the walk stopped the replace step, or this run's staging directory could not
+be removed; 64 for a bad invocation, which is a missing,
+extra or unknown argument as well as a walk that cannot be shipped. When
+both 1 and 2 apply, 1 wins and the line opens `FAILED:`. A `FAILED:` line
+that carries the citation lists the refused files after what failed; an
+earlier `FAILED:` line names no refused file.
 
 THE DESTINATION is the record shipper's one constant with the kind swapped to
 `walk/`. Its environment override, COLD_READ_RECORD_SHIP_DESTINATION, moves this
@@ -180,14 +234,17 @@ kind with it, which is how the tests point at a scratch directory.
 """
 
 import argparse
+import errno
 import hashlib
 import importlib.util
 import os
 import pathlib
+import re
 import secrets
 import shlex
 import subprocess
 import sys
+import tempfile
 import typing
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -203,46 +260,45 @@ _shipper_spec = importlib.util.spec_from_file_location(
 shipper = importlib.util.module_from_spec(_shipper_spec)
 _shipper_spec.loader.exec_module(shipper)
 
-_walk_finder_spec = importlib.util.spec_from_file_location(
-    "walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
-    REPO_ROOT / "nc-systems" / "skills" / "walk-me-through"
-    / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py")
-walk_finder = importlib.util.module_from_spec(_walk_finder_spec)
-_walk_finder_spec.loader.exec_module(walk_finder)
-
-# The hook owns the walk-closed marker's name, so writer and reader cannot drift.
-_threshold_hook_spec = importlib.util.spec_from_file_location(
-    "handoff_context_threshold_hook", REPO_ROOT / "scripts" / "handoff-context-threshold-hook.py")
-threshold_hook = importlib.util.module_from_spec(_threshold_hook_spec)
-_threshold_hook_spec.loader.exec_module(threshold_hook)
-
-SESSION_ID_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_SESSION_ID"
-
 EXIT_SHIPPED = shipper.EXIT_SHIPPED
 EXIT_FAILED = shipper.EXIT_FAILED
 EXIT_REFUSED = shipper.EXIT_REFUSED
 EXIT_BAD_INVOCATION = shipper.EXIT_BAD_INVOCATION
 
 # (role suffix, role name) in the order the skill names them; "" is the walk
-# text. The suffixes are also what walk_name_and_directory strips from a path.
+# text.
 WALK_FILE_ROLES = (
     ("-draft", "draft"),
-    ("-suggestions", "suggestions"),
+    ("-cold-read-fast-read", "cold-read-fast-read report"),
     ("", "walk text"),
     ("-minutes", "minutes"),
     ("-dispositions", "dispositions"),
 )
+# A walk started before the skill named the fast read's report
+# <name>-cold-read-fast-read.md holds it as <name>-suggestions.md. The skill no
+# longer names this ending, so it stays out of WALK_FILE_ROLES, which
+# scripts/walk-file-endings-match-the-skill-test.py holds to the skill.
+APPROVAL_WALK_COLD_READ_FAST_READ_REPORT_FILE_SUFFIX_IN_WALKS_STARTED_BEFORE_ITS_RENAME = "-suggestions"
+# Every file this program ships, in the order it lists them; the suffixes are
+# also what walk_name_and_directory strips from a path.
+APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX = (
+    WALK_FILE_ROLES[:2]
+    + ((APPROVAL_WALK_COLD_READ_FAST_READ_REPORT_FILE_SUFFIX_IN_WALKS_STARTED_BEFORE_ITS_RENAME, "cold-read-fast-read report"),)
+    + WALK_FILE_ROLES[2:])
 MINUTES_ROLE_SUFFIX = "-minutes"
 WALK_TEXT_ROLE_SUFFIX = ""
 REQUIRED_ROLE_SUFFIXES = (WALK_TEXT_ROLE_SUFFIX, MINUTES_ROLE_SUFFIX)
-NOTED_WHEN_ABSENT_ROLE_SUFFIXES = ("-draft", "-suggestions")
+# Each group is noted on stderr, by its first suffix, when none of its files is present.
+NOTED_WHEN_ABSENT_ROLE_SUFFIX_GROUPS = (
+    ("-draft",),
+    ("-cold-read-fast-read", APPROVAL_WALK_COLD_READ_FAST_READ_REPORT_FILE_SUFFIX_IN_WALKS_STARTED_BEFORE_ITS_RENAME))
 # The files a walk replaces in the store (see REPLACED in the docstring); every
 # other role is add-only.
 REPLACED_ROLE_SUFFIXES = (MINUTES_ROLE_SUFFIX, "-dispositions")
-# The one add-only role a run replaces when the local file only grew (see
-# APPENDED TO in the docstring). Every other add-only role is refused on any
-# difference.
-ROLE_SUFFIX_REPLACED_WHEN_ONLY_APPENDED_TO = WALK_TEXT_ROLE_SUFFIX
+# A walk text the store holds that is not a byte prefix of the local one is
+# shipped beside it as <name>-revised-<n>.md, n counting up from 1, and never
+# refused (see REVISED COPIES in the docstring).
+REVISED_WALK_TEXT_NAME_INFIX = "-revised-"
 # What the store's listing prefixes a file's size in bytes with, so one
 # round trip carries both facts the rules need and the sha256sum lines keep
 # the format sha256sum itself prints.
@@ -295,7 +351,7 @@ def walk_name_and_directory(argument: str):
         directory = path.parent.resolve()
         stem = path.name[:-3] if path.name.endswith(".md") else path.name
         candidates = [stem]
-        for suffix, _ in WALK_FILE_ROLES:
+        for suffix, _ in APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX:
             if suffix and stem.endswith(suffix):
                 candidates.append(stem[:-len(suffix)])
         for candidate in candidates:
@@ -310,6 +366,71 @@ def walk_file_name(name: str, suffix: str) -> str:
     return f"{name}{suffix}.md"
 
 
+def revised_walk_text_file_name(name: str, number: int) -> str:
+    return f"{name}{REVISED_WALK_TEXT_NAME_INFIX}{number}.md"
+
+
+def revised_walk_text_number(name: str, file_name: str) -> typing.Optional[int]:
+    """n when file_name is <name>-revised-<n>.md with n a positive whole
+    number written without leading zeros, else None. The walk text of
+    another walk named <name>-revised-<n> answers n too: nothing in the name
+    tells the two apart."""
+    matched = re.fullmatch(re.escape(name + REVISED_WALK_TEXT_NAME_INFIX)
+                           + r"([1-9][0-9]*)\.md", file_name)
+    return int(matched.group(1)) if matched else None
+
+
+def stored_revised_walk_text_numbers(copy_host, walk_path: pathlib.PurePosixPath,
+                                     name: str):
+    """(process, sorted numbers of the walk's revised copies the store holds),
+    with None for the numbers when the store cannot be listed. A store
+    directory that does not exist yet holds none."""
+    if copy_host is None:
+
+        def list_stored():
+            directory = pathlib.Path(walk_path)
+            if not directory.is_dir():
+                return []
+            # is_file() answers False for an entry it cannot stat, so a
+            # directory that cannot be entered would read as holding no copy.
+            if not os.access(directory, os.R_OK | os.X_OK):
+                raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(directory))
+            return [path.name for path in directory.iterdir() if path.is_file()]
+
+        listed, names = shipper.local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
+            list_stored)
+    else:
+        # The glob's fixed part is quoted, its * is not; an unmatched glob is
+        # left as written, which the -f test drops. `ls` is not used, so a
+        # name is never mangled by its output format. A directory that cannot
+        # be entered or read exits 1: the glob would otherwise match nothing
+        # and read as "no revised copies".
+        quoted_directory = shlex.quote(str(walk_path))
+        pattern = shlex.quote(name + REVISED_WALK_TEXT_NAME_INFIX) + "*.md"
+        script = (f"[ -d {quoted_directory} ] || exit 0; "
+                  f"cd -- {quoted_directory} || exit 1; [ -r . ] || exit 1; "
+                  f"for f in {pattern}; do if [ -f \"$f\" ]; then printf '%s\\n' \"$f\"; fi; done; exit 0")
+        listed = subprocess.run(shipper.SSH_COMMAND + [copy_host, script],
+                                capture_output=True, text=True, check=False)
+        names = listed.stdout.splitlines() if listed.returncode == 0 else None
+    if names is None:
+        return listed, None
+    numbers = sorted(number for number in (revised_walk_text_number(name, file_name)
+                                           for file_name in names)
+                     if number is not None)
+    return listed, numbers
+
+
+def store_file_role_rank(name: str, file_name: str) -> int:
+    """The place of a store file of this walk in the roles' order, a revised
+    copy taking the walk text's place, so the stdout line and the stderr
+    announcements list files in one order."""
+    for rank, (suffix, _) in enumerate(APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX):
+        if file_name == walk_file_name(name, suffix):
+            return rank
+    return [suffix for suffix, _ in APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX].index(WALK_TEXT_ROLE_SUFFIX)
+
+
 def sha256_of(path: pathlib.Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -318,7 +439,8 @@ class StoredWalkFile(typing.NamedTuple):
     """What the store reports about one file it holds. The size is what the
     APPENDED TO rule needs -- how many leading bytes of the local file to
     hash -- and is None when the listing gave a digest and no size, in which
-    case that rule cannot be applied and the difference is refused."""
+    case that rule cannot be applied and the walk text ships as a revised
+    copy."""
 
     sha256: str
     size_in_bytes: typing.Optional[int]
@@ -391,7 +513,7 @@ def stored_copy_is_an_exact_prefix(source: pathlib.Path,
     already routed them to the already-there path, and the strict < excludes
     them anyway. A shorter local file (content removed), a same-length
     difference (content changed) and a longer file with a byte changed before
-    its added part all answer False, so all three stay refused."""
+    its added part all answer False, so all three ship as a revised copy."""
     if in_store.size_in_bytes is None or in_store.size_in_bytes >= source.stat().st_size:
         return False
     with source.open("rb") as opened:
@@ -432,12 +554,18 @@ class PlannedWalkFileReplacement(typing.NamedTuple):
     dispositions file, which is replaced whatever the store holds
     (`required_sha256` None), or a walk text the walk only added to, which
     is replaced only while the store still holds the copy that was tested
-    (`required_sha256` that copy's digest)."""
+    (`required_sha256` that copy's digest) and that copy is still the latest:
+    `must_be_absent_name` is the revised copy the next shipment would add,
+    and since copies are numbered one after another, its absence shows no
+    newer copy has been added. `target_name` is the store's name for it: the
+    source's own, or the walk's latest revised copy."""
 
     source: pathlib.Path
     role_name: str
     required_sha256: typing.Optional[str]
     ruling: str
+    target_name: str
+    must_be_absent_name: typing.Optional[str] = None
 
 
 REPLACED_ROLE_RULING = (
@@ -453,11 +581,63 @@ APPENDED_TO_RULING = (
     "md-skills-seat-questions-and-concerns-2026-09-21).")
 
 
+def staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(copy_host, staging_dir, why: str) -> str:
+    """What a FAILED line says when remove_staging_directory could not remove
+    this run's staging directory: the replace step of every later shipment of
+    the walk stops on it until it is deleted."""
+    shown, command = shipper.staging_directory_host_colon_path_and_local_or_ssh_rm_command(
+        copy_host, staging_dir)
+    return (f"This run's staging directory {shown} is left behind: removing it "
+            f"failed ({why}). Until it is deleted it stops nearly every later "
+            f"shipment of this walk. Deleting it loses nothing, because every "
+            f"shipment copies the walk's files again into a new staging directory "
+            f"of its own; delete it with `{command}`.")
+
+
+def walk_files_ship_rerun_command(name: str, directory: pathlib.Path) -> str:
+    """The command that ships walk `name` in `directory` again: this
+    program by its resolved path, and the walk by its name or its minutes'
+    resolved path, so it runs from any working directory, however the
+    program was started."""
+    # A name that begins with a dash would be read by argparse as an option,
+    # so such a walk is rerun by its minutes' path, as a walk elsewhere is.
+    walk_argument = (name if directory == WALK_DIRECTORY and not name.startswith("-")
+                     else str(directory / walk_file_name(name, MINUTES_ROLE_SUFFIX)))
+    return (f"{shlex.quote(str(REPO_ROOT / 'scripts' / 'walk-files-ship.py'))} "
+            f"{shlex.quote(walk_argument)}")
+
+
+def walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
+        copy_host, name: str, directory: pathlib.Path, staging_dir,
+        what_failed: str, why: typing.Optional[str]) -> str:
+    """The FAILED line of a copy or placing step that failed: it ends with the
+    command that reruns this shipment, after the deletion of this run's
+    staging directory when that could not be removed, since the rerun's
+    replace step would stop on it."""
+    rerun = walk_files_ship_rerun_command(name, directory)
+    if why:
+        return (f"FAILED: {name} — {what_failed}. "
+                f"{staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(copy_host, staging_dir, why)} "
+                f"Then rerun: `{rerun}`")
+    return f"FAILED: {name} — {what_failed}. Rerun: `{rerun}`"
+
+
 def ship_walk(destination: WalkStoreDestination, name: str,
               directory: pathlib.Path) -> int:
-    """One walk, one stdout line, one exit code."""
+    """One walk, one stdout line, one exit code. A new revised copy of the
+    walk text is copied from a file of its own name in a temporary
+    directory, because the store's add-only placing links a staged file
+    under the name it was staged with."""
+    with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as revised_copies:
+        return ship_walk_with_revised_copies_directory(
+            destination, name, directory, pathlib.Path(revised_copies))
+
+
+def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
+                                            name: str, directory: pathlib.Path,
+                                            revised_copies: pathlib.Path) -> int:
     present = {suffix: directory / walk_file_name(name, suffix)
-               for suffix, _ in WALK_FILE_ROLES
+               for suffix, _ in APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX
                if (directory / walk_file_name(name, suffix)).is_file()}
     missing_required = [walk_file_name(name, suffix)
                         for suffix in REQUIRED_ROLE_SUFFIXES if suffix not in present]
@@ -465,16 +645,41 @@ def ship_walk(destination: WalkStoreDestination, name: str,
         print(f"FAILED: {name} — not a walk that can be shipped: "
               f"{', '.join(missing_required)} not found in {directory}")
         return EXIT_BAD_INVOCATION
-    for suffix in NOTED_WHEN_ABSENT_ROLE_SUFFIXES:
-        if suffix not in present:
-            print(f"{PROGRAM}: no {walk_file_name(name, suffix)} in {directory}; "
+    for group in NOTED_WHEN_ABSENT_ROLE_SUFFIX_GROUPS:
+        if not any(suffix in present for suffix in group):
+            print(f"{PROGRAM}: no {walk_file_name(name, group[0])} in {directory}; "
                   f"shipping the walk without it", file=sys.stderr)
-    role_names = {walk_file_name(name, suffix) for suffix, _ in WALK_FILE_ROLES}
+    role_names = [walk_file_name(name, suffix) for suffix, _ in APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX]
     others = sorted(p.name for p in directory.glob(f"{name}-*.md")
                     if p.name not in role_names)
     if others:
-        print(f"{PROGRAM}: not shipped, not one of the walk's five roles (another "
-              f"walk's, or a shape the ruling did not name): {', '.join(others)}",
+        # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md
+        print(f"{PROGRAM}: not shipped: {', '.join(others)}. Each of these names "
+              f"begins with \"{name}-\", but none is a name a file of walk {name} "
+              f"can have, so this run does not ship them and leaves them in "
+              f"{directory}; the stdout line reports what it did with the walk's "
+              f"own files. A file of walk {name} has one of the names "
+              f".claude/skills/walk-me-through/SKILL.md gives a walk's files: "
+              f"{', '.join(walk_file_name(name, suffix) for suffix, _ in WALK_FILE_ROLES)}; "
+              f"or, in a walk started before its fast read's report took the name "
+              f"{walk_file_name(name, '-cold-read-fast-read')}, that report's earlier name "
+              f"{walk_file_name(name, APPROVAL_WALK_COLD_READ_FAST_READ_REPORT_FILE_SUFFIX_IN_WALKS_STARTED_BEFORE_ITS_RENAME)}.\n"
+              f"For a file of another walk, which it is when {directory} holds that "
+              f"walk's minutes, such as {name}-x-minutes.md for {name}-x-draft.md "
+              f"or for {name}-x.md: do nothing; it "
+              f"ships when that walk is shipped.\n"
+              f"For a file of walk {name} that fills one of those roles under "
+              f"another name, when {directory} has no file of that role's name: "
+              f"rename it to that name; once every such file is renamed, run "
+              f"`{walk_files_ship_rerun_command(name, directory)}` again, because the log-store keeps no copy "
+              f"of a file this program does not ship.\n"
+              f"For any other file, one whose role's name is already taken included: "
+              f"tell the user, in one sentence for each such "
+              f"file, with its name in place of <file name>: \"<file name> is "
+              f"not named as a walk's file is, so scripts/walk-files-ship.py did not ship it; the "
+              f"log-store has no copy of it; it is in {directory} on "
+              f"{os.uname().nodename}.\" A subagent passes those sentences to the "
+              f"agent that dispatched it instead.",
               file=sys.stderr)
 
     minutes_target = destination.walk_path / walk_file_name(name, MINUTES_ROLE_SUFFIX)
@@ -491,8 +696,21 @@ def ship_walk(destination: WalkStoreDestination, name: str,
 
     targets = {suffix: destination.walk_path / walk_file_name(name, suffix)
                for suffix in present}
+    revised_numbers = []
+    if WALK_TEXT_ROLE_SUFFIX in present:
+        listed, revised_numbers = stored_revised_walk_text_numbers(
+            destination.copy_host, destination.walk_path, name)
+        if revised_numbers is None:
+            reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+                destination.copy_host, listed)
+            print(f"FAILED: {name} — {reason}; the walk's files stay on disk, unshipped.")
+            sys.stderr.write(listed.stderr)
+            return EXIT_FAILED
+    revised_targets = {number: destination.walk_path / revised_walk_text_file_name(name, number)
+                       for number in revised_numbers}
     listed, stored = store_digests_and_sizes(destination.copy_host,
-                                             list(targets.values()))
+                                             list(targets.values())
+                                             + list(revised_targets.values()))
     if stored is None:
         reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
             destination.copy_host, listed)
@@ -503,25 +721,51 @@ def ship_walk(destination: WalkStoreDestination, name: str,
     # Each file's plan is decided on the listing; its outcome on what the
     # store holds after the copy (see TWO SHIPMENTS OF ONE WALK AT ONCE).
     to_place, to_replace, unchanged, refused = [], [], [], []
-    role_name_of = dict(WALK_FILE_ROLES)
+    role_name_of = dict(APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX)
     local_digests = {}
     for suffix, source in present.items():
         local_digest = sha256_of(source)
         local_digests[source.name] = local_digest
         in_store = stored.get(str(targets[suffix]))
-        if in_store is not None and in_store.sha256 == local_digest:
+        if suffix == WALK_TEXT_ROLE_SUFFIX:
+            # See REVISED COPIES in the docstring: once a revised copy
+            # exists, the highest-numbered one is the walk text as last
+            # shipped, and the rules apply to it, not to the original.
+            latest_name, latest = source.name, in_store
+            if revised_numbers:
+                latest_name = revised_walk_text_file_name(name, revised_numbers[-1])
+                latest = stored.get(str(revised_targets[revised_numbers[-1]]))
+            local_digests[latest_name] = local_digest
+            if latest is not None and latest.sha256 == local_digest:
+                unchanged.append(latest_name)
+            elif latest is None and not revised_numbers:
+                to_place.append(source)
+            elif latest is not None and stored_copy_is_an_exact_prefix(source, latest):
+                to_replace.append(PlannedWalkFileReplacement(
+                    source, role_name_of[suffix], latest.sha256,
+                    APPENDED_TO_RULING.format(stored_bytes=latest.size_in_bytes,
+                                              local_bytes=source.stat().st_size),
+                    latest_name,
+                    revised_walk_text_file_name(
+                        name, (revised_numbers[-1] if revised_numbers else 0) + 1)))
+            else:
+                revised_name = revised_walk_text_file_name(
+                    name, (revised_numbers[-1] if revised_numbers else 0) + 1)
+                revised_copy = revised_copies / revised_name
+                revised_copy.write_bytes(source.read_bytes())
+                local_digests[revised_name] = local_digest
+                to_place.append(revised_copy)
+                print(f"{PROGRAM}: {source.name} differs from {latest_name} in the "
+                      f"store by more than added text, so it ships beside it as "
+                      f"{revised_name}; the store keeps {latest_name} as it is.",
+                      file=sys.stderr)
+        elif in_store is not None and in_store.sha256 == local_digest:
             unchanged.append(source.name)
         elif suffix in REPLACED_ROLE_SUFFIXES:
             to_replace.append(PlannedWalkFileReplacement(
-                source, role_name_of[suffix], None, REPLACED_ROLE_RULING))
+                source, role_name_of[suffix], None, REPLACED_ROLE_RULING, source.name))
         elif in_store is None:
             to_place.append(source)
-        elif (suffix == ROLE_SUFFIX_REPLACED_WHEN_ONLY_APPENDED_TO
-              and stored_copy_is_an_exact_prefix(source, in_store)):
-            to_replace.append(PlannedWalkFileReplacement(
-                source, role_name_of[suffix], in_store.sha256,
-                APPENDED_TO_RULING.format(stored_bytes=in_store.size_in_bytes,
-                                          local_bytes=source.stat().st_size)))
         else:
             refused.append(f"{source.name} (store sha256 {in_store.sha256}, "
                            f"local sha256 {local_digest})")
@@ -530,8 +774,7 @@ def ship_walk(destination: WalkStoreDestination, name: str,
     # puts the walk text before the minutes and the minutes before the
     # dispositions. `lost` names a file whose copy is not what the store holds.
     added, replaced, lost = set(), [], []
-    minutes_name = walk_file_name(name, MINUTES_ROLE_SUFFIX)
-    marker_failed = False
+    staging_left_behind = None
     if to_place or to_replace:
         staging_dir = destination.walk_path / (
             f"{shipper.STAGING_DIRECTORY_PREFIX}{name}-{secrets.token_hex(6)}")
@@ -539,44 +782,50 @@ def ship_walk(destination: WalkStoreDestination, name: str,
                              to_place + [planned.source for planned in to_replace],
                              staging_dir)
         if copied.returncode != 0:
-            shipper.remove_staging_directory(destination.copy_host, staging_dir)
+            why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
             reason = ("ned-box unreachable"
                       if copied.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED
                       else f"rsync exit {copied.returncode}")
-            print(f"FAILED: {name} — {reason} during the copy; a later run finishes it.")
+            print(walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
+                destination.copy_host, name, directory, staging_dir,
+                f"{reason} during the copy", why))
             sys.stderr.write(copied.stderr)
             return EXIT_FAILED
         outcomes = {}
         if to_replace:
             renamed, outcomes = shipper.replace_with_staged_files(
                 destination.copy_host, staging_dir, destination.walk_path,
-                [(planned.source.name, planned.source.name, planned.required_sha256)
+                [(planned.source.name, planned.target_name, planned.required_sha256,
+                  planned.must_be_absent_name)
                  for planned in to_replace])
             if isinstance(outcomes, shipper.OtherShipmentStaging):
-                shipper.remove_staging_directory(destination.copy_host, staging_dir)
+                why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
                 failed, instruction = shipper.other_shipment_failure_lines(name, outcomes)
+                if why:
+                    failed += " " + staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(
+                        destination.copy_host, staging_dir, why)
                 print(failed)
                 sys.stderr.write(instruction + "\n")
                 return EXIT_FAILED
             if outcomes is None:
-                shipper.remove_staging_directory(destination.copy_host, staging_dir)
+                why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
                 reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
                     destination.copy_host, renamed)
-                print(f"FAILED: {name} — {reason} while putting the copied files "
-                      f"in place; a later run finishes it.")
+                print(walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
+                    destination.copy_host, name, directory, staging_dir,
+                    f"{reason} while putting the copied files in place", why))
                 sys.stderr.write(renamed.stderr)
-                # The renames stop partway, so the minutes may be in
-                # place already, and a re-run would find them unchanged.
-                if any(planned.source.name == minutes_name for planned in to_replace):
-                    walk_closed_marker_written_when_minutes_close_the_walk(
-                        present[MINUTES_ROLE_SUFFIX])
                 return EXIT_FAILED
         for planned in to_replace:
-            file_name = planned.source.name
-            local_digest = local_digests[file_name]
+            file_name = planned.target_name
+            local_digest = local_digests[planned.source.name]
             outcome = outcomes.get(file_name)
             if outcome is None:
                 lost.append(f"{file_name} (not in the store after the copy)")
+            elif not outcome.replaced and outcome.displaced_sha256 == planned.required_sha256:
+                refused.append(f"{file_name} (no longer the store's latest copy: "
+                               f"another shipment added {planned.must_be_absent_name} "
+                               f"while this run ran; local sha256 {local_digest})")
             elif not outcome.replaced:
                 refused.append(f"{file_name} (changed in the store while this run "
                                f"ran: store sha256 {outcome.displaced_sha256}, "
@@ -593,26 +842,25 @@ def ship_walk(destination: WalkStoreDestination, name: str,
                 replaced.append(WalkFileReplacement(
                     file_name, planned.role_name, outcome.displaced_sha256,
                     local_digest, planned.ruling))
-        # Before the add-only placement, which can still return: a re-run
-        # finds these minutes unchanged and so cannot record the close.
-        if minutes_name in added or any(replacement.file_name == minutes_name
-                                        for replacement in replaced):
-            marker_failed = not walk_closed_marker_written_when_minutes_close_the_walk(
-                present[MINUTES_ROLE_SUFFIX])
         after = {}
         if to_place:
-            placed, after = shipper.link_staged_files_never_over_existing(
+            placed, after, why = shipper.link_staged_files_never_over_existing(
                 destination.copy_host, staging_dir, destination.walk_path,
                 [source.name for source in to_place])
             if after is None:
+                why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
                 reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
                     destination.copy_host, placed)
-                print(f"FAILED: {name} — {reason} while putting the copied files "
-                      f"in place; a later run finishes it.")
+                print(walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
+                    destination.copy_host, name, directory, staging_dir,
+                    f"{reason} while putting the copied files in place", why))
                 sys.stderr.write(placed.stderr)
                 return EXIT_FAILED
         else:
-            shipper.remove_staging_directory(destination.copy_host, staging_dir)
+            why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
+        if why:
+            staging_left_behind = staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(
+                destination.copy_host, staging_dir, why)
         for source in to_place:
             in_store_now = after.get(source.name)
             if in_store_now == local_digests[source.name]:
@@ -622,9 +870,9 @@ def ship_walk(destination: WalkStoreDestination, name: str,
             else:
                 refused.append(f"{source.name} (store sha256 {in_store_now}, "
                                f"local sha256 {local_digests[source.name]})")
-        replaced.sort(key=lambda replacement: [
-            source.name for source in present.values()].index(replacement.file_name))
-    added = [source.name for source in present.values() if source.name in added]
+        replaced.sort(key=lambda replacement: (store_file_role_rank(name, replacement.file_name),
+                                               replacement.file_name))
+    added = sorted(added, key=lambda file_name: (store_file_role_rank(name, file_name), file_name))
     # Built from the record shipper's constant, not the destination, which may
     # be a local override the snapshots never hold.
     stored_walk_directory = (shipper.split_destination(
@@ -653,58 +901,40 @@ def ship_walk(destination: WalkStoreDestination, name: str,
     if unchanged:
         parts.append(f"{len(unchanged)} already there unchanged")
     summary = "; ".join(parts) if parts else "nothing to copy"
-    if lost:
-        refused_too = (f" Refused, add-only: {'; '.join(refused)}." if refused else "")
-        print(f"FAILED: {name} — not in the store as this run copied them: "
-              f"{'; '.join(lost)}.{refused_too} Ship the walk again only from the "
-              f"checkout whose copy the store should keep. The rest: {summary}; "
+    if lost or staging_left_behind:
+        sentences = []
+        if lost:
+            sentences.append(f"not in the store as this run copied them: {'; '.join(lost)}.")
+        if staging_left_behind:
+            sentences.append(staging_left_behind)
+        if refused:
+            sentences.append(f"Refused, add-only: {'; '.join(refused)}.")
+        if lost:
+            sentences.append("Ship the walk again only from the checkout whose copy "
+                             "the store should keep.")
+        print(f"FAILED: {name} — {' '.join(sentences)} The rest: {summary}; "
               f"minutes at {citation}")
         return EXIT_FAILED
     if refused:
         print(f"REFUSED: {name} — already in the store with different content and "
               f"not replaced, add-only: {'; '.join(refused)}. The rest: {summary}; "
               f"minutes at {citation}")
-        return EXIT_FAILED if marker_failed else EXIT_REFUSED
+        return EXIT_REFUSED
     print(f"shipped: {name} — {summary}; minutes at {citation}")
-    return EXIT_FAILED if marker_failed else EXIT_SHIPPED
+    return EXIT_SHIPPED
 
 
-def walk_closed_marker_written_when_minutes_close_the_walk(minutes: pathlib.Path) -> bool:
-    """Write this agent-session's walk-closed marker when the minutes' last
-    `#next_to_present` line says the walk is closed (see THE WALK-CLOSED
-    MARKER). False only when the marker was due and could not be written."""
-    marker = walk_finder.next_to_present(minutes.read_text(encoding="utf-8"),
-                                         walk_finder.markdown_parser())
-    if marker is None or not walk_finder.is_closed(marker[0]):
-        return True
-    session_id = os.environ.get(SESSION_ID_ENVIRONMENT_VARIABLE, "")
-    if not session_id:
-        print(f"{PROGRAM}: the walk is closed, but {SESSION_ID_ENVIRONMENT_VARIABLE} is "
-              f"not set, so no walk-closed marker was written and the handoff Stop hook "
-              f"will not ask for /handoff at this close. The walk's files are not "
-              f"affected; do not rerun this command.\n"
-              f"If an agent-session ran this command: run /handoff as the last step of "
-              f"this turn, after the walk's closing message.\n"
-              f"If a person ran it in a terminal: nothing more is needed.", file=sys.stderr)
-        return True
-    path = threshold_hook.handoff_due_at_lower_context_threshold_after_approval_walk_closed_marker_path(
-        session_id)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"{minutes.name}\n", encoding="utf-8")
-    except OSError as error:
-        print(f"{PROGRAM}: FAILED to write the walk-closed marker {path} ({error}), so "
-              f"the handoff Stop hook will not ask for /handoff at this close. The walk's "
-              f"files shipped as the stdout line says; do not rerun this command. This run "
-              f"exits 1 only to report the marker.\n"
-              f"Run /handoff as the last step of this turn, after the walk's closing "
-              f"message.", file=sys.stderr)
-        return False
-    return True
+class FailedLineArgumentParser(argparse.ArgumentParser):
+    """argparse's own error() prints usage on stderr and exits 2; OUTPUT
+    promises one FAILED line on stdout and exit 64 for a bad invocation."""
+
+    def error(self, message):
+        print(f"FAILED: bad invocation — {message}; {self.format_usage().strip()}")
+        sys.exit(EXIT_BAD_INVOCATION)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
+    parser = FailedLineArgumentParser(
         prog=PROGRAM, description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("walk", help="the walk's name (its files are under docs/walk/), "

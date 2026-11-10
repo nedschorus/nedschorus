@@ -106,14 +106,14 @@ def clear_fired_marker(session_id: str) -> str:
                     session_id=session_id, reason="that file could not be loaded"))
     marker = None
     try:
-        marker = threshold.fired_marker_path(session_id)
+        marker = threshold.handoff_asked_marker_path(session_id)
         marker.unlink()
     except FileNotFoundError:
         return ""
     except Exception as error:
         instruction = (
             MARKER_PATH_UNKNOWN_INSTRUCTION.format(
-                session_id=session_id, reason="its fired_marker_path() failed")
+                session_id=session_id, reason="its handoff_asked_marker_path() failed")
             if marker is None else MARKER_PATH_NOT_CLEARED_INSTRUCTION.format(path=marker))
         return (fault_line("clearing the fired marker", MARKER_NOT_CLEARED_COST, error)
                 + "\n" + instruction)

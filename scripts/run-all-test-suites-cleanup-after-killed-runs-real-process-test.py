@@ -161,7 +161,7 @@ def start_run(root, repo, name):
     environment = dict(os.environ)
     environment.pop(module.SIGNAL_SANDBOX_INSIDE_VARIABLE, None)
     # In the checkout, which a suite run without any sandbox and this test share; inside
-    # a test sandbox the checkout is a copy-on-write overlay, so a sandboxed suite reports
+    # an nc-test-sandbox the checkout is a copy-on-write overlay, so a sandboxed suite reports
     # its start in its output instead.
     environment[STARTED_FILE_VARIABLE] = str(repo / f"{name}.started")
     environment[STOP_FILE_VARIABLE] = str(repo / "stop")

@@ -36,8 +36,9 @@ launched a cell, whatever the cells' outcome, a run in which every cell failed
 included, whose record holds its log and no report, printing this program's
 one line as `record:`; and the requesting agent again after writing
 `finding-dispositions.md`, when the add-only copy sends only that new file.
-A shipping failure never fails the sanity check: the caller prints the line and
-goes on, and the record stays on disk for a later run.
+Whenever this program's line is not `shipped:`, a calling program prints the
+line, finishes its run and keeps its reports, and then exits 1, or the nonzero
+code its run has for another reason; the record stays on disk for a later run.
 
 OUTPUT AND EXITS are the record shipper's, unchanged: one line per record
 directory on stdout (`shipped:`, `REFUSED:`, `FAILED:`, or `skipped:` under
@@ -75,7 +76,8 @@ def destination_for_this_machine() -> tuple:
 
 def main() -> int:
     return shipper.ship_from_command_line(
-        __doc__, RECORDS_DIR, destination_for_this_machine())
+        __doc__, RECORDS_DIR, destination_for_this_machine(),
+        pathlib.Path(__file__).resolve())
 
 
 if __name__ == "__main__":
