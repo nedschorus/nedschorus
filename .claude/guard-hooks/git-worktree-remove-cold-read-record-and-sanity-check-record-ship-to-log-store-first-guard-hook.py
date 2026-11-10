@@ -229,18 +229,25 @@ REMOVAL_NOT_DEFERRED_ENDING_TEMPLATE = (
 REMOVAL_NOT_DEFERRED_FAILURE_TEMPLATE = "for {worktree}, {error}"
 REMOVED_WORKTREE_UNRESOLVED_REFUSAL_TEMPLATE = (
     "Refused on purpose: this hook could not tell which worktree this command removes ({reason}), "
-    "and a running program, such as the cold-read-grid, is still writing a record in a worktree. "
-    "That program ships the record to the log-store itself when it finishes; removing its worktree "
-    "now would delete the record first.\n"
+    "and a running program, such as the cold-read-grid, is still writing a record in the worktree "
+    "each Record line below names. "
+    "That program ships the record to the log-store itself when it finishes; removing a worktree a "
+    "Record line names now would delete its record first.\n"
     "{records}"
     "{path_written_out_instruction}")
 GIT_WORKTREE_REMOVE_PATH_WRITTEN_OUT_RUN_AGAIN_INSTRUCTION_TEMPLATE = (
     "Run the removal again as `git worktree remove{force} <path>`, with the worktree's path written "
     "out in full, as an absolute path with no variable, in a command that does not change directory.")
+PATH_NAMES_NO_WORKTREE_REASON_TEMPLATE = (
+    "the path {argument} names no worktree the hook can find from the command's directory")
+# The path is already written out, so asking for it written out again would loop.
+PATH_NAMES_NO_WORKTREE_RUN_AGAIN_INSTRUCTION_TEMPLATE = (
+    "Run `git worktree list` from the command's directory. If the worktree you meant is in its list, "
+    "run the removal again as `git worktree remove{force} <path>`, with its path copied from that list. "
+    "If it is not in the list, it is not a worktree of this repository: do not remove it from here.")
 SHIPMENT_FAILED_UNRESOLVED_INSTRUCTION_TEMPLATE = (
     "If the worktree you remove is not one that a Record line above names, do not follow the lines "
-    "below; instead: " + GIT_WORKTREE_REMOVE_PATH_WRITTEN_OUT_RUN_AGAIN_INSTRUCTION_TEMPLATE[:-1]
-    + ". This hook then ships and checks only that worktree's records.\n")
+    "below; instead: {instruction} This hook then ships and checks only that worktree's records.\n")
 GIT_WORKTREE_REMOVE_NOT_THE_WHOLE_SHELL_COMMAND_REFUSAL_REASON = (
     "the command does more than the removal, so this hook cannot tell whether the shell runs the removal")
 # A word the shell would still expand: a variable, a substitution or a glob.
@@ -251,10 +258,12 @@ DIRECTORY_CHANGING_WRAPPER_OPTIONS = {"env": ("-C", "--chdir"), "sudo": ("-D", "
 WORKTREE_REMOVE_FORCE_OPTIONS = {"-f", "--force"}
 
 SHIP_RECORDS_YOURSELF_NEXT_STEP_LINES = (
-    "Before you remove another worktree, ship its records yourself, from that worktree's root, "
-    "with this command: `python3 nc-systems/cold-read/cold-read-record-ship.py --all && "
-    "python3 scripts/sanity-check-record-ship.py --all`\n"
-    "If it exits 0, remove the worktree.\n"
+    "Before you remove another worktree, ship its records yourself with this command, which runs the "
+    "two shippers inside that worktree, where `--all` means every record of that worktree: "
+    "`(cd <the worktree's absolute path> && python3 nc-systems/cold-read/cold-read-record-ship.py --all "
+    "&& python3 scripts/sanity-check-record-ship.py --all)`\n"
+    "If it exits 0, remove the worktree from a directory outside it, since git cannot remove the worktree "
+    "your shell is in; the parentheses return your shell to the directory it was in.\n"
     f"If it exits nonzero, leave the worktree in place, and {TELL_THE_USER_OR_DISPATCHING_AGENT} "
     "which worktree is kept, quoting each line that begins FAILED or REFUSED.")
 
@@ -459,7 +468,7 @@ def worktrees_removed_or_unresolved_reason(command, cwd, worktrees, outer_comman
                 return None, f"the command changes directory, and the path {argument} is relative"
             worktree = worktree_named_by_real_path(os.path.join(cwd, path), worktrees)
         if worktree is None:
-            return None, f"the path {argument} names no worktree the hook can find from the command's directory"
+            return None, PATH_NAMES_NO_WORKTREE_REASON_TEMPLATE.format(argument=argument)
         removed[worktree] = removed.get(worktree, False) or worktree_remove_force_given(words, index)
     return removed, None
 
@@ -592,6 +601,14 @@ def ship_every_record(worktrees, runner, clock, deadline, progress):
             progress["lines"][record] = line
 
 
+def run_again_instruction(unresolved, force):
+    """What to run instead of the removal the hook could not place, for the reason unresolved."""
+    before, after = PATH_NAMES_NO_WORKTREE_REASON_TEMPLATE.split("{argument}")
+    if unresolved.startswith(before) and unresolved.endswith(after):
+        return PATH_NAMES_NO_WORKTREE_RUN_AGAIN_INSTRUCTION_TEMPLATE.format(force=force)
+    return GIT_WORKTREE_REMOVE_PATH_WRITTEN_OUT_RUN_AGAIN_INSTRUCTION_TEMPLATE.format(force=force)
+
+
 def shipment_failed_refusal(unshipped, unresolved=None, force=""):
     """The refusal for records that did not ship; unresolved is why the hook could not place the removal, or None."""
     lines = "".join(UNSHIPPED_RECORD_LINE_TEMPLATE.format(
@@ -601,7 +618,8 @@ def shipment_failed_refusal(unshipped, unresolved=None, force=""):
         scope = instruction = ""
     else:
         scope = SHIPMENT_FAILED_UNRESOLVED_SCOPE_TEMPLATE.format(reason=unresolved)
-        instruction = SHIPMENT_FAILED_UNRESOLVED_INSTRUCTION_TEMPLATE.format(force=force)
+        instruction = SHIPMENT_FAILED_UNRESOLVED_INSTRUCTION_TEMPLATE.format(
+            instruction=run_again_instruction(unresolved, force))
     return SHIPMENT_FAILED_REFUSAL_TEMPLATE.format(
         scope=scope, count=len(unshipped), records=lines, unresolved_instruction=instruction)
 
@@ -730,8 +748,7 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic, start_wai
         if unresolved is not None:
             refusals.append(REMOVED_WORKTREE_UNRESOLVED_REFUSAL_TEMPLATE.format(
                 reason=unresolved, records=listed,
-                path_written_out_instruction=GIT_WORKTREE_REMOVE_PATH_WRITTEN_OUT_RUN_AGAIN_INSTRUCTION_TEMPLATE
-                .format(force=force)))
+                path_written_out_instruction=run_again_instruction(unresolved, force)))
         else:
             failures = []
             for worktree in dict.fromkeys(worktree for worktree, _ in being_written):
