@@ -105,7 +105,10 @@ def install_step_failure_generic_advice(machine, command):
 
 
 def reference_checkout_missing_commit_failure_advice(machine, command):
-    pull = f"git -C {REFERENCE_CHECKOUT} pull --ff-only"
+    # git pull rejects --no-overwrite-ignore, and without it the merge replaces an ignored file
+    # at a path main tracks.
+    pull = (f"git -C {REFERENCE_CHECKOUT} fetch origin && "
+            f"git -C {REFERENCE_CHECKOUT} merge --ff-only --no-overwrite-ignore origin/main")
     return (f"The reference-checkout {REFERENCE_CHECKOUT} on {machine} does not yet hold main's "
             f"commit {MAIN_COMMIT_EACH_REFERENCE_CHECKOUT_MUST_HOLD[:9]}, which this install's files came "
             f"from. Fast-forward it to main by running on the Mac `{command_text_to_run_on_the_mac_ssh_wrapped_when_for_ned_box(machine, pull)}`, "

@@ -1376,7 +1376,8 @@ def launch_time_git_sync(working_directory: Path) -> str:
         return (f"launch-time-git-sync: {branch} left as is — {error}{fetch_note}\n"
                 f"{launch_time_git_sync_git_failure_next_steps(error)}")
 
-    merged = run_git_here(["merge", "--ff-only", "origin/main"], working_directory)
+    merged = run_git_here(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"],
+                          working_directory)
     if merged.returncode != 0:
         error = "; ".join(line.strip() for line in merged.stderr.splitlines()
                           if line.strip())
