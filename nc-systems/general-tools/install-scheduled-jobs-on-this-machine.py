@@ -691,6 +691,12 @@ def programs_a_cron_line_runs(line: str) -> list:
     words. reads_output is true for a later stage of a pipeline, such as the
     logger of `job | logger`, which only reads the job's output.
     """
+    return [(program, reads_output)
+            for program, reads_output, _ in _cron_line_programs_and_causes(line)]
+
+
+def _cron_line_programs_and_causes(line: str) -> list:
+    # Each entry adds the cause program is None, or None where program is resolved.
     # Interpreter and env options may consume arguments; guessing could remove an unrelated job.
     if not line.strip() or line.lstrip().startswith("#") or CRON_ENVIRONMENT_ASSIGNMENT.match(line):
         return []
@@ -704,17 +710,19 @@ def programs_a_cron_line_runs(line: str) -> list:
         raise shell_parser_refusal(error, line)
     # A function's body may never run.
     if defines_a_function:
-        return [(None, False)]
+        return [(None, False, _FUNCTION_DEFINITION_CAUSE)]
     commands = [command for command in commands if not command.inside_substitution()]
     stage_sizes = {}
     for command in commands:
         for shell in command.child_shell:
             stage_sizes[shell] = stage_sizes.get(shell, 0) + 1
-    # Only a later stage that is one command and nothing more reads the output; a stage such
-    # as `(cat; /usr/bin/other-job)` runs other jobs of its own.
-    return [(_program_of_a_cron_job(command),
-             _only_command_of_a_later_pipeline_stage(command, stage_sizes))
-            for command in commands]
+    found = []
+    for command in commands:
+        program, cause = _program_of_a_cron_job(command)
+        # Only a later stage that is one command and nothing more reads the output; a stage such
+        # as `(cat; /usr/bin/other-job)` runs other jobs of its own.
+        found.append((program, _only_command_of_a_later_pipeline_stage(command, stage_sizes), cause))
+    return found
 
 
 def _only_command_of_a_later_pipeline_stage(command, stage_sizes):
@@ -727,18 +735,25 @@ def _only_command_of_a_later_pipeline_stage(command, stage_sizes):
             and stage_sizes[shells[-1]] == 1)
 
 
+_INTERPRETER_OPTION_CAUSE = "it gives an interpreter or env an option, which may take the next word"
+_FUNCTION_DEFINITION_CAUSE = "it defines a function, whose body may never run"
+_NO_PROGRAM_AFTER_INTERPRETER_CAUSE = "it names no program after its interpreter or env"
+_NO_PROGRAM_CAUSE = "it names no program"
+
+
 def _program_of_a_cron_job(words):
+    """Return (program, None), or (None, cause) where the program is unresolved."""
     after_interpreter = False
     for word in words:
         if CRON_ENVIRONMENT_ASSIGNMENT.match(word):
             continue
         if after_interpreter and word.startswith("-"):
-            return None
+            return None, _INTERPRETER_OPTION_CAUSE
         if INTERPRETER_PROGRAM_NAME.fullmatch(Path(word).name):
             after_interpreter = True
             continue
-        return word
-    return None
+        return word, None
+    return None, (_NO_PROGRAM_AFTER_INTERPRETER_CAUSE if after_interpreter else _NO_PROGRAM_CAUSE)
 
 
 def _cron_lines_of_placed_jobs(placed: list, lines: list) -> set:
@@ -755,14 +770,13 @@ def _cron_lines_not_read(placed: list, lines: list) -> list:
     owned = _cron_lines_of_placed_jobs(placed, lines)
     found = []
     for index, line in enumerate(lines):
-        programs = programs_a_cron_line_runs(line)
-        if index in owned or not any(program is None for program, _ in programs):
+        # A line a table job owns is never read: it needs no shell parser.
+        if index in owned:
             continue
-        # programs_a_cron_line_runs returns exactly [(None, False)] for a line defining a function.
-        found.append((line, "it defines a function, whose body may never run"
-                      if programs == [(None, False)]
-                      and _defines_a_function(_cron_line_command_text(line))
-                      else "it gives an interpreter or env an option, which may take the next word"))
+        causes = [cause for program, _, cause in _cron_line_programs_and_causes(line)
+                  if program is None]
+        if causes:
+            found.append((line, causes[0]))
     return found
 
 
