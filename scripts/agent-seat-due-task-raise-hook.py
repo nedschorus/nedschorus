@@ -755,7 +755,7 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
                         "so no task was checked")
     if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
-    if agent_session_unattended_by_user_check_common.agent_session_has_no_user_attending(environment):
+    if agent_session_unattended_by_user_check_common.agent_session_unattended_by_user(environment):
         return None  # a headless child: the raise would replace the answer its caller reads
     directory = task_list_directory(home, environment)
     if directory is None:

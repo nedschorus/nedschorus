@@ -466,7 +466,7 @@ def run(stdin_text, environment, home, now):
     session_key = str(payload.get("session_id") or "unknown-session")
     if event == "SubagentStop":
         session_key += "-" + str(payload.get("agent_id") or "unknown-agent")
-    headless = agent_session_unattended_by_user_check_common.agent_session_has_no_user_attending(environment)
+    headless = agent_session_unattended_by_user_check_common.agent_session_unattended_by_user(environment)
     if headless:
         outcome = "headless"
     elif locator_ran:

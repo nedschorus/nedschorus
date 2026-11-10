@@ -190,7 +190,7 @@ def insert_lines(walk, cwd, alert_ids):
 
 def headless(environment):
     return load_module("agent_session_unattended_by_user_check_common",
-                       ATTENDANCE_CHECK_FILE).agent_session_has_no_user_attending(environment)
+                       ATTENDANCE_CHECK_FILE).agent_session_unattended_by_user(environment)
 
 
 def output_for(payload, environment, user_alerts=None):

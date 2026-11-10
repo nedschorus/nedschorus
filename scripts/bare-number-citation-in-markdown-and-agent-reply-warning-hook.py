@@ -791,7 +791,7 @@ def note_record_write(record_path, record):
 
 
 def previous_reply_note(payload: dict, environment):
-    if _load_agent_session_unattended_by_user_check().agent_session_has_no_user_attending(environment):
+    if _load_agent_session_unattended_by_user_check().agent_session_unattended_by_user(environment):
         return None
     transcript_path = payload.get("transcript_path")
     if not isinstance(transcript_path, str) or not transcript_path:

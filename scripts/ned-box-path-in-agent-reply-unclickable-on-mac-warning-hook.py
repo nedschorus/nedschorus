@@ -269,7 +269,7 @@ def note_record_path_for(session_id):
 
 
 def previous_reply_note(payload, environment):
-    if agent_session_unattended_by_user_check_common.agent_session_has_no_user_attending(environment):
+    if agent_session_unattended_by_user_check_common.agent_session_unattended_by_user(environment):
         return None
     hook = bare_number_hook()
     transcript_path = payload.get("transcript_path")

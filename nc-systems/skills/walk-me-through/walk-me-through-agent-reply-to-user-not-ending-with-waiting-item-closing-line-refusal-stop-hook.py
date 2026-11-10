@@ -380,7 +380,7 @@ def run(stdin_text, environment):
 def output_for(payload, environment):
     """A block naming the waiting items the reply leaves out, or why they are unknown; or None."""
     if walk_finder.load_module("agent_session_unattended_by_user_check_common",
-                               ATTENDANCE_CHECK_FILE).agent_session_has_no_user_attending(environment):
+                               ATTENDANCE_CHECK_FILE).agent_session_unattended_by_user(environment):
         return None
     transcript_path = payload.get("transcript_path")
     if not transcript_path or not Path(transcript_path).expanduser().is_file():

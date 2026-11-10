@@ -26,7 +26,7 @@ AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES = (
 )
 
 
-def agent_session_has_no_user_attending(environment):
+def agent_session_unattended_by_user(environment):
     """True when the environment mapping marks an agent-session no user attends."""
     return bool(environment.get(REINCARNATION_OWNED_BY_CALLER_VARIABLE)
                 or environment.get(SESSION_ATTENDED_VARIABLE) == SESSION_UNATTENDED_VALUE)

@@ -529,7 +529,7 @@ def run(stdin_text, environment):
     payload = json.loads(stdin_text)
     if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
-    if agent_session_unattended_by_user_check_common.agent_session_has_no_user_attending(environment):
+    if agent_session_unattended_by_user_check_common.agent_session_unattended_by_user(environment):
         return None
     transcript_path = payload.get("transcript_path")
     if not transcript_path or not Path(transcript_path).expanduser().is_file():

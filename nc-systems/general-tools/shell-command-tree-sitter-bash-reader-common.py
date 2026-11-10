@@ -486,7 +486,7 @@ def parser():
 
 
 def _session_unattended(environment):
-    return _attendance_check.agent_session_has_no_user_attending(environment)
+    return _attendance_check.agent_session_unattended_by_user(environment)
 
 
 @contextlib.contextmanager

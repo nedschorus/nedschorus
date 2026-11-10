@@ -38,7 +38,7 @@ for name, environment, expected in (
         ("caller variable empty: attended", {"NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": ""}, False),
         ("caller owns it though attended=1: no user",
          {"NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "1", "CLAUDE_CODE_SESSION_ATTENDED": "1"}, True)):
-    result = attendance_check.agent_session_has_no_user_attending(environment)
+    result = attendance_check.agent_session_unattended_by_user(environment)
     check(name, result is expected, result)
 
 original = {"CLAUDE_CODE_SESSION_ATTENDED": "0", "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "1",
