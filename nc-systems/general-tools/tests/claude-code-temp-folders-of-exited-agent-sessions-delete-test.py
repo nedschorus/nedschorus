@@ -386,7 +386,8 @@ def run_per_folder_failure_cases():
 
 def run_throwaway_folders_step_cases():
     s = scene()
-    home, place = s.base / "home", s.base / "throwaway-place"
+    # Resolved, as the second step resolves each place: the test sandbox's TMPDIR is a symlink.
+    home, place = s.base / "home", Path(os.path.realpath(s.base)) / "throwaway-place"
     home.mkdir()
     folder = place / "tmpab12cd34" / "stub-bin"
     folder.mkdir(parents=True)
@@ -411,6 +412,14 @@ def run_throwaway_folders_step_cases():
     check("the second step is given --dry-run when the program is",
           folder.is_dir() and f"would delete {folder.parent}" in result.stdout and result.returncode == 0,
           result.stdout + result.stderr)
+    user = s.proc / "4242"
+    (user / "fd").mkdir(parents=True)
+    os.symlink(str(folder.parent), user / "cwd")
+    result = run(flag, str(kinds_file))
+    check("the second step reads the process table it is given, not the machine's /proc",
+          folder.is_dir() and "kept because a process uses them: 1;" in result.stdout,
+          result.stdout + result.stderr)
+    shutil.rmtree(user)
     result = run(flag, str(kinds_file))
     check("the second step runs after the first, with the approved-kinds file given",
           not folder.parent.exists() and result.stdout.index("folders of exited agent-sessions deleted")

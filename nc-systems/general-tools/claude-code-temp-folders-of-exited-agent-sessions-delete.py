@@ -52,7 +52,8 @@ failure: /home/nedlern/.cache/claude-code-tmp has none until an agent-session la
 
 SECOND STEP. Given --then-throwaway-folders-of-user-approved-kinds-delete APPROVED_KINDS_FILE,
 the program then runs throwaway-folders-of-user-approved-kinds-delete.py, beside this file, with
-that file and with --dry-run when it was given, whatever its own step found; that program's
+that file, with the same --proc-filesystem-directory, and with --dry-run when it was given,
+whatever its own step found; that program's
 output goes to the same streams. The exit status is 1 when either step failed.
 
 SCHEDULE. Once a day at 07:30 on ned-box, installed by
@@ -102,15 +103,15 @@ FAILURES_INSTRUCTION = (
     "shell commands; a subagent tells the agent that dispatched it instead.")
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-THROWAWAY_FOLDERS_PROGRAM = Path(__file__).resolve().parent / "throwaway-folders-of-user-approved-kinds-delete.py"
-THROWAWAY_FOLDERS_STEP_NOT_STARTED_TEMPLATE = (
+THROWAWAY_FOLDERS_OF_USER_APPROVED_KINDS_DELETE_PROGRAM_PATH = Path(__file__).resolve().parent / "throwaway-folders-of-user-approved-kinds-delete.py"
+THROWAWAY_FOLDERS_DELETE_STEP_COULD_NOT_START_ERROR_TEMPLATE = (
     "The daily 07:30 job's second step, the sweep of throwaway folders, could not be started as "
     "`{command}`: {error}. The first step, above, ran; no throwaway folder was deleted or shown "
     "today.\n"
     "Fix the cause the error names, then on ned-box run that same command with --dry-run added "
     "at its end, and when that exits 0, run the command again without --dry-run.")
 
-DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES =["/tmp", "/home/nedlern/.cache/claude-code-tmp"]
+DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES = ["/tmp", "/home/nedlern/.cache/claude-code-tmp"]
 SESSION_FOLDER_NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 EXIT_DONE = 0
 EXIT_FAILED = 1
@@ -273,7 +274,7 @@ def main(arguments=None):
                         help="keep a folder changed more recently than this")
     parser.add_argument("--then-throwaway-folders-of-user-approved-kinds-delete", type=Path,
                         metavar="APPROVED_KINDS_FILE",
-                        help="after this program's own work, run " + THROWAWAY_FOLDERS_PROGRAM.name
+                        help="after this program's own work, run " + THROWAWAY_FOLDERS_OF_USER_APPROVED_KINDS_DELETE_PROGRAM_PATH.name
                              + " with this approved-kinds file, a relative path being read from "
                              "the repository's root; --dry-run is passed on")
     options = parser.parse_args(arguments)
@@ -295,13 +296,15 @@ def main(arguments=None):
           f"seconds: {result['kept_recent']}; failures: {len(result['failures'])}", flush=True)
     exit_status = EXIT_FAILED if result["failures"] else EXIT_DONE
     if options.then_throwaway_folders_of_user_approved_kinds_delete is not None:
-        command = [sys.executable, str(THROWAWAY_FOLDERS_PROGRAM), "--approved-kinds-file",
-                   str(REPOSITORY_ROOT / options.then_throwaway_folders_of_user_approved_kinds_delete)]
+        command = [sys.executable, str(THROWAWAY_FOLDERS_OF_USER_APPROVED_KINDS_DELETE_PROGRAM_PATH),
+                   "--approved-kinds-file",
+                   str(REPOSITORY_ROOT / options.then_throwaway_folders_of_user_approved_kinds_delete),
+                   "--proc-filesystem-directory", str(options.proc_filesystem_directory)]
         command += ["--dry-run"] if options.dry_run else []
         try:
             step = subprocess.run(command, check=False).returncode
         except OSError as error:
-            print(THROWAWAY_FOLDERS_STEP_NOT_STARTED_TEMPLATE.format(command=shlex.join(command),
+            print(THROWAWAY_FOLDERS_DELETE_STEP_COULD_NOT_START_ERROR_TEMPLATE.format(command=shlex.join(command),
                                                                     error=error), file=sys.stderr)
             step = EXIT_FAILED
         if step != EXIT_DONE:

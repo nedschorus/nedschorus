@@ -54,7 +54,9 @@ class Scene:
     """A scratch machine: a tmp place, a reviewer place, a process table, a home and a stub gh."""
 
     def __init__(self):
-        self.base = Path(tempfile.mkdtemp(prefix="throwaway-folders-delete-test-", dir=WORKSPACE))
+        # Resolved, as the program resolves each place: the test sandbox's TMPDIR is a symlink.
+        self.base = Path(os.path.realpath(tempfile.mkdtemp(prefix="throwaway-folders-delete-test-",
+                                                           dir=WORKSPACE)))
         self.tmp = self.base / "tmp"
         self.reviewers = self.base / "reviewer-scratch"
         self.proc = self.base / "proc"
@@ -122,7 +124,7 @@ class Scene:
         return [json.loads(path.read_text()) for path in sorted(pending.glob("*.json"))] if pending.is_dir() else []
 
     def shown(self):
-        path = self.home / program.KINDS_SHOWN_STATE_FILE_RELATIVE_TO_HOME
+        path = self.home / program.THROWAWAY_FOLDER_KINDS_SHOWN_TO_THE_USER_STATE_FILE_RELATIVE_TO_HOME
         return json.loads(path.read_text()) if path.exists() else None
 
 
@@ -232,6 +234,38 @@ def run_reviewer_cases():
     check("when gh cannot be run, the reviewer scratch directory is kept and the failure says so",
           merged.is_dir() and "could not be run" in result.stderr and result.returncode == 1, result.stderr)
 
+    # The lookup can take minutes; what happens to a folder meanwhile must still be seen.
+    s = Scene()
+    merged = s.reviewer_folder("rv100r1")
+    gh = s.bin / "gh"
+    gh.write_text(f"#!/bin/sh\nmkdir -p '{s.proc}/300/fd'\nln -s '{merged}' '{s.proc}/300/cwd'\n"
+                  + gh.read_text().split("\n", 1)[1])
+    result = s.run()
+    check("a process that starts using a reviewer scratch directory while its pull request is looked up "
+          "keeps it", merged.is_dir() and "kept because a process uses them: 1;" in result.stdout,
+          result.stdout + result.stderr)
+
+    s = Scene()
+    merged = s.reviewer_folder("rv100r1")
+    gh = s.bin / "gh"
+    gh.write_text(f"#!/bin/sh\necho changed > '{merged}/notes.md'\n" + gh.read_text().split("\n", 1)[1])
+    result = s.run()
+    check("a reviewer scratch directory changed while its pull request is looked up is kept",
+          merged.is_dir() and "deleted: 0;" in result.stdout, result.stdout + result.stderr)
+
+    # /proc gives each process's paths with symlinks resolved, so a place named through one must be too.
+    s = Scene()
+    folder = s.test_folder()
+    linked_place = s.base / "tmp-by-a-symlink"
+    os.symlink(str(s.tmp), linked_place)
+    s.kinds[0]["place"] = str(linked_place)
+    s.write_kinds()
+    s.process(300, cwd=os.path.realpath(folder))
+    result = s.run()
+    check("a place named through a symlink is compared with the process table's resolved paths",
+          folder.is_dir() and "kept because a process uses them: 1;" in result.stdout,
+          result.stdout + result.stderr)
+
 
 def run_kinds_file_cases():
     s = Scene()
@@ -267,7 +301,7 @@ def run_kinds_file_cases():
     check("a missing approved-kinds file deletes nothing and exits 1",
           folder.is_dir() and "could not be read as JSON" in result.stderr and result.returncode == 1)
 
-    kinds = program.approved_kinds_read(GENERAL_TOOLS / "throwaway-folder-kinds-the-user-approved-for-deletion.json")
+    kinds = program.approved_throwaway_folder_kinds_file_read_and_validate(GENERAL_TOOLS / "throwaway-folder-kinds-the-user-approved-for-deletion.json")
     check("the approved-kinds file in the repository is well formed and holds the two approved kinds",
           [kind["kind"] for kind in kinds] == ["cold-read-test-scratch-directory-in-tmp",
                                                "merge-lane-pull-request-reviewer-scratch-directory"]
@@ -306,18 +340,18 @@ def run_unreadable_cases():
 
     s = Scene()
     vanishing, after = s.test_folder("tmpab12cd34"), s.test_folder("tmpab12cd35")
-    tree_measure = program.tree_measure
+    newest_modification_time_entries_and_bytes_in_folder_tree = program.newest_modification_time_entries_and_bytes_in_folder_tree
 
     def gone_during_the_run(folder):
         if folder == vanishing:
             raise FileNotFoundError(2, "No such file or directory", str(folder))
-        return tree_measure(folder)
-    program.tree_measure = gone_during_the_run
+        return newest_modification_time_entries_and_bytes_in_folder_tree(folder)
+    program.newest_modification_time_entries_and_bytes_in_folder_tree = gone_during_the_run
     try:
         result = program.throwaway_folders_of_user_approved_kinds_delete(
             s.kinds_file, s.base / "shown.json", s.proc, dry_run=False)
     finally:
-        program.tree_measure = tree_measure
+        program.newest_modification_time_entries_and_bytes_in_folder_tree = newest_modification_time_entries_and_bytes_in_folder_tree
     check("a folder that disappears during the run is passed over, and the folders after it go on",
           vanishing.is_dir() and not after.exists() and result["failures"] == [] and result["deleted"] == 1,
           str(result))
@@ -376,10 +410,10 @@ def run_unapproved_kind_cases():
         folder = s.tmp / name
         folder.mkdir()
         age(folder)
-    in_use = s.tmp / "pymp-inuse123"
-    in_use.mkdir()
-    age(in_use)
-    s.process(600, cwd=in_use)
+    folder_used_by_any_process = s.tmp / "pymp-inuse123"
+    folder_used_by_any_process.mkdir()
+    age(folder_used_by_any_process)
+    s.process(600, cwd=folder_used_by_any_process)
     young = s.tmp / "young-test-a1b2c3d4"
     young.mkdir()
     result = s.run()
@@ -396,7 +430,7 @@ def run_unapproved_kind_cases():
     check("each new unapproved kind is raised in one user-alert, with its place, count and size",
           len(alerts) == 3 and any(alert["title"].endswith(f"pymp-* in {s.tmp}") and "2 folders" in alert["alert_text"]
                                    and "pymp-a1b2c3d4, pymp-zz99yy88" in alert["alert_text"]
-                                   and alert["action"] == program.ALERT_ACTION_TEXT for alert in alerts),
+                                   and alert["action"] == program.UNAPPROVED_THROWAWAY_FOLDER_KIND_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO for alert in alerts),
           json.dumps(alerts))
     check("each raised kind is recorded as shown",
           sorted(s.shown()) == sorted(f"{s.tmp}/{kind}" for kind in ("pymp-*", "meaning-check-test-*", "rv*")),
@@ -409,7 +443,7 @@ def run_unapproved_kind_cases():
           result.stdout + result.stderr)
 
     check("the kind rule replaces mkdtemp's and mktemp's suffixes, else cuts at the first digit",
-          [program.unapproved_kind_of(name) for name in (
+          [program.unapproved_throwaway_folder_kind_from_name(name) for name in (
               "pymp-a1b2c3d4", "tmpab_12cde", "find-copies-test_a1b2c3d4", "tmp.Xq3vT9aBcD",
               "rv2144r1", "cold-read-research-ghi", "xtmpab_12cde", "tmpab_12cdef")]
           == ["pymp-*", "tmp*", "find-copies-test_*", "tmp.*", "rv*", "cold-read-research-ghi", "xtmpab_*",
@@ -419,7 +453,7 @@ def run_unapproved_kind_cases():
     folder = s.tmp / "pymp-a1b2c3d4"
     folder.mkdir()
     age(folder)
-    state = s.home / program.KINDS_SHOWN_STATE_FILE_RELATIVE_TO_HOME
+    state = s.home / program.THROWAWAY_FOLDER_KINDS_SHOWN_TO_THE_USER_STATE_FILE_RELATIVE_TO_HOME
     state.parent.mkdir(parents=True)
     state.write_text("[]")
     result = s.run()
