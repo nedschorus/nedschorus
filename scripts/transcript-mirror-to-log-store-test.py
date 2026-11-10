@@ -175,7 +175,7 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
           and "local 2 files, store 2 files" in lines[2] and lines[3].startswith("mirrored: seat-briefs")
           and "local 1 files, store 1 files" in lines[3] and lines[4].startswith("mirrored: CLAUDE.md")
           and "local 1 files, store 1 files" in lines[4]
-          and lines[5].startswith("mirrored: remote-control-reconnect-watcher-log")
+          and lines[5].startswith(f"mirrored: {WATCHER_PROGRAM} ")
           and "local 1 files, store 1 files" in lines[5],
           result.stdout)
     check("the Mac's Remote Control reconnect watcher log lands under agent-session-files-by-machine/<machine>/<watcher program>/",
