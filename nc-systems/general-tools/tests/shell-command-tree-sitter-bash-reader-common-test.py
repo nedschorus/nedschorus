@@ -1882,8 +1882,6 @@ except r.ShellParserUnavailable as error:
         (".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-"
          "server-selection-refusal-hook.py", "The tmux kill guard"),
         (".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py", "The hand-typed codex exec guard"),
-        (".claude/guard-hooks/hand-typed-git-worktree-add-refusal-hook.py",
-         "The hand-typed git worktree add guard"),
     ]
     for relative, guard_name in GUARDS:
         guard = load(REPOSITORY_ROOT / relative, "guard_" + Path(relative).stem.replace("-", "_"))

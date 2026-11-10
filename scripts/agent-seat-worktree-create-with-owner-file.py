@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Make a git worktree for the calling agent-seat and write its owner file at once.
 
-This is the one way an agent makes a worktree: .claude/guard-hooks/
-hand-typed-git-worktree-add-refusal-hook.py refuses a `git worktree add` an agent types.
-Programs that make and remove their own worktrees keep doing so.
+Agents make worktrees with it; programs that make and remove their own worktrees keep
+doing so.
 
 Usage:
   agent-seat-worktree-create-with-owner-file.py <branch> [--base <commit>]
