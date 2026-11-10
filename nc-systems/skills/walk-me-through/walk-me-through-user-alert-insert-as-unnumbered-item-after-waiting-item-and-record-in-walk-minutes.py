@@ -13,7 +13,8 @@ each alert, read from user-alerts/claimed/<id>.json under ALERTS_MODULE_FILE's d
   "User alert: ". This program writes no number: the walk check program's close step writes
   `Item K of M: ` into the heading when the walk moves on to the item, after the user answers the item before
   it, so no other heading changes;
-- the walk-minutes get a re-planning line and the line `#user_alert <id>`.
+- the walk-minutes get a re-planning line, each title in it a code span so that a `#next_to_present` in a
+  title is not read as the walk's marker, and the line `#user_alert <id>`.
 The open approval-walk is found with WALK_FINDER_FILE, in the checkout --cwd names, as the other walk-me-through
 programs find it. The item gets no recommendation: the agent writes the case against and the `Recommendation:`
 line, as the program's output says.
@@ -190,7 +191,8 @@ def insert(cwd, alert_ids, now=None):
     document.write_text(new_text, encoding="utf-8")
     date = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
     minutes_lines = [REPLANNED_MINUTES_LINE.format(
-        date=date, count=len(alerts), waiting=waiting, titles="; ".join(titles))]
+        date=date, count=len(alerts), waiting=waiting,
+        titles="; ".join(map(walk_finder.text_wrapped_as_markdown_code_span, titles)))]
     minutes_lines += [f"#user_alert {alert.get('id')}" for alert in alerts]
     existing = minutes.read_text(encoding="utf-8")
     separator = "" if existing.endswith("\n") or not existing else "\n"

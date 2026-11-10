@@ -10,6 +10,9 @@ line in each walk's docs/walk/<name>-minutes.md. The marker is found anywhere
 outside code, the last one in a minutes file counts, and one inside a code
 span is a quotation; a value inside a code span is read without its
 backticks, and a colon after the hashtag is read as the old form's colon was.
+A program that writes text it was given into the minutes, such as the user's
+reply, writes it with text_wrapped_as_markdown_code_span, so that a marker
+inside that text is a quotation too.
 The old marker `Next to present:` is read too, so that a caller can migrate
 it. A value is `none` or `closed` for a closed walk, or opens with a running
 count, `item N`, `item 4.1`, `items 5 and 6`, `items 10 to 12`, with or
@@ -320,6 +323,18 @@ def next_to_present(minutes_text, parser):
         return None
     hashtag, value = markers[last]
     return value, not hashtag, last < len(markers) - 1
+
+
+def text_wrapped_as_markdown_code_span(text):
+    """Return one line of text as a code span CODE_SPAN reads whole, its text unchanged.
+
+    The delimiter is one backtick longer than the longest backtick run inside the text, and a text that opens or
+    ends with a backtick gets a space on each side, so that the text's own backticks neither end the span early
+    nor join its delimiter."""
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    delimiter = "`" * (longest + 1)
+    padding = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{delimiter}{padding}{text}{padding}{delimiter}"
 
 
 def newest_item_page_link_per_item_from_walk_minutes(minutes_text, parser):
