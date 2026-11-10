@@ -1234,8 +1234,10 @@ def ignored_files_a_rebase_onto_main_would_replace(checkout: Path):
 
     Three placements are replaced: the path origin/main tracks; a file inside
     a directory where origin/main tracks a file; and a file where origin/main
-    tracks files under a directory of that name. A path HEAD tracks is in the
-    index, so it never appears among the ignored files.
+    tracks files under a directory of that name. git lists an ignored nested
+    repository as its directory with a trailing slash, so that directory is
+    checked like a file of that name. A path HEAD tracks is in the index, so it
+    never appears among the ignored files.
     """
     main_paths = set(git_output.nul_separated_fields(run_git_or_raise(
         ["ls-tree", "-r", "-z", "--name-only", "origin/main"], checkout, timeout=30).stdout))
@@ -1245,17 +1247,31 @@ def ignored_files_a_rebase_onto_main_would_replace(checkout: Path):
         ["ls-files", "-z", "--others", "--ignored", "--exclude-standard"], checkout,
         timeout=30).stdout)
     return sorted(path for path in ignored
-                  if path in main_paths or path in main_directories
+                  if path.rstrip("/") in main_paths or path.rstrip("/") in main_directories
                   or any(str(parent) in main_paths
                          for parent in PurePosixPath(path).parents))
+
+
+IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT = 1500
+
+
+def shortened_file_list(file_list: str) -> str:
+    """A comma-separated file list cut to about
+    IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT characters, ending with where to
+    see the rest."""
+    if len(file_list) <= IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT:
+        return file_list
+    kept = file_list[:IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT].rsplit(", ", 1)[0]
+    return f"{kept}, and more; run `git status --ignored --untracked-files=all` to see them all"
 
 
 def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
     """Move a never-pushed branch onto origin/main, or say why not.
 
-    Returns (outcome, detail): "rebased"; "skipped" with the blockers;
-    "ignored-files-in-the-way" with the ignored files the rebase would replace,
-    git having been asked nothing that moves the tree; "conflict"
+    Returns (outcome, detail): "rebased"; "ignored-files-in-the-way" with the
+    ignored files the rebase would replace, whatever else blocks it, git having
+    been asked nothing that moves the tree; "skipped" with the blockers;
+    "conflict"
     with the conflicting paths, the tree put back exactly as it was; or
     "abort-failed", the one outcome that is a fault — the tree was left
     mid-rebase — and is reported to the user.
@@ -1273,12 +1289,15 @@ def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
     because the Stop hook has a budget of its own and a rebase of a few commits
     is sub-second; a rebase that takes longer is one to abort, not wait on.
     """
-    blockers, _ = merge_blockers(checkout, git_dir)
-    if blockers:
-        return "skipped", "; ".join(blockers)
+    # Ignored files are checked before the other blockers: a "skipped" note
+    # carries REBASE_ADVICE, which tells the agent to rebase by hand, and that
+    # rebase would overwrite them.
     in_the_way = ignored_files_a_rebase_onto_main_would_replace(checkout)
     if in_the_way:
         return "ignored-files-in-the-way", ", ".join(in_the_way)
+    blockers, _ = merge_blockers(checkout, git_dir)
+    if blockers:
+        return "skipped", "; ".join(blockers)
     rebased = run_git(["rebase", "--no-autostash", "origin/main"], checkout, timeout=30)
     if rebased.returncode == 0:
         return "rebased", ""
@@ -1532,9 +1551,13 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
                  f"aborted cleanly ({detail}). Inspect `git status` before doing anything else.")
         else:
             stamp["last_action"] = f"rebase {outcome}: {detail}"
-            if not already_told:
-                stamp["last_told"] = told
+            # The outcome is part of the key: a note told for a dirty tree must
+            # not silence the different advice for ignored files in the way.
+            told_with_outcome = {**told, "outcome": outcome}
+            if stamp.get("last_told") != told_with_outcome:
+                stamp["last_told"] = told_with_outcome
                 advice = REBASE_ADVICE
+                short = None
                 if outcome == "skipped":
                     reason = f"Not updated: {detail}."
                 elif outcome == "ignored-files-in-the-way":
@@ -1542,13 +1565,17 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
                               f"delete these ignored files, which are in the way of files "
                               f"origin/main tracks: {detail}.")
                     advice = IGNORED_FILES_IN_THE_WAY_ADVICE
+                    short = (f"{heading} Not updated: a rebase onto origin/main would "
+                             f"overwrite or delete these ignored files, which are in the way "
+                             f"of files origin/main tracks: "
+                             f"{shortened_file_list(detail)}.{note}\n{advice}")
                 elif outcome == "refused":
                     reason = f"Not updated: git refused — {detail}."
                 else:
                     reason = (f"A rebase onto origin/main was tried and put back: it "
                               f"conflicts on {detail}.")
                 tell(f"{heading} {reason}{changed_on_main_clause}{note}\n{advice}",
-                     kind=NOTE_KIND_BLOCKED)
+                     kind=NOTE_KIND_BLOCKED, short=short)
         save_stamp_with_queued_notes(stamp_path, stamp)
         return
 
