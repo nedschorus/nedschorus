@@ -42,6 +42,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -1813,8 +1814,8 @@ def run_revert_check_cases(scratch):
           repr(scenario.fake_check_calls()))
 
 
-REFERENCE_CHECKOUT_CHECK_RUN_BY_HAND_COMMAND = "python3 %s --head %s"
-NO_COPY_TO_RUN_TEXT = ("no copy of the check exists to run, as your worktree has no scripts/%s "
+PRE_PUSH_CHECK_FROM_REFERENCE_CHECKOUT_RUN_BY_HAND_COMMAND = "python3 %s --head %s"
+PRE_PUSH_CHECK_SCRIPT_MISSING_FROM_WORKTREE_AND_REFERENCE_CHECKOUT_TEXT = ("no copy of the check exists to run, as your worktree has no scripts/%s "
                        "and %s is missing too; tell the user")
 # Gives no verdict when the hook runs it, which passes --branch, and a clean one when run by hand.
 FAKE_CHECK_NO_VERDICT_FROM_HOOK_CLEAN_BY_HAND = FAKE_CHECK_PREAMBLE + """\
@@ -1849,21 +1850,21 @@ def run_worktree_without_checks_cases(scratch):
         os.chdir(started_in)
     check("an error before the pushed refs were read, in a worktree with no checks: both "
           "commands run the reference checkout's copies",
-          REFERENCE_CHECKOUT_CHECK_RUN_BY_HAND_COMMAND % (REAL_CONFLICT_CHECK, "<branch name>")
-          in stream.getvalue()
-          and REFERENCE_CHECKOUT_CHECK_RUN_BY_HAND_COMMAND % (REAL_REVERT_CHECK, "<branch name>")
-          in stream.getvalue()
+          PRE_PUSH_CHECK_FROM_REFERENCE_CHECKOUT_RUN_BY_HAND_COMMAND % (
+              shlex.quote(str(REAL_CONFLICT_CHECK)), "<branch name>") in stream.getvalue()
+          and PRE_PUSH_CHECK_FROM_REFERENCE_CHECKOUT_RUN_BY_HAND_COMMAND % (
+              shlex.quote(str(REAL_REVERT_CHECK)), "<branch name>") in stream.getvalue()
           and "python3 scripts/" not in stream.getvalue(), stream.getvalue())
 
     def hook_copy_command(hooks, check_file, short):
-        return REFERENCE_CHECKOUT_CHECK_RUN_BY_HAND_COMMAND % (hooks.parent / check_file.name,
-                                                               short)
+        return PRE_PUSH_CHECK_FROM_REFERENCE_CHECKOUT_RUN_BY_HAND_COMMAND % (
+            shlex.quote(str(hooks.parent / check_file.name)), short)
 
     def no_copy_text(hooks, check_file, short):
-        return NO_COPY_TO_RUN_TEXT % (check_file.name, hooks.parent / check_file.name)
+        return PRE_PUSH_CHECK_SCRIPT_MISSING_FROM_WORKTREE_AND_REFERENCE_CHECKOUT_TEXT % (check_file.name, hooks.parent / check_file.name)
 
     fake = FAKE_CHECK_NO_VERDICT_FROM_HOOK_CLEAN_BY_HAND
-    for case_number, (label, layout_arguments, expected_lines) in enumerate((
+    cases = (
             ("the Python file is missing",
              {"include_runner": False, "conflict_check": fake, "revert_check": fake},
              ((HAND_CONFLICT_CHECK_LINE, REAL_CONFLICT_CHECK, hook_copy_command),
@@ -1885,9 +1886,16 @@ def run_worktree_without_checks_cases(scratch):
               (HAND_REVERT_CHECK_AFTER_CONFLICT_CHECK_LINE, REAL_REVERT_CHECK, no_copy_text))),
             ("the reference checkout's revert check is missing",
              {"conflict_check": FAKE_CHECK_ALWAYS_CLEAN, "revert_check": None},
-             ((HAND_REVERT_CHECK_LINE, REAL_REVERT_CHECK, no_copy_text),)))):
+             ((HAND_REVERT_CHECK_LINE, REAL_REVERT_CHECK, no_copy_text),)))
+    # The first case's command comes from the sh hook, the second's from the Python file; a
+    # reference checkout whose path holds a space must still give a command that runs.
+    spaced_cases = tuple((label + ", with a space in the reference checkout's path", arguments,
+                          lines, True) for label, arguments, lines in cases[:2])
+    for case_number, (label, layout_arguments, expected_lines, spaced) in enumerate(
+            tuple(case + (False,) for case in cases) + spaced_cases):
         name = "worktree-without-checks-%d" % case_number
-        hooks = make_layout(scratch, "layout-" + name, **layout_arguments)
+        layout_parent = scratch / "reference checkout parent" if spaced else scratch
+        hooks = make_layout(layout_parent, "layout-" + name, **layout_arguments)
         scenario = Scenario(scratch, name, hooks, worktree_has_checks=False)
         scenario.git(scenario.clone, "switch", "--quiet", "clean")
         short = scenario.head("clean")[:SHORT_COMMIT_LENGTH]

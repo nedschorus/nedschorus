@@ -14,6 +14,7 @@ can still refuse it, so the outcome is said once, after every branch."""
 # Keep Git’s environment so the check sees the repository actually being pushed.
 
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -44,9 +45,9 @@ TERMINATE_GRACE_SECONDS = 3.0
 MESSAGE_PREFIX = "pre-push: "
 SHORT_COMMIT_LENGTH = 12
 # Git runs a hook from the top of the worktree being pushed, so scripts/ is the worktree's.
-WORKTREE_HAND_CHECK_COMMAND = "python3 scripts/%s --head %s"
-REFERENCE_CHECKOUT_CHECK_RUN_BY_HAND_COMMAND = "python3 %s --head %s"
-NO_COPY_TO_RUN_TEXT = ("no copy of the check exists to run, as your worktree has no scripts/%s "
+PRE_PUSH_CHECK_FROM_WORKTREE_RUN_BY_HAND_COMMAND = "python3 scripts/%s --head %s"
+PRE_PUSH_CHECK_FROM_REFERENCE_CHECKOUT_RUN_BY_HAND_COMMAND = "python3 %s --head %s"
+PRE_PUSH_CHECK_SCRIPT_MISSING_FROM_WORKTREE_AND_REFERENCE_CHECKOUT_TEXT = ("no copy of the check exists to run, as your worktree has no scripts/%s "
                        "and %s is missing too; tell the user")
 TELL_USER_LINE = ("Tell the user this whole message, including any error printed just "
                   "above it: the next push on this machine may go unchecked the same way.")
@@ -184,20 +185,20 @@ def branch_list(branches):
                      for branch, object_id in branches)
 
 
-def hook_copy_path(check_file_name):
+def pre_push_check_script_path_in_reference_checkout(check_file_name):
     """The copy of a check this file runs: the one beside it, in the reference checkout."""
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), check_file_name)
 
 
 def pre_push_check_run_by_hand_command(check_file_name, head):
     """The command that runs a check by hand from a copy of it that exists: the worktree's,
-    else the reference checkout's; NO_COPY_TO_RUN_TEXT when neither exists."""
+    else the reference checkout's; PRE_PUSH_CHECK_SCRIPT_MISSING_FROM_WORKTREE_AND_REFERENCE_CHECKOUT_TEXT when neither exists."""
     if os.path.isfile(os.path.join("scripts", check_file_name)):
-        return WORKTREE_HAND_CHECK_COMMAND % (check_file_name, head)
-    hook_copy = hook_copy_path(check_file_name)
+        return PRE_PUSH_CHECK_FROM_WORKTREE_RUN_BY_HAND_COMMAND % (check_file_name, head)
+    hook_copy = pre_push_check_script_path_in_reference_checkout(check_file_name)
     if os.path.isfile(hook_copy):
-        return REFERENCE_CHECKOUT_CHECK_RUN_BY_HAND_COMMAND % (hook_copy, head)
-    return NO_COPY_TO_RUN_TEXT % (check_file_name, hook_copy)
+        return PRE_PUSH_CHECK_FROM_REFERENCE_CHECKOUT_RUN_BY_HAND_COMMAND % (shlex.quote(hook_copy), head)
+    return PRE_PUSH_CHECK_SCRIPT_MISSING_FROM_WORKTREE_AND_REFERENCE_CHECKOUT_TEXT % (check_file_name, hook_copy)
 
 
 def hand_check_line(branch, object_id):
@@ -272,7 +273,7 @@ def main(argv, pushed_refs_text, stderr, environment):
     if not branches:
         return EXIT_ALLOW_PUSH
 
-    check_path = hook_copy_path(CONFLICT_CHECK_FILE_NAME)
+    check_path = pre_push_check_script_path_in_reference_checkout(CONFLICT_CHECK_FILE_NAME)
     if not os.path.isfile(check_path):
         say_no_branch_checked(
             stderr, "the pre-push conflict check did not run, because %s is missing"
@@ -355,7 +356,7 @@ def check_reverts(branches, deadline, budget, stderr):
     setting a file back, and (branch, local object ID) for each it gave no verdict on.
 
     Any other outcome lets the branch through, with one message."""
-    check_path = hook_copy_path(REVERT_CHECK_FILE_NAME)
+    check_path = pre_push_check_script_path_in_reference_checkout(REVERT_CHECK_FILE_NAME)
     reverts = []
     unchecked = []
     for branch, local_object_id in branches:
