@@ -29,7 +29,7 @@ HOOK_SCRIPT = Path(__file__).with_name("absence-claim-locator-reminder-hook.py")
 LABELLED_REPLIES = Path(
     "/home/nedlern/nedschorus-logs/seats/ned-box-helper/"
     "absence-claim-trigger-phrases-2026-10-05/out/precision/labels.csv")
-EXPECTED_PRECISION_LINE = "fires 102: correct 87, incorrect 15, unclear 0; precision 0.8529"
+EXPECTED_PRECISION_LINE = "fires 103: correct 88, incorrect 15, unclear 0; precision 0.8544"
 B01_CLAIM = "The transcripts it points to are gone."
 REMINDER_FOR_B01 = (
     "absence-claim reminder: your reply says a file or record is gone, missing "
@@ -296,6 +296,13 @@ for case_name, text in [
     ("pattern 6: an edited-element word heads the clause", "That change is not in the branch."),
     ("pattern 6: any ... that before the match",
      "I looked for any copy that might exist, but the file is not in the mirror."),
+    ("pattern 2: an edited-element word after a preposition is the artifact's object", "The transcript for that step is gone."),
+    ("pattern 2: an edited-element word ending the clause after a preposition", "The log of that command is gone."),
+    ("pattern 2: an edited-element word in a relative clause", "The file the link points to is gone."),
+    ("pattern 2: no after a preposition", "The file with no backup is gone."),
+    ("pattern 6: that means draws a conclusion", "That means the transcript is not in the repository."),
+    ("pattern 4: the search, with a first-person subject", "I cannot find the transcript after the search failed."),
+    ("pattern 4: a pronoun subject with a first-person clause", "I checked, and it can't find the transcript."),
 ]:
     check(f"trigger: {case_name}", bool(hook.absence_claim_matches(text)), text)
 
@@ -333,7 +340,11 @@ for case_name, text in [
     ("any that are missing", "It checks `x.md` for a fast read of each exact text, and runs the fast read for any that are missing."),
     ("advice that is gone",
      "- The advice to give the backup search a path for the Mac's local snapshots is gone."),
-    ("a removed code element heads the clause", "- TR1's checks on `scripts/x.py` are gone;"),
+    ("checks on an artifact", "- TR1's checks on `scripts/x.py` are gone;"),
+    ("a removed code element heads the clause", "The file's format is gone."),
+    ("pattern 13 on an edited element, read as pattern 2", "The file parser does not exist."),
+    ("pattern 13 in a sentence that says where the agent looked",
+     "The report says only where I looked, not that it does not exist."),
     ("what a search tool can find", "Naming: grep and glob don't find branch names."),
     ("where records belong", "Records like these belong in the log-store on ned-box, not in the repository."),
     ("a kind of commit", "Its one weakness, a commit on no branch, is guarded three ways."),
