@@ -93,8 +93,8 @@ Ruled "y": the naming rule binds new file names only. An existing file is rename
 
 ## Ruled 2026-09-16, in the cold-read-research seat's walk of the five seat-brief cold reads (item 1)
 
-1. **`info-agent`** joins the glossary. It is the user's name for the class of agents like ghi-info: "I proposed info-agent. I guess I have a preference for shorter names." The entry, approved as written: "info-agent — a long-lived agent that answers other agents' questions about one domain (the GHIs, PRs, the wiki, one system) and keeps that domain's knowledge current. It is not an agent-seat: a script runs it one question at a time, with no seat-brief and no handoffs, and the user does not talk to it. ghi-info is the first."
-2. **"domain-knowledge agent" is renamed to info-agent** in `docs/issues/26-dynamic-agent-team-model.md`, `docs/issues/46-ghi-info-agent-design.md` and the queue note `git show 93bcc041:docs/nedschorus-wiki/queue/26-lifecycle-revision-from-ghi-info.md`. That note was deleted on 2026-09-28 (queue-drain item 13) after its three lifecycle facts were written into `docs/issues/26-dynamic-agent-team-model.md` without the old term, so it needs no rename.
+1. **`info-agent`** joins the glossary. It is the user's name for the class of agents like ghi-guide-agent: "I proposed info-agent. I guess I have a preference for shorter names." The entry, approved as written: "info-agent — a long-lived agent that answers other agents' questions about one domain (the GHIs, PRs, the wiki, one system) and keeps that domain's knowledge current. It is not an agent-seat: a script runs it one question at a time, with no seat-brief and no handoffs, and the user does not talk to it. ghi-info is the first."
+2. **"domain-knowledge agent" is renamed to info-agent** in `docs/issues/26-dynamic-agent-team-model.md`, `docs/issues/46-ghi-guide-agent-design.md` and the queue note `git show 93bcc041:docs/nedschorus-wiki/queue/26-lifecycle-revision-from-ghi-info.md`. That note was deleted on 2026-09-28 (queue-drain item 13) after its three lifecycle facts were written into `docs/issues/26-dynamic-agent-team-model.md` without the old term, so it needs no rename.
 3. **`agent-seat` keeps its glossary definition.** The proposed rename to interactive-agent was declined: "I'm fine with an agent-seat as defined".
 
 Already applied: the ghi seat-brief calls ghi-info an info-agent, landed in PR [Five seat briefs rewritten against current state, with the cold read's fixes and the walk's rulings](https://github.com/nedschorus/nedschorus/pull/454).
@@ -121,10 +121,10 @@ Not yet put to him. Under his ruling these go as one message from the MD-skills 
 
 - `cold-read-cell`: one reviewer model reading one target under one prompt. Already 41 uses in the tree.
 - `cold-read-record`: the directory holding one run's reports, its frozen target and its dispositions. 24 uses.
-- `cold-read-grid`: the program that launches the six cold-read-cells, `nc-systems/cold-read/cold-read-grid.py`.
+- `cold-read-grid`: the program that launches the cold-read-cells, `nc-systems/cold-read/cold-read-grid.py`.
 - `cold-read-tier`: which model a cold-read-cell runs, and at what effort. 5 uses.
 - `cold-read-fast-read`: the one-reviewer pass that precedes the full run, matching `nc-systems/cold-read/cold-read-fast-read.py`.
-- `cold-read-full-run`: the six-cold-read-cell run.
+- `cold-read-full-run`: the run of every cold-read-cell.
 - `cold-read-target`: the document under review, frozen at launch.
 
 `cold-read-fast-read` and `cold-read-full-run` were `fast-cold-read` and `full-cold-read` until 2026-09-15, when he renamed the sanity-check seat's `review-request` to `sanity-check-request`, "instrument first like the rest".

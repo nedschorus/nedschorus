@@ -4,9 +4,9 @@
 A `*-common.py` module that holds the master copy of wording programs print is
 pinned word for word by its own tests alone. Every other test gets the wording
 by calling the module, so a change to it fails one suite, not every suite of a
-program that prints it. The module's own test calls
-common_module_wording_copies_in_other_test_files, and fails while the list it
-returns is not empty.
+program that prints it. A guard suite calls
+common_module_wording_copies_in_other_test_files for each such module, and
+fails while a list it returns is not empty.
 
 The module's wording is each string literal assigned at its top level, and each
 literal piece of a string or f-string inside its top-level functions and
@@ -15,17 +15,20 @@ which tell a programmer how to call the module. A piece counts only when it has
 at least MINIMUM_WORDS_IN_A_COPIED_PIECE words: a shorter one, such as
 "fell back to", is a phrase other programs say in their own words.
 
-A copy is a string literal, docstrings left out, in a test file of the
-checkout, as path_is_test_file in
-python-source-agent-facing-string-collector-common.py decides, that contains a
-piece once runs of whitespace in both are made single spaces. Implicitly
-concatenated literals count as one literal; an f-string's fields split it, so a
-piece must fall inside one literal part. A test file whose name starts with the
-module's own file name, less `.py`, is the module's own test and is skipped.
+A copy is a run of at least MINIMUM_WORDS_IN_A_COPIED_PIECE words in a row
+that a piece and a string literal share, docstrings left out, in a test file of
+the checkout, as path_is_test_file in
+python-source-agent-facing-string-collector-common.py decides. Words are what
+whitespace separates, compared without the punctuation at either end, so
+"user." is the word "user". Implicitly concatenated literals count as one
+literal; an f-string's fields split it, so a run must fall inside one literal
+part. A test file whose name starts with the module's own file name, less
+`.py`, is the module's own test and is skipped.
 
 Not found: a copy split across `+` or across separate literals, a copy shorter
-than the floor, a reworded copy, and wording the module builds at run time
-without a literal piece of the floor's length.
+than the floor, a reworded copy, a copied run whose end word is only part of a
+word in the literal, and wording the module builds at run time without a
+literal piece of the floor's length.
 
 The checkout's files are listed with `git ls-files`, run without the variables
 that redirect git, such as GIT_DIR, so a guard started from a git hook still
@@ -42,6 +45,7 @@ Load it by path, under the snake_case form of its file name:
 import ast
 import importlib.util
 import re
+import string
 import subprocess
 from pathlib import Path
 
@@ -84,9 +88,6 @@ def _literal_pieces(node, left_out):
             continue
         if isinstance(inner, ast.Raise):
             left_out.update(ast.walk(inner))
-        elif isinstance(inner, ast.JoinedStr):
-            left_out.update(inner.values)
-            pieces += [part.value for part in inner.values if isinstance(part, ast.Constant)]
         elif isinstance(inner, ast.Constant) and isinstance(inner.value, str):
             pieces.append(inner.value)
     return pieces
@@ -129,10 +130,47 @@ def _test_file_literals(path):
     return [(line, _whitespace_runs_made_single_spaces(text)) for line, text in literals]
 
 
-def common_module_wording_copies_in_other_test_files(module_path, checkout_root):
-    """Return (test file path relative to checkout_root, line, piece, names) for each copy, in path and line order.
+def _words_compared(words):
+    return tuple(word.strip(string.punctuation) for word in words)
 
-    line is the first line of the literal holding the copy.
+
+def _piece_windows_of_the_floor_length(pieces):
+    """Return {compared words of a run of the floor's length: [(piece, index of its first word in the piece)]}."""
+    windows = {}
+    for piece in pieces:
+        compared = _words_compared(piece.split())
+        for start in range(len(compared) - MINIMUM_WORDS_IN_A_COPIED_PIECE + 1):
+            windows.setdefault(compared[start:start + MINIMUM_WORDS_IN_A_COPIED_PIECE], []).append((piece, start))
+    return windows
+
+
+def _runs_shared_with_pieces(text, windows):
+    """Return the set of (piece, run) for each longest run of words a part of text between fields shares with a piece."""
+    runs = set()
+    for part in text.split(F_STRING_FIELD_STAND_IN):
+        compared = _words_compared(part.split())
+        # (piece, index in the piece of the latest window's first word): index in the piece of the run's first word.
+        open_runs = {}
+        for start in range(len(compared) - MINIMUM_WORDS_IN_A_COPIED_PIECE + 1):
+            window = compared[start:start + MINIMUM_WORDS_IN_A_COPIED_PIECE]
+            continued = {(piece, at): open_runs.get((piece, at - 1), at) for piece, at in windows.get(window, [])}
+            runs.update(_run_words(piece, first, at) for (piece, at), first in open_runs.items()
+                        if (piece, at + 1) not in continued)
+            open_runs = continued
+        runs.update(_run_words(piece, first, at) for (piece, at), first in open_runs.items())
+    return runs
+
+
+def _run_words(piece, first, last_window_start):
+    words = piece.split()[first:last_window_start + MINIMUM_WORDS_IN_A_COPIED_PIECE]
+    return piece, " ".join(words).strip(string.punctuation)
+
+
+def common_module_wording_copies_in_other_test_files(module_path, checkout_root):
+    """Return (test file path relative to checkout_root, line, run, names) for each copy, in path and line order.
+
+    line is the first line of the literal holding the copy; run is the longest run of words the literal shares
+    with a piece, in the module's words, less the punctuation at its two ends; names are those of the constants and functions whose pieces hold it.
     """
     checkout_root = Path(checkout_root)
     own_test_prefix = Path(module_path).name[:-len(".py")]
@@ -141,13 +179,15 @@ def common_module_wording_copies_in_other_test_files(module_path, checkout_root)
                             capture_output=True, text=True, check=True,
                             timeout=GIT_LS_FILES_TIMEOUT_SECONDS,
                             env=_git_environment.environment_without_git_redirecting_variables()).stdout.split("\0")
-    copies = []
+    windows = _piece_windows_of_the_floor_length(pieces)
+    names_by_copy = {}
     for relative in sorted(path for path in listed if path):
         if not _collector.path_is_test_file(relative) or Path(relative).name.startswith(own_test_prefix):
             continue
         for line, text in _test_file_literals(checkout_root / relative):
-            copies += [(relative, line, piece, names) for piece, names in pieces.items() if piece in text]
-    return sorted(copies)
+            for piece, run in _runs_shared_with_pieces(text, windows):
+                names_by_copy.setdefault((relative, line, run), set()).update(pieces[piece])
+    return sorted((relative, line, run, sorted(names)) for (relative, line, run), names in names_by_copy.items())
 
 
 def copied_wording_report_line(copy):

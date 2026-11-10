@@ -52,6 +52,10 @@ sys.exit(exit_code)
 failures = []
 
 
+def review_worktrees_directory(helpers):
+    return helpers.parent / f"{helpers.name}-review-worktrees"
+
+
 def check(name, condition, detail=""):
     print(("PASS  " if condition else "FAIL  ") + name)
     if not condition:
@@ -66,6 +70,7 @@ def run_program(scratch, helpers, exits, *pull_requests, review_tools=None, cwd=
     completed = subprocess.run(
         [sys.executable, str(PROGRAM), *pull_requests,
          "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+         "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(helpers)),
          "--review-tools-worktree-at-main", str(review_tools or scratch / "main-checkout")],
         capture_output=True, text=True, cwd=cwd,
         env={**os.environ, "GIT_DIR": str(scratch / "no-such-git-directory"),
@@ -89,10 +94,11 @@ def main():
         detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
         check("each pull request is run in turn", [
             call["argv"][call["argv"].index("--checkout") + 1] for call in calls] == [
-            str(helpers / "wt" / "pr7-merged"), str(helpers / "wt" / "pr8-merged")], detail)
+            str(review_worktrees_directory(helpers) / "pr7-merged"),
+            str(review_worktrees_directory(helpers) / "pr8-merged")], detail)
         check("the run gets the paths under the worktrees and outputs directory",
               calls and calls[0]["argv"] == [
-                  "--checkout", str(helpers / "wt" / "pr7-merged"),
+                  "--checkout", str(review_worktrees_directory(helpers) / "pr7-merged"),
                   "--log-store-root", str(helpers / "hr" / "pr7" / "log-store"),
                   "--temporary-directory", str(helpers / "hr" / "pr7" / "tmp"),
                   "--recorded-inputs-directory", str(helpers / "hr" / "store")],
@@ -133,7 +139,7 @@ def main():
         detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
         check("relative directory options run main's runner on the right checkout",
               completed.returncode == 0 and calls and calls[0]["argv"][:2] == [
-                  "--checkout", str(helpers / "wt" / "pr7-merged")], detail)
+                  "--checkout", str(review_worktrees_directory(helpers) / "pr7-merged")], detail)
         check("relative directory options still put an absolute tripwire-bin first on PATH",
               calls and calls[0]["first_path_entry"] == str(helpers / "tripwire-bin"),
               json.dumps(calls))
@@ -142,6 +148,7 @@ def main():
         live = subprocess.Popen(
             [sys.executable, str(PROGRAM), "7",
              "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+             "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(helpers)),
              "--review-tools-worktree-at-main", str(scratch / "main-checkout")],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env={**os.environ, "MERGE_LANE_HEAD_TEST_RUN_TEST_LOG": str(scratch / "live.log"),
@@ -179,6 +186,7 @@ def main():
                    "this command, from any directory: " + shlex.join([
                        sys.executable, str(PROGRAM.resolve()), "9",
                        "--merge-lane-worktrees-and-outputs-directory", str(helpers.resolve()),
+                       "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(helpers).resolve()),
                        "--review-tools-worktree-at-main",
                        str((scratch / "main-checkout").resolve())])) in lines
                   and any(line.startswith("Before you run it, give it a stderr that takes "
@@ -197,6 +205,7 @@ def main():
             both = subprocess.Popen(
                 [sys.executable, str(PROGRAM), "9",
                  "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+                 "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(helpers)),
                  "--review-tools-worktree-at-main", str(scratch / "main-checkout")],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 env={**os.environ, "MERGE_LANE_HEAD_TEST_RUN_TEST_LOG": str(scratch / "both.log"),
@@ -236,6 +245,7 @@ def main():
         unread = subprocess.Popen(
             [sys.executable, str(PROGRAM), "7",
              "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+             "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(helpers)),
              "--review-tools-worktree-at-main", str(scratch / "main-checkout")],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env={**os.environ, "MERGE_LANE_HEAD_TEST_RUN_TEST_LOG": str(scratch / "unread.log"),

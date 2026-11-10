@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Tests for merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py.
 
-Real git in a scratch directory: a repository whose head commit is checked
-out, detached, as wt/pr7-head under a scratch worktrees and outputs directory,
-as step 1 builds it, with the brief step 2 writes beside it. A stand-in claude
+Real git in a scratch directory: a repository whose nc-head-commit is checked
+out, detached, as wt/pr7-head under a scratch review worktrees directory,
+as step 1 builds it, with the brief step 2 writes beside it, and a review
+tools worktree at main that holds only main's .claude/settings.json, whose
+commands name the project directory in each form a command can, each running
+a script the head worktree does not have. A stand-in claude
 and a stand-in gh go first on PATH, and HOME holds a mac-claude token file, so
 no case runs a model or reaches GitHub. The stand-in claude logs its
 arguments, standard input, directory and environment, and answers as
-FAKE_CLAUDE_MODE says: valid, null, invalid, could-not-review, nonzero,
-not-json, hang (it writes its pid, starts a child that also sleeps, and
+FAKE_CLAUDE_MODE says: valid, null, refusal-no-structured-output, invalid, no-note, note-not-text,
+not-object, extra-key, line-below-minimum, line-not-integer,
+comment-body-empty, could-not-review, nonzero, not-json, hang (it writes its
+pid, starts a child that also sleeps, and
 writes the child's pid), leave-child (it starts a sleeping child whose output
 goes to /dev/null, writes the child's pid, and answers validly), or move-head
 (it checks the head worktree out at another commit). Every
@@ -30,6 +35,7 @@ import importlib.util
 import io
 import json
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -37,6 +43,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from unittest import mock
 
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
     "git_redirecting_environment_removal_test_fixture",
@@ -50,6 +57,30 @@ PROGRAM = Path(__file__).with_name(
     "merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py")
 SCHEMA = Path(__file__).with_name("merge-lane-pull-request-claude-reviewer-review-schema.json")
 BRIEF = "Review pull request 7.\nThe brief's last line.\n"
+MAIN_PROJECT_SETTINGS = {
+    "env": {"DISABLE_AUTOUPDATER": "1"},
+    "statusLine": {"type": "command",
+                   "command": 'python3 "${CLAUDE_PROJECT_DIR:-.}"/scripts/status-line.py'},
+    "hooks": {"UserPromptSubmit": [{"hooks": [
+        {"type": "command",
+         "command": 'python3 "$CLAUDE_PROJECT_DIR"/scripts/user-alerts-fixed-on-main-hook.py'}]}],
+              "Stop": [{"matcher": "", "hooks": [
+        {"type": "command",
+         "command": 'python3 "${CLAUDE_PROJECT_DIR}"/scripts/stop-hook.py --quiet'}]}]}}
+
+
+def expected_main_project_settings_for_reviewer(main_worktree):
+    """MAIN_PROJECT_SETTINGS as the reviewer must get them: every command runs main's script."""
+    return {
+        "env": {"DISABLE_AUTOUPDATER": "1"},
+        "statusLine": {"type": "command",
+                       "command": f'python3 "{main_worktree}"/scripts/status-line.py'},
+        "hooks": {"UserPromptSubmit": [{"hooks": [
+            {"type": "command",
+             "command": f'python3 "{main_worktree}"/scripts/user-alerts-fixed-on-main-hook.py'}]}],
+                  "Stop": [{"matcher": "", "hooks": [
+            {"type": "command",
+             "command": f'python3 "{main_worktree}"/scripts/stop-hook.py --quiet'}]}]}}
 GIT_ENVIRONMENT = {
     **{key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
     "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@example.invalid",
@@ -65,7 +96,8 @@ prompt = sys.stdin.read()
 with open(state / "claude-calls.jsonl", "a") as log:
     log.write(json.dumps({"argv": sys.argv[1:], "stdin": prompt, "cwd": os.getcwd(),
                           "env": {key: os.environ.get(key) for key in
-                                  ("GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR")}}) + "\n")
+                                  ("GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR",
+                                   "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD")}}) + "\n")
 subprocess.run(["git", "worktree", "add", "-q", "--detach",
                 str(state / "reviewer-scratch" / "wt" / "mac-claude-pr7-mutation"), "HEAD"],
                check=True, capture_output=True)
@@ -79,12 +111,25 @@ output = {"type": "result", "subtype": "success", "is_error": False, "session_id
                                   "tool_input": {"command": "rm -rf /tmp/x"}}]}
 if mode == "null":
     output["structured_output"] = None
+elif mode == "refusal-no-structured-output":
+    del output["structured_output"]
+    output["result"] = "The reviewer declined this request."
 elif mode == "invalid":
     output["structured_output"] = {"verdict": "MAYBE", "body": "b", "comments": [], "note": ""}
 elif mode == "no-note":
     del answer["note"]
 elif mode == "note-not-text":
     answer["note"] = 5
+elif mode == "not-object":
+    output["structured_output"] = "APPROVE"
+elif mode == "extra-key":
+    answer["summary"] = "s"
+elif mode == "line-below-minimum":
+    answer["comments"][0]["line"] = 0
+elif mode == "line-not-integer":
+    answer["comments"][0]["line"] = True
+elif mode == "comment-body-empty":
+    answer["comments"][0]["body"] = ""
 elif mode == "could-not-review":
     output["structured_output"] = {"verdict": "COULD_NOT_REVIEW",
                                    "body": "Bash was refused, so nothing ran.", "comments": [],
@@ -152,6 +197,10 @@ atexit.register(stall)
 failures = []
 
 
+def review_worktrees_directory(helpers):
+    return helpers.parent / f"{helpers.name}-review-worktrees"
+
+
 def check(name, condition, detail=""):
     """Report one case; condition is a callable, so an error in it fails only this case."""
     try:
@@ -216,10 +265,14 @@ class Case:
             git(repository, "add", ".")
             git(repository, "commit", "-q", "-m", name)
         self.head = git(repository, "rev-parse", "HEAD")
-        self.head_worktree = self.helpers / "wt" / "pr7-head"
+        self.head_worktree = review_worktrees_directory(self.helpers) / "pr7-head"
         git(repository, "worktree", "add", "-q", "--detach", str(self.head_worktree), self.head)
-        (self.helpers / "briefs").mkdir()
+        (self.helpers / "briefs").mkdir(parents=True)
         (self.helpers / "briefs" / "brief-7a-mac-claude.md").write_text(BRIEF)
+        self.main_worktree = self.helpers / "wt" / "main"
+        self.main_settings_file = self.main_worktree / ".claude" / "settings.json"
+        self.main_settings_file.parent.mkdir(parents=True)
+        self.main_settings_file.write_text(json.dumps(MAIN_PROJECT_SETTINGS))
         (home / ".config" / "nedschorus").mkdir(parents=True)
         (home / ".config" / "nedschorus" / "mac-claude.token").write_text("stand-in-token\n")
         for name, text in (("claude", FAKE_CLAUDE), ("gh", FAKE_GH)):
@@ -237,7 +290,8 @@ class Case:
     def command(self, tag, head, options):
         return [sys.executable, str(PROGRAM), "7", tag, head or self.head, *options,
                 "--merge-lane-worktrees-and-outputs-directory", str(self.helpers),
-                "--review-tools-worktree-at-main", str(self.helpers / "wt" / "main")]
+                "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(self.helpers)),
+                "--review-tools-worktree-at-main", str(self.main_worktree)]
 
     def run(self, mode="valid", *options, tag="7a", head=None, **environment):
         completed = subprocess.run(
@@ -316,8 +370,90 @@ class Case:
         return any("POST" in call["arguments"] for call in self.gh_calls)
 
 
+def load_program():
+    spec = importlib.util.spec_from_file_location("claude_reviewer_headless_run", PROGRAM)
+    program = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(program)
+    return program
+
+
+def schema_driven_cases(scratch):
+    """The answer check reads its rules from the schema file it is given, with no rule of its own."""
+    program = load_program()
+    schema = json.loads(SCHEMA.read_text())
+    answer = {"verdict": "APPROVE", "body": "Looks right.",
+              "comments": [{"path": "scripts/thing.py", "line": 2, "body": "A remark."}],
+              "note": ""}
+    check("an answer the schema file allows has no problems",
+          lambda: program.answer_problems(answer, schema) == [])
+
+    longer_body = json.loads(SCHEMA.read_text())
+    longer_body["properties"]["body"]["minLength"] = 20
+    check("a minLength raised in the schema refuses the same answer, with no code change",
+          lambda: program.answer_problems(answer, longer_body)
+          == ["the answer's body is shorter than 20 characters"])
+    with_summary = json.loads(SCHEMA.read_text())
+    with_summary["required"].append("summary")
+    with_summary["properties"]["summary"] = {"type": "string"}
+    check("a field the schema adds as required is required of the answer, with no code change",
+          lambda: program.answer_problems(answer, with_summary) == ["the answer has no summary"])
+
+    not_enforced = program.review_schema_keywords_and_types_the_answer_check_does_not_enforce
+    check("the schema file uses only keywords and types the answer check enforces",
+          lambda: not_enforced(schema) == [])
+    unchecked = json.loads(SCHEMA.read_text())
+    unchecked["properties"]["comments"]["items"]["properties"]["path"]["pattern"] = r"\S"
+    unchecked["properties"]["note"]["type"] = "number"
+    check("a keyword or type the answer check does not enforce is named, at any depth",
+          lambda: not_enforced(unchecked)
+          == ["the schema.comments[].path: pattern", "the schema.note: type number"],
+          str(not_enforced(unchecked)))
+    loose = json.loads(SCHEMA.read_text())
+    loose["additionalProperties"] = {"type": "string"}
+    loose["properties"]["comments"]["items"] = [{"type": "object"}]
+    check("additionalProperties given as a schema and items given as a list are named as unenforced",
+          lambda: not_enforced(loose)
+          == ["the schema: additionalProperties given as a schema",
+              "the schema.comments: items given as a list"],
+          str(not_enforced(loose)))
+    comments_not_required = json.loads(SCHEMA.read_text())
+    comments_not_required["required"].remove("comments")
+
+    for name, text, expected in (
+            ("missing a key the program reads from its required list",
+             json.dumps(comments_not_required),
+             "does not require comments, which this program reads from every answer"),
+            ("not JSON", "{", "is not JSON ("),
+            ("not an object", "[]", "is JSON but not a JSON object"),
+            ("unchecked keyword", json.dumps(unchecked),
+             "uses JSON-schema keywords or types that this program's answer check does not "
+             "enforce, so an answer could break those rules unnoticed: "
+             "the schema.comments[].path: pattern; the schema.note: type number.")):
+        case = Case(scratch)
+        schema_file = case.state / "review-schema.json"
+        schema_file.write_text(text)
+        program.SCHEMA_FILE_NAME = str(schema_file)
+        printed = io.StringIO()
+        handler = signal.getsignal(signal.SIGTERM)
+        # In-process, so the stand-in claude and gh catch a regressed refusal only if
+        # os.environ is the case's own.
+        try:
+            with contextlib.redirect_stdout(printed), mock.patch.dict(
+                    os.environ, {**case.environment, "FAKE_CLAUDE_MODE": "valid"}, clear=True):
+                code = program.main(case.command("7a", None, ())[2:])
+        finally:
+            signal.signal(signal.SIGTERM, handler)
+        case.code, case.stdout = code, printed.getvalue()
+        case.read_calls()
+        check(f"a review schema file that is {name} refuses with exit 2 before the reviewer runs",
+              lambda: code == 2 and not case.claude_calls
+              and f"PR 7: Claude review not run: the review schema {schema_file} "
+              in printed.getvalue()
+              and expected in printed.getvalue(), f"exit {code}\n{printed.getvalue()}")
+
+
 def main():
-    scratch = Path(tempfile.mkdtemp(prefix="claude-reviewer-headless-run-test-")).resolve()
+    scratch =Path(tempfile.mkdtemp(prefix="claude-reviewer-headless-run-test-")).resolve()
     try:
         reported = io.StringIO()
         with contextlib.redirect_stdout(reported):
@@ -335,12 +471,19 @@ def main():
         check("a valid answer is posted as mac-claude, and the step exits 0",
               lambda: case.code == 0 and case.posted()
               and "PR 7: Claude review posted, verdict APPROVE." in case.stdout, case.detail)
-        check("claude runs headless with the schema, JSON output, dontAsk and the six tools, "
-              "and no prompt argument after them",
-              lambda: call.get("argv") == ["-p", "--json-schema", SCHEMA.read_text(),
-                                           "--output-format", "json", "--permission-mode",
-                                           "dontAsk", "--allowedTools", "Read", "Grep", "Glob",
-                                           "Bash", "WebFetch", "WebSearch"],
+        main_settings_argument = json.dumps(
+            {**expected_main_project_settings_for_reviewer(case.main_worktree), "advisorModel": ""})
+        check("claude runs headless with no claude.ai connectors, dontAsk, main's project settings "
+              "and hooks in place of the head's, the head's CLAUDE.md, the schema, JSON output "
+              "and the six tools, and no prompt argument after them",
+              lambda: call.get("argv") == ["-p", "--strict-mcp-config", "--permission-mode", "dontAsk",
+                                           "--settings", main_settings_argument,
+                                           "--setting-sources", "user",
+                                           "--add-dir", str(case.head_worktree),
+                                           "--json-schema", SCHEMA.read_text(),
+                                           "--output-format", "json", "--allowedTools", "Read", "Grep",
+                                           "Glob", "Bash", "WebFetch", "WebSearch"]
+              and call.get("env", {}).get("CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD") == "1",
               case.detail)
         check("the brief is the reviewer's standard input, and it runs in the head worktree",
               lambda: call.get("stdin") == BRIEF and call.get("cwd") == str(case.head_worktree),
@@ -371,8 +514,12 @@ def main():
               == f"session-77\n{case.head_worktree}\n", case.detail)
         check("the follow-up command is printed whole, with where to run it",
               lambda: f"run from {case.head_worktree}" in case.stdout
-              and "claude -p --resume session-77 --permission-mode dontAsk --allowedTools Read "
-                  "Grep Glob Bash WebFetch WebSearch" in case.stdout, case.detail)
+              and shlex.join(["CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1", "claude", "-p",
+                              "--strict-mcp-config", "--permission-mode", "dontAsk",
+                              "--settings", main_settings_argument, "--setting-sources", "user",
+                              "--add-dir", str(case.head_worktree), "--resume", "session-77",
+                              "--allowedTools", "Read", "Grep", "Glob", "Bash", "WebFetch",
+                              "WebSearch"]) in case.stdout, case.detail)
         check("each refused tool call is printed",
               lambda: "the reviewer was refused a Bash call it asked for: rm -rf /tmp/x"
               in case.stdout, case.detail)
@@ -380,7 +527,7 @@ def main():
               lambda: not case.reviewer_worktree_left(), case.detail)
 
         case = Case(scratch)
-        others = [case.helpers / "wt" / name for name in
+        others = [review_worktrees_directory(case.helpers) / name for name in
                   ("mac-claude-pr70-mutation", "mac-claude-pr8-mutation")]
         for other in others:
             git(case.head_worktree, "worktree", "add", "-q", "--detach", str(other), "HEAD")
@@ -412,10 +559,24 @@ def main():
 
         for mode, expected in (
                 ("null", "the reviewer finished without an answer the review schema accepts"),
-                ("invalid", "the reviewer's answer is not a valid review: its verdict 'MAYBE'"),
-                ("no-note", "its keys are ['body', 'comments', 'verdict'], not verdict, body, "
-                            "comments and note"),
-                ("note-not-text", "the reviewer's answer is not a valid review: its note is not text"),
+                ("refusal-no-structured-output",
+                 "the reviewer finished without an answer the review schema accepts"),
+                ("invalid", "the reviewer's answer is not a valid review: the answer's verdict "
+                            "'MAYBE' is not one of APPROVE, REQUEST_CHANGES, COULD_NOT_REVIEW"),
+                ("no-note", "the reviewer's answer is not a valid review: the answer has no note"),
+                ("note-not-text", "the reviewer's answer is not a valid review: the answer's note "
+                                  "is int, not string"),
+                ("not-object", "the reviewer's answer is not a valid review: the answer is str, "
+                               "not object"),
+                ("extra-key", "the reviewer's answer is not a valid review: the answer has "
+                              "summary, which the schema does not allow"),
+                ("line-below-minimum", "the reviewer's answer is not a valid review: the "
+                                       "answer's comments[0]'s line 0 is below the minimum 1"),
+                ("line-not-integer", "the reviewer's answer is not a valid review: the answer's "
+                                     "comments[0]'s line is bool, not integer"),
+                ("comment-body-empty", "the reviewer's answer is not a valid review: the "
+                                       "answer's comments[0]'s body is shorter than 1 "
+                                       "characters"),
                 ("could-not-review", "the reviewer could not finish the review"),
                 ("nonzero", "claude exited 3: claude: API error 529"),
                 ("not-json", "claude printed no JSON output"),
@@ -434,6 +595,12 @@ def main():
               in case.stdout
               and (case.record() / "note.txt").read_text() == "Bash needs allowing.\n",
               case.detail)
+        case = Case(scratch).run("refusal-no-structured-output")
+        check("an output with no structured_output, as after a refusal, prints the reviewer's "
+              "text answer as its last answer, and writes no note",
+              lambda: case.code == 1
+              and "The reviewer's last answer:\nThe reviewer declined this request." in case.stdout
+              and not (case.record() / "note.txt").exists(), case.detail)
         case = Case(scratch).run("could-not-review")
         check("a COULD_NOT_REVIEW answer's reason is printed",
               lambda: case.stdout.count("Bash was refused, so nothing ran.") == 1, case.detail)
@@ -534,20 +701,41 @@ def main():
               lambda: case.code == 2 and not case.claude_calls, case.detail)
         case = Case(scratch)
         case.run("valid", head="0" * 40)
-        check("a head worktree not at the head commit refuses with exit 2 before the reviewer runs",
+        check("a head worktree not at the nc-head-commit refuses with exit 2 before the reviewer runs",
               lambda: case.code == 2 and not case.claude_calls
-              and "is not at the head commit" in case.stdout, case.detail)
+              and "is not at the nc-head-commit" in case.stdout, case.detail)
 
-        def schema_matches_the_step():
-            schema = json.loads(SCHEMA.read_text())
-            return (schema["properties"]["verdict"]["enum"] == ["APPROVE", "REQUEST_CHANGES",
-                                                                "COULD_NOT_REVIEW"]
-                    and schema["required"] == ["verdict", "body", "comments", "note"]
-                    and schema["properties"]["note"] == {"type": "string"}
-                    and schema["properties"]["comments"]["items"]["required"]
-                    == ["path", "line", "body"])
-        check("the schema file's verdicts and fields are the ones the step checks",
-              schema_matches_the_step)
+        for name, settings_text, expected in (
+                ("missing", None, "could not read"),
+                ("not JSON", "{", "is not JSON ("),
+                ("not a JSON object", "[]", "is JSON but not a JSON object"),
+                ("naming the project directory in a form this program does not rewrite",
+                 json.dumps({"hooks": {"Stop": [{"hooks": [
+                     {"type": "command",
+                      "command": 'python3 "${CLAUDE_PROJECT_DIR%/}"/scripts/stop-hook.py'}]}]}}),
+                 "still names CLAUDE_PROJECT_DIR")):
+            case = Case(scratch)
+            if settings_text is None:
+                case.main_settings_file.unlink()
+            else:
+                case.main_settings_file.write_text(settings_text)
+            case.run("valid")
+            check(f"main's project settings file {name} refuses with exit 2 before the reviewer "
+                  f"runs",
+                  lambda: case.code == 2 and not case.claude_calls
+                  and "PR 7: Claude review not run: " in case.stdout
+                  and str(case.main_settings_file) in case.stdout
+                  and expected in case.stdout, case.detail)
+
+        repository_settings = load_program().claude_code_project_settings_read_from_review_tools_worktree_at_main_with_claude_project_dir_replaced_by_its_path(
+            PROGRAM.resolve().parents[1])
+        check("this repository's own .claude/settings.json is rewritten whole, so no command in "
+              "it runs a head worktree's script",
+              lambda: "CLAUDE_PROJECT_DIR" not in json.dumps(repository_settings)
+              and str(PROGRAM.resolve().parents[1]) in json.dumps(repository_settings["hooks"]),
+              json.dumps(repository_settings)[:2000])
+
+        schema_driven_cases(scratch)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 

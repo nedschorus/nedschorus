@@ -10,7 +10,7 @@ One program, two hook events, told apart by the payload's hook_event_name:
       written, as style-guide-word-checker-markdown-edit-hook-nbd.py does. Edit
       scans new_string alone. Write scans only the lines HEAD does not already
       hold, so an edit to a file whose old bare numbers are kept on purpose
-      (agent-only files such as those under scripts/ and .claude/hooks/) is
+      (agent-only files such as those under scripts/ and .claude/guard-hooks/) is
       not reported for text it did not write. A file outside the session's
       checkout, or one git ignores, is not scanned.
   UserPromptSubmit: when the user sends a message, scan the agent's reply
@@ -32,7 +32,7 @@ matches. Not scanned: fenced code blocks, a block quote's included, inline
 code spans, a whole Markdown link `[text](target "title")` (its text included:
 a link is already a citation that can be opened), a bare URL, and a line a
 program reads: one that starts with `supports-issues:` or `issue-marker:`, or
-is, whole, one of ghi-info's reply lines, which ghi-info-ask.py parses
+is, whole, one of ghi-guide-agent's reply lines, which ghi-guide-agent-ask.py parses
 (`verdict: related #<n>,#<m>`, `read #<n>, #<m>`). A fence opened inside a
 block quote closes where the block quote ends. A skipped span is blanked to a
 barrier character no match can cross, so `PR [title](url) 2 hours` is not read
@@ -144,10 +144,10 @@ BARE_REFERENCE_PATTERN = re.compile(
     re.IGNORECASE)
 FENCE_PATTERN = re.compile(r"^\s*(?:>\s?)*\s*(?:[-*+]\s+|\d+[.)]\s+)?(`{3,}|~{3,})")
 ISSUE_NUMBER_LIST = r"#\d+(?:[ \t]*,[ \t]*#\d+)*"
-# ghi-info tags each closed issue in a reading list with "(closed <date>)" after its number.
+# ghi-guide-agent tags each closed issue in a reading list with "(closed <date>)" after its number.
 READING_LIST_ENTRY = r"#\d+(?:[ \t]*\(closed[ \t]+\d{4}-\d{2}-\d{2}\))?"
 READING_LIST = READING_LIST_ENTRY + r"(?:[ \t]*,[ \t]*" + READING_LIST_ENTRY + r")*"
-# ghi-info's two reply shapes count only as whole lines, so a sentence that starts "Read #<n> before ..." is still read.
+# ghi-guide-agent's two reply shapes count only as whole lines, so a sentence that starts "Read #<n> before ..." is still read.
 PROGRAM_READ_LINE_PATTERN = re.compile(
     r"^\s*(?:(?:supports-issues|issue-marker):"
     r"|verdict:[ \t]*(?:(?:too-similar|related)[ \t]*" + ISSUE_NUMBER_LIST + r"|unrelated)[ \t]*$"

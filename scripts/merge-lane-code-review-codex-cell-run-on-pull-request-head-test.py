@@ -50,6 +50,10 @@ sys.exit(int(os.environ.get("MERGE_LANE_CODEX_TEST_CELL_EXIT", "0")))
 failures = []
 
 
+def review_worktrees_directory(helpers):
+    return helpers.parent / f"{helpers.name}-review-worktrees"
+
+
 def check(name, condition, detail=""):
     print(("PASS  " if condition else "FAIL  ") + name)
     if not condition:
@@ -67,6 +71,7 @@ def run_program(scratch, helpers, extra_environment=None, home=None):
         (scratch / log).unlink(missing_ok=True)
     completed = subprocess.run(
         [sys.executable, str(PROGRAM), "7", BASE, "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+         "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(helpers)),
          "--review-tools-worktree-at-main", str(scratch / "main-checkout")],
         capture_output=True, text=True,
         env={**os.environ,
@@ -107,10 +112,10 @@ def main():
               json.dumps(gh_calls))
         check("the description is saved under cx/pr<n>-<base>",
               (outputs / "pull-request-description.md").read_text() == DESCRIPTION, detail)
-        check("main's review runs on wt/pr<n>-head from the base commit, with main's "
+        check("main's review runs on pr<n>-head from the base commit, with main's "
               "PR reviewer instructions",
               cell_calls and cell_calls[0]["argv"] == [
-                  "--base", BASE, "--repo", str(helpers / "wt" / "pr7-head"),
+                  "--base", BASE, "--repo", str(review_worktrees_directory(helpers) / "pr7-head"),
                   "--instructions-file", str(instructions),
                   "--pull-request-description-file", str(outputs / "pull-request-description.md"),
                   "--output", str(outputs / "codex-code-review-report.md")], json.dumps(cell_calls))

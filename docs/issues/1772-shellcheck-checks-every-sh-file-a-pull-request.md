@@ -1,5 +1,6 @@
 ---
 issue: "[ShellCheck checks every .sh file a pull request changes, and its findings block the merge](https://github.com/nedschorus/nedschorus/issues/1772)"
+kind: design
 ---
 
 # ShellCheck checks every .sh file a pull request changes, and its findings block the merge

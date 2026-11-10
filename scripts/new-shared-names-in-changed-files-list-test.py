@@ -414,13 +414,13 @@ def case_agent_seat_branch_in_its_agent_home_is_not_reported(root):
     _, topic = run_hook(agent_home, state_root, {"tool_name": "Bash", "session_id": "session-seat",
                                                  "tool_input": {"command": "git switch -c a-topic-in-the-agent-home"}},
                         home=home)
-    check("a topic branch in an agent-home is reported",
+    check("an nc-topic-branch in an agent-home is reported",
           reported_branches(topic) == {"a-topic-in-the-agent-home"}, topic)
     topic_worktree = home / "agents" / "some-seat-worktrees" / "a-named-topic"
     git(["worktree", "add", "-q", "-b", "a-named-topic", str(topic_worktree)], clone)
     _, named = run_hook(topic_worktree, state_root, {"tool_name": "Bash", "session_id": "session-topic",
                                                      "tool_input": {"command": "ls"}}, home=home)
-    check("a topic branch in a worktree named after it, below ~/agents but not directly in it, is reported",
+    check("an nc-topic-branch in a worktree named after it, below ~/agents but not directly in it, is reported",
           reported_branches(named) == {"a-named-topic"}, named)
 
 

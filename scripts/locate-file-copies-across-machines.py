@@ -79,16 +79,20 @@ MAC_SURFACES = {
 NED_BOX_SURFACES = {
     "machine": "ned-box",
     "surfaces": [
+        # Agent-sessions handoff-supervisor.py launches keep their temp folder under its
+        # NED_BOX_CLAUDE_CODE_TMPDIR, copied here since this file is sent over ssh alone; its
+        # test fails when the two differ. Agent-sessions launched before that still use /tmp.
         {"name": "checkouts",
          "roots": ["/home/nedlern/agents", "/home/nedlern/Projects",
-                   "/tmp/claude-1000"],
+                   "/tmp/claude-1000",
+                   "/home/nedlern/.cache/claude-code-tmp/claude-1000"],
          "git": True},
         {"name": "log-store", "roots": ["/home/nedlern/nedschorus-logs"]},
         {"name": "handoffs", "roots": ["/home/nedlern/.claude/handoffs"]},
     ],
     "this_repository": {"clones": ["/home/nedlern/Projects/nedschorus"],
                         "checkout_parents": ["/home/nedlern/agents"],
-                        "scratch_trees": ["/tmp"]},
+                        "scratch_trees": ["/tmp", "/home/nedlern/.cache/claude-code-tmp"]},
     # The Mac mounts ned-box's home here. A copy of the pair in
     # nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py,
     # since this file is sent over ssh alone; its test fails when the two differ.

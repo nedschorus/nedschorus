@@ -65,7 +65,7 @@ def write_transcript(directory, records, name="session.jsonl"):
     project = Path(directory) / "-home-someone-agents-alpha"
     project.mkdir(parents=True, exist_ok=True)
     path = project / name
-    path.write_text("".join(json.dumps(record) + "\n" for record in records))
+    path.write_text("".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records), encoding="utf-8")
     return path
 
 
@@ -148,6 +148,182 @@ with tempfile.TemporaryDirectory() as directory:
           run.returncode == 0 and "USER: y" in run.stdout
           and "1 matching user message(s)" in run.stdout,
           f"exit {run.returncode}: {run.stdout}{run.stderr}")
+
+def typed_with(text, **fields):
+    record = typed(text)
+    record.update(fields)
+    return record
+
+
+with tempfile.TemporaryDirectory() as directory:
+    path = write_transcript(directory, [
+        typed_with("go on", origin={"kind": "human"}),
+        typed_with("Another Claude session sent a message: done", origin={"kind": "peer"}),
+        typed_with("<channel source=\"reviewer\">x</channel> trailing", origin={"kind": "channel"}),
+        typed_with("<task-notification>x</task-notification> trailing", origin={"kind": "task-notification"}),
+        typed_with("Stop hook feedback:\nrefused", isMeta=True),
+        typed_with("Review this file for a range of defects.", entrypoint="sdk-cli"),
+        typed_with("no origin field at all"),
+        typed_with("origin is not a dict", origin=None),
+        agent("ok"),
+    ])
+    texts = user_texts(path)
+    check("a user turn whose origin is not human, or that is meta or a claude -p prompt, is not the user's",
+          texts == ["go on", "no origin field at all"], texts)
+
+with tempfile.TemporaryDirectory() as directory:
+    path = write_transcript(directory, [
+        typed_with("This session is being continued from a previous conversation that ran out of context."),
+        typed_with("Read /h/.claude/handoffs/a-dialog-0002.md — the dialog from the session you are continuing, "
+                   "written at 10:00", origin={"kind": "human"}),
+        typed_with("Read /h/.claude/handoffs/a-dialog-0001.md — it is the dialog from the session you are "
+                   "continuing", origin={"kind": "human"}),
+        typed_with("Next step.\n\n(Recovered at supervisor boot: the previous session's conversation-tail is "
+                   "unavailable; this next-step and the repository are your whole context.)",
+                   origin={"kind": "human"}),
+        typed_with("I said: Read the file — the dialog from the session you are continuing is long",
+                   origin={"kind": "human"}),
+    ])
+    texts = user_texts(path)
+    check("a compaction summary and a handoff successor's opening prompt are not the user's",
+          texts == ["I said: Read the file — the dialog from the session you are continuing is long"], texts)
+
+with tempfile.TemporaryDirectory() as directory:
+    path = write_transcript(directory, [
+        typed("start"),
+        queued("y"),
+        typed("y"),
+    ])
+    texts = user_texts(path)
+    check("the same words typed right after a queued message, with no interrupt between, are a second message",
+          texts == ["start", "y", "y"], texts)
+
+# Each prompt below comes from the program that writes it, so a prompt it adds or rewords is tested here.
+recover_module = search_module.crash_recovery
+supervisor_module = search_module.handoff_supervisor
+with tempfile.TemporaryDirectory() as directory:
+    handoffs = Path(directory)
+    no_handoff_yet = supervisor_module.FIRST_PROMPT_FOR_AGENT_SEAT_WITHOUT_A_HANDOFF_TEMPLATE.format(agent="MD-skills")
+    launch_prompts = [
+        recover_module.write_resume_prompt(handoffs, "alpha").read_text(),
+        recover_module.write_resume_prompt(handoffs, "alpha", unreplied_successor=True).read_text(),
+        recover_module.write_first_prompt_after_recorded_exit(handoffs, "alpha", by_hand=True, resuming=True).read_text(),
+        recover_module.write_first_prompt_after_recorded_exit(handoffs, "alpha", by_hand=False, resuming=True).read_text(),
+        recover_module.write_first_prompt_after_recorded_exit(handoffs, "alpha", by_hand=False, resuming=False).read_text(),
+        recover_module.fresh_session_from_conversation_tail_prompt(handoffs / "alpha-conversation-tail.md"),
+        supervisor_module.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF,
+        no_handoff_yet,
+        supervisor_module.first_prompt_from_launch_command_marked_not_typed_by_the_user(
+            "You are the git-infra seat. Read docs/agents/seat-first-prompt.md."),
+        no_handoff_yet + "\n\nLeftover work-snapshots: 1 copy(ies) of uncommitted work left by an agent of this "
+        "agent-seat whose `claude` process is gone, and no longer in its worktree:",
+        supervisor_module.build_ignition_prompt(
+            handoffs / "alpha-dialog-0003.md",
+            {"next-step": "Do the work.", "written-at": "2026-11-01T19:27:02Z"}),
+        supervisor_module.IgnitionPlanWithoutConversationTail(next_step="Do the work.").compose(""),
+        supervisor_module.IgnitionPlanWithoutConversationTail(
+            next_step="Do the work.", occasion="login", unextracted_session_id="s1",
+            unextracted_transcript_path=handoffs / "s1.jsonl").compose(""),
+        supervisor_module.IgnitionPlanWithoutConversationTail(
+            next_step="Do the work.", unextracted_session_id="s1",
+            unextracted_transcript_paths_in_several_folders=(handoffs / "a.jsonl", handoffs / "b.jsonl")).compose(""),
+        supervisor_module.IgnitionPlanWithoutConversationTail(
+            next_step="Do the work.", unextracted_session_id="s1",
+            unextracted_transcript_expected_path=handoffs / "s1.jsonl").compose(""),
+    ]
+    missed = [prompt[:60] for prompt in launch_prompts
+              if not search_module.written_by_a_program({"origin": {"kind": "human"}}, prompt)]
+    check("every launch prompt crash recovery and the handoff-supervisor write is recognized as a program's",
+          missed == [], missed)
+
+# Written out, not read from the handoff-supervisor, so that dropping the earlier wording from it fails here.
+first_prompt_ending_with_the_earlier_not_typed_by_the_user_line = (
+    "You are the git-infra seat. Read docs/agents/seat-first-prompt.md.\n\n"
+    "The handoff-supervisor was given this first prompt with --first-prompt-file or --first-prompt; "
+    "the user did not type it.")
+check("a first prompt that ends with the earlier wording of the not-typed-by-the-user line is still a program's",
+      search_module.written_by_a_program({"origin": {"kind": "human"}},
+                                         first_prompt_ending_with_the_earlier_not_typed_by_the_user_line))
+
+quoting = "I said: You are MD-skills. No handoff exists yet; ask what to work on."
+check("the user's words that quote the no-handoff prompt after his own opening are still his",
+      not search_module.written_by_a_program({"origin": {"kind": "human"}}, quoting))
+
+with tempfile.TemporaryDirectory() as directory:
+    path = write_transcript(directory, [
+        typed("start"),
+        queued("stop"),
+        interrupt_notice(),
+        typed("stop"),
+        agent("Stopped."),
+    ])
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    whole = search_module.TurnReader()
+    whole_turns = [whole.turn(record) for record in records]
+    first_half = search_module.TurnReader()
+    turns = [first_half.turn(record) for record in records[:3]]
+    resumed = search_module.TurnReader(json.loads(json.dumps(first_half.state())))
+    turns += [resumed.turn(record) for record in records[3:]]
+    check("a reader resumed from its saved state reads the rest as one reader would",
+          turns == whole_turns and [t for t in turns if t] == [("user", "start"), ("user", "stop"),
+                                                                ("agent", "Stopped.")], turns)
+
+def search(directory, *arguments):
+    return subprocess.run([sys.executable, str(SEARCH_SCRIPT), "--projects-dir", directory, *arguments],
+                          capture_output=True, text=True)
+
+
+with tempfile.TemporaryDirectory() as directory:
+    write_transcript(directory, [typed("the alpha plan"), agent("ok")], name="one.jsonl")
+    write_transcript(directory, [typed("alpha then beta"), agent("ok")], name="two.jsonl")
+    write_transcript(directory, [typed("nothing here"), agent("ok")], name="three.jsonl")
+    run = search(directory, "BETA")
+    check("the prefilter reads only the transcripts that hold a pattern's text, still finds the hit, and says \"was opened\" for one transcript",
+          run.returncode == 0 and "USER: alpha then beta" in run.stdout
+          and "among 3 transcript(s); ripgrep found none of the search pattern(s) in 2 of them, so only the other 1 was opened" in run.stdout,
+          f"exit {run.returncode}: {run.stdout}{run.stderr}")
+    run = search(directory, "alpha", "beta", "--all-terms")
+    check("with --all-terms, a transcript is read only when it holds every pattern's text",
+          "1 matching user message(s)" in run.stdout and "in 2 of them, so only the other 1 was opened" in run.stdout,
+          f"exit {run.returncode}: {run.stdout}{run.stderr}")
+    run = search(directory, "alpha", "beta")
+    check("without --all-terms, a transcript holding any pattern's text is read",
+          "2 matching user message(s)" in run.stdout and "in 1 of them, so only the other 2 were opened" in run.stdout,
+          f"exit {run.returncode}: {run.stdout}{run.stderr}")
+    run = search(directory, "alpha.plan")
+    check("a pattern that could match text JSON escapes gets no prefilter: every transcript is read",
+          "1 matching user message(s)" in run.stdout and "found among 3 transcript(s); 1 user message(s)" not in run.stdout and "ripgrep found none" not in run.stdout,
+          f"exit {run.returncode}: {run.stdout}{run.stderr}")
+
+    write_transcript(directory, [typed("approve İtem 4"), agent("ok")], name="four.jsonl")
+    run = search(directory, "approve item")
+    check("an ASCII pattern finds a message whose letter Python folds onto it and ripgrep does not (İ for i)",
+          "USER: approve İtem 4" in run.stdout, f"exit {run.returncode}: {run.stdout}{run.stderr}")
+    write_transcript(directory, [typed("approve item 5"), agent("ok")], name="five.jsonl")
+    run = search(directory, "İtem 5")
+    check("a pattern with a non-ASCII letter is not prefiltered, finds its match, and says so on stderr",
+          "USER: approve item 5" in run.stdout and "every transcript was read" in run.stderr
+          and "İtem 5" in run.stderr, f"exit {run.returncode}: {run.stdout}{run.stderr}")
+    write_transcript(directory, [typed("cut it by x\u00bd now"), agent("ok")], name="six.jsonl")
+    run = search(directory, r"by x\w")
+    check("a pattern with a regex escape is not prefiltered, so it finds a match only Python's \\w reads (\u00bd)",
+          "USER: cut it by x\u00bd now" in run.stdout and "every transcript was read" in run.stderr,
+          f"exit {run.returncode}: {run.stdout}{run.stderr}")
+    (Path(directory) / "-home-someone-agents-alpha" / "six.jsonl").unlink()
+    (Path(directory) / "-home-someone-agents-alpha" / "four.jsonl").unlink()
+    (Path(directory) / "-home-someone-agents-alpha" / "five.jsonl").unlink()
+
+    paths = sorted(str(path) for path in Path(directory).glob("*/*.jsonl"))
+    real_search = search_module.claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcripts_matching_any_pattern_ignoring_case
+    search_module.claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcripts_matching_any_pattern_ignoring_case = (
+        lambda *_, **__: ([], ["ripgrep could not search everything: injected failure"]))
+    try:
+        kept, note = search_module.claude_code_session_transcript_paths_prefilter_on_raw_json(directory, paths, ["beta"], False)
+    finally:
+        search_module.claude_code_session_transcript_lookup_and_text_search_common.claude_code_session_transcripts_matching_any_pattern_ignoring_case = (
+            real_search)
+    check("a prefilter search that fails reads every transcript, and says why",
+          kept == paths and "injected failure" in note and "every transcript was read" in note, (kept, note))
 
 print(f"{'FAILED' if failures else 'all cases passed'}: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)

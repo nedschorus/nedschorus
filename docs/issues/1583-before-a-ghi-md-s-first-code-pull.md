@@ -1,5 +1,6 @@
 ---
 issue: "[Before a GHI-MD's first code pull request, the agent sorts every line of its deferred-decisions with the user, using fixed hashtag markers](https://github.com/nedschorus/nedschorus/issues/1583)"
+kind: design
 ---
 
 # Before a GHI-MD's first code pull request, the agent sorts every line of its deferred-decisions with the user, using fixed hashtag markers
