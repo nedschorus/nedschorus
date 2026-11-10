@@ -251,12 +251,20 @@ def rsync_command(host, source: pathlib.Path, target: pathlib.PurePosixPath,
     return command + [f"{source}/", destination]
 
 
-def ensure_directory(host, path: pathlib.PurePosixPath) -> subprocess.CompletedProcess:
+def ensure_directory(host, path: pathlib.PurePosixPath):
+    """Create path in the store; return None, or what went wrong, after passing ssh's stderr on."""
     if host is None:
-        pathlib.Path(path).mkdir(parents=True, exist_ok=True)
-        return subprocess.CompletedProcess([], 0, "", "")
-    return subprocess.run(SSH_COMMAND + [host, f"mkdir -p -- '{path}'"],
-                          capture_output=True, text=True, check=False)
+        try:
+            pathlib.Path(path).mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            return str(error)
+        return None
+    completed = subprocess.run(SSH_COMMAND + [host, f"mkdir -p -- '{path}'"],
+                               capture_output=True, text=True, check=False)
+    if completed.returncode == 0:
+        return None
+    sys.stderr.write(completed.stderr)
+    return f"exit {completed.returncode}"
 
 
 def count_files_local(path: pathlib.Path) -> int:
@@ -296,10 +304,9 @@ def mirror_one(host, target: pathlib.PurePosixPath, name: str, source: pathlib.P
         if not failures_only:
             print(f"mirrored: {name} — nothing to mirror, none found in {source}")
         return NOTHING_TO_MIRROR
-    prepared = ensure_directory(host, target)
-    if prepared.returncode != 0:
-        print(f"FAILED: {name} — could not prepare {host or ''}:{target} (exit {prepared.returncode})")
-        sys.stderr.write(prepared.stderr)
+    problem = ensure_directory(host, target)
+    if problem is not None:
+        print(f"FAILED: {name} — could not prepare {f'{host}:' if host else ''}{target} ({problem})")
         return EXIT_FAILED
     # The file list goes on rsync's stdin (--files-from=-); a whole tree gets an empty stdin.
     completed = subprocess.run(rsync_command(host, source, target, files is not None),
