@@ -178,12 +178,8 @@ git(checkout, "worktree", "add", "-q", "--detach", str(other_worktree))
 other_record = other_worktree / "cold-read-records" / "shipped-other-doc-2026-11-03"
 other_record.mkdir(parents=True)
 (other_record / "fast-read.md").write_text("other report\n")
-code, output, stderr = run_hook_process("git worktree remove some-worktree", checkout)
 cold_read_copy = STORE / "cold-read-records" / "shipped-doc-2026-11-03" / "fast-read.md"
 sanity_check_copy = STORE / "sanity-check-records" / "2026-11-03-shipped-doc" / "finding-dispositions.md"
-check("a removal whose path names no worktree ships nothing and is let through silently",
-      code == 0 and output is None and not cold_read_copy.exists() and not sanity_check_copy.exists(),
-      (code, output, stderr))
 code, output, stderr = run_hook_process(f"git worktree remove {worktree}", checkout)
 check("unshipped records reach the log-store and the removal is let through silently",
       code == 0 and output is None and cold_read_copy.is_file() and sanity_check_copy.is_file()
@@ -193,6 +189,14 @@ check("the records of a worktree the command does not name are not shipped",
       not (STORE / "cold-read-records" / other_record.name).exists())
 check("an empty record directory is not shipped",
       not (STORE / "cold-read-records" / "empty-record").exists())
+other_copy = STORE / "cold-read-records" / other_record.name / "fast-read.md"
+code, output, stderr = run_hook_process(f"echo {other_worktree} | xargs git worktree remove", checkout)
+check("a removal whose path reaches git only at run time, through xargs, ships every worktree's records",
+      code == 0 and output is None and other_copy.is_file(), (code, output, stderr))
+shutil.rmtree(STORE / "cold-read-records" / other_record.name)
+code, output, stderr = run_hook_process("git worktree remove some-worktree", checkout)
+check("a removal whose path names no worktree ships every worktree's records, not none",
+      code == 0 and output is None and other_copy.is_file(), (code, output, stderr))
 
 # A record the store already holds whole is skipped without running its shipper.
 shipper_calls = []
@@ -814,8 +818,18 @@ check("a suffix must start at a directory boundary",
 check("two paths given to one removal leave the hook unable to tell",
       hook.worktrees_removed_or_unresolved_reason("git worktree remove /a/b/one /a/b/two", "/", worktrees)
       == (None, "`worktree remove` is given 2 paths"))
-check("a removal naming no worktree removes none",
-      hook.worktrees_removed_or_unresolved_reason("git worktree remove /a/nowhere", "/", worktrees) == ({}, None))
+check("a removal naming no worktree leaves the hook unable to tell, never removing none",
+      hook.worktrees_removed_or_unresolved_reason("git worktree remove /a/nowhere", "/", worktrees)
+      == (None, "the path /a/nowhere names no worktree the hook can find from the command's directory"))
+check("a removal naming no path in the command text, as through xargs, leaves the hook unable to tell",
+      hook.worktrees_removed_or_unresolved_reason("echo /a/b/two | xargs git worktree remove", "/", worktrees)
+      == (None, "`worktree remove` names no path in the command text, so the path reaches git only when "
+                "the command runs, as through xargs"))
+check("builtin cd before a relative path leaves the hook unable to tell",
+      hook.worktrees_removed_or_unresolved_reason(
+          "builtin cd .claude/worktrees && git worktree remove -f ./A", "/r",
+          [Path("/r"), Path("/r/.claude/worktrees/A")])
+      == (None, "the command changes directory, and the path ./A is relative"))
 check("a worktree removed twice, once with -f, is removed with -f",
       hook.worktrees_removed_or_unresolved_reason(
           "git worktree remove /a/b/two; bash -c 'git worktree remove --force /a/b/two'", "/", worktrees)

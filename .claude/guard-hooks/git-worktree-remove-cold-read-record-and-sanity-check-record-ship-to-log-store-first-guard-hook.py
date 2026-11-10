@@ -7,9 +7,9 @@ Bash command that runs `git worktree remove`, this PreToolUse hook lists the
 repository's worktrees with `git worktree list`, run in the hook's cwd, works
 out which of them the command removes, and ships the records of those alone:
 a removal whose path names a worktree never reads, ships or waits on another
-worktree's records, and a removal naming no worktree ships nothing. A removal
-the hook cannot place, as described below, ships the records of every
-worktree, as it might remove any of them. The shippers, and the folder each serves, are the ones
+worktree's records. A removal the hook cannot place, as described below,
+ships the records of every worktree, as it might remove any of them; one it
+cannot place never ships nothing. The shippers, and the folder each serves, are the ones
 scripts/clean-worktrees.py uses (LOG_STORE_RECORD_SHIPPERS), loaded from that
 file so the two stay one list. A record whose every file the log-store
 already holds with the same content is skipped without running its shipper,
@@ -42,8 +42,11 @@ directory boundary, names that worktree; otherwise the argument, resolved
 against the hook's cwd and any -C before `worktree`, is compared with each
 worktree's real path. When it cannot tell, because the path or a -C holds a
 variable, a glob or a substitution, `worktree remove` is given an option
-other than -f or --force or more than one path, or the command changes
-directory before a path that depends on it, the hook refuses the removal
+other than -f or --force, more than one path or no path in the command text
+(as through xargs), the command changes directory (cd, pushd or popd, after
+builtin too, or a wrapper's -C) before a path that depends on it, or the path
+names no worktree the hook can find, the hook ships every worktree's records,
+refuses the removal
 while any worktree holds a record being written or one that did not ship,
 starts no waiter, and asks for the path written out in full, with -f when
 the command gave -f or --force; when every worktree's records shipped, it
@@ -99,9 +102,9 @@ it has read every worktree's records, as when a shipper module cannot be
 loaded, or has not read them when the deadline passes, the command is let
 through and the agent is told, the same way, that records may not have
 shipped. A removal in another repository, given by git's -C or --git-dir,
-names none of the worktrees of the repository the hook's cwd is in, so it
-ships nothing; when the hook cannot place it, it ships the records of the
-cwd's repository, not of that one. On the Mac each record is
+names none of the worktrees of the repository the hook's cwd is in, so the
+hook cannot place it and ships the records of every worktree of the cwd's
+repository, not of that one. On the Mac each record is
 checked against the store over ssh, one record at a time, so with many
 records the budget can run out and refuse the removal; a run after that
 skips the records already shipped. When the worktree's directory cannot be
@@ -367,8 +370,9 @@ def worktree_named_by_real_path(path, worktrees):
 
 def removal_path_argument_and_path_or_unresolved_reason(words, index):
     """For the `git ... worktree remove ...` whose git is words[index]: (the path argument, that
-    path joined to each -C before it, None), (None, None, None) for a removal naming no path, or
-    (None, None, why the hook cannot tell). The joined path is relative when it depends on the cwd."""
+    path joined to each -C before it, None), or (None, None, why the hook cannot tell). A removal
+    naming no path in the command text, as through xargs, gets its path only when it runs, so the
+    hook cannot tell. The joined path is relative when it depends on the cwd."""
     directories = []
     index += 1
     while index < len(words) and words[index].startswith("-"):
@@ -391,7 +395,8 @@ def removal_path_argument_and_path_or_unresolved_reason(words, index):
     if len(paths) > 1:
         return None, None, f"`worktree remove` is given {len(paths)} paths"
     if not paths:
-        return None, None, None
+        return None, None, ("`worktree remove` names no path in the command text, so the path "
+                            "reaches git only when the command runs, as through xargs")
     if UNEXPANDED_WORD_PATTERN.search(paths[0]):
         return None, None, f"the path {paths[0]} holds a variable, a glob or a substitution"
     argument = shell_reader.shell_word_tilde_prefix_expand_as_bash_would(paths[0])
@@ -399,8 +404,10 @@ def removal_path_argument_and_path_or_unresolved_reason(words, index):
 
 
 def simple_command_changes_directory(words):
-    """True for cd, pushd or popd, and for a command run by a wrapper option such as env -C."""
+    """True for cd, pushd or popd, after builtin too, and for a command run by a wrapper option such as env -C."""
     index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
+    if index is not None and words[index] == "builtin" and index + 1 < len(words):
+        index += 1
     if index is not None and any(is_program(words[index], name) for name in DIRECTORY_CHANGING_PROGRAMS):
         return True
     for wrapper, options in shell_reader.simple_command_wrapper_options_and_values_parsed_from_words(words):
@@ -418,7 +425,9 @@ def worktrees_removed_or_unresolved_reason(command, cwd, worktrees, outer_comman
 
     A path that depends on the cwd is unresolved in a command that changes directory anywhere,
     because the hook does not follow the directory changes; a bash -c string inherits that
-    from the command that runs it.
+    from the command that runs it. A removal the hook cannot place, including one whose path
+    names no worktree it can find, is unresolved, never a removal of no worktree, so that the
+    caller ships every worktree's records rather than none.
     """
     commands = list(shell_reader.simple_commands(command))
     changes_directory = outer_command_changes_directory or any(
@@ -444,15 +453,14 @@ def worktrees_removed_or_unresolved_reason(command, cwd, worktrees, outer_comman
         argument, path, reason = removal_path_argument_and_path_or_unresolved_reason(words, index)
         if reason is not None:
             return None, reason
-        if argument is None:
-            continue
         worktree = worktree_named_by_path_suffix(argument, worktrees)
         if worktree is None:
             if changes_directory and not os.path.isabs(path):
                 return None, f"the command changes directory, and the path {argument} is relative"
             worktree = worktree_named_by_real_path(os.path.join(cwd, path), worktrees)
-        if worktree is not None:
-            removed[worktree] = removed.get(worktree, False) or worktree_remove_force_given(words, index)
+        if worktree is None:
+            return None, f"the path {argument} names no worktree the hook can find from the command's directory"
+        removed[worktree] = removed.get(worktree, False) or worktree_remove_force_given(words, index)
     return removed, None
 
 
