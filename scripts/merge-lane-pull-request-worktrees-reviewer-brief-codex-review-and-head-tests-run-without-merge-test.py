@@ -729,7 +729,7 @@ def main():
               completed.returncode == 2 and calls == []
               and f"{STEPS[0]} is missing" in completed.stdout
               and "worktree add --detach" in completed.stdout
-              and completed.stdout.rstrip().endswith("Then run this again.")
+              and "Then run this again." in completed.stdout
               and generic_instruction not in completed.stdout,
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}")
 
@@ -744,13 +744,31 @@ def main():
             stub.rename(stub.with_suffix(".away"))
             completed, calls, _ = run_program(scratch, checkout, helpers, [first_round])
             stub.with_suffix(".away").rename(stub)
-            check(f"a review tools worktree without {step} exits 2 before any step runs, "
-                  f"with the missing-tool instructions and not the generic one",
+            check(f"a review tools worktree at main without {step} exits 2 before any step "
+                  f"runs, saying main lacks it and to run main's copy of this program, and "
+                  f"not to move the worktree to main",
                   completed.returncode == 2 and calls == []
-                  and f"{step} is missing" in completed.stdout
-                  and completed.stdout.rstrip().endswith("Then run this again.")
+                  and f"{checkout / 'scripts' / step} is missing" in completed.stdout
+                  and f"now at origin's main, {head_of(checkout)}" in completed.stdout
+                  and f"Run this again as {checkout / 'scripts' / PROGRAM.name}"
+                  in completed.stdout
+                  and completed.stdout.rstrip().endswith(
+                      "If main's copy refuses the same way, tell the user this message.")
+                  and "move it to main" not in completed.stdout.lower()
                   and generic_instruction not in completed.stdout,
                   f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}")
+
+        program_spec = importlib.util.spec_from_file_location("run_without_merge", PROGRAM)
+        program = importlib.util.module_from_spec(program_spec)
+        program_spec.loader.exec_module(program)
+        what_stopped, instruction = (
+            program.review_tools_worktree_at_main_step_script_missing_refusal_message(
+                STEPS[0], PROGRAM.resolve().parents[1], "0" * 40))
+        check("run from main's own copy, a missing step script is only to be told to the user, "
+              "as main having renamed or removed it",
+              instruction == "Tell the user this message."
+              and "main has renamed or removed the script" in what_stopped
+              and "is not main's" not in what_stopped, f"{what_stopped}\n{instruction}")
 
         # Last, because it moves origin's main: main gains a step script that the review
         # tools worktree's older commit lacks, so the scripts are looked for only after
