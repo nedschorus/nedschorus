@@ -111,8 +111,8 @@ line a sub-step that asks for no decision ends with, `[No decision here; type
 N or next to continue.](<page link>)`, alone on its line, or, for a sub-step
 whose publish failed, the same line without its link.
 
-Agent-facing messages follow
-docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+Tool-messages-to-agent follow
+docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 """
 import importlib.util
 import os

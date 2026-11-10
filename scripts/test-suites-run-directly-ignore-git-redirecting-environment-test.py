@@ -129,7 +129,7 @@ SUITES_RUN_WITH_GIT_DIR = {
         "scripts/branch-leaves-no-citations-of-removed-paths-test.py",
         "scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py",
         "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
-        "nc-systems/general-tools/failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py"),
+        "nc-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py"),
 }
 SUITE_RUN_WITH_EVERY_VARIABLE = "scripts/code-review-codex-cell-test.py"
 FILES_THE_SUITE_RUN_WITH_EVERY_VARIABLE_READS = (

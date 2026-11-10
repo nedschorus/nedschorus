@@ -157,8 +157,8 @@ that is not JSON or a file it cannot read, the hook prints one line naming it
 on stderr and exits 1: Claude Code records a Stop hook's exit 1 as a
 non-blocking error and still ends the turn.
 
-Agent-facing messages follow
-docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+Tool-messages-to-agent follow
+docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 """
 import datetime
 import functools

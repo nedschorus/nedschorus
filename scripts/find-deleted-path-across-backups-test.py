@@ -2826,7 +2826,7 @@ for abbreviated in (["--rep", "/x"], ["--rep=/x"]):
           refused.returncode == 2 and "unrecognized arguments: %s" % abbreviated[0] in refused.stderr,
           "exit %s\n%s" % (refused.returncode, refused.stderr))
 
-message = finder.build_agent_facing_message_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command("/r", "/r/a.md", "planted failure", {"reflog"}, "python3 p")
+message = finder.build_tool_message_to_agent_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command("/r", "/r/a.md", "planted failure", {"reflog"}, "python3 p")
 check("with only git reflog skipped, the git-failure message names the git surface alone and keeps exit 3 for no find",
       "The git surface cannot search, and its result line will say UNAVAILABLE for this failure; --skip left out "
       "the other git surface." in message

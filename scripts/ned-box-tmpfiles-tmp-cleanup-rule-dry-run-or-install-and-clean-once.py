@@ -29,7 +29,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 RULE_FILE = (Path(__file__).resolve().parents[1] / "config"
              / "ned-box-tmpfiles-tmp-cleanup-rule-ignoring-directory-access-time.conf")
 INSTALLED_RULE_PATH = Path("/etc/tmpfiles.d/tmp.conf")

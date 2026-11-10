@@ -121,8 +121,8 @@ whose recommendation cannot be read, RECOMMENDATION_UNKNOWN_LINE says why and
 what to do. A payload that is not JSON is a fault: one line on stderr, exit 1,
 which Claude Code records as a non-blocking error.
 
-Agent-facing messages follow
-docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+Tool-messages-to-agent follow
+docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 """
 import importlib.util
 import json

@@ -9,7 +9,7 @@ printer that puts its message where the agent reads it.
 Load it by path, under the snake_case form of its file name:
 
     spec = importlib.util.spec_from_file_location(
-        "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common", <path>)
+        "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common", <path>)
 """
 
 import json

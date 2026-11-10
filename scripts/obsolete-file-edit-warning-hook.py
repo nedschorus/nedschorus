@@ -276,7 +276,7 @@ GIT_FAILURE_CAUSE_LINE = (
     "obsolete-file-edit-warning-hook: {failure}, so the edited file was not checked "
     "against origin/main; the edit itself succeeded."
 )
-GIT_FAILURE_AGENT_FACING_MESSAGE_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW = (
+GIT_FAILURE_TOOL_MESSAGE_TO_AGENT_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW = (
     "A later run of this hook checks only the file that run's Edit or Write touched, so check "
     "{path} by running the command printed on its own line below this paragraph. If git's error "
     "above names no lock file, run that "
@@ -672,7 +672,7 @@ def main() -> int:
         # hook copied away from it fails in the one load the top-level handler reports.
         freshness.next_step_lines.post_tool_use_hook_additional_context_print_for_agent("\n".join((
             GIT_FAILURE_CAUSE_LINE.format(failure=failure),
-            GIT_FAILURE_AGENT_FACING_MESSAGE_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW.format(
+            GIT_FAILURE_TOOL_MESSAGE_TO_AGENT_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW.format(
                 path=file_path, rerun=rerun,
                 lock_file_condition=freshness.next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION,
                 wait_for_lock_file=freshness.next_step_lines

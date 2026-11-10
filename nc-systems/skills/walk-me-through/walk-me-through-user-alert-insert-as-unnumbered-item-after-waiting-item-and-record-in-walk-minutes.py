@@ -23,8 +23,8 @@ cannot be found in its walk-document, the walk-document's items sit under `##` p
 heading is not an item, or an alert's file is missing or unreadable, with a message on stderr saying which and
 what to do.
 
-Agent-facing messages follow
-docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+Tool-messages-to-agent follow
+docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 """
 import argparse
 import importlib.util

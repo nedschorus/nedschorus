@@ -51,7 +51,7 @@ GIT_MERGE_BASE_IS_ANCESTOR_NO = 1
 # untracked files from the check.
 UNCOMMITTED_CHANGES_COMMAND = ["git", "status", "--porcelain", "--untracked-files=normal"]
 MESSAGE_PREFIX = "pull request ready for review: "
-# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 NOTHING_CHANGED_LINE = "Nothing was changed on GitHub."
 RETRY_THEN_USER_INSTRUCTION = (
     "Run this command again once. If it fails the same way, tell the user, in one sentence, that "

@@ -80,7 +80,7 @@ import sys
 import time
 from pathlib import Path
 
-# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 PROGRAM_PATH_ON_NED_BOX = ("/home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
                            "claude-code-temp-folders-of-exited-agent-sessions-delete.py")
 FAILURES_INSTRUCTION = (

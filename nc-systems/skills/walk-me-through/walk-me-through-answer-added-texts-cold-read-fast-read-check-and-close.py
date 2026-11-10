@@ -353,8 +353,8 @@ detached read-ahead worker, which only close and the step above start.
 No open approval-walk, or an item the walk-minutes or the walk-document do not
 let the program find, is a failure: one line on stderr, exit 1.
 
-Agent-facing messages follow
-docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+Tool-messages-to-agent follow
+docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 """
 import argparse
 import collections

@@ -149,9 +149,9 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIRECTORY = REPOSITORY_ROOT / "scripts"
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
     REPOSITORY_ROOT / "nc-systems" / "general-tools"
-    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
@@ -1012,7 +1012,7 @@ def agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build(p
     start_again_instruction says how to start the agent-seat again once the file is fixed;
     it depends on the program that refused.
     """
-    # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md
+    # docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md
     machine = ("ned-box" if handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
                else "the Mac")
     unix_user = getpass.getuser()

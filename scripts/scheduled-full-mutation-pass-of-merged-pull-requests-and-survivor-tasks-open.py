@@ -235,7 +235,7 @@ applies: an unwritten record outranks a failed step, which outranks a lost
 task, which outranks an unjudged recheck, which outranks a carried-on merge.
 """
 
-# Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 
 import argparse
 import fcntl

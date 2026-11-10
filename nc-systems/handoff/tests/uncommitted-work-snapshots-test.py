@@ -50,7 +50,7 @@ CLEANER_RELATIVE = Path("scripts/clean-worktrees.py")
 GIT_OUTPUT_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 NEXT_STEP_LINES_MODULE_RELATIVE = Path(
-    "nc-systems/general-tools/failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    "nc-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 LOG_STORE_WRITER_MODULE_RELATIVE = Path(
     "nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py")
 NED_BOX_HOME_CONSTANTS_MODULE_RELATIVE = Path(

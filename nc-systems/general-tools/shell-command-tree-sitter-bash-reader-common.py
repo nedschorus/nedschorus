@@ -63,8 +63,8 @@ _python_libraries_pinned_requirements_install_if_missing_then_import_spec = impo
 python_libraries_pinned_requirements_install_if_missing_then_import_common = importlib.util.module_from_spec(_python_libraries_pinned_requirements_install_if_missing_then_import_spec)
 _python_libraries_pinned_requirements_install_if_missing_then_import_spec.loader.exec_module(python_libraries_pinned_requirements_install_if_missing_then_import_common)
 _failed_command_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
-    Path(__file__).resolve().with_name("failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py"))
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().with_name("failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py"))
 _failed_command_lines = importlib.util.module_from_spec(_failed_command_lines_spec)
 _failed_command_lines_spec.loader.exec_module(_failed_command_lines)
 

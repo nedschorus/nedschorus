@@ -294,7 +294,7 @@ EXIT_BAD_INVOCATION = 64
 
 # The note at the door of the log-store, written into it by this program.
 #
-# AGENT-FACING TEXT, so it says what the store is, how to cite a file in it,
+# TOOL-MESSAGE-TO-AGENT TEXT, so it says what the store is, how to cite a file in it,
 # which program or skill owns each kind, and what to edit to change this file,
 # with a reason wherever the reason helps the reader act. It cites no ruling
 # and no date: a ruling or a date says only who decided and when, which does
