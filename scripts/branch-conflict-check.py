@@ -744,8 +744,8 @@ def clearing_lines(pull_request, branch, head, base, remote, head_hash, base_has
             "Run git merge %s, resolving each conflict so that both changes work."
             % base,
         ] + give_up + [
-            "Push it with git push -u %s %s, without --force, then carry on with "
-            "what you were doing." % (remote, branch),
+            "Push it with git push -u %s HEAD:%s, without --force, then carry on "
+            "with what you were doing." % (remote, branch),
         ]
     return [
         "ANSWER: rebase -- branch %s has no open pull request and %s does not have "

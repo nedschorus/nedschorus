@@ -768,7 +768,7 @@ def pushed_history_merge_lines(branch, named, base="origin/main", remote="origin
         "Run git merge %s, resolving each conflict so that both changes work."
         % base,
     ] + give_up_lines("merge", base) + [
-        "Push it with git push -u %s %s, without --force, then carry on with what "
+        "Push it with git push -u %s HEAD:%s, without --force, then carry on with what "
         "you were doing." % (remote, branch),
     ]
 
@@ -2304,7 +2304,8 @@ case("pushed history: a holder on another remote is not asked about, and past tw
      "holders the rest are counted",
      lines[1:] == pushed_history_merge_lines(
          "topic", "upstream/pr-branch, origin/a and 1 more")
-     and not any(c[:3] == ["gh", "pr", "list"] and "pr-branch" in c for c in log))
+     and [c[c.index("--head") + 1] for c in log if c[:3] == ["gh", "pr", "list"]]
+     == ["topic", "a", "b"])
 
 status, lines = run_pushed_history(unpushed_commits=OWN_COMMITS)
 case("pushed history: none of the branch's commits on a remote: still rebased",
