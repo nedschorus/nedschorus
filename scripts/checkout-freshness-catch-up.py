@@ -225,9 +225,9 @@ IGNORED_FILES_IN_THE_WAY_ADVICE = (
 )
 LEAVE_IT_ADVICE = (
     "This branch is pushed, so its review may be running. Do not rebase or "
-    "amend it. A fix for this topic is a new commit on top, pushed once. If the "
-    "branch conflicts with main, as python3 scripts/branch-conflict-check.py run "
-    "in its checkout reports, do what that report says. "
+    "amend it. A fix for this topic is a new commit on top, pushed once. To learn "
+    "whether the branch conflicts with main, run python3 scripts/branch-conflict-check.py "
+    "in this checkout, and if it reports a conflict, do what its report says. "
     "Start your next topic with `git checkout -b <name> origin/main`."
 )
 # A branch whose own commits are already on a remote branch, under another

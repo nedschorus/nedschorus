@@ -406,8 +406,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # A conflict with main is the one case a commit on top cannot clear; the
     # pushed-branch advice sends it to scripts/branch-conflict-check.py's report.
     check("a pushed branch is told how to clear a conflict with main, byte for byte",
-          "If the branch conflicts with main, as python3 scripts/branch-conflict-check.py "
-          "run in its checkout reports, do what that report says." in agent_text(result),
+          "To learn whether the branch conflicts with main, run python3 "
+          "scripts/branch-conflict-check.py in this checkout, and if it reports a "
+          "conflict, do what its report says." in agent_text(result),
           agent_text(result))
     check("the pushed head's status says how a conflict is cleared, byte for byte",
           "(frozen: a fix is a new commit on top, never an amend; for a conflict with "
