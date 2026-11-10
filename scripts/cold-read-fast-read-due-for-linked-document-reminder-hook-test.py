@@ -829,9 +829,10 @@ def main():
     # A module loaded by run(), after the import-time ones, is reported the same way.
     shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nc-systems" / "general-tools"
                 / home_module_path.name, home_module_path)
-    git_runner_module = "git-machine-readable-output-runner-and-parser-common.py"
-    shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nc-systems" / "general-tools" / git_runner_module,
-                scratch_root / "nc-systems" / "general-tools" / git_runner_module)
+    for module in ("agent-session-unattended-by-user-check-common.py",
+                   "git-machine-readable-output-runner-and-parser-common.py"):
+        shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nc-systems" / "general-tools" / module,
+                    scratch_root / "nc-systems" / "general-tools" / module)
     record_names_path = scratch_root / "nc-systems" / "cold-read" / "cold-read-record-names-common.py"
     case = Case()
     case.transcript.write_text("")

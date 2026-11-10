@@ -727,16 +727,12 @@ _next_step_lines_spec = importlib.util.spec_from_file_location(
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
-_attendance_check_spec = importlib.util.spec_from_file_location(
-    "agent_session_unattended_by_user_check_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-    / "agent-session-unattended-by-user-check-common.py")
-_attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
-_attendance_check_spec.loader.exec_module(_attendance_check)
-
 # Whether a user attends the agent-session changes what some messages under test say, so a suite
 # is launched without them and each test sets them itself.
-AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES = _attendance_check.AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES
+AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES = (
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
+)
 
 # Suites run as the same account as every agent-seat, so a stray kill(-1) or
 # killpg from a suite reaches all of them. In its own PID namespace a suite can
