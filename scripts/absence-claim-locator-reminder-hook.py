@@ -11,17 +11,20 @@ message the user (or, for a subagent, its parent) sent. absence_claim_matches()
 decides whether that reply claims a stored artifact is absent. It is five
 phrase patterns, 2, 4, 6 and 12, numbered after the larger detector they were
 chosen from, and 13, for "does not exist" and "no longer exists", with the
-guards measured alongside them. Patterns 2 and 13 count only when a word
-naming a stored artifact stands in the match's own clause. On 278
-hand-labelled replies, about six fires in seven were correct. Matches inside
+guards measured alongside them. Pattern 2 counts only when a word naming a
+stored artifact stands in the match's own clause, or, after a pronoun
+subject such as "it is gone", in the 100 characters before the match.
+Pattern 13 counts when such a word, or "branch", stands in its clause, or
+when a place follows it ("does not exist on main"). On 278 hand-labelled
+replies, about six fires in seven were correct. Matches inside
 code, quoted text and block quotes do not count.
 
 THE HOOK STAYS SILENT when any of these holds:
   - this Stop ends the agent's answer to a Stop hook's output (the shared
     rule of nc-systems/general-tools/claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py);
-  - the agent ran the locator this turn (a Bash command naming
-    locate-file-copies-across-machines.py) or invoked the skill
-    find-missing-file;
+  - the agent searched this turn: it invoked the skill find-missing-file or
+    find-info, or ran a Bash command naming one of find-info's search
+    programs, SEARCH_PROGRAM_NAMES;
   - this agent-session (for a subagent, this subagent) was already reminded:
     agents remember the reminder for a while, so it comes once;
   - the agent-session is a headless `claude -p` child, told apart as the
@@ -93,8 +96,13 @@ _claude_code_session_transcript_records_read_backward_common_specification = imp
 claude_code_session_transcript_records_read_backward_common = importlib.util.module_from_spec(_claude_code_session_transcript_records_read_backward_common_specification)
 _claude_code_session_transcript_records_read_backward_common_specification.loader.exec_module(claude_code_session_transcript_records_read_backward_common)
 
-SKILL_NAME = "find-missing-file"
-LOCATOR_PROGRAM_NAME = "locate-file-copies-across-machines.py"
+SKILL_NAMES = ("find-missing-file", "find-info")
+# find-info's programs for a file, a past discussion and an approval.
+SEARCH_PROGRAM_NAMES = (
+    "locate-file-copies-across-machines.py",
+    "log-store-past-discussions-regex-search-newest-first.py",
+    "locate-user-approval-by-question-subject.py",
+)
 # A person ("human"), another session or a subagent handing back ("peer"), and
 # a parent session writing to its subagent ("coordinator"): the agent answers each.
 TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator")
@@ -116,6 +124,8 @@ REMINDER_HEAD = (
     "log-store, a transcript or a backup.\n"
     "Before you tell anyone it does not exist, run: python3 "
     "scripts/locate-file-copies-across-machines.py <the file's name>\n"
+    "For a ruling, an approval or a past discussion, use the skill find-info "
+    "instead.\n"
 )
 REMINDER_TEMPLATE = REMINDER_HEAD + (
     "If the locator finds it, tell whoever read your reply that it is not "
@@ -149,13 +159,17 @@ PATTERNS = {
 }
 COMPILED = {number: re.compile(pattern, re.I) for number, pattern in PATTERNS.items()}
 
-# Pattern 2 fires only when a stored artifact is named in its own clause, just before the match. A hyphen
+# Pattern 2 fires only when a stored artifact is named in its own clause, or within 100 characters before a pronoun
+# subject. A hyphen
 # next to the word ("per-path", "file-by-file") makes it a modifier, not the artifact.
 ARTIFACT = re.compile(r"(?<![\w-])(?:FILE|files?|documents?|drafts?|transcripts?|records?|copies|copy|backups?|paths?|directories|directory|folders?|artifacts?|overviews?|reports?|logs?|history|traces?|mirrors?|checkouts?|repos?|issues?|citations?|rulings?|approvals?|prompts?|minutes|data|results?)(?![\w-])", re.I)
 CLAUSE_BREAK = re.compile(r"[;:(—–]|\s-\s")
 # Code and text elements an edit removes; "the fallback is gone" reports a change, not a missing artifact.
 EDITED_ELEMENT = re.compile(r"\b(?:parsing|parser|lookup|comparison|rules?|guards?|comments?|fallback|scan|tail|property|words?|phrases?|names?|command|gap|rows?|arithmetic|waker|advice|alignment|minimum|mod|change|premise|reason|case|binary|style|options?|flags?|code|helper|function|stand-ins)\s*$", re.I)
 EDITED_HEAD = re.compile(r"\b(?:rules?|comparison|owner|guards?|scan|lock|lookup|minimum|change|parsing|arithmetic|waker|code|comments?|refusal|cases?|checks?|format|steps?|fork|clog|command|words|mark|link|alignment|distinction|mod)\b", re.I)
+# A preposition or a pronoun between an artifact word and a later word makes the later word the artifact's object
+# or part of a relative clause: "the transcript for that step", "the folders it checks".
+OBJECT_LINK = re.compile(r"\b(?:of|for|to|from|on|in|at|by|with|about|it|they|we|I|you|he|she)\b", re.I)
 FIRST_PERSON = re.compile(r"\b(?:I|[Ww]e|[Mm]y|[Oo]ur|me|us)\b")
 SCORING_REPLY = re.compile(r"\b(?:match file|match to|report covers|answer-key entries)\b", re.I)
 
@@ -203,6 +217,14 @@ def strip_noise(text):
 def clause_before(before):
     """The text after the last clause break before the match: the match's own subject, roughly."""
     return CLAUSE_BREAK.split(before)[-1][-80:]
+
+
+def edited_element_heads_clause(before, element):
+    """True when the edited-element word `element`, a match in `before`, heads the match's clause: no artifact word
+    stands earlier in the clause after a comma, or none is linked to the element word by a preposition or pronoun."""
+    clause_start = max(before.rfind(mark, 0, element.start()) for mark in ",;:") + 1
+    artifacts = list(ARTIFACT.finditer(before, clause_start, element.start()))
+    return not artifacts or not OBJECT_LINK.search(before, artifacts[-1].end(), element.start())
 
 
 def match_is_excluded(number, sentence, before, after):
@@ -256,14 +278,17 @@ def match_is_excluded(number, sentence, before, after):
     if re.search(r"\b(?:say|says|said|saying)\s+(?:[\w'-]+\s+){0,5}$", before, re.I):
         return True
     # "no test case on main is lost", "nobody's lines are lost".
-    if number == 2 and re.search(r"\b(?:no|nobody's|neither)\s+(?:[\w'-]+\s+){0,4}$", before, re.I):
+    # "The file with no backup is gone": after a preposition, the "no" phrase is not the subject.
+    if number == 2 and re.search(r"(?<!\bwith )(?<!\bwithout )(?<!\bof )(?<!\bfor )\b(?:no|nobody's|neither)\s+(?:[\w'-]+\s+){0,4}$", before, re.I):
         return True
     # What a test or check verifies: "the tests check that the temporary folder is gone".
     if re.search(r"\b(?:tests?|checks?)\s+(?:\w+\s+){0,2}(?:that|whether)\b", before, re.I):
         return True
     # Pattern 2 on an edited code or text element: "the untested guards are gone".
-    if number == 2 and EDITED_ELEMENT.search(before.rstrip()):
-        return True
+    if number == 2:
+        element = EDITED_ELEMENT.search(before.rstrip())
+        if element and edited_element_heads_clause(before, element):
+            return True
     # Alternatives in a case analysis: "its file is gone", "is missing or stale".
     if number == 2 and (re.match(r"\s+or\b", after, re.I) or re.search(r"\bor\s+(?:[\w'-]+\s+){0,3}$", before, re.I)):
         return True
@@ -281,7 +306,8 @@ def match_is_excluded(number, sentence, before, after):
     if number == 12 and re.search(r"\b(?:that|which)\s+(?:(?:is|are|was|were)\s+)?$", before, re.I):
         return True
     # A definition: "step 4 uses the word for another file: the old version kept beside a revised text that is not in the repository".
-    if number == 6 and re.search(r"\b(?:uses?|means|refers? to|stands? for)\b", before, re.I):
+    # "That means the transcript is not in the repository" draws a conclusion; it defines nothing.
+    if number == 6 and re.search(r"\b(?:uses?|(?<!\bthat )(?<!\bthis )(?<!\bwhich )(?<!\bit )means|refers? to|stands? for)\b", before, re.I):
         return True
     # "missing" as a verb: "the record is missing a field".
     if number == 2 and re.match(r"\s+(?:a|an|something)\b", after, re.I) and "missing" in sentence[len(before):].lower():
@@ -296,15 +322,19 @@ def match_is_excluded(number, sentence, before, after):
         return True
     if number == 2 and re.search(r"\b(?:advice|conditional)\b", before, re.I):
         return True
-    # A removed code element is the head of the match's clause, after any artifact word: "TR1's checks on FILE are gone".
+    # A removed code element heads the match's clause: "the log format is gone", or "the change is gone" with no
+    # artifact word in the clause. Not "the transcript for that step is gone", where the element word is an object.
     if number == 2:
         clause_after_comma = re.split(r"[,;:]", before)[-1]
-        heads = list(EDITED_HEAD.finditer(clause_after_comma))
-        artifacts = list(ARTIFACT.finditer(clause_after_comma))
-        if heads and (not artifacts or heads[-1].start() >= artifacts[-1].start()):
-            return True
+        if not ARTIFACT.search(clause_after_comma):
+            if EDITED_HEAD.search(clause_after_comma):
+                return True
+        else:
+            head = re.search(EDITED_HEAD.pattern + r"\s*$", before, re.I)
+            if head and edited_element_heads_clause(before, head):
+                return True
     # What a search tool can do: "grep and glob don't find branch names".
-    if number == 4 and re.search(r"\b(?:the locator|keyword search|grep and glob|the pre-push hook|the search)\b", sentence, re.I) and re.search(r"\b(?:cannot|can't|don't)\b", sentence, re.I):
+    if number == 4 and not FIRST_PERSON.search(before) and re.search(r"\b(?:the locator|keyword search|grep and glob|the pre-push hook|the search)\b", sentence, re.I) and re.search(r"\b(?:cannot|can't|don't)\b", sentence, re.I):
         return True
     # "Records like these belong in the log-store, not in the repository": where things should go.
     if number == 6 and re.search(r"\bbelongs?\b", re.split(r"[;:]", before)[-1], re.I):
@@ -375,10 +405,11 @@ def read_turn(transcript_path):
                 continue
             if block.get("type") == "tool_use":
                 tool_input = block.get("input") or {}
+                command = str(tool_input.get("command", ""))
                 if (block.get("name") == "Bash"
-                        and LOCATOR_PROGRAM_NAME in str(tool_input.get("command", ""))):
+                        and any(name in command for name in SEARCH_PROGRAM_NAMES)):
                     locator_ran = True
-                if block.get("name") == "Skill" and tool_input.get("skill") == SKILL_NAME:
+                if block.get("name") == "Skill" and tool_input.get("skill") in SKILL_NAMES:
                     locator_ran = True
             elif block.get("type") == "text":
                 message_id = message.get("id") or id(record)
