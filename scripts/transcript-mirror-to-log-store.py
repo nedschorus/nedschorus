@@ -191,7 +191,7 @@ SOURCES = (
     ("tasks", pathlib.Path(".claude") / "tasks", "tasks", None),
     ("seat-briefs", pathlib.Path("agents"), "seat-briefs", seat_briefs_in),
     (GLOBAL_INSTRUCTIONS_FILE_NAME, pathlib.Path(".claude"), ".", global_instructions_in),
-    ("remote-control-reconnect-watcher-log",
+    (REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM,
      pathlib.Path(".local") / "state" / "claude" / REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM,
      REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM, None),
 )
