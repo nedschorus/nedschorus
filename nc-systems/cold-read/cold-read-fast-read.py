@@ -149,7 +149,7 @@ reviews the copy the reviewer was given, and quotes each of its sentences, so
 the agent triages against those quoted sentences, since a walk draft's copy
 is removed on exit, and carries each fix to the document as it
 now stands, as the cold-read-grid asks for the same event. Since the
-Question 4 cell's claude launcher runs for the whole of the fast-clarify
+Question 4 cell's claude launcher can run for the whole of the fast-clarify
 cell's run, such an edit, like any change in the checkout while the read
 runs, is also printed on stderr as a stray write; it does not fail the read.
 
@@ -200,7 +200,8 @@ other runs: each writes its report into this program's temporary directory,
 and the claude launcher reports as a stray write any file in the checkout
 that changes while it runs. When the cell fails, or gives no answer within
 COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS of its
-start, after which its process group is killed, the section and a line on
+start, after which its process group is killed, even while Questions 1 to 3
+still run, the section and a line on
 stderr say so and why, and the read still delivers Questions 1 to 3 with the
 exit it would have had. When Questions 1 to 3 fail, or the read ends any
 other way without a report, the Question 4 cell's process group is killed if
@@ -224,6 +225,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import typing
 
@@ -1330,6 +1332,19 @@ class WhatShouldBeCodeQuestionCell(typing.NamedTuple):
     launcher_output: pathlib.Path
     target: pathlib.Path
     deadline: float
+    # The read is busy with Questions 1 to 3 until it waits for this cell, so
+    # a timer, not that wait, stops the cell at its time limit.
+    time_limit_timer: threading.Timer
+    stopped_at_time_limit: threading.Event
+
+
+def what_should_be_code_cell_stop_at_time_limit(process: subprocess.Popen,
+                                                stopped_at_time_limit: threading.Event) -> None:
+    """Stop the Question 4 cell's process group if it is still running, and
+    mark that it was stopped at its time limit."""
+    if process.poll() is None:
+        stopped_at_time_limit.set()
+        cell_common.stop_process_tree(process)
 
 
 def what_should_be_code_cell_start(target: pathlib.Path, scratch: pathlib.Path) -> WhatShouldBeCodeQuestionCell:
@@ -1364,15 +1379,23 @@ def what_should_be_code_cell_start(target: pathlib.Path, scratch: pathlib.Path) 
         process = subprocess.Popen(
             command, stdout=output, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
             cwd=REPO_ROOT, start_new_session=True)
+    stopped_at_time_limit = threading.Event()
+    time_limit_timer = threading.Timer(
+        COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS,
+        what_should_be_code_cell_stop_at_time_limit, args=(process, stopped_at_time_limit))
+    time_limit_timer.daemon = True
+    time_limit_timer.start()
     return WhatShouldBeCodeQuestionCell(
         process, answer, launcher_output, target,
-        time.monotonic() + COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS)
+        time.monotonic() + COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS,
+        time_limit_timer, stopped_at_time_limit)
 
 
 def what_should_be_code_cell_abandon(cell: WhatShouldBeCodeQuestionCell) -> None:
     """Stop the Question 4 cell's process group, whether or not it is still
     running, re-emit its launcher's output on stderr, and say on stderr that
     its answer is not used."""
+    cell.time_limit_timer.cancel()
     was_running = cell.process.poll() is None
     cell_common.stop_process_tree(cell.process)
     print(cell.launcher_output.read_text(encoding="utf-8"), file=sys.stderr, end="")
@@ -1389,10 +1412,15 @@ def what_should_be_code_section(cell: WhatShouldBeCodeQuestionCell) -> str:
     cell failed, a paragraph saying so and why, also printed on stderr. A
     failed cell never fails the read."""
     try:
-        exit_code = cell.process.wait(timeout=max(0.0, cell.deadline - time.monotonic()))
+        cell.process.wait(timeout=max(0.0, cell.deadline - time.monotonic()))
     except subprocess.TimeoutExpired:
-        exit_code = None
-        cell_common.stop_process_tree(cell.process)
+        what_should_be_code_cell_stop_at_time_limit(cell.process, cell.stopped_at_time_limit)
+    cell.time_limit_timer.cancel()
+    # Waiting for the timer's thread makes sure it has finished stopping the
+    # cell before its exit code and output are read.
+    if cell.time_limit_timer.is_alive():
+        cell.time_limit_timer.join()
+    exit_code = None if cell.stopped_at_time_limit.is_set() else cell.process.returncode
     output_text = cell.launcher_output.read_text(encoding="utf-8")
     print(output_text, file=sys.stderr, end="")
     if exit_code == 0:

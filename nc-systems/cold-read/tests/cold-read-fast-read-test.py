@@ -115,6 +115,7 @@ import pathlib
 import shutil
 import signal
 import subprocess
+import threading
 import sys
 import tempfile
 import time
@@ -1231,6 +1232,56 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the model the Question 4 cell started is killed with it at the time limit",
           hanging_stub_pid is not None and not process_is_running(hanging_stub_pid),
           f"pid {hanging_stub_pid}")
+
+    # Questions 1 to 3 outlast Question 4's time limit: the fast-clarify stub
+    # waits for a file that this case writes only once the hanging Question 4
+    # stub has died, or after 15 s if it never does.
+    repository = build_scratch_repository(scratch)
+    copied_fast_read = repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"
+    copied_fast_read.write_text(
+        copied_fast_read.read_text(encoding="utf-8").replace(
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n",
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 2\n"),
+        encoding="utf-8")
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    slow_read_stub_pid_file = scratch / "slow-questions-1-to-3-question-4-stub.pid"
+    slow_read_stub_pid_file.unlink(missing_ok=True)
+    question_4_stopped_file = scratch / "question-4-stub-stopped-while-questions-1-to-3-ran"
+    question_4_stopped_file.unlink(missing_ok=True)
+    question_4_died_while_questions_1_to_3_ran = []
+
+    def release_questions_1_to_3_once_question_4_stub_dies():
+        started = time.monotonic()
+        while time.monotonic() - started < 15:
+            if slow_read_stub_pid_file.is_file():
+                pid = int(slow_read_stub_pid_file.read_text())
+                if not process_is_running(pid):
+                    question_4_died_while_questions_1_to_3_ran.append(True)
+                    break
+            time.sleep(0.1)
+        question_4_stopped_file.write_text("released", encoding="utf-8")
+
+    releaser = threading.Thread(target=release_questions_1_to_3_once_question_4_stub_dies)
+    releaser.start()
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"wait_for_file": str(question_4_stopped_file),
+               "report": "STUB FAST READ: questions 1 to 3\n"}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"hang": True, "report": QUESTION_4_STUB_ANSWER,
+                         "pid_file": str(slow_read_stub_pid_file)},
+    )
+    releaser.join()
+    report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
+    check("a Question 4 cell is stopped at its time limit while Questions 1 to 3 are "
+          "still running, not only once the read waits for it, and its section says it "
+          "gave no answer within the limit",
+          question_4_died_while_questions_1_to_3_ran == [True]
+          and result.returncode == 0
+          and f"no answer within {2 / 60:g} minutes" in report_text
+          and QUESTION_4_STUB_ANSWER.strip() not in report_text,
+          f"died while 1 to 3 ran: {question_4_died_while_questions_1_to_3_ran}; "
+          f"exit {result.returncode}; report={report_text!r}; stderr={result.stderr!r}")
 
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
