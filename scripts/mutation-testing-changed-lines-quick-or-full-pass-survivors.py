@@ -181,7 +181,7 @@ without a mutant, as when another test run holds the machine's lock, its
 refusal printed. The scratch worktree is removed whatever happens.
 
 Exit codes: 0 every mutant was killed, 1 a mutant survived, errored or was
-not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
+not run, or a changed file has no suite, 2 could not run (cosmic-ray missing or unable to start,
 a git step failed, the nc-head-commit is already in the base, the worktree could
 not be made, a changed file the quick mutation pass reads is not valid Python,
 the JSON file could not be written, or a suite fails, runs out of time or
@@ -216,6 +216,14 @@ EXIT_SURVIVORS_OR_UNTESTED_FILES = 1
 EXIT_COULD_NOT_RUN = 2
 
 COSMIC_RAY_TOOLS = ("cosmic-ray", "cr-filter-git", "cr-filter-pragma", "cr-filter-lines")
+# Not under /tmp: systemd-tmpfiles deletes files there unread for 10 days, and Python reads only
+# a module's .pyc, so the venv's .py files go and its imports fail. The version is the one whose
+# internals the parallel mutant workers use.
+COSMIC_RAY_VENV_INSTALL_COMMANDS = (
+    "  rm -rf ~/.local/share/nedschorus/cosmic-ray-venv\n"
+    "  python3 -m venv ~/.local/share/nedschorus/cosmic-ray-venv\n"
+    "  ~/.local/share/nedschorus/cosmic-ray-venv/bin/pip install cosmic-ray==8.7.0\n"
+    "Then run this again with --cosmic-ray-venv ~/.local/share/nedschorus/cosmic-ray-venv.")
 
 QUICK_MUTATION_PASS_COMMAND_LINE_FLAG = "--quick-mutation-pass"
 FULL_MUTATION_PASS_COMMAND_LINE_FLAG = "--full-mutation-pass"
@@ -320,10 +328,8 @@ def cosmic_ray_tool_paths(venv):
                      else "on PATH")
             raise CouldNotRun(
                 f"{PROGRAM}: not run — {tool} is not {where}.\n"
-                f"Install cosmic-ray into a venv of its own, not globally:\n"
-                f"  python3 -m venv /tmp/cosmic-ray-venv\n"
-                f"  /tmp/cosmic-ray-venv/bin/pip install cosmic-ray\n"
-                f"Then run this again with --cosmic-ray-venv /tmp/cosmic-ray-venv.")
+                f"Install cosmic-ray into a venv of its own, not globally and not under /tmp:\n"
+                + COSMIC_RAY_VENV_INSTALL_COMMANDS)
         found[tool] = path
     return found
 
@@ -870,6 +876,13 @@ def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_
         failure_handling_ranges))
     baseline = run([*cosmic_ray, "baseline", "--session-file",
                     str(baseline_session), str(config)], worktree, environment)
+    if not baseline_session.exists():
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — {tools['cosmic-ray']} exited {baseline.returncode} without "
+            f"making its baseline session, so no suite ran and no mutant of {path} can be "
+            f"judged:\n{(baseline.stderr or baseline.stdout).strip()}\n"
+            f"If that error is an ImportError or ModuleNotFoundError, the venv holding "
+            f"cosmic-ray is broken; rebuild it:\n" + COSMIC_RAY_VENV_INSTALL_COMMANDS)
     if baseline.returncode != 0:
         # cosmic-ray writes the baseline's result before it exits 1; a baseline that crashed
         # before writing it leaves nothing to dump, and is reported as failing suites.
