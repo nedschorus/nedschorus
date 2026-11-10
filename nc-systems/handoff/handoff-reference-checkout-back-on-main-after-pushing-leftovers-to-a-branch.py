@@ -81,7 +81,7 @@ StepFailed = reference_checkout_steps.ReferenceCheckoutGitStepFailed
 TREE_STEP_TIMEOUT_SECONDS = reference_checkout_steps.NETWORK_OR_TREE_GIT_STEP_TIMEOUT_SECONDS
 # The nc-shared-database service restart the hook runs takes seconds; a hung hook must not hold a handoff.
 POST_MERGE_HOOK_TIMEOUT_SECONDS = 120
-POST_MERGE_HOOK_PENDING_FILE_NAME = "reference-checkout-back-on-main-post-merge-hook-pending"
+FAILED_POST_MERGE_HOOK_ORIG_HEAD_FILE_NAME = "handoff-reference-checkout-failed-post-merge-hook-orig-head-to-rerun"
 
 
 def git(checkout: Path, arguments, **options) -> str:
@@ -149,11 +149,11 @@ def head_held_by_origin_main_or_a_leftovers_branch_or_raise(checkout: Path, head
             "on a leftovers branch first.")
 
 
-def switch_to_main_run_pending_hook_and_fast_forward(checkout: Path, switch_to_main: bool,
-                                                     pushed: list, problems: list) -> str:
+def switch_to_main_run_pending_post_merge_hook_delete_pushed_leftovers_branches_and_fast_forward(
+        checkout: Path, switch_to_main: bool, pushed: list, problems: list) -> str:
     """Return origin/main's commit; append a post-merge hook failure to problems; raise StepFailed."""
     pending_file = Path(git(checkout, ["rev-parse", "--path-format=absolute", "--git-path",
-                                       POST_MERGE_HOOK_PENDING_FILE_NAME]))
+                                       FAILED_POST_MERGE_HOOK_ORIG_HEAD_FILE_NAME]))
     orig_head = pending_file.read_text().strip() if pending_file.is_file() else ""
     if switch_to_main:
         head_before_the_switch = git(checkout, ["rev-parse", "HEAD"])
@@ -207,8 +207,8 @@ def put_reference_checkout_back_on_main(checkout: Path, today: date):
         except StepFailed as error:
             problems.append(push_failure_text(checkout, branch, error))
     try:
-        main = switch_to_main_run_pending_hook_and_fast_forward(checkout, switch_to_main, pushed,
-                                                                problems)
+        main = switch_to_main_run_pending_post_merge_hook_delete_pushed_leftovers_branches_and_fast_forward(
+            checkout, switch_to_main, pushed, problems)
     except StepFailed as error:
         raise StepFailed("\n".join(problems + [str(error)])) from error
     if problems:
