@@ -29,11 +29,11 @@ The program:
   push succeeded, because every agent-seat's git hooks and the cron jobs run from this checkout;
   and then runs the clone's post-merge hook, with ORIG_HEAD at the commit HEAD left, as a merge
   would have, since the switch runs none. Until the hook succeeds, the file
-  reference-checkout-back-on-main-post-merge-hook-pending in the clone's git directory keeps that
-  commit, and each later run runs the hook again with it;
+  ~/Projects/nedschorus/.git/handoff-reference-checkout-failed-post-merge-hook-orig-head-to-rerun,
+  in the clone's git directory, keeps that commit, and each later run runs the hook again with it;
 - fast-forwards to origin/main and checks that HEAD is origin/main with no changed tracked file,
   with the same shared function as step 0 of the restart program,
-  handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout.py.
+  nc-systems/handoff/handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout.py.
 It prints the pushed leftovers branches, or that there were none. On a checkout already on main, at
 origin/main, with nothing uncommitted, no local leftovers branch and no post-merge hook still to
 run, it changes nothing, so it can be run again to check a fix.
@@ -49,7 +49,8 @@ What it does not handle:
 
 How it fails: it prints what failed, with what git or the hook printed, to standard error and exits
 1. A failed fetch, or local main's own commits, change nothing. Any other failed step stops the
-program, except a failed push, which still lets the checkout go back on main: the unpushed branch
+program, except a failed push of a leftovers branch, the new one that saves HEAD's commit just
+before the switch included, which still lets the checkout go back on main: the unpushed branch
 stays in the checkout, and the message names it and its commit; run again, the program pushes that
 same branch. Every failure after the pushes is reported together with each failed push before it.
 A failed post-merge hook leaves the checkout on main, the program's message quotes what the hook
@@ -84,7 +85,7 @@ StepFailed = reference_checkout_steps.ReferenceCheckoutGitStepFailed
 TREE_STEP_TIMEOUT_SECONDS = reference_checkout_steps.NETWORK_OR_TREE_GIT_STEP_TIMEOUT_SECONDS
 # The nc-shared-database service restart the hook runs takes seconds; a hung hook must not hold a handoff.
 POST_MERGE_HOOK_TIMEOUT_SECONDS = 120
-POST_MERGE_HOOK_PENDING_FILE_NAME = "reference-checkout-back-on-main-post-merge-hook-pending"
+FAILED_POST_MERGE_HOOK_ORIG_HEAD_FILE_NAME = "handoff-reference-checkout-failed-post-merge-hook-orig-head-to-rerun"
 
 
 def git(checkout: Path, arguments, **options) -> str:
@@ -158,13 +159,12 @@ def head_held_by_origin_main_or_a_leftovers_branch(checkout: Path, head: str) ->
                                f"refs/remotes/origin/{LEFTOVERS_BRANCH_PREFIX}*"]))
 
 
-def switch_to_main_run_pending_hook_and_fast_forward(checkout: Path, switch_to_main: bool,
-                                                     today: date, pushed: list,
-                                                     problems: list) -> str:
+def switch_to_main_run_pending_post_merge_hook_delete_pushed_leftovers_branches_and_fast_forward(
+        checkout: Path, switch_to_main: bool, today: date, pushed: list, problems: list) -> str:
     """Return origin/main's commit; append a failed push, a post-merge hook failure or a failed
     write or removal of the pending file to problems; raise StepFailed."""
     pending_file = Path(git(checkout, ["rev-parse", "--path-format=absolute", "--git-path",
-                                       POST_MERGE_HOOK_PENDING_FILE_NAME]))
+                                       FAILED_POST_MERGE_HOOK_ORIG_HEAD_FILE_NAME]))
     try:
         orig_head = pending_file.read_text().strip()
     except FileNotFoundError:
@@ -238,8 +238,8 @@ def put_reference_checkout_back_on_main(checkout: Path, today: date):
     for branch in local_leftovers_branches(checkout):
         leftovers_branch_push_or_record_failure(checkout, branch, pushed, problems)
     try:
-        main = switch_to_main_run_pending_hook_and_fast_forward(checkout, switch_to_main, today,
-                                                                pushed, problems)
+        main = switch_to_main_run_pending_post_merge_hook_delete_pushed_leftovers_branches_and_fast_forward(
+            checkout, switch_to_main, today, pushed, problems)
     except StepFailed as error:
         raise StepFailed("\n".join(problems + [str(error)])) from error
     if problems:

@@ -443,7 +443,7 @@ def another_run_committed_onto_main_before_the_switch_and_its_push_fails_case():
 
 def pending_file():
     return Path(git("rev-parse", "--path-format=absolute", "--git-path",
-                    program.POST_MERGE_HOOK_PENDING_FILE_NAME))
+                    program.FAILED_POST_MERGE_HOOK_ORIG_HEAD_FILE_NAME))
 
 
 def pending_file_removed_while_the_hook_runs_case():
