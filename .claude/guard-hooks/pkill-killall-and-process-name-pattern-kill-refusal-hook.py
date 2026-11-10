@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refuse pkill, killall, and kill given process ids that a name pattern found.
+"""Refuse pkill, killall, kill given process ids that a name pattern found, and pgrep -f waits.
 
 Every agent on a machine runs as the same user, so a process name pattern
 matches other agents' processes as well as one's own: a pattern that names a
@@ -12,7 +12,15 @@ and kill run by xargs in a pipeline whose other stage runs pgrep, pidof or ps,
 as in pgrep -f x | xargs kill. A kill naming its process ids, or a variable or
 file holding them, as in kill 1234 or kill "$pid", is allowed, and so is
 kill -0, which sends no signal and only tests whether a process exists, as
-wait loops do: until ! kill -0 $(pgrep -f x | head -1); do sleep 5; done.
+in kill -0 "$pid".
+
+Refused too: pgrep -f, or pgrep with -f in a cluster such as -af, or --full,
+in the condition of a while or until loop, a substitution there included, as
+in until ! kill -0 $(pgrep -f x | head -1); do sleep 5; done. The pattern
+also matches the command line of the shell running the loop, which holds the
+same words, so the condition never changes and the loop never ends. The
+refusal names the program that waits on a background command's output file
+instead. pgrep -f outside a loop's condition, as in its body, is allowed.
 
 pkill -P <process id>, which signals the children of one process and matches
 no name, is allowed when every other argument is a signal, as in -TERM, -9,
@@ -57,6 +65,11 @@ PKILL_FLAGS_SELECTING_NO_MORE = frozenset("fxieno")
 PKILL_LONG_FLAGS_SELECTING_NO_MORE = frozenset(
     ("--full", "--exact", "--ignore-case", "--echo", "--newest", "--oldest"))
 PROCESS_ID_LISTING_PROGRAMS = ("pgrep", "pidof", "ps")
+# pgrep's short options that take a value, which ends the option cluster.
+PGREP_LETTERS_TAKING_A_VALUE = frozenset("dgGPstuUF")
+BACKGROUND_COMMAND_OUTPUT_FILE_WAIT_PROGRAM = (
+    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+    / "claude-code-background-command-output-file-wait-until-no-process-writes-it.py")
 
 REFUSAL_TEMPLATE = (
     "Refused on purpose: `{what}` signals every process a name pattern matches. "
@@ -66,6 +79,18 @@ REFUSAL_TEMPLATE = (
     "with the TaskStop tool and its task id.\n"
     "If you started the process yourself in another way, kill it by the process id you "
     "recorded when you started it, as in: kill 1234"
+)
+
+PGREP_FULL_COMMAND_LINE_LOOP_CONDITION_REFUSAL = (
+    "Refused on purpose: `pgrep -f` in the condition of a while or until loop also matches the "
+    "command line of the shell running the loop, which holds the same words, so the condition "
+    "never changes and the loop never ends.\n"
+    "If you are waiting for a background command you started with the Bash tool, run this, where "
+    "<output file> is the file the Bash tool named when it moved the command to the background:\n"
+    f"python3 {BACKGROUND_COMMAND_OUTPUT_FILE_WAIT_PROGRAM} <output file>\n"
+    "It exits 0 once the command has ended; if it exits 1, its time limit ran out, so run it again.\n"
+    "If you started the process another way, wait on the process id you recorded when you "
+    "started it, not on a name pattern."
 )
 
 
@@ -104,6 +129,22 @@ def in_pipeline(key, child_shell):
     return (tuple(child_shell[:position]) == enclosing and len(child_shell) > position
             and child_shell[position].kind == shell_reader.PIPELINE_STAGE
             and child_shell[position].shell_pipeline_first_stage_byte_offset == start)
+
+
+def pgrep_matches_full_command_line(arguments):
+    """Return whether pgrep's arguments include -f or --full, alone or in a short option cluster."""
+    for argument in arguments:
+        if argument == "--":
+            return False
+        if argument == "--full":
+            return True
+        if argument.startswith("-") and not argument.startswith("--"):
+            for letter in argument[1:]:
+                if letter == "f":
+                    return True
+                if letter in PGREP_LETTERS_TAKING_A_VALUE:
+                    break
+    return False
 
 
 def sends_signal_zero(arguments):
@@ -170,6 +211,9 @@ def refusal_for(command):
             reason = refusal_for(inner)
             if reason:
                 return reason
+        if (is_program(program, "pgrep") and words.in_while_or_until_loop_condition
+                and pgrep_matches_full_command_line(arguments)):
+            return PGREP_FULL_COMMAND_LINE_LOOP_CONDITION_REFUSAL
         if (is_program(program, "pkill") and not run_by_xargs
                 and pkill_selects_only_children_of_a_process_id(arguments)):
             continue
