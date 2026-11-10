@@ -406,8 +406,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # A conflict with main is the one case a commit on top cannot clear; the
     # pushed-branch advice sends it to scripts/branch-conflict-check.py's report.
     check("a pushed branch is told how to clear a conflict with main, byte for byte",
-          "If it conflicts with main, do what scripts/branch-conflict-check.py "
-          "reports." in agent_text(result), agent_text(result))
+          "If the branch conflicts with main, as python3 scripts/branch-conflict-check.py "
+          "run in its checkout reports, do what that report says." in agent_text(result),
+          agent_text(result))
     check("the pushed head's status says how a conflict is cleared, byte for byte",
           "(frozen: a fix is a new commit on top, never an amend; for a conflict with "
           "main, do what scripts/branch-conflict-check.py reports)" in agent_text(result),
@@ -515,8 +516,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "This branch's commits are already on GitHub under another branch name, so the "
           "branch is treated as pushed and is not rebased: a pushed head may be under "
           "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
-          "fix is a new commit on top. If it conflicts with main, do what "
-          "scripts/branch-conflict-check.py reports."
+          "fix is a new commit on top. If the branch conflicts with main, as python3 "
+          "scripts/branch-conflict-check.py run in its checkout reports, do what that "
+          "report says."
           in agent_text(result), agent_text(result))
     check("the pushed-history note never tells the agent to rebase",
           "git rebase origin/main" not in agent_text(result), agent_text(result))
@@ -1709,23 +1711,13 @@ with tempfile.TemporaryDirectory() as exception_scratch:
           and never_blocks(old_git_result) and never_blocks(unresolvable_result),
           f"{old_git_result.returncode} {unresolvable_result.returncode}")
 
-    # --- a hand-merge the conflict check called for is not reported ----------
-    # A pushed branch that scripts/branch-conflict-check.py reports as
-    # `VERDICT: CONFLICT` is cleared by a hand-merge, as that report says. That
-    # program asks git with rename detection ON, as `git merge` and the pre-push
-    # hook do; this hook once re-merged the two parents with rename detection
-    # OFF only. A file added under a directory the
-    # other side moved conflicts only WITH detection (CONFLICT (file location)).
-    # So the conflict check ordered the hand-merge, git's own merge stopped and
-    # was resolved by hand, and this hook then told the user that the branch did
-    # what was ruled out 2026-09-14. The first shape is the merge commit "Merge
-    # main to relocate #342's two drafts, and revert two commit-pinned paths"
-    # (6bd0aa5850ce) in miniature, the one such merge in main's history
-    # (merges_from_main's docstring); the second is the same conflict with the
-    # two sides swapped. Both not-reported checks FAIL against the script as it
-    # was when it re-merged without rename detection only, each printing the
-    # merge-from-main line — checked by running this file against that
-    # revision, not assumed.
+    # --- a merge that resolved a conflict with main is not reported ----------
+    # A file added under a directory the other side moved conflicts only WITH
+    # rename detection (CONFLICT (file location)), as scripts/branch-conflict-check.py,
+    # `git merge` and the pre-push hook see it. A merge that resolved such a
+    # conflict is no catch-up, so it is not reported. The first shape is the merge
+    # commit 6bd0aa5850ce in miniature; the second is the same conflict with the
+    # two sides swapped.
     conflict_check_path = SCRIPT_PATH.with_name("branch-conflict-check.py")
 
     def conflict_check_exit_and_verdict_line(seat_path: Path):
@@ -1745,11 +1737,11 @@ with tempfile.TemporaryDirectory() as exception_scratch:
 
     for shape_name, seat_change, main_change, case_name in (
             ("seat-moved-the-directory", move_drafts_directory, add_third_draft,
-             "the hand-merge that relocates a file main added under a directory the "
-             "branch moved is NOT reported — the conflict check called for it"),
+             "a merge that relocates a file main added under a directory the "
+             "branch moved is NOT reported — it resolved a conflict"),
             ("main-moved-the-directory", add_third_draft, move_drafts_directory,
-             "the hand-merge that relocates a file the branch added under a directory "
-             "main moved is NOT reported — the conflict check called for it")):
+             "a merge that relocates a file the branch added under a directory "
+             "main moved is NOT reported — it resolved a conflict")):
         shape_origin, shape_seat = seat_on_main(shape_name)
         # A directory both sides start with, holding two drafts.
         commit_file(shape_origin, "docs/drafts/first-draft.md", "the first draft\n",
@@ -1774,9 +1766,7 @@ with tempfile.TemporaryDirectory() as exception_scratch:
         check(f"(fixture, {shape_name}) merging main by hand stops on a conflict",
               merge_main_into(shape_seat) != 0)
         # The resolution git itself suggests: the added file goes where the
-        # directory went. The merge's message names the resolved file, as
-        # the VERDICT: CONFLICT report of scripts/branch-conflict-check.py has a
-        # hand-merge do.
+        # directory went.
         git(["add", "-A"], shape_seat)
         git(["commit", "-q", "-m",
              "Merge origin/main into seat by hand\n\n"
