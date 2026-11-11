@@ -1523,16 +1523,23 @@ def run_completed_task_prune_cases(workspace: Path):
     fixture.task("3.json", task_bytes(3, "in_progress"))
     fixture.task("4.json", task_bytes(4, "completed"), stored=task_bytes(4, "pending"))
     fixture.task("5.json", task_bytes(5, "completed"), stored=False)
+    fixture.task("6.json", task_bytes(6, "pending"), stored=False)
     completed = fixture.run()
     line = prune_line(completed)
     check("a completed task whose log-store copy matches is removed",
-          not fixture.present("1.json") and "removed 1 of 3 completed tasks" in line, line)
+          not fixture.present("1.json") and "removed 3 of 3 completed tasks" in line, line)
     check("pending and in-progress tasks with matching log-store copies remain",
           fixture.present("2.json") and fixture.present("3.json"), line)
-    check("a completed task whose log-store copy still has its older status is kept",
-          fixture.present("4.json"), line)
-    check("a completed task with no log-store copy is kept, and counted as not yet copied",
-          fixture.present("5.json") and "2 not yet in the log-store copy" in line, line)
+    # The mirror runs on a timer, so a task completed since its last run has an older copy, or none.
+    check("a completed task whose log-store copy still has its older status is copied there, then removed",
+          not fixture.present("4.json")
+          and (fixture.store_list_directory / "4.json").read_bytes() == task_bytes(4, "completed"), line)
+    check("a completed task with no log-store copy is copied there, then removed",
+          not fixture.present("5.json")
+          and (fixture.store_list_directory / "5.json").read_bytes() == task_bytes(5, "completed")
+          and "0 not yet in the log-store copy" in line, line)
+    check("an open task is not copied by the prune",
+          fixture.present("6.json") and not (fixture.store_list_directory / "6.json").exists(), line)
     check("the prune line says where the removed tasks stay",
           str(fixture.store_list_directory) in line, line)
     check("a pruning handoff is still written", fixture.handoff_written(), completed.stderr)
@@ -1655,18 +1662,19 @@ def run_completed_task_prune_cases(workspace: Path):
           fixture.present("1.json") and "could not be read" in line and "2.json" in line
           and fixture.handoff_written(), line)
 
-    fixture = PruneFixture(workspace, "store-copy-unreadable")
+    fixture = PruneFixture(workspace, "store-folder-unwritable")
     fixture.task("1.json", task_bytes(1, "completed"))
-    (fixture.store_list_directory / "1.json").chmod(0o000)
+    fixture.task("2.json", task_bytes(2, "completed"), stored=False)
+    fixture.store_list_directory.chmod(0o555)
     try:
         completed = fixture.run()
     finally:
-        (fixture.store_list_directory / "1.json").chmod(0o644)
+        fixture.store_list_directory.chmod(0o755)
     line = prune_line(completed)
-    check("an unexpected failure inside the prune keeps every task, says so, and still writes the handoff",
-          fixture.present("1.json") and "failed, every completed task kept" in line
-          and "PermissionError" in line and fixture.handoff_written()
-          and completed.returncode == 1, f"exit {completed.returncode}: {line}")
+    check("a copy to the log-store that fails keeps every completed task, names rsync's exit, and still writes the handoff",
+          fixture.present("1.json") and fixture.present("2.json") and "failed, every completed task kept" in line
+          and "RuntimeError: rsync of the completed tasks" in line and "exited 23" in line
+          and fixture.handoff_written() and completed.returncode == 1, f"exit {completed.returncode}: {line}")
 
     fixture = PruneFixture(workspace, "unset")
     fixture.task("1.json", task_bytes(1, "completed"))
@@ -1695,6 +1703,12 @@ def run_completed_task_prune_cases(workspace: Path):
           refused.returncode == 2 and fixture.present("1.json"), refused.stdout + refused.stderr)
 
 
+# Runs the command ssh was given on this machine, after the options and the host.
+RUN_REMOTE_COMMAND_HERE_SSH_STUB = 'while [ "$1" = -o ]; do shift 2; done\nshift\nexec sh -c "$*"\n'
+# Lets the prune's rsync through, so that what follows in a stub answers only the sha256sum.
+RSYNC_ONLY_SSH_STUB_PREFIX = 'case "$*" in *"rsync --server"*) ' + RUN_REMOTE_COMMAND_HERE_SSH_STUB.replace("\n", "; ") + ';; esac\n'
+
+
 def run_completed_task_prune_remote_store_cases(workspace: Path):
     """On the Mac the log-store is checked over ssh, which can fail."""
     fixture = PruneFixture(workspace, "unreachable")
@@ -1719,22 +1733,24 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
     check("the log-store is checked before the handoff file exists",
           calls == ["absent"], str(calls))
 
-    # The stub runs the remote command here, so sha256sum reads the local store directory.
+    # The stub runs the remote command here, so rsync and sha256sum reach the local store directory.
     fixture = PruneFixture(workspace, "remote")
     fixture.task("1.json", task_bytes(1, "completed"))
     fixture.task("2.json", task_bytes(2, "completed"), stored=False)
-    stubs = stub_ssh_directory(fixture.root / "remote-stubs", 'for last; do :; done\nexec sh -c "$last"\n')
+    stubs = stub_ssh_directory(fixture.root / "remote-stubs", RUN_REMOTE_COMMAND_HERE_SSH_STUB)
     line = prune_line(fixture.run(
         "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
         PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
     check("over ssh, a completed task whose copy matches is removed", not fixture.present("1.json"), line)
-    check("over ssh, a completed task the log-store lacks is kept", fixture.present("2.json"), line)
+    check("over ssh, a completed task the log-store lacks is copied there, then removed",
+          not fixture.present("2.json")
+          and (fixture.store_list_directory / "2.json").read_bytes() == task_bytes(2, "completed"), line)
     check("over ssh, the prune line names the store in scp form",
           f"stubhost:{fixture.store_list_directory}" in line, line)
 
     fixture = PruneFixture(workspace, "remote-unreadable")
     fixture.task("1.json", task_bytes(1, "completed"))
-    stubs = stub_ssh_directory(fixture.root / "remote-unreadable-stubs",
+    stubs = stub_ssh_directory(fixture.root / "remote-unreadable-stubs", RSYNC_ONLY_SSH_STUB_PREFIX +
                                'echo "sha256sum: 1.json: Permission denied" >&2\nexit 1\n')
     line = prune_line(fixture.run(
         "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
@@ -1748,7 +1764,7 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
     fixture = PruneFixture(workspace, "remote-unreadable-one-of-two")
     fixture.task("1.json", task_bytes(1, "completed"))
     fixture.task("11.json", task_bytes(11, "completed"))
-    stubs = stub_ssh_directory(fixture.root / "remote-unreadable-one-of-two-stubs",
+    stubs = stub_ssh_directory(fixture.root / "remote-unreadable-one-of-two-stubs", RSYNC_ONLY_SSH_STUB_PREFIX +
                                'echo "sha256sum: 11.json: Permission denied" >&2\nexit 1\n')
     line = prune_line(fixture.run(
         "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
