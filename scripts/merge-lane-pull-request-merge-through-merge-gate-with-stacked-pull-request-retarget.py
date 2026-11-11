@@ -353,7 +353,7 @@ def after_merge_test_run(arguments, merge_commit):
               f"this message.")
         exit_code = EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
 
-    store = common.merge_lane_recorded_inputs_store_directory(arguments)
+    store = common.merge_lane_head_test_run_recorded_inputs_store_directory(arguments)
     try:
         adopted = runner.adopt_passing_recordings_that_match_the_checkout(
             worktree, store,

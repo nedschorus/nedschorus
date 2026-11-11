@@ -206,6 +206,28 @@ def main():
           runner.adopt_passing_recordings_that_match_the_checkout(
               no_suites, scratch.root / "store", [scratch.root / "pr-z-recordings"]) == [])
 
+    real_git = runner.git
+    for exit_code, how in ((128, "exits 128"), (-9, "is killed by a signal")):
+
+        def git_whose_ls_files_fails(checkout, *arguments, exit_code=exit_code):
+            # Only the listing of suites, so a later git ls-files cannot raise in its place.
+            if arguments[:1] == ("ls-files",) and runner.TEST_SUITE_PATHSPEC in arguments:
+                return subprocess.CompletedProcess(arguments, exit_code, "", "fatal: injected\n")
+            return real_git(checkout, *arguments)
+
+        runner.git = git_whose_ls_files_fails
+        try:
+            runner.adopt_passing_recordings_that_match_the_checkout(
+                main_checkout, scratch.root / "store", [scratch.root / "pr-z-recordings"])
+            refused = None
+        except runner.CouldNotRun as refusal:
+            refused = str(refusal)
+        finally:
+            runner.git = real_git
+        check(f"a git ls-files of the suites that {how} is refused with git's error",
+              refused is not None and "git ls-files failed" in refused
+              and "fatal: injected" in refused, refused)
+
     not_a_repository = scratch.root / "not-a-repository"
     not_a_repository.mkdir()
     try:

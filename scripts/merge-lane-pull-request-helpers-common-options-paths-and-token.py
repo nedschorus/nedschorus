@@ -94,7 +94,7 @@ def pull_request_head_test_run_log_store_root_directory(arguments, number):
             / "log-store")
 
 
-def merge_lane_recorded_inputs_store_directory(arguments):
+def merge_lane_head_test_run_recorded_inputs_store_directory(arguments):
     """The --recorded-inputs-directory every merge-lane head test run selects by; only a
     recording that matches a merge commit on main is saved there."""
     return arguments.merge_lane_worktrees_and_outputs_directory / "hr" / "store"

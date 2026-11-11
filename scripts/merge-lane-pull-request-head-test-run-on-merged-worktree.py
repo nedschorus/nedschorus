@@ -89,7 +89,7 @@ def main(argv=None):
                  "--log-store-root", str(log_store),
                  "--temporary-directory", str(outputs / "tmp"),
                  "--recorded-inputs-directory",
-                 str(common.merge_lane_recorded_inputs_store_directory(arguments)),
+                 str(common.merge_lane_head_test_run_recorded_inputs_store_directory(arguments)),
                  "--save-recorded-inputs-to-directory",
                  str(common.pull_request_head_test_run_saved_recorded_inputs_directory(
                      arguments, number))],
