@@ -755,7 +755,7 @@ print(x.render_companion(*x.complete_dialog_turns_and_report(pathlib.Path({str(e
     result = run(root, "^yes$", "--kind", "user-messages")
     answered.unlink()
     check("a pattern anchored to a whole message finds that message in the transcripts",
-          result.returncode == 0 and "USER: yes" in result.stdout, result.stdout + result.stderr)
+          result.returncode == 0 and "[user] yes" in result.stdout, result.stdout + result.stderr)
 
     spoken = root / "agent-session-files-by-machine" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s10.jsonl"
     write(spoken, transcript_records(agent("heron words of the agent", "2026-10-03T00:00:00Z"),
@@ -763,8 +763,24 @@ print(x.render_companion(*x.complete_dialog_turns_and_report(pathlib.Path({str(e
     finding = run(root, "heron words", "--kind", "user-messages")
     spoken.unlink()
     check("user-messages finds the user's words in a transcript and not the agent's",
-          finding.returncode == 0 and "USER: heron words of the user" in finding.stdout
+          finding.returncode == 0 and "[user] heron words of the user" in finding.stdout
           and "of the agent" not in finding.stdout, finding.stdout + finding.stderr)
+
+    injected = root / "agent-session-files-by-machine" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s13.jsonl"
+    write(injected, transcript_records(
+        dict(typed("egret from a hook", "2026-10-03T00:00:00Z"), origin={"kind": "hook"}),
+        dict(typed("egret from a peer", "2026-10-03T00:01:00Z"), origin={"kind": "peer"}, isMeta=True),
+        dict(typed("egret in a claude -p prompt", "2026-10-03T00:02:00Z"), entrypoint="sdk-cli"),
+        dict(typed("egret in a subagent's task", "2026-10-03T00:03:00Z"), isSidechain=True))
+          + '{"type": "user", "message": "egret in a torn record\n'
+          + transcript_records(dict(typed("egret typed by the user", "2026-10-03T00:04:00Z"),
+                                    origin={"kind": "human"})))
+    finding = run(root, "egret", "--kind", "user-messages")
+    injected.unlink()
+    check("user-messages marks the user's typed message [user], after a record that is not JSON, and leaves out "
+          "user records a hook, a peer, a program or a subagent's task wrote",
+          finding.returncode == 0 and "[user] egret typed by the user" in finding.stdout
+          and finding.stdout.count("egret") == 1, finding.stdout + finding.stderr)
 
     escaped = root / "agent-session-files-by-machine" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s11.jsonl"
     write(escaped, transcript_records(typed("merge it\nplease now", "2026-10-03T00:02:00Z"),
@@ -776,7 +792,7 @@ print(x.render_companion(*x.complete_dialog_turns_and_report(pathlib.Path({str(e
                               (r"C:\\logs", "path C:\\logs here")):
         finding = run(root, pattern, "--kind", "user-messages")
         check(f"a pattern that matches what JSON escapes finds the message, {pattern}",
-              finding.returncode == 0 and f"USER: {expected}" in finding.stdout, finding.stdout + finding.stderr)
+              finding.returncode == 0 and f"[user] {expected}" in finding.stdout, finding.stdout + finding.stderr)
     escaped.unlink()
 
     for locked_directory in (root / "agent-session-files-by-machine" / "mac" / "projects",
