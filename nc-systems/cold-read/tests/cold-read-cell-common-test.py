@@ -1451,7 +1451,9 @@ with tempfile.TemporaryDirectory() as scratch:
         {"*": {"stderr": "You've hit your session limit · resets 8:50pm\n"}}, report)
     check("an exit-0 attempt with no report and a limit message on stderr is caused account-limit",
           result.returncode == 1
-          and "cold-read-claude-cell: cause: account-limit — resets 8:50pm" in result.stderr,
+          # The cause detail's own format is the classifier tests' concern.
+          and re.search(r"^cold-read-claude-cell: cause: account-limit — .*resets 8:50pm$",
+                        result.stderr, re.MULTILINE) is not None,
           f"exit {result.returncode}; stderr={result.stderr!r}")
 
     # Every heading present passes, with trailing spaces on a heading line,
