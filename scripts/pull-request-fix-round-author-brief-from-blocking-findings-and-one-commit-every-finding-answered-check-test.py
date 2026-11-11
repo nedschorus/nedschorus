@@ -1314,14 +1314,17 @@ def stated_count_position_cases(root, repository, base, frozen_head):
           and "is read back as several comments when a continuation" in out
           and "Surviving mutant" not in out, err + out)
 
-    counted_reviewer = dict(reviewer, body="REQUEST_CHANGES\n\n**Blocking: 3**\n\nThree blockers.")
     reviewer_blocks = [comment("hook.py", "**Blocks** A finding merge-lane-2 graded fix-next.", comment_id=41)]
-    lane_only = dict(routes, **{REVIEWS: {"stdout": lines([counted_reviewer, grading])},
-                                **comments_route(reviewer["id"], reviewer_blocks)})
-    code, out, err = run(root, repository, lane_only)
-    check("a count where the review poster writes it, in a commissioned reviewer's review, is not checked, "
-          "since only merge-lane-2's review grades the round",
-          code == 0 and "Blocking findings (1)" in out and "graded fix-next" not in out, err + out)
+    # A login sorting after merge-lane-2's tells an ordering comparison of logins from an equality one.
+    for login in ("mac-claude", "zz-reviewer"):
+        counted_reviewer = dict(reviewer, body="REQUEST_CHANGES\n\n**Blocking: 3**\n\nThree blockers.",
+                                user={"login": login})
+        lane_only = dict(routes, **{REVIEWS: {"stdout": lines([counted_reviewer, grading])},
+                                    **comments_route(reviewer["id"], reviewer_blocks)})
+        code, out, err = run(root, repository, lane_only)
+        check(f"a count where the review poster writes it, in {login}'s commissioned review, is not checked, "
+              "and its Blocks do not block, since only merge-lane-2's review grades the round",
+              code == 0 and "Blocking findings (1)" in out and "graded fix-next" not in out, err + out)
 
     for body in ["REQUEST_CHANGES\n\nThe reviewer's test posts `**Blocking: 2**`; one finding blocks.",
                  "REQUEST_CHANGES\n\n**Blocking: 2**, both inline.",
