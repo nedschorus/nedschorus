@@ -901,11 +901,13 @@ with tempfile.TemporaryDirectory() as workspace:
         ])
     resumed_own = hook.subagent_transcript_path(resumed_after_stop_then_interim, "a01d1eb8fe1e4066a")
     resumed_own.parent.mkdir(parents=True, exist_ok=True)
-    transcript_of(resumed_own.parent, resumed_own.name, [background_task_launch_record("bdrdn0t9k")])
+    # The subagent's own transcript shows no running work, so only an applied interim notice
+    # takes it out of flight; a stop the resume failed to clear would skip the notice.
+    transcript_of(resumed_own.parent, resumed_own.name, [])
     flight = hook.work_in_flight(str(resumed_after_stop_then_interim), float("inf"),
                                  now=grid_at_13_minutes)
-    check("an interim notification after a resume that followed a TaskStop counts again",
-          flight.subagent_ids == ["a01d1eb8fe1e4066a"], str(flight.subagent_ids))
+    check("an interim notification after a resume that followed a TaskStop is applied",
+          flight.subagent_ids == [], str(flight.subagent_ids))
 
     # A cut-off stop record, unlike a cut-off launch, is skipped: missing it only leaves the task
     # counted as running.
