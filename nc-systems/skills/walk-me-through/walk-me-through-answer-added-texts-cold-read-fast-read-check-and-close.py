@@ -26,10 +26,11 @@ recommendation. R, E and O decide nothing, so the program takes no flag for
 them. --part-answer, given once for each part of an item that holds parts, as
 in `--part-answer 1=A --part-answer 2=D`, gives that part its own answer, A, AO
 or D. Z is not taken for a part, and a part number given twice is refused,
-writing nothing. Two flags record an item the user is not shown, so that no
+writing nothing. Three flags record an item the user is not shown, so that no
 agent writes a deciding line by hand: --already-decided for an item an earlier
 user-ruling decides as the item recommends, USER_RULING citing that ruling,
-which adds the `#new` texts as A does; and --moved-on for an item the walk
+which adds the `#new` texts as A does; --now-over-later-already-decided, the
+same with the now-over-later ruling as its citation; and --moved-on for an item the walk
 leaves with no decision, REASON saying why, which changes nothing.
 --moved-on-no-decision records that the user moved on from an
 item that asks for no decision, such as a summary item: it needs no
@@ -38,8 +39,8 @@ decision>`. It is refused, writing nothing, for an item that has a recommendatio
 the short-answer hook reads it: text after its last "Recommendation:", outside
 fenced or indented code and HTML comments, because that item asks for a decision.
 
-Every answer but --not-asked, --already-decided and --moved-on, which record an
-item the user is not shown, needs --user-reply-as-typed, the user's reply
+Every answer but --not-asked, --already-decided, --now-over-later-already-decided
+and --moved-on, which record an item the user is not shown, needs --user-reply-as-typed, the user's reply
 exactly as he typed it; check writes it, its whitespace runs squeezed to single
 spaces, into the answer line right after the date, as in ``in his words "`a
 trivial - a bit longer doesn't matter.`"``, so that the minutes keep a
@@ -47,7 +48,7 @@ remark that rides with the answer. The reply, USER_RULING, REASON and the start
 of each text in a status line are written as code spans, so that a
 `#next_to_present` or `#approval_walk_paused` inside them is not read as the
 walk's marker. A check without --user-reply-as-typed is refused, writing
-nothing, and so is one that gives it with any of those three. A reply that is a
+nothing, and so is one that gives it with any of those four. A reply that is a
 navigation word alone, next, N, continue or go, whatever its case and any
 trailing period or exclamation mark, is refused for every answer but
 --moved-on-no-decision, writing nothing: it approves nothing, and the
@@ -1600,7 +1601,7 @@ def now_over_later_problems(walk_finder, minutes, value, numbers, total, parser)
                                if any(first <= line < end for first, end in ranges)],
         NOW_OVER_LATER_OPTIONS: [number for first, end in ranges for number in range(first, end)
                                  if OPTION_LINE.match(lines[number])],
-        NOW_OVER_LATER_NEW_IF_D: [mark.number for mark in new_marks(text, tokens, ranges)
+        NOW_OVER_LATER_NEW_IF_D: [mark.number for mark in new_marks(text, tokens, ranges, lines)
                                   if mark.mark == NEW_IF_D_MARK],
     }
     return document, [problem.format(lines=", ".join(str(number + 1) for number in sorted(set(numbers))))
