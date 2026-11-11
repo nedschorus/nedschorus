@@ -585,13 +585,21 @@ WAITING_APPROVAL_WALK_ITEM_WITHOUT_PAGE_LINK_INSTRUCTION_TEMPLATE = (
     "Approval-walk {walk}: item {count_and_point} is waiting for the user; the walk-minutes record no "
     "page link for it. Before your first message, publish the item from docs/walk/{walk}.md and append "
     "the line \"#item_page item {count} <new link>\" to docs/walk/{walk}-minutes.md. Show the item in "
-    "full, and end your first message with its closing line, holding the link that opens."
+    "full, and end your first message with its closing line, holding the link that opens. If the publish "
+    "fails, append the line \"#item_page item {count} publish failed: <what the Artifact tool said>\" "
+    "to docs/walk/{walk}-minutes.md instead, and end your first message with the closing line without "
+    "its link."
 )
 
-WAITING_APPROVAL_WALK_ITEM_UNREADABLE_INSTRUCTION_TEMPLATE = (
-    "The handoff-supervisor could not read the waiting item of the open approval-walk in "
-    "{walk_directory}: {error}. Find it in the walk-minutes as /walk-me-through says, and tell the user "
-    "this error."
+# Follows the line for the waiting item when the walk-minutes name it but its walk-document cannot be read.
+WAITING_APPROVAL_WALK_ITEM_WALK_DOCUMENT_UNREADABLE_SENTENCE_TEMPLATE = (
+    " The handoff-supervisor could not read the item's text in docs/walk/{walk}.md: {error}. Tell the "
+    "user this error."
+)
+
+WAITING_APPROVAL_WALK_ITEM_WALK_MINUTES_UNREADABLE_INSTRUCTION_TEMPLATE = (
+    "The handoff-supervisor could not read the walk-minutes in {walk_directory} to find the open "
+    "approval-walk's waiting item: {error}. Tell the user this error."
 )
 
 # Subagent IDs resolve only within their session, so a successor must re-commission unfinished work.
@@ -1180,8 +1188,11 @@ def successor_initial_agent_instructions_line_naming_waiting_approval_walk_item(
 
     The walk is the one with the latest walk-minutes, by modification time, among the open ones in
     working_directory's docs/walk/, as /walk-me-through chooses when several are open. When the walk-minutes'
-    `#next_to_present` line names several items, the line names the first, where the walk resumes. Any failure
-    to read the walk files gives a line naming the error instead."""
+    `#next_to_present` line names several items, the line names the first, where the walk resumes. When the
+    walk-document cannot be read, the line names the item from the walk-minutes alone, without its point, and
+    says why; its count then lacks `of M` when the `#next_to_present` line gives none, so the `#item_page` line
+    it asks for would not be read until the agent adds M. When the walk-minutes cannot be read, or the walk
+    finder cannot be loaded, the line names the error instead."""
     walk_directory = working_directory / APPROVAL_WALK_DIRECTORY
     if not walk_directory.is_dir():
         return ()
@@ -1189,9 +1200,6 @@ def successor_initial_agent_instructions_line_naming_waiting_approval_walk_item(
         # Loaded here, not at import, so a copy of the supervisor without walk-me-through still starts.
         walk_finder = load_module_from_path(
             "walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common", WALK_FINDER_PATH)
-        walk_short_answer_hook = load_module_from_path(
-            "walk_me_through_user_short_answer_to_approval_walk_item_expanded_into_instructions_user_prompt_submit_hook",
-            WALK_SHORT_ANSWER_HOOK_PATH)
         parser = walk_finder.markdown_parser()
         walks = [walk for walk in walk_finder.unclosed_approval_walks_including_paused(walk_directory, parser)
                  if not walk[3]]
@@ -1200,23 +1208,34 @@ def successor_initial_agent_instructions_line_naming_waiting_approval_walk_item(
         minutes, value, _, _ = max(walks, key=lambda walk: walk[0].stat().st_mtime)
         name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
         numbers, total = walk_finder.parse_items(value)
-        document = minutes.with_name(name + ".md")
-        text = document.read_text(encoding="utf-8")
-        spans = walk_finder.item_unit_spans(text, parser)
-        total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser, spans)
         number = numbers[0]
-        point = walk_short_answer_hook.heading_points(text.split("\n"), spans, parser).get(number)
         link = walk_finder.newest_item_page_link_per_item_from_walk_minutes(
             minutes.read_text(encoding="utf-8"), parser).get(number)
     except Exception as error:
         print(f"handoff-supervisor: waiting approval-walk item check failed: {type(error).__name__}: {error}")
-        return (WAITING_APPROVAL_WALK_ITEM_UNREADABLE_INSTRUCTION_TEMPLATE.format(
+        return (WAITING_APPROVAL_WALK_ITEM_WALK_MINUTES_UNREADABLE_INSTRUCTION_TEMPLATE.format(
             walk_directory=walk_directory, error=f"{type(error).__name__}: {error}"),)
-    count = f"{number} of {total}"
+    point, document_problem = None, ""
+    try:
+        walk_short_answer_hook = load_module_from_path(
+            "walk_me_through_user_short_answer_to_approval_walk_item_expanded_into_instructions_user_prompt_submit_hook",
+            WALK_SHORT_ANSWER_HOOK_PATH)
+        document = minutes.with_name(name + ".md")
+        text = document.read_text(encoding="utf-8")
+        spans = walk_finder.item_unit_spans(text, parser)
+        total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser, spans)
+        point = walk_short_answer_hook.heading_points(text.split("\n"), spans, parser).get(number)
+    except Exception as error:
+        print(f"handoff-supervisor: waiting approval-walk item's walk-document unreadable: "
+              f"{type(error).__name__}: {error}")
+        document_problem = WAITING_APPROVAL_WALK_ITEM_WALK_DOCUMENT_UNREADABLE_SENTENCE_TEMPLATE.format(
+            walk=name, error=f"{type(error).__name__}: {error}")
+    count = f"{number} of {total}" if total is not None else number
     values = {"walk": name, "count": count, "count_and_point": f"{count}, {point}," if point else count}
     if link is None or link == walk_finder.ITEM_PAGE_PUBLISH_FAILED:
-        return (WAITING_APPROVAL_WALK_ITEM_WITHOUT_PAGE_LINK_INSTRUCTION_TEMPLATE.format(**values),)
-    return (WAITING_APPROVAL_WALK_ITEM_INSTRUCTION_TEMPLATE.format(link=link, **values),)
+        return (WAITING_APPROVAL_WALK_ITEM_WITHOUT_PAGE_LINK_INSTRUCTION_TEMPLATE.format(**values)
+                + document_problem,)
+    return (WAITING_APPROVAL_WALK_ITEM_INSTRUCTION_TEMPLATE.format(link=link, **values) + document_problem,)
 
 
 def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
