@@ -56,12 +56,14 @@ LOG_STORE_WRITER_MODULE_RELATIVE = Path(
 NED_BOX_HOME_CONSTANTS_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 # The cleaner reads the review checkouts directory from the merge-lane helpers' common module,
-# which loads the test runner, which loads the git-redirecting variables module.
+# which loads the test runner, which loads the git-redirecting variables module and the attendance check.
 MERGE_LANE_COMMON_MODULE_RELATIVE = Path(
     "scripts/merge-lane-pull-request-helpers-common-options-paths-and-token.py")
 TEST_RUNNER_RELATIVE = Path("scripts/run-all-test-suites.py")
 GIT_REDIRECTING_REMOVAL_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py")
+ATTENDANCE_CHECK_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/agent-session-unattended-by-user-check-common.py")
 
 # The cleaner's --remove run below would otherwise append to the real log-store's log of removals.
 _removals_log_directory = tempfile.mkdtemp(prefix="uncommitted-work-snapshots-test-removals-log-")
@@ -151,7 +153,7 @@ def new_clone():
                      GIT_OUTPUT_MODULE_RELATIVE, NEXT_STEP_LINES_MODULE_RELATIVE,
                      LOG_STORE_WRITER_MODULE_RELATIVE, NED_BOX_HOME_CONSTANTS_MODULE_RELATIVE,
                      MERGE_LANE_COMMON_MODULE_RELATIVE, TEST_RUNNER_RELATIVE,
-                     GIT_REDIRECTING_REMOVAL_MODULE_RELATIVE):
+                     GIT_REDIRECTING_REMOVAL_MODULE_RELATIVE, ATTENDANCE_CHECK_MODULE_RELATIVE):
         (main / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPOSITORY_ROOT / relative, main / relative)
     (main / "tracked.txt").write_text("one\n")
