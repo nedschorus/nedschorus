@@ -763,8 +763,8 @@ def from_elsewhere(lines, start_line, branch, remote="origin"):
     start line after the ANSWER line, and a push naming HEAD:<branch>."""
     last = lines[-1]
     if last.startswith("Then carry on"):
-        last = ("Push it with git push -u %s HEAD:%s, then carry on with what you "
-                "were doing." % (remote, branch))
+        last = ("Push it with git push -u %s HEAD:refs/heads/%s, then carry on with "
+                "what you were doing." % (remote, branch))
     elif last.startswith("Push it with git push,"):
         last = ("Push it with git push -u %s HEAD:%s, without --force, then carry "
                 "on with what you were doing." % (remote, branch))
@@ -794,8 +794,8 @@ def pushed_history_merge_lines(branch, named, base="origin/main", remote="origin
         "Run git merge %s, resolving each conflict so that both changes work."
         % base,
     ] + give_up_lines("merge", base) + [
-        "Push it with git push -u %s HEAD:%s, without --force, then carry on with what "
-        "you were doing." % (remote, branch),
+        "Push it with git push -u %s HEAD:refs/heads/%s, without --force, then "
+        "carry on with what you were doing." % (remote, branch),
     ]
 
 
@@ -2087,6 +2087,27 @@ def real_repository_cases(root):
              and without_main_side(lines)[1:] == want
              and any("--head pr-branch " in call + " " for call in calls))
 
+    # A detached HEAD gives git no namespace for a destination origin lacks, so
+    # the printed push must name refs/heads/ in full; it is run here for real.
+    detached = root / "detached-fix"
+    git_in(work, "worktree", "add", "-q", "--detach", str(detached), "conflict-topic")
+    commit_in(detached, "detached.txt", "on no branch\n", "commit on no branch")
+    detached_hash = git_in(detached, "rev-parse", "HEAD").strip()
+    status, lines, _ = run_here("--head", detached_hash, "--branch", "brand-new-fix",
+                                gh=dict(NUMBER="[]"))
+    push_lines = [line for line in lines if line.startswith("Push it with git push -u")]
+    pushed = None
+    if push_lines:
+        command = push_lines[0][len("Push it with "):].split(",")[0].split()
+        pushed = subprocess.run(command, cwd=detached, capture_output=True, text=True)
+    case("real: the printed push of a commit on no local branch creates the branch "
+         "origin lacks",
+         status == CHECK.EXIT_CONFLICT
+         and any(line.startswith("No local branch is at the checked commit")
+                 for line in lines)
+         and pushed is not None and pushed.returncode == 0
+         and git_in(origin, "rev-parse", "brand-new-fix").strip() == detached_hash)
+
     # main's side came in through a pull request's merge, by another agent-seat.
     git_in(origin, "checkout", "-q", "-b", "side-work", "main")
     (origin / "shared-by-pull-request.txt").write_text("main's side\n")
@@ -2436,6 +2457,20 @@ for exit_status in (128, -9):
     status, lines = run_elsewhere(worktree_list=(exit_status, LISTING_WITH_FIX))
     case("not HEAD: git worktree list exiting %d still says to switch to the local "
          "branch" % exit_status, lines[2] == SWITCH_FIRST)
+
+status, lines = run_elsewhere(local_branches_at=(0, "aaa-original\nremote-fix"))
+case("not HEAD: of two local branches at the commit, the pushed one is named, "
+     "though it sorts second",
+     lines[2] == "The checked commit %s is branch remote-fix, not the one checked "
+                 "out here: first run git switch remote-fix, because every step "
+                 "below acts on HEAD." % SHORT_HEAD)
+
+status, lines = run_elsewhere(local_branches_at=(0, "aaa-original\nlocal-fix"))
+case("not HEAD: when the pushed branch is not among the local branches at the "
+     "commit, the first is named",
+     lines[2] == "The checked commit %s is branch aaa-original, not the one checked "
+                 "out here: first run git switch aaa-original, because every step "
+                 "below acts on HEAD." % SHORT_HEAD)
 
 status, lines = run_elsewhere(local_branches_at=(0, ""))
 case("not HEAD: no local branch at the commit: switch --detach to it, never HEAD",

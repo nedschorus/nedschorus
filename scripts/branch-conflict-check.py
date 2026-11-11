@@ -25,8 +25,10 @@ pushed commit has an open pull request, it gets that pull request's answer;
 otherwise the base is merged into it. Every merge and rebase step acts on
 HEAD, so when the checked commit is not HEAD, as for a branch pushed while
 another is checked out, the steps first say where to stand: the worktree that
-has the commit's local branch checked out, else git switch to that branch,
-else git switch --detach to the commit, and the push names HEAD:<branch>.
+has the commit's local branch checked out, the pushed branch preferred, else
+git switch to that branch, else git switch --detach to the commit, and the
+push names HEAD:<branch>, or HEAD:refs/heads/<branch> when the remote lacks
+the branch.
 When no branch can be asked about, or
 gh, git or the remote cannot answer, the report gives no answer and says how
 to rerun for one."""
@@ -628,10 +630,13 @@ def replace_lines(answer_line, pull_request, base, understand, caveat=()):
     ]
 
 
-def pushed_commit_checkout_lines(head_hash, runner=run):
+def checked_commit_not_head_worktree_or_git_switch_instruction_lines(
+        head_hash, branch=None, runner=run):
     """Return [] when HEAD is the checked commit, else the one line that tells
     the agent where to stand so that the steps after it, which act on HEAD,
-    act on the checked commit.
+    act on the checked commit. Of several local branches at the commit, the
+    pushed branch, named by branch, is the one named; another only when the
+    pushed branch is not among them.
 
     The pre-push hook checks every pushed branch, and a branch pushed while
     another is checked out would otherwise get the checked-out branch merged,
@@ -651,7 +656,7 @@ def pushed_commit_checkout_lines(head_hash, runner=run):
         return ["No local branch is at the checked commit %s, and it is not the "
                 "one checked out here: first run git switch --detach %s, because "
                 "every step below acts on HEAD." % (short, short)]
-    local_branch = local_branches[0]
+    local_branch = branch if branch in local_branches else local_branches[0]
     exit_status, out = runner(["git", "worktree", "list", "--porcelain"])
     if exit_status == 0:
         worktree_path = None
@@ -751,7 +756,8 @@ def clearing_lines(pull_request, branch, head, base, remote, head_hash, base_has
                         "close or replace that pull request; ask its author with "
                         "SendMessage how to clear the conflict."
                         % (branch, holder_pull_request)])
-    start = pushed_commit_checkout_lines(head_hash, runner)
+    start = checked_commit_not_head_worktree_or_git_switch_instruction_lines(
+        head_hash, branch, runner)
     give_up = [
         "If you cannot make both changes work, run git %s --abort, which puts the "
         "branch back as it was, and ask the agent-seat the MAIN'S SIDE line names, "
@@ -791,8 +797,8 @@ def clearing_lines(pull_request, branch, head, base, remote, head_hash, base_has
             "Run git merge %s, resolving each conflict so that both changes work."
             % base,
         ] + give_up + [
-            "Push it with git push -u %s HEAD:%s, without --force, then carry on "
-            "with what you were doing." % (remote, branch),
+            "Push it with git push -u %s HEAD:refs/heads/%s, without --force, then "
+            "carry on with what you were doing." % (remote, branch),
         ]
     return [
         "ANSWER: rebase -- branch %s has no open pull request and %s does not have "
@@ -805,8 +811,8 @@ def clearing_lines(pull_request, branch, head, base, remote, head_hash, base_has
         "commit that is the other branch's work rather than this branch's, and run "
         "git rebase --onto %s <that commit's hash>." % (base, base, base),
     ] + give_up + [
-        ("Push it with git push -u %s HEAD:%s, then carry on with what you were "
-         "doing." % (remote, branch)) if start else
+        ("Push it with git push -u %s HEAD:refs/heads/%s, then carry on with what "
+         "you were doing." % (remote, branch)) if start else
         "Then carry on with what you were doing; if that was a push, push again.",
     ]
 
