@@ -24,7 +24,9 @@ earlier version opened). The task's owner is the agent-seat whose task list
 holds it (TASKS below). The state file is state.json in --state-directory: the
 last main commit mutation-tested, under last_tested_main_commit, and, under
 tasks_opened, each surviving mutant's key with the agent-seat and id of the
-survivor task that lists it.
+survivor task that lists it, and, under untestable_merges, which a state file
+may lack, each merge recorded as untestable (AN UNTESTABLE MERGE below) with
+the suites that fail on its unchanged code.
 
 WHAT ONE RUN DOES, in order.
 
@@ -95,12 +97,22 @@ later merge, and the next run goes on with this merge from its first mutant
 with no result. Each run first removes the kept sessions of every merge that
 is no longer waiting to be tested.
 
+AN UNTESTABLE MERGE. When the mutation testing program exits
+EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD, because a suite fails on the merge's
+unchanged code, and names each such suite on standard error, the run opens a
+job failure task naming the merge and those suites, then records the merge
+under untestable_merges in the state, with those suites, and as tested, and
+goes on to the next merge, which it never tries again. A task that cannot be
+opened is a failed step, and the merge is not recorded.
+
 A step that fails stops the run there, and steps 8 and 9 still run, to open
 the failure's task and write the record: a failed fetch, a state file that
 cannot be read or no longer names an ancestor of origin/main, a survivor task,
 diff file or state file that the recheck cannot read or write, a missing
 cosmic-ray venv, a kept session that cannot be read or removed, a mutation
-testing run that exits other than 0 or 1 or writes no readable JSON, a
+testing run that exits other than 0, 1 or EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD,
+as when git fails, a suite runs out of time or the disk is full, or that
+writes no readable JSON, a
 mutant's diff or task that cannot be written, and an error this program does
 not handle, whose traceback the record keeps.
 The commit it stopped at is not recorded as tested, so the next run tries it
@@ -164,14 +176,18 @@ mutant adds about 30 seconds to the run.
 
 JOB FAILURE TASKS. The run opens a task on the task list of the agent-seat
 JOB_FAILURE_TASK_AGENT_SEAT names, saying what failed and what to do, for each
-failure of the run itself: a step that failed, as above; a merge carried on
+failure of the run itself: a step that failed, as above; a merge recorded
+as untestable, opened as AN UNTESTABLE MERGE above says; a merge carried on
 with no mutant judged beyond those its kept sessions held before the run; a
 survivor task whose recheck gave no verdicts; a run record that could not be
 written, opened after the failed write; and any merge still not recorded as
 tested MERGE_STILL_UNTESTED_TASK_OPENED_AFTER_SECONDS_SINCE_MERGE, three days,
 after its merge commit, the sign that the pass no longer keeps up and that the
 lines it mutates must be chosen. A failed step's task has the first line of
-its message as its subject, and a carried-on merge's task names the merge.
+its message as its subject, and an untestable or a carried-on merge's task
+names the merge; an untestable merge's task also names the failing suites,
+and asks for the merge's changed lines to be mutation-tested at a later main
+commit where they pass.
 Each of the other three kinds has one task with a fixed subject:
 SURVIVOR_TASKS_NOT_RECHECKED_TASK_SUBJECT, whose description names the
 survivor tasks not rechecked; RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT, whose
@@ -193,7 +209,8 @@ THE RECORD is one text file per run in the log-store:
 It holds origin/main, the commit the run started after, a line per survivor
 task rechecked with its verdicts and what was done to the task, a line per
 merge with its worker count, the mutants its kept sessions already held and
-the mutation testing program's SUMMARY line, or, for a merge carried on, how
+the mutation testing program's SUMMARY line, or, for a merge recorded as
+untestable, the suites that fail on its unchanged code, or, for a merge carried on, how
 many mutants are judged, a line per job failure task, a line per surviving
 mutant with the task it was given or was added to, a line per ERRORED mutant
 and changed file with no suite, each failure, and the wall-clock seconds.
@@ -215,8 +232,9 @@ The cron line:
     30 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py >> /home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log 2>&1
 
 Exit codes: 0 every survivor task was rechecked and every merge since the last
-run was mutation-tested and its survivors given tasks, or the first run wrote
-the state file; EXIT_STEP_FAILED (4) a step failed, as above;
+run was mutation-tested and its survivors given tasks, or recorded as
+untestable with its job failure task opened, or the first run wrote the state
+file; EXIT_STEP_FAILED (4) a step failed, as above;
 EXIT_RECORD_NOT_WRITTEN (5) the record could not be written;
 EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6) another run holds the lock;
 EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR (7) no step failed, but a
@@ -274,6 +292,7 @@ LOG_STORE_HOST = "nedlern@ned-box"
 DEFAULT_STATE_DIRECTORY = (Path.home() / ".local" / "state" / "nedschorus"
                            / "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open")
 STATE_FILE_NAME = "state.json"
+UNTESTABLE_MERGES_STATE_KEY = "untestable_merges"
 LOCK_FILE_NAME = "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.lock"
 DEFAULT_TASK_LISTS_DIRECTORY = Path.home() / ".claude" / "tasks"
 DEFAULT_AGENT_SEATS_DIRECTORY = Path.home() / "agents"
@@ -811,6 +830,61 @@ def survivor_task_rechecked_write(task_file, diff_files, surviving_diff_files, m
     return "rewritten to list only the surviving mutants"
 
 
+def merge_untestable_task_subject(merge):
+    return (f"Nightly full mutation pass skipped merge {merge[:12]}, untestable: a suite fails "
+            f"on its unchanged code")
+
+
+def merge_untestable_recorded(arguments, state, state_file, merge, parent, merge_subject,
+                              exit_code, stderr, record, record_citation):
+    """Open the job failure task for a merge the mutation testing program found a suite failing
+    on with no mutant applied, then record the merge in the state as untestable and as the last
+    tested commit, so the run goes on to the next merge. Raises StepFailed when the task cannot
+    be opened, leaving the state as it was, so the next run tries the merge again."""
+    suites = [line[len(mutation_testing.SUITE_FAILS_ON_UNMUTATED_HEAD_LINE_PREFIX):].strip()
+              for line in stderr.splitlines()
+              if line.startswith(mutation_testing.SUITE_FAILS_ON_UNMUTATED_HEAD_LINE_PREFIX)]
+    named = ", ".join(suites)
+    subject = merge_untestable_task_subject(merge)
+    description = (
+        f"The scheduled full mutation pass on ned-box could not mutation-test merge {merge} "
+        f"({merge_subject}): on that merge's unchanged code, the suite(s) {named} fail, so the "
+        f"mutation testing program judged no mutant and exited {exit_code}. The run recorded "
+        f"the merge as untestable under {UNTESTABLE_MERGES_STATE_KEY} in {state_file}, went on "
+        f"to the next merge, and does not try this merge again. The program printed:\n"
+        f"{all_said_on_stderr_or_last_line_of_stdout_indented('', stderr)}\n"
+        f"Its record: {record_citation}\n"
+        f"Mutation-test this merge's changed lines at a later main commit where that suite "
+        f"passes: run on ned-box python3 {arguments.mutation_testing_program} "
+        f"--full-mutation-pass --checkout {shlex.quote(str(arguments.clone))} --head <that "
+        f"commit> --base {parent} --cosmic-ray-venv "
+        f"{shlex.quote(str(arguments.cosmic_ray_venv))}, and give each surviving mutant in a "
+        f"file that `git diff --name-only {parent} {merge} -- '*.py'` lists a task on the task "
+        f"list of the agent-seat that wrote its line. That range also holds the merges after "
+        f"this one, which the nightly run tests itself.\n"
+        f"Mark this task completed once those lines are mutation-tested and their survivors "
+        f"have tasks.")
+    try:
+        task_id, opened = job_failure_task_opened_unless_open(subject, description, arguments)
+    except OSError as error:
+        raise StepFailed(
+            f"merge {merge[:12]} ({merge_subject}): a suite fails on its unchanged code ({named}), "
+            f"so it is untestable, but its job failure task could not be opened on "
+            f"{JOB_FAILURE_TASK_AGENT_SEAT}'s task list ({type(error).__name__}: {error}), so "
+            f"the merge is not recorded as untestable and no later merge is tested. The next "
+            f"run tries this merge again.\n"
+            f"Fix what the error names, such as a task list directory that does not exist, "
+            f"then run this program again on ned-box: {RUN_BY_HAND}") from error
+    record.append(f"UNTESTABLE: merge {merge[:12]} ({merge_subject}): on its unchanged code the "
+                  f"suite(s) {named} fail, so no mutant can be judged; recorded as untestable, "
+                  f"and the run goes on to the next merge")
+    record.append(f"JOB FAILURE TASK: {'opened' if opened else 'already open, so none opened:'}"
+                  f" task #{task_id} on {JOB_FAILURE_TASK_AGENT_SEAT}'s task list, {subject}")
+    state.setdefault(UNTESTABLE_MERGES_STATE_KEY, {})[merge] = suites
+    state["last_tested_main_commit"] = merge
+    write_state(state_file, state)
+
+
 def summary_line(stdout):
     lines = [line for line in stdout.splitlines() if line.startswith("SUMMARY:")]
     return lines[-1] if lines else "no SUMMARY line"
@@ -861,6 +935,10 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
                 f"Fix the cause in a pull request. The nightly run carries the merge on until "
                 f"then; mark this task completed once a run records the merge as tested or "
                 f"carries it on with new mutants judged."))
+    if exit_code == mutation_testing.EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD:
+        merge_untestable_recorded(arguments, state, state_file, merge, parent, merge_subject,
+                                  exit_code, stderr, record, record_citation)
+        return False, None
     if exit_code not in MUTATION_TESTING_EXITS_WITH_A_VERDICT:
         raise StepFailed(
             f"merge {merge[:12]} ({merge_subject}): the mutation testing program exited "
@@ -1123,8 +1201,12 @@ def main_under_lock(arguments):
                         job_failure_tasks += [no_progress_task] if no_progress_task else []
                         break
                     untested_merges_and_times.pop(0)
+            untestable = [merge for merge in merges
+                          if merge in state.get(UNTESTABLE_MERGES_STATE_KEY, {})]
             record.append(f"merges tested: {len(merges) - len(untested_merges_and_times)} of "
-                          f"{len(merges)}")
+                          f"{len(merges)}"
+                          + (f", {len(untestable)} of them recorded as untestable"
+                             if untestable else ""))
     except (StepFailed, OSError) as error:
         failure = str(error)
         record.append(f"FAILED: {failure}")
