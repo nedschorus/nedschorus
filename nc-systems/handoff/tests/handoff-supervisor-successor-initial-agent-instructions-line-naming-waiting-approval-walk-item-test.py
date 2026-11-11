@@ -173,6 +173,19 @@ def run_walk_minutes_cases(workspace):
     check("a waiting item the walk-document has no heading for: the line naming the error",
           len(lines) == 1 and ": UnusableRange: " in lines[0], repr(lines))
 
+    root = workspace / "walk-finder-missing"
+    walk_in(root, OPEN_MINUTES)
+    with fixture.supervisor_names_replaced(WALK_FINDER_PATH=root / "no-such-walk-finder.py"), \
+            contextlib.redirect_stdout(io.StringIO()):
+        lines = lines_for(root)
+    check("a walk finder missing from the supervisor's checkout: the line naming the error, and no crash",
+          len(lines) == 1 and ": FileNotFoundError: " in lines[0], repr(lines))
+
+    walk_finder = supervisor.load_module_from_path("walk_finder_for_the_test", supervisor.WALK_FINDER_PATH)
+    check("the supervisor reads the same docs/walk the walk finder reads",
+          supervisor.APPROVAL_WALK_DIRECTORY == walk_finder.WALK_DIRECTORY,
+          f"{supervisor.APPROVAL_WALK_DIRECTORY} != {walk_finder.WALK_DIRECTORY}")
+
 
 def run_prompt_placement_cases(workspace):
     line = approved_line(WALK, f"2 of 3, {POINT},", LINK, "2 of 3")

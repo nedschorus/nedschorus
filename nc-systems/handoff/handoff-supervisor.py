@@ -290,18 +290,14 @@ CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET = 1
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 
 WALK_ME_THROUGH_DIRECTORY = REPOSITORY_ROOT / "nc-systems" / "skills" / "walk-me-through"
-_walk_finder_spec = importlib.util.spec_from_file_location(
-    "walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
-    WALK_ME_THROUGH_DIRECTORY / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py")
-walk_finder = importlib.util.module_from_spec(_walk_finder_spec)
-_walk_finder_spec.loader.exec_module(walk_finder)
+WALK_FINDER_PATH = (WALK_ME_THROUGH_DIRECTORY
+                    / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py")
 # Loaded for heading_points alone, so the point is read as the closing line the hooks check reads it.
-_walk_short_answer_hook_spec = importlib.util.spec_from_file_location(
-    "walk_me_through_user_short_answer_to_approval_walk_item_expanded_into_instructions_user_prompt_submit_hook",
+WALK_SHORT_ANSWER_HOOK_PATH = (
     WALK_ME_THROUGH_DIRECTORY
     / "walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py")
-walk_short_answer_hook = importlib.util.module_from_spec(_walk_short_answer_hook_spec)
-_walk_short_answer_hook_spec.loader.exec_module(walk_short_answer_hook)
+# The same docs/walk the walk finder reads; kept here so a missing walk finder still lets the supervisor start.
+APPROVAL_WALK_DIRECTORY = Path("docs") / "walk"
 
 _claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(
     "claude_code_session_transcript_lookup_and_text_search_common",
@@ -1171,6 +1167,13 @@ def spawned_subagent_roster_from(handoff_fields: dict) -> list:
     return numbered_field_values_from(handoff_fields, SPAWNED_SUBAGENT_FIELD_PREFIX)
 
 
+def load_module_from_path(name: str, path: Path):
+    specification = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
 def successor_initial_agent_instructions_line_naming_waiting_approval_walk_item(working_directory: Path) -> tuple:
     """Return the first prompt's line naming the open approval-walk's waiting item and its last page link, or no
     lines when no approval-walk is open or every one is paused; never block launch.
@@ -1179,10 +1182,16 @@ def successor_initial_agent_instructions_line_naming_waiting_approval_walk_item(
     working_directory's docs/walk/, as /walk-me-through chooses when several are open. When the walk-minutes'
     `#next_to_present` line names several items, the line names the first, where the walk resumes. Any failure
     to read the walk files gives a line naming the error instead."""
-    walk_directory = working_directory / walk_finder.WALK_DIRECTORY
+    walk_directory = working_directory / APPROVAL_WALK_DIRECTORY
     if not walk_directory.is_dir():
         return ()
     try:
+        # Loaded here, not at import, so a copy of the supervisor without walk-me-through still starts.
+        walk_finder = load_module_from_path(
+            "walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common", WALK_FINDER_PATH)
+        walk_short_answer_hook = load_module_from_path(
+            "walk_me_through_user_short_answer_to_approval_walk_item_expanded_into_instructions_user_prompt_submit_hook",
+            WALK_SHORT_ANSWER_HOOK_PATH)
         parser = walk_finder.markdown_parser()
         walks = [walk for walk in walk_finder.unclosed_approval_walks_including_paused(walk_directory, parser)
                  if not walk[3]]
