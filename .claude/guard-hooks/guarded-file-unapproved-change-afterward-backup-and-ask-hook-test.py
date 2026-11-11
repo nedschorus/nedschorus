@@ -1247,6 +1247,39 @@ def cases(scratch):
               rebased_away not in world.store_file(claude, "approved").split(),
               world.store_file(claude, "approved"))
 
+    # -- a lost first-run version, reported or approved over, does not stop the first-run
+    # version of a file listed after it from being approved first
+    for approved_over in (False, True):
+        name = "first-run-version-pruned-" + ("approved-over-" if approved_over else "") + "then-next"
+        world = World(Path(scratch) / name)
+        claude = world.repo / "CLAUDE.md"
+        committed = world.key(claude)
+        # Listed before CLAUDE.md.
+        skill = world.repo / ".claude" / "skills" / "a.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("a skill\n")
+        world.git("add", ".")
+        world.git("commit", "-qm", "a skill")
+        skill.write_text("a skill, rebased away\n")
+        world.git("commit", "-qam", "dropped by the rebase")
+        world.run()
+        world.git("reset", "-q", "--hard", "HEAD~1")
+        (world.repo / ".git" / "ORIG_HEAD").unlink(missing_ok=True)
+        world.git("reflog", "expire", "--expire=now", "--expire-unreachable=now", "--all")
+        world.git("gc", "-q", "--prune=now")
+        if approved_over:
+            world.run()
+            world.marker('The user said "y"')
+            result = world.command("--approve", skill, world.key(skill))
+            check(f"{name}: the skill's version after the lost one is approved",
+                  result.returncode == 0, result.stderr)
+            skill.write_text("a skill v3\n")
+        claude.write_text("project v2\n")
+        world.run()
+        check(f"{name}: CLAUDE.md's first-run version is approved first",
+              world.store_file(claude, "approved").split()[:1] == [committed],
+              world.store_file(claude, "approved"))
+
     # -- a version a run saw unapproved is not approved by a rename after the file went back to it
     world = fresh(scratch, "rename-after-revert-to-unapproved-base")
     skills = world.repo / ".claude" / "skills"
