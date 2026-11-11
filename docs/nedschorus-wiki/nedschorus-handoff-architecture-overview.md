@@ -136,7 +136,6 @@ Unless named otherwise, files are in `~/.claude/handoffs/` on the agent-seat's m
 - GHI [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedschorus/nedschorus/issues/242)
 - GHI [refresh-design: when a system's code lands, bring its design, build-slice plan and overview into line — removing, never revising](https://github.com/nedschorus/nedschorus/issues/670)
 - GHI [Handoffs become one pending file per session, archived only after a successor is up](https://github.com/nedschorus/nedschorus/issues/754)
-- GHI [A crash-recovered ned-box seat runs without its own GitHub token, and the Mac launcher warns of a missing token when it only attaches](https://github.com/nedschorus/nedschorus/issues/759)
 - GHI [A small HTTP service with SQLite on ned-box keeps one record of every agent-seat on both machines](https://github.com/nedschorus/nedschorus/issues/972)
 - GHI [Move mechanical agent chores into programs and hooks](https://github.com/nedschorus/nedschorus/issues/1036)
 - GHI [Check every prerequisite of the fleet's programs before an agent-session starts](https://github.com/nedschorus/nedschorus/issues/1055)
