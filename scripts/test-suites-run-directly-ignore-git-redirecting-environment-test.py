@@ -267,7 +267,9 @@ runs = [(suite, "GIT_DIR") for suite in SUITES_RUN_WITH_GIT_DIR]
 runs += [(SUITE_RUN_WITH_EVERY_VARIABLE, variable)
          for variable in NAMED_REPOSITORY_PATH_FOR_VARIABLE]
 
-files_to_copy = [RUNNER_PATH, FIXTURE_PATH, REMOVAL_MODULE_PATH, ATTENDANCE_CHECK_MODULE_PATH,
+files_to_copy = [RUNNER_PATH,
+                 str(runner.ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH.relative_to(REPO_ROOT)),
+                 FIXTURE_PATH, REMOVAL_MODULE_PATH, ATTENDANCE_CHECK_MODULE_PATH,
                  SUITE_RUN_WITH_EVERY_VARIABLE,
                  *FILES_THE_SUITE_RUN_WITH_EVERY_VARIABLE_READS]
 for suite, files_it_reads in SUITES_RUN_WITH_GIT_DIR.items():
