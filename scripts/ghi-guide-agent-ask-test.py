@@ -124,8 +124,10 @@ with tempfile.TemporaryDirectory() as temporary:
           len(claude_calls) == 2, claude_calls)
     check("a cold start's ask turn carries the plan-reuse sentence and its "
           "cold-start turn does not",
-          ghi_ask.ASK_PROMPT_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE_REQUEST_SENTENCE in claude_calls[1][0]
-          and ghi_ask.ASK_PROMPT_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE_REQUEST_SENTENCE not in claude_calls[0][0],
+          ghi_ask.GHI_GUIDE_AGENT_ASK_PROMPT_SENTENCE_ASKING_THE_AGENT_TO_NAME_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE
+          in claude_calls[1][0]
+          and ghi_ask.GHI_GUIDE_AGENT_ASK_PROMPT_SENTENCE_ASKING_THE_AGENT_TO_NAME_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE
+          not in claude_calls[0][0],
           claude_calls)
     check("cold-start's second call resumes the session the first call opened",
           claude_calls[1][1] == "sess-A", claude_calls)
@@ -158,7 +160,7 @@ with tempfile.TemporaryDirectory() as temporary:
           len(refresh_calls) == 1 and refresh_calls[0]["full"] is False, refresh_calls)
 
     # --- every question ghi-guide-agent is sent carries the plan-reuse sentence ----
-    reuse = ghi_ask.ASK_PROMPT_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE_REQUEST_SENTENCE
+    reuse = ghi_ask.GHI_GUIDE_AGENT_ASK_PROMPT_SENTENCE_ASKING_THE_AGENT_TO_NAME_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE
     check("the plan-reuse sentence is the one the user approved",
           reuse == ("If the question describes a plan, also name any issue whose "
                     "design built something the plan should reuse instead of "
