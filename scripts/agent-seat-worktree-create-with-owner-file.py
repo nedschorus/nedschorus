@@ -5,8 +5,8 @@ Agents make worktrees with it; programs that make and remove their own worktrees
 doing so.
 
 Usage:
-  agent-seat-worktree-create-with-owner-file.py <branch> [--base <commit>]
-  agent-seat-worktree-create-with-owner-file.py --detach <directory name> <commit>
+  agent-seat-worktree-create-with-owner-file.py <branch> [--base <commit>] [--owned-by-agent-session]
+  agent-seat-worktree-create-with-owner-file.py --detach <directory name> <commit> [--owned-by-agent-session]
 
 Run it from any checkout of the clone. The worktree is made at
 <reference-checkout>/.claude/worktrees/<branch>, or <directory name> with --detach, where
@@ -25,7 +25,10 @@ prints. A branch name holding `/` makes nested directories there.
 
 The owner file, scripts/worktree-owner-file-read-and-write.py's, names the agent-seat
 GIT_AUTHOR_NAME names, which must be an agent-seat as scripts/recover-crashed-seats.py lists
-them. `git worktree add` runs with core.hooksPath emptied, so the post-checkout hook writes
+them. With --owned-by-agent-session the owner is instead the agent-session of the nearest
+`claude` process among this program's parent processes, with that agent-seat, as a
+subagent's worktree has; with no such process the owner file cannot be written, and the
+worktree is removed as below. `git worktree add` runs with core.hooksPath emptied, so the post-checkout hook writes
 no owner file of its own and this program is its one writer.
 
 Prints the worktree's path, alone, on stdout, so `cd "$(python3 <this program> <branch>)"`
@@ -58,12 +61,13 @@ PROGRAM_PATH = Path(__file__).resolve()
 AGENT_SEAT_WORKTREES_DIRECTORY = Path(".claude") / "worktrees"
 DEFAULT_BASE = "origin/main"
 EXIT_MADE, EXIT_FAILED, EXIT_REFUSED = 0, 1, 2
+OWNED_BY_AGENT_SESSION_FLAG = "--owned-by-agent-session"
 # A directory that holds no hooks, so `git worktree add` runs no post-checkout hook.
 NO_HOOKS_DIRECTORY = os.devnull
 
 USAGE = (
-    "usage: agent-seat-worktree-create-with-owner-file.py <branch> [--base <commit>]\n"
-    "       agent-seat-worktree-create-with-owner-file.py --detach <directory name> <commit>")
+    "usage: agent-seat-worktree-create-with-owner-file.py <branch> [--base <commit>] [--owned-by-agent-session]\n"
+    "       agent-seat-worktree-create-with-owner-file.py --detach <directory name> <commit> [--owned-by-agent-session]")
 
 
 def load_module(name, relative_path):
@@ -206,10 +210,15 @@ def worktree_add_command(path, branch, base, commit):
     return [*add, "-b", branch, str(path), base or DEFAULT_BASE], branch
 
 
-def owner_file_write_or_remove_worktree(path, agent_seat, made_branch, base):
+def owner_file_write_or_remove_worktree(path, agent_seat, made_branch, base, owned_by_agent_session=False):
     """Write the owner file; when that fails, remove the worktree. Return the exit code."""
     try:
-        owner_file.worktree_owner_file_write(path, owner_file.OWNER_AGENT_SEAT, agent_seat)
+        if owned_by_agent_session:
+            owner_file.worktree_owner_file_write(
+                path, owner_file.OWNER_AGENT_SESSION, agent_seat,
+                owner_file.nearest_claude_parent_process_owner_key())
+        else:
+            owner_file.worktree_owner_file_write(path, owner_file.OWNER_AGENT_SEAT, agent_seat)
         return EXIT_MADE
     except Exception as error:
         error_text = f"{type(error).__name__}: {error}"
@@ -232,6 +241,8 @@ def main(argv=None):
     if arguments in (["--help"], ["-h"]):
         print(__doc__)
         return EXIT_MADE
+    owned_by_agent_session = OWNED_BY_AGENT_SESSION_FLAG in arguments
+    arguments = [argument for argument in arguments if argument != OWNED_BY_AGENT_SESSION_FLAG]
     try:
         parsed = parse_arguments(arguments)
         if isinstance(parsed, str):
@@ -256,7 +267,7 @@ def main(argv=None):
     except GitFailed as error:
         print(error, file=sys.stderr)
         return EXIT_FAILED
-    code = owner_file_write_or_remove_worktree(path, agent_seat, made_branch, base)
+    code = owner_file_write_or_remove_worktree(path, agent_seat, made_branch, base, owned_by_agent_session)
     if code == EXIT_MADE:
         print(path)
     return code

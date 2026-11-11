@@ -4,7 +4,8 @@ against the installed Claude Code.
 
 A headless `claude -p` on haiku, given the hook as its only WorktreeCreate hook, in a scratch
 clone with a local bare origin, starts one subagent with isolation "worktree". The suite
-checks that the hook made the subagent's worktree with its owner file, that `git worktree
+checks that the hook made the subagent's worktree with its owner file, naming claude's
+agent-session, which has stopped once claude has exited, that `git worktree
 list` never shows a worktree locked while claude runs, and that the worktree is still there,
 unlocked, once claude has exited. A later Claude Code that locks or removes such a worktree
 fails it. It needs the real HOME, where claude is logged in, and an agent-seat of this machine
@@ -90,9 +91,8 @@ def test_trial_against_the_installed_claude_code():
         check("this machine has an agent-seat to name GIT_AUTHOR_NAME for the trial", False,
               "scripts/recover-crashed-seats.py lists none")
         return
-    if shutil.which(headless.CLAUDE_CODE_PROGRAM) is None:
-        check("claude is on PATH for the trial", False, "it is not")
-        return
+    # Cron's PATH does not hold ~/.local/bin, where claude is installed.
+    claude = shutil.which(headless.CLAUDE_CODE_PROGRAM) or str(Path.home() / ".local" / "bin" / "claude")
     root = Path(os.path.realpath(tempfile.mkdtemp(prefix="worktree-create-hook-trial-")))
     origin, clone = root / "origin.git", root / "clone"
     project_directory = transcripts.project_directory_for_seat(clone, Path.home() / ".claude" / "projects")
@@ -110,7 +110,7 @@ def test_trial_against_the_installed_claude_code():
         settings = {"hooks": {"WorktreeCreate": [{"hooks": [
             {"type": "command", "command": f"{sys.executable} {HOOK}"}]}]}}
         command = headless.claude_code_headless_run_command_line_prefix_build(
-            "acceptEdits", caller_claude_code_session_settings=settings) + [
+            "acceptEdits", program=claude, caller_claude_code_session_settings=settings) + [
             ('Call the Agent tool once, with subagent_type "general-purpose", isolation "worktree", and the '
              'prompt "Run the Bash command: sleep 15; pwd. Reply with its output only." Then reply with the '
              "subagent's reply and nothing else."),
@@ -137,6 +137,8 @@ def test_trial_against_the_installed_claude_code():
             ran = completed.returncode == 0
         except subprocess.TimeoutExpired:
             claude_stdout, outcome, ran = "", f"claude did not finish within {CLAUDE_RUN_TIMEOUT_SECONDS} s", False
+        except OSError as error:
+            claude_stdout, outcome, ran = "", f"{claude} could not start: {error}", False
         finally:
             stop.set()
             watcher.join()
@@ -148,9 +150,12 @@ def test_trial_against_the_installed_claude_code():
               len(made) == 1, f"{list(worktree_records(clone))}; {outcome}")
         if len(made) == 1:
             check("the subagent ran in the hook's worktree", str(made[0]) in claude_stdout, outcome)
-            check("the hook's worktree has the owner file naming the agent-seat",
-                  owner_file.worktree_owner_file_read(made[0]) == {"owner_kind": owner_file.OWNER_AGENT_SEAT,
-                                                                    "agent_seat": seat}, "")
+            owner = owner_file.worktree_owner_file_read(made[0])
+            check("the hook's worktree has the owner file naming claude's agent-session and the agent-seat, "
+                  "an agent-session that has stopped once claude has exited",
+                  owner is not None and owner["owner_kind"] == owner_file.OWNER_AGENT_SESSION
+                  and owner["agent_seat"] == seat
+                  and owner_file.worktree_owner_running_state(owner)[0] == owner_file.STOPPED, str(owner))
             check("Claude Code leaves the hook's worktree in place once claude has exited",
                   made[0].is_dir() and str(made[0]) in worktree_records(clone), "")
         check("Claude Code never locked a worktree while claude ran, nor after",

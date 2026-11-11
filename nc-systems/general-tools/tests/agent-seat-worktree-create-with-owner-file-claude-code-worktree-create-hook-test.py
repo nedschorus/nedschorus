@@ -4,7 +4,9 @@ run alone.
 
 Each case feeds the hook the JSON Claude Code feeds it, on a scratch machine: a HOME with one
 agent-seat and a clone with a local bare origin, as
-scripts/agent-seat-worktree-create-with-owner-file-test.py builds it.
+scripts/agent-seat-worktree-create-with-owner-file-test.py builds it. The hook runs under a
+symbolic link to Python named claude, so its process is the `claude` process whose
+agent-session the owner file names, as Claude Code's is when it runs the hook.
 nc-systems/general-tools/tests/agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook-real-claude-code-test.py
 tries the hook with the installed Claude Code.
 
@@ -66,7 +68,11 @@ def worktree_records(clone, environment):
 
 def run_hook(hook_input, cwd, environment):
     text = hook_input if isinstance(hook_input, str) else json.dumps(hook_input)
-    completed = subprocess.run([sys.executable, str(HOOK)], input=text, cwd=cwd, env=environment,
+    claude = Path(environment["HOME"]).parent / "bin" / "claude"
+    if not claude.exists():
+        claude.parent.mkdir()
+        claude.symlink_to(sys.executable)
+    completed = subprocess.run([str(claude), str(HOOK)], input=text, cwd=cwd, env=environment,
                                capture_output=True, text=True, check=False)
     return completed.returncode, completed.stdout, completed.stderr
 
@@ -104,9 +110,12 @@ def test_hook_alone():
         check("the worktree checks out a new branch worktree-<name> cut from origin/main, unlocked",
               f"branch refs/heads/worktree-{SUBAGENT_NAME}" in record and f"HEAD {main_commit}" in record
               and not any(line.startswith("locked") for line in record), str(record))
-        check("the worktree's owner file names the agent-seat GIT_AUTHOR_NAME names",
-              owner_file.worktree_owner_file_read(expected) == {"owner_kind": owner_file.OWNER_AGENT_SEAT,
-                                                                 "agent_seat": SEAT}, "")
+        owner = owner_file.worktree_owner_file_read(expected)
+        check("the worktree's owner file names the agent-session of the claude process that ran the hook, "
+              "and the agent-seat GIT_AUTHOR_NAME names",
+              owner is not None and owner["owner_kind"] == owner_file.OWNER_AGENT_SESSION
+              and owner["agent_seat"] == SEAT and owner_file.worktree_owner_running_state(owner)[0] == owner_file.STOPPED,
+              str(owner))
 
         code, out, err = run_hook({**hook_input, "cwd": str(expected), "name": "agent-afedcba9876543210"},
                                   root, environment)
