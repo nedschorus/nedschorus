@@ -10,8 +10,10 @@ Usage, from the agent-session's checkout:
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check
       [--obvious | --after-advisor | --disapproved | --deferred | --option N
        | --part-answer N=ANSWER ... | --moved-on-no-decision | --not-asked KIND|none
-       | --already-decided USER_RULING | --moved-on REASON]
-      --user-reply-as-typed REPLY    (every answer but --not-asked, --already-decided and --moved-on)
+       | --already-decided USER_RULING | --now-over-later-already-decided
+       | --moved-on REASON]
+      --user-reply-as-typed REPLY    (every answer but --not-asked, --already-decided,
+                                      --now-over-later-already-decided and --moved-on)
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py close
       [--hold-answer-until-new-item-answered]
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py approval-walk-waiting-item-cold-read-fast-read
@@ -24,10 +26,11 @@ recommendation. R, E and O decide nothing, so the program takes no flag for
 them. --part-answer, given once for each part of an item that holds parts, as
 in `--part-answer 1=A --part-answer 2=D`, gives that part its own answer, A, AO
 or D. Z is not taken for a part, and a part number given twice is refused,
-writing nothing. Two flags record an item the user is not shown, so that no
+writing nothing. Three flags record an item the user is not shown, so that no
 agent writes a deciding line by hand: --already-decided for an item an earlier
 user-ruling decides as the item recommends, USER_RULING citing that ruling,
-which adds the `#new` texts as A does; and --moved-on for an item the walk
+which adds the `#new` texts as A does; --now-over-later-already-decided, the
+same with the now-over-later ruling as its citation; and --moved-on for an item the walk
 leaves with no decision, REASON saying why, which changes nothing.
 --moved-on-no-decision records that the user moved on from an
 item that asks for no decision, such as a summary item: it needs no
@@ -36,8 +39,8 @@ decision>`. It is refused, writing nothing, for an item that has a recommendatio
 the short-answer hook reads it: text after its last "Recommendation:", outside
 fenced or indented code and HTML comments, because that item asks for a decision.
 
-Every answer but --not-asked, --already-decided and --moved-on, which record an
-item the user is not shown, needs --user-reply-as-typed, the user's reply
+Every answer but --not-asked, --already-decided, --now-over-later-already-decided
+and --moved-on, which record an item the user is not shown, needs --user-reply-as-typed, the user's reply
 exactly as he typed it; check writes it, its whitespace runs squeezed to single
 spaces, into the answer line right after the time of the answer, which check
 writes in UTC marked Z, in the form `(YYYY-MM-DD HH:MMZ)`, as in ``in his words "`a
@@ -46,7 +49,7 @@ remark that rides with the answer. The reply, USER_RULING, REASON and the start
 of each text in a status line are written as code spans, so that a
 `#next_to_present` or `#approval_walk_paused` inside them is not read as the
 walk's marker. A check without --user-reply-as-typed is refused, writing
-nothing, and so is one that gives it with any of those three. A reply that is a
+nothing, and so is one that gives it with any of those four. A reply that is a
 navigation word alone, next, N, continue or go, whatever its case and any
 trailing period or exclamation mark, is refused for every answer but
 --moved-on-no-decision, writing nothing: it approves nothing, and the
@@ -126,6 +129,18 @@ it refuses a touched file that is not in the checkout, and one the instruction-f
 adds words the user has not approved to such a file is shown to him; the
 guard's own functions decide which files those are. The minutes write the
 answer as `not asked, case against none`.
+
+`--now-over-later-already-decided` is --already-decided with the citation
+supplied by the program, NOW_OVER_LATER_USER_RULING_CITATION, the user-ruling
+that he is always for building now when the agents recommend now over later;
+what this docstring says of --already-decided holds for it. It is for an item whose
+only choice is whether to build something now or later and which recommends
+now, and APPROVAL-WALK-WAITING-ITEM-COLD-READ-FAST-READ, below, says so in the
+line that tells the agent to present the item. Before it writes anything, it
+refuses an item that holds a `Part N.` paragraph, as the walk-me-through
+UserPromptSubmit hook's part_starts finds one, a line opening `Option N`, or
+a `#new_if_d` mark, since each of those is a choice the user makes, and
+lists each such line by its line number in the walk-document.
 
 The open approval-walk and its waiting items are found with
 walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py,
@@ -878,13 +893,30 @@ ITEM_READ_RUN_FACTS = ", because your changes since its last cold-read-fast-read
 ITEM_READ_NOT_RUN = ("{item}: no new cold-read-fast-read: your changes since its last one ({report}) touch no "
                      "number, path, file or program name, link, or line holding \"Recommendation:\", "
                      "\"The alternative:\" or `#case_against`.")
+NOW_OVER_LATER_FLAG = "--now-over-later-already-decided"
+NOW_OVER_LATER_USER_RULING_CITATION = (
+    "the user-ruling at line 361 of nedlern@ned-box:/home/nedlern/agents/cold-read-improvement/docs/walk/"
+    "walk-me-through-skill-refactor-approval-walk-2026-11-02-minutes.md, given with his answer to item 42 on "
+    "2026-11-09: \"If the agents recommend now versus later, I'm always for now.\"")
+OPTION_LINE = re.compile(LINE_OPENING_MARKERS + r"Option\s+\d")
+NOW_OVER_LATER_REFUSED = (
+    "nothing written: {item} in {document} was not recorded as already decided by the user-ruling that he is "
+    "always for building now when the agents recommend now over later, because that user-ruling settles only an "
+    "item whose one choice is now or later, and {item} holds other choices:\n{problems}\n"
+    "Present {item} to the user, then run check with the flag for his answer, as `--help` lists it.")
+NOW_OVER_LATER_PARTS = "- a `Part N.` paragraph, each part answered on its own, on line {lines}"
+NOW_OVER_LATER_OPTIONS = "- a line opening `Option N`, another option he can pick, on line {lines}"
+NOW_OVER_LATER_NEW_IF_D = "- a `#new_if_d` text, what his disapproval would do instead, on line {lines}"
+SHORT_ANSWER_HOOK_FILE = HERE / ("walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-"
+                                 "user-prompt-submit-hook.py")
 ITEM_READ_LINES = (
     "Read that report and apply each finding that holds to {item} in the walk-document {document}; a finding that "
     "would change what the item decides becomes a new item, numbered as the walk-me-through skill's Re-planning "
     "section says.",
     "If you change {item} after this, run `{command}` and do what it prints; it reads {item} again only when your "
     "changes touch a fact.",
-    "Then present {item}.",
+    "Then present {item}, unless its only choice is whether to build something now or later and it recommends now: "
+    "then run `python3 {program} check " + NOW_OVER_LATER_FLAG + " --cwd {top}`, then the close command it prints.",
 )
 ITEM_READ_NOT_RUN_NEXT = "Present {item}."
 ITEM_READ_FAILED_LINES = (
@@ -1363,7 +1395,9 @@ def check_flags(arguments):
         flags += f" --option {arguments.option}"
     if arguments.not_asked is not None:
         flags += f" --not-asked {arguments.not_asked}"
-    if arguments.already_decided is not None:
+    if arguments.now_over_later_already_decided:
+        flags += " " + NOW_OVER_LATER_FLAG
+    elif arguments.already_decided is not None:
         flags += f" --already-decided {shlex.quote(arguments.already_decided)}"
     for number, letter in arguments.part_answer or []:
         flags += f" --part-answer {number}={letter}"
@@ -1561,7 +1595,27 @@ def glossary_term_or_marker_problems(found, touched, top, item):
     return problems
 
 
+def now_over_later_problems(walk_finder, minutes, value, numbers, total, parser):
+    """Return (walk-document path, one line for each kind of choice besides now or later that the item holds:
+    `Part N.` paragraphs, `Option N` lines and `#new_if_d` marks, each with its 1-based line numbers)."""
+    document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
+    lines = walk_finder.prose_lines(text, parser, tokens)
+    hook = load_module("walk_me_through_user_short_answer_hook", SHORT_ANSWER_HOOK_FILE)
+    found = {
+        NOW_OVER_LATER_PARTS: [line for line, _ in hook.part_starts(tokens)
+                               if any(first <= line < end for first, end in ranges)],
+        NOW_OVER_LATER_OPTIONS: [number for first, end in ranges for number in range(first, end)
+                                 if OPTION_LINE.match(lines[number])],
+        NOW_OVER_LATER_NEW_IF_D: [mark.number for mark in new_marks(text, tokens, ranges, lines)
+                                  if mark.mark == NEW_IF_D_MARK],
+    }
+    return document, [problem.format(lines=", ".join(str(number + 1) for number in sorted(set(numbers))))
+                      for problem, numbers in found.items() if numbers]
+
+
 def check(arguments):
+    if arguments.now_over_later_already_decided:
+        arguments.already_decided = NOW_OVER_LATER_USER_RULING_CITATION
     part_numbers = [number for number, _ in arguments.part_answer or []]
     repeated = sorted({number for number in part_numbers if part_numbers.count(number) > 1})
     if repeated:
@@ -1575,6 +1629,7 @@ def check(arguments):
     words = " ".join((arguments.user_reply_as_typed or "").split())
     program = Path(__file__).resolve()
     not_shown_flag = ("--not-asked" if arguments.not_asked is not None
+                      else NOW_OVER_LATER_FLAG if arguments.now_over_later_already_decided
                       else "--already-decided" if arguments.already_decided is not None
                       else "--moved-on" if arguments.moved_on is not None else None)
     if not_shown_flag and words:
@@ -1585,6 +1640,10 @@ def check(arguments):
         raise Failure(NAVIGATION_WORD_REFUSED.format(words=words, item=item,
                                                      answered=answered_word(arguments, walk_finder),
                                                      program=program, quoted_words=shlex.quote(words)))
+    if arguments.now_over_later_already_decided:
+        document, problems = now_over_later_problems(walk_finder, minutes, value, numbers, total, parser)
+        if problems:
+            raise Failure(NOW_OVER_LATER_REFUSED.format(item=item, document=document, problems="\n".join(problems)))
     in_his_words = USER_WORDS.format(words=walk_finder.text_wrapped_as_markdown_code_span(words)) if words else ""
     document, lines, marks, unreadable = item_lines(walk_finder, minutes, value, numbers, total, parser)
     rating = case_against_rating(lines, item, document, arguments)
@@ -1886,7 +1945,8 @@ def waiting_item_read(arguments):
         how = ITEM_READ_HOW_RUN.format(why=why)
     notes = "".join(STATUS_FAST_READ_NOTE.format(note=note) for note in outcome["notes"])
     print("\n".join([ITEM_READ_USED.format(item=item, how=how, report=outcome["report"], notes=notes)]
-                    + [line.format(item=item, document=document, command=command) for line in ITEM_READ_LINES]))
+                    + [line.format(item=item, document=document, command=command, program=program,
+                                   top=shlex.quote(str(top))) for line in ITEM_READ_LINES]))
     return 0
 
 
@@ -2496,6 +2556,12 @@ def main(argv=None):
     answer.add_argument("--already-decided", metavar="USER_RULING",
                         help="check: not shown, since an earlier user-ruling decides the item as it recommends; "
                              "USER_RULING cites it")
+    answer.add_argument(NOW_OVER_LATER_FLAG, action="store_true",
+                        help="check: not shown, since its only choice is whether to build something now or later "
+                             "and it recommends now; records it as already decided by the user's answer to item 42 "
+                             "of walk-me-through-skill-refactor-approval-walk-2026-11-02, \"If the agents recommend "
+                             "now versus later, I'm always for now.\"; refused for an item with parts, Option "
+                             "paragraphs or `#new_if_d` texts")
     answer.add_argument("--moved-on", metavar="REASON",
                         help="check: not shown, and the walk moves on from the item with no decision, for REASON")
     answer.add_argument("--part-answer", type=part_answer, action="append", metavar="N=ANSWER",
@@ -2506,7 +2572,8 @@ def main(argv=None):
                              "or, as `none`, an item of no kind whose case against is rated none")
     parser.add_argument("--user-reply-as-typed", metavar="REPLY",
                         help="check: the user's reply exactly as he typed it, written into the minutes beside the "
-                             "answer; needed for every answer but --not-asked, --already-decided and --moved-on")
+                             "answer; needed for every answer but --not-asked, --already-decided, "
+                             f"{NOW_OVER_LATER_FLAG} and --moved-on")
     parser.add_argument(HOLD_ANSWER_FLAG, action="store_true",
                         help="close: a fast-read finding raised the new item written right after the answered "
                              "one; number it and hold the answer until the user answers it")
