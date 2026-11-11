@@ -150,8 +150,7 @@ def reports_the_git_failure_and_no_result(root, arguments, code, out, err):
     return (code == 2 and INJECTED_GIT_ERROR in err and "a git command failed" in err
             and "finding(s)" not in err
             and next_step_lines.git_failure_next_step_lines(
-                rerun, "stale-code-citation-check", text_the_failure_line_contains="could not check, because a git command failed",
-                include_the_misspelt_branch_commit_or_path_line=True) in err)
+                rerun, "stale-code-citation-check", text_the_failure_line_contains="could not check, because a git command failed") in err)
 
 
 def document(stamp="2026-05-01", status="design", body=""):

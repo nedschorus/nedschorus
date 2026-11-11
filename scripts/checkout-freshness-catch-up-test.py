@@ -2738,8 +2738,7 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
           and "not a git checkout" not in run.stdout
           and catch_up_module.next_step_lines.git_failure_next_step_lines(
               f"`python3 {SCRIPT_PATH.resolve()} --report --repo {level_seat.resolve()}`",
-              text_the_failure_line_contains="because a git command failed",
-              include_the_misspelt_branch_commit_or_path_line=False) in run.stdout
+              text_the_failure_line_contains="because a git command failed") in run.stdout
           and "you gave" not in run.stdout
           and "Nothing needs rerunning" not in run.stdout, run.stdout + run.stderr)
     worktree_list_fails = failing_git_shim("worktree-list-fails-in-modes", '*" worktree list "*')
