@@ -283,13 +283,15 @@ DOWN_AGENT_SEAT_FAILURE_KINDS = ("second-crash", "recovery-failed", "leftover-sh
                                  "recovery-refuses")
 DOWN_AGENT_SEAT_RESTART_BY_OWNER_TEMPLATE = (
     "{seat} is down, and no other program restarts it; its own copy of this task waits on its "
-    "task list until it runs again. Once the cause is fixed, restart {seat} on ned-box, from "
-    "~/Projects/nedschorus, with:\n"
+    "task list until it runs again. Restart {seat} once you know the cause and judge that a "
+    "restart will not stop it again the same way; a fix still waiting to merge is no reason to "
+    "keep it down, since merge-lane-2 merges nothing while it is down. Restart it on ned-box, "
+    "from your own checkout, with:\n"
     "  python3 scripts/recover-crashed-seats.py {seat}\n"
-    "If recovery's output says it restarts {seat} only on an operator's yes at a terminal, tell "
-    "the user that command and why recovery needs his yes: he runs it in a Terminal on his Mac "
-    "as ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
-    "scripts/recover-crashed-seats.py {seat}'.\n")
+    "If recovery prints REFUSED and says it has no terminal to ask its question on, tell the "
+    "user that only his yes at a terminal restarts {seat}, and give him this command to run in "
+    "a Terminal on his Mac:\n"
+    "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n")
 AGENT_SEAT_TASK_DESCRIPTION_CLOSING_TEMPLATE = (
     "Find the cause and fix it going forward. A fix to code, settings or instructions goes in a "
     "pull request.\n"

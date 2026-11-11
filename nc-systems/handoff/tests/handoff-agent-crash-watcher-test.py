@@ -291,7 +291,9 @@ def run_decision_cases(root: Path):
           len(owner_copies) == 1 and owner_copies[0]["subject"] == task["subject"]
           and "merge-lane-2 is down, and no other program restarts it" in owner_text
           and "  python3 scripts/recover-crashed-seats.py merge-lane-2\n" in owner_text
-          and "only on an operator's yes at a terminal, tell the user" in owner_text
+          and "If recovery prints REFUSED and says it has no terminal" in owner_text
+          and "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
+              "scripts/recover-crashed-seats.py merge-lane-2'\n" in owner_text
           and "had restarted it at 2026-10-12 03:16 UTC" in owner_text, owner_text)
     check("the seat's own copy of the task carries no restart command",
           "recover-crashed-seats.py merge-lane-2\n" not in text, text)
