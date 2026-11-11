@@ -815,10 +815,26 @@ with tempfile.TemporaryDirectory() as workspace:
     try:
         hook.work_in_flight(str(truncated_launch), thirty_minutes, now=grid_at_13_minutes)
         refused = False
-    except hook.TranscriptCouldNotBeFullyRead:
+        truncated_launch_message = ""
+    except hook.TranscriptCouldNotBeFullyRead as problem:
         refused = True
+        truncated_launch_message = str(problem)
     check("a background launch record cut off mid-write is not read as nothing running",
           refused, "the scan answered instead of refusing")
+    check("the scan's refusal names the line number of the record that did not parse",
+          f"{truncated_launch}, line 2: " in truncated_launch_message, truncated_launch_message)
+    check("the scan's refusal quotes the start of the line that did not parse",
+          repr(launch_text[:cut][:200]) in truncated_launch_message, truncated_launch_message)
+    long_broken_launch = Path(workspace) / "long-broken-background-launch.jsonl"
+    long_broken_line = '{"toolUseResult": {"backgroundTaskId": "b27dndn4c", "x": "' + "a" * 300
+    long_broken_launch.write_text(long_broken_line + "\n", encoding="utf-8")
+    try:
+        hook.work_in_flight(str(long_broken_launch), thirty_minutes, now=grid_at_13_minutes)
+        long_broken_message = ""
+    except hook.TranscriptCouldNotBeFullyRead as problem:
+        long_broken_message = str(problem)
+    check("the scan's refusal quotes exactly the first 200 characters of a longer line",
+          repr(long_broken_line[:200]) in long_broken_message, long_broken_message[-260:])
 
     # Claude Code writes no task-notification for a task TaskStop stops, only this result.
     bash_stopped = transcript_of(workspace, "background-task-stopped.jsonl", [

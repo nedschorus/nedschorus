@@ -437,7 +437,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
     try:
         decoding_errors = "strict" if should_raise_on_undecodable_bytes else "replace"
         with path.open("r", encoding="utf-8", errors=decoding_errors) as handle:
-            for line in handle:
+            for line_number, line in enumerate(handle, start=1):
                 is_spawn_candidate = SPAWNED_SUBAGENT_STATUS in line
                 is_launch_candidate = BACKGROUND_TASK_LAUNCH_KEY in line
                 is_resume_candidate = RESUMED_SUBAGENT_KEY in line
@@ -450,7 +450,9 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                         # A stop record not read only leaves its task counted as running.
                         if is_spawn_candidate or is_launch_candidate or is_resume_candidate:
                             raise TranscriptCouldNotBeFullyRead(
-                                f"{path}: a spawn, resume or launch record did not parse"
+                                f"{path}, line {line_number}: a spawn, resume or launch record did "
+                                f"not parse ({problem}); the line's first 200 characters: "
+                                f"{line[:200].rstrip()!r}"
                             ) from problem
                         record = None
                     tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
@@ -462,9 +464,9 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                         if agent_id and agent_id not in spawned_ids:
                             spawned_ids.append(agent_id)
                             launched_at_by_id[agent_id] = record_time(record)
-                    if is_resume_candidate and \
-                            tool_result.get(RESUMED_SUBAGENT_KEY) in spawned_ids:
-                        last_notification_is_interim.pop(tool_result[RESUMED_SUBAGENT_KEY], None)
+                    # A resume clears the subagent's last notification, so it counts as in flight
+                    # again; a record without the key pops None, which is never a key.
+                    last_notification_is_interim.pop(tool_result.get(RESUMED_SUBAGENT_KEY), None)
                     if is_launch_candidate:
                         task_id = tool_result.get(BACKGROUND_TASK_LAUNCH_KEY)
                         if task_id and task_id not in launched_task_age:
