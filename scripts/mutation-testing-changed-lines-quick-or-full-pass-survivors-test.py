@@ -839,6 +839,22 @@ def run_recorded_mutant_killed_check_cases():
     check("a recorded mutant with two hunks applies both",
           apply_mutant("a\nb\nc\n", two_hunks) == "A\nb\nC\n", apply_mutant("a\nb\nc\n", two_hunks))
 
+    # A context line of the mutant's own hunk carries the pragma; an exact twin of the hunk's
+    # lines, without it, is in twice(). The mutant must be applied in double(), not in twice().
+    twin_source = ("def double(x):\n    x = int(x)\n    y = x  # pragma: no mutate\n"
+                   "    return y * 2\n    # end\n\n\ndef twice(x):\n    x = int(x)\n    y = x\n"
+                   "    return y * 2\n    # end\n")
+    twin_hunks = [(2, ["    x = int(x)", "    y = x", "    return y * 2", "    # end"],
+                   ["    x = int(x)", "    y = x", "    return y + 2", "    # end"])]
+    twin_verdict, twin_mutated = survivors.recorded_mutant_verdict_without_a_suite_run(
+        None, "scripts/thing.py", twin_hunks, "0" * 40, twin_source, None, {})
+    check("a recorded mutant whose hunk has an exact twin elsewhere in the file is applied at "
+          "its own place, found reading a `# pragma: no mutate` comment as absent, and the "
+          "context line keeps its comment",
+          twin_verdict is None and twin_mutated == twin_source.replace(
+              "x  # pragma: no mutate\n    return y * 2", "x  # pragma: no mutate\n    return y + 2"),
+          (twin_verdict, twin_mutated))
+
     verdict = survivors.recorded_mutant_run_verdict
     check("a run with the mutant applied that exits 0 is a survivor",
           verdict(0, "", runner) == ("survived", None), verdict(0, "", runner))
