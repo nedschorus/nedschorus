@@ -59,11 +59,14 @@ DEFAULT_LIMIT_FOR_A_SUITE_WITHOUT_RECORDING = (
     + load_script_module().TEST_SUITE_RUNNER_START_UP_SECONDS)
 EXTRA_SECONDS = load_script_module(
 ).MUTANT_TIMEOUT_EXTRA_SECONDS_FOR_TEST_SUITE_RUNNER_TO_STOP_ITS_SUITES
+ADMISSION_WAIT_CEILING_SECONDS = load_test_suite_runner().TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS
 
 
 def cosmic_ray_timeout_line_and_test_command_words_for_limit(limit):
-    """The config's timeout line and the test command's first words, for this limit."""
-    return (f"timeout = {float(limit + EXTRA_SECONDS)!r}\n",
+    """The config's timeout line and the test command's first words, for this limit: cosmic-ray
+    waits for the admission ceiling and the limit, then for the test command's backstop to stop
+    the runner."""
+    return (f"timeout = {float(limit + ADMISSION_WAIT_CEILING_SECONDS + 2 * EXTRA_SECONDS)!r}\n",
             [sys.executable, str(SCRIPT.resolve()),
              load_script_module().COSMIC_RAY_TEST_COMMAND_RUN_TEST_SUITE_RUNNER_STOPPED_AFTER_SECONDS_FLAG, repr(float(limit))])
 
@@ -1827,6 +1830,15 @@ def run_cases():
                "run-all-test-suites: not run to the end — stopped by SIGTERM.\n")]],
          1, "ERRORED   scripts/thing.py:2 core/NumberReplacer (timeout: the suites ran past "
             "the limit of"),
+        ("a killed mutant the suite runner stopped at its run time limit is ERRORED with the "
+         "timeout, not killed",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           killed_with_output(
+               "PASS scripts/other-test.py (0.4s)\n"
+               f"{load_test_suite_runner().RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX}"
+               " of 45 s, not counting the time in which a suite waited for admission\n")]],
+         1, "ERRORED   scripts/thing.py:2 core/NumberReplacer (timeout: the suites ran past "
+            "the limit of"),
         ("a killed mutant whose failing suite was killed by a signal Python has no name for is "
          "killed",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
@@ -1949,17 +1961,54 @@ def run_cases():
               and "ran out of time on the unmutated head" in completed.stderr
               and "the limit of 15 s on one run of them" in completed.stderr,
               f"rc={completed.returncode} err={completed.stderr} ran={ran}")
-        check("the test command says it stopped the suite runner, and the runner says it was "
-              "stopped by SIGTERM",
+        check("the suite runner, given the limit by the test command, stops itself at that "
+              "limit and says so, so the test command's backstop never fires",
               ran.get("exit") == 2
-              and load_script_module().TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX
+              and load_test_suite_runner(
+              ).RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX
               in ran.get("stdout", "")
-              and "not run to the end — stopped by SIGTERM" in ran.get("stdout", ""), ran)
+              and load_script_module().TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX
+              not in ran.get("stdout", ""), ran)
         check("a suite running when the test command stops the suite runner has ended, before "
               "cosmic-ray's own limit",
               suite_pid is not None and not suite_still_running
               and seconds < 15 + EXTRA_SECONDS,
               (suite_pid, suite_still_running, seconds))
+
+    # ------------------------------------------------------------------
+    # The test command's backstop stops a runner that outlives the
+    # admission ceiling and its own run time limit together.
+    # ------------------------------------------------------------------
+    with tempfile.TemporaryDirectory() as scratch_name:
+        script = load_script_module()
+        backstops = []
+
+        def two_second_backstop(seconds, runner):
+            backstops.append((seconds, runner.TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS))
+            return 2
+
+        class OutputCountingFlushes(io.StringIO):
+            flushes = 0
+
+            def flush(self):
+                self.flushes += 1
+                super().flush()
+
+        script.test_suite_runner_backstop_seconds = two_second_backstop
+        started = time.monotonic()
+        # Flushed before the SIGTERM, so the line comes before what the runner prints as it stops.
+        with contextlib.redirect_stdout(OutputCountingFlushes()) as printed:
+            exit_code = script.run_test_suite_runner_with_its_stderr_on_stdout_stopped_before_cosmic_ray_limit(
+                1.0, scratch_name, [sys.executable, "-c", "import time; time.sleep(60)"])
+        seconds = time.monotonic() - started
+        check("a runner still running at the test command's backstop is sent SIGTERM, and the "
+              "test command says it stopped it, with the backstop's seconds",
+              exit_code == -signal.SIGTERM and seconds < 30
+              and backstops == [(1.0, ADMISSION_WAIT_CEILING_SECONDS)]
+              and printed.getvalue().startswith(
+                  f"{script.TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX}: it ran past 2 s")
+              and printed.flushes >= 1,
+              (exit_code, seconds, backstops, printed.getvalue(), printed.flushes))
 
     # ------------------------------------------------------------------
     # A baseline cosmic-ray passes although its suites never launched:
@@ -2232,6 +2281,24 @@ def run_cases():
          (), ["on the unmutated head, scripts/thing-test.py ran past its own limit of 1800 s",
               "a larger --mutant-timeout-seconds does not raise it",
               "--only-suites-named scripts/thing-test.py\n"], ["fail"]),
+        ("a baseline the suite runner stopped at its run time limit exits 2, says the suites "
+         "ran out of time with that limit, admission waits not counted",
+         {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
+             f"{load_test_suite_runner().RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX}"
+             " of 45 s, not counting the time in which a suite waited for admission\n")]]},
+         ("--mutant-timeout-seconds", "45"),
+         ["ran out of time on the unmutated head",
+          "the limit of 45 s on one run of them passed, admission waits not counted",
+          "Run this again with --mutant-timeout-seconds larger than 45."], ["fail"]),
+        ("a baseline whose suite got no test slot exits 2, quotes the runner's line, and says "
+         "to run again when the machine is quieter, not to raise --mutant-timeout-seconds",
+         {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
+             f"{load_test_suite_runner().TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX}: "
+             "scripts/thing-test.py waited 28800 s\n")]]},
+         (), ["got no test slot", "a larger --mutant-timeout-seconds does not help",
+              ": scripts/thing-test.py waited 28800 s\n",
+              "Run this again once the machine is quieter."],
+         ["fail", "ran out of time", "larger than"]),
         ("a baseline killed with any other output still says the suites fail",
          {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
              "FAIL scripts/thing-test.py exit 1 (0.2s)\n")]]},

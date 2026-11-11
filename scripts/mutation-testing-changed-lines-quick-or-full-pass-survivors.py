@@ -91,15 +91,19 @@ suites' time limits, computed as the runner computes them from the
 recordings, times the number of rounds the runner needs for them (the number
 of suites divided by the number it runs at once, its suites_run_at_once(), the
 same call the runner makes, rounded up), plus
-TEST_SUITE_RUNNER_START_UP_SECONDS: a backstop, which a run passes only when
-admission keeps its suites waiting. --mutant-timeout-seconds, when given, sets
-that limit for every file instead. At that limit the test command sends the
-runner SIGTERM, on which the runner kills each running suite's process group;
-cosmic-ray's own limit, which kills only the test command's process group, is
+TEST_SUITE_RUNNER_START_UP_SECONDS. --mutant-timeout-seconds, when given, sets
+that limit for every file instead. The test command gives the runner that limit
+as --run-time-limit-seconds-not-counting-admission-waits, so the time in which
+a suite waits for the runner's ADMISSION is not counted against it; at the
+limit the runner kills each running suite's process group and exits nonzero. A
+suite waits for admission at most the runner's
+TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS; past it the runner stops, saying
+the suite got no test slot. As a backstop for a runner that does neither, the
+test command sends the runner SIGTERM once the limit, that ceiling and
 MUTANT_TIMEOUT_EXTRA_SECONDS_FOR_TEST_SUITE_RUNNER_TO_STOP_ITS_SUITES, 30 s,
-later,
-since a suite runs in a session of its own and, outside an nc-test-sandbox,
-outlives a runner killed with SIGKILL.
+have passed; cosmic-ray's own limit, which kills only the test command's
+process group, is 30 s later still, since a suite runs in a session of its own
+and, outside an nc-test-sandbox, outlives a runner killed with SIGKILL.
 
 PARALLEL MUTANTS. --parallel-mutant-workers N runs N mutants at once, each in a
 scratch worktree of its own at the head, since each worker edits its mutant into
@@ -143,7 +147,8 @@ ceiling (MEMORY CEILING in the runner's docstring), as a mutant that allocates
 without end does, is killed: it fails that suite in seconds, and the rest of
 the machine keeps its memory. On the unmutated head either a suite's own time limit or the limit on
 one run of the suites stops the script with exit 2 and a message saying the suites ran out of time, with the limit,
-and, for a suite's own limit, the suite.
+and, for a suite's own limit, the suite; a suite that got no test slot stops it with exit 2 and a
+message saying so.
 
 --survived-and-errored-mutants-json-file, when given, names a file this
 script writes after its SUMMARY line, as one JSON object: "head" and
@@ -478,22 +483,38 @@ def failure_handling_line_ranges_of_file(worktree, path):
             f"commit.") from error
 
 
+def test_suite_runner_backstop_seconds(seconds, runner):
+    """How long the test command waits for a runner given a run time limit of `seconds`:
+    the longest it can wait for admission, that limit, and the time it takes to stop its suites
+    at that limit.
+
+    The admission wait is bounded so only while every suite of the run waits from its start,
+    as where the runner runs all of them at once, its default with admission."""
+    return (seconds + runner.TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS
+            + MUTANT_TIMEOUT_EXTRA_SECONDS_FOR_TEST_SUITE_RUNNER_TO_STOP_ITS_SUITES)
+
+
 def run_test_suite_runner_with_its_stderr_on_stdout_stopped_before_cosmic_ray_limit(
         seconds, log_directories_parent, command):
     """Run the suite runner's command, its standard error on standard output, with a new
-    --log-dir in log_directories_parent; past `seconds`, say so on standard output and send it
-    SIGTERM. Return its exit code.
+    --log-dir in log_directories_parent and a run time limit of `seconds`, which the runner
+    counts without its admission waits; past test_suite_runner_backstop_seconds(), say so on
+    standard output and send it SIGTERM. Return its exit code.
 
     A runner a signal killed returns the negative signal number, which leaves this process
     nonzero."""
+    backstop = test_suite_runner_backstop_seconds(seconds, load_test_suite_runner())
     log_dir = tempfile.mkdtemp(dir=log_directories_parent)
-    test_suite_runner = subprocess.Popen([*command, "--log-dir", log_dir],
-                                         stderr=subprocess.STDOUT)
+    test_suite_runner = subprocess.Popen(
+        [*command, "--log-dir", log_dir,
+         "--run-time-limit-seconds-not-counting-admission-waits", repr(float(seconds))],
+        stderr=subprocess.STDOUT)
     try:
-        exit_code = test_suite_runner.wait(seconds)
+        exit_code = test_suite_runner.wait(backstop)
     except subprocess.TimeoutExpired:
-        print(f"{TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX}: it ran past the limit of "
-              f"{seconds:g} s on one run of the suites", flush=True)
+        print(f"{TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX}: it ran past "
+              f"{backstop:g} s, the longest admission wait, the run time limit of {seconds:g} s "
+              f"and the time to stop its suites together", flush=True)
         test_suite_runner.terminate()
         exit_code = test_suite_runner.wait()
     return exit_code
@@ -684,10 +705,12 @@ WORKER_OUTCOMES_THAT_ERRORED = ("exception", "abnormal")
 TIMED_OUT_OUTPUT = "timeout"
 
 
-def is_recorded_output_of_a_run_stopped_at_mutant_timeout(output):
-    """True when the test command was stopped at the limit, by itself or by cosmic-ray."""
+def is_recorded_output_of_a_run_stopped_at_mutant_timeout(output, runner):
+    """True when the run was stopped at the limit, by the runner, the test command or cosmic-ray."""
     return output == TIMED_OUT_OUTPUT or any(
-        line.startswith(TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX) for line in output.splitlines())
+        line.startswith((TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX,
+                         runner.RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX))
+        for line in output.splitlines())
 
 
 def line_cr_filter_pragma_reads(mutation):
@@ -756,7 +779,8 @@ def outcomes_from_dump(dump_text, mutant_timeout_seconds, runner):
             survivors.append(mutant_description(item, result))
         elif (worker_outcome not in WORKER_OUTCOMES_THAT_ERRORED
               and test_outcome == "killed"
-              and is_recorded_output_of_a_run_stopped_at_mutant_timeout(result.get("output") or "")):
+              and is_recorded_output_of_a_run_stopped_at_mutant_timeout(result.get("output") or "",
+                                                                        runner)):
             counts["errored"] += 1
             errored.append(mutant_description(
                 item, result,
@@ -876,14 +900,24 @@ def cosmic_ray_session_kept_to_resume_has_pending_mutants_or_is_unreadable(sessi
 
 def baseline_refusal(path, suites, baseline, baseline_results, mutant_timeout_seconds,
                      runner):
-    """The message for a baseline cosmic-ray exited nonzero on: a timeout, or failing suites."""
+    """The message for a baseline cosmic-ray exited nonzero on: a suite that got no test slot, a
+    timeout, or failing suites."""
     outputs = [result.get("output") or "" for _, result in baseline_results
                if result and result.get("test_outcome") == "killed"]
-    if any(is_recorded_output_of_a_run_stopped_at_mutant_timeout(output) for output in outputs):
+    no_test_slot = [line for output in outputs for line in output.splitlines()
+                    if line.startswith(runner.TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX)]
+    if no_test_slot:
+        return (f"{PROGRAM}: not run — on the unmutated head, a suite for {path} got no test "
+                f"slot from scripts/run-all-test-suites.py's admission, so no mutant can be "
+                f"judged; a larger --mutant-timeout-seconds does not help. Suites: "
+                f"{' '.join(suites)}\n{no_test_slot[0]}\n"
+                f"Run this again once the machine is quieter.")
+    if any(is_recorded_output_of_a_run_stopped_at_mutant_timeout(output, runner)
+           for output in outputs):
         return (f"{PROGRAM}: not run — the suites for {path} ran out of time on the unmutated "
                 f"head: they had not ended when the limit of "
-                f"{mutant_timeout_seconds:g} s on one run of them passed, so no mutant "
-                f"can be judged. Suites: {' '.join(suites)}\n"
+                f"{mutant_timeout_seconds:g} s on one run of them passed, admission waits not "
+                f"counted, so no mutant can be judged. Suites: {' '.join(suites)}\n"
                 f"Run this again with --mutant-timeout-seconds larger than "
                 f"{mutant_timeout_seconds:g}.")
     timed_out = runner.run_all_test_suites_output_timed_out_suites_and_limits_parse(
@@ -951,7 +985,7 @@ def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_
         path, test_command_for(suites, ".", arguments, recorded_inputs_directory,
                                mutant_timeout_seconds, log_directories_parent),
         merge_base,
-        mutant_timeout_seconds
+        test_suite_runner_backstop_seconds(mutant_timeout_seconds, runner)
         + MUTANT_TIMEOUT_EXTRA_SECONDS_FOR_TEST_SUITE_RUNNER_TO_STOP_ITS_SUITES,
         failure_handling_ranges))
     baseline = run([*cosmic_ray, "baseline", "--session-file",
