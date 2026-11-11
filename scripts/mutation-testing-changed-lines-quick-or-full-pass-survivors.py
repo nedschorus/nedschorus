@@ -162,14 +162,18 @@ NO LONGER EXISTS when there is nothing to kill, because the line it changes ends
 head and origin/main, read without fetching, lacks the lines it replaces; and
 MUTANT COULD NOT BE JUDGED, with what to do, when the diff file cannot be read or
 names no file, the file has no suite while the mutant still applies at the
-head, the diff does not apply at the head
-while origin/main has those lines or cannot tell, the lines it replaces appear
-more than once at the head when a trailing `# pragma: no mutate` comment is
-read as absent, but only once when lines are compared exactly, or the runner judged no
-suite with the mutant applied, as when a suite ran past its own time limit or
-the runner was refused. When those lines appear more than once even when
-compared exactly, as when every copy ends with the comment, the mutant does not apply
-at the head, and origin/main decides between those two verdicts as above. Whether a mutant still exists is decided before
+head, the diff does not apply at the head while origin/main has those lines,
+the diff does not apply at the head and whether origin/main has those lines
+cannot be told (there is no local origin/main, git cannot read the file there,
+or the lines appear there more than once), two of the diff's hunks are found at
+places whose lines overlap, some copies of the lines it replaces end with a
+`# pragma: no mutate` comment and others do not, so that the lines appear more
+than once at the head when that comment is ignored but only once when it is
+not, or the runner judged no suite with the mutant applied, as when a suite ran
+past its own time limit or the runner was refused. When those lines appear more
+than once even with the comment counted, as when every copy ends with it, the
+mutant does not apply at the head, and origin/main decides between MUTANT NO
+LONGER EXISTS and MUTANT COULD NOT BE JUDGED as above. Whether a mutant still exists is decided before
 whether its file has a suite, so the mutant of a deleted file no longer exists
 once origin/main lacks the file too. A line starting RECORDED MUTANTS counts each verdict.
 --recorded-mutant-killed-check-verdicts-json-file-to-write, when given, names a file it then writes
@@ -1104,6 +1108,13 @@ def recorded_mutant_places_reading_pragma_as_absent(lines, hunks):
             for old_start, old, new in hunks]
 
 
+def recorded_mutant_hunk_places_overlap(places):
+    """True when two hunks were found at places whose lines overlap: each place is found in
+    the unmutated source, so applying both would make neither hunk's change as recorded."""
+    spans = sorted((at, at + len(old)) for at, old, _ in places)
+    return any(next_start < end for (_, end), (next_start, _) in zip(spans, spans[1:]))
+
+
 def recorded_mutant_place_ends_with_pragma(lines, place):
     """True when the last line the hunk at place replaces has a `# pragma: no mutate` comment
     after it, so no mutation pass makes the mutant any more."""
@@ -1139,6 +1150,17 @@ def recorded_mutant_verdict_without_a_suite_run(checkout, path, hunks, head, sou
             f"{head[:12]}, so no mutation pass makes it; the nightly mutation pass drops it from "
             f"its task once that is on main.")), None
     if all(place is not None for place in places):
+        if recorded_mutant_hunk_places_overlap(places):
+            return ("could not be judged", (
+                f"in {path} at head {head[:12]}, two hunks of this diff file are found at "
+                f"places whose lines overlap, so applying both would not make the mutant as it "
+                f"was recorded, and no suite was run. The diff's `@@` lines give the line "
+                f"numbers the mutant had when it was recorded.\n"
+                f"Make the diff's change by hand at those lines, run the file's suites, and "
+                f"put the file back before you commit. If a suite fails, the mutant is killed: "
+                f"say so in your pull request and mark the survivor task that names this diff "
+                f"file completed once it merges. Otherwise write a test that fails with the "
+                f"change made.")), None
         return None, source_with_recorded_mutant_applied_at_places(lines, places)
     if source_with_recorded_mutant_applied(source, hunks) is None:
         return recorded_mutant_not_applied_verdict(
