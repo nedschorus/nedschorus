@@ -1111,10 +1111,10 @@ def source_with_recorded_mutant_applied(source, hunks):
 def hunk_shared_context_line_counts(old, new):
     """(lines at the start, lines at the end) that a hunk's old and new lines share."""
     start = 0
-    while start < min(len(old), len(new)) and old[start] == new[start]:
+    while start < min(len(old), len(new)) and old[start] == new[start]:  # pragma: no mutate, `!=` stops where `<` does: start counts up by 1 from 0 to the bound at most
         start += 1
     end = 0
-    while (end < min(len(old), len(new)) - start
+    while (end < min(len(old), len(new)) - start  # pragma: no mutate, `!=` stops where `<` does: end counts up by 1 from 0 to the bound at most, and the bound is never below 0
            and old[len(old) - 1 - end] == new[len(new) - 1 - end]):
         end += 1
     return start, end
@@ -1151,7 +1151,7 @@ def recorded_mutant_lines_on_main(checkout, path, hunks, environment):
     for _, old, new in hunks:
         replaced = hunk_replaced_lines(old, new)
         if replaced and not any(lines[place:place + len(replaced)] == replaced
-                                for place in range(len(lines) - len(replaced) + 1)):
+                                for place in range(len(lines) - len(replaced) + 1)):  # pragma: no mutate, a mutant that only lengthens the range adds places whose slices are shorter than replaced, so never equal to it
             return "gone"
     return None
 
