@@ -402,6 +402,49 @@ def bash_stdout_record_mentioning_the_marker():
     }
 
 
+# A subagent that finished, was resumed by SendMessage, and finished again, read off a real
+# transcript; trimmed to the fields the hook reads.
+RESUMED_SUBAGENT_ID = "ac25f42af3e1481af"
+RESUMED_SUBAGENT_FINAL_NOTIFICATION = (
+    "<task-notification>\n"
+    "<task-id>ac25f42af3e1481af</task-id>\n"
+    "<tool-use-id>toolu_01AgYc8eUQGoaYS9jynrNu53</tool-use-id>\n"
+    "<status>completed</status>\n"
+    '<summary>Agent "Fix GHI 1112\'s fast-read findings" finished</summary>\n'
+    "<note>A task-notification fires each time this agent stops with no live background "
+    "children of its own. The user can send it another message and resume it, so the same "
+    "task-id may notify more than once.</note>\n"
+    '<result>This agent\'s report was delivered to you as a message from "ac25f42af3e1481af" '
+    "(its SubagentHandback call). Read it there; it is not repeated here.\n</result>\n"
+    "</task-notification>")
+
+
+def subagent_resume_record(agent_id=RESUMED_SUBAGENT_ID, timestamp="2026-10-13T19:35:53.110Z"):
+    """The SendMessage tool_result that resumes a finished subagent."""
+    result = {"success": True, "message": f"Resuming agent {agent_id[:7]}",
+              "resumedAgentId": agent_id,
+              "pin": {"id": agent_id, "name": agent_id, "ref": "6f1f0b"}}
+    return {
+        "type": "user", "timestamp": timestamp,
+        "message": {"role": "user", "content": [{
+            "tool_use_id": "toolu_01AHzbGageT9pSdG6yHP3VB5", "type": "tool_result",
+            "content": [{"type": "text", "text": json.dumps(result)}]}]},
+        "toolUseResult": result,
+    }
+
+
+def bash_stdout_record_mentioning_a_resume():
+    """A foreground Bash result whose stdout is a grep hit on a resume record, as a search of
+    transcripts for resumedAgentId prints it; its own toolUseResult has no such key."""
+    hit = '838:{"toolUseResult":{"resumedAgentId":"ac25f42af3e1481af"}}'
+    return {
+        "type": "user", "timestamp": "2026-10-13T19:40:00.000Z",
+        "message": {"role": "user", "content": [{
+            "tool_use_id": "toolu_grep_resume", "type": "tool_result", "content": hit}]},
+        "toolUseResult": {"stdout": hit, "stderr": "", "interrupted": False, "isImage": False},
+    }
+
+
 with tempfile.TemporaryDirectory() as workspace:
     # --- The suite's own handoff directory -------------------------------
     # Fails if the redirect above is removed: without it HANDOFF_DIRECTORY is
@@ -610,6 +653,52 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a final notification after an interim one takes the subagent out of flight",
           hook.spawned_subagent_ids_in_flight(str(final_after_interim)) == [],
           str(hook.spawned_subagent_ids_in_flight(str(final_after_interim))))
+
+    # A SendMessage to a finished subagent resumes it, under the same task-id.
+    resumed_after_final = transcript_of(workspace, "resumed-after-final-notification.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(RESUMED_SUBAGENT_ID, "Fix GHI 1112's fast-read findings"),
+        *notification_records(RESUMED_SUBAGENT_FINAL_NOTIFICATION, "2026-10-13T19:35:01.611Z"),
+        subagent_resume_record(),
+    ])
+    check("a subagent resumed after its final notification is in flight again",
+          hook.spawned_subagent_ids_in_flight(str(resumed_after_final)) == [RESUMED_SUBAGENT_ID],
+          str(hook.spawned_subagent_ids_in_flight(str(resumed_after_final))))
+    resumed_and_finished_again = transcript_of(workspace, "resumed-and-finished-again.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(RESUMED_SUBAGENT_ID),
+        *notification_records(RESUMED_SUBAGENT_FINAL_NOTIFICATION, "2026-10-13T19:35:01.611Z"),
+        subagent_resume_record(),
+        *notification_records(RESUMED_SUBAGENT_FINAL_NOTIFICATION, "2026-10-13T19:37:28.832Z"),
+    ])
+    check("a resumed subagent's next final notification takes it out of flight",
+          hook.spawned_subagent_ids_in_flight(str(resumed_and_finished_again)) == [],
+          str(hook.spawned_subagent_ids_in_flight(str(resumed_and_finished_again))))
+    resumed_unknown_agent = transcript_of(workspace, "resumed-agent-never-spawned-here.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_resume_record(),
+    ])
+    check("a resume of a subagent this transcript never spawned adds nothing",
+          hook.spawned_subagent_ids_in_flight(str(resumed_unknown_agent)) == [],
+          str(hook.spawned_subagent_ids_in_flight(str(resumed_unknown_agent))))
+    resume_word_in_stdout = transcript_of(workspace, "resume-word-in-stdout.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(RESUMED_SUBAGENT_ID),
+        *notification_records(RESUMED_SUBAGENT_FINAL_NOTIFICATION, "2026-10-13T19:35:01.611Z"),
+        bash_stdout_record_mentioning_a_resume(),
+    ])
+    check("a Bash result that merely prints a resume record is not a resume",
+          hook.spawned_subagent_ids_in_flight(str(resume_word_in_stdout)) == [],
+          str(hook.spawned_subagent_ids_in_flight(str(resume_word_in_stdout))))
+    truncated_resume = Path(workspace) / "truncated-resume.jsonl"
+    resume_text = json.dumps(subagent_resume_record())
+    truncated_resume.write_text(
+        json.dumps(subagent_spawn_record(RESUMED_SUBAGENT_ID)) + "\n"
+        + json.dumps(notification_records(RESUMED_SUBAGENT_FINAL_NOTIFICATION)[0]) + "\n"
+        + resume_text[:resume_text.index('"resumedAgentId"') + len('"resumedAgentId": "ac25')],
+        encoding="utf-8")
+    check("a resume record cut off mid-write is not read as the subagent having finished",
+          raises_could_not_read(truncated_resume), "the scan answered instead of refusing")
 
     # --- Which background tasks are still in flight -------------------------
     # A reincarnation kills a background Bash task with the session too. On

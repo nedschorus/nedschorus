@@ -214,6 +214,9 @@ class TranscriptCouldNotBeFullyRead(Exception):
 
 SPAWNED_SUBAGENT_STATUS = "async_launched"
 
+# SendMessage to a finished subagent resumes it under the same task-id; its next notification decides.
+RESUMED_SUBAGENT_KEY = "resumedAgentId"
+
 # Check a toolUseResult key, not raw text: foreground grep output can contain the launch marker.
 BACKGROUND_TASK_LAUNCH_KEY = "backgroundTaskId"
 
@@ -403,8 +406,10 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                    should_raise_on_undecodable_bytes=False) -> WorkInFlight:
     """Return running subagents and background tasks in launch order.
 
-    A subagent whose last task-notification is interim counts only while its own transcript
-    shows work in flight; should_read_subagent_own_transcripts=False counts it from the notices alone.
+    A subagent counts from its spawn, or from a resume after a SendMessage, until a final
+    task-notification. One whose last task-notification is interim counts only while its own
+    transcript shows work in flight; should_read_subagent_own_transcripts=False counts it from
+    the notices alone.
     should_raise_on_undecodable_bytes=True raises TranscriptCouldNotBeFullyRead on bytes that are
     not UTF-8 anywhere in the file, instead of reading past them.
     """
@@ -428,12 +433,13 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
             for line in handle:
                 is_spawn_candidate = SPAWNED_SUBAGENT_STATUS in line
                 is_launch_candidate = BACKGROUND_TASK_LAUNCH_KEY in line
-                if is_spawn_candidate or is_launch_candidate:
+                is_resume_candidate = RESUMED_SUBAGENT_KEY in line
+                if is_spawn_candidate or is_launch_candidate or is_resume_candidate:
                     try:
                         record = json.loads(line)
                     except (json.JSONDecodeError, UnicodeDecodeError) as problem:
                         raise TranscriptCouldNotBeFullyRead(
-                            f"{path}: a spawn or launch record did not parse"
+                            f"{path}: a spawn, resume or launch record did not parse"
                         ) from problem
                     tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
                     if not isinstance(tool_result, dict):
@@ -444,6 +450,9 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                         if agent_id and agent_id not in spawned_ids:
                             spawned_ids.append(agent_id)
                             launched_at_by_id[agent_id] = record_time(record)
+                    if is_resume_candidate and \
+                            tool_result.get(RESUMED_SUBAGENT_KEY) in spawned_ids:
+                        last_notification_is_interim.pop(tool_result[RESUMED_SUBAGENT_KEY], None)
                     if is_launch_candidate:
                         task_id = tool_result.get(BACKGROUND_TASK_LAUNCH_KEY)
                         if task_id and task_id not in launched_task_age:
@@ -468,7 +477,8 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
     def subagent_still_in_flight(agent_id):
         if agent_id in finished_ids:
             return False
-        # A subagent with no notice yet has not stopped once; only an interim last notice is doubted.
+        # A subagent with no notice since its spawn or resume has not stopped; only an interim
+        # last notice is doubted.
         if agent_id not in last_notification_is_interim or not should_read_subagent_own_transcripts:
             return True
         return subagent_own_transcript_shows_work_in_flight(
