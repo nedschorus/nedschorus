@@ -866,7 +866,7 @@ def files_whose_moved_change_is_still_here(named, commit):
             if completed.returncode not in (0, 1):
                 raise StepFailed(f"git {' '.join(check)} exited {completed.returncode} on pull request "
                                  f"{named}'s patch: {completed.stderr.strip()}")
-            if completed.returncode == 0:
+            if completed.returncode == 0:  # pragma: no mutate, returncode is 0 or 1 here, so `<=` matches only 0 as `==` does
                 still_here.append(piece.splitlines()[0].removeprefix("diff --git "))
     return still_here
 
@@ -1222,7 +1222,7 @@ def move_finish(number, title, body_file):
         raise Refused(f"An answers file {answers} is in this worktree, so the commit would carry it to "
                       f"{new_branch}.\n"
                       f"Move it to {set_aside} and run this again; it comes back when the move ends.")
-    if git(["rev-list", "--count", "origin/main..HEAD"]).strip() != "0":
+    if git(["rev-list", "--count", "origin/main..HEAD"]).strip() != "0":  # pragma: no mutate, a count has no leading zero, so `>` matches every count but "0" as `!=` does, and so does `is not`, as CPython keeps one "0" string
         head = git(["rev-parse", "HEAD"]).strip()
         base = git(["merge-base", "HEAD", "origin/main"]).strip()
         raise Refused(f"{new_branch} already holds commit {head[:12]} beside origin/main, and this step must make "
