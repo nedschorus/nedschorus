@@ -1292,7 +1292,7 @@ with tempfile.TemporaryDirectory() as scratch:
 # --- strace only where asked, and the files only it saw kept for later runs --
 # A stand-in strace runs each suite, and writes one trace line saying STRACE_ONLY_SUITE opened
 # data.txt, as a git command or a shell script would, unseen by the audit hook. Real strace
-# cannot attach inside the daily full run, which traces this suite, so it is not used here.
+# cannot attach inside the scheduled full run, which traces this suite, so it is not used here.
 FAKE_STRACE_SOURCE = r'''import os, subprocess, sys
 arguments = sys.argv[1:]
 trace = arguments[arguments.index("-o") + 1]
@@ -1302,7 +1302,7 @@ with open(os.environ["FAKE_STRACE_CALLED_FILE"], "a") as called:
 code = subprocess.call(command)
 seen = os.environ["FAKE_STRACE_SAW"]
 suite_traced = any(argument.endswith(os.environ["FAKE_STRACE_SUITE"]) for argument in command)
-# A suite that fails before reaching data.txt, as when the daily run times out.
+# A suite that fails before reaching data.txt, as when the scheduled run times out.
 stops_early = suite_traced and os.environ.get("FAKE_STRACE_SUITE_FAILS_BEFORE_READING")
 # A suite that skips, without the mark, the case that reads data.txt, and still passes.
 skips_reading = suite_traced and os.environ.get("FAKE_STRACE_SUITE_SKIPS_THE_CASE_THAT_READS")
@@ -1466,8 +1466,8 @@ with tempfile.TemporaryDirectory() as scratch:
               f"the checkout holds, so what it reads here is unknown" in lines(selected.stdout),
           (ran(root), selected.stdout))
 
-# Only the daily full run records these lists, once a day; a list older than the limit, or
-# none, means a daily run was missed, and the run says so.
+# Only the scheduled full run records these lists, once a day; a list older than the limit, or
+# none, means a scheduled run was missed, and the run says so.
 NOW = datetime.datetime(2026, 11, 4, 12, 0, tzinfo=datetime.timezone.utc)
 
 
@@ -1489,7 +1489,7 @@ notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_o
 check("a list older than the limit is named, with the time it was recorded",
       notice is not None and notice.startswith("run-all-test-suites: 1 of 2 suites")
       and "has not recorded every suite since 2026-11-02T23:00:00Z" in notice
-      and "If you have not yet told the user in this agent-session that the daily full test "
+      and "If you have not yet told the user in this agent-session that the scheduled full test "
           "run's lists are stale: tell him" in notice,
       notice)
 notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(

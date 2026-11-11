@@ -26,7 +26,7 @@ Usage:
                 table places on this machine.
 
 WHY THIS EXISTS (user-ruled 2026-10-01, Mac session
-8db2e753-65d6-4e89-bc4d-063f2a20e951). The Mac's daily full test run was about
+8db2e753-65d6-4e89-bc4d-063f2a20e951). The Mac's scheduled full test run was about
 to be installed as a plist typed by hand, as ned-box's cron line for it had
 been the day before and as the transcript mirror's cron lines were on both
 machines. Asked for his word on the hand install, the user answered "why not
@@ -77,7 +77,7 @@ a later pull request: its launchd half fits `launchd_keys` as it stands, and
 its ned-box half needs a third scheduler, a systemd user unit, added to
 SCHEDULERS here.
 
-The Mac's daily full test run is launchd and not cron because a launchd
+The Mac's scheduled full test run is launchd and not cron because a launchd
 calendar job missed while the Mac sleeps starts at the next wake, and a cron
 line is skipped (user-ruled, his "y" at 2026-10-01T04:38:17Z, item 11 of the
 walk open-questions-concerns-and-recommendations-2026-09-30). The Mac's

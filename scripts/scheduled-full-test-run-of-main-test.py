@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for daily-full-test-run-of-main.py.
+"""Tests for scheduled-full-test-run-of-main.py.
 
-Run: python3 scripts/daily-full-test-run-of-main-test.py
+Run: python3 scripts/scheduled-full-test-run-of-main-test.py
 
 No case reaches anything real. The clone is a fixture clone of a bare
 repository in the same scratch directory, so `git fetch origin` fetches a
@@ -38,10 +38,10 @@ import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).resolve().with_name("daily-full-test-run-of-main.py")
+SCRIPT_PATH = Path(__file__).resolve().with_name("scheduled-full-test-run-of-main.py")
 REPOSITORY_ROOT = SCRIPT_PATH.parent.parent
 
-_spec = importlib.util.spec_from_file_location("daily_full_test_run_of_main", SCRIPT_PATH)
+_spec = importlib.util.spec_from_file_location("scheduled_full_test_run_of_main", SCRIPT_PATH)
 program = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(program)
 
@@ -62,7 +62,7 @@ SSH_THAT_CANNOT_REACH_NED_BOX = (
     "echo 'ssh: connect to host ned-box port 22: No route to host' >&2\n"
     "echo 'a second line' >&2\nexit 255")
 
-STAND_IN_RUNNER_BEHAVIOUR_FILE_VARIABLE = "DAILY_FULL_TEST_RUN_STAND_IN_RUNNER_BEHAVIOUR_FILE"
+STAND_IN_RUNNER_BEHAVIOUR_FILE_VARIABLE = "SCHEDULED_FULL_TEST_RUN_STAND_IN_RUNNER_BEHAVIOUR_FILE"
 
 # Played for scripts/run-all-test-suites.py. It writes down how it was called
 # and what the checkout it was run from is, then prints what the real runner
@@ -71,7 +71,7 @@ STAND_IN_RUNNER_BEHAVIOUR_FILE_VARIABLE = "DAILY_FULL_TEST_RUN_STAND_IN_RUNNER_B
 # Exit 3 and exit 2 print the real runner's refusals on stderr and nothing on
 # stdout. A negative exit is the signal the stand-in kills itself with.
 #
-# Every call also writes down whether the daily run's lock was free, tried
+# Every call also writes down whether the scheduled run's lock was free, tried
 # with a descriptor of the stand-in's own. Two more behaviours, each asked
 # for by a key of the behaviour file:
 #   leaves_a_directory_its_owner_may_not_write_to: leaves in the checkout a
@@ -86,7 +86,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-behaviour = json.loads(Path(os.environ["DAILY_FULL_TEST_RUN_STAND_IN_RUNNER_BEHAVIOUR_FILE"]).read_text())
+behaviour = json.loads(Path(os.environ["SCHEDULED_FULL_TEST_RUN_STAND_IN_RUNNER_BEHAVIOUR_FILE"]).read_text())
 calls_file = Path(behaviour["calls_file"])
 calls = json.loads(calls_file.read_text()) if calls_file.exists() else []
 arguments = sys.argv[1:]
@@ -94,8 +94,8 @@ log_dir = Path(arguments[arguments.index("--log-dir") + 1])
 checkout = Path.cwd()
 
 
-def daily_run_lock_is_free():
-    with open(log_dir.parent / "daily-full-test-run-of-main.lock", "a") as handle:
+def scheduled_run_lock_is_free():
+    with open(log_dir.parent / "scheduled-full-test-run-of-main.lock", "a") as handle:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
@@ -119,9 +119,9 @@ calls.append({
     "head_is_detached": git("symbolic-ref", "-q", "HEAD").returncode != 0,
     "later_file_is_there": (checkout / "a-later-file.txt").is_file(),
     "log_dir_held": sorted(path.name for path in log_dir.iterdir()) if log_dir.is_dir() else None,
-    "daily_run_lock_was_free": daily_run_lock_is_free(),
-    "daily_run_lock_was_inherited": any(
-        path.exists() and path.samefile(log_dir.parent / "daily-full-test-run-of-main.lock")
+    "scheduled_run_lock_was_free": scheduled_run_lock_is_free(),
+    "scheduled_run_lock_was_inherited": any(
+        path.exists() and path.samefile(log_dir.parent / "scheduled-full-test-run-of-main.lock")
         for path in Path("/dev/fd").iterdir()),
 })
 calls_file.write_text(json.dumps(calls))
@@ -218,8 +218,8 @@ def fixture_git(directory: Path, *arguments) -> str:
     git into another repository dropped; its stdout. A command that fails
     stops the suite, so no case runs against a repository that was not made."""
     completed = subprocess.run(
-        ["git", "-C", str(directory), "-c", "user.name=daily-full-test-run-fixture",
-         "-c", "user.email=daily-full-test-run-fixture@example.invalid",
+        ["git", "-C", str(directory), "-c", "user.name=scheduled-full-test-run-fixture",
+         "-c", "user.email=scheduled-full-test-run-fixture@example.invalid",
          "-c", "commit.gpgsign=false", *arguments],
         env=program.run_all_test_suites.environment_without_git_redirecting_variables(),
         stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
@@ -287,14 +287,14 @@ class Fixture:
         self.log_store = root / "log-store"
         self.temporary = root / "temporary"
         self.temporary.mkdir()
-        self.directory = self.temporary / program.DAILY_FULL_TEST_RUN_DIRECTORY_NAME
-        self.worktree = self.directory / program.DAILY_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME
-        self.logs = self.directory / program.DAILY_FULL_TEST_RUN_LOGS_DIRECTORY_NAME
-        self.lock_file = self.directory / program.DAILY_FULL_TEST_RUN_LOCK_FILE_NAME
+        self.directory = self.temporary / program.SCHEDULED_FULL_TEST_RUN_DIRECTORY_NAME
+        self.worktree = self.directory / program.SCHEDULED_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME
+        self.logs = self.directory / program.SCHEDULED_FULL_TEST_RUN_LOGS_DIRECTORY_NAME
+        self.lock_file = self.directory / program.SCHEDULED_FULL_TEST_RUN_LOCK_FILE_NAME
         self.run_count = 0
 
     def local_copy(self, date: str = "2026-09-30") -> Path:
-        return self.directory / f"daily-full-test-run-record-{date}.txt"
+        return self.directory / f"scheduled-full-test-run-record-{date}.txt"
 
     def scratch_for_next_run(self):
         self.run_count += 1
@@ -342,9 +342,9 @@ class Fixture:
         def runner_step_that_raises(*_arguments):
             raise StandInRunnerStepRaised("the case told the runner step to raise")
 
-        saved_bound = program.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS
+        saved_bound = program.SCHEDULED_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS
         if lock_wait_bound_seconds is not None:
-            program.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = lock_wait_bound_seconds
+            program.SCHEDULED_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = lock_wait_bound_seconds
         saved_chmod = os.chmod
         saved_runner_step = program.run_test_suite_runner_waiting_for_the_machine_lock
         if runner_step_raises:
@@ -372,7 +372,7 @@ class Fixture:
             os.environ["PATH"] = original_path
             os.environ.pop(STAND_IN_RUNNER_BEHAVIOUR_FILE_VARIABLE, None)
             socket.gethostname = saved_gethostname
-            program.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = saved_bound
+            program.SCHEDULED_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = saved_bound
             os.chmod = saved_chmod
             program.run_test_suite_runner_waiting_for_the_machine_lock = saved_runner_step
         ssh_calls_file = scratch / "ssh-calls"
@@ -408,7 +408,7 @@ class Fixture:
                       for path in self.log_store.rglob("*") if path.is_file())
 
     def record(self, machine: str, date: str = "2026-09-30"):
-        path = (self.log_store / program.DAILY_FULL_TEST_RUNS_KIND_DIRECTORY_NAME / machine
+        path = (self.log_store / program.SCHEDULED_FULL_TEST_RUNS_KIND_DIRECTORY_NAME / machine
                 / f"{date}.txt")
         return path.read_text(encoding="utf-8") if path.is_file() else None
 
@@ -450,8 +450,8 @@ def run_cases_on_ned_box(workspace: Path):
     call = result.runner_calls[0] if result.runner_calls else {}
     check("a passing run exits 0", result.code == 0, repr(result))
     check("on ned-box the record is written locally, with no ssh, as "
-          "daily-full-test-runs/ned-box/<date>.txt",
-          fixture.record_files() == ["daily-full-test-runs/ned-box/2026-09-30.txt"]
+          "scheduled-full-test-runs-of-main/ned-box/<date>.txt",
+          fixture.record_files() == ["scheduled-full-test-runs-of-main/ned-box/2026-09-30.txt"]
           and result.ssh_calls == [], f"{fixture.record_files()} {result!r}")
     check("a passing run's record holds the SUMMARY line",
           record is not None and PASSING_SUMMARY_LINE in record.splitlines(), repr(record))
@@ -462,7 +462,7 @@ def run_cases_on_ned_box(workspace: Path):
           "line, the skipped case, the SUMMARY line, the exit code, both counts of seconds "
           "and the logs' directory",
           record == "\n".join([
-              "daily-full-test-run-of-main: ned-box, 2026-09-30 in America/Los_Angeles, "
+              "scheduled-full-test-run-of-main: ned-box, 2026-09-30 in America/Los_Angeles, "
               "started 2026-10-01T03:30:00Z",
               f"origin/main: {fixture.commit_of_main}",
               first_line,
@@ -474,8 +474,8 @@ def run_cases_on_ned_box(workspace: Path):
               f"logs: {fixture.logs} on ned-box",
           ]) + "\n", repr(record))
     check("stdout is the record's citation in the scp form",
-          result.stdout == "daily-full-test-run-of-main: record written to nedlern@ned-box:"
-          f"{fixture.log_store}/daily-full-test-runs/ned-box/2026-09-30.txt\n", result.stdout)
+          result.stdout == "scheduled-full-test-run-of-main: record written to nedlern@ned-box:"
+          f"{fixture.log_store}/scheduled-full-test-runs-of-main/ned-box/2026-09-30.txt\n", result.stdout)
     check("the runner is run once, by the Python running this program, as the worktree's "
           "scripts/run-all-test-suites.py --log-dir <logs> --record-inputs-with-strace "
           "--wait-for-lock-seconds 3600, with no selection option, no -j and no "
@@ -504,9 +504,9 @@ def run_cases_on_ned_box(workspace: Path):
           repr(sorted(path.name for path in fixture.directory.iterdir())))
     check("this program's lock is held while the runner runs: a second lock on the lock "
           "file, tried from inside the runner, is refused",
-          call.get("daily_run_lock_was_free") is False, repr(result))
-    check("the runner inherits no descriptor for the daily run's lock",
-          call.get("daily_run_lock_was_inherited") is False, repr(result))
+          call.get("scheduled_run_lock_was_free") is False, repr(result))
+    check("the runner inherits no descriptor for the scheduled run's lock",
+          call.get("scheduled_run_lock_was_inherited") is False, repr(result))
 
     # --- A failing run, the same day -----------------------------------------
     result = fixture.run(exits=(1,), lines=FAILING_RUNNER_LINES)
@@ -526,7 +526,7 @@ def run_cases_on_ned_box(workspace: Path):
           fixture_git(fixture.clone, "worktree", "list"))
     check("a second run the same day replaces the record: one file, holding the second "
           "run alone",
-          fixture.record_files() == ["daily-full-test-runs/ned-box/2026-09-30.txt"]
+          fixture.record_files() == ["scheduled-full-test-runs-of-main/ned-box/2026-09-30.txt"]
           and PASSING_SUMMARY_LINE not in record_lines, f"{fixture.record_files()} {record!r}")
     check("each run replaces the logs: the second run's runner found none of the first's, "
           "and the directory holds the second run's alone",
@@ -581,7 +581,7 @@ def run_cases_on_ned_box(workspace: Path):
           and result.stderr.endswith(
               "\nRun this again after the run holding that lock has finished.\n"),
           result.stderr)
-    check("the bound is an hour", program.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS == 3600)
+    check("the bound is an hour", program.SCHEDULED_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS == 3600)
     check("the worktree is removed after the lock was not released",
           fixture.worktree_is_gone(), fixture_git(fixture.clone, "worktree", "list"))
 
@@ -691,7 +691,7 @@ def run_cases_on_ned_box(workspace: Path):
               and any(line.startswith(f"the worktree {fixture.worktree} was not removed: ")
                       for line in record_lines)
               and PASSING_SUMMARY_LINE in record_lines
-              and result.stderr.startswith("daily-full-test-run-of-main: the worktree "
+              and result.stderr.startswith("scheduled-full-test-run-of-main: the worktree "
                                            f"{fixture.worktree} was not removed: ")
               and result.stderr.endswith(f"\nRemove it with: {remedy}\n")
               and result.stderr.count("\n") == 2,
@@ -726,7 +726,7 @@ def run_cases_on_ned_box(workspace: Path):
           f"{result!r}\n{record_lines!r}")
     check("when git worktree add fails stderr is what failed, with git's error line, and "
           "what to do",
-          result.stderr == f"daily-full-test-run-of-main: {what_failed}\n"
+          result.stderr == f"scheduled-full-test-run-of-main: {what_failed}\n"
           "Fix what git reports, then run this again.\n", result.stderr)
     error_line = getattr(program, "first_fatal_or_error_stderr_line_or_no_detail", None)
     check("the error line of a failed git worktree add is the first line opening `error:` "
@@ -738,17 +738,17 @@ def run_cases_on_ned_box(workspace: Path):
           and error_line("a line\nanother\n") == "a line"
           and error_line("\n") == "no detail")
 
-    # --- One daily run at a time -------------------------------------------------
+    # --- One scheduled run at a time -------------------------------------------------
     files_before = {name: fixture.record(name) for name in ("ned-box", "mac")}
-    with open(fixture.directory / program.DAILY_FULL_TEST_RUN_LOCK_FILE_NAME, "a") as holder:
+    with open(fixture.directory / program.SCHEDULED_FULL_TEST_RUN_LOCK_FILE_NAME, "a") as holder:
         fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         result = fixture.run()
-    check("while another daily run holds this program's lock, a run exits 6 having run "
+    check("while another scheduled run holds this program's lock, a run exits 6 having run "
           "nothing and written nothing",
           result.code == 6 and result.runner_calls == [] and result.stdout == ""
           and {name: fixture.record(name) for name in ("ned-box", "mac")} == files_before
-          and result.stderr == "daily-full-test-run-of-main: not run — another daily full "
-          f"test run holds {fixture.directory}/daily-full-test-run-of-main.lock.\n"
+          and result.stderr == "scheduled-full-test-run-of-main: not run — another scheduled full "
+          f"test run holds {fixture.directory}/scheduled-full-test-run-of-main.lock.\n"
           "Run this again after that run has finished.\n", repr(result))
     result = fixture.run()
     check("once that run's lock is released, a run goes ahead", result.code == 0,
@@ -764,7 +764,7 @@ def run_cases_on_ned_box(workspace: Path):
           "log-store's record as it was, and says what failed and what to do",
           result.code == 5 and result.stdout == "" and fixture.record("ned-box") == record_before
           and result.stderr.startswith(
-              "daily-full-test-run-of-main: the record was not written: its local copy "
+              "scheduled-full-test-run-of-main: the record was not written: its local copy "
               f"{fixture.local_copy('2026-09-30')} could not be written "
               "(IsADirectoryError: ")
           and result.stderr.endswith(
@@ -788,10 +788,10 @@ def run_cases_on_ned_box(workspace: Path):
           repr(record_lines))
     check("a failed fetch prints what failed and what to do on stderr, and still cites the "
           "record",
-          result.stderr.startswith("daily-full-test-run-of-main: not run — git fetch origin "
+          result.stderr.startswith("scheduled-full-test-run-of-main: not run — git fetch origin "
                                    f"failed in {cut_off}: ")
           and result.stderr.endswith("\nFix what git reports, then run this again.\n")
-          and result.stdout.startswith("daily-full-test-run-of-main: record written to "),
+          and result.stdout.startswith("scheduled-full-test-run-of-main: record written to "),
           repr(result))
     check("a failed fetch leaves no worktree", fixture.worktree_is_gone(cut_off),
           fixture_git(cut_off, "worktree", "list"))
@@ -806,29 +806,29 @@ def run_cases_on_the_mac(workspace: Path):
         result = fixture.run(hostname="a-mac-that-is-not-ned-box")
     record = fixture.record("mac")
     check("off ned-box the record is written over ssh to nedlern@ned-box, with the options "
-          "the log-store's other writers pass, as daily-full-test-runs/mac/<date>.txt",
+          "the log-store's other writers pass, as scheduled-full-test-runs-of-main/mac/<date>.txt",
           result.code == 0 and record is not None and PASSING_SUMMARY_LINE in record
           and result.ssh_calls == [
               "-o BatchMode=yes -o ConnectTimeout=10 nedlern@ned-box mkdir -p "
-              f"{fixture.log_store}/daily-full-test-runs/mac && cat > "
-              f"{fixture.log_store}/daily-full-test-runs/mac/2026-09-30.txt"],
+              f"{fixture.log_store}/scheduled-full-test-runs-of-main/mac && cat > "
+              f"{fixture.log_store}/scheduled-full-test-runs-of-main/mac/2026-09-30.txt"],
           f"{result!r}\n{record!r}")
     check("the record is dated by the Pacific date when the machine's zone is another day",
-          fixture.record_files() == ["daily-full-test-runs/mac/2026-09-30.txt"]
-          and record.startswith("daily-full-test-run-of-main: mac, 2026-09-30 in "
+          fixture.record_files() == ["scheduled-full-test-runs-of-main/mac/2026-09-30.txt"]
+          and record.startswith("scheduled-full-test-run-of-main: mac, 2026-09-30 in "
                                 "America/Los_Angeles, started 2026-10-01T03:30:00Z\n"),
           f"{fixture.record_files()} {record!r}")
     check("the citation names ned-box and the mac's directory",
-          result.stdout == "daily-full-test-run-of-main: record written to nedlern@ned-box:"
-          f"{fixture.log_store}/daily-full-test-runs/mac/2026-09-30.txt\n", result.stdout)
+          result.stdout == "scheduled-full-test-run-of-main: record written to nedlern@ned-box:"
+          f"{fixture.log_store}/scheduled-full-test-runs-of-main/mac/2026-09-30.txt\n", result.stdout)
 
     # --- ned-box cannot be reached ------------------------------------------------
     unreachable = Fixture(workspace / "on-the-mac-with-ned-box-unreachable")
     result = unreachable.run(hostname="a-mac-that-is-not-ned-box",
                              ssh_body=SSH_THAT_CANNOT_REACH_NED_BOX)
-    target = f"{unreachable.log_store}/daily-full-test-runs/mac/2026-09-30.txt"
+    target = f"{unreachable.log_store}/scheduled-full-test-runs-of-main/mac/2026-09-30.txt"
     remedy = ("ssh -o BatchMode=yes -o ConnectTimeout=10 nedlern@ned-box "
-              f"'mkdir -p {unreachable.log_store}/daily-full-test-runs/mac && cat > "
+              f"'mkdir -p {unreachable.log_store}/scheduled-full-test-runs-of-main/mac && cat > "
               f"{target}' < {unreachable.local_copy('2026-09-30')}")
     check("when ned-box cannot be reached the program exits 5, cites nothing and writes "
           "nothing into the log-store",
@@ -836,7 +836,7 @@ def run_cases_on_the_mac(workspace: Path):
           and len(result.runner_calls) == 1, repr(result))
     check("when ned-box cannot be reached stderr is what failed, then one instruction a "
           "line: tell the user, and the command that writes the record",
-          result.stderr == "daily-full-test-run-of-main: the record was not written to "
+          result.stderr == "scheduled-full-test-run-of-main: the record was not written to "
           f"nedlern@ned-box:{target} (ssh nedlern@ned-box exited 255: ssh: connect to host "
           "ned-box port 22: No route to host).\n"
           "Tell the user what the line above says, and the remedy in the line below.\n"
@@ -869,7 +869,7 @@ def run_cases_on_the_mac(workspace: Path):
           and next_day_local_copy is not None
           and FAILING_SUMMARY_LINE in next_day_local_copy.splitlines()
           and next_day_local_copy.startswith(
-              "daily-full-test-run-of-main: mac, 2026-10-01 in America/Los_Angeles, ")
+              "scheduled-full-test-run-of-main: mac, 2026-10-01 in America/Los_Angeles, ")
           and unreachable.local_copy("2026-09-30").is_file()
           and unreachable.local_copy("2026-09-30").read_text(encoding="utf-8") == local_copy,
           f"{result!r}\n{next_day_local_copy!r}")
@@ -885,8 +885,8 @@ def run_cases_on_the_mac(workspace: Path):
           remedy_of_the_first_day == remedy and written_by_hand.returncode == 0
           and local_copy is not None and unreachable.record("mac", "2026-09-30") == local_copy
           and local_copy.startswith(
-              "daily-full-test-run-of-main: mac, 2026-09-30 in America/Los_Angeles, ")
-          and unreachable.record_files() == ["daily-full-test-runs/mac/2026-09-30.txt"],
+              "scheduled-full-test-run-of-main: mac, 2026-09-30 in America/Los_Angeles, ")
+          and unreachable.record_files() == ["scheduled-full-test-runs-of-main/mac/2026-09-30.txt"],
           f"{remedy_of_the_first_day!r}\n{written_by_hand.returncode} "
           f"{written_by_hand.stderr}\n{unreachable.record('mac', '2026-09-30')!r}")
     written_by_hand = subprocess.run(["/bin/sh", "-c", remedy_of_the_next_day],
@@ -897,8 +897,8 @@ def run_cases_on_the_mac(workspace: Path):
           written_by_hand.returncode == 0 and next_day_local_copy is not None
           and unreachable.record("mac", "2026-10-01") == next_day_local_copy
           and unreachable.record("mac", "2026-09-30") == local_copy
-          and unreachable.record_files() == ["daily-full-test-runs/mac/2026-09-30.txt",
-                                             "daily-full-test-runs/mac/2026-10-01.txt"],
+          and unreachable.record_files() == ["scheduled-full-test-runs-of-main/mac/2026-09-30.txt",
+                                             "scheduled-full-test-runs-of-main/mac/2026-10-01.txt"],
           f"{remedy_of_the_next_day!r}\n{written_by_hand.returncode} "
           f"{written_by_hand.stderr}\n{unreachable.record('mac', '2026-10-01')!r}")
 
@@ -918,9 +918,9 @@ def run_cases_as_a_program(workspace: Path):
               if len(written) == 1 else "")
     check("run as a program it exits 0, writes one record dated today and cites it",
           completed.returncode == 0 and len(written) == 1
-          and re.fullmatch(r"daily-full-test-runs/(ned-box|mac)/\d{4}-\d{2}-\d{2}\.txt",
+          and re.fullmatch(r"scheduled-full-test-runs-of-main/(ned-box|mac)/\d{4}-\d{2}-\d{2}\.txt",
                            written[0]) is not None
-          and completed.stdout == "daily-full-test-run-of-main: record written to "
+          and completed.stdout == "scheduled-full-test-run-of-main: record written to "
           f"nedlern@ned-box:{fixture.log_store}/{written[0]}\n",
           f"{completed.returncode} {written!r}\n{completed.stdout}\n{completed.stderr}")
     check("that record holds the SUMMARY line and both counts of seconds as whole numbers",
@@ -939,12 +939,12 @@ def run_cases_as_a_program(workspace: Path):
 
 def run_log_store_readme_cases():
     readme = record_shipper.STORE_README
-    kind = program.DAILY_FULL_TEST_RUNS_KIND_DIRECTORY_NAME
-    check("the log-store's README lists daily-full-test-runs/ once, naming this program as "
+    kind = program.SCHEDULED_FULL_TEST_RUNS_KIND_DIRECTORY_NAME
+    check("the log-store's README lists scheduled-full-test-runs-of-main/ once, naming this program as "
           "its owner",
-          kind == "daily-full-test-runs" and readme.count(f"`{kind}/`") == 1
+          kind == "scheduled-full-test-runs-of-main" and readme.count(f"`{kind}/`") == 1
           and f"- `{kind}/` -- " in readme
-          and "`scripts/daily-full-test-run-of-main.py`" in readme, readme)
+          and "`scripts/scheduled-full-test-run-of-main.py`" in readme, readme)
 
 
 def run_line_copying_cases(workspace: Path):
