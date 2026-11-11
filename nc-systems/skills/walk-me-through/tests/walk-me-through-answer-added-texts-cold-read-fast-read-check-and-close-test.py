@@ -3065,7 +3065,15 @@ def test_moving_on_is_refused_writing_nothing_while_the_item_holds_a_recommendat
               checked.returncode == 1 and case.minutes.read_text() == before and case.calls.read_text() == ""
               and 'nothing written: item 3 of 3 recommends "change the sentence", so it asks for a decision'
               in checked.stderr
-              and "Ask the user to answer item 3 of 3 with A, AO, Aa, D or Z" in checked.stderr,
+              and "If the user's reply already answers item 3 of 3, do not ask him again" in checked.stderr
+              and "If it does not, ask him to answer item 3 of 3" in checked.stderr
+              and all(f"{answer}: python3 " in checked.stderr and f"check{flag} --user-reply-as-typed REPLY"
+                      in checked.stderr
+                      for answer, flag in (("A", ""), ("AO", " --obvious"), ("Aa", " --after-advisor"),
+                                           ("D", " --disapproved"), ("Z", " --deferred")))
+              and "check --option 2 --user-reply-as-typed REPLY" in checked.stderr
+              and "check --option 3 --user-reply-as-typed REPLY" in checked.stderr
+              and "check --part-answer 1=A --part-answer 2=D --user-reply-as-typed REPLY" in checked.stderr,
               described(checked))
 
 

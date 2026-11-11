@@ -718,8 +718,17 @@ NAVIGATION_WORD_REFUSED = (
 MOVED_ON_NO_DECISION_REFUSED = (
     "nothing written: {item} recommends \"{recommendation}\", so it asks for a decision, and --moved-on-no-decision "
     "records only a move on from an item that asks for none.\n"
-    "Ask the user to answer {item} with A, AO, Aa, D or Z, because the walk-me-through skill lets the walk move "
-    "on from an item only once its recommendation is answered.")
+    "If the user's reply already answers {item}, do not ask him again: run check with the flag for his answer, "
+    "as below.\n"
+    "If it does not, ask him to answer {item}, because the walk-me-through skill lets the walk move on from an "
+    "item only once its recommendation is answered.\n"
+    "The check command for each answer, with REPLY replaced by his reply as he typed it:\n{commands}")
+MOVED_ON_NO_DECISION_ANSWER_COMMANDS = (
+    ("A", ""), ("AO", " --obvious"), ("Aa", " --after-advisor"), ("D", " --disapproved"), ("Z", " --deferred"))
+MOVED_ON_NO_DECISION_OPTION_LINE = ("O{number}, for an item with an \"Option {number}\" paragraph: python3 {program} check "
+                                    "--option {number} --user-reply-as-typed REPLY")
+MOVED_ON_NO_DECISION_PART_LINE = ("An answer to each part of an item with parts, one flag per part: python3 {program} "
+                                  "check --part-answer 1=A --part-answer 2=D --user-reply-as-typed REPLY")
 UNREADABLE_NEW_MARKS = (
     "nothing written: {item} in the walk-document {document} has `#new` or `#new_if_d` marks whose text this "
     "program would not read whole, so an answer that adds such a text would be recorded without that text's "
@@ -1321,6 +1330,15 @@ def answer_hashtag(arguments):
     return ""
 
 
+def answer_check_commands(program):
+    """The check command for each answer an item can take, to print where the agent chose the wrong flag."""
+    commands = [f"{answer}: python3 {program} check{flag} --user-reply-as-typed REPLY"
+                for answer, flag in MOVED_ON_NO_DECISION_ANSWER_COMMANDS]
+    commands += [MOVED_ON_NO_DECISION_OPTION_LINE.format(number=number, program=program) for number in OPTION_NUMBERS]
+    commands.append(MOVED_ON_NO_DECISION_PART_LINE.format(program=program))
+    return "\n".join(commands)
+
+
 def check_flags(arguments):
     """The flags this check step was run with, to repeat in the command it tells the agent to rerun."""
     flags = ""
@@ -1566,9 +1584,11 @@ def check(arguments):
     document, lines, marks, unreadable = item_lines(walk_finder, minutes, value, numbers, total, parser)
     rating = case_against_rating(lines, item, document, arguments)
     rated = CASE_AGAINST_HASHTAG.format(rating=rating.replace(" ", "_")) if rating else ""
-    recommendation = walk_finder.approval_walk_item_recommendation_text(lines)
+    recommendation = walk_finder.approval_walk_item_last_recommendation_text_from_item_lines(lines)
     if arguments.moved_on_no_decision and recommendation is not None:
-        raise Failure(MOVED_ON_NO_DECISION_REFUSED.format(item=item, recommendation=recommendation))
+        raise Failure(MOVED_ON_NO_DECISION_REFUSED.format(
+            item=item, recommendation=recommendation,
+            commands=answer_check_commands(program)))
     if arguments.deferred or arguments.moved_on_no_decision or arguments.moved_on is not None:
         now = datetime.datetime.now().astimezone()
         no_change = CHECK_MOVED_ON_MINUTES if arguments.moved_on is not None else CHECK_DEFERRED_MINUTES
