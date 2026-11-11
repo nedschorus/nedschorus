@@ -1418,11 +1418,10 @@ with tempfile.TemporaryDirectory() as workspace:
         flight = flight_of([list_entry("bsubold", "shell")])
         check("a subagent's own shell task past the wait holds nothing", not flight,
               str(flight.background_task_ids))
-        # A Workflow-tool agent keeps its transcript a level deeper. Layout, ids and journal lines
-        # from ~/.claude/projects/ on ned-box, MD-skills' probe session
-        # 65d644bd-b689-43c4-b258-efed0a8087b4 of 2026-11-04, whose Stop-hook input listed the
-        # workflow w2c4bv83u and its agent's shell task bxecf0mah; that headless transcript carries
-        # no toolUseResult, so the launch records take the interactive shape above.
+        # A Workflow-tool agent keeps its transcript a level deeper, under
+        # subagents/workflows/<run>/, beside a journal.jsonl. The layout and journal lines are
+        # copied from a real headless probe session; its transcript carries no toolUseResult,
+        # so the launch records take the interactive shape above.
         workflow_session = transcript_of(workspace, "65d644bd-b689-43c4-b258-efed0a8087b4.jsonl", [
             usage_record(100_000, cache_read=450_000)])
         workflow_run = workflow_session.with_suffix("") / "subagents" / "workflows" / "wf_b109740f-730"
