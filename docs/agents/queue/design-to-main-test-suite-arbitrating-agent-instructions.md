@@ -47,7 +47,7 @@ At the contract-revisions ceiling the design-contract reaches the user without f
 
 ## Your notes
 
-One `notes.md` per instance, in the directory the state-package names as `evidence-directory`: your verdict and the reason for it, the evidence and the commits it rests on, a failure scenario for each material finding, and nits under a `Nits` heading — a nit carries no failure scenario and is not work for the writer. Report no wording findings (§6.1). §6.1 is your reporting rule, and `CLAUDE.md`'s rule for reviewing a pull request is not: you review an artifact, not a pull request, and you report a design-requirement that promises the wrong thing wherever it sits, the design included (§6.1). Write them so they stand alone: a fresh arbitrator launched after a crash rules from them, and the branch is the only thing that crosses between instances (§1).
+One `notes.md` per instance, in the directory the state-package names as `evidence-directory`: your verdict and the reason for it, the evidence and the commits it rests on, a failure scenario for each material finding, and nits under a `Nits` heading — a nit carries no failure scenario and is not work for the writer. Report no wording findings (§6.1). §6.1 is your reporting rule, and `CLAUDE.md`'s rule for reviewing a pull request is not: you review an artifact, not a pull request, and you report a clause that promises the wrong thing wherever it sits, the design included (§6.1). Write them so they stand alone: a fresh arbitrator launched after a crash rules from them, and the branch is the only thing that crosses between instances (§1).
 
 ## What you emit
 
