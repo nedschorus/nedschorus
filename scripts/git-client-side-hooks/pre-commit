@@ -113,8 +113,10 @@ agent_home_git_directory="$(git rev-parse --absolute-git-dir)" || {
 }
 if [ -e "$agent_home_git_directory/agent-home-marker" ]; then
     agent_home="$(git rev-parse --show-toplevel)"
+    # The creator is named through this hook's own checkout, the reference checkout core.hooksPath points at, because an agent-home at an older commit may not have it.
+    worktree_creator="$(cd "$(dirname "$0")/.." && pwd)/agent-seat-worktree-create-with-owner-file.py"
     echo "pre-commit: this commit is refused, because $agent_home is an agent-home: an agent-home holds no work and rests on a detached HEAD at origin/main, so a commit here is on no branch, and nothing keeps it once HEAD moves." >&2
-    echo "Make the commit in a worktree of your own, on an nc-topic-branch, made with this command, which prints the new worktree's path: cd $agent_home && python3 scripts/agent-seat-worktree-create-with-owner-file.py <branch name> --base HEAD" >&2
+    echo "Make the commit in a worktree of your own, on an nc-topic-branch, made with this command, which prints the new worktree's path: cd $agent_home && python3 $worktree_creator <branch name> --base HEAD" >&2
     echo "If the changes you meant to commit were made here in the agent-home, carry them to that worktree: git -C $agent_home diff --binary HEAD | git -C <the new worktree> apply --index; copy across any new file that git status lists as untracked, then, once the worktree holds them all, put the agent-home back with git -C $agent_home reset --hard HEAD and delete those copied files here." >&2
     echo "If you are the user committing by hand and mean this commit to be in the agent-home, add --no-verify to the same git commit command." >&2
     exit 1

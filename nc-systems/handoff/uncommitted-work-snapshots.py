@@ -758,8 +758,8 @@ def agent_seat_task_list_new_pending_task_write(list_directory, subject, descrip
     Claude Code numbers a new task; the file is linked into place only where no file of that
     name exists, so a task Claude Code creates at the same moment is not overwritten. It creates
     the list directory, which an agent-session that has made no task yet lacks; the function of
-    the same name in scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-
-    tasks-open.py raises there instead.
+    the same name in nc-systems/general-tools/agent-seat-task-list-new-pending-task-write-common.py
+    raises there instead.
     """
     list_directory = Path(list_directory)
     list_directory.mkdir(parents=True, exist_ok=True)

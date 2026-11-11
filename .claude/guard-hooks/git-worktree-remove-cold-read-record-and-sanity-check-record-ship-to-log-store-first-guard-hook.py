@@ -48,8 +48,10 @@ builtin too, or a wrapper's -C) before a path that depends on it, or the path
 names no worktree the hook can find, the hook ships every worktree's records,
 refuses the removal
 while any worktree holds a record being written or one that did not ship,
-starts no waiter, and asks for the path written out in full, with -f when
-the command gave -f or --force; when every worktree's records shipped, it
+starts no waiter, and gives the run-again instruction for its reason, with -f
+when the command gave -f or --force: for a path that names no worktree, to
+copy the path from `git worktree list`, and otherwise, to write the path out
+in full; when every worktree's records shipped, it
 lets the removal through. A removal
 of a worktree in which a record is being written, in a command that does more
 than that removal, as in `git push && git worktree remove /wt`, gets the same

@@ -1,8 +1,21 @@
 #!/usr/bin/env python3
 """Request a handoff before context runs out.
 
-It fires at a share of the context window, or below that share once it has deferred the
-handoff in this session and the work it deferred for has finished.
+It asks for the /handoff skill once the context used reaches --threshold-used-percentage.
+Below --ceiling-used-percentage it defers instead, saving the work it waits for in
+<session>-handoff-deferred in ~/.claude/handoffs/, while Claude Code's background_tasks list
+shows a running subagent, workflow or background shell task within its wait, or while a
+transcript it reads launch records from cannot be read, since it then cannot tell what runs.
+With no background_tasks list it counts nothing as running.
+
+The post-compaction hook deletes only <session>-handoff-asked, so while <session>-handoff-deferred
+exists the hook still fires below the threshold once the awaited work has finished; it then
+moves that file to <session>-handoff-deferred-fired, where the writer script reads when the
+deferral began.
+
+.claude/settings.json registers it under Stop alone, and a subagent's turn raises SubagentStop,
+so it never runs in a subagent; the subagent line in HANDOFF_DEFERRED_MARKER_NOT_DELETED follows
+the tool-message page's rule for messages that send an agent to the user.
 
 Stop-hook payloads lack context usage; headless sessions lack a status line.
 The transcript supplies usage for both interactive and headless sessions."""
@@ -751,12 +764,16 @@ def defer(session_id, used, share, flight, arguments, unreadable_marker_problem=
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Fire the handoff skill when context runs low.")
+    parser = argparse.ArgumentParser(description="Fire the handoff skill when context runs low.",
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--threshold-used-percentage", type=float,
-                        default=DEFAULT_THRESHOLD_USED_PERCENTAGE)
+                        default=DEFAULT_THRESHOLD_USED_PERCENTAGE,
+                        help="the share of the context window, in percent, at which the hook "
+                             "asks for the /handoff skill: the reincarnation threshold")
     parser.add_argument(
         "--ceiling-used-percentage", type=float, default=65.0,
-        help="above this used share the handoff fires even with work in flight",
+        help="the share of the context window, in percent, at or above which the handoff fires "
+             "even with work in flight",
     )
     parser.add_argument(
         "--background-task-wait-minutes", type=float,

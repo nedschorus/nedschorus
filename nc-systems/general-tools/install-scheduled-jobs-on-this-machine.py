@@ -16,8 +16,8 @@ Usage:
                 says. A job already installed as the table says is left alone.
   --start-once  with --install: after installing, ask launchd to run each
                 selected launchd job once, now.
-  --remove      take the named jobs off this machine. Needs --job, so that
-                --remove never takes off every job of the table at once.
+  --remove      take the named jobs off this machine. Needs --job, so a bare
+                --remove cannot take off every job.
   --remove-not-in-table
                 take off this machine every job --check reports NOT IN THE
                 TABLE. Takes no --job. Exits 1 when it leaves a line KEPT.

@@ -4,14 +4,14 @@ This file gets you from a standing start to your brief. It is not your only cont
 
 **Step 1 — which agent-seat are you?** Run `pwd`. Your agent-seat's name is the last component of that path: in `/home/nedlern/agents/prof` the agent-seat is `prof`. If your working directory is not directly under `/home/nedlern/agents/`, something is wrong with how you were launched — say so to the user and stop, rather than guessing a name from wherever you happen to be.
 
-**Step 2 — confirm your agent-home is a checkout on your own branch.** The launcher does this before your session starts. Verify both halves:
+**Step 2 — confirm your agent-home is a checkout on a detached HEAD.** The launcher does this before your session starts. Verify both halves:
 
 ```
 git rev-parse --show-toplevel      # expect your own directory
-git branch --show-current          # expect your agent-seat's name (empty output means detached HEAD)
+git branch --show-current          # expect empty output, which means a detached HEAD
 ```
 
-If either check fails — not a checkout, empty output, or a branch that is not your agent-seat's name — **stop and tell the user**, naming which check failed. Do not repair it yourself. Two reasons, and the second is the one that matters: a wrong branch means your commits would land somewhere unintended; and if the agent-home is not a checkout at all, then the project's settings — the status line, the `Stop` hook that asks you to hand off when context runs low (`scripts/handoff-context-threshold-hook.py`), and the guard on instruction files (`.claude/guard-hooks/instruction-file-guard.py`) — were never loaded, because settings are read at session start. Fixing the directory now cannot load them into the session you are already in. Only a relaunch can. Say that to the user plainly so he can decide whether to relaunch you or have you continue without them.
+If either check fails — not a checkout, or a branch name printed — **stop and tell the user**, naming which check failed. Do not repair it yourself. Two reasons, and the second is the one that matters: an agent-home on a branch is not as the launcher makes it; and if the agent-home is not a checkout at all, then the project's settings — the status line, the `Stop` hook that asks you to hand off when context runs low (`scripts/handoff-context-threshold-hook.py`), and the guard on instruction files (`.claude/guard-hooks/instruction-file-guard.py`) — were never loaded, because settings are read at session start. Fixing the directory now cannot load them into the session you are already in. Only a relaunch can. Say that to the user plainly so he can decide whether to relaunch you or have you continue without them.
 
 **Step 3 — read your instructions, in this order,** from inside your checkout:
 
