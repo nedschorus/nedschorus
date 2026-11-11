@@ -84,7 +84,8 @@ The restore steps come before the agent's other work. They are written as instru
 1. **See what it holds:** `git diff --stat <ref>^ <ref>`, then `git diff <ref>^ <ref>`.
 2. **Decide what to keep.** Read the end of the transcript the entry names, to learn what the dead agent was doing; if the transcript is gone, decide from the diff alone, and ask the user when unsure. Drop any mutant: a deliberate small break in code that nc-mutation-testing makes, by a program or by an agent's own edit, to check that the tests notice. A crash during nc-mutation-testing leaves the mutant in the work-snapshot. Leave a file that holds only a mutant off `--keep`; keep a file that holds both wanted work and a mutant, and after `restore` remove the mutant from it in a commit of its own on the restored branch, before the branch is pushed.
 3. **Run the entry's command.** To keep one file or more, run `restore`, after deleting from `--keep` the files you drop. To keep nothing, run `discard`. For a work-snapshot taken during an operation, run `discard`, as its entry says. When the command refuses or fails, do what it prints, and tell the user what failed.
-4. **Tell the user**, in the next message to the user, each work-snapshot handled, using the summary line each command prints, and add why each dropped file was dropped. Whether to finish the dead agent's task is a separate decision, made after the restore; the task `restore` opens keeps the restored branch on the agent-seat's task list until that decision is carried out.
+
+Whether to finish the dead agent's task is a separate decision, made after the restore; the task `restore` opens keeps the restored branch on the agent-seat's task list until that decision is carried out.
 
 ### `restore <ref> --keep <file> [<file> ...]`
 
@@ -106,7 +107,7 @@ Otherwise it does, in order:
 3. In the new worktree, `git diff --binary <ref>^ <ref> -- <kept files> | git apply --index`, then `git commit -m "Restore work from <ref>"`.
 4. Opens the restored branch's task, below, on the task list in `~/.claude/tasks/<CLAUDE_CODE_TASK_LIST_ID>`, making that directory when it does not yet exist.
 5. Deletes the ref with `git update-ref -d <ref>`.
-6. Prints the branch, the worktree and the task's id, then a summary line for the agent's message to the user: the ref, the kept files, the dropped files, the branch and the worktree.
+6. Prints the branch, the worktree and the task's id, then a summary line: the ref, the kept files, the dropped files, the branch and the worktree.
 
 When a step fails, `restore` prints what failed and exits nonzero:
 
@@ -116,7 +117,7 @@ When a step fails, `restore` prints what failed and exits nonzero:
 
 ### `discard <ref>`
 
-`discard` deletes the ref and prints its list entry, which names the files it held and, for a work-snapshot taken during an operation, the worktree and the operation, as the summary line for the agent's message to the user. It refuses when the ref does not exist. It opens no task.
+`discard` deletes the ref and prints its list entry, which names the files it held and, for a work-snapshot taken during an operation, the worktree and the operation, as its summary line. It refuses when the ref does not exist. It opens no task.
 
 ### The task `restore` opens, and how the task closes itself
 
