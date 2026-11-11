@@ -32,8 +32,8 @@ Design and tests: docs/issues/1268-catch-a-guarded-file-changed-without-the-user
 
 Exit status: the hook always exits 0, since the tool call has already happened. --approve and
 --restore exit 0 when done, 1 when they refuse, when the store cannot be reached, when a
-file operation or git fails, or when --restore changes some files and fails on others, and 64 on a bad
-command line.
+file operation or git fails, when --restore changes some files and fails on others, or when
+--approve records the approval but cannot delete the approval marker, and 64 on a bad command line.
 """
 
 import difflib
@@ -43,6 +43,7 @@ import json
 import os
 import pickle
 import select
+import shlex
 import signal
 import socket
 import stat
@@ -200,6 +201,18 @@ COMMAND_FAILED = ("{program_name} {mode} failed: {reason}. Tell the user, with t
                   "the command again once the cause is fixed.")
 RESTORE_INCOMPLETE = ("{program_name} --restore: not every file was put back; the lines above "
                       "say what was done to each. Tell the user which files failed and why.")
+MARKER_SURVIVED = (
+    "{program_name} --approve: the approval above is recorded, but its marker {marker} could not "
+    "be deleted: {reason}. While the marker exists, a later --approve would spend the user's "
+    "words a second time.\n"
+    "Run: rm -f {quoted_marker}\n"
+    "Do not ask the user again and do not run --approve again: the approval is already recorded.\n"
+    "If rm fails too, tell the user, with this message.")
+
+
+class ApprovalRecordedButApprovalMarkerNotDeleted(Exception):
+    """--approve recorded the approval but could not delete the marker; args[0] is the
+    approved lines, args[1] the marker's path, args[2] the OSError."""
 
 
 class StoreUnreachable(Exception):
@@ -1502,9 +1515,13 @@ def approve(pairs, cwd: Path):
         return True
 
     run_command_work(work)
-    loaded("guard_approval_marker_common", HOOK_PATH.parent / "guard-approval-marker-common.py") \
-        .consume_approval_marker(marker)
-    return [f"Approved {path} at version {key}." for path, key in pairs]
+    lines = [f"Approved {path} at version {key}." for path, key in pairs]
+    try:
+        marker.unlink(missing_ok=True)
+    except OSError as error:
+        # A surviving marker would let a later --approve spend the user's words a second time.
+        raise ApprovalRecordedButApprovalMarkerNotDeleted(lines, marker, error)
+    return lines
 
 
 def restore(pairs):
@@ -1630,6 +1647,13 @@ def main(arguments=None):
             return EXIT_BAD_INVOCATION
         try:
             lines = approve(pairs, Path.cwd()) if mode == "--approve" else restore(pairs)
+        except ApprovalRecordedButApprovalMarkerNotDeleted as error:
+            approved_lines, marker, reason = error.args
+            print("\n".join(approved_lines))
+            print(MARKER_SURVIVED.format(program_name=HOOK_PATH.name, marker=marker, reason=reason,
+                                         quoted_marker=shlex.quote(str(marker))),
+                  file=sys.stderr)
+            return EXIT_REFUSED
         except RestoreIncomplete as error:
             print("\n".join(error.args[0]))
             print(RESTORE_INCOMPLETE.format(program_name=HOOK_PATH.name), file=sys.stderr)
