@@ -128,9 +128,10 @@ writes a file in the clone; and a plist carrying
 PLIST_WRITTEN_BY_THIS_PROGRAM whose label is no launchd job's of the table.
 A plist written before that line existed is not found. A cron line whose
 programs this program cannot tell, because it gives an interpreter or env an
-option or defines a function, is reported NOT CHECKED instead, with which of
-the two it does, and --remove-not-in-table leaves it in place.
---remove-not-in-table takes exactly those off, except a cron line that also
+option, defines a function, or names no program after its interpreter or env,
+is reported NOT CHECKED instead, with which of these it does, and
+--remove-not-in-table leaves it in place.
+--remove-not-in-table takes exactly the NOT IN THE TABLE jobs off, except a cron line that also
 runs a job that is not a program of the clone: it reports that line as KEPT
 and leaves it for a person to edit, since removing it would stop the other
 job too. A later pipeline stage, such as the logger of `job | logger`, only
