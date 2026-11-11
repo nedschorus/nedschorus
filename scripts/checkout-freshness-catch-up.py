@@ -555,7 +555,7 @@ NOTE_KINDS_DROPPED = set()
 STOP_AGENT_LINES = []   # notes that could not be queued, sent at Stop instead
 
 
-# Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 def report(line: str) -> None:
     """Queue one line for the USER's display."""
     REPORT_LINES.append(line)
