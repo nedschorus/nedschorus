@@ -132,7 +132,10 @@ def run_tmp_place_cases():
     s.process(501, fds=[by_fd / "checkout-1" / "deep" / "file"])
     s.process(502, maps=[by_map / "checkout-1" / "deep" / "file"])
     by_unnormalized_socket = s.folder("tmux-1001")
-    s.sockets(by_socket / "merge-lane-2", f"{s.tmp}//tmux-1001/./default")
+    by_socket_through_link = s.folder("tmux-1002")
+    by_double_slash_socket = s.folder("tmux-1003")
+    s.sockets(by_socket / "merge-lane-2", f"{s.tmp}//tmux-1001/./default",
+              f"{s.tmp}/tmux-1002/link/../../default", f"/{s.tmp}/tmux-1003/default")
     # A process whose open files cannot be read is passed over, not a failure.
     s.process(503)
     (s.proc / "503" / "fd").chmod(0)
@@ -165,8 +168,12 @@ def run_tmp_place_cases():
     check("a folder holding a bound unix socket, such as tmux's, is kept", by_socket.is_dir())
     check("a folder holding a unix socket bound under a path with // or /./ in it is kept",
           by_unnormalized_socket.is_dir())
+    check("a folder holding a unix socket bound through a symbolic link followed by .. is kept",
+          by_socket_through_link.is_dir())
+    check("a folder holding a unix socket bound under a path starting with exactly two slashes is kept",
+          by_double_slash_socket.is_dir())
     check("the summary counts the deleted and the in-use folders",
-          "throwaway folders deleted: 3;" in result.stdout and "kept because a process uses them: 5;" in result.stdout,
+          "throwaway folders deleted: 3;" in result.stdout and "kept because a process uses them: 7;" in result.stdout,
           result.stdout)
     check("a symbolic link is not followed and not deleted", (s.tmp / "linked").is_symlink() and target.is_dir())
     check("a file is not deleted", a_file.is_file())
