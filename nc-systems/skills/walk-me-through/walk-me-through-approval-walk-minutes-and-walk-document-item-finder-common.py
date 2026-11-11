@@ -84,8 +84,8 @@ falls in; in a unit that names several items it ends only the item it falls
 in, and the unit's next opening starts the next item, so a version the walk-document keeps after replacing it is never
 read for the item's recommendation, its `#new` lines or its parts. Every search of a walk file for its
 structure, here and in the programs that load this module, reads the lines
-prose_lines returns, in which fenced and indented code and HTML comment blocks
-are empty, or the parser's own tokens, as item starts are, so a line in code or
+prose_lines returns, in which fenced and indented code is empty and HTML comments
+are cut out, or the parser's own tokens, as item starts are, so a line in code or
 in a comment is never an item's start, a marker, a recommendation or a recorded
 answer.
 
@@ -121,6 +121,9 @@ import importlib.util
 import os
 import re
 from pathlib import Path
+
+HTML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.S)
+RECOMMENDATION = re.compile(r"Recommendation:(.*)$", re.I | re.M)
 
 REPOSITORY_TOP = Path(__file__).resolve().parents[3]
 SUITE_RUNNER_FILE = REPOSITORY_TOP / "scripts" / "run-all-test-suites.py"
@@ -230,19 +233,42 @@ def markdown_parser():
                        MARKDOWN_PARSER_MODULE_FILE).markdown_parser()
 
 
+def approval_walk_item_recommendation_text(lines):
+    """The last recommendation in an item's prose_lines, the text after `Recommendation:` as written, without
+    emphasis or one trailing period; or None when there is none, or the last one has no text after it."""
+    found = [match[1].strip(" *_") for match in RECOMMENDATION.finditer("\n".join(lines))]
+    found = [text[:-1].rstrip(" *_") if text.endswith(".") else text for text in found]
+    return found[-1] if found and found[-1] else None
+
+
+def without_html_comments(lines):
+    """Return lines with each HTML comment in them, `<!--` to `-->` or to the end, cut out, keeping the count of
+    lines, so that text after a comment's `-->` stays."""
+    cut = HTML_COMMENT.sub(lambda comment: "\n" * comment[0].count("\n"), "\n".join(lines))
+    return cut.split("\n")
+
+
 def prose_lines(text, parser, tokens=None):
-    """Return text's lines with every line of fenced or indented code, or of an HTML comment block, made
-    empty, keeping each line's index; tokens are parser.parse(text) when the caller has them already.
+    """Return text's lines with every line of fenced or indented code made empty and every HTML comment cut
+    out, keeping each line's index; tokens are parser.parse(text) when the caller has them already.
 
     Every search of a walk file for its structure, such as a marker, a `#new` line, a recommendation, an
     answer line or an outcome tag, runs over these lines, so that an example in code, or a note in a
-    comment the reader never sees, is never read as structure. Other HTML blocks stay, since they show."""
-    hidden = set()
+    comment the reader never sees, is never read as structure. Text that shows stays: other HTML blocks, and
+    text after a comment's `-->`, as in `<!-- note --> Recommendation: x`. In a paragraph that holds a comment,
+    a code span with comment text in it, such as `<!-- x -->` in backquotes, is cut too."""
+    lines = text.split("\n")
     for token in parser.parse(text) if tokens is None else tokens:
-        if token.map is not None and (token.type in ("fence", "code_block")
-                                      or token.type == "html_block" and token.content.lstrip().startswith("<!--")):
-            hidden.update(range(*token.map))
-    return ["" if number in hidden else line for number, line in enumerate(text.split("\n"))]
+        if token.map is None:
+            continue
+        first, end = token.map
+        if token.type in ("fence", "code_block"):
+            lines[first:end] = [""] * (end - first)
+        elif (token.type == "html_block" and token.content.lstrip().startswith("<!--")
+              or token.type == "inline" and any(child.type == "html_inline" and child.content.startswith("<!--")
+                                                for child in token.children or [])):
+            lines[first:end] = without_html_comments(lines[first:end])
+    return lines
 
 
 def item_opening_lines(text, parser, tokens=None):

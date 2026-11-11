@@ -32,9 +32,9 @@ leaves with no decision, REASON saying why, which changes nothing.
 --moved-on-no-decision records that the user moved on from an
 item that asks for no decision, such as a summary item: it needs no
 `#case_against` line, runs no fast read, and close records the item as `<moved on, no
-decision>`. It is refused, writing nothing, for an item that holds "Recommendation:" on a
-line outside fenced or indented code and HTML comments, because that item asks
-for a decision.
+decision>`. It is refused, writing nothing, for an item that has a recommendation as
+the short-answer hook reads it: text after its last "Recommendation:", outside
+fenced or indented code and HTML comments, because that item asks for a decision.
 
 Every answer but --not-asked, --already-decided and --moved-on, which record an
 item the user is not shown, needs --user-reply-as-typed, the user's reply
@@ -716,7 +716,7 @@ NAVIGATION_WORD_REFUSED = (
     "If {item} asks for no decision, such as a summary item, run `python3 {program} check --moved-on-no-decision "
     "--user-reply-as-typed {quoted_words}`, then close.")
 MOVED_ON_NO_DECISION_REFUSED = (
-    "nothing written: {item} holds the line \"{line}\", so it asks for a decision, and --moved-on-no-decision "
+    "nothing written: {item} recommends \"{recommendation}\", so it asks for a decision, and --moved-on-no-decision "
     "records only a move on from an item that asks for none.\n"
     "Ask the user to answer {item} with A, AO, Aa, D or Z, because the walk-me-through skill lets the walk move "
     "on from an item only once its recommendation is answered.")
@@ -843,7 +843,6 @@ READ_DONE, READ_FAILED = "done", "failed"
 READ_POLL_SECONDS = 2
 FACT_LABELS = ("Recommendation:", "The alternative:")
 # Spelled as the short-answer hook's RECOMMENDATION, so the two programs agree on which items hold a recommendation.
-RECOMMENDATION_LINE = re.compile(r"Recommendation:", re.I)
 AUTOLINK = r"<[A-Za-z][A-Za-z0-9+.-]*:[^>\s]*>"
 # A backquoted span, a Markdown link, an autolink, or any other run of non-space characters.
 FACT_TOKEN = re.compile(r"`[^`\n]+`|!?\[[^\]\n]*\]\([^)\s]*\)|" + AUTOLINK + r"|\S+")
@@ -1567,9 +1566,9 @@ def check(arguments):
     document, lines, marks, unreadable = item_lines(walk_finder, minutes, value, numbers, total, parser)
     rating = case_against_rating(lines, item, document, arguments)
     rated = CASE_AGAINST_HASHTAG.format(rating=rating.replace(" ", "_")) if rating else ""
-    recommendation = next((line for line in lines if RECOMMENDATION_LINE.search(line)), None)
+    recommendation = walk_finder.approval_walk_item_recommendation_text(lines)
     if arguments.moved_on_no_decision and recommendation is not None:
-        raise Failure(MOVED_ON_NO_DECISION_REFUSED.format(item=item, line=recommendation.strip()))
+        raise Failure(MOVED_ON_NO_DECISION_REFUSED.format(item=item, recommendation=recommendation))
     if arguments.deferred or arguments.moved_on_no_decision or arguments.moved_on is not None:
         now = datetime.datetime.now().astimezone()
         no_change = CHECK_MOVED_ON_MINUTES if arguments.moved_on is not None else CHECK_DEFERRED_MINUTES
