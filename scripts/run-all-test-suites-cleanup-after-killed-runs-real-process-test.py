@@ -362,6 +362,127 @@ else:
         finally:
             (root / "stop").write_text("stop\n")
 
+# --- The launcher a suite outside an nc-test-sandbox starts under ----------------
+_launcher_spec = importlib.util.spec_from_file_location(
+    "suite_launcher", module.SUITE_LAUNCHER_ADOPTING_ORPHANED_DESCENDANTS)
+launcher = importlib.util.module_from_spec(_launcher_spec)
+_launcher_spec.loader.exec_module(launcher)
+LAUNCHER_COMMAND = [sys.executable, "-I", str(module.SUITE_LAUNCHER_ADOPTING_ORPHANED_DESCENDANTS)]
+
+
+class PrctlRefuses:
+    def prctl(self, *arguments):
+        return -1
+
+
+real_cdll = launcher.ctypes.CDLL
+launcher.ctypes.CDLL = lambda *arguments, **keywords: PrctlRefuses()
+real_stderr = sys.stderr
+sys.stderr = captured_stderr = __import__("io").StringIO()
+try:
+    refused_status = launcher.main(["true"])
+finally:
+    sys.stderr = real_stderr
+    launcher.ctypes.CDLL = real_cdll
+check("the launcher starts no suite, exits 125 and says why, when prctl refuses",
+      refused_status == launcher.LAUNCH_FAILED_EXIT_STATUS
+      and "prctl(PR_SET_CHILD_SUBREAPER) failed" in captured_stderr.getvalue()
+      and "was not started" in captured_stderr.getvalue(), captured_stderr.getvalue())
+
+if not_linux:
+    print(f"SKIP  the launcher's and the orphaned-descendant cases: {not_linux}, so there is "
+          f"no child subreaper")
+else:
+    missing = subprocess.run([*LAUNCHER_COMMAND, "/nonexistent/suite-command"],
+                             capture_output=True, text=True, timeout=60)
+    check("the launcher exits 125 and says why when the suite's command cannot start",
+          missing.returncode == launcher.LAUNCH_FAILED_EXIT_STATUS
+          and "the command could not start" in missing.stderr, missing)
+    no_command = subprocess.run(LAUNCHER_COMMAND, capture_output=True, text=True, timeout=60)
+    check("the launcher given no command runs nothing and exits 2",
+          no_command.returncode == 2 and "no command given" in no_command.stderr, no_command)
+    exited = subprocess.run([*LAUNCHER_COMMAND, "sh", "-c", "exit 7"], timeout=60)
+    check("the launcher exits with the suite's exit status", exited.returncode == 7,
+          exited.returncode)
+    passed = subprocess.run([*LAUNCHER_COMMAND, "sh", "-c", "exit 0"], timeout=60)
+    check("the launcher exits 0 when the suite exits 0", passed.returncode == 0,
+          passed.returncode)
+    # Signal 1, the lowest, so a launcher that took -1 for an exit status is caught.
+    hung_up = subprocess.run([*LAUNCHER_COMMAND, "sh", "-c", "kill -HUP $$"], timeout=60)
+    check("the launcher ends by SIGHUP when SIGHUP ended the suite",
+          hung_up.returncode == -signal.SIGHUP, hung_up.returncode)
+    signalled = subprocess.run([*LAUNCHER_COMMAND, "sh", "-c", "kill -TERM $$"], timeout=60)
+    check("the launcher ends by the signal that ended the suite",
+          signalled.returncode == -signal.SIGTERM, signalled.returncode)
+    # SIGKILL is what the kernel sends a suite at its memory ceiling.
+    killed = subprocess.run([*LAUNCHER_COMMAND, "sh", "-c", "kill -KILL $$"], timeout=60)
+    check("the launcher ends by SIGKILL when SIGKILL ended the suite",
+          killed.returncode == -signal.SIGKILL, killed.returncode)
+
+    # Made a child subreaper here too, so a grandchild the runner misses is reparented to this
+    # test, which can then end it, rather than to a process of the account's.
+    libc_for_orphans = ctypes.CDLL(None, use_errno=True)
+    if libc_for_orphans.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+        print(f"SKIP  the orphaned-descendant case: prctl(PR_SET_CHILD_SUBREAPER) failed, "
+              f"errno {ctypes.get_errno()}")
+    else:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = pathlib.Path(scratch)
+            top = root / "top"
+            top.mkdir()
+            grandchild_pid_file = root / "grandchild.pid"
+            # A helper starts a grandchild in a session of its own and exits, so the grandchild
+            # has no parent below the suite when the suite is killed at its limit.
+            (top / "orphan-suite-test.py").write_text(
+                "import subprocess, sys, time\n"
+                "helper = ('import subprocess, sys; '\n"
+                "          'p = subprocess.Popen([\"sleep\", \"60\"], start_new_session=True); '\n"
+                "          'open(sys.argv[1], \"w\").write(str(p.pid))')\n"
+                f"subprocess.run([sys.executable, '-c', helper, {str(grandchild_pid_file)!r}],\n"
+                "               check=True)\n"
+                "print('helper exited', flush=True)\n"
+                "time.sleep(60)\n")
+            logs = root / "logs"
+            logs.mkdir()
+            grandchild = grandchild_ticks = None
+            try:
+                result = module.run_one_suite(top, sys.executable, "orphan-suite-test.py", logs,
+                                              time_limit=(20, None))
+                grandchild = (int(grandchild_pid_file.read_text())
+                              if grandchild_pid_file.exists() else None)
+                grandchild_ticks = (None if grandchild is None
+                                    else module.process_start_ticks(grandchild))
+                check("a killed suite's grandchild whose parent ended first is killed too",
+                      "timeout" in result and grandchild is not None
+                      and grandchild_ticks is None,
+                      (result, grandchild, grandchild_ticks))
+            finally:
+                if grandchild_ticks is not None:
+                    signal_own_descendant(grandchild, grandchild_ticks, signal.SIGKILL)
+                    wait_until(lambda: module.process_start_ticks(grandchild) is None, 10)
+                reap_ended_children()
+
+    # Elsewhere the kill cannot see below the process group, so the directory is kept.
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        top = root / "top"
+        top.mkdir()
+        (top / "sleeps-test.py").write_text("import time\ntime.sleep(60)\n")
+        logs = root / "logs"
+        logs.mkdir()
+        result = module.run_one_suite(top, sys.executable, "sleeps-test.py", logs,
+                                      platform="darwin", time_limit=(2, None))
+        note = result.get("output_note") or ""
+        kept = [part for part in note.split("`rm -rf ")[1:]]
+        kept_directory = kept[0].split("`")[0].strip("'") if kept else None
+        check("on a platform without /proc a killed suite's temporary directory is kept, "
+              "and the note says how to remove it",
+              "timeout" in result and "is kept for any still running" in note
+              and kept_directory is not None and pathlib.Path(kept_directory).is_dir(), note)
+        if kept_directory and pathlib.Path(kept_directory).name.startswith(
+                module.SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX):
+            shutil.rmtree(kept_directory, ignore_errors=True)
+
 # --- A killed run's suite that still runs keeps its traces ---------------------
 not_runnable = not_linux or sandbox_starts()
 if not_runnable:

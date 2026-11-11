@@ -391,9 +391,13 @@ session or process group of its own. In an nc-test-sandbox the group holds the i
 PID namespace, whose end ends every process inside, so nothing is left. The
 runner also reads the tree of processes below the suite from /proc just before
 the kill and sends SIGKILL to each, so outside an nc-test-sandbox such a process
-is reached too, unless its parent ended before the kill, which leaves it outside
-the tree, or it started after the tree was read; the runner then waits up to
-TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS, 10, for each of them to end.
+is reached too. On Linux a suite outside an nc-test-sandbox is started through
+SUITE_LAUNCHER_ADOPTING_ORPHANED_DESCENDANTS, a child subreaper, so a process
+whose parent ended before the kill is reparented to it and stays in the tree; a
+process that started after the tree was read is not reached. The runner then
+waits up to TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS, 10, for each of them
+to end. Elsewhere, as on macOS, there is neither a subreaper nor /proc, so only
+the process group is killed.
 A suite outside an nc-test-sandbox runs with TMPDIR set to a directory of its
 own in the system temp directory, which the runner removes once the suite has
 ended, however it ended, so what a killed suite made through TMPDIR is not
@@ -401,7 +405,9 @@ left behind; when that removal fails, the suite's line is followed by one
 naming the directory and the command that removes it. When a process the kill
 reached still runs after that wait, the directory is kept for it, and the
 suite's line is followed by one naming the processes, the directory and the
-command that removes it. A runner killed with SIGKILL leaves that directory; a
+command that removes it. Where the runner cannot read a suite's processes, as
+on macOS, the directory of a killed suite is always kept, and the suite's line
+says so, with the command that removes it. A runner killed with SIGKILL leaves that directory; a
 later run that uses the default --lock-file removes it once nothing in it has changed for
 two days, on every platform. It is reported FAIL with `TIMEOUT after
 <n>s (limit <m>s, <k> times recorded <r>s)`, `(limit <m>s, the floor, more than
@@ -920,6 +926,9 @@ TEST_SUITE_NICE_INCREMENT = 10
 # Short, because a suite binds AF_UNIX sockets under its TMPDIR and macOS caps a socket path at
 # 104 bytes; mkdtemp adds 8 characters to it.
 SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX = "rts-"
+SUITE_LAUNCHER_ADOPTING_ORPHANED_DESCENDANTS = (
+    Path(__file__).resolve().with_name(
+        "run-all-test-suites-suite-launcher-adopting-orphaned-descendants.py"))
 MACHINE_READINGS_INTERVAL_SECONDS = 1
 MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME = "machine-cpu-and-memory-readings.tsv"
 TEST_SUITE_RESOURCE_USE_FILE_NAME = "test-suite-resource-use.tsv"
@@ -3028,7 +3037,10 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
     and its result carries "stopped by". A suite outside an nc-test-sandbox gets TMPDIR set to
     a directory of its own, removed once the suite has ended; a removal that fails is named,
     with its command, in the result's "output_note", as is a killed process still running,
-    for which the directory is kept.
+    for which the directory is kept. On Linux such a suite starts under
+    SUITE_LAUNCHER_ADOPTING_ORPHANED_DESCENDANTS, so the kill finds a process whose parent
+    ended first; on another platform, where the kill cannot look below the process group,
+    a killed suite's directory is kept and "output_note" says so.
 
     With in_cgroup_scope, the suite runs in a cgroup scope of its own and its CPU seconds
     and peak memory are read from there; with nice, at low priority. Inside its
@@ -3078,6 +3090,11 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         suite_temporary_directory = tempfile.mkdtemp(
             prefix=SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX)
         environment["TMPDIR"] = suite_temporary_directory
+        if platform.startswith("linux"):
+            # A process whose parent ends is reparented to the launcher, not to PID 1, so it
+            # stays below the suite where the kill looks.
+            command = [sys.executable, "-I", str(SUITE_LAUNCHER_ADOPTING_ORPHANED_DESCENDANTS),
+                       *command]
     status_read = status_write = None
     if sandbox_prefix and note_suite_process is not None:
         status_read_fd, status_write = os.pipe()
@@ -3173,10 +3190,22 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         # Closed only after bwrap exits: bwrap writes its exit status to this pipe last.
         if status_read is not None:
             status_read.close()
+        # Without /proc the kill cannot see past the process group, so a killed suite may
+        # have left a process running that still uses the directory.
+        killed_unchecked = (suite_temporary_directory is not None
+                            and not platform.startswith("linux")
+                            and (timed_out is not None or stopped_by is not None))
         # Kept for processes still running, which would otherwise lose their files mid-run.
         temporary_directory_left = (None if suite_temporary_directory is None
-                                    or killed_but_running
+                                    or killed_but_running or killed_unchecked
                                     else remove_tree_or_say_why(suite_temporary_directory))
+    if killed_unchecked:
+        output_note = "; ".join(filter(None, (
+            output_note,
+            f"the suite was killed, and on {platform} the runner cannot find the processes it "
+            f"started outside its process group, so the temporary directory the suite was "
+            f"given, {suite_temporary_directory}, is kept for any still running; once none "
+            f"is, remove it with `rm -rf {shlex.quote(suite_temporary_directory)}`")))
     if killed_but_running:
         output_note = "; ".join(filter(None, (
             output_note,
@@ -3273,10 +3302,12 @@ def kill_test_suite_process_group_and_descendants(process, proc=Path("/proc"), k
     process group of its own; such a process is reached through the tree of processes,
     read before the kill. In an nc-test-sandbox the group also holds the init of the
     suite's PID namespace, since bwrap is not given --new-session, and the init's end ends
-    every process in the namespace. Outside one, a process in a session or process group
-    of its own is not reached when its parent ended before the kill, so that it no longer
-    stands below the suite, or when it starts after the tree is read. Called before the
-    suite's first process is reaped, so its process group id is still its own."""
+    every process in the namespace. Outside one on Linux, the suite runs under
+    SUITE_LAUNCHER_ADOPTING_ORPHANED_DESCENDANTS, a child subreaper, so a process whose
+    parent ended before the kill still stands below the suite; a process in a session or
+    process group of its own that starts after the tree is read is not reached. Where there
+    is no /proc, as on macOS, only the process group is killed. Called before the suite's
+    first process is reaped, so its process group id is still its own."""
     descendants = descendant_processes_with_start_ticks(process.pid, proc)
     with contextlib.suppress(ProcessLookupError):
         killpg(process.pid, signal.SIGKILL)

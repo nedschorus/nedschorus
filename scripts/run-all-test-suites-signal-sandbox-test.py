@@ -633,15 +633,29 @@ with tempfile.TemporaryDirectory() as scratch_name:
                                   scratch, run_stops=run_stops)
     stopper.join()
     made = pathlib.Path(made_record.read_text()) if made_record.exists() else None
-    check("a suite outside an nc-test-sandbox killed with SIGKILL leaves no directory it made "
-          "through TMPDIR, nor the TMPDIR it was given, and that TMPDIR is not the shared one",
-          killed.get("stopped by") == "the test's stop" and made is not None
-          and not made.exists() and not made.parent.exists()
-          and made.parent.parent == pathlib.Path(tempfile.gettempdir())
-          and made.parent.name.startswith(
-              runner.SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX)
-          and killed["output_note"] is None,
-          (killed, made))
+    in_the_shared_temp_directory = (
+        made is not None and made.parent.parent == pathlib.Path(tempfile.gettempdir())
+        and made.parent.name.startswith(
+            runner.SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX))
+    if sys.platform.startswith("linux"):
+        check("a suite outside an nc-test-sandbox killed with SIGKILL leaves no directory it "
+              "made through TMPDIR, nor the TMPDIR it was given, and that TMPDIR is not the "
+              "shared one",
+              killed.get("stopped by") == "the test's stop" and in_the_shared_temp_directory
+              and not made.exists() and not made.parent.exists()
+              and killed["output_note"] is None,
+              (killed, made))
+    else:
+        # Off Linux the runner cannot find what the killed suite left running.
+        check("off Linux, the TMPDIR of a suite killed with SIGKILL is kept, and the suite's "
+              "output note says so, with the command that removes it",
+              killed.get("stopped by") == "the test's stop" and in_the_shared_temp_directory
+              and made.parent.is_dir()
+              and f"is kept for any still running; once none is, remove it with "
+                  f"`rm -rf {shlex.quote(str(made.parent))}`" in (killed["output_note"] or ""),
+              (killed, made))
+        if made is not None and made.parent.is_dir() and in_the_shared_temp_directory:
+            shutil.rmtree(made.parent)
     # On the Mac, restart-live-seats-at-login-test.py binds a socket at
     # <TMPDIR>/lstXXXXXXXX/tmux-501/fleet-anchor; with the Mac's 48-character temp directory the
     # path stays under macOS's 104-byte limit only while the runner adds at most 13 characters.
