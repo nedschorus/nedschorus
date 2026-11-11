@@ -217,6 +217,22 @@ def running(process_id):
     return bool(state) and not state.startswith("Z")
 
 
+def ps_state_once_it_is(process_id, stopped):
+    """Wait up to 60 seconds for ps to show process_id stopped (T, or t under a tracer) or not,
+    and return the state ps last showed.
+
+    SIGSTOP takes effect only when the kernel next schedules its target, so under heavy load the
+    stop can show in the process table well after kill returns.
+    """
+    deadline = time.monotonic() + 60
+    while True:
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(process_id)], capture_output=True,
+                               text=True).stdout.strip()
+        if (state[:1] in ("T", "t")) == stopped or time.monotonic() >= deadline:
+            return state
+        time.sleep(0.05)
+
+
 def stop_fake(process_id):
     with contextlib.suppress(OSError):
         os.kill(process_id, signal.SIGCONT)
@@ -225,6 +241,12 @@ def stop_fake(process_id):
 
 def quick_sleep(seconds):
     time.sleep(min(seconds, 0.2))
+
+
+def settle_until_stopped(process_id):
+    """A sleep for foreground() that waits until ps shows process_id stopped, instead of
+    freeze()'s fixed settle, which under heavy load can end before the stop shows."""
+    return lambda seconds: ps_state_once_it_is(process_id, stopped=True)
 
 
 @contextlib.contextmanager
@@ -272,7 +294,8 @@ def step_0_cases():
               "no failure")
     except program.RestartFailure as error:
         check("step 0: a reference-checkout that cannot fast-forward fails, quoting git",
-              "git merge --ff-only origin/main in" in str(error) and "failed (exit" in str(error),
+              "git merge --ff-only --no-overwrite-ignore origin/main in" in str(error)
+              and "failed (exit" in str(error),
               str(error))
     git("reset", "-q", "--hard", "origin/main", cwd=checkout)
 
@@ -419,7 +442,8 @@ def foreground_cases():
 
     def failing_start(path):
         raise OSError("no room to start")
-    status, _, errors = run_foreground(start_second_half=failing_start, sleep=quick_sleep)
+    status, _, errors = run_foreground(start_second_half=failing_start,
+                                       sleep=settle_until_stopped(supervisor_id))
     time.sleep(0.2)
     check("foreground: a second half that cannot start leaves the handoff-supervisor unfrozen",
           status == 1 and "no room to start" in errors and "unfrozen with SIGCONT" in errors
@@ -434,7 +458,7 @@ def foreground_cases():
 
     started = []
     status, output, errors = run_foreground(start_second_half=lambda path: started.append(path) or 4242,
-                                            sleep=quick_sleep)
+                                            sleep=settle_until_stopped(supervisor_id))
     state = json.loads(started[0].read_text()) if started else {}
     check("foreground: the handoff-supervisor is frozen and the agent-seat told to write its session-handoff",
           status == 0 and program.process_is_stopped(supervisor_id)
@@ -861,12 +885,13 @@ def process_cases():
     stoppable = subprocess.Popen(["sleep", "600"])
     started_process_ids.append(stoppable.pid)
     os.kill(stoppable.pid, signal.SIGSTOP)
-    time.sleep(0.2)
+    stopped_state = ps_state_once_it_is(stoppable.pid, stopped=True)
     stopped = program.process_is_stopped(stoppable.pid)
     os.kill(stoppable.pid, signal.SIGCONT)
-    time.sleep(0.2)
+    running_state = ps_state_once_it_is(stoppable.pid, stopped=False)
     check("process_is_stopped: true for a stopped process, false for a running one",
-          stopped and not program.process_is_stopped(stoppable.pid))
+          stopped and not program.process_is_stopped(stoppable.pid),
+          f"stopped: {stopped} with ps state {stopped_state!r}; then ps state {running_state!r}")
     stoppable.kill()
 
 
@@ -910,13 +935,14 @@ def mac_cases():
     stoppable = subprocess.Popen(["sleep", "600"])
     started_process_ids.append(stoppable.pid)
     os.kill(stoppable.pid, signal.SIGSTOP)
-    time.sleep(0.2)
+    stopped_state = ps_state_once_it_is(stoppable.pid, stopped=True)
     with replaced(program, "PROCESS_TABLE_DIRECTORY", SCRATCH_HOME / "no-proc-here"):
         stopped = program.process_is_stopped(stoppable.pid)
         os.kill(stoppable.pid, signal.SIGCONT)
-        time.sleep(0.2)
+        running_state = ps_state_once_it_is(stoppable.pid, stopped=False)
         check("process_is_stopped without /proc reads ps, as on the Mac",
-              stopped and not program.process_is_stopped(stoppable.pid))
+              stopped and not program.process_is_stopped(stoppable.pid),
+              f"stopped: {stopped} with ps state {stopped_state!r}; then ps state {running_state!r}")
     stoppable.kill()
 
     saved = os.environ.pop("NEDSCHORUS_HANDOFF_SUPERVISOR_RESTART_LOG_DIRECTORY")

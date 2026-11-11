@@ -60,9 +60,9 @@ shell_quote() {
 }
 pre_push_check_run_by_hand_command() {
     if [ -f "scripts/$1" ]; then
-        printf 'python3 scripts/%s --head %s' "$1" "$2"
+        printf 'python3 scripts/%s %s' "$1" "$2"
     elif [ -f "$scripts_directory/$1" ]; then
-        printf 'python3 %s --head %s' "$(shell_quote "$scripts_directory/$1")" "$2"
+        printf 'python3 %s %s' "$(shell_quote "$scripts_directory/$1")" "$2"
     else
         printf 'no copy of the check exists to run, as your worktree has no scripts/%s and %s is missing too; tell the user' "$1" "$scripts_directory/$1"
     fi
@@ -105,8 +105,8 @@ if [ "$remote_name" = "$checked_remote" ]; then
             branch_list="$branch_list, "
         fi
         branch_list="$branch_list$branch ($commit)"
-        unchecked_lines="${unchecked_lines}Check $branch by hand from your worktree: $(pre_push_check_run_by_hand_command branch-conflict-check.py "$commit")$newline"
-        revert_lines="${revert_lines}Once the hand conflict check of $branch prints VERDICT: CLEAN, check it for files set back too: $(pre_push_check_run_by_hand_command branch-reverts-a-file-to-an-older-main-version-check.py "$commit")$newline"
+        unchecked_lines="${unchecked_lines}Check $branch by hand from your worktree: $(pre_push_check_run_by_hand_command branch-conflict-check.py "--head $commit --branch $branch")$newline"
+        revert_lines="${revert_lines}Once the hand conflict check of $branch prints VERDICT: CLEAN, check it for files set back too: $(pre_push_check_run_by_hand_command branch-reverts-a-file-to-an-older-main-version-check.py "--head $commit")$newline"
     done
     set +f
     IFS=$old_ifs

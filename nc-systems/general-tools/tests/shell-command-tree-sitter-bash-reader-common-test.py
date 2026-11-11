@@ -1043,6 +1043,23 @@ check("each child shell says its kind: a subshell, a substitution, or a pipeline
           [("pipeline stage", True)], [("pipeline stage", False)]]
       and [f.inside_substitution() for f in found] == [False, True, False, False],
       [(list(f), f.child_shell) for f in found])
+found = reader.simple_commands(
+    "until ! kill -0 $(pgrep -f x); do sleep 5; done; while `pgrep -af y`; do :; done; pgrep -f z")
+check("a command in a while or until loop's condition, a substitution there included, is marked; one in the "
+      "loop's body or outside a loop is not",
+      [(f[0], f.in_while_or_until_loop_condition) for f in found]
+      == [("pgrep", True), ("kill", True), ("sleep", False), ("pgrep", True), ("`pgrep -af y`", True),
+          (":", False), ("pgrep", False)],
+      [(list(f), f.in_while_or_until_loop_condition) for f in found])
+for name, text in [("an unquoted heredoc's $( )", "cat <<EOF\n$(while pgrep -f t; do sleep 5; done)\nEOF"),
+                   ("an unquoted heredoc's backticks", "cat <<EOF\n`while pgrep -f t; do sleep 5; done`\nEOF"),
+                   ("backticks holding \\`", 'echo `while pgrep -f t; do echo \\`date\\`; done`'),
+                   ("backticks in a ${ :- } default", 'echo ${x:-`while pgrep -f t; do sleep 5; done`}')]:
+    found = reader.simple_commands(text)
+    check(f"a loop inside {name}, read by a second parse, keeps its condition's mark",
+          [(f[0], f.in_while_or_until_loop_condition) for f in found if f[0] in ("pgrep", "sleep", "date")]
+          == [("pgrep", True), ("sleep" if "sleep" in text else "date", False)],
+          [(list(f), f.in_while_or_until_loop_condition) for f in found])
 found = reader.simple_commands("x | cd /a && ls >o | head")
 check("each stage of both pipelines in `x | cd /a && ls >o | head` runs in a child shell",
       all(f.child_shell != () for f in found) and found[2].redirects == [(">", "o")],

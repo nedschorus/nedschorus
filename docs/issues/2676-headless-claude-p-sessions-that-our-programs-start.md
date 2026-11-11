@@ -31,7 +31,7 @@ A headless session with these tools can send mail from the user's account, share
 
 | program | permission mode the session runs in | MCP flags |
 |---|---|---|
-| `nc-systems/cold-read/cold-read-claude-cell.py`, `invocation_builder` (line 93); also run, as a subprocess or by import, by `nc-systems/cold-read/cold-read-grid.py`, `nc-systems/cold-read/cold-read-restater-judge-cell.py` and `scripts/agent-facing-message-ask-two-fresh-agents-next-step-and-check-named-script-flags.py` | user default, bypassPermissions | none |
+| `nc-systems/cold-read/cold-read-claude-cell.py`, `invocation_builder` (line 93); also run, as a subprocess or by import, by `nc-systems/cold-read/cold-read-grid.py`, `nc-systems/cold-read/cold-read-restater-judge-cell.py` and `scripts/tool-message-to-agent-ask-two-fresh-agents-next-step-and-check-named-script-flags.py` | user default, bypassPermissions | none |
 | `scripts/sanity-check-adversarial-prompts.py`, `run_claude` (line 623), `--setting-sources user` | user default, bypassPermissions | none |
 | `scripts/ghi-guide-agent-ask.py`, `run_claude` (line 566) | `--permission-mode bypassPermissions` | none |
 | `scripts/merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py`, `run_reviewer` (line 218), and the `claude -p --resume` command it prints for an agent to run by hand (line 264) | `--permission-mode dontAsk` | none |

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Tests for nc-systems/general-tools/failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py.
+"""Tests for nc-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py.
 
 The programs that print these lines reach this module through their own
 suites. These cases pin the wording itself, word for word, so a change to it
 is a change a reviewer sees here, and pin the rerun command and the printer
 that the file-edit hooks take from the module.
 
-Run: python3 nc-systems/general-tools/tests/failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common-test.py
+Run: python3 nc-systems/general-tools/tests/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -21,9 +21,9 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
     REPOSITORY_ROOT / "nc-systems" / "general-tools"
-    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(next_step_lines)
 
@@ -42,8 +42,7 @@ def check(name, condition, detail=None):
 WHO = "the user, or, if you are a subagent, the agent that dispatched you,"
 
 lines = next_step_lines.git_failure_next_step_lines(
-    "`p --x`", "p", text_the_failure_line_contains="p: could not",
-    include_the_misspelt_branch_commit_or_path_line=True).splitlines()
+    "`p --x`", "p", text_the_failure_line_contains="p: could not").splitlines()
 check("a git failure in a program that takes names on its command line gets four lines: "
       "two cases, the unchanged rerun when no case applies, and the stop naming "
       "the text to look for, who is told, and which lines",
@@ -62,8 +61,7 @@ check("a git failure in a program that takes names on its command line gets four
           "from the command that printed this message and from the rerun, or the corrected command."], lines)
 
 lines = next_step_lines.git_failure_next_step_lines(
-    "`git -C d status`", include_the_misspelt_branch_commit_or_path_line=False,
-    rerun_fails_when="prints an error again", which_lines_to_quote_in_the_report="the sync line and the error",
+    "`git -C d status`", rerun_fails_when="prints an error again", which_lines_to_quote_in_the_report="the sync line and the error",
     read_by_a_subagent=False,
     next_step_to_skip_when_the_rerun_fails_too="act on the rest of this prompt").splitlines()
 check("a program that takes no names gets one case; a line no subagent reads names only "
@@ -72,19 +70,6 @@ check("a program that takes no names gets one case; a line no subagent reads nam
           "If git's error names no lock file, run exactly `git -C d status` once more.",
           "If the rerun prints an error again, stop, do not act on the rest of this prompt, "
           "and tell the user word for word, the sync line and the error."], lines)
-
-try:
-    lines = next_step_lines.git_failure_next_step_lines(
-        "`p --x`", text_the_failure_line_contains="p: could not",
-        include_the_misspelt_branch_commit_or_path_line=True)
-except TypeError as error:
-    lines = None
-    said = str(error)
-check("the misspelt-name line without the program it names is refused, naming the argument and both "
-      "values of the flag",
-      lines is None and "needs program" in said
-      and "include_the_misspelt_branch_commit_or_path_line=True" in said
-      and "include_the_misspelt_branch_commit_or_path_line=False" in said, lines)
 
 for case_name, arguments in [
         ("neither the failure text nor the free-text pair", {}),

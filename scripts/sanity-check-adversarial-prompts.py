@@ -317,9 +317,9 @@ git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
     REPO_ROOT / "nc-systems" / "general-tools"
-    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 _command_line_prefix_spec = importlib.util.spec_from_file_location(
@@ -413,8 +413,7 @@ def git_failure_next_step_lines(rerun: str, text_the_failure_line_contains: str)
     """
     program = str(pathlib.Path(__file__).resolve())
     return next_step_lines.git_failure_next_step_lines(
-        rerun, program, text_the_failure_line_contains=text_the_failure_line_contains,
-        include_the_misspelt_branch_commit_or_path_line=True) + "\n"
+        rerun, program, text_the_failure_line_contains=text_the_failure_line_contains) + "\n"
 
 
 # The line a cell prints when its first launch produced no report and the

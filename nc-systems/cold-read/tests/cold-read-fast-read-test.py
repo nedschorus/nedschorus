@@ -163,6 +163,9 @@ FIXED_RECORD_CLOCK_FOR_TESTS = "2026-09-16T10:42"
 FIXED_RECORD_STAMP_FOR_TESTS = "2026-09-16"
 STDOUT_RECOVERY_PHRASE = cell_common.STDOUT_RECOVERY_PHRASE
 LONG_CHAT_REVIEW = " ".join(f"word{index}" for index in range(150)) + "\n"
+# agy prints stream-json, and the cell takes the chat answer only from its result line.
+AGY_SUCCESS_RESULT_LINE_ANSWERING_LONG_CHAT_REVIEW = json.dumps({"event": "result", "result": {
+    "conversation_id": "", "status": "SUCCESS", "response": LONG_CHAT_REVIEW, "error": ""}}) + "\n"
 
 # The script under test, imported so the cases below read the constants it
 # actually carries instead of restating them. A fixed phrase was used until
@@ -418,8 +421,8 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     scratch_repository_fixture.install_fake_sandbox_programs(stub_directory)
     counter_path.unlink(missing_ok=True)
     claude_counter_path(counter_path).unlink(missing_ok=True)
-    # The agy cell scans HOME for credential files at launch, and the real
-    # home takes seconds to walk.
+    # A scratch HOME, so the agy cell's sandbox masks paths in it, not the
+    # real home's.
     scratch_home = repository.parent / "scratch-home"
     scratch_home.mkdir(exist_ok=True)
     environment = dict(os.environ)
@@ -1089,7 +1092,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
-        repository, stubs, {"*": {"stdout": LONG_CHAT_REVIEW}},
+        repository, stubs, {"*": {"stdout": AGY_SUCCESS_RESULT_LINE_ANSWERING_LONG_CHAT_REVIEW}},
         suggestions, walk_draft_relative, counter,
     )
     suggestions_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""

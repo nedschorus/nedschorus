@@ -933,17 +933,26 @@ seat.state_path.write_text(json.dumps({"raised": {"3": {"prerequisites": hook.ca
 gh_calls_made = []
 
 
+# The budget is read off a fake clock that only the fake gh moves, 0.2 seconds a call, so the
+# cases do not depend on how fast the machine runs the rest of the hook. The fake gh also
+# sleeps for real longer than the whole budget, as a loaded machine would.
+fake_clock_seconds = [0.0]
+
+
 def slow_timing_out_gh(command, *arguments, **keywords):
     if command[0] != "gh":
         return real_subprocess_run(command, *arguments, **keywords)
     gh_calls_made.append(command[3])
-    time.sleep(0.2)
+    time.sleep(0.35)
+    fake_clock_seconds[0] += 0.2
     raise subprocess.TimeoutExpired(command, keywords.get("timeout"))
 
 
 real_budget = hook.GH_CALLS_TOTAL_BUDGET_SECONDS
+real_clock = hook.GitHubConditionChecker.clock
 real_home = os.environ.get("HOME")
 hook.subprocess.run = slow_timing_out_gh
+hook.GitHubConditionChecker.clock = staticmethod(lambda: fake_clock_seconds[0])
 hook.GH_CALLS_TOTAL_BUDGET_SECONDS = 0.3
 os.environ["HOME"] = str(seat.home)  # the handoff module finds its markers under Path.home()
 try:
@@ -954,6 +963,7 @@ try:
         seat.home, hook.datetime.now(hook.timezone.utc))
 finally:
     hook.subprocess.run = real_subprocess_run
+    hook.GitHubConditionChecker.clock = real_clock
     hook.GH_CALLS_TOTAL_BUDGET_SECONDS = real_budget
     if real_home is None:
         os.environ.pop("HOME", None)

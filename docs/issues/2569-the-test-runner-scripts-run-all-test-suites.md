@@ -22,7 +22,7 @@ The change to design: keep several recordings per suite, each a file of its own,
 
 When a suite runs a git command on the checkout that reads file contents, such as `git status`, `git diff` or `git clone` of the checkout, the runner selects it whenever any file differs, because git reads committed content from the object store, where neither recorder sees a working file (`selection_reason`, the reason "it runs git … on the checkout, which reads files no recorder here saw").
 
-Measured: 749 suite-runs and 75,745 suite-seconds, 15% of head-run seconds, over the same three days. Most came from seven suites, among them `nc-systems/general-tools/tests/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check-test.py`, whose median run is 430 seconds; it ran in all 230 head test runs and used 17.5% of all suite CPU.
+Measured: 749 suite-runs and 75,745 suite-seconds, 15% of head-run seconds, over the same three days. Most came from seven suites, among them `nc-systems/general-tools/tests/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check-test.py`, whose median run is 430 seconds; it ran in all 230 head test runs and used 17.5% of all suite CPU.
 
 The options to weigh in the design, which can be combined:
 1. Each such suite runs git on a fixture repository it builds, instead of on the checkout, so it no longer runs git on the checkout and the runner selects it by its recorded files alone. This helps only the suites rewritten, and only where the fixture still holds what the test checks; a suite that needs the real checkout stays selected by every change.
@@ -44,7 +44,7 @@ This section proposes a design for the two reasons above. The user has not ruled
 
 Reason 1, measured again: in the latest test run of each of the 21 pull requests merge-lane-2 test-ran from 2026-11-05 to 2026-11-06T07:01Z, leaving out the test runs that ran every nc-test-suite, the reason selected 37% of the run-seconds, against 24% from 2026-11-01 to 2026-11-04.
 
-Reason 2: `nc-systems/general-tools/tests/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check-test.py` now runs its git commands on a test fixture repository it builds from the checkout's files (`make_test_repository` in that file), and merge-lane-2's test runs of pull requests 2686 and 2687 on 2026-11-06 did not select it. In the same 21 test runs, the reason selected 4.3% of the run-seconds, in the four nc-test-suites of the table under Part 2.
+Reason 2: `nc-systems/general-tools/tests/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check-test.py` now runs its git commands on a test fixture repository it builds from the checkout's files (`make_test_repository` in that file), and merge-lane-2's test runs of pull requests 2686 and 2687 on 2026-11-06 did not select it. In the same 21 test runs, the reason selected 4.3% of the run-seconds, in the four nc-test-suites of the table under Part 2.
 
 Measured from the PASS and FAIL lines of nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/hr/pr*/stderr, the latest test run of each pull request, leaving out test runs where a file under `EVERY_SUITE_RUNS_WHEN_THESE_CHANGE` differed. Pull request 2544 was replaced by [pull request 2684](https://github.com/nedschorus/nedschorus/pull/2684), which merged on 2026-11-06 as a4cf4060b; it changed `selective_test_run_selection_without_no_sandbox_suites`, which runs after `suites_selected_since` and is untouched by this proposal.
 
@@ -100,11 +100,10 @@ The GHI-MD as filed weighed two options, which can be combined: option 1, an nc-
 | nc-test-suite | git call on the checkout | Seconds a test run | What the design does |
 |---|---|---|---|
 | `.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook-test.py` | `git clone -q --shared <checkout>`, in its case "with nothing changed, a run does no hashing, copying or store work" | about 50 | Option 1: the case clones a test fixture repository holding the checkout's guarded files, as the hook's own `guarded_blobs_at` lists them, built the way `make_test_repository` in the bash-guards nc-test-suite builds one. |
-| `scripts/unvalidated-negative-result-check-test.py` | `git grep -n "scripts/handoff-supervisor.py" 9f8cc38e`, from `scripts/unvalidated-negative-result-check-fixtures/moved-file-checked-by-searching-for-its-old-path.json` | about 2 | Nothing: the call reproduces a real search of the repository's history at a pinned commit, and costs about 2 seconds. |
 | `scripts/ghi-issue-write-test.py` | `git ls-remote --heads <a test fixture repository under /tmp> …` | about 1 | `ls-remote` joins `GIT_COMMANDS_THAT_ONLY_LIST`: it lists refs and reads no file's content. The nc-test-suite is then selected only when a file is added or deleted, by the rule for every git call on the checkout. |
 | `scripts/branch-leaves-no-citations-of-removed-paths-test.py` | `git diff -z --name-status … <COMMIT>..HEAD` | under 1 | Nothing: the nc-test-suite checks this checkout's own commits, so every change is its input. |
 
-Option 2 is not built. Of the four calls, a clone reads the whole checkout whatever its arguments, the `git diff` covers every file the branch changed, the `git grep` names no path to map, and `ls-remote` reads no file; so mapping arguments to paths would deselect none of them.
+Option 2 is not built. Of the three calls, a clone reads the whole checkout whatever its arguments, the `git diff` covers every file the branch changed, and `ls-remote` reads no file; so mapping arguments to paths would deselect none of them.
 
 ### What needs judgment and what is code in this proposal
 

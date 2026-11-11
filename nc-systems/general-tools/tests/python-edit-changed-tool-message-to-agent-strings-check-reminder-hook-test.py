@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for python-edit-changed-agent-facing-message-check-reminder-hook.py.
+"""Tests for python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py.
 
-Run: python3 nc-systems/general-tools/tests/python-edit-changed-agent-facing-message-check-reminder-hook-test.py
+Run: python3 nc-systems/general-tools/tests/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 Each case runs the hook as Claude Code does, as a subprocess reading a
@@ -32,10 +32,10 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
-HOOK_PATH = GENERAL_TOOLS / "python-edit-changed-agent-facing-message-check-reminder-hook.py"
+HOOK_PATH = GENERAL_TOOLS / "python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py"
 PAGE_PATH = ("docs/nedschorus-wiki/"
-             "nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md")
-FAST_READ_TARGET_DIRECTORY_NAME = "agent-facing-message-fast-read-targets"
+             "nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md")
+FAST_READ_TARGET_DIRECTORY_NAME = "tool-message-to-agent-fast-read-targets"
 hook_temporary_directory = None
 
 failures = []
@@ -173,7 +173,7 @@ REMINDER_INSTRUCTION_LINES = (
     "If every listed message passes, carry on; nothing needs saying to the user.",
     "If your edit changed a message held in a local variable or built any other way, check "
     "that message against the page too.",
-    "Before you write or change an agent-facing-message from now on, read the page first.",
+    "Before you write or change a tool-message-to-agent from now on, read the page first.",
 )
 
 with tempfile.TemporaryDirectory() as temporary:
@@ -205,7 +205,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("an Edit that changes one message lists that message with path and line",
           result.returncode == 0 and "scripts/tool.py:8  first message, reworded" in text, result)
     check("the reminder lists only the changed message",
-          "second message" not in text and "(s), text" in text and "changed 1 " in text, text)
+          "second message" not in text and "(s)-to-agent, text" in text and "changed 1 " in text, text)
     check("the reminder names the page by path", PAGE_PATH in text, text)
     for line in REMINDER_INSTRUCTION_LINES:
         check(f"the reminder carries the instruction line: {line[:60]}", line in text.split("\n"), text)
@@ -214,7 +214,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("the reminder gives the changed message's cold-read-fast-read command, its file named "
           "by path and a digest of the text alone, in one directory under the temporary directory",
           targets == [hook_temporary_directory / FAST_READ_TARGET_DIRECTORY_NAME
-                      / f"scripts-tool-{text_digest}-agent-facing-message.md"], text)
+                      / f"scripts-tool-{text_digest}-tool-message-to-agent.md"], text)
     check("the command's file holds the changed message's text",
           len(targets) == 1 and file_text(targets[0]) == "first message, reworded\n",
           targets)
@@ -445,7 +445,7 @@ with tempfile.TemporaryDirectory() as temporary:
           and "changed 30 " in text, text)
     long_messages = "".join(f'print("{"x" * 5000} {index}")\n' for index in range(30))
     long_path = repository / "nc-systems" / ("a-directory-with-a-long-name-" * 3) / \
-        "python-edit-changed-agent-facing-message-check-reminder-hook.py"
+        "python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py"
     long_temporary_directory = Path(temporary) / ("a-long-temporary-directory-name-" * 4)
     long_temporary_directory.mkdir()
     long_path.parent.mkdir(parents=True)
@@ -458,7 +458,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("with a long path and a long temporary directory, the reminder stays under Claude Code's "
           "10,000-character cut by listing fewer messages, first lines truncated",
           0 < len(text) < 10000 and ("x" * 100 + "...") in text and " more in nc-systems/" in text
-          and "Before you write or change an agent-facing-message from now on" in text, len(text))
+          and "Before you write or change a tool-message-to-agent from now on" in text, len(text))
 
     result = write_then_run(repository, repository / "scripts" / "joined.py",
                             'print("stopped: " + NAME + ".")\nprint("-" * 20)\n')

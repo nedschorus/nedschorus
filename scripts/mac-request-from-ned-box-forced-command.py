@@ -151,7 +151,6 @@ AGENT_SEAT_NAME_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,63}")
 LAUNCH_CLAUDE_UBUNTU_PATH = Path(__file__).with_name("launch-claude-ubuntu")
 SAFE_WORD_PATTERN = re.compile(r"[A-Za-z0-9_./:=@%+,-]+")
 MAXIMUM_WORD_COUNT = 32
-MAXIMUM_WORD_LENGTH = 256
 MAXIMUM_REQUEST_LENGTH = 2048
 NED_BOX_SSH_DESTINATION = "nedlern@ned-box"
 DEFAULT_WINDOW_OPENER = Path(__file__).with_name("open-iterm-window-running-command")
@@ -161,6 +160,8 @@ TYPORA_APPLICATION = "Typora"
 NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME
 MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME
 MAXIMUM_PATH_LENGTH = 1024
+# A word is often an absolute path on ned-box, such as a program in a worktree under .claude/worktrees.
+MAXIMUM_WORD_LENGTH = MAXIMUM_PATH_LENGTH
 DEFAULT_OPEN_PROGRAM = "/usr/bin/open"
 OPEN_IN_BROWSER_REQUEST_VERB = "open-in-browser"
 LOG_STORE_DIRECTORY_NAME = "nedschorus-logs"

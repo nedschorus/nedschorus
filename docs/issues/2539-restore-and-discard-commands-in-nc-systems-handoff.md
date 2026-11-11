@@ -13,7 +13,7 @@ When an agent-seat's earlier agent-session died with uncommitted work, the hando
 - it applies the rule that a work-snapshot taken during a merge, rebase, cherry-pick, revert or am is never restored, only deleted;
 - it deletes the ref with `git update-ref -d <ref>`, whether the work was kept or dropped, and leaves the ref in place when a command fails.
 
-The program's command line today has one command, `list` (`main()` in the same file). The design, `nc-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md` § 3, "The restore steps, printed with the list", writes these steps as instructions to the agent.
+At 78716fd58 the program's command line had one command, `list` (`main()` in the same file), and the design, `nc-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md`, wrote these steps as instructions to the agent in its § 3, then titled "The restore steps, printed with the list"; § 3 is now "Restoring or discarding a leftover: the `restore` and `discard` commands, and the task a restore opens".
 
 ## Why it matters
 
@@ -30,7 +30,7 @@ Each list entry the handoff-supervisor prints then ends with the command to run:
 
 `RESTORE_STEPS` then keeps only what needs judgment: reading the diff and the end of the dead agent-session's transcript to decide which files to keep, removing any mutant left by nc-mutation-testing from a kept file, in a commit of its own after `restore`, before the branch is pushed, choosing between `restore` and `discard`, and telling the user what was kept and what was dropped.
 
-Tests for both commands go in `nc-systems/handoff/tests/uncommitted-work-snapshots-test.py`, with each failure injected: a kept path not in the work-snapshot, a branch that already exists, an apply that conflicts, a commit that fails, a ref deletion that fails, a merge-time work-snapshot, and, for both commands, a ref that no longer exists.
+Tests for both commands, the task and the cleaner's closing of it go in `nc-systems/handoff/tests/uncommitted-work-snapshots-test.py`, with each failure injected: a kept path not in the work-snapshot, an empty `--keep`, a branch or worktree directory that already exists, a branch that already holds the restore, an unset `CLAUDE_CODE_TASK_LIST_ID` or `GIT_AUTHOR_NAME`, a `git worktree add`, an owner file write, an apply and a commit that fail, a worktree or branch the undo cannot remove, a task that cannot be opened, a ref deletion that fails, a merge-time work-snapshot, and, for both commands, a ref that no longer exists; and, for the cleaner, a restore commit that reached `origin/main`, a branch deleted with `git branch -D`, a renamed branch, one deleted locally but still on origin, a fetch that fails, a task with no `Restore commit: ` line, a commit git cannot judge, and a task file that cannot be read or rewritten.
 
 ## User-rulings
 

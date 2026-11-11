@@ -8,11 +8,11 @@ Filed by cold-read-improvement on 2026-11-02, as the follow-up that the `#root_c
 
 ## What is wrong
 
-`nc-systems/general-tools/python-source-agent-facing-string-collector-common.py` lists the strings a Python file hands an agent; `scripts/pull-request-review-plan.py` uses that list to decide which strings merge-lane-2 fast-reads in a pull request. To follow a local name to the strings bound to it, the collector must know which names a function, lambda, class body or comprehension binds, and which outer binding a name refers to. It works this out with its own rules, chiefly `scope_assigned_names` (`:537-558`), `nodes_in_own_scope` (`:581`) and `definition_time_expressions` (`:515`). Each binding form those rules do not model is a miss of its own, and reviews keep finding new ones: Codex found seven forms after [PR 2280](https://github.com/nedschorus/nedschorus/pull/2280) and two after [PR 2318](https://github.com/nedschorus/nedschorus/pull/2318), and PR 2346 added the forms it could.
+`nc-systems/general-tools/python-source-tool-message-to-agent-string-collector-common.py` lists the strings a Python file hands an agent; `scripts/pull-request-review-plan.py` uses that list to decide which strings merge-lane-2 fast-reads in a pull request. To follow a local name to the strings bound to it, the collector must know which names a function, lambda, class body or comprehension binds, and which outer binding a name refers to. It works this out with its own rules, chiefly `scope_assigned_names` (`:537-558`), `nodes_in_own_scope` (`:581`) and `definition_time_expressions` (`:515`). Each binding form those rules do not model is a miss of its own, and reviews keep finding new ones: Codex found seven forms after [PR 2280](https://github.com/nedschorus/nedschorus/pull/2280) and two after [PR 2318](https://github.com/nedschorus/nedschorus/pull/2318), and PR 2346 added the forms it could.
 
 ## Misses still at PR 2346's head
 
-1. **`global` in a nested function.** No branch of `scope_assigned_names` handles `ast.Global`. Reproduced at `5f5f26cd1` by loading the collector and calling `agent_facing_string_nodes_in_source` on this source:
+1. **`global` in a nested function.** No branch of `scope_assigned_names` handles `ast.Global`. Reproduced at `5f5f26cd1` by loading the collector and calling `tool_message_to_agent_string_nodes_in_source` on this source:
 
    ```
    text = 1
@@ -41,7 +41,7 @@ The user approved with "A", on 2026-11-02, item 8.1 of cold-read-improvement's a
 Why the rebuild was dropped, from checks on Python 3.14.4 on ned-box:
 
 - **symtable gives list, set and dict comprehensions no scope of their own.** Since Python 3.12 these comprehensions are inlined into the enclosing function (PEP 709), and symtable reports their targets as the function's own locals. For `def f(items): a = [t for t in items]; d = [w for messages[w] in items]`, symtable lists `t`, `w` and even the read `messages` among `f`'s names; only a generator expression keeps a scope of its own. So symtable cannot say that the `text` in `[print(text) for text in ...]` is the comprehension's, which is misses 2 and 3; comprehensions are where most of the collector's misses were.
-- **symtable's answers differ between Python versions.** Comprehension inlining arrived in 3.12, and 3.14 adds annotation scopes. The edit hook that uses the collector, `nc-systems/general-tools/python-edit-changed-agent-facing-message-check-reminder-hook.py`, runs on both the Mac and ned-box, whose Python versions can differ, so rules built on symtable could collect different strings on each machine.
+- **symtable's answers differ between Python versions.** Comprehension inlining arrived in 3.12, and 3.14 adds annotation scopes. The edit hook that uses the collector, `nc-systems/general-tools/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py`, runs on both the Mac and ned-box, whose Python versions can differ, so rules built on symtable could collect different strings on each machine.
 - **symtable gives no link from a scope to its `ast` node.** Matching its scopes to the code by kind, name and line would be a new hand-written layer.
 
 A rebuild of the collector's scope rules, as one model of how Python scopes names rather than one rule per binding form, becomes worth doing when either of these holds:
@@ -60,7 +60,7 @@ Until then, a new miss is fixed in the rule that missed it, with a test that fai
 3. A name read inside a target, as `text` in `for messages[text] in items`, is no longer taken as bound: `comprehension_target_names` keeps only the names the target stores to.
 4. A type parameter's name hides the outer name in its own bound and default, and in a generic definition's annotations, bases and keywords (PEP 695): the new `type_parameter_scope_expressions` splits these out of `definition_time_expressions`.
 
-The module docstring's "Where a followed name may be bound" states all four. PR 2426 added seven cases to `nc-systems/general-tools/tests/python-source-agent-facing-string-collector-common-test.py`: six fail on the collector before the fix, and the seventh, a parameter printed in a comprehension's first iterable, checks that the fix does not hide too much. Over the 370 Python files at main, test files skipped, the collector's entries were the same before and after the fix.
+The module docstring's "Where a followed name may be bound" states all four. PR 2426 added seven cases to `nc-systems/general-tools/tests/python-source-tool-message-to-agent-string-collector-common-test.py`: six fail on the collector before the fix, and the seventh, a parameter printed in a comprehension's first iterable, checks that the fix does not hide too much. Over the 370 Python files at main, test files skipped, the collector's entries were the same before and after the fix.
 
 ## Next action
 

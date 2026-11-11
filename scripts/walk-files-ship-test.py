@@ -28,6 +28,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import shlex
 import tempfile
 import traceback
 
@@ -184,7 +185,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           len(not_shipped_instruction_lines) == 3
           and "do nothing; it ships when that walk is shipped" in not_shipped_instruction_lines[0]
           and "rename it to that name; once every such file is renamed, run "
-              f"`{SHIP} {walks.resolve() / (WALK + '-minutes.md')}` again"
+              f"`{SHIP} {walks.resolve() / (WALK + '.md')}` again"
               in not_shipped_instruction_lines[1]
           and f"the log-store has no copy of it; it is in {walks.resolve()}"
               in not_shipped_instruction_lines[2],
@@ -1074,7 +1075,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-ssh-") as 
 
     def rerun_sentence(module, walks, walk):
         return (f"`{module.REPO_ROOT}/scripts/walk-files-ship.py "
-                f"{walks}/{walk}-minutes.md`")
+                f"{walks}/{walk}.md`")
 
     def ship_in_process():
         # An injected OSError that escapes ship_walk fails the calling case by
@@ -1336,7 +1337,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
                 and one_line(line) and names_the_directory_and_its_deletion(line, store)
                 and "Deleting it loses nothing" in line
                 and line.endswith(f"`. Then rerun: `{left.REPO_ROOT}/scripts/walk-files-ship.py "
-                                  f"{walks}/{LEFT_WALK}-minutes.md`\n"))
+                                  f"{walks}/{LEFT_WALK}.md`\n"))
 
     # A shipment whose files all land, then whose staging directory stays.
     walks, store, destination = left_walk_and_store("after-placing")
@@ -1485,15 +1486,26 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
                          f"Rerun: `{left.REPO_ROOT}/scripts/walk-files-ship.py "
                          f"named-walk-2026-10-31`"), named_line)
     below_line = rerun_line_for(left.WALK_DIRECTORY / "older")
-    check("a walk in a directory below docs/walk/ is rerun by the path to its minutes",
+    check("a walk in a directory below docs/walk/ is rerun by the path to its walk-document",
           below_line.endswith(f"walk-files-ship.py "
-                              f"{left.WALK_DIRECTORY}/older/named-walk-2026-10-31-minutes.md`"),
+                              f"{left.WALK_DIRECTORY}/older/named-walk-2026-10-31.md`"),
           below_line)
     dash_line = rerun_line_for(pathlib.Path(str(left.WALK_DIRECTORY)), walk="-dash-walk")
     check("a walk under docs/walk/ whose name begins with a dash is rerun by the path to "
-          "its minutes, which argparse cannot read as an option",
-          dash_line.endswith(f"walk-files-ship.py {left.WALK_DIRECTORY}/-dash-walk-minutes.md`"),
+          "its walk-document, which argparse cannot read as an option",
+          dash_line.endswith(f"walk-files-ship.py {left.WALK_DIRECTORY}/-dash-walk.md`"),
           dash_line)
+
+    with tempfile.TemporaryDirectory() as elsewhere_root:
+        elsewhere = pathlib.Path(elsewhere_root).resolve()
+        for file_name in ("topic.md", "topic-minutes.md", "topic-minutes-minutes.md"):
+            (elsewhere / file_name).write_text("x\n")
+        rerun = left.walk_files_ship_rerun_command("topic", elsewhere)
+        rerun_argument = shlex.split(rerun)[1]
+        check("the rerun command of walk topic, outside docs/walk/ beside a walk named "
+              "topic-minutes, resolves to topic again, not to topic-minutes",
+              left.walk_name_and_directory(rerun_argument) == ("topic", elsewhere),
+              rerun)
 
 print()
 if failures:

@@ -13,6 +13,7 @@ import datetime
 import importlib.util
 import io
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -302,6 +303,25 @@ def main() -> int:
               "seat-branch",
               not moved and "not moved:" in line and "No such file" in line
               and fleet.git(eta, "symbolic-ref", "--short", "HEAD") == "eta", line)
+
+        # An ignored directory at a path main newly tracks: without --no-overwrite-ignore,
+        # git checkout replaces its file with main's, and the only copy is lost.
+        iota = fleet.seat_home("iota", own_commits=0, recorded=False)
+        fleet.git(fleet.clone, "switch", "--quiet", "main")
+        fleet.git(fleet.clone, "pull", "--quiet", "--ff-only", "origin", "main")
+        (fleet.clone / "ignored-here").mkdir()
+        fleet.commit(fleet.clone, "ignored-here/notes.txt", "Main tracks a file iota ignores")
+        fleet.git(fleet.clone, "push", "--quiet", "origin", "main")
+        (iota / "ignored-here").mkdir()
+        (iota / "ignored-here" / ".gitignore").write_text("*\n")
+        (iota / "ignored-here" / "notes.txt").write_text("the only copy\n")
+        moved, line = module.move_agent_home(iota, today)
+        check("a detach over an ignored file at a path main tracks is refused, naming the file, "
+              "and the agent-home stays on its seat-branch with the file intact",
+              not moved and "not moved:" in line and "ignored-here/notes.txt" in line
+              and fleet.git(iota, "symbolic-ref", "--short", "HEAD") == "iota"
+              and (iota / "ignored-here" / "notes.txt").read_text() == "the only copy\n", line)
+        shutil.rmtree(iota / "ignored-here")
 
         exit_status = module.main(["--agents-root", str(fleet.agents_root),
                                    "--handoff-directory", str(fleet.handoffs)])

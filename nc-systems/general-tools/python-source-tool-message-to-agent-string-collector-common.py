@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Find the agent-facing-messages in a Python file's source, and say which
+"""Find the tool-messages-to-agent in a Python file's source, and say which
 files are tests.
 
-An agent-facing-message is recognized by its form alone: a string printed or
+A tool-message-to-agent is recognized by its form alone: a string printed or
 written to sys.stdout or sys.stderr; a string passed to a helper printer, a
 function defined once at module level whose parameter reaches print,
 sys.stdout.write, sys.stderr.write, `<parameter>.write` or another helper
@@ -10,7 +10,7 @@ printer, as text in say(stream, text) does, in the position or under the
 keyword of that parameter; a string in a raise statement; a string
 assigned to a name ending in one of AGENT_STRING_NAME_SUFFIXES, or in one of
 them followed by S; the value, in a dict literal, of one of
-AGENT_FACING_HOOK_OUTPUT_KEYS, the keys through which a Claude Code hook's JSON
+TOOL_MESSAGE_TO_AGENT_HOOK_OUTPUT_KEYS, the keys through which a Claude Code hook's JSON
 output reaches the agent, when that value is a string-building expression, as a local name's
 binding below may be, or a name assigned a string once at module level; and the module docstring of a file
 whose source holds the text __doc__ anywhere, comments and strings included,
@@ -82,11 +82,11 @@ parameter hides the helper printer's name; nor one that fills a helper's
 *args or **kwargs, as in warn("text") for def warn(*parts): print(*parts). "systemMessage" is not
 among the keys: Claude Code shows that text to the user, not to the agent.
 
-A test file's strings are not agent-facing-messages: a test's copy of an
+A test file's strings are not tool-messages-to-agent: a test's copy of an
 expected message is not handed to an agent.
 
 scripts/pull-request-review-plan.py and
-nc-systems/general-tools/python-edit-changed-agent-facing-message-check-reminder-hook.py
+nc-systems/general-tools/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py
 load this file with importlib.util.spec_from_file_location, because Python
 cannot import a hyphenated file name by name.
 """
@@ -95,10 +95,10 @@ import ast
 
 AGENT_STRING_NAME_SUFFIXES = ("_ADVICE", "_INSTRUCTION", "_LINE", "_MESSAGE", "_NOTICE", "_REASON",
                               "_REFUSAL", "_TEMPLATE")
-AGENT_FACING_HOOK_OUTPUT_KEYS = ("additionalContext", "permissionDecisionReason", "reason", "stopReason")
+TOOL_MESSAGE_TO_AGENT_HOOK_OUTPUT_KEYS = ("additionalContext", "permissionDecisionReason", "reason", "stopReason")
 
 
-def variable_name_has_agent_facing_message_suffix(name):
+def variable_name_has_tool_message_to_agent_suffix(name):
     stem = name[:-1] if name.endswith("S") else name
     return stem.endswith(AGENT_STRING_NAME_SUFFIXES)
 
@@ -515,7 +515,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
     def visit_assignment_value(self, node):
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
         for target in targets:
-            if isinstance(target, ast.Name) and variable_name_has_agent_facing_message_suffix(target.id):
+            if isinstance(target, ast.Name) and variable_name_has_tool_message_to_agent_suffix(target.id):
                 self.collect_sink_expression(node.value, f"{target.id} =")
         self.generic_visit(node)
 
@@ -525,14 +525,14 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
 
     def visit_Dict(self, node):
         for key, value in zip(node.keys, node.values):
-            if not (isinstance(key, ast.Constant) and key.value in AGENT_FACING_HOOK_OUTPUT_KEYS):
+            if not (isinstance(key, ast.Constant) and key.value in TOOL_MESSAGE_TO_AGENT_HOOK_OUTPUT_KEYS):
                 continue
             label = f'"{key.value}" value'
             if isinstance(value, ast.Name):
                 if self.enclosing_local_string_bindings and value.id in self.enclosing_local_string_bindings[-1]:
                     self.collect_local_strings_reaching(value)
                 # A name ending in a suffix is collected already, at its assignment.
-                elif value.id in self.module_string_values and not variable_name_has_agent_facing_message_suffix(value.id):
+                elif value.id in self.module_string_values and not variable_name_has_tool_message_to_agent_suffix(value.id):
                     self.collect_expression_strings(self.module_string_values[value.id], f"{label} {value.id} =")
             elif string_building_parts(value):
                 self.collect_sink_expression(value, label)
@@ -820,7 +820,7 @@ def module_level_string_values_whose_name_the_file_binds_only_once(tree, module_
     return {name: value for name, value in module_string_values.items() if counts.get(name) == 1}
 
 
-def agent_facing_string_nodes_in_source(source):
+def tool_message_to_agent_string_nodes_in_source(source):
     """Each entry holds line and end_line, counted from 1, label, text, literal_text,
     placeholder_value_source_code_texts, text_as_agent_reads_it_with_placeholder_stand_ins and kind,
     "prompt" or "message".

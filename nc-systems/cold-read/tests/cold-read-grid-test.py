@@ -455,8 +455,8 @@ def run_grid(repository, stub_directory, environment_overrides=None,
         stub.write_text(STUB_MODEL_RUNTIME, encoding="utf-8")
         stub.chmod(0o755)
     scratch_repository_fixture.install_fake_sandbox_programs(stub_directory)
-    # Every Codex cell scans HOME for credential files at launch, and the
-    # real home takes seconds to walk.
+    # A scratch HOME, so every cell's credential rules name paths in it, not
+    # the real home's.
     scratch_home = repository.parent / "scratch-home"
     scratch_home.mkdir(exist_ok=True)
     environment = dict(os.environ)
@@ -2055,8 +2055,8 @@ try:
           f"exit {result.returncode}; {record_lines!r}; stderr={result.stderr[-400:]!r}")
 
     # --- A shipment made while the run is still writing its record ----------
-    # The pre-remove hook ships every worktree's records whenever any
-    # agent-seat runs `git worktree remove`. A shipment made mid-run holds
+    # The pre-remove hook ships a worktree's records whenever an
+    # agent-seat runs `git worktree remove` on it. A shipment made mid-run holds
     # files the run then rewrites or deletes, such as a cell's .stderr.log,
     # so the run's own shipment, and every later one, was refused. The run
     # holds its record's being-written lock, so that shipment copies nothing.

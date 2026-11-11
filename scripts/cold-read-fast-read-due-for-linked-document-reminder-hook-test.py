@@ -29,6 +29,12 @@ _git_environment_fixture_spec = importlib.util.spec_from_file_location(
 _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+_attendance_check_spec = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "agent-session-unattended-by-user-check-common.py")
+attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
+_attendance_check_spec.loader.exec_module(attendance_check)
 
 HOOK_SCRIPT = Path(__file__).with_name("cold-read-fast-read-due-for-linked-document-reminder-hook.py")
 STORE_VARIABLE = "NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY"
@@ -136,9 +142,7 @@ def check(case_name, condition, detail=""):
 
 def run_hook(hook_script, stdin_text, environment_extra=None):
     """Run hook_script with stdin_text, in this process's environment less the variables that silence the hook."""
-    environment = {key: value for key, value in os.environ.items()
-                   if key not in ("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
-                                  "CLAUDE_CODE_SESSION_ATTENDED")}
+    environment = attendance_check.environment_without_agent_session_attendance_variables(os.environ)
     environment.update(environment_extra or {})
     return subprocess.run([sys.executable, str(hook_script)], input=stdin_text,
                           capture_output=True, text=True, env=environment, timeout=60)
@@ -825,9 +829,10 @@ def main():
     # A module loaded by run(), after the import-time ones, is reported the same way.
     shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nc-systems" / "general-tools"
                 / home_module_path.name, home_module_path)
-    git_runner_module = "git-machine-readable-output-runner-and-parser-common.py"
-    shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nc-systems" / "general-tools" / git_runner_module,
-                scratch_root / "nc-systems" / "general-tools" / git_runner_module)
+    for module in ("agent-session-unattended-by-user-check-common.py",
+                   "git-machine-readable-output-runner-and-parser-common.py"):
+        shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nc-systems" / "general-tools" / module,
+                    scratch_root / "nc-systems" / "general-tools" / module)
     record_names_path = scratch_root / "nc-systems" / "cold-read" / "cold-read-record-names-common.py"
     case = Case()
     case.transcript.write_text("")

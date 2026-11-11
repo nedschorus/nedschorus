@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Hand an agent-facing-message and its situation to two fresh-agents, and check the scripts it names.
+"""Hand a tool-message-to-agent and its situation to two fresh-agents, and check the scripts it names.
 
 Usage:
-  scripts/agent-facing-message-ask-two-fresh-agents-next-step-and-check-named-script-flags.py \\
+  scripts/tool-message-to-agent-ask-two-fresh-agents-next-step-and-check-named-script-flags.py \\
       --message-file MESSAGE --situation-file SITUATION
 
 MESSAGE holds the message exactly as the agent receives it. SITUATION says
@@ -48,9 +48,9 @@ import sys
 import tempfile
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-PROGRAM_PATH = "scripts/agent-facing-message-ask-two-fresh-agents-next-step-and-check-named-script-flags.py"
+PROGRAM_PATH = "scripts/tool-message-to-agent-ask-two-fresh-agents-next-step-and-check-named-script-flags.py"
 CLAUDE_CELL_LAUNCHER = REPO_ROOT / "nc-systems/cold-read/cold-read-claude-cell.py"
-FOLLOWER_ANSWER_FILE_LABEL_FOR_CELL_FLAG = "agent-facing-message-follower"
+FOLLOWER_ANSWER_FILE_LABEL_FOR_CELL_FLAG = "tool-message-to-agent-follower"
 FOLLOWER_TIERS = ("fast", "deep")
 HELP_TIMEOUT_SECONDS = 60
 EXIT_CHECKOUT_CHANGED = 3
@@ -61,7 +61,7 @@ cell_common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(cell_common)
 
 # Messages this program hands an agent follow
-# docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 
 FOLLOWER_PROMPT = """You are an agent-session working in the repository at {REPO_ROOT}, in your own worktree. In your real work you can use the tools Bash, Read, Edit, Write, Grep, Glob, TaskList, SendMessage (send a message to another agent-seat by its name), ListAgents (list the agent-seats you can message) and the skills under .claude/skills/.
 
@@ -77,7 +77,7 @@ FLAG_PATTERN = re.compile(r"(?<![\w-])--[A-Za-z][\w-]*")
 FLAG_SPAN_END_PATTERN = re.compile(r"[`;|&]")
 
 
-def scripts_and_flags_named_in_agent_facing_message(message: str) -> dict:
+def scripts_and_flags_named_in_tool_message_to_agent(message: str) -> dict:
     """Map each script path the message names to the flags written after it, in order of first mention."""
     scripts: dict = {}
     for line in message.splitlines():
@@ -174,7 +174,7 @@ def main() -> int:
             return 2
     message, situation = texts["--message-file"], texts["--situation-file"]
 
-    with tempfile.TemporaryDirectory(prefix="agent-facing-message-ask-two-fresh-agents-") as scratch:
+    with tempfile.TemporaryDirectory(prefix="tool-message-to-agent-ask-two-fresh-agents-") as scratch:
         scratch_path = pathlib.Path(scratch)
         target = scratch_path / "situation-and-message.md"
         target.write_text(f"# What you were doing\n\n{situation.rstrip()}\n\n"
@@ -192,7 +192,7 @@ def main() -> int:
     for _, _, section in follower_results:
         report_lines += section + [""]
     report_lines += ["## Scripts the message names", ""]
-    scripts = scripts_and_flags_named_in_agent_facing_message(message)
+    scripts = scripts_and_flags_named_in_tool_message_to_agent(message)
     if not scripts:
         report_lines.append("The message names no path ending in .py or .sh.")
     for script, flags in scripts.items():

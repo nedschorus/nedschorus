@@ -390,7 +390,7 @@ check("an Edit with an empty newString that left the following newline, as Claud
 both_forms = added_lines_or_fault("a\nb\nZ a\nb", "a\nb", "", "Z a\nb", replace_all=True)
 check("a replace_all Edit with an empty newString, where both texts Claude Code may have removed "
       "give the file's line count and different added lines, is a check not made",
-      isinstance(both_forms, str) and "both of tool_response.oldString removed" in both_forms, both_forms)
+      isinstance(both_forms, str) and "tool_response.oldString removed alone or removed together with the newline that followed it, and the two readings change different lines" in both_forms, both_forms)
 both_forms_agree = added_lines_or_fault("\na\na", "\na", "", "", replace_all=True)
 check("a replace_all Edit with an empty newString, where both texts Claude Code may have removed "
       "give the file's line count and the same added lines, is read", both_forms_agree == [],
@@ -700,7 +700,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         check("an Edit whose payload has no originalFile is reported as a check not made, exit 1",
               result.returncode == 1 and result.stdout == ""
               and "lacks tool_response's originalFile" in result.stderr
-              and "the Edit itself succeeded, and nothing needs redoing." in result.stderr,
+              and "the Edit itself succeeded and need not be redone.\n" in result.stderr
+              and "If the Edit wrote a paragraph across several lines, join that paragraph into one line yourself." in result.stderr,
               result.stdout + result.stderr)
         payload = payload_for(checkout, "Edit", edited_file, {"old_string": "x", "new_string": "y"})
         payload["tool_response"] = {"originalFile": BROKEN_TEXT, "oldString": "absent",
@@ -771,7 +772,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           result.returncode == 1 and result.stdout.strip() == ""
           and "git check-ignore -q -- notes.md in" in result.stderr
           and "failed (exit 128" in result.stderr
-          and "the Write itself succeeded, and nothing needs redoing." in result.stderr,
+          and "the Write itself succeeded and need not be redone.\n" in result.stderr
+              and "If the Write wrote a paragraph across several lines, join that paragraph into one line yourself." in result.stderr,
           f"exit {result.returncode}: {result.stdout + result.stderr}")
 
     # git missing from PATH: the hook runs by absolute path, so only git is absent.

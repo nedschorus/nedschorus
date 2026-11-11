@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Tests for scripts/agent-facing-message-ask-two-fresh-agents-next-step-and-check-named-script-flags.py.
+"""Tests for scripts/tool-message-to-agent-ask-two-fresh-agents-next-step-and-check-named-script-flags.py.
 
 No model runs: every case points CLAUDE_CELL_LAUNCHER at a fake launcher, written
 to a temporary directory, that records its arguments and either writes an
 answer to --report or fails the way cold-read-claude-cell.py fails.
 
-Run: python3 scripts/agent-facing-message-ask-two-fresh-agents-next-step-and-check-named-script-flags-test.py
+Run: python3 scripts/tool-message-to-agent-ask-two-fresh-agents-next-step-and-check-named-script-flags-test.py
 Prints one line per case and exits 1 if any case fails.
 """
 
@@ -19,7 +19,7 @@ import sys
 import subprocess
 import tempfile
 
-SCRIPT_PATH = pathlib.Path(__file__).with_name("agent-facing-message-ask-two-fresh-agents-next-step-and-check-named-script-flags.py")
+SCRIPT_PATH = pathlib.Path(__file__).with_name("tool-message-to-agent-ask-two-fresh-agents-next-step-and-check-named-script-flags.py")
 _spec = importlib.util.spec_from_file_location("ask_two_fresh_agents", SCRIPT_PATH)
 ask_two_fresh_agents = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ask_two_fresh_agents)
@@ -231,7 +231,7 @@ def test_named_scripts(scratch):
 
 
 def test_named_scripts_parsing():
-    scripts = ask_two_fresh_agents.scripts_and_flags_named_in_agent_facing_message(
+    scripts = ask_two_fresh_agents.scripts_and_flags_named_in_tool_message_to_agent(
         "Run scripts/a.py --x --y scripts/b.sh --z | grep --count\n"
         "Or c.py --c1 d.py --d1 e.py --e1\n"
         "Then scripts/a.py --x --w.\n"

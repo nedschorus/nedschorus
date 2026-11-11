@@ -192,7 +192,7 @@ def move_agent_home(home: Path, today: datetime.date):
         note = other_branch_note(home, seat)
         marker = Path(output(home, "rev-parse", "--absolute-git-dir")) / AGENT_HOME_MARKER_NAME
         marker.touch()
-        git(home, "checkout", "--quiet", "--detach", "origin/main")
+        git(home, "checkout", "--quiet", "--no-overwrite-ignore", "--detach", "origin/main")
     except (GitStepFailed, OSError) as error:
         return False, f"{home}: not moved: {error}; {saved}"
     return True, f"{home}: now detached at origin/main and marked as an agent-home; {saved}{note}"

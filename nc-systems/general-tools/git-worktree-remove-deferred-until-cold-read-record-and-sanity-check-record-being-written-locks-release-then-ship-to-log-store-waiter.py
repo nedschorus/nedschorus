@@ -44,7 +44,7 @@ the log are lost, and the hook starts no waiter at all, since it cannot open
 the log.
 
 The user-alert follows
-docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 """
 
 import argparse

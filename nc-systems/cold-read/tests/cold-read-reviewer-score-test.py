@@ -71,6 +71,11 @@ def run(*args):
                           capture_output=True, text=True, check=False)
 
 
+def without_test_paths(text):
+    """Return text without the scorer's path and the scratch directory, which may hold any word."""
+    return text.replace(str(SCORER), "").replace(str(scratch), "")
+
+
 def placement_table(rows):
     """rows: (id, placement, confidence, reason[, quote]). Returns one table."""
     out = ["| Finding | Quote | Placement | Confidence | Reason |",
@@ -326,7 +331,7 @@ with tempfile.TemporaryDirectory(prefix="cold-read-reviewer-score-test-") as nam
           and "The two files are different." in result.stderr
           and f"rename {same_run / 'ann-run-1--placement.md'} to "
               f"{same_run / 'ann-run-3--placement.md'}" in result.stderr
-          and "delete" not in result.stderr
+          and "delete" not in without_test_paths(result.stderr)
           and "Then run the scorer again: python3 " in result.stderr,
           result.stdout + result.stderr)
     padded_run = write_placements(scratch / "padded-run-number", {
@@ -339,7 +344,7 @@ with tempfile.TemporaryDirectory(prefix="cold-read-reviewer-score-test-") as nam
           result.returncode == 64 and "both run 1 of reader 'ann'" in result.stderr
           and "The two files are byte-identical" in result.stderr
           and f"delete {padded_run / 'ann-run-1--placement.md'}." in result.stderr
-          and "rename" not in result.stderr,
+          and "rename" not in without_test_paths(result.stderr),
           result.stdout + result.stderr)
     check("a reviewer's name is the file name before '--placement.md'",
           scorer.reviewer_name_from_placement_file_name(pathlib.Path("a--b--placement.md")) == "a--b"

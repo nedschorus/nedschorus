@@ -20,12 +20,17 @@ _git_environment_fixture_spec = importlib.util.spec_from_file_location(
 _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+_attendance_check_spec = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().parents[4] / "nc-systems" / "general-tools"
+    / "agent-session-unattended-by-user-check-common.py")
+attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
+_attendance_check_spec.loader.exec_module(attendance_check)
 
 HERE = Path(__file__).resolve().parents[1]
 HOOK = HERE / "walk-me-through-pending-user-alerts-claim-and-insert-as-approval-walk-items-user-prompt-submit-hook.py"
 INSERT_PROGRAM = HERE / "walk-me-through-user-alert-insert-as-unnumbered-item-after-waiting-item-and-record-in-walk-minutes.py"
 WALK = "alerts-hook-test-walk-2026-10-27"
-HEADLESS_VARIABLES = ("CLAUDE_CODE_SESSION_ATTENDED", "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
 failures = []
 
 
@@ -79,7 +84,7 @@ class Case:
                                    f"({insert_run}) if 'user-alert-insert' in str(a[0]) else real(*a, **k))"
                                    "(subprocess.run); " if insert_run else "")
                                 + "runpy.run_path(sys.argv[2], run_name='__main__')")
-        environment = {name: value for name, value in os.environ.items() if name not in HEADLESS_VARIABLES}
+        environment = attendance_check.environment_without_agent_session_attendance_variables(os.environ)
         environment.update({"HOME": str(self.home)}, **(environment_extra or {}))
         result = subprocess.run([sys.executable, "-c", run_hook_as_platform, platform, str(HOOK)],
                                 input=stdin or json.dumps(payload),

@@ -530,6 +530,72 @@ def run_lock_cases(workspace: Path):
         unidentifiable.wait()
     unknown_state_path.unlink(missing_ok=True)
     unknown_lock_path.unlink(missing_ok=True)
+    run_liveness_or_cannot_tell_cases(workspace)
+
+
+def run_liveness_or_cannot_tell_cases(workspace: Path):
+    """The three-answer query keeps "cannot tell" apart from yes and no."""
+    state_path = workspace / "threeway-supervisor-state.json"
+    lock_path = workspace / "threeway-supervisor.lock"
+    ps_fails = lambda _process_id: (None, False)  # noqa: E731
+    answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(state_path)
+    check("with no state, the three-answer query says not watching",
+          answer == supervisor.SUPERVISOR_LIVENESS_NOT_WATCHING, explanation)
+
+    supervisor.stamp_heartbeat(state_path, {"launched_session_id": "s"})
+    answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(state_path)
+    check("with no lock, the three-answer query says not watching",
+          answer == supervisor.SUPERVISOR_LIVENESS_NOT_WATCHING and "no supervisor lock" in explanation,
+          explanation)
+
+    lock_path.write_text("garbage\n", encoding="utf-8")
+    answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(state_path)
+    check("an unreadable lock is cannot tell, not no",
+          answer == supervisor.SUPERVISOR_LIVENESS_CANNOT_TELL and "unreadable" in explanation,
+          explanation)
+    alive, explanation = supervisor.supervisor_liveness(state_path)
+    check("the two-answer reading still takes an unreadable lock as no supervisor",
+          not alive and explanation.startswith("no supervisor is watching — ")
+          and "unreadable" in explanation, explanation)
+
+    holder = subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        lock_path.write_text(f"{holder.pid}\n", encoding="utf-8")
+        complaints = io.StringIO()
+        with contextlib.redirect_stderr(complaints):
+            answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(
+                state_path, read_command_line=ps_fails)
+        check("ps failing on a live lock holder is cannot tell, not yes",
+              answer == supervisor.SUPERVISOR_LIVENESS_CANNOT_TELL
+              and "cannot tell" in explanation and "assumed present" not in explanation,
+              explanation)
+        check("the three-answer query prints no assumed-supervisor notice",
+              complaints.getvalue() == "", complaints.getvalue())
+
+        answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(
+            state_path, read_command_line=lambda _p: ("python3 /x/handoff-supervisor.py --agent threeway", True))
+        check("an identified supervisor is watching",
+              answer == supervisor.SUPERVISOR_LIVENESS_WATCHING
+              and explanation.startswith("supervisor alive — "), explanation)
+
+        answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(
+            state_path, read_command_line=lambda _p: ("python3 other.py", True))
+        check("a live process that is not the supervisor is not watching",
+              answer == supervisor.SUPERVISOR_LIVENESS_NOT_WATCHING
+              and explanation.startswith("no supervisor is watching — "), explanation)
+    finally:
+        holder.kill()
+        holder.wait()
+
+    lock_path.write_text("99999999\n", encoding="utf-8")
+    answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(
+        state_path, read_command_line=ps_fails)
+    check("ps failing on a dead id is answered as not watching",
+          answer == supervisor.SUPERVISOR_LIVENESS_NOT_WATCHING and "os.kill" in explanation,
+          explanation)
+    state_path.unlink(missing_ok=True)
+    lock_path.unlink(missing_ok=True)
 
 
 
@@ -1017,15 +1083,20 @@ with tempfile.TemporaryDirectory() as update_workspace:
     # A hung update is killed at the timeout and the launch proceeds. The
     # launchers allow 120s for a real download; 1s here bounds the case. exec,
     # so the kill at the timeout reaches the sleep and nothing outlives the case.
+    hung_update_timeout_seconds = 1
+    # A backstop only: the status and the message below are what show the
+    # timeout fired. Ten times the timeout or more, so a busy machine cannot
+    # fail it, and far below the stub's 30-second sleep.
+    hung_update_backstop_seconds = 15 * hung_update_timeout_seconds
     agent = an_agent_recording_its_invocations(update_workspace, body="exec sleep 30")
     started = time.monotonic()
     captured = io.StringIO()
     with contextlib.redirect_stderr(captured):
         result = supervisor.agent_binary_update_under_lock.run_agent_binary_update_under_lock(
-            [str(agent), "update"], 1, "handoff-supervisor")
+            [str(agent), "update"], hung_update_timeout_seconds, "handoff-supervisor")
     elapsed = time.monotonic() - started
     check("a hung update is killed at the timeout rather than blocking the launch",
-          elapsed < 15, f"{elapsed:.1f}s")
+          elapsed < hung_update_backstop_seconds, f"{elapsed:.1f}s")
     check("a timed-out update returns a nonzero status", result == 124, str(result))
     check("a killed update says so, because the supervisor is what killed it",
           "was stopped" in captured.getvalue(), captured.getvalue())
@@ -1077,14 +1148,17 @@ with tempfile.TemporaryDirectory() as update_workspace:
 with tempfile.TemporaryDirectory() as update_workspace:
     agent = an_agent_recording_its_invocations(update_workspace)
     captured = io.StringIO()
+    # Counting the lock attempts, not timing them: one attempt that cannot
+    # block is what "immediately" means, and a busy machine cannot change it.
     with AnotherUpdateHoldsTheLock(sandboxed_update_lock_path):
-        started = time.monotonic()
-        with contextlib.redirect_stderr(captured):
+        with mock.patch.object(fcntl, "flock", wraps=fcntl.flock) as lock_attempts, \
+                contextlib.redirect_stderr(captured):
             supervisor.update_agent_binary(str(agent), 30)
-        elapsed = time.monotonic() - started
-    check("a held lock skips the update immediately",
-          invocations_of(update_workspace) == [] and elapsed < 0.5,
-          f"{invocations_of(update_workspace)} after {elapsed:.1f}s")
+    lock_attempt_flags = [call.args[1] for call in lock_attempts.call_args_list]
+    check("a held lock skips the update immediately: one lock attempt, which does not wait",
+          invocations_of(update_workspace) == []
+          and len(lock_attempt_flags) == 1 and lock_attempt_flags[0] & fcntl.LOCK_NB,
+          f"{invocations_of(update_workspace)} lock flags {lock_attempt_flags}")
     check("the skipped update is reported in exactly one line",
           "Another claude update is running; this launch uses the claude already installed.\n"
           == captured.getvalue(), captured.getvalue())
@@ -1092,20 +1166,20 @@ with tempfile.TemporaryDirectory() as update_workspace:
 with tempfile.TemporaryDirectory() as update_workspace:
     # Timeout 0 is --agent-update-timeout-seconds 0, which every supervisor
     # case in the handoff-supervisor suites passes: it must skip the update
-    # entirely, lock included. Held lock: returning at once proves it neither
-    # waited nor reported. Fresh path: the lock file never even being created
+    # entirely, lock included. Held lock: no lock attempt at all proves it
+    # neither waited nor reported. Fresh path: the lock file never even being created
     # proves it was never opened.
     agent = an_agent_recording_its_invocations(update_workspace)
     captured = io.StringIO()
     with AnotherUpdateHoldsTheLock(sandboxed_update_lock_path):
-        started = time.monotonic()
-        with contextlib.redirect_stderr(captured):
+        with mock.patch.object(fcntl, "flock", wraps=fcntl.flock) as lock_attempts, \
+                contextlib.redirect_stderr(captured):
             supervisor.update_agent_binary(str(agent), 0)
-        elapsed = time.monotonic() - started
     check("a zero timeout does not wait on a held lock, and says nothing",
-          elapsed < 0.5 and captured.getvalue() == ""
+          lock_attempts.call_count == 0 and captured.getvalue() == ""
           and invocations_of(update_workspace) == [],
-          f"{elapsed:.2f}s {captured.getvalue()!r} {invocations_of(update_workspace)}")
+          f"{lock_attempts.call_count} lock attempts {captured.getvalue()!r} "
+          f"{invocations_of(update_workspace)}")
     unused_lock_path = Path(update_workspace) / "unused-lock" / "agent-binary-update.lock"
     supervisor.agent_binary_update_under_lock.AGENT_BINARY_UPDATE_LOCK_PATH = str(
         unused_lock_path)

@@ -194,8 +194,9 @@ def main():
               f"{'a' * 12}", f"This checkout is on branch some-other-branch, not the pull "
               f"request's branch {BRANCH}: run this again from the checkout that has {BRANCH} "
               "checked out; git worktree list names each checkout of this clone with its "
-              f"branch. If no checkout has it, make one with git worktree add <a new directory> "
-              f"{BRANCH} and run this again there."]),
+              f"branch. If no checkout has it, make one with python3 "
+              f"scripts/agent-seat-worktree-create-with-owner-file.py {BRANCH}, which prints its "
+              "path, and run this again there."]),
             ("a checkout on a detached HEAD",
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"), branch=answers("\n")),
              ["view", "rev-parse", "branch"],

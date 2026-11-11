@@ -6,7 +6,7 @@ A change is the difference an agent's work makes, from before it starts to after
 
 ## Changes that need approval
 
-- A change to what agent-instructions, an agent-facing-message or a prompt a program hands to an agent tells an agent to do, such as `CLAUDE.md`, a seat-brief, a skill and its prompts, a subagent definition in `.claude/agents/`, an `-instructions.md` or `-prompt.md` file, a prompt built in Python, or a hook's refusal.
+- A change to what agent-instructions, a tool-message-to-agent or a prompt a program hands to an agent tells an agent to do, such as `CLAUDE.md`, a seat-brief, a skill and its prompts, a subagent definition in `.claude/agents/`, an `-instructions.md` or `-prompt.md` file, a prompt built in Python, or a hook's refusal.
 - A change to what a hook or a setting lets an agent do, or stops an agent doing.
 - Adding, removing or reordering a step that agent-instructions or a program tell agents to follow.
 - A change to what a document on main directs, decides or plans, including one a review finding asks for.

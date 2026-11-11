@@ -104,7 +104,7 @@ non-blocking error and keeps the write and the prompt; stderr after exit 0 is
 recorded nowhere, so a fault reported that way would read as "no bare numbers".
 """
 
-# Agent-facing messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# Tool-messages-to-agent follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 
 import functools
 import importlib.util
@@ -129,9 +129,6 @@ GITHUB_REPOSITORY_OWNER = "nedschorus"
 GITHUB_REPOSITORY_NAME = "nedschorus"
 TITLE_ATTEMPT_WORDS_AT_LEAST = 3
 EXCERPT_CHARACTERS_EACH_SIDE = 40
-REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
-SESSION_ATTENDED_VARIABLE = "CLAUDE_CODE_SESSION_ATTENDED"
-SESSION_UNATTENDED_VALUE = "0"
 SESSION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 NOTE_RECORD_DIRECTORY_NAME = "bare-number-citation-in-markdown-and-agent-reply-warning-hook-state"
 
@@ -625,6 +622,17 @@ def _load_edited_file_path_within_checkout_root_and_git_check_ignore():
     return module
 
 
+def _load_agent_session_unattended_by_user_check():
+    """Return the shared check of whether a user attends the agent-session, loaded by path."""
+    specification = importlib.util.spec_from_file_location(
+        "agent_session_unattended_by_user_check_common",
+        Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+        / "agent-session-unattended-by-user-check-common.py")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
 def markdown_edit_note(payload: dict):
     tool_name = payload.get("tool_name")
     tool_input = payload.get("tool_input")
@@ -783,8 +791,7 @@ def note_record_write(record_path, record):
 
 
 def previous_reply_note(payload: dict, environment):
-    if (environment.get(REINCARNATION_OWNED_BY_CALLER_VARIABLE)
-            or environment.get(SESSION_ATTENDED_VARIABLE) == SESSION_UNATTENDED_VALUE):
+    if _load_agent_session_unattended_by_user_check().agent_session_unattended_by_user(environment):
         return None
     transcript_path = payload.get("transcript_path")
     if not isinstance(transcript_path, str) or not transcript_path:
@@ -832,9 +839,9 @@ def previous_reply_note(payload: dict, environment):
 
 def _load_failed_command_next_step_lines():
     specification = importlib.util.spec_from_file_location(
-        "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+        "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
         Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-        / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+        / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module

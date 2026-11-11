@@ -14,6 +14,7 @@ import fcntl
 import importlib.util
 import json
 import os
+import re
 import signal
 import sqlite3
 import subprocess
@@ -315,6 +316,100 @@ def run_every_exit_but_0_6_7_9_opens_a_job_failure_task_cases():
           set(opened_for_exit) == exits
           and all(tasks for runs in opened_for_exit.values() for tasks in runs),
           (sorted(exits), opened_for_exit))
+
+    # A reader of the job log matches an exit code to its meaning by the docstring's numbers.
+    documented = {name: int(number) for name, number
+                  in re.findall(r"\b(EXIT_[A-Z_]+) \((\d+)\)", job.__doc__)}
+    exit_constants = {name: value for name, value in vars(job).items()
+                      if name.startswith("EXIT_") and isinstance(value, int)}
+    check("each exit code has a value of its own, and each the docstring numbers has that number",
+          len(set(exit_constants.values())) == len(exit_constants)
+          and len(documented) >= 6
+          and all(exit_constants.get(name) == number for name, number in documented.items()),
+          (exit_constants, documented))
+
+
+def run_untestable_merge_cases():
+    """A merge the mutation testing program finds a suite failing on, with no mutant applied."""
+    failing_suite = "scripts/thing-test.py"
+    untestable_step = {
+        "exit": job.mutation_testing.EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD,
+        "stderr": (f"mutation-testing: not run — a suite for scripts/thing.py fails on the "
+                   f"unmutated head, so no mutant can be judged:\n"
+                   f"{job.mutation_testing.SUITE_FAILS_ON_UNMUTATED_HEAD_LINE_PREFIX}"
+                   f"{failing_suite}\nMake the suite pass at the head, then run this again.")}
+
+    # The untestable merge is recorded, its task opened, and the merge after it tested in the
+    # same run, from a state file an earlier version wrote without untestable_merges.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        alpha_list = fixture.seat("alpha")
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        untestable = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                                    author="alpha")
+        after = fixture.commit("scripts/other.py", "def triple(x):\n    return x * 3\n",
+                               author="alpha")
+        completed = fixture.run({untestable: untestable_step,
+                                 after: {"json": verdict(survived=[survivor()])}})
+        record = fixture.records()[-1].read_text() if fixture.records() else ""
+        tasks = job_failure_tasks(fixture)
+        heads = [call[call.index("--head") + 1] for call in fixture.calls()]
+        check("a merge whose suite fails on its unchanged code is recorded as untestable with "
+              "that suite, and the run goes on to test the next merge and exits 0",
+              completed.returncode == job.EXIT_ALL_DONE
+              and heads == [untestable, after]
+              and fixture.state_json()["last_tested_main_commit"] == after
+              and fixture.state_json()[job.UNTESTABLE_MERGES_STATE_KEY]
+              == {untestable: [failing_suite]}
+              and task_files(alpha_list) == ["1.json"],
+              (completed.returncode, completed.stderr, heads, fixture.state_json()))
+        check("an untestable merge opens one job failure task naming the merge, the failing "
+              "suite and a later commit's run with the merge's own parent as --base",
+              [task["subject"] for task in tasks]
+              == [job.untestable_merge_job_failure_task_subject(untestable)]
+              and untestable in tasks[0]["description"]
+              and failing_suite in tasks[0]["description"]
+              and f"--base {start}" in tasks[0]["description"]
+              and f"--head <that commit>" in tasks[0]["description"],
+              tasks)
+        check("the record names the untestable merge, its failing suite and its task, and "
+              "counts it among the merges tested",
+              f"UNTESTABLE: merge {untestable[:12]} (change scripts/thing.py): on its unchanged "
+              f"code the suite(s) {failing_suite} fail" in record
+              and f"JOB FAILURE TASK: opened task #{tasks[0]['id'] if tasks else ''} on "
+                  f"{job.JOB_FAILURE_TASK_AGENT_SEAT}'s task list, "
+                  f"{job.untestable_merge_job_failure_task_subject(untestable)}" in record
+              and "merges tested: 2 of 2, 1 of them recorded as untestable" in record,
+              record)
+        calls_before = len(fixture.calls())
+        completed = fixture.run({"recheck": {"exit": 1}})
+        check("the next run does not try the untestable merge again",
+              completed.returncode == job.EXIT_ALL_DONE
+              and not any("--recorded-mutant-killed-check" not in call
+                          for call in fixture.calls()[calls_before:]),
+              (completed.returncode, fixture.calls()[calls_before:]))
+
+    # The task cannot be opened: a failed step, the state left as it was.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        untestable = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n")
+        after = fixture.commit("scripts/other.py", "def triple(x):\n    return x * 3\n")
+        completed = fixture.run({untestable: untestable_step})
+        heads = [call[call.index("--head") + 1] for call in fixture.calls()]
+        check("an untestable merge whose job failure task cannot be opened stops the run at "
+              "that merge, exit 4, with the state not advanced and no merge recorded as "
+              "untestable",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and heads == [untestable]
+              and f"merge {untestable[:12]} (change scripts/thing.py): a suite fails on its "
+                  f"unchanged code ({failing_suite}), so it is untestable, but its job failure "
+                  f"task could not be opened" in completed.stderr
+              and fixture.state_json() == {"last_tested_main_commit": start, "tasks_opened": {}},
+              (completed.returncode, completed.stderr, heads, fixture.state_json()))
 
 
 def run_carry_on_and_job_failure_task_cases():
@@ -633,7 +728,23 @@ def run_carry_on_and_job_failure_task_cases():
           "the cores", counts == [12, 1, 16, 1], counts)
 
 
+def run_last_line_said_cases():
+    kept = (f"{job.mutation_testing.TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX}/tmp/x; "
+            f"remove that directory once you have read them.")
+    check("last_line_said quotes the refusal on standard error, not the line naming where the "
+          "suite runner's logs are kept after it",
+          job.last_line_said("MUTATING a.py", f"refused: the suites fail\n{kept}\n")
+          == "refused: the suites fail")
+    check("last_line_said falls back to standard output's last line when standard error holds "
+          "only the kept-logs line",
+          job.last_line_said("MUTATING a.py with b-test.py\n", f"{kept}\n")
+          == "MUTATING a.py with b-test.py")
+    check("last_line_said says nothing when neither stream holds another line",
+          job.last_line_said("", f"{kept}\n") == "nothing")
+
+
 def run_cases():
+    run_last_line_said_cases()
     # The first run writes the state file and tests nothing.
     with tempfile.TemporaryDirectory() as scratch:
         fixture = Fixture(scratch)
@@ -780,6 +891,11 @@ def run_cases():
          "It printed:\n    mutation-testing: git worktree add failed (exit 128): Preparing "
          "worktree (detached HEAD 557f938)\n    error: unable to write file README: No space "
          "left on device\n    fatal: Could not reset index file to revision 'HEAD'.\n"),
+        # Above EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD, as when a signal stopped it.
+        ("the mutation testing program exits 143",
+         {"exit": 143, "stderr": "stopped"}, None,
+         "exited 143 without saying whether each mutant was killed. The next run tries this "
+         "merge again."),
         ("the mutation testing program writes no JSON file",
          {"exit": 0}, None, "but its JSON file"),
         ("the JSON file lacks a key",
@@ -808,6 +924,7 @@ def run_cases():
                   in completed.stderr and not crash_tasks, (completed.stderr, crash_tasks))
 
     run_carry_on_and_job_failure_task_cases()
+    run_untestable_merge_cases()
 
     # No task list for the survivor at all: the merge is not recorded as tested.
     with tempfile.TemporaryDirectory() as scratch:
@@ -979,6 +1096,57 @@ def run_cases():
               completed.returncode == 0 and "TASK LOST" not in fixture.records()[-1].read_text()
               and fixture.state_json()["tasks_opened"] == {},
               (completed.returncode, completed.stderr, fixture.state_json()))
+
+    # Tasks that still hold their mutant, or are completed, come before the lost ones in the
+    # state, so a loop that stops at either misses the lost tasks after it.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        merge = fixture.commit("scripts/thing.py",
+                               "def double(x):\n    return x + x\nVALUE = 1\nOTHER = 2\n",
+                               author="alpha")
+        fixture.run({merge: {"json": verdict(survived=[
+            survivor(1, "core/ReplaceBinaryOperator_Add_Sub"), survivor(),
+            survivor(3, "core/ReplaceBinaryOperator_Add_Div"),
+            survivor(4, "core/ReplaceBinaryOperator_Add_Mod")])}})
+        order = [given["task_id"] for given in fixture.state_json()["tasks_opened"].values()]
+        finished = json.loads((alpha_list / "2.json").read_text())
+        finished["status"] = "completed"
+        (alpha_list / "2.json").write_text(json.dumps(finished))
+        (alpha_list / "3.json").unlink()
+        (alpha_list / "4.json").unlink()
+        completed = fixture.run()
+        record = fixture.records()[-1].read_text()
+        check("after a held task and a completed task, each of two lost tasks gets its own "
+              "TASK LOST line, and the run exits 7",
+              order == [1, 2, 3, 4]
+              and completed.returncode == job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR
+              and record.count("TASK LOST: ") == 2
+              and "TASK LOST: task #3 on alpha's task list" in record
+              and "TASK LOST: task #4 on alpha's task list" in record
+              and [given["task_id"] for given in fixture.state_json()["tasks_opened"].values()]
+              == [1],
+              (order, completed.returncode, record, fixture.state_json()))
+
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        first = fixture.commit("scripts/thing.py",
+                               "def double(x):\n    return x + x\nVALUE = 1\n", author="alpha")
+        fixture.run({first: {"json": verdict(survived=[survivor()])}})
+        second = fixture.commit("scripts/other.py", "VALUE = 2\n", author="alpha")
+        completed = fixture.run({second: {"json": verdict(survived=[
+            survivor(), survivor(3, "core/ReplaceBinaryOperator_Add_Div")])}})
+        record = fixture.records()[-1].read_text()
+        check("a line whose survivors were all given tasks before does not stop the next line's "
+              "new survivor from getting a task",
+              completed.returncode == 0 and task_files(alpha_list) == ["1.json", "2.json"]
+              and "already given task #1 on alpha's task list" in record
+              and "SURVIVED scripts/thing.py:3 core/ReplaceBinaryOperator_Add_Div: task #2 "
+                  "opened on alpha's task list" in record,
+              (completed.returncode, task_files(alpha_list), record))
 
     # A mutant whose task file is gone, as after a fold of its task into another and the
     # handoff prune of the completed task, follows the one open task that names its diff file;
@@ -1565,7 +1733,7 @@ def run_cases():
     # The hand run a job failure task gives holds the job's lock, because it shares the
     # merge's kept sessions with the nightly run.
     if not FLOCK_PROGRAM.exists():
-        # The job runs only on ned-box; the Mac's daily full test run still runs this suite.
+        # The job runs only on ned-box; the Mac's scheduled full test run still runs this suite.
         print(f"SKIP  [this machine cannot run it] the hand-run command's lock case: {FLOCK_PROGRAM} is missing; it exists on Linux only")
     else:
         with tempfile.TemporaryDirectory() as scratch:

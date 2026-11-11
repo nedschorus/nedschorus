@@ -6,7 +6,7 @@ the worktree is on, so a later agent-session of the same agent-seat is not told 
 that branch, a new branch that adds the same name is told it, and each other worktree keeps its
 own record. Entries for branches that no longer exist are dropped when the record is written.
 The content cache and the once-per-session failure reports stay per agent-session.
-A branch whose name no agent chose is not reported: see branch_named_by_no_agent().
+A branch's own name is never reported, because the naming page needs no check of it.
 """
 # The hook never blocks: a failure leaves the agent's turn as it was, apart from a message saying the check failed.
 
@@ -16,7 +16,6 @@ import importlib.util
 import json
 import os
 import re
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -29,8 +28,6 @@ FILE_WRITING_TOOL_NAMES = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit
 SHELL_TOOL_NAME = "Bash"
 STATE_DIRECTORY = Path(tempfile.gettempdir()) / "new-shared-names-reminder-hook-state"
 SESSION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-# Claude Code names an isolated subagent's worktree branch worktree-agent-<17 hex digits>.
-HARNESS_SUBAGENT_WORKTREE_BRANCH_PATTERN = re.compile(r"^worktree-agent-[0-9a-f]{17}$")
 LISTER_PATH = Path(__file__).resolve().parent / "new-shared-names-in-changed-files-list.py"
 
 _git_machine_readable_output_spec = importlib.util.spec_from_file_location(
@@ -41,9 +38,9 @@ git_machine_readable_output = importlib.util.module_from_spec(_git_machine_reada
 _git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
     Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 NAMING_PAGE_PATH = "docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md"
@@ -86,12 +83,6 @@ GIT_FAILURE_TEMPLATE = (
     "Nothing needs rerunning: this check runs again at your next file edit or shell command.\n"
     + next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
         "at your next file edit or shell command", "new-shared-names-reminder:")
-)
-BRANCH_CHECK_FAILURE_TEMPLATE = (
-    "new-shared-names-reminder: the check of whether this branch's name is new failed, so "
-    "the branch's name is not being listed; new names in changed files are still listed: {error}\n"
-    "The check runs again after your next edit.\n"
-    "Until it works, if you chose this branch's name, check it by hand against {page}."
 )
 
 
@@ -323,63 +314,13 @@ def worktree_fingerprint(checkout: Path, status=None):
     return hashlib.sha256("\n".join(parts).encode("utf-8", "surrogateescape")).hexdigest()
 
 
-class BranchCheckFailure(Exception):
-    pass
-
-
-def branch_named_by_no_agent(checkout: Path, branch: str) -> bool:
-    """Whether the branch is one whose name no agent chose: the branch Claude Code makes for an
-    isolated subagent's worktree, or an agent-seat's own branch in its agent-home.
-
-    An agent-home is ~/agents/<seat>, on the branch <seat>, a name the user approved when he made
-    the agent-seat. The location matters: a topic worktree is often named after its branch, so a
-    branch equal to its directory's name anywhere else is still reported.
-    """
-    if HARNESS_SUBAGENT_WORKTREE_BRANCH_PATTERN.match(branch):
-        return True
-    try:
-        agent_homes = (Path.home() / "agents").resolve()
-        top_level = checkout.resolve()
-    except (OSError, RuntimeError) as error:
-        raise BranchCheckFailure(f"could not resolve the home directory's agents directory or this checkout: {error}") from error
-    return top_level.parent == agent_homes and top_level.name == branch
-
-
-def unreported_new_branch(checkout: Path, reported, record_key: str) -> str:
-    """Return this worktree's branch, named by record_key, when origin lacks it, it is not yet
-    reported and an agent chose its name, else "".
-
-    Only this worktree's own branch is considered: other worktrees of the same clone share
-    refs/heads, and their branches belong to other agents.
-    """
-    if record_key == DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY:
-        return ""
-    branch = record_key
-    if f"branch\t{branch}" in reported or branch_named_by_no_agent(checkout, branch):
-        return ""
-    try:
-        lookup = subprocess.run(["git", "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}"],
-                                cwd=str(checkout), capture_output=True, text=True, check=False,
-                                timeout=GIT_CALL_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired as error:
-        raise BranchCheckFailure("git show-ref timed out") from error
-    except OSError as error:
-        raise BranchCheckFailure("git show-ref could not start") from error
-    if lookup.returncode == 0:
-        return ""
-    if lookup.returncode != 1:
-        first_line = (lookup.stderr.strip().splitlines() or [""])[0][:200]
-        raise BranchCheckFailure(f"git show-ref exited {lookup.returncode}: {first_line}")
-    return branch
-
-
-def failure_report_once(state: dict, error: str, template: str = FAILURE_TEMPLATE):
+def failure_report_once(state: dict, error: str):
     """Return the failure text the first time this error is seen in the agent-session, else None."""
     failures = set(state.get("reported_failures", []))
     if error in failures:
         return None
     state["reported_failures"] = sorted(failures | {error})
-    return template.format(error=error, page=NAMING_PAGE_PATH)
+    return FAILURE_TEMPLATE.format(error=error, page=NAMING_PAGE_PATH)
 
 
 def reminder_text(new_names) -> str:
@@ -484,17 +425,8 @@ def main() -> int:
     reported = record.get(record_key, set())
     # Pruned on every run, so a branch deleted and later recreated under the same name starts fresh.
     record_merge_prune_and_write_telling_failures(set())
-    branch_check_error = None
-    try:
-        new_branch = unreported_new_branch(checkout, reported, record_key)
-    except BranchCheckFailure as failure:
-        new_branch = ""
-        branch_check_error = str(failure)
-    branch_check_error_untold = (branch_check_error is not None
-                                 and branch_check_error not in state.get("reported_failures", []))
-    # A shell command that changed no file and left no new branch has nothing new to list.
-    if (tool_name == SHELL_TOOL_NAME and not new_branch and not messages and not branch_check_error_untold
-            and fingerprint == state.get("worktree_fingerprint")):
+    # A shell command that changed no file and left the worktree on the same branch has nothing new to list.
+    if tool_name == SHELL_TOOL_NAME and not messages and fingerprint == state.get("worktree_fingerprint"):
         return 0
     state["worktree_fingerprint"] = fingerprint
 
@@ -502,19 +434,11 @@ def main() -> int:
     names = []
     try:
         lister = load_lister()
-        names = lister.new_shared_names(checkout, [new_branch] if new_branch else [],
-                                        already_reported=frozenset(reported), file_cache=file_cache)
+        names = lister.new_shared_names(checkout, already_reported=frozenset(reported), file_cache=file_cache)
     except Exception as failure:
         failure_text = failure_report_once(state, str(failure) or type(failure).__name__)
         if failure_text:
             messages.append(failure_text)
-    else:
-        # Told only when the lister worked, because the branch-check text says names in changed files are
-        # still listed; left unmarked otherwise, so a later run where only the branch check fails tells it.
-        if branch_check_error is not None:
-            failure_text = failure_report_once(state, branch_check_error, BRANCH_CHECK_FAILURE_TEMPLATE)
-            if failure_text:
-                messages.append(failure_text)
 
     state["file_cache"] = file_cache
     # Only the names the reminder shows count as reported; the rest are shown by a later reminder.

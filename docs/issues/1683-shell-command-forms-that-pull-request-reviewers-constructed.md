@@ -12,7 +12,7 @@ The user approved this rule on 2026-10-19, answering "A" to item 17 of agent-sea
 
 "Today merge-lane-2 sends each such finding to the pull request's author, who opens a follow-up pull request. Instead, merge-lane-2 files one GitHub issue for the shell reader with the ghi-write skill, and from then on adds each such finding to that issue's GHI-MD with the edit-GHI operation, and does not send the finding to the author. A command form moves from that issue to a pull request only when a real command an agent ran, recorded in a transcript, uses that form."
 
-Write only constructed forms here. This repository is public, and recorded commands and transcripts can hold secrets, so no text from a recorded command, a transcript, or the Bash guards' replay corpus (the store of recorded commands that `nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py` replays through every Bash guard) goes into this file. To show that a recorded command uses a form, cite the transcript's path in the log-store, never its text.
+Write only constructed forms here. This repository is public, and recorded commands and transcripts can hold secrets, so no text from a recorded command, a transcript, or the corpus of `nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py` (the store of recorded commands that program replays through every Bash guard) goes into this file. To show that a recorded command uses a form, cite the transcript's path in the log-store, never its text.
 
 ## How this differs from GHI 1196
 

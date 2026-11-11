@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Find file copies by name across both machines, then search backups if none are found."""
+"""Find file copies by name across both machines, then search backups if none are found.
+
+When nothing is found and every candidate has one and the same name, other than the
+query's own, the search runs once more with that full name, in the query's directory
+when the query is a path, and so does the backup search when that search too finds
+nothing. The second search does not try again a machine the first could not reach, and
+it is skipped when the candidate list was cut, since then not every candidate was seen.
+"""
 
 from __future__ import annotations
 
@@ -837,7 +844,7 @@ def render_group(group, lines):
 
 
 def render(query, target, results, not_searched, elapsed):
-    """Return (report text, exit code) for both machines."""
+    """Return (report text, exit code, the distinct names of the candidates) for both machines."""
     stem = query_stem(query)
     name = query_name(query)
     kind, wanted = target["kind"], target["parts"]
@@ -903,6 +910,7 @@ def render(query, target, results, not_searched, elapsed):
 
     lines = [f"{PROGRAM}: file names containing \"{stem}\", any case"]
     truncated = False
+    candidates_cut = False
     if same:
         lines += ["", f"{heading}, newest first:"]
         for group in same:
@@ -940,13 +948,13 @@ def render(query, target, results, not_searched, elapsed):
             failed += [f"{machine} git: {failure}"
                        for failure in git["failed"]]
             if git.get("candidates_cut"):
-                truncated = True
+                truncated = candidates_cut = True
                 lines.append(f"  {machine} git: every path named {name} was "
                              f"kept, and {git['candidates_cut']} older "
                              f"candidate path(s) were cut, past the newest "
                              f"{MAX_GIT_PATHS_PER_CLONE} per clone")
         if result.get("candidate_matches_total", 0) > MAX_FILE_HITS_PER_MACHINE:
-            truncated = True
+            truncated = candidates_cut = True
             lines.append(f"  {machine}: {result['file_matches_total']} files "
                          f"matched; every one named {name} was kept, and "
                          f"only the newest {MAX_FILE_HITS_PER_MACHINE} of the "
@@ -998,7 +1006,13 @@ def render(query, target, results, not_searched, elapsed):
         code = 3
     else:
         code = 1
-    return "\n".join(lines) + "\n", code
+    # Names match case-insensitively, so names that differ only in case are one name.
+    candidate_names = sorted({os.path.basename(entry["hit"]["path"]).lower():
+                              os.path.basename(entry["hit"]["path"])
+                              for group in other for entry in group}.values())
+    if candidates_cut:
+        candidate_names = None
+    return "\n".join(lines) + "\n", code, candidate_names
 
 
 def write_text(text):
@@ -1093,7 +1107,12 @@ def main(argv=None) -> int:
                         "extension is the same, so report finds report.md; a name "
                         "with a dot anywhere, such as .gitignore, counts only that "
                         "name. A name that opens with a "
-                        "dash goes after --, as in -- -nbd-test.py")
+                        "dash goes after --, as in -- -nbd-test.py. When nothing "
+                        "is found and every candidate has one and the same name, "
+                        "other than the query's own, the program runs again with "
+                        "that full name, in the query's directory when the "
+                        "query is a path, says so, and exits as that second "
+                        "run does")
     parser.add_argument(THIS_MACHINE_JSON_FLAG, metavar="SURFACES_JSON",
                         help="search only this machine, over these surfaces, "
                              "and print the answer as JSON: what the program "
@@ -1127,8 +1146,36 @@ def main(argv=None) -> int:
         json.dump(result, sys.stdout)
         return 0
 
-    started_at = time.monotonic()
     plan = plan_for_this_run()
+    code, candidate_names, unreached = search_and_report(query, plan)
+    if code == 0 or not candidate_names or len(candidate_names) != 1 \
+            or is_same_name(candidate_names[0], name):
+        return code
+    full_name = candidate_names[0]
+    # A path query keeps its directory, so only a file at that path counts as found.
+    rerun_query = (os.path.join(os.path.dirname(query), full_name)
+                   if len(parts_of(query)) > 1 else full_name)
+    write_text(f"\nNo copy was found, and every candidate is named "
+               f"{full_name}, so this program runs again with "
+               f"{rerun_query} in place of {query}.\n\n")
+    if unreached is not None:
+        # The other machine did not answer the first search; asking again would wait out the same timeout.
+        # Its layout and spellings stay, because the query's target is placed with them.
+        other = {key: value for key, value in plan["other"].items()
+                 if key != "ssh_target"}
+        other["not_searched_because"] = unreached
+        plan = dict(plan, other=other)
+    return search_and_report(rerun_query, plan)[0]
+
+
+def search_and_report(query, plan):
+    """Search both machines for `query`, print the answer, run the backup search when
+    nothing is found, and return (exit code, the distinct names of the candidates or None
+    when the candidate list was cut, why the other machine was not searched or None)."""
+    stem = query_stem(query)
+    name = query_name(query)
+    check_tracked = len(parts_of(query)) > 1
+    started_at = time.monotonic()
     other = plan.get("other")
     not_searched = []
     remote = None
@@ -1149,15 +1196,17 @@ def main(argv=None) -> int:
             not_searched.append((other["machine"], answer))
 
     target = query_target(query, *layouts_and_spellings(plan))
-    text, code = render(query, target, results, not_searched,
-                        time.monotonic() - started_at)
+    text, code, candidate_names = render(query, target, results, not_searched,
+                                         time.monotonic() - started_at)
     write_text(text)
     if code != 0:
         closing = run_backup_search_after_nothing_found(
             target.get("canonical", target["path"]), code == 1)
         if closing:
             write_text("\n" + "\n".join(closing) + "\n")
-    return code
+    unreached = next((reason for machine, reason in not_searched
+                      if other and machine == other["machine"]), None)
+    return code, candidate_names, unreached
 
 
 if __name__ == "__main__":

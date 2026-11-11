@@ -8,8 +8,11 @@ as a squash by `git reset --soft` onto a newer main does; git merges such a
 branch cleanly, so the conflict check cannot see it. A branch the conflict
 check gives no verdict on is not sent to the revert check, which relies on the
 conflict check's fetch; a line says so and gives the command to run the revert
-check by hand. No per-branch line says what happens to the push: a later branch
-can still refuse it, so the outcome is said once, after every branch."""
+check by hand. No line printed while the branches are checked says what happens
+to the push, since a later branch can still refuse it. Once every branch is
+checked, a push that goes through gets at most one line, naming the branches it
+goes through without a clean verdict for, and a refused push gets one "this push
+is refused" line for each branch that conflicts or sets a file back."""
 # Fail open: a missed conflict is caught in review, but a wrongly blocked push stops work.
 # Keep Git’s environment so the check sees the repository actually being pushed.
 
@@ -45,8 +48,11 @@ TERMINATE_GRACE_SECONDS = 3.0
 MESSAGE_PREFIX = "pre-push: "
 SHORT_COMMIT_LENGTH = 12
 # Git runs a hook from the top of the worktree being pushed, so scripts/ is the worktree's.
-PRE_PUSH_CHECK_FROM_WORKTREE_RUN_BY_HAND_COMMAND = "python3 scripts/%s --head %s"
-PRE_PUSH_CHECK_FROM_REFERENCE_CHECKOUT_RUN_BY_HAND_COMMAND = "python3 %s --head %s"
+PRE_PUSH_CHECK_FROM_WORKTREE_RUN_BY_HAND_COMMAND = "python3 scripts/%s %s"
+PRE_PUSH_CHECK_FROM_REFERENCE_CHECKOUT_RUN_BY_HAND_COMMAND = "python3 %s %s"
+# --branch lets the hand check say whether the branch is rebased or its pull request replaced.
+CONFLICT_CHECK_ARGUMENTS = "--head %s --branch %s"
+REVERT_CHECK_ARGUMENTS = "--head %s"
 PRE_PUSH_CHECK_SCRIPT_MISSING_FROM_WORKTREE_AND_REFERENCE_CHECKOUT_TEXT = ("no copy of the check exists to run, as your worktree has no scripts/%s "
                        "and %s is missing too; tell the user")
 TELL_USER_LINE = ("Tell the user this whole message, including any error printed just "
@@ -190,27 +196,27 @@ def pre_push_check_script_path_in_reference_checkout(check_file_name):
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), check_file_name)
 
 
-def pre_push_check_run_by_hand_command(check_file_name, head):
+def pre_push_check_run_by_hand_command(check_file_name, arguments):
     """The command that runs a check by hand from a copy of it that exists: the worktree's,
     else the reference checkout's; PRE_PUSH_CHECK_SCRIPT_MISSING_FROM_WORKTREE_AND_REFERENCE_CHECKOUT_TEXT when neither exists."""
     if os.path.isfile(os.path.join("scripts", check_file_name)):
-        return PRE_PUSH_CHECK_FROM_WORKTREE_RUN_BY_HAND_COMMAND % (check_file_name, head)
+        return PRE_PUSH_CHECK_FROM_WORKTREE_RUN_BY_HAND_COMMAND % (check_file_name, arguments)
     hook_copy = pre_push_check_script_path_in_reference_checkout(check_file_name)
     if os.path.isfile(hook_copy):
-        return PRE_PUSH_CHECK_FROM_REFERENCE_CHECKOUT_RUN_BY_HAND_COMMAND % (shlex.quote(hook_copy), head)
+        return PRE_PUSH_CHECK_FROM_REFERENCE_CHECKOUT_RUN_BY_HAND_COMMAND % (shlex.quote(hook_copy), arguments)
     return PRE_PUSH_CHECK_SCRIPT_MISSING_FROM_WORKTREE_AND_REFERENCE_CHECKOUT_TEXT % (check_file_name, hook_copy)
 
 
 def hand_check_line(branch, object_id):
     return "Check %s by hand from your worktree: %s" % (
-        branch, pre_push_check_run_by_hand_command(CONFLICT_CHECK_FILE_NAME,
-                                                   short_commit(object_id)))
+        branch, pre_push_check_run_by_hand_command(
+            CONFLICT_CHECK_FILE_NAME, CONFLICT_CHECK_ARGUMENTS % (short_commit(object_id), branch)))
 
 
 def revert_after_hand_conflict_check_line(branch, object_id):
     return REVERT_AFTER_HAND_CONFLICT_CHECK_LINE % (
-        branch, pre_push_check_run_by_hand_command(REVERT_CHECK_FILE_NAME,
-                                                   short_commit(object_id)))
+        branch, pre_push_check_run_by_hand_command(
+            REVERT_CHECK_FILE_NAME, REVERT_CHECK_ARGUMENTS % short_commit(object_id)))
 
 
 def say_branch_not_checked(stream, branch, because):
@@ -254,12 +260,14 @@ def say_error_before_branches_read(stream, error_text):
         "conflicts with %s." % (error_text, BASE_NAME_FOR_MESSAGES))
     say(stream, "For each branch this push sends to %s, other than main, run from your "
         "worktree: %s" % (CHECKED_REMOTE_NAME, pre_push_check_run_by_hand_command(
-            CONFLICT_CHECK_FILE_NAME, "<branch name>")))
+            CONFLICT_CHECK_FILE_NAME,
+            CONFLICT_CHECK_ARGUMENTS % ("<branch name>", "<branch name>"))))
     say(stream, "Nor was any branch checked for files set back to a version that %s has "
         "replaced. For each branch this push sends to %s, other than main, once that conflict "
         "check prints VERDICT: CLEAN, also run: %s"
         % (BASE_NAME_FOR_MESSAGES, CHECKED_REMOTE_NAME,
-           pre_push_check_run_by_hand_command(REVERT_CHECK_FILE_NAME, "<branch name>")))
+           pre_push_check_run_by_hand_command(REVERT_CHECK_FILE_NAME,
+                                              REVERT_CHECK_ARGUMENTS % "<branch name>")))
     say(stream, PUSH_GOES_ON_LINE % "any of its branches")
     say(stream, TELL_USER_LINE)
 
@@ -307,7 +315,8 @@ def main(argv, pushed_refs_text, stderr, environment):
                 say(stderr, line)
             say(stderr, "Follow the report, then check %s again by hand from your "
                 "worktree: %s" % (branch, pre_push_check_run_by_hand_command(
-                    CONFLICT_CHECK_FILE_NAME, short_commit(local_object_id))))
+                    CONFLICT_CHECK_FILE_NAME,
+                    CONFLICT_CHECK_ARGUMENTS % (short_commit(local_object_id), branch))))
             say_revert_check_not_run(stderr, branch, local_object_id)
             say(stderr, RERUN_VERDICT_LINE)
         elif result.kind == "timed out":
@@ -381,8 +390,8 @@ def check_reverts(branches, deadline, budget, stderr):
             % (branch, BASE_NAME_FOR_MESSAGES, reason))
         unchecked.append((branch, local_object_id))
         say(stderr, "Check it by hand from your worktree: %s"
-            % pre_push_check_run_by_hand_command(REVERT_CHECK_FILE_NAME,
-                                                 short_commit(local_object_id)))
+            % pre_push_check_run_by_hand_command(
+                REVERT_CHECK_FILE_NAME, REVERT_CHECK_ARGUMENTS % short_commit(local_object_id)))
         say(stderr, "If that run prints no VERDICT line, tell the user this whole message "
             "and what that run printed.")
     return reverts, unchecked

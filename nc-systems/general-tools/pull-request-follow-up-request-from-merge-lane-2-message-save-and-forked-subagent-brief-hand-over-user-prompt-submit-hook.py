@@ -30,7 +30,7 @@ MERGE_LANE_2_SENDER_PATTERN = re.compile(r"\bfrom-name=\"merge-lane-2\"")
 FOLLOW_UP_PROGRAM_PATH = (Path(__file__).resolve().parents[2] / "scripts"
                          / "pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py")
 # Each text this hook hands an agent follows
-# docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 UNREADABLE_BLOCK_LINES = (
     HOOK + ": merge-lane-2's message above holds a #follow_up_request block that the hook could not "
     "read, so nothing was saved, and no follow-up brief is given.\n"

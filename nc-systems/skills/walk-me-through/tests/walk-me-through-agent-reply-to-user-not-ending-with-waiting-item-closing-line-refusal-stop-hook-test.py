@@ -28,6 +28,12 @@ _git_environment_fixture_spec = importlib.util.spec_from_file_location(
 _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+_attendance_check_spec = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().parents[4] / "nc-systems" / "general-tools"
+    / "agent-session-unattended-by-user-check-common.py")
+attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
+_attendance_check_spec.loader.exec_module(attendance_check)
 
 HOOK_SCRIPT = (Path(__file__).resolve().parents[1]
                / "walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py")
@@ -178,9 +184,7 @@ class Case:
                    "stop_hook_active": stop_hook_active}
         if last_assistant_message is not None:
             payload["last_assistant_message"] = last_assistant_message
-        environment = {name: value for name, value in os.environ.items()
-                       if name not in ("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
-                                       "CLAUDE_CODE_SESSION_ATTENDED")}
+        environment = attendance_check.environment_without_agent_session_attendance_variables(os.environ)
         environment.update(environment_extra or {})
         return subprocess.run(
             [sys.executable, str(HOOK_SCRIPT)],

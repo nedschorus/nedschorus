@@ -176,7 +176,7 @@ def main():
         git("worktree", "add", "-q", "--detach", str(stale), before, cwd=clone)
         message = common.review_tool_missing_message(
             argparse.Namespace(review_tools_worktree_at_main=stale), "scripts/tool.py")
-        command = printed_command_after(message or "", "move it to main:")
+        command = printed_command_after(message or "", "Move it to main:")
         completed = run_printed(command) if command else None
         check("the printed command for an existing worktree, run as printed, moves it to main "
               "so the tool is there",
@@ -184,16 +184,39 @@ def main():
               and (stale / "scripts" / "tool.py").is_file(),
               f"{message}\n" + ("" if completed is None else completed.stderr))
 
+        check("the printed command for an existing worktree does not tell the reader to "
+              "make it", "worktree add" not in (message or ""), message or "")
+        check("the message for an existing worktree ends by saying what to do when main "
+              "itself lacks the tool",
+              (message or "").endswith("main itself lacks scripts/tool.py: tell the "
+                                       "user this message."), message or "")
+
+        check("the checkout the module names for making a missing worktree is the one "
+              "holding the module",
+              common.REPOSITORY_ROOT == MODULE.resolve().parents[1]
+              and (common.REPOSITORY_ROOT / ".git").exists(),
+              str(common.REPOSITORY_ROOT))
         absent = scratch / "absent-review-tools"
-        message = common.review_tool_missing_message(
-            argparse.Namespace(review_tools_worktree_at_main=absent), "scripts/tool.py")
-        command = printed_command_after(message or "", "from any clone of this repository:")
-        completed = (run_printed(command.replace("<clone>", str(clone)))
-                     if command and "<clone>" in command else None)
-        check("the printed command for a missing worktree, run as printed from a clone, makes "
-              "it at main so the tool is there",
+        # origin/main as last fetched lacks the tool, so the printed command works
+        # only if it fetches first.
+        git("update-ref", "refs/remotes/origin/main", before, cwd=clone)
+        # The scratch clone takes the place of the checkout holding the module, so
+        # running the printed command registers no worktree in the real repository.
+        real_checkout, common.REPOSITORY_ROOT = common.REPOSITORY_ROOT, clone
+        try:
+            message = common.review_tool_missing_message(
+                argparse.Namespace(review_tools_worktree_at_main=absent), "scripts/tool.py")
+        finally:
+            common.REPOSITORY_ROOT = real_checkout
+        command = printed_command_after(message or "", "Make it at main:")
+        completed = run_printed(command) if command else None
+        check("the printed command for a missing worktree, run as printed, makes it at main "
+              "from the checkout holding the module, so the tool is there",
               completed is not None and completed.returncode == 0
-              and (absent / "scripts" / "tool.py").is_file(),
+              and (absent / "scripts" / "tool.py").is_file()
+              and "<" not in command and "move it to main" not in message.lower()
+              and message.endswith("main itself lacks scripts/tool.py: tell the "
+                                   "user this message."),
               f"{message}\n" + ("" if completed is None else completed.stderr))
     finally:
         os.chdir(saved_directory)

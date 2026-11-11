@@ -264,14 +264,13 @@ class GeminiTaskTests(unittest.TestCase):
     def test_sandbox_arguments_and_credential_denial_order(self):
         common = runner.agy_cell.common
         with patch.object(common, "credential_directories_present", return_value=["/credentials"]), \
-                patch.object(common, "credential_files_found_now", return_value=["/data/.env"]), \
                 patch.object(common, "reviewer_program_login_files", return_value=["/codex/auth.json"]) as login:
             prefix = runner.agy_cell.credential_sandbox_prefix("linux", writable_paths=[
                 (self.report, False), (self.base, True)], network=False)
             self.assertEqual(prefix, ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--bind", str(self.report),
                                      str(self.report), "--bind", str(self.base), str(self.base),
                                      "--unshare-net", "--tmpfs", "/credentials", "--ro-bind", "/dev/null",
-                                     "/data/.env", "--ro-bind", "/dev/null", "/codex/auth.json"])
+                                     "/codex/auth.json"])
             login.assert_called_with(except_program="agy", only_present=True)
             legacy = runner.agy_cell.credential_sandbox_prefix("linux")
             self.assertEqual(legacy[:4], ["bwrap", "--dev-bind", "/", "/"])

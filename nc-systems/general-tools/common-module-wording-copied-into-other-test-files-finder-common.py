@@ -18,7 +18,7 @@ at least MINIMUM_WORDS_IN_A_COPIED_PIECE words: a shorter one, such as
 A copy is a run of at least MINIMUM_WORDS_IN_A_COPIED_PIECE words in a row
 that a piece and a string literal share, docstrings left out, in a test file of
 the checkout, as path_is_test_file in
-python-source-agent-facing-string-collector-common.py decides. Words are what
+python-source-tool-message-to-agent-string-collector-common.py decides. Words are what
 whitespace separates, compared without the punctuation at either end, so
 "user." is the word "user". Implicitly concatenated literals count as one
 literal; an f-string's fields split it, so a run must fall inside one literal
@@ -55,8 +55,8 @@ GIT_LS_FILES_TIMEOUT_SECONDS = 60
 F_STRING_FIELD_STAND_IN = "\0"
 
 _collector_spec = importlib.util.spec_from_file_location(
-    "python_source_agent_facing_string_collector_common",
-    Path(__file__).resolve().parent / "python-source-agent-facing-string-collector-common.py")
+    "python_source_tool_message_to_agent_string_collector_common",
+    Path(__file__).resolve().parent / "python-source-tool-message-to-agent-string-collector-common.py")
 _collector = importlib.util.module_from_spec(_collector_spec)
 _collector_spec.loader.exec_module(_collector)
 _git_environment_spec = importlib.util.spec_from_file_location(

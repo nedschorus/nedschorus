@@ -265,7 +265,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/python-edit-changed-agent-facing-message-check-reminder-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py",
             "timeout": 30
           }
         ]
