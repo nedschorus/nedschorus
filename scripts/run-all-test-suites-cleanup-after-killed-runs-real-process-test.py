@@ -364,10 +364,10 @@ else:
 
 # --- The launcher a suite outside an nc-test-sandbox starts under ----------------
 _launcher_spec = importlib.util.spec_from_file_location(
-    "suite_launcher", module.SUITE_LAUNCHER_ADOPTING_ORPHANED_DESCENDANTS)
+    "suite_launcher", module.ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH)
 launcher = importlib.util.module_from_spec(_launcher_spec)
 _launcher_spec.loader.exec_module(launcher)
-LAUNCHER_COMMAND = [sys.executable, "-I", str(module.SUITE_LAUNCHER_ADOPTING_ORPHANED_DESCENDANTS)]
+LAUNCHER_COMMAND = [sys.executable, "-I", str(module.ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH)]
 
 
 class PrctlRefuses:
@@ -385,7 +385,7 @@ finally:
     sys.stderr = real_stderr
     launcher.ctypes.CDLL = real_cdll
 check("the launcher starts no suite, exits 125 and says why, when prctl refuses",
-      refused_status == launcher.LAUNCH_FAILED_EXIT_STATUS
+      refused_status == launcher.CHILD_SUBREAPER_LAUNCHER_SUITE_NOT_STARTED_EXIT_STATUS
       and "prctl(PR_SET_CHILD_SUBREAPER) failed" in captured_stderr.getvalue()
       and "was not started" in captured_stderr.getvalue(), captured_stderr.getvalue())
 
@@ -396,7 +396,7 @@ else:
     missing = subprocess.run([*LAUNCHER_COMMAND, "/nonexistent/suite-command"],
                              capture_output=True, text=True, timeout=60)
     check("the launcher exits 125 and says why when the suite's command cannot start",
-          missing.returncode == launcher.LAUNCH_FAILED_EXIT_STATUS
+          missing.returncode == launcher.CHILD_SUBREAPER_LAUNCHER_SUITE_NOT_STARTED_EXIT_STATUS
           and "the command could not start" in missing.stderr, missing)
     no_command = subprocess.run(LAUNCHER_COMMAND, capture_output=True, text=True, timeout=60)
     check("the launcher given no command runs nothing and exits 2",

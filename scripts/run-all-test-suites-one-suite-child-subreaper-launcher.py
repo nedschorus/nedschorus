@@ -2,7 +2,7 @@
 """Run one test suite's command as the child of a Linux child subreaper, for
 scripts/run-all-test-suites.py.
 
-Usage: python3 -I run-all-test-suites-suite-launcher-adopting-orphaned-descendants.py <command> [<argument> ...]
+Usage: python3 -I run-all-test-suites-one-suite-child-subreaper-launcher.py <command> [<argument> ...]
 
 The runner starts this program in place of a suite that runs outside an nc-test-sandbox.
 It makes itself a child subreaper, prctl(PR_SET_CHILD_SUBREAPER), then starts the command
@@ -26,7 +26,7 @@ import subprocess
 import sys
 
 PR_SET_CHILD_SUBREAPER = 36
-LAUNCH_FAILED_EXIT_STATUS = 125
+CHILD_SUBREAPER_LAUNCHER_SUITE_NOT_STARTED_EXIT_STATUS = 125
 LAUNCH_FAILED_MESSAGE_TEMPLATE = (
     "{program}: the nc-test-suite `{command}` was not started, so the runner reports it "
     "FAIL although none of its cases ran: {reason}.\n"
@@ -58,7 +58,7 @@ def main(command):
     def failed(reason):
         sys.stderr.write(LAUNCH_FAILED_MESSAGE_TEMPLATE.format(
             program=sys.argv[0], command=" ".join(command), reason=reason))
-        return LAUNCH_FAILED_EXIT_STATUS
+        return CHILD_SUBREAPER_LAUNCHER_SUITE_NOT_STARTED_EXIT_STATUS
 
     libc = ctypes.CDLL(None, use_errno=True)
     if libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
