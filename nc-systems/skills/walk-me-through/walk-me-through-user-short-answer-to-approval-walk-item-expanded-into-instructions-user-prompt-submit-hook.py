@@ -620,7 +620,7 @@ def recommendations_in(lines, openings, spans, walk_finder, starts):
                 continue
         for number in numbers:
             part = lines[ranges[number][0]:ranges[number][1]]
-            found[number] = walk_finder.approval_walk_item_recommendation_text(part)
+            found[number] = walk_finder.approval_walk_item_last_recommendation_text_from_item_lines(part)
             numbered = part_numbers(starts, *ranges[number])
             if numbered:
                 parts[number] = numbered

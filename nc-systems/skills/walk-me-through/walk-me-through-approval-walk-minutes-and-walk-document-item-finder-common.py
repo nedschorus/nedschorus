@@ -233,7 +233,7 @@ def markdown_parser():
                        MARKDOWN_PARSER_MODULE_FILE).markdown_parser()
 
 
-def approval_walk_item_recommendation_text(lines):
+def approval_walk_item_last_recommendation_text_from_item_lines(lines):
     """The last recommendation in an item's prose_lines, the text after `Recommendation:` as written, without
     emphasis or one trailing period; or None when there is none, or the last one has no text after it."""
     found = [match[1].strip(" *_") for match in RECOMMENDATION.finditer("\n".join(lines))]
