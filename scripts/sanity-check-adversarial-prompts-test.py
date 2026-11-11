@@ -1004,6 +1004,7 @@ def main():
 
     def capture_command(command, *arguments, **keywords):
         captured["command"] = list(command)
+        captured["env"] = keywords.get("env")
         return subprocess.CompletedProcess(list(command), 0, "", "")
 
     # The credential lists are pointed at a scratch home for the call, so the
@@ -1028,7 +1029,20 @@ def main():
             for directory in real_lists[0])
         shared.REVIEWER_PROGRAM_LOGIN_FILES = {"codex": (login_canary,)}
         shared.credential_files_found_now = lambda: []
-        runner_memories.run_codex("a prompt no model ever sees")
+        real_token_file = shared.SANDBOXED_MODELS_READ_ONLY_GITHUB_TOKEN_FILE
+        shared.SANDBOXED_MODELS_READ_ONLY_GITHUB_TOKEN_FILE = scratch_home / "read-only-token"
+        shared.SANDBOXED_MODELS_READ_ONLY_GITHUB_TOKEN_FILE.write_text("read-only\n", encoding="utf-8")
+        real_tokens = {name: os.environ.get(name) for name in ("GH_TOKEN", "GITHUB_TOKEN")}
+        os.environ.update(GH_TOKEN="agent-seat-token", GITHUB_TOKEN="agent-seat-token")
+        try:
+            runner_memories.run_codex("a prompt no model ever sees")
+        finally:
+            shared.SANDBOXED_MODELS_READ_ONLY_GITHUB_TOKEN_FILE = real_token_file
+            for name, value in real_tokens.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
     finally:
         runner_memories.run_agent_binary_unless_run_stopped = real_memories_launch
         (shared.CREDENTIAL_DIRECTORIES, shared.REVIEWER_PROGRAM_LOGIN_FILES,
@@ -1046,6 +1060,12 @@ def main():
     denied_table = next((override.split("=", 1)[1] for override in codex_overrides
                          if override.startswith("permissions.sanity-check-no-credentials.filesystem=")),
                         "")
+    codex_environment = captured.get("env") or {}
+    check("run_codex gives codex the read-only GitHub token and none of the agent-seat's",
+          codex_environment.get("GH_TOKEN") == "read-only"
+          and "GITHUB_TOKEN" not in codex_environment, repr(sorted(codex_environment)))
+    check("run_codex asks codex for live web search",
+          'web_search="live"' in codex_overrides, repr(codex_overrides))
     check("run_codex runs under no --sandbox, which Codex will not combine with a profile",
           "--sandbox" not in codex_command, f"composed command was {codex_command}")
     check("run_codex runs under the credential-denying profile, extending :workspace, network on",

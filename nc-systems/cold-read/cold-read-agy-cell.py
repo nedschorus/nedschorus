@@ -196,8 +196,8 @@ def sandbox_exec_profile() -> str:
 
 
 def credential_sandbox_prefix(platform: str = sys.platform, *,
-                              writable_paths=None, network: bool = True) -> list:
-    """Return the sandbox argv prefix, optionally restricting writes and network.
+                              writable_paths=None) -> list:
+    """Return the sandbox argv prefix, optionally restricting writes.
 
     writable_paths contains (path, is_directory) pairs; None preserves the
     cold-read-cell's write access. Credential denials override write grants.
@@ -209,8 +209,6 @@ def credential_sandbox_prefix(platform: str = sys.platform, *,
                 f'(require-not ({"subpath" if directory else "literal"} '
                 f'{json.dumps(str(path))}))' for path, directory in writable_paths)
             profile += f"(deny file-write* (require-all {exceptions}))"
-        if not network:
-            profile += "(deny network*)"
         return ["sandbox-exec", "-p", profile]
     prefix = ["bwrap", "--dev-bind" if writable_paths is None else "--ro-bind", "/", "/"]
     if writable_paths is not None:
@@ -218,8 +216,6 @@ def credential_sandbox_prefix(platform: str = sys.platform, *,
         prefix += ["--dev", "/dev"]
         for path, _directory in writable_paths:
             prefix += ["--bind", str(path), str(path)]
-    if not network:
-        prefix += ["--unshare-net"]
     for directory in common.credential_directories_present():
         prefix += ["--tmpfs", directory]
     for path in (common.credential_files_found_now()
@@ -259,6 +255,10 @@ def main() -> int:
               f"{PROGRAM}: if you cannot install it, run this cold read on the Mac.",
               file=sys.stderr)
         return common.EXIT_BAD_INVOCATION
+    environment, token_note = common.process_environment_copy_with_agent_seat_github_tokens_replaced_by_read_only_github_token(
+        agy_environment_copy_without_gemini_api_key(os.environ))
+    if token_note:
+        print(f"{PROGRAM}: {token_note}", file=sys.stderr)
     return common.run_cell(
         program=PROGRAM, runtime="agy", description=__doc__,
         model_help="explicit Antigravity model id (effort suffix included, "
@@ -268,7 +268,7 @@ def main() -> int:
         invocation_builder=invocation_builder,
         recover_report_from_stdout=stdout_is_a_review,
         recognised_failure_texts_for_model=logged_out_failure_texts,
-        child_environment=agy_environment_copy_without_gemini_api_key(os.environ),
+        child_environment=environment,
         per_model_run_timeout_seconds=COLD_READ_AGY_CELL_PER_MODEL_RUN_KILL_AFTER_SECONDS,
     )
 

@@ -9,7 +9,8 @@ must not drift are pinned:
 
   - model and reasoning effort, explicit (the tier convention of
     nc-systems/cold-read/cold-read-codex-cell.py: `deep` = gpt-6.1-sol at xhigh);
-  - the sandbox, read-only and denying every credential file, placed AFTER
+  - the sandbox, read-only with the network and live web search on, and
+    denying every credential file, placed AFTER
     `review`, because the review's commands drop a profile placed before it
     -- see WHERE THE PERMISSION PROFILE GOES below, which also says how to
     re-check it after a Codex upgrade. It is a permission profile extending
@@ -440,6 +441,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -652,7 +654,9 @@ def main(argv=None) -> int:
         # commands run in a child thread that drops a profile placed before
         # it. See WHERE THE PERMISSION PROFILE GOES in the docstring.
         *common.codex_credential_denying_permission_profile_arguments(
-            CREDENTIAL_DENYING_PERMISSION_PROFILE, ":read-only"),
+            CREDENTIAL_DENYING_PERMISSION_PROFILE, ":read-only", network=True),
+        # `codex exec` does not accept --search; this config key is what that flag sets.
+        "-c", 'web_search="live"',
         # The instructions and the description, AFTER `review` too: placed
         # before `exec` or between `exec` and `review` they did not reach the
         # review. See THE PULL REQUEST'S DESCRIPTION in the docstring.
@@ -662,11 +666,14 @@ def main(argv=None) -> int:
         "-c", f"model_reasoning_effort={REASONING_EFFORT}",
         "--output-last-message", str(output_path),
     ]
+    environment, token_note = common.process_environment_copy_with_agent_seat_github_tokens_replaced_by_read_only_github_token(os.environ)
+    if token_note:
+        print(f"code-review-codex-cell: {token_note}", file=sys.stderr)
     try:
         # stderr is captured, not discarded: on failure its tail is the only
         # explanation anyone gets. On success it stays unprinted.
         completed = subprocess.run(
-            command, cwd=repo, stdin=subprocess.DEVNULL,
+            command, cwd=repo, stdin=subprocess.DEVNULL, env=environment,
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
             timeout=REVIEW_TIMEOUT_SECONDS, check=False,
         )

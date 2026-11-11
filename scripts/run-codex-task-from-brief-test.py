@@ -40,6 +40,10 @@ if "FAKE_CODEX_PID_FILE" in os.environ:
     open(os.environ["FAKE_CODEX_PID_FILE"], "w").write(str(os.getpid()))
 with open(os.environ["FAKE_CODEX_ARGUMENTS_FILE"], "w") as record:
     json.dump(arguments, record)
+with open(os.environ["FAKE_CODEX_ARGUMENTS_FILE"] + ".environment", "w") as record:
+    json.dump({name: os.environ.get(name) for name in (
+        "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+        "GH_CONFIG_DIR")}, record)
 report = arguments[arguments.index("-o") + 1]
 mode = os.environ.get("FAKE_CODEX_MODE", "report")
 print("fake codex trace line")
@@ -247,38 +251,40 @@ try:
 
     completed, report, _ = run("report")
     arguments = json.loads(arguments_file.read_text())
-    check("without the widening options Codex gets no network, extra folder, git skip or web search",
-          not any("network" in argument or "web_search" in argument for argument in arguments)
-          and "--add-dir" not in arguments and "--skip-git-repo-check" not in arguments,
-          repr(arguments))
+    check("by default Codex gets the network and live web search, after exec, and no extra "
+          "folder or git skip",
+          "permissions.codex-task-no-credentials.network.enabled=true" in arguments
+          and ["-c", 'web_search="live"'] == arguments[arguments.index('web_search="live"') - 1:
+                                                       arguments.index('web_search="live"') + 1]
+          and "--add-dir" not in arguments and "--skip-git-repo-check" not in arguments
+          if 'web_search="live"' in arguments else False, repr(arguments))
+
+    completed, report, _ = run("report", "--no-network")
+    arguments = json.loads(arguments_file.read_text())
+    check("--no-network takes away both the network and web search",
+          completed.returncode == 0
+          and not any("network" in argument or "web_search" in argument
+                      for argument in arguments), repr(arguments))
 
     extra_root_one = scratch / "extra one"
     extra_root_two = scratch / "extra-two"
-    completed, report, _ = run("report", "--sandbox", "workspace-write", "--network",
+    completed, report, _ = run("report", "--sandbox", "workspace-write",
                                "--writable-root", str(extra_root_one),
                                "--writable-root", str(extra_root_two),
-                               "--outside-git-checkout", "--web-search")
+                               "--outside-git-checkout")
     arguments = json.loads(arguments_file.read_text())
     added_folders = [arguments[index + 1] for index, argument in enumerate(arguments)
                      if argument == "--add-dir"]
-    check("--network turns on the permission profile's network",
-          completed.returncode == 0
-          and "permissions.codex-task-no-credentials.network.enabled=true" in arguments,
-          f"exit {completed.returncode}, {arguments!r}, stderr {completed.stderr!r}")
     check("each --writable-root reaches Codex as its own --add-dir, path whole",
           added_folders == [str(extra_root_one), str(extra_root_two)], repr(added_folders))
     check("--outside-git-checkout passes --skip-git-repo-check",
           "--skip-git-repo-check" in arguments, repr(arguments))
-    check("--web-search sets web_search to live, after exec",
-          ["-c", 'web_search="live"'] == arguments[arguments.index('web_search="live"') - 1:
-                                                     arguments.index('web_search="live"') + 1]
-          if 'web_search="live"' in arguments else False, repr(arguments))
     check("the brief is still the last argument with every option on",
           arguments[-1] == brief.read_text(), repr(arguments[-1]))
 
     session_id = "019abcde-1234-7000-8000-123456789abc"
-    for options in ((), ("--sandbox", "workspace-write", "--network",
-                         "--outside-git-checkout", "--web-search",
+    for options in ((), ("--sandbox", "workspace-write", "--no-network",
+                         "--outside-git-checkout",
                          "-m", "model-x", "--effort", "high")):
         completed, report, _ = run("report", *options)
         fresh_arguments = json.loads(arguments_file.read_text())
@@ -312,8 +318,8 @@ try:
     help_text = subprocess.run([sys.executable, str(PROGRAM), "--help"], capture_output=True,
                                text=True, check=False).stdout
     check("the usage line names every option",
-          all(option in help_text for option in ("--network", "--writable-root <folder>",
-                                                 "--outside-git-checkout", "--web-search",
+          all(option in help_text for option in ("--no-network", "--writable-root <folder>",
+                                                 "--outside-git-checkout",
                                                  "--resume <session-id>")),
           help_text)
 
@@ -556,8 +562,7 @@ try:
           bool(arguments) and arguments[-1].startswith(brief.read_text().rstrip())
           and all(str(path) in arguments[-1] for path in saved)
           and "`gh pr list --state merged --limit 5`" in arguments[-1]
-          and "permission profile keeps you from the folder holding gh's login"
-          in arguments[-1],
+          and "fetched for you before you started" in arguments[-1],
           repr(arguments[-1:]))
 
     fresh_prefetch_case()
@@ -698,6 +703,11 @@ try:
     spec = importlib.util.spec_from_file_location("runner_under_test", PROGRAM)
     runner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runner)
+    # In this process HOME is the real one; the cases below must not write in its log-store.
+    runner.CODEX_AND_GEMINI_SHARED_WRITABLE_FOLDER = (
+        scratch_home / "nedschorus-logs" / "codex-and-gemini-sandboxed-task-runs-shared-writable-folder")
+    runner.common.SANDBOXED_MODELS_READ_ONLY_GITHUB_TOKEN_FILE = (
+        scratch_home / "no-read-only-github-token-here")
     fresh_prefetch_case()
     clock = [1000.0]
     real_monotonic = time.monotonic
@@ -835,6 +845,97 @@ try:
           "\"could not start Codex\"",
           main_error is not None and "could not start Codex" not in captured.getvalue(),
           f"error {main_error!r}, exit {main_exit}, stderr {captured.getvalue()!r}")
+
+    environment_file = Path(str(arguments_file) + ".environment")
+    agent_seat_tokens = {"GH_TOKEN": "agent-seat-token", "GITHUB_TOKEN": "agent-seat-token",
+                         "GH_ENTERPRISE_TOKEN": "agent-seat-token",
+                         "GITHUB_ENTERPRISE_TOKEN": "agent-seat-token"}
+    token_folder = scratch_home / ".config" / "nedschorus-sandboxed-models"
+    token_folder.mkdir(parents=True)
+    token_file = token_folder / "github-public-repositories-read-only-token"
+    token_file.write_text("read-only-token\n")
+    completed, report, _ = run("report", extra_environment=agent_seat_tokens)
+    environment_seen = json.loads(environment_file.read_text())
+    run_log = report.with_name(report.name + ".run.log")
+    check("Codex gets the read-only token as GH_TOKEN, gh's config folder beside it, and "
+          "none of the agent-seat's tokens",
+          completed.returncode == 0 and environment_seen == {
+              "GH_TOKEN": "read-only-token", "GITHUB_TOKEN": None,
+              "GH_ENTERPRISE_TOKEN": None, "GITHUB_ENTERPRISE_TOKEN": None,
+              "GH_CONFIG_DIR": str(token_folder)}
+          and "GitHub token" not in run_log.read_text(),
+          f"exit {completed.returncode}, {environment_seen!r}, log {run_log.read_text()!r}")
+
+    token_file.write_text(" \n")
+    completed, report, _ = run("report", extra_environment=agent_seat_tokens)
+    environment_seen = json.loads(environment_file.read_text())
+    check("an empty read-only token file: Codex runs with no GitHub token, and the run log's "
+          "first line says the file is empty",
+          completed.returncode == 0 and set(environment_seen.values()) == {None}
+          and run_log.read_text().splitlines()[0].startswith(
+              "run-codex-task-from-brief: the read-only GitHub token file ")
+          and "is empty" in run_log.read_text().splitlines()[0],
+          f"exit {completed.returncode}, {environment_seen!r}, log {run_log.read_text()!r}")
+
+    token_file.chmod(0)
+    completed, report, _ = run("report", extra_environment=agent_seat_tokens)
+    environment_seen = json.loads(environment_file.read_text())
+    token_file.chmod(0o600)
+    check("an unreadable read-only token file: Codex runs with no GitHub token, and the run "
+          "log's first line says why",
+          completed.returncode == 0 and set(environment_seen.values()) == {None}
+          and "no read-only GitHub token (" in run_log.read_text().splitlines()[0]
+          and "Permission denied" in run_log.read_text().splitlines()[0],
+          f"exit {completed.returncode}, {environment_seen!r}, log {run_log.read_text()!r}")
+
+    token_file.unlink()
+    completed, report, _ = run("report", extra_environment=agent_seat_tokens)
+    environment_seen = json.loads(environment_file.read_text())
+    check("a missing read-only token file: Codex runs with no GitHub token, and the run log's "
+          "first line says so",
+          completed.returncode == 0 and set(environment_seen.values()) == {None}
+          and "no read-only GitHub token (" in run_log.read_text().splitlines()[0]
+          and "unauthenticated" in run_log.read_text().splitlines()[0],
+          f"exit {completed.returncode}, {environment_seen!r}, log {run_log.read_text()!r}")
+
+    completed, report, _ = run("report")
+    arguments = json.loads(arguments_file.read_text())
+    check("without a log-store on the machine, Codex gets no shared folder",
+          completed.returncode == 0
+          and not any("shared-writable-folder" in argument for argument in arguments),
+          repr(arguments))
+
+    log_store = scratch_home / "nedschorus-logs"
+    log_store.mkdir()
+    shared_folder = log_store / "codex-and-gemini-sandboxed-task-runs-shared-writable-folder"
+    for seat_environment, seat_folder in (
+            ({"CLAUDE_CODE_TASK_LIST_ID": "nedschorus-test-seat-tasks"}, "test-seat"),
+            ({"CLAUDE_CODE_TASK_LIST_ID": ""}, "no-agent-seat-name")):
+        completed, report, _ = run("report", extra_environment=seat_environment)
+        arguments = json.loads(arguments_file.read_text())
+        run_folder = shared_folder / seat_folder / "brief"
+        profile = next((argument for argument in arguments
+                        if argument.startswith("permissions.codex-task-no-credentials.filesystem=")),
+                       "")
+        check(f"with the log-store present, the run's folder {seat_folder}/brief is created, "
+              f"writable in the read-only profile, and named at the end of the brief",
+              completed.returncode == 0 and run_folder.is_dir()
+              and f'{json.dumps(str(run_folder))}="write"' in profile
+              and arguments[-1].startswith(brief.read_text().rstrip())
+              and arguments[-1].rstrip().endswith(str(run_folder)),
+              f"exit {completed.returncode}, {arguments!r}")
+
+    shutil.rmtree(shared_folder)
+    shared_folder.write_text("a file where the shared folder belongs\n")
+    arguments_file.unlink()
+    completed, report, _ = run("report")
+    check("when the run's folder cannot be created, the run exits 1, says so, and Codex is "
+          "not started",
+          completed.returncode == 1 and "could not create the run's folder in" in completed.stderr
+          and not arguments_file.exists(),
+          f"exit {completed.returncode}, stderr {completed.stderr!r}")
+    shared_folder.unlink()
+    log_store.rmdir()
 
     empty_brief = scratch / "empty.md"
     empty_brief.write_text("  \n")

@@ -778,8 +778,13 @@ def run_codex(prompt: str, checkout: pathlib.Path = None) -> tuple:
         "--output-last-message", str(last_message_path),
         "-m", CODEX_MODEL,
         "-c", f"model_reasoning_effort={REASONING_EFFORT}",
+        # `codex exec` does not accept --search; this config key is what that flag sets.
+        "-c", 'web_search="live"',
         prompt,
     ]
+    environment, token_note = common.process_environment_copy_with_agent_seat_github_tokens_replaced_by_read_only_github_token(os.environ)
+    if token_note:
+        print(f"sanity-check Codex cell: {token_note}", file=sys.stderr)
     try:
         # Both streams are captured, where they used to go to DEVNULL: a Codex
         # launch that is logged out, or whose model is at capacity, says so on
@@ -800,7 +805,7 @@ def run_codex(prompt: str, checkout: pathlib.Path = None) -> tuple:
         completed = run_agent_binary_unless_run_stopped(
             command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding="utf-8",
-            errors="replace", timeout=CELL_TIMEOUT_SECONDS,
+            errors="replace", timeout=CELL_TIMEOUT_SECONDS, env=environment,
         )
         if completed is None:
             # The run was stopped before codex could start: see run_claude.

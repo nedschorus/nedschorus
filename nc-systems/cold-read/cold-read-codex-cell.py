@@ -143,6 +143,7 @@ nothing else in the cold-read-cell depends on it.
 """
 
 import importlib.util
+import os
 import pathlib
 import sys
 
@@ -211,6 +212,9 @@ def recognised_failure_texts_for_model(model: str) -> list:
 
 
 def main() -> int:
+    environment, token_note = common.process_environment_copy_with_agent_seat_github_tokens_replaced_by_read_only_github_token(os.environ)
+    if token_note:
+        print(f"{PROGRAM}: {token_note}", file=sys.stderr)
     return common.run_cell(
         program=PROGRAM, runtime="codex", description=__doc__,
         model_help="explicit Codex model id; overrides the tier mapping",
@@ -219,6 +223,7 @@ def main() -> int:
         invocation_builder=invocation_builder,
         recognised_failure_texts_for_model=recognised_failure_texts_for_model,
         stage_report_outside_checkout=True,
+        child_environment=environment,
     )
 
 

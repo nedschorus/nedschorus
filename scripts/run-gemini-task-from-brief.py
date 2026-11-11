@@ -3,7 +3,7 @@
 
 Usage: run-gemini-task-from-brief.py -C CHECKOUT --brief FILE -o REPORT
        [--sandbox read-only|workspace-write] [-m MODEL] [--effort EFFORT]
-       [--writable-root FOLDER]... [--network] [--deadline-minutes N]
+       [--writable-root FOLDER]... [--deadline-minutes N]
        [--run-log FILE]
 
 Reads use the cold-read agy sandbox: the filesystem, including log-store
@@ -12,16 +12,25 @@ needed. As in that sandbox, agy's own login remains readable; Linux masks
 credential files present at launch under home and the launcher's checkout,
 not files created later or found elsewhere.
 
-read-only lets agy write REPORT and nothing else, not even its own state
-under ~/.gemini, so agy logs failed cache writes. workspace-write also lets
-it write CHECKOUT and each --writable-root folder. The report file is bound
+read-only lets agy write REPORT and, when the log-store is on this machine,
+its run's subfolder <agent-seat>/<brief file name without its extension> of
+~/nedschorus-logs/codex-and-gemini-sandboxed-task-runs-shared-writable-folder/,
+whose path ends the brief; nothing else, not even its own state under
+~/.gemini, so agy logs failed cache writes. workspace-write also lets it
+write CHECKOUT and each --writable-root folder. The report file is bound
 individually on Linux, so replacing it by rename is not supported. Existing
 report content is removed before the task starts. Files in writable folders
 may be overwritten by the task and are not rolled back on failure.
 
---network enables network access for the whole agy process, including its
-model connection; without it even Gemini's API is unreachable. No proxy
-separates model traffic from tool traffic. This launcher does not provision
+agy always reaches the network, its own web tool included: its model
+connection needs it, and no proxy separates model traffic from tool
+traffic.
+
+The launcher removes the agent-seat's GitHub tokens, which can push and
+merge, from agy's environment, and sets GH_TOKEN to the read-only token in
+~/.config/nedschorus-sandboxed-models/, so that `gh` inside the sandbox
+reads public GitHub. When that token cannot be read, agy runs without one,
+and the run log says why after the model listing. This launcher does not provision
 logins, recover reports from chat, retry models, or verify report content.
 
 agy runs on its own Google login, never on a Gemini API key: the launcher
@@ -77,7 +86,6 @@ def _parser():
     parser.add_argument("-m", dest="model", default="gemini-4-argon-high")
     parser.add_argument("--effort")
     parser.add_argument("--writable-root", action="append", default=[])
-    parser.add_argument("--network", action="store_true")
     parser.add_argument("--deadline-minutes", type=float, default=60)
     parser.add_argument("--run-log")
     return parser
@@ -122,11 +130,19 @@ def main(argv=None):
         if not prompt.strip():
             raise RuntimeError("the brief is empty")
         stage = "preparing the sandbox"
-        environment = agy_cell.agy_environment_copy_without_gemini_api_key(os.environ)
+        environment, token_note = (
+            agy_cell.common.process_environment_copy_with_agent_seat_github_tokens_replaced_by_read_only_github_token(
+                agy_cell.agy_environment_copy_without_gemini_api_key(os.environ)))
+        stage = "creating the run's folder in the shared writable folder"
+        shared_subfolder = (
+            codex_task.codex_or_gemini_task_run_subfolder_in_shared_writable_folder_create(brief))
+        if shared_subfolder:
+            prompt = codex_task.brief_with_shared_writable_subfolder(prompt, shared_subfolder)
+        stage = "preparing the sandbox"
         writable_folders = [checkout, *roots] if args.sandbox == "workspace-write" else []
+        writable_folders += [shared_subfolder] if shared_subfolder else []
         prefix = agy_cell.credential_sandbox_prefix(
-            writable_paths=[(report, False), *((folder, True) for folder in writable_folders)],
-            network=args.network)
+            writable_paths=[(report, False), *((folder, True) for folder in writable_folders)])
         stage = f"preparing report {report} and log {log_path}"
         report.parent.mkdir(parents=True, exist_ok=True)
         report.unlink(missing_ok=True)
@@ -142,6 +158,10 @@ def main(argv=None):
             known = sorted(set(re.findall(r"(?<![\w.-])[a-z][a-z0-9]*(?:[-.][a-z0-9]+)+(?![\w.-])", listing)))
             if args.model not in known:
                 raise RuntimeError(f"unknown model {args.model!r}; known names: {', '.join(known) or '(none listed)'}")
+            # After the listing is parsed: its words would read as model names.
+            if token_note:
+                log.write(f"{PROGRAM}: {token_note}\n")
+                log.flush()
             command = [*prefix, "agy", "--add-dir", str(checkout),
                        "--dangerously-skip-permissions", "--model", args.model,
                        "--print-timeout", f"{math.ceil(args.deadline_minutes * 60)}s",

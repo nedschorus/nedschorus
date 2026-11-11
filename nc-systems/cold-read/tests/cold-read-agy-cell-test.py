@@ -115,7 +115,8 @@ SHORT_CHAT_REMARK = "I have written the report to the path you gave me.\n"
 # "near_miss" writes the report one directory away from where it was asked,
 # "stdout" is the model's chat text, "dump_argv" and "dump_prompt" are paths
 # to record what the stub was launched with, "dump_key" is a path to record
-# GEMINI_API_KEY as agy received it (null when absent), "hang_writing_child_pid_to" is a path
+# GEMINI_API_KEY as agy received it (null when absent), "dump_github_tokens" is a path to
+# record GH_TOKEN and GITHUB_TOKEN as agy received them, "hang_writing_child_pid_to" is a path
 # to append the pid of a child the stub starts before both sleep past any
 # deadline a case sets, "exit_leaving_child_writing_pid_to" is a path to
 # append the pid of a child the stub starts, which keeps the stub's stdout
@@ -154,6 +155,9 @@ if "read_paths" in step:
 if "dump_key" in step:
     pathlib.Path(step["dump_key"]).write_text(
         json.dumps(os.environ.get("GEMINI_API_KEY")), encoding="utf-8")
+if "dump_github_tokens" in step:
+    pathlib.Path(step["dump_github_tokens"]).write_text(json.dumps(
+        [os.environ.get("GH_TOKEN"), os.environ.get("GITHUB_TOKEN")]), encoding="utf-8")
 if "dump_record_directory_descriptor_count" in step:
     record_directory = os.stat(report_path.parent)
     count = 0
@@ -645,6 +649,25 @@ with tempfile.TemporaryDirectory() as scratch:
               f"exit {result.returncode}; key={received_key(key_dump)!r}; "
               f"stderr={result.stderr!r}")
     gemini_api_key_file.unlink()
+
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "agent-seat-github-tokens")
+    tokens_dump = scratch / "agent-seat-github-tokens.json"
+    os.environ.update(GH_TOKEN="agent-seat-token", GITHUB_TOKEN="agent-seat-token")
+    try:
+        result = run_agy_cell(repository, stubs,
+                              {"*": {"report": "STUB AGY REVIEW\n",
+                                     "dump_github_tokens": str(tokens_dump)}}, report)
+    finally:
+        os.environ.pop("GH_TOKEN")
+        os.environ.pop("GITHUB_TOKEN")
+    received_tokens = (json.loads(tokens_dump.read_text(encoding="utf-8"))
+                       if tokens_dump.is_file() else "NOT RUN")
+    check("agy is given none of the agent-seat's GitHub tokens, and stderr says it has no "
+          "read-only one",
+          result.returncode == 0 and received_tokens == [None, None]
+          and "cold-read-agy-cell: no read-only GitHub token (" in result.stderr,
+          f"exit {result.returncode}; tokens={received_tokens!r}; stderr={result.stderr!r}")
 
     # What the real agy 1.4.7 printed on ned-box with ~/.gemini hidden; the URL is shortened.
     agy_logged_out_stderr = (
