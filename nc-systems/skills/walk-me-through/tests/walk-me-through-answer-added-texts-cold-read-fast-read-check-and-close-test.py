@@ -311,10 +311,22 @@ def case_paths(case):
 def outside_paths(text, case):
     """text with this checkout's and the case's paths removed, so that a word the program must not print
     is not found in a directory name, such as a worktree named for a flag. The case's temporary directory
-    goes first: it lies inside case.root, and its own name can hold the word."""
+    goes first: it lies inside case.root, and its own name can hold the word. A path the program prints
+    through shlex.quote() is spelled with each apostrophe as '"'"', so that spelling is removed too."""
     for path in (case.temporary_directory, case.root, Path(__file__).resolve().parents[4]):
-        text = text.replace(str(path), "")
+        text = text.replace(str(path), "").replace(str(path).replace("'", "'\"'\"'"), "")
     return text
+
+
+TRACEBACK_HEADER = "Traceback (most recent call last)"
+
+
+def test_outside_paths_removes_a_shell_quoted_path_with_an_apostrophe():
+    root = Path("/scratch/it's flag root")
+    case = types.SimpleNamespace(temporary_directory=root / "tmp", root=root)
+    printed = f"rm -rf {shlex.quote(str(root / 'tmp' / 'leftover'))}"
+    check("outside_paths removes a case path the program printed through shlex.quote(), apostrophe included",
+          "flag" not in outside_paths(printed, case), outside_paths(printed, case))
 
 
 def described(result):
@@ -1880,7 +1892,7 @@ def test_close_hold_answer_refuses_a_new_item_it_cannot_place_before_numbering_i
         check(f"close --hold-answer-until-new-item-answered refuses, writing nothing to the walk-document or the "
               f"minutes, when the new item {name}",
               closed.returncode == 1 and expected in closed.stderr and "nothing written" in closed.stderr
-              and "Traceback" not in closed.stderr and walk_document(case) == document
+              and TRACEBACK_HEADER not in closed.stderr and walk_document(case) == document
               and case.minutes.read_text() == minutes, described(closed) + walk_document(case))
 
 
@@ -3748,7 +3760,7 @@ def test_the_first_entered_line_close_writes_keeps_indented_code_under_the_headi
     document = walk_document(case)
     check("close leaves a blank line after the first-entered line it writes above indented code, so the code's "
           "category tag is not read as the item's second one, and the item is shown",
-          closed.returncode == 0 and "Traceback" not in closed.stderr
+          closed.returncode == 0 and TRACEBACK_HEADER not in closed.stderr
           and re.search(rf"#approval_walk_item_first_entered \S+\n\n{re.escape(code)}\n", document) is not None
           and marker(case) == "#next_to_present item 2 of 3", described(closed) + document)
 
@@ -3761,7 +3773,7 @@ def refused_walk_order(name, *items, expected):
     check(f"close refuses, writing nothing, {name}",
           closed.returncode == 1 and expected in closed.stderr and "nothing written" in closed.stderr
           and "`#approval_walk_item_in_category_must_fix_now`" in closed.stderr and " close --cwd " in closed.stderr
-          and "Traceback" not in closed.stderr
+          and TRACEBACK_HEADER not in closed.stderr
           and walk_document(case) == document and case.minutes.read_text() == minutes, described(closed))
 
 
