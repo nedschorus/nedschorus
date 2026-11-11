@@ -5,7 +5,7 @@ Run from the top level of a clean checkout:
 
     python3 scripts/glossary-term-agent-facing-message-replaced-by-tool-message-to-agent-in-repository-nbd.py
 
-What it does: moves each file whose name holds the old term with `git mv`, then rewrites every
+What it does: moves each file listed in MOVED_FILES_NEW_PATHS with `git mv`, then rewrites every
 spelling of the term in every file git tracks: kebab-case in prose and file names, snake_case and
 UPPER_CASE in code, the article before it ("an" becomes "a"), and the plural, which becomes
 tool-messages-to-agent; and moves the renamed glossary entry to its alphabetical place. It can be
@@ -22,6 +22,10 @@ How it fails: it exits 1 and lists each line that still holds "agent-facing" or 
 outside that history, so a new form is seen rather than left behind; the files it already
 rewrote stay rewritten, so review them with `git diff` and add a rule or a history string, then
 run it again. A `git mv` that fails stops it with git's error before any file text is changed.
+When the glossary has no tool-message-to-agent entry or no topic-worktree entry (the constants
+GLOSSARY_ENTRY_START and GLOSSARY_ENTRY_AFTER_START in this script), the last step stops with a
+StopIteration traceback, after every other file is rewritten and before the leftover lines are
+listed, and no glossary entry is moved. Add the missing entry by hand, then run it again.
 It changes only the working tree and the index of the checkout it runs in, never a commit.
 """
 import argparse
