@@ -236,33 +236,59 @@ def wait_for_calls(fake_gh, wanted, watcher, timeout=EVENT_WAIT_BACKSTOP_SECONDS
 
 def run_unit_cases():
     # ------------------------------------------------------------------
-    # The event key is (number, head sha) and nothing else.
+    # The event key is (number, head sha, is_draft) and nothing else.
     # ------------------------------------------------------------------
     events_for_poll = watcher_module.events_for_poll
-    unchanged = [{"number": 7, "head_sha": "aaaaaaaaaaaa", "title": "t",
-                  "is_draft": False, "author": "nedlern"}]
-    retitled = [{"number": 7, "head_sha": "aaaaaaaaaaaa", "title": "EDITED",
-                 "is_draft": True, "author": "someone-else"}]
-    moved = [{"number": 7, "head_sha": "bbbbbbbbbbbb", "title": "t",
-              "is_draft": False, "author": "nedlern"}]
+    by_number = watcher_module.pull_requests_by_number
+
+    def state(head_sha="aaaaaaaaaaaa", is_draft=False, title="t",
+              author="nedlern"):
+        return [{"number": 7, "head_sha": head_sha, "title": title,
+                 "is_draft": is_draft, "author": author}]
+
+    unchanged = state()
+    retitled = state(title="EDITED", author="someone-else")
+    moved = state(head_sha="bbbbbbbbbbbb")
+    draft = state(is_draft=True)
+    draft_moved = state(head_sha="bbbbbbbbbbbb", is_draft=True)
 
     check("a pull request not seen before is OPENED",
           events_for_poll({}, unchanged) == [
               "PR #7 OPENED aaaaaaaa nedlern: t"],
           str(events_for_poll({}, unchanged)))
     check("the same head sha again is not an event",
-          events_for_poll({7: "aaaaaaaaaaaa"}, unchanged) == [], "")
-    check("a title, draft or author change alone is not an event",
-          events_for_poll({7: "aaaaaaaaaaaa"}, retitled) == [],
-          str(events_for_poll({7: "aaaaaaaaaaaa"}, retitled)))
+          events_for_poll(by_number(unchanged), unchanged) == [], "")
+    check("a title or author change alone is not an event",
+          events_for_poll(by_number(unchanged), retitled) == [],
+          str(events_for_poll(by_number(unchanged), retitled)))
     check("a changed head sha is NEW-HEAD",
-          events_for_poll({7: "aaaaaaaaaaaa"}, moved) == [
+          events_for_poll(by_number(unchanged), moved) == [
               "PR #7 NEW-HEAD bbbbbbbb nedlern: t"],
-          str(events_for_poll({7: "aaaaaaaaaaaa"}, moved)))
-    check("a draft is marked, not filtered out",
-          events_for_poll({}, retitled) == [
-              "PR #7 OPENED aaaaaaaa someone-else [draft]: EDITED"],
-          str(events_for_poll({}, retitled)))
+          str(events_for_poll(by_number(unchanged), moved)))
+    check("a draft not seen before raises no event",
+          events_for_poll({}, draft) == [], str(events_for_poll({}, draft)))
+    check("a new head commit on a draft raises no event",
+          events_for_poll(by_number(draft), draft_moved) == [],
+          str(events_for_poll(by_number(draft), draft_moved)))
+    check("a draft marked ready is one READY line",
+          events_for_poll(by_number(draft), unchanged) == [
+              "PR #7 READY aaaaaaaa nedlern: t"],
+          str(events_for_poll(by_number(draft), unchanged)))
+    check("a draft marked ready with a moved head is one READY line, "
+          "carrying the current head",
+          events_for_poll(by_number(draft), moved) == [
+              "PR #7 READY bbbbbbbb nedlern: t"],
+          str(events_for_poll(by_number(draft), moved)))
+    check("a pull request turned back into a draft raises no event",
+          events_for_poll(by_number(unchanged), draft) == [],
+          str(events_for_poll(by_number(unchanged), draft)))
+    baseline_with_draft = watcher_module.baseline_line(
+        "o/n", 60, [unchanged[0], {**draft[0], "number": 8}], False)
+    check("the baseline line lists a draft apart, as not to be reviewed",
+          "1 open at baseline: #7 " in baseline_with_draft
+          and "1 draft(s), not to be reviewed until marked ready, which "
+              "raises READY: #8" in baseline_with_draft,
+          baseline_with_draft)
 
     # ------------------------------------------------------------------
     # Redaction: every printed line goes through it, so it must replace
@@ -434,8 +460,8 @@ def run_subprocess_cases():
 
         fake_gh.answer(graphql_body([
             pull_request_node(145, "a" * 40, "already open"),
-            pull_request_node(146, "b" * 40, "newly opened", draft=True)]))
-        opened = watcher.wait_for("PR #146 OPENED bbbbbbbb nedlern [draft]: "
+            pull_request_node(146, "b" * 40, "newly opened")]))
+        opened = watcher.wait_for("PR #146 OPENED bbbbbbbb nedlern: "
                                   "newly opened")
         check("a newly opened pull request is one OPENED line", opened,
               "\n".join(watcher.lines))
@@ -449,7 +475,7 @@ def run_subprocess_cases():
         # A title edit on both pull requests, no head movement.
         fake_gh.answer(graphql_body([
             pull_request_node(145, "a" * 40, "RETITLED 145"),
-            pull_request_node(146, "b" * 40, "RETITLED 146", draft=True)]))
+            pull_request_node(146, "b" * 40, "RETITLED 146")]))
         calls_now = fake_gh.call_count()
         wait_for_calls(fake_gh, calls_now + 4, watcher)
         check("a changed title is not an event",
@@ -458,7 +484,7 @@ def run_subprocess_cases():
         # A new head commit on 146 only.
         fake_gh.answer(graphql_body([
             pull_request_node(145, "a" * 40, "RETITLED 145"),
-            pull_request_node(146, "c" * 40, "RETITLED 146", draft=True)]))
+            pull_request_node(146, "c" * 40, "RETITLED 146")]))
         moved = watcher.wait_for("PR #146 NEW-HEAD cccccccc")
         check("a new head commit on an open pull request is one NEW-HEAD line",
               moved and watcher.count("PR #146 NEW-HEAD") == 1,
@@ -469,19 +495,96 @@ def run_subprocess_cases():
         # A closed pull request that reopens is announced again — the
         # documented choice, since the seat must look at it again.
         fake_gh.answer(graphql_body([pull_request_node(146, "c" * 40,
-                                                       "RETITLED 146",
-                                                       draft=True)]))
+                                                       "RETITLED 146")]))
         calls_now = fake_gh.call_count()
         wait_for_calls(fake_gh, calls_now + 3, watcher)
         fake_gh.answer(graphql_body([
             pull_request_node(145, "a" * 40, "reopened"),
-            pull_request_node(146, "c" * 40, "RETITLED 146", draft=True)]))
+            pull_request_node(146, "c" * 40, "RETITLED 146")]))
         reopened = watcher.wait_for("PR #145 OPENED aaaaaaaa nedlern: reopened")
         lines = watcher.stop()
         check("a pull request that closes and reopens is announced again",
               reopened, "\n".join(lines))
         check("closing a pull request is not itself announced",
               not any("CLOSED" in line for line in lines), "\n".join(lines))
+
+        # ------------------------------------------------------------------
+        # Drafts: one open at baseline and one opened later raise nothing,
+        # nor does a new head commit on a draft; each raises one READY line
+        # when marked ready, and nothing more after.
+        # ------------------------------------------------------------------
+        fake_gh = FakeGitHubCommand(scratch / "drafts")
+        fake_gh.answer(graphql_body([
+            pull_request_node(170, "a" * 40, "draft at baseline", draft=True)]))
+        watcher = WatcherProcess(environment=fake_gh.environment(),
+                                 token_file=token_file)
+        baseline = watcher.wait_for("0 open at baseline")
+        check("a draft at baseline is listed apart in the baseline line",
+              baseline and any("not to be reviewed until marked ready"
+                               in line and "#170" in line
+                               for line in watcher.lines),
+              "\n".join(watcher.lines))
+        fake_gh.answer(graphql_body([
+            pull_request_node(170, "a" * 40, "draft at baseline", draft=True),
+            pull_request_node(171, "b" * 40, "opened as a draft", draft=True)]))
+        calls_now = fake_gh.call_count()
+        wait_for_calls(fake_gh, calls_now + 4, watcher)
+        check("a pull request opened as a draft raises no line",
+              watcher.count("PR #171") == 0, "\n".join(watcher.lines))
+        fake_gh.answer(graphql_body([
+            pull_request_node(170, "a" * 40, "draft at baseline", draft=True),
+            pull_request_node(171, "c" * 40, "opened as a draft", draft=True)]))
+        calls_now = fake_gh.call_count()
+        wait_for_calls(fake_gh, calls_now + 4, watcher)
+        check("a new head commit on a draft raises no line",
+              watcher.count("PR #171") == 0, "\n".join(watcher.lines))
+        fake_gh.answer(graphql_body([
+            pull_request_node(170, "a" * 40, "draft at baseline"),
+            pull_request_node(171, "c" * 40, "opened as a draft")]))
+        ready_baseline = watcher.wait_for("PR #170 READY aaaaaaaa nedlern: "
+                                          "draft at baseline")
+        ready_later = watcher.wait_for("PR #171 READY cccccccc nedlern: "
+                                       "opened as a draft")
+        calls_now = fake_gh.call_count()
+        wait_for_calls(fake_gh, calls_now + 4, watcher)
+        lines = watcher.stop()
+        check("a draft open at baseline and marked ready is one READY line",
+              ready_baseline and watcher.count("PR #170") == 1,
+              "\n".join(lines))
+        check("a draft opened later and marked ready is one READY line, "
+              "carrying the current head",
+              ready_later and watcher.count("PR #171") == 1, "\n".join(lines))
+
+        # ------------------------------------------------------------------
+        # --exit-after-first-poll-with-events does not exit for a draft, and
+        # does exit for the draft marked ready.
+        # ------------------------------------------------------------------
+        fake_gh = FakeGitHubCommand(scratch / "exit-on-ready")
+        fake_gh.answer(graphql_body([]))
+        watcher = WatcherProcess("--exit-after-first-poll-with-events",
+                                 environment=fake_gh.environment(),
+                                 token_file=token_file)
+        watcher.wait_for("0 open at baseline")
+        fake_gh.answer(graphql_body([
+            pull_request_node(172, "d" * 40, "a draft", draft=True)]))
+        calls_now = fake_gh.call_count()
+        wait_for_calls(fake_gh, calls_now + 4, watcher)
+        check("--exit-after-first-poll-with-events keeps polling when only a "
+              "draft opened",
+              watcher.process.poll() is None and watcher.count("PR #172") == 0,
+              "\n".join(watcher.lines))
+        fake_gh.answer(graphql_body([
+            pull_request_node(172, "d" * 40, "a draft")]))
+        try:
+            exit_code = watcher.process.wait(timeout=EVENT_WAIT_BACKSTOP_SECONDS)
+        except subprocess.TimeoutExpired:
+            exit_code = None
+        lines = watcher.stop()
+        check("--exit-after-first-poll-with-events exits 0 on a draft marked "
+              "ready, printing its READY line",
+              exit_code == 0
+              and any("PR #172 READY dddddddd" in line for line in lines),
+              f"exit {exit_code}\n" + "\n".join(lines))
 
         # ------------------------------------------------------------------
         # --exit-after-first-poll-with-events: polls on through a silent baseline, then

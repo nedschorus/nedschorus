@@ -63,6 +63,7 @@ CALLING_AGENT_SESSION_TEST_VARIABLES = {
     "CLAUDE_CODE_MESSAGING_TOKEN": "calling-token",
     "CLAUDE_CODE_SESSION_ATTENDED": "0",
     "IS_DEMO": "1",
+    "GH_TOKEN": "decoy-inherited-token",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "calling-seat",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "/calling/seat/directory",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": "calling-supervisor-session",
@@ -145,15 +146,15 @@ def run_resupervise(workspace: Path, name: str, *flags):
     )
 
 
-def write_handoff(workspace: Path, name: str, counter: int, dont_restart: bool = False):
+def write_handoff(workspace: Path, name: str, counter: int, ask_user_before_restart: bool = False):
     lines = [
         f"# handoff for {name}",
         "written-at: 2026-08-19T00:00:00+00:00",
-        f"restart-counter: {counter}",
+        f"session-handoff-sequence-number: {counter}",
         "next-step: Continue the walk.",
     ]
-    if dont_restart:
-        lines.append("dont-restart: the user asked to be consulted")
+    if ask_user_before_restart:
+        lines.append("ask-user-before-restart: the user asked to be consulted")
     (workspace / f"{name}-handoff.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -176,10 +177,10 @@ def run_no_handoff_cases(workspace: Path):
           "hand off first" in result.stderr, result.stderr)
 
     (workspace / "prose-handoff.md").write_text(
-        "# handoff for prose\nthis file has no restart-counter line at all\n", encoding="utf-8"
+        "# handoff for prose\nthis file has no session-handoff-sequence-number line at all\n", encoding="utf-8"
     )
     result = run_resupervise(workspace, "prose", "--dry-run")
-    check("a handoff with no restart-counter refuses",
+    check("a handoff with no session-handoff-sequence-number refuses",
           result.returncode == 1, result.stdout + result.stderr)
     check("the unreadable-handoff refusal says the supervisor would not start a fresh agent-session from it",
           "not start a fresh agent-session from it" in result.stderr, result.stderr)
@@ -198,7 +199,7 @@ def run_already_consumed_case(workspace: Path):
     check("an already-consumed handoff refuses",
           result.returncode == 1, result.stdout + result.stderr)
     check("the consumed refusal names both counters",
-          "restart-counter 4" in result.stderr and "recorded 4" in result.stderr,
+          "session-handoff-sequence-number 4" in result.stderr and "recorded 4" in result.stderr,
           result.stderr)
 
     # Strictly newer is the boundary the supervisor's own boot-ignition uses.
@@ -287,18 +288,18 @@ def run_stale_heartbeat_case(workspace: Path):
           "DRY RUN" in result.stdout, result.stdout)
 
 
-def run_dont_restart_case(workspace: Path):
-    """dont-restart is the agent asking to be consulted, not a refusal.
+def run_ask_user_before_restart_case(workspace: Path):
+    """ask-user-before-restart is the agent asking to be consulted, not a refusal.
 
     The supervisor honors it on its own terminal, so this script proceeds and
     warns rather than deciding on the agent's behalf.
     """
-    write_handoff(workspace, "consult", counter=1, dont_restart=True)
+    write_handoff(workspace, "consult", counter=1, ask_user_before_restart=True)
     result = run_resupervise(workspace, "consult", "--dry-run")
-    check("a dont-restart handoff still proceeds",
+    check("an ask-user-before-restart handoff still proceeds",
           result.returncode == 0, result.stdout + result.stderr)
-    check("the dont-restart note reaches the operator",
-          "dont-restart" in result.stdout, result.stdout)
+    check("the ask-user-before-restart note reaches the operator",
+          "ask-user-before-restart" in result.stdout, result.stdout)
 
 
 def run_missing_launcher_case(workspace: Path):
@@ -316,13 +317,18 @@ def run_missing_launcher_case(workspace: Path):
     # which transcript is worth resuming from scripts/ (issue 242 change 5).
     # Both are resolved from the repository root, so the isolated copy needs
     # the repository's SHAPE around it rather than two files beside it.
-    # The modules the supervisor loads from scripts/ are read from its own
-    # source, so a new import there needs no change here.
+    # The files the supervisor names under scripts/ are read from its own
+    # source, so a new import there needs no change here, whether it loads the
+    # file directly or through a path constant.
     supervisor_home = workspace / "nc-systems" / "handoff"
     supervisor_home.mkdir(parents=True)
-    for supervisor_file in ("handoff-supervisor.py", "handoff-user-review-of-agent-memory-stores-mark.py",
+    for supervisor_file in ("handoff-supervisor.py", "session-handoff-field-names-common.py",
+                            "handoff-user-review-of-agent-memory-stores-mark.py",
                             "handoff-architecture-overview-refresh-user-shown-mark.py",
-                            "uncommitted-work-snapshots.py"):
+                            "uncommitted-work-snapshots.py",
+                            "handoff-reference-checkout-fetch-and-fast-forward-to-origin-main-check-common.py",
+                            "handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py",
+                            "agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py"):
         (supervisor_home / supervisor_file).write_text(
             SUPERVISOR_SCRIPT.with_name(supervisor_file).read_text(encoding="utf-8"),
             encoding="utf-8")
@@ -340,14 +346,15 @@ def run_missing_launcher_case(workspace: Path):
             "tmux-target-or-server-does-not-exist-error-pattern-common.py",
             "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py",
             "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py",
-            "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py"):
+            "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py",
+            "pull-request-conflict-with-main-rebase-or-replace-answer-common.py"):
         (general_tools_home / general_tools_module).write_text(
             (SUPERVISOR_SCRIPT.parents[1] / "general-tools" / general_tools_module)
             .read_text(encoding="utf-8"), encoding="utf-8")
     scripts_home = workspace / "scripts"
     scripts_home.mkdir(parents=True, exist_ok=True)
     for supervisor_import in re.findall(
-            r'SCRIPTS_DIRECTORY / "([\w-]+\.py)"\)',
+            r'SCRIPTS_DIRECTORY / "([\w-]+\.py)"',
             SUPERVISOR_SCRIPT.read_text(encoding="utf-8")):
         (scripts_home / supervisor_import).write_text(
             RESUPERVISE_SCRIPT.with_name(supervisor_import)
@@ -1094,7 +1101,7 @@ def run_apostrophe_propagation_case(workspace: Path):
     apostrophe_handoffs = workspace / "agent's handoffs"
     apostrophe_handoffs.mkdir(exist_ok=True)
     (apostrophe_handoffs / "quoted-seat-handoff.md").write_text(
-        "# handoff for quoted-seat\nrestart-counter: 2\nnext-step: go\n",
+        "# handoff for quoted-seat\nsession-handoff-sequence-number: 2\nnext-step: go\n",
         encoding="utf-8")
     isolated = workspace / "isolated"
     record = workspace / "launcher-environment-apostrophe.txt"
@@ -1146,7 +1153,7 @@ def run_all_cases() -> int:
         run_already_consumed_case(workspace)
         run_live_supervisor_case(workspace)
         run_stale_heartbeat_case(workspace)
-        run_dont_restart_case(workspace)
+        run_ask_user_before_restart_case(workspace)
         run_missing_launcher_case(workspace)
         run_prepare_only_case(workspace)
         run_end_to_end_case(workspace)

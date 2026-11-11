@@ -13,22 +13,45 @@ logout leaves the files in place, and those leftovers are not listed.
 Three callers share this module:
 scripts/uncommitted-work-snapshot-hook.py writes and deletes work-snapshots,
 nc-systems/handoff/handoff-supervisor.py lists an agent-seat's lost work in
-the first prompt of every agent-session it starts, and
-scripts/clean-worktrees.py deletes a listed leftover first listed more than
+the first prompt of every agent-session it starts, each entry ending with the
+restore or discard command that handles it, and scripts/clean-worktrees.py
+deletes a listed leftover first listed more than
 LEFTOVER_DELETED_DAYS_AFTER_FIRST_LISTING days ago and still lost, and a
-leftover a newer leftover of the same worktree duplicates exactly.
+leftover a newer leftover of the same worktree duplicates exactly, and marks
+completed the task a restore opened once its restore commit is on origin/main
+or held by no ref.
 
 Usage:
   uncommitted-work-snapshots.py list [--agent-seat NAME] [--repo PATH]
       every leftover work-snapshot holding lost work, or the agent-seat's;
       exit 0, 1 when a work-snapshot could not be compared with its worktree,
       2 when listing failed
+  uncommitted-work-snapshots.py restore REF --keep FILE [FILE ...] [--repo PATH]
+      commits the kept files' changes on a new branch, restored-<the ref's
+      last two parts joined by a hyphen>, in a new worktree of that name
+      under <clone>/.claude/worktrees/, made from the work-snapshot's parent
+      and given an owner file naming the agent-seat GIT_AUTHOR_NAME names;
+      opens a task naming the branch on the task list
+      ~/.claude/tasks/<CLAUDE_CODE_TASK_LIST_ID>; deletes the ref
+  uncommitted-work-snapshots.py discard REF [--repo PATH]
+      deletes the ref and prints its list entry
+  Both refuse, changing nothing, when the ref does not exist; restore also
+  refuses an empty --keep, a kept path the work-snapshot did not change, a
+  work-snapshot taken during a merge, rebase, cherry-pick, revert or am, an
+  existing branch or worktree directory of the restored name, and an unset
+  CLAUDE_CODE_TASK_LIST_ID or GIT_AUTHOR_NAME. When a restore step fails:
+  before the commit, the worktree and branch it made are removed and the ref
+  is kept; opening the task, the task's text is printed for TaskCreate and
+  the ref is still deleted; deleting the ref, the command is printed.
+  Exit 0 done, 1 a step failed, 2 bad invocation, 3 refused.
 """
 
 import hashlib
 import importlib.util
 import json
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -59,6 +82,20 @@ FIRST_LISTED_FILE_SUFFIX = "-work-snapshots-first-listed.json"
 OWNER_PROCESS_COMMAND_NAME = "claude"
 
 MODULE_PATH = Path(__file__).resolve()
+
+RESTORED_BRANCH_NAME_PREFIX = "restored-"
+RESTORE_COMMIT_MESSAGE_TEMPLATE = "Restore work from {ref}"
+# scripts/clean-worktrees.py finds the tasks restore opens by these two.
+RESTORED_BRANCH_TASK_SUBJECT_PREFIX = "Restored branch "
+RESTORED_BRANCH_TASK_DESCRIPTION_RESTORE_COMMIT_LINE_PREFIX = "Restore commit: "
+TASK_LIST_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
+TASK_FILE_NAME_PATTERN = re.compile(r"[1-9][0-9]*\.json")
+TASK_HIGH_WATER_MARK_FILE_NAME = ".highwatermark"
+
+EXIT_DONE = 0
+EXIT_STEP_FAILED = 1
+EXIT_BAD_INVOCATION = 2
+EXIT_REFUSED = 3
 
 
 class WorkSnapshotError(Exception):
@@ -309,7 +346,14 @@ def tree_of_worktree_now(worktree):
         return git_output(worktree, "write-tree", environment=environment)
 
 
-def build_work_snapshot_commit(worktree, agent_seat, transcript):
+def build_work_snapshot_commit(worktree, agent_seat, transcript, replacing=None):
+    """A work-snapshot commit of worktree's state now.
+
+    When replacing, the commit the ref holds now, already has this tree, parent and message, it
+    is returned and no commit is written: hook runs on an unchanged worktree would otherwise each
+    leave one unreachable commit, and enough of those trigger git's foreground auto-gc on every
+    fetch.
+    """
     tree = tree_of_worktree_now(worktree)
     head = head_commit_or_raise(worktree)
     # symbolic-ref -q exits 1 only for a detached HEAD.
@@ -333,6 +377,11 @@ def build_work_snapshot_commit(worktree, agent_seat, transcript):
         GIT_COMMITTER_NAME=WORK_SNAPSHOT_IDENTITY_NAME,
         GIT_COMMITTER_EMAIL=WORK_SNAPSHOT_IDENTITY_EMAIL,
     )
+    if replacing is not None:
+        old_tree, old_parents, old_message = git_output(
+            worktree, "log", "-1", "--format=%T%x00%P%x00%B", replacing).split("\x00", 2)
+        if (old_tree, old_parents, old_message.strip()) == (tree, head or "", message.strip()):
+            return replacing
     arguments = ["commit-tree", tree, "-F", "-"]
     if head:
         arguments[2:2] = ["-p", head]
@@ -347,8 +396,9 @@ def current_ref_value(directory, ref):
 def refresh_work_snapshot(worktree, owner_key, agent_seat, transcript):
     """Write, replace or delete this owner's work-snapshot of worktree.
 
-    Returns "written", "deleted" or "clean". The ref is set with
-    compare-and-swap; when an overlapping run changed it in between, the
+    Returns "written", "unchanged", "deleted" or "clean"; "unchanged" means the ref already
+    held a work-snapshot of this state, and was left as it was. The ref is set, and
+    "unchanged" confirmed, with compare-and-swap; when an overlapping run changed it in between, the
     work-snapshot is built once more from the worktree's state then.
     """
     ref = work_snapshot_ref(owner_key, worktree)
@@ -360,9 +410,11 @@ def refresh_work_snapshot(worktree, owner_key, agent_seat, transcript):
             result = run_git(worktree, "update-ref", "-d", ref, old)
             outcome = "deleted"
         else:
-            new = build_work_snapshot_commit(worktree, agent_seat, transcript)
+            new = build_work_snapshot_commit(worktree, agent_seat, transcript, replacing=old)
+            # When new == old this swaps the ref for itself, confirming that no overlapping
+            # run moved it since old was read.
             result = run_git(worktree, "update-ref", ref, new, old or ZERO_OBJECT_ID)
-            outcome = "written"
+            outcome = "unchanged" if new == old else "written"
         if result.returncode == 0:
             return outcome
         if attempt == 2:
@@ -544,7 +596,17 @@ def utc_text(seconds):
     return datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def entry_text(repo, snapshot, problem=None):
+def entry_command_text(repo, snapshot):
+    """The command that handles the work-snapshot: discard for one taken during an operation,
+    otherwise restore keeping every changed file, each path quoted for the shell."""
+    program = f"python3 {shlex.quote(str(MODULE_PATH))}"
+    if snapshot["operation"]:
+        return f"{program} discard {snapshot['ref']}"
+    files = " ".join(shlex.quote(path) for _status, path in changed_files(repo, snapshot["ref"]))
+    return f"{program} restore {snapshot['ref']} --keep {files}"
+
+
+def entry_text(repo, snapshot, problem=None, with_command=True):
     worktree = snapshot["worktree"]
     transcript = snapshot["transcript"]
     exists = "exists" if worktree and Path(worktree).is_dir() else "is gone"
@@ -561,6 +623,8 @@ def entry_text(repo, snapshot, problem=None):
     if problem:
         parts.append(f"its worktree could not be compared with it: {problem}")
     parts.append(f"changes: {changed_files_text(repo, snapshot['ref'])}")
+    if with_command:
+        parts.append(f"handle it with: `{entry_command_text(repo, snapshot)}`")
     return "; ".join(parts)
 
 
@@ -569,15 +633,11 @@ def list_command_text(agent_seat):
 
 
 RESTORE_STEPS = """\
-Each was listed because its worktree is gone or no longer holds its changes. Handle each of them before your other work:
+Each was listed because its worktree is gone or no longer holds its changes. Handle each of them, before your other work:
 1. See what it holds: `git diff --stat <ref>^ <ref>`, then `git diff <ref>^ <ref>`.
-2. Decide what to keep. If you keep nothing, skip step 3. Read the end of the transcript the entry names, to learn what the dead agent was doing; if the transcript is gone, decide from the diff alone, and ask the user when unsure. Drop any mutant: a deliberate small break in code that nc-mutation-testing makes, by a program or by an agent's own edit, to check that the tests notice. A crash during nc-mutation-testing leaves the mutant in the work-snapshot. If one file holds both wanted work and a mutant, keep the file and remove the mutant from it by editing it before you commit in step 3.
-3. Restore what you keep, as a commit.
-   - If the entry says the work-snapshot was taken during a merge, rebase, cherry-pick, revert or am: restore nothing from it. Delete it (step 4), tell the user in one line which worktree and which operation were discarded, and, if the dead agent's task still needs the operation, start the operation again from the branch, which still holds the committed work.
-   - Otherwise make a new worktree from the work-snapshot's parent, so the changes apply without conflict. Do this even when the entry's worktree still exists: it no longer holds these changes, so leave it alone. With <name> standing for `restored-` and the ref's last two parts joined by a hyphen: `git worktree add -b <name> <clone>/.claude/worktrees/<name> <ref>^`, where <clone> is the directory containing the path `git rev-parse --path-format=absolute --git-common-dir` prints. In the new worktree run `git diff --binary <ref>^ <ref> -- <files to keep> | git apply --index`, then `git commit -m "Restore work from <ref>"`. Carry the restored branch on, or tell the user it is there.
-   - If a command here fails, stop, leave the ref in place, and tell the user what failed.
-4. Delete the ref: `git update-ref -d <ref>`, whether the work was kept or dropped.
-5. Tell the user, in your next message to the user, each work-snapshot handled, what was kept and where, and what was dropped and why. Finishing the dead agent's task is a separate decision, made after the restore."""
+2. Decide what to keep. Read the end of the transcript the entry names, to learn what the dead agent was doing; if the transcript is gone, decide from the diff alone, and ask the user when unsure. Drop any mutant: a deliberate small break in code that nc-mutation-testing makes, by a program or by an agent's own edit, to check that the tests notice. A crash during nc-mutation-testing leaves the mutant in the work-snapshot. Leave a file that holds only a mutant off `--keep`; keep a file that holds both wanted work and a mutant, and after `restore` remove the mutant from it in a commit of its own on the restored branch, before the branch is pushed.
+3. Run the entry's command. To keep one file or more, run `restore`, after deleting from `--keep` the files you drop. To keep nothing, run `python3 {module} discard <ref>`. For a work-snapshot taken during an operation, run `discard`, as its entry says. When the command refuses or fails, do what it prints, and tell the user what failed.
+4. Tell the user, in your next message to the user, each work-snapshot handled, using the summary line each command prints, and add why each dropped file was dropped. Whether to finish the dead agent's task is a separate decision, made after the restore; the task `restore` opens keeps the restored branch on your task list until that decision is carried out."""
 
 
 def first_listed_path(handoff_directory, agent_seat):
@@ -637,7 +697,7 @@ def first_prompt_text(repo, agent_seat, handoff_directory, now=None, is_alive=No
     rest = len(leftovers) - len(entries)
     if rest > 0:
         lines.append(f"- and {rest} more; list them all with: {list_command_text(agent_seat)}")
-    lines.append(RESTORE_STEPS.format(module=MODULE_PATH))
+    lines.append(RESTORE_STEPS.format(module=shlex.quote(str(MODULE_PATH))))
     try:
         record_first_listing(first_listed_path(handoff_directory, agent_seat),
                              [snapshot["ref"] for snapshot in leftovers],
@@ -647,6 +707,273 @@ def first_prompt_text(repo, agent_seat, handoff_directory, now=None, is_alive=No
         lines.append(f"(Their first listing could not be recorded ({type(error).__name__}: "
                      f"{error}), so scripts/clean-worktrees.py counts them as never listed and keeps them.)")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------- restore and discard
+
+
+_worktree_owner_file_read_and_write_module = None
+
+
+def load_worktree_owner_file_read_and_write_module():
+    """scripts/worktree-owner-file-read-and-write.py, loaded on first use: it loads this module
+    itself, so loading it at import would be circular."""
+    global _worktree_owner_file_read_and_write_module
+    if _worktree_owner_file_read_and_write_module is None:
+        spec = importlib.util.spec_from_file_location(
+            "worktree_owner_file_read_and_write",
+            MODULE_PATH.parents[2] / "scripts" / "worktree-owner-file-read-and-write.py")
+        _worktree_owner_file_read_and_write_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_worktree_owner_file_read_and_write_module)
+    return _worktree_owner_file_read_and_write_module
+
+
+def restored_branch_name(ref):
+    """restored- and the ref's last two parts joined by a hyphen; no other work-snapshot shares it."""
+    return RESTORED_BRANCH_NAME_PREFIX + "-".join(ref.split("/")[-2:])
+
+
+def restored_branch_task_subject(branch):
+    return f"{RESTORED_BRANCH_TASK_SUBJECT_PREFIX}{branch}: open its pull request or delete it"
+
+
+def restored_branch_task_description(snapshot, kept, worktree, restore_commit):
+    return "\n".join([
+        f"`restore` restored the work-snapshot {snapshot['ref']}, left by the worktree "
+        f"{snapshot['worktree'] or '(none recorded)'} with the transcript "
+        f"{snapshot['transcript'] or '(none recorded)'}.",
+        f"Kept files: {', '.join(kept)}.",
+        f"Restored worktree: {worktree}",
+        f"{RESTORED_BRANCH_TASK_DESCRIPTION_RESTORE_COMMIT_LINE_PREFIX}{restore_commit}",
+        "Carry the branch on to a pull request, or delete it. Leave this task open: "
+        "scripts/clean-worktrees.py marks it completed once that commit is on main or no branch "
+        "holds it any more.",
+    ])
+
+
+def agent_seat_task_list_new_pending_task_write(list_directory, subject, description):
+    """Write a new pending task into the Claude Code task list; return its id. Raises OSError.
+
+    The id is one more than the highest of the list's task ids and its .highwatermark, as
+    Claude Code numbers a new task; the file is linked into place only where no file of that
+    name exists, so a task Claude Code creates at the same moment is not overwritten. It creates
+    the list directory, which an agent-session that has made no task yet lacks; the function of
+    the same name in scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-
+    tasks-open.py raises there instead.
+    """
+    list_directory = Path(list_directory)
+    list_directory.mkdir(parents=True, exist_ok=True)
+    highest = 0
+    for path in list_directory.iterdir():
+        if TASK_FILE_NAME_PATTERN.fullmatch(path.name):
+            highest = max(highest, int(path.stem))
+    mark_path = list_directory / TASK_HIGH_WATER_MARK_FILE_NAME
+    mark = mark_path.read_text(encoding="utf-8").strip() if mark_path.is_file() else ""
+    if mark.isdigit():
+        highest = max(highest, int(mark))
+    task_id = highest + 1
+    with tempfile.NamedTemporaryFile("w", dir=list_directory, prefix=".task-", suffix=".partial",
+                                     delete=False, encoding="utf-8") as partial:
+        partial_path = Path(partial.name)
+    try:
+        while True:
+            partial_path.write_text(json.dumps({
+                "id": str(task_id), "subject": subject, "description": description,
+                "status": "pending", "blocks": [], "blockedBy": []}, indent=2), encoding="utf-8")
+            try:
+                os.link(partial_path, list_directory / f"{task_id}.json")
+                break
+            except FileExistsError:
+                task_id += 1
+    finally:
+        partial_path.unlink(missing_ok=True)
+    mark_partial = list_directory / (TASK_HIGH_WATER_MARK_FILE_NAME + ".partial")
+    mark_partial.write_text(str(task_id), encoding="utf-8")
+    os.replace(mark_partial, mark_path)
+    return task_id
+
+
+def work_snapshot_of_ref(repo, ref, out):
+    """The work-snapshot ref names, or None after printing why there is none."""
+    if not ref.startswith(WORK_SNAPSHOT_REF_PREFIX):
+        out(f"REFUSED: {ref} is not a work-snapshot; a work-snapshot's ref starts with "
+            f"{WORK_SNAPSHOT_REF_PREFIX}, as its list entry prints it.")
+        return None
+    for snapshot in all_work_snapshots(repo):
+        if snapshot["ref"] == ref:
+            return snapshot
+    out(f"REFUSED: the work-snapshot {ref} does not exist, so nothing was changed.\n"
+        f"If you restored or discarded it earlier, it is already handled.\n"
+        f"Otherwise list the work-snapshots there are with: python3 {shlex.quote(str(MODULE_PATH))} list")
+    return None
+
+
+def git_failure_text(result):
+    return f"exited {result.returncode}: {(result.stderr or result.stdout or '').strip() or 'no output'}"
+
+
+def restore_refusal(repo, snapshot, keep, environment):
+    """Why restore must not start, or None. Checked before anything changes."""
+    ref = snapshot["ref"]
+    program = f"python3 {shlex.quote(str(MODULE_PATH))}"
+    if not keep:
+        return (f"--keep names no file, which would restore every file.\n"
+                f"To keep every file, name each one, as the list entry does.\n"
+                f"To keep nothing, run: {program} discard {ref}")
+    changed = [path for _status, path in changed_files(repo, ref)]
+    missing = [path for path in keep if path not in changed]
+    if missing:
+        return (f"{', '.join(missing)} is not among the files the work-snapshot changed: "
+                f"{', '.join(changed)}.\n"
+                f"Give the paths relative to the clone's root, as the list entry prints them.")
+    if snapshot["operation"]:
+        return (f"the work-snapshot was taken during a {snapshot['operation']} in the worktree "
+                f"{snapshot['worktree']}, and git's record of the {snapshot['operation']} is not "
+                f"in it, so it cannot be resumed or restored.\n"
+                f"Run: {program} discard {ref}\n"
+                f"Then tell the user that the {snapshot['operation']} in {snapshot['worktree']} "
+                f"was discarded; its commits are still on the branches.")
+    branch = restored_branch_name(ref)
+    worktree = common_git_directory(repo).parent / ".claude" / "worktrees" / branch
+    if current_ref_value(repo, f"refs/heads/{branch}") is not None:
+        newest = git_output(repo, "log", "-1", "--format=%s", f"refs/heads/{branch}")
+        if newest == RESTORE_COMMIT_MESSAGE_TEMPLATE.format(ref=ref):
+            return (f"the branch {branch} already holds this restore: its newest commit is "
+                    f"\"{newest}\". Only the ref's deletion failed earlier.\n"
+                    f"Run: git update-ref -d {ref}")
+        return (f"the branch {branch} already exists, and its newest commit is not this "
+                f"work-snapshot's restore.\n"
+                f"Look at it with `git log {branch}`, and ask the user what to do with it.")
+    if worktree.exists():
+        return (f"the directory {worktree} already exists.\n"
+                f"Look at what it holds, and ask the user what to do with it.")
+    unset = [name for name in (TASK_LIST_ENVIRONMENT_VARIABLE, AGENT_SEAT_ENVIRONMENT_VARIABLE)
+             if not environment.get(name)]
+    if unset:
+        return (f"{' and '.join(unset)} is unset; the launchers set both for every agent-seat, "
+                f"and restore needs them to name the worktree's owner and the task list.\n"
+                f"Run restore from an agent-session the launcher started, or ask the user.")
+    return None
+
+
+def remove_worktree_and_branch_of_failed_work_snapshot_restore(repo, worktree, branch, out):
+    """Remove the worktree and the branch restore made; name each that cannot be removed, and
+    say so when neither is left."""
+    if worktree.exists():
+        removal = run_git(repo, "worktree", "remove", "--force", "--force", str(worktree))
+        if removal.returncode:
+            out(f"The worktree {worktree} restore made could not be removed "
+                f"({git_failure_text(removal)}); remove it with: "
+                f"git worktree remove --force --force {shlex.quote(str(worktree))}")
+    if current_ref_value(repo, f"refs/heads/{branch}") is not None:
+        deletion = run_git(repo, "branch", "-D", branch)
+        if deletion.returncode:
+            out(f"The branch {branch} restore made could not be deleted "
+                f"({git_failure_text(deletion)}); delete it with: git branch -D {branch}")
+    if not worktree.exists() and current_ref_value(repo, f"refs/heads/{branch}") is None:
+        out(f"Neither the worktree {worktree} nor the branch {branch} is left, "
+            f"so restore can be run again once the cause is fixed.")
+
+
+def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
+    """The restore command; returns its exit code."""
+    environment = os.environ if environment is None else environment
+    snapshot = work_snapshot_of_ref(repo, ref, out)
+    if snapshot is None:
+        return EXIT_REFUSED
+    refusal = restore_refusal(repo, snapshot, keep, environment)
+    if refusal:
+        out(f"REFUSED: nothing was changed, because {refusal}")
+        return EXIT_REFUSED
+    branch = restored_branch_name(ref)
+    worktree = common_git_directory(repo).parent / ".claude" / "worktrees" / branch
+    agent_seat = environment[AGENT_SEAT_ENVIRONMENT_VARIABLE]
+
+    def undo_after(step, detail):
+        out(f"FAILED: {step} failed ({detail}).")
+        remove_worktree_and_branch_of_failed_work_snapshot_restore(repo, worktree, branch, out)
+        out(f"The ref {ref} is kept, so nothing is lost. Tell the user what failed.")
+        return EXIT_STEP_FAILED
+
+    added = run_git(repo, "worktree", "add", "-b", branch, str(worktree), f"{ref}^")
+    if added.returncode:
+        return undo_after(f"git worktree add -b {branch} {worktree} {ref}^", git_failure_text(added))
+    owners = load_worktree_owner_file_read_and_write_module()
+    owner = {"owner_kind": owners.OWNER_AGENT_SEAT, "agent_seat": agent_seat}
+    try:
+        try:
+            owners.worktree_owner_file_write(worktree, owners.OWNER_AGENT_SEAT, agent_seat)
+        except owners.WorktreeOwnerFileAlreadyExistsError:
+            # The post-checkout hook, in a clone whose core.hooksPath names it, writes the owner
+            # file during `git worktree add`, naming GIT_AUTHOR_NAME's agent-seat as restore does.
+            written = owners.worktree_owner_file_read(worktree)
+            if written != owner:
+                raise owners.WorktreeOwnerFileError(
+                    f"git worktree add left an owner file naming {json.dumps(written)}, where "
+                    f"restore names {json.dumps(owner)}. scripts/git-client-side-hooks/post-checkout "
+                    f"writes that file, naming GIT_AUTHOR_NAME's agent-seat as restore does, and "
+                    f"restore cannot tell why the two differ. restore never overwrites an owner file "
+                    f"that names another owner, because scripts/clean-worktrees.py decides from the "
+                    f"owner when to remove the worktree") from None
+    except Exception as error:
+        return undo_after(f"writing the owner file of {worktree}", f"{type(error).__name__}: {error}")
+    diff = subprocess.run(["git", "--literal-pathspecs", "-C", str(worktree), "diff", "--binary",
+                           f"{ref}^", ref, "--",
+                           *keep], capture_output=True, check=False)
+    if diff.returncode:
+        return undo_after(f"git diff --binary {ref}^ {ref}",
+                          f"exited {diff.returncode}: {diff.stderr.decode(errors='replace').strip()}")
+    applied = subprocess.run(["git", "-C", str(worktree), "apply", "--index"], input=diff.stdout,
+                             capture_output=True, check=False)
+    if applied.returncode:
+        return undo_after("git apply --index",
+                          f"exited {applied.returncode}: {applied.stderr.decode(errors='replace').strip()}")
+    committed = run_git(worktree, "commit", "-q", "-m", RESTORE_COMMIT_MESSAGE_TEMPLATE.format(ref=ref))
+    if committed.returncode:
+        return undo_after("git commit", git_failure_text(committed))
+    restore_commit = git_output(worktree, "rev-parse", "HEAD")
+
+    exit_code = EXIT_DONE
+    subject = restored_branch_task_subject(branch)
+    description = restored_branch_task_description(snapshot, keep, worktree, restore_commit)
+    task_list = Path.home() / ".claude" / "tasks" / environment[TASK_LIST_ENVIRONMENT_VARIABLE]
+    try:
+        task_id = agent_seat_task_list_new_pending_task_write(task_list, subject, description)
+    except OSError as error:
+        task_id = None
+        exit_code = EXIT_STEP_FAILED
+        out(f"FAILED: the task could not be opened in {task_list} ({type(error).__name__}: {error}). "
+            f"The branch and the worktree hold the work, so the ref is still deleted.\n"
+            f"Create the task with Claude Code's TaskCreate tool, with exactly this subject and "
+            f"description, so that scripts/clean-worktrees.py closes it:\n"
+            f"subject: {subject}\ndescription:\n{description}")
+    deleted = run_git(repo, "update-ref", "-d", ref, snapshot["commit"])
+    if deleted.returncode:
+        exit_code = EXIT_STEP_FAILED
+        out(f"FAILED: the ref could not be deleted ({git_failure_text(deleted)}); the branch "
+            f"{'and the task are' if task_id else 'is'} kept.\nRun: git update-ref -d {ref}")
+    out(f"branch: {branch}\nworktree: {worktree}\n"
+        f"task: {task_id if task_id is not None else 'not opened, as the FAILED line above says'}")
+    dropped = [path for _status, path in changed_files(repo, snapshot["commit"]) if path not in keep]
+    out(f"summary: restored {ref}: kept {', '.join(keep)}; dropped "
+        f"{', '.join(dropped) if dropped else 'nothing'}; on the branch {branch} in the worktree "
+        f"{worktree}")
+    return exit_code
+
+
+def discard_work_snapshot(repo, ref, out=print):
+    """The discard command; returns its exit code."""
+    snapshot = work_snapshot_of_ref(repo, ref, out)
+    if snapshot is None:
+        return EXIT_REFUSED
+    entry = entry_text(repo, snapshot, with_command=False)
+    deleted = run_git(repo, "update-ref", "-d", ref, snapshot["commit"])
+    if deleted.returncode:
+        out(f"FAILED: the ref could not be deleted ({git_failure_text(deleted)}).\n"
+            f"Run: git update-ref -d {ref}")
+        return EXIT_STEP_FAILED
+    out(f"summary: discarded {entry}")
+    return EXIT_DONE
 
 
 # ---------------------------------------------------------------- cleaner
@@ -774,6 +1101,15 @@ def head_commit_or_raise(worktree):
 # ---------------------------------------------------------------- command line
 
 
+def command_exit_code(run):
+    """Run a restore or discard; a git failure outside its own steps is printed, exit 1."""
+    try:
+        return run()
+    except WorkSnapshotError as error:
+        print(f"FAILED: {error}. Nothing after that step was done; tell the user what failed.")
+        return EXIT_STEP_FAILED
+
+
 def main(argv=None):
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments in (["--help"], ["-h"]):
@@ -787,6 +1123,17 @@ def main(argv=None):
             return 2
         repo = Path(arguments[position + 1])
         del arguments[position:position + 2]
+    if arguments[:1] == ["restore"]:
+        rest = arguments[1:]
+        if len(rest) < 2 or rest[1] != "--keep" or "--keep" in rest[2:]:
+            print(__doc__, file=sys.stderr)
+            return EXIT_BAD_INVOCATION
+        return command_exit_code(lambda: restore_work_snapshot(repo, rest[0], rest[2:]))
+    if arguments[:1] == ["discard"]:
+        if len(arguments) != 2:
+            print(__doc__, file=sys.stderr)
+            return EXIT_BAD_INVOCATION
+        return command_exit_code(lambda: discard_work_snapshot(repo, arguments[1]))
     if arguments[:1] == ["list"]:
         agent_seat = None
         rest = arguments[1:]

@@ -43,7 +43,8 @@ with a pathspec counts the commit that deleted it.
 This hook runs that one diff itself, for the reason obsolete_path_set() gives —
 it needs to see the return code, which that function does not expose — and
 imports the rest of what it needs from that script: run_git(), read_stamp(),
-write_stamp() and head_state(). Its module level is imports and constants
+write_stamp(), head_state(), remote_branches_holding_own_commits() and its
+git_output module. Its module level is imports and constants
 only, its main() behind `if __name__ == "__main__"`, so importing runs
 nothing.
 
@@ -118,16 +119,14 @@ REV_PARSE_TIMEOUT_SECONDS = 15
 OBSOLETE_DIFF_TIMEOUT_SECONDS = 30
 COMMIT_COUNT_TIMEOUT_SECONDS = 15
 
-# Which head states mean "somebody else may have this branch". These are the
-# four of head_state()'s keys that imply a push of this branch happened; the
-# frozen-head rule in CLAUDE.md applies to every one of them.
-# Its others — unpushed, pushed-history, detached, unknown — are handled
-# separately in head_advice(). pushed-history is frozen too, but its commits
-# were pushed under another branch name, so "This branch is pushed" would be
-# false of it; it gets checkout-freshness-catch-up.py's PUSHED_HISTORY_ADVICE,
-# which says what was found.
-PUSHED_HEAD_STATE_KEYS = ("pushed", "pushed-with-local-commits",
-                          "behind-remote", "diverged-from-remote")
+# The two of head_state()'s keys where this checkout holds everything that was
+# pushed, so a new commit on top pushes cleanly. behind-remote and
+# diverged-from-remote are pushed too, but a commit on top there is a push git
+# rejects, so each gets advice of its own; a checkout on main gets its own
+# before any of these. pushed-history is frozen too, but its commits were
+# pushed under another branch name, so "This branch is pushed" would be false
+# of it; it gets checkout-freshness-catch-up.py's PUSHED_HISTORY_ADVICE.
+PUSHED_HEAD_STATE_KEYS = ("pushed", "pushed-with-local-commits")
 
 NEVER_PUSHED_ADVICE = (
     "This branch has never been pushed, so nobody else has it: commit or set aside "
@@ -135,16 +134,50 @@ NEVER_PUSHED_ADVICE = (
     "branch only when the tree is clean — then run `python3 scripts/run-all-test-suites.py "
     "--only-suites-whose-recorded-inputs-changed-since origin/main`."
 )
-# A pushed branch that conflicts with main is the one exception: no commit on
-# top can clear a conflict, so it is cleared by the hand-merge that
-# the VERDICT: CONFLICT report of scripts/branch-conflict-check.py describes.
-# Forbidding every merge here would send an agent with a conflict away from
-# the one move that clears it.
+# No commit on top can clear a conflict with main, so a pushed branch that
+# conflicts is sent to scripts/branch-conflict-check.py, whose report says
+# whether it is rebased or its pull request replaced.
 PUSHED_ADVICE = (
     "This branch is pushed, so its review may be running: do not rebase or amend "
-    "it. A fix for this topic is a new commit on top. If it conflicts with main, "
-    "clear the conflict with the hand-merge that scripts/branch-conflict-check.py "
-    "describes. Your next topic starts with `git checkout -b <name> origin/main`."
+    "it. A fix for this topic is a new commit on top. If the branch conflicts with "
+    "main, as python3 scripts/branch-conflict-check.py run in its checkout reports, "
+    "do what that report says. Your next topic starts with "
+    "`git checkout -b <name> origin/main`."
+)
+# `git pull --rebase` moves only the commits origin/<branch> lacks, which are
+# this checkout's own and never pushed, so it rewrites nothing under review.
+BEHIND_REMOTE_ADVICE = (
+    "This branch is pushed, and origin/{branch} has commits this checkout lacks, "
+    "most likely a fix pushed from elsewhere, so a push from here is rejected until "
+    "this checkout has them. Commit your edit, then run `git pull --rebase origin "
+    "{branch}`: it moves only your new commit, which is on no remote yet, onto "
+    "origin/{branch}, and leaves the pushed commits as they are. Then push once. If "
+    "the branch conflicts with main, do what `python3 scripts/branch-conflict-check.py` "
+    "reports; never rebase the pushed commits."
+)
+DIVERGED_FROM_REMOTE_ADVICE = (
+    "This branch has diverged from origin/{branch}: each side has commits the other "
+    "lacks, so a push is rejected, and a force-push would move a pushed head that may "
+    "be under review. Do not push yet. Run `git log --oneline --left-right "
+    "origin/{branch}...HEAD`: lines marked < are only on origin/{branch}, lines marked "
+    "> only here. If every > commit is new work made here since the last push, commit "
+    "your edit and run `git pull --rebase origin {branch}`, which moves only the > "
+    "commits onto origin/{branch}; then push once. If a > commit is a rewritten copy "
+    "of a < commit, as an amend or a rebase after the push makes, do not push: tell "
+    "the user that the pushed history was rewritten in this checkout, list both "
+    "sides' commits, and recommend keeping origin/{branch} and adding this "
+    "checkout's changes as a new commit on top of it."
+)
+# A checkout on main is behind or beside origin/main whenever this warning
+# fires, and work reaches main only through a pull request, so the edit moves
+# to a topic branch. The new branch was never pushed, so rebasing it is safe.
+MAIN_CHECKOUT_ADVICE = (
+    "This checkout is on main, and a change reaches main only through a pull "
+    "request from a topic branch. Run `git switch -c <a-branch-name>`, with a name "
+    "for your change, which keeps your edit; commit the edit there, then run `git "
+    "rebase origin/main`, which is allowed because the new branch has never been "
+    "pushed. From now on, start each topic with `git switch -c <a-branch-name> "
+    "origin/main` before its first edit."
 )
 
 
@@ -156,6 +189,22 @@ DETACHED_HEAD_LINE = (
     "<a-branch-name>) before you commit, because a commit on a detached HEAD is on "
     "no branch."
 )
+# The shape a fix-round agent works in: a worktree detached at a pull
+# request's pushed head. Rebasing there rewrites commits under review, and
+# every hook allows it, so the pushed case never gets the rebase lines.
+DETACHED_PUSHED_HEAD_LINE = (
+    "This checkout is on a detached HEAD whose commits are already on {holders}, so "
+    "they may be a pull request's head under review: do not rebase or amend them. "
+    "Make a branch (git switch -c <a-branch-name>) before you commit, because a "
+    "commit on a detached HEAD is on no branch; your fix is a new commit on top."
+)
+DETACHED_PUSH_STATE_UNKNOWN_LINE = (
+    "This checkout is on a detached HEAD, and git could not check whether its "
+    "commits are already on a remote branch, so treat them as pushed: do not rebase "
+    "or amend them. Make a branch (git switch -c <a-branch-name>) before you commit, "
+    "because a commit on a detached HEAD is on no branch; your fix is a new commit on "
+    "top."
+)
 NO_OVERLAP_LINE = (
     "main's changes to {path} do not overlap this checkout's copy; a rebase merges "
     "them cleanly."
@@ -165,9 +214,47 @@ OVERLAP_LINE = (
     "and commit your edit, run git rebase origin/main, which will stop on this file, "
     "and resolve the conflict there."
 )
-MAIN_HAS_NO_FILE_LINE = (
-    "main no longer has a file at {path}: find out whether main moved or deleted it "
-    "(git log origin/main -- {path}) before you commit."
+PUSHED_NO_OVERLAP_LINE = (
+    "main's changes to {path} do not overlap this checkout's copy, so they merge "
+    "cleanly when the pull request merges: commit your edit on top, and do not "
+    "rebase to pick them up."
+)
+PUSHED_OVERLAP_LINE = (
+    "main's changes to {path} overlap this checkout's copy, so the pull request will "
+    "conflict with main on this file. Commit your edit on top first, and do not "
+    "rebase; then do what `python3 scripts/branch-conflict-check.py` reports."
+)
+# git's rename detection carries an edit at the old path to the new one, in a
+# rebase and in a merge alike, so a moved file needs no hand-carrying.
+MAIN_MOVED_FILE_LINE = (
+    "main moved {path} to {new_path}. After you make the branch and commit your edit "
+    "at {path}, run `git rebase origin/main`: git follows the move and applies your "
+    "edit to {new_path}. If the rebase stops on {new_path}, resolve the conflict there."
+)
+MAIN_MOVED_FILE_PUSHED_LINE = (
+    "main moved {path} to {new_path}. Commit your edit on top at {path}, and do not "
+    "rebase: when the pull request merges, git follows the move and carries your edit "
+    "to {new_path}. If `python3 scripts/branch-conflict-check.py` reports a conflict, "
+    "do what its report says."
+)
+MAIN_DELETED_FILE_LINE = (
+    "main deleted {path}{deleted_in}, so your edit has no file to land in. Read why "
+    "with `git log -1 --stat origin/main -- {path}`. If your fix is still needed, "
+    "drop this edit with `git checkout -- {path}`, start a topic branch with `git "
+    "switch -c <a-branch-name> origin/main`, and make the same fix in the file that "
+    "does that job on main now. If no file on main does that job, drop the edit and "
+    "do not make the fix."
+)
+MAIN_LOST_FILE_UNKNOWN_LINE = (
+    "main no longer has a file at {path}, and git could not tell whether main moved or "
+    "deleted it ({text}). Run `git log -1 --format=%h origin/main -- {path}` for the "
+    "commit that removed it, then `git show --name-status -M --format= <that commit>`. "
+    "If a line there starts with R and names {path}, main moved the file, and your "
+    "edit belongs at the second path on that line. Otherwise main deleted it: drop "
+    "this edit with `git checkout -- "
+    "{path}`, and if your fix is still needed, make it in the file that does that job "
+    "on main now, on a topic branch from origin/main (`git switch -c <a-branch-name> "
+    "origin/main`)."
 )
 MAIN_COPY_UNREADABLE_LINE = (
     "git could not read {path} on origin/main ({text}), so this warning cannot say "
@@ -189,7 +276,7 @@ GIT_FAILURE_CAUSE_LINE = (
     "obsolete-file-edit-warning-hook: {failure}, so the edited file was not checked "
     "against origin/main; the edit itself succeeded."
 )
-GIT_FAILURE_AGENT_FACING_MESSAGE_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW = (
+GIT_FAILURE_TOOL_MESSAGE_TO_AGENT_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW = (
     "A later run of this hook checks only the file that run's Edit or Write touched, so check "
     "{path} by running the command printed on its own line below this paragraph. If git's error "
     "above names no lock file, run that "
@@ -384,15 +471,41 @@ def git_operation_in_progress(freshness, git_directory: Path):
     return None
 
 
-def overlap_line(freshness, checkout: Path, repository_path: str):
+def main_lost_file_line(freshness, checkout: Path, merge_base: str,
+                        repository_path: str, pushed: bool):
+    """(line, whether the line reports a git failure) for an edit at a path
+    origin/main no longer has: the moved line naming main's new path when main
+    renamed the file, else the deleted line, naming the deleting commit when git
+    can find it; the unknown line, with git's text, when git could not list main's
+    renames."""
+    renamed = freshness.run_git(
+        ["diff", "-z", "--name-status", "-M", "--diff-filter=R", merge_base,
+         "origin/main"], checkout, timeout=OBSOLETE_DIFF_TIMEOUT_SECONDS)
+    if renamed.returncode != 0:
+        text = (renamed.stderr or "").strip() or "git diff exited %d" % renamed.returncode
+        return MAIN_LOST_FILE_UNKNOWN_LINE.format(path=repository_path, text=text), True
+    for entry in freshness.git_output.name_status_entries(renamed.stdout):
+        if entry.origin_path == repository_path and entry.path:
+            moved = MAIN_MOVED_FILE_PUSHED_LINE if pushed else MAIN_MOVED_FILE_LINE
+            return moved.format(path=repository_path, new_path=entry.path), False
+    deleting = freshness.run_git(
+        ["log", "-1", "--format=%h (%s)", "origin/main", "--", repository_path],
+        checkout, timeout=COMMIT_COUNT_TIMEOUT_SECONDS)
+    commit = deleting.stdout.strip() if deleting.returncode == 0 else ""
+    return MAIN_DELETED_FILE_LINE.format(
+        path=repository_path, deleted_in=f" in commit {commit}" if commit else ""), False
+
+
+def overlap_line(freshness, checkout: Path, repository_path: str, pushed: bool = False):
     """(line, whether the line reports a git failure): whether main's changes to
     the file overlap this checkout's copy.
 
-    The line is MAIN_HAS_NO_FILE_LINE when main's tree was read and lists no file at
-    the path, MAIN_COPY_UNREADABLE_LINE with git's text when main's copy or tree
+    The line is main_lost_file_line()'s when main's tree was read and lists no file
+    at the path, MAIN_COPY_UNREADABLE_LINE with git's text when main's copy or tree
     cannot be read, OVERLAP_UNKNOWN_LINE when another git step (merge base, base
     copy, merge-file) fails, and "" when there is no merge base, the merge base has
-    no file at the path, or the edited file is gone.
+    no file at the path, or the edited file is gone. When HEAD's commits are pushed,
+    no line tells the agent to rebase.
 
     A two-way diff against main cannot answer this, because the agent's own edit is
     part of it; a three-way merge of the file, with the merge base as the common
@@ -422,7 +535,8 @@ def overlap_line(freshness, checkout: Path, repository_path: str):
             ["ls-tree", "origin/main", "--", repository_path], checkout,
             timeout=REV_PARSE_TIMEOUT_SECONDS)
         if main_listing.returncode == 0 and not main_listing.stdout.strip():
-            return MAIN_HAS_NO_FILE_LINE.format(path=repository_path), False
+            return main_lost_file_line(freshness, checkout, merge_base.stdout.strip(),
+                                       repository_path, pushed)
         text = ((main_copy.stderr or "").strip()
                 or "git show exited %d" % main_copy.returncode)
         return MAIN_COPY_UNREADABLE_LINE.format(path=repository_path, text=text), True
@@ -450,9 +564,11 @@ def overlap_line(freshness, checkout: Path, repository_path: str):
         merged = freshness.run_git(merge_file_arguments, checkout,
                                    timeout=MERGE_FILE_TIMEOUT_SECONDS)
     if merged.returncode == 0:
-        return NO_OVERLAP_LINE.format(path=repository_path), False
+        return (PUSHED_NO_OVERLAP_LINE if pushed else NO_OVERLAP_LINE).format(
+            path=repository_path), False
     if 0 < merged.returncode <= MERGE_FILE_HIGHEST_CONFLICT_COUNT:
-        return OVERLAP_LINE.format(path=repository_path), False
+        return (PUSHED_OVERLAP_LINE if pushed else OVERLAP_LINE).format(
+            path=repository_path), False
     return overlap_unknown(merge_file_arguments, merged)
 
 
@@ -471,6 +587,8 @@ def head_advice(freshness, checkout: Path, git_directory: Path, repository_path:
             "git rev-parse exited %d" % branch_answer.returncode)
         return BRANCH_STATE_UNKNOWN_LINE.format(text=text), True, True
     branch = branch_answer.stdout.strip()
+    if branch == "main":
+        return MAIN_CHECKOUT_ADVICE, False, False
     state_key, state_text = freshness.head_state(checkout, branch)
     if state_key == "unpushed":
         return NEVER_PUSHED_ADVICE, False, False
@@ -478,12 +596,25 @@ def head_advice(freshness, checkout: Path, git_directory: Path, repository_path:
         return freshness.PUSHED_HISTORY_ADVICE, False, False
     if state_key in PUSHED_HEAD_STATE_KEYS:
         return PUSHED_ADVICE, False, False
+    if state_key == "behind-remote":
+        return BEHIND_REMOTE_ADVICE.format(branch=branch), False, False
+    if state_key == "diverged-from-remote":
+        return DIVERGED_FROM_REMOTE_ADVICE.format(branch=branch), False, False
     if state_key == "detached":
         marker = git_operation_in_progress(freshness, git_directory)
         if marker is not None:
             return GIT_OPERATION_IN_PROGRESS_LINE.format(marker=marker), True, False
-        lines = [DETACHED_HEAD_LINE]
-        verdict, verdict_reports_failure = overlap_line(freshness, checkout, repository_path)
+        holders = freshness.remote_branches_holding_own_commits(checkout)
+        if holders is None:
+            lines = [DETACHED_PUSH_STATE_UNKNOWN_LINE]
+        elif holders:
+            named = ", ".join(holders[:freshness.PUSHED_HISTORY_BRANCHES_NAMED])
+            lines = [DETACHED_PUSHED_HEAD_LINE.format(holders=named)]
+        else:
+            lines = [DETACHED_HEAD_LINE]
+        verdict, verdict_reports_failure = overlap_line(
+            freshness, checkout, repository_path, pushed=holders != [])
+        verdict_reports_failure = verdict_reports_failure or holders is None
         if verdict:
             lines.append(verdict)
         return "\n".join(lines), True, verdict_reports_failure
@@ -522,7 +653,7 @@ def main() -> int:
     # The session's OWN view of where it works. Never $CLAUDE_PROJECT_DIR:
     # that variable lies in forked sessions, naming the main checkout while
     # settings load from the worktree — the same reason
-    # checkout-freshness-catch-up.py and .claude/hooks/instruction-file-guard.py
+    # checkout-freshness-catch-up.py and .claude/guard-hooks/instruction-file-guard.py
     # both read cwd from the payload.
     working_directory = payload.get("cwd")
     if not working_directory or not isinstance(working_directory, str):
@@ -541,7 +672,7 @@ def main() -> int:
         # hook copied away from it fails in the one load the top-level handler reports.
         freshness.next_step_lines.post_tool_use_hook_additional_context_print_for_agent("\n".join((
             GIT_FAILURE_CAUSE_LINE.format(failure=failure),
-            GIT_FAILURE_AGENT_FACING_MESSAGE_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW.format(
+            GIT_FAILURE_TOOL_MESSAGE_TO_AGENT_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW.format(
                 path=file_path, rerun=rerun,
                 lock_file_condition=freshness.next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION,
                 wait_for_lock_file=freshness.next_step_lines

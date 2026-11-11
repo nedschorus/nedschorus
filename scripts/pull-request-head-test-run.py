@@ -17,6 +17,7 @@ import argparse
 import importlib.util
 import locale
 import os
+import re
 import shlex
 import sys
 import tempfile
@@ -118,6 +119,61 @@ PULL_REQUEST_HEAD_TEST_LOG_APPEND_PROGRAM = "; ".join((
     f'not written: {TEST_LOG_TOOK_PART_OF_THE_RECORD}.'
     f'\\nBefore appending another record, repair the partial record in the test log by hand.")',
 ))
+
+PULL_REQUEST_HEAD_TEST_RUN_RECORD_FIRST_LINE = re.compile(
+    rf"{PROGRAM}: \S+, started (\S+), a record of (\d+) lines")
+PULL_REQUEST_HEAD_TEST_RUN_RECORD_HEAD_LINE_PREFIX = "head: "
+PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX = f"{PROGRAM} exit code: "
+
+
+class PullRequestHeadTestRunTestLogNotWholeRecordsError(ValueError):
+    pass
+
+
+def pull_request_head_test_run_test_log_split_into_records(text: str) -> list:
+    """Return (started, the record's lines) for each record of a test log, in the order written.
+
+    Raise PullRequestHeadTestRunTestLogNotWholeRecordsError when the text does not split into whole
+    records by the line count each record's first line gives, as after a torn append.
+    """
+    lines = text.split("\n")
+    if lines[-1] != "":
+        raise PullRequestHeadTestRunTestLogNotWholeRecordsError("the test log does not end with a line feed")
+    lines.pop()
+    records = []
+    at = 0
+    while at < len(lines):
+        first_line = PULL_REQUEST_HEAD_TEST_RUN_RECORD_FIRST_LINE.fullmatch(lines[at])
+        if first_line is None:
+            raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
+                f"line {at + 1} should begin a record and does not: {lines[at][:200]!r}")
+        count = int(first_line.group(2))
+        if count == 0:
+            raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
+                f"the record that begins at line {at + 1} says it has 0 lines, but that count "
+                f"includes the record's first line, so it is at least 1")
+        record = lines[at:at + count]
+        if len(record) != count:
+            raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
+                f"the record that begins at line {at + 1} says it has {count} lines, but the test "
+                f"log ends after {len(record)} lines")
+        if not record[-1].startswith(PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX):
+            raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
+                f"the record that begins at line {at + 1} does not end with its "
+                f"{PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX!r} line: line "
+                f"{at + count} is {record[-1][:200]!r}")
+        records.append((first_line.group(1), record))
+        at += count
+    if not records:
+        raise PullRequestHeadTestRunTestLogNotWholeRecordsError("the test log is empty")
+    return records
+
+
+def pull_request_head_test_run_record_passed_on_commit_check(record: list, commit: str) -> bool:
+    """Return whether a record's lines say it tested commit and this program exited 0."""
+    head = f"{PULL_REQUEST_HEAD_TEST_RUN_RECORD_HEAD_LINE_PREFIX}commit {commit}"
+    return ((record[1] == head or record[1].startswith(f"{head} ("))
+            and record[-1] == f"{PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX}0")
 
 
 def commit_named_for_the_record(checkout: Path, commit: str) -> str:
@@ -320,7 +376,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
               and daily.runner_summary_line(completed) is None):
             steps_failed.append((
                 f"{run_all_test_suites.PROGRAM} exited {completed.returncode} and printed "
-                f"no {daily.RUNNER_SUMMARY_LINE_PREFIX} line, which is no verdict",
+                f"no {run_all_test_suites.SUMMARY_LINE_PREFIX} line, which is no verdict",
                 "Read the runner's stderr in the record, then run this again."))
         if completed.returncode in (run_all_test_suites.EXIT_ALL_PASSED,
                                     run_all_test_suites.EXIT_SOME_FAILED):
@@ -335,7 +391,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
 
     summary = daily.runner_summary_line(completed) if completed is not None else None
     record_lines = [
-        f"head: {commit_named_for_the_record(checkout, head)}",
+        f"{PULL_REQUEST_HEAD_TEST_RUN_RECORD_HEAD_LINE_PREFIX}{commit_named_for_the_record(checkout, head)}",
         f"selecting since: {since_for_the_record}",
         f"runner: {runner_named_for_the_record(runner)}"]
     record_lines.extend(what_failed for what_failed, _ in steps_failed)
@@ -348,7 +404,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
             record_lines.extend(printed)
             if summary is None:
                 record_lines.append(
-                    f"the runner printed no {daily.RUNNER_SUMMARY_LINE_PREFIX} line; its "
+                    f"the runner printed no {run_all_test_suites.SUMMARY_LINE_PREFIX} line; its "
                     f"stderr:")
                 record_lines.extend(f"  {line}"
                                     for line in completed.stderr.strip().splitlines())
@@ -362,7 +418,8 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
     record_lines.append(f"logs: {logs} on {machine}")
     exit_code_once_the_record_is_written = (
         daily.EXIT_STEP_OF_THIS_PROGRAM_FAILED if steps_failed else completed.returncode)
-    record_lines.append(f"{PROGRAM} exit code: {exit_code_once_the_record_is_written}")
+    record_lines.append(
+        f"{PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX}{exit_code_once_the_record_is_written}")
     # Count the complete record, including this header, so quoted runner output cannot impersonate records.
     after_the_first_line = "\n".join(record_lines)
     record = (f"{PROGRAM}: {machine}, started {started}, a record of "

@@ -19,9 +19,11 @@ import pathlib
 import signal
 import socket
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 # Before anything runs git, so the scratch repository is built where this suite says.
@@ -336,7 +338,9 @@ if linux_only_cases_run_here("the report's sandbox lines"):
               "PID namespace" not in report, report[-600:])
 
     with tempfile.TemporaryDirectory() as scratch_name:
-        scratch = pathlib.Path(scratch_name)
+        # Resolved, as the runner resolves the checkout it names, where TMPDIR is reached
+        # through a link.
+        scratch = pathlib.Path(scratch_name).resolve()
         fake_bin = scratch / "bin"
         fake_bin.mkdir()
         # Stands in for a working bwrap: skips the sandbox's own arguments, names the
@@ -347,8 +351,8 @@ if linux_only_cases_run_here("the report's sandbox lines"):
             "status_fd=\n"
             "while [ $# -gt 0 ]; do\n"
             "  case \"$1\" in\n"
-            "    --dev-bind|--bind|--ro-bind|--ro-bind-try|--setenv) shift 3 ;;\n"
-            "    --proc|--dev|--tmpfs|--overlay-src|--tmp-overlay|--unsetenv) shift 2 ;;\n"
+            "    --dev-bind|--bind|--ro-bind|--ro-bind-try|--setenv|--symlink) shift 3 ;;\n"
+            "    --proc|--dev|--tmpfs|--dir|--overlay-src|--tmp-overlay|--unsetenv) shift 2 ;;\n"
             "    --json-status-fd) status_fd=$2; shift 2 ;;\n"
             "    --unshare-pid|--unshare-net|--unshare-ipc|--die-with-parent) shift ;;\n"
             "    *) break ;;\n"
@@ -357,6 +361,29 @@ if linux_only_cases_run_here("the report's sandbox lines"):
             "[ -n \"$status_fd\" ] && eval \"echo '{\\\"child-pid\\\": $$}' >&$status_fd\"\n"
             "exec \"$@\"\n")
         (fake_bin / "bwrap").chmod(0o755)
+
+        # The runner hands bwrap the status pipe at whatever descriptor number is free,
+        # which reaches 10 or more only on a busy run, so the case forces both widths.
+        for status_fd in (9, 12):
+            read_end, write_end = os.pipe()
+            os.dup2(write_end, status_fd)
+            os.close(write_end)
+            try:
+                started = subprocess.run(
+                    [str(fake_bin / "bwrap"), "--unshare-pid", "--json-status-fd", str(status_fd),
+                     "sh", "-c", "echo started"],
+                    pass_fds=(status_fd,), capture_output=True, text=True,
+                    stdin=subprocess.DEVNULL, timeout=60, check=False)
+            finally:
+                os.close(status_fd)
+            with os.fdopen(read_end) as status_reader:
+                status = status_reader.read()
+            check(f"the stand-in bwrap, given status descriptor {status_fd}, writes the "
+                  "child-pid line to it and starts the command",
+                  started.returncode == 0 and started.stdout == "started\n"
+                  and '"child-pid"' in status,
+                  (started.returncode, started.stdout, started.stderr, status))
+
         repository = scratch_checkout(scratch, ["a-test.py", OUTSIDE_SUITE])
         completed, report = run_runner(
             scratch, repository, f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
@@ -582,9 +609,102 @@ with tempfile.TemporaryDirectory() as scratch_name:
           "PREFIXED" not in outside["log"].read_text()
           and "ran" in outside["log"].read_text(), outside["log"].read_text())
 
+# --- A suite outside an nc-test-sandbox leaves nothing in the shared temp directory ---
+
+with tempfile.TemporaryDirectory() as scratch_name:
+    scratch = pathlib.Path(scratch_name)
+    subprocess.run(["git", "init", "-q"], cwd=scratch, check=True)
+    made_record = scratch / "made"
+    (scratch / "makes-a-directory-then-sleeps-test.py").write_text(
+        "import pathlib, sys, tempfile, time\n"
+        f"pathlib.Path({str(made_record)!r}).write_text(tempfile.mkdtemp(prefix='made-'))\n"
+        "time.sleep(60)\n")
+    run_stops = []
+
+    def stop_once_the_directory_is_made():
+        deadline = time.monotonic() + 30
+        while not made_record.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        run_stops.append("the test's stop")
+
+    stopper = threading.Thread(target=stop_once_the_directory_is_made, daemon=True)
+    stopper.start()
+    killed = runner.run_one_suite(scratch, sys.executable, "makes-a-directory-then-sleeps-test.py",
+                                  scratch, run_stops=run_stops)
+    stopper.join()
+    made = pathlib.Path(made_record.read_text()) if made_record.exists() else None
+    check("a suite outside an nc-test-sandbox killed with SIGKILL leaves no directory it made "
+          "through TMPDIR, nor the TMPDIR it was given, and that TMPDIR is not the shared one",
+          killed.get("stopped by") == "the test's stop" and made is not None
+          and not made.exists() and not made.parent.exists()
+          and made.parent.parent == pathlib.Path(tempfile.gettempdir())
+          and made.parent.name.startswith(
+              runner.SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX)
+          and killed["output_note"] is None,
+          (killed, made))
+    # On the Mac, restart-live-seats-at-login-test.py binds a socket at
+    # <TMPDIR>/lstXXXXXXXX/tmux-501/fleet-anchor; with the Mac's 48-character temp directory the
+    # path stays under macOS's 104-byte limit only while the runner adds at most 13 characters.
+    check("the TMPDIR given to a suite outside an nc-test-sandbox is at most 13 characters longer "
+          "than the shared temp directory",
+          made is not None
+          and len(str(made.parent)) - len(str(pathlib.Path(tempfile.gettempdir()))) <= 13,
+          made)
+
+    # Root removes a directory whatever its mode, so the runner's removal cannot be made to fail.
+    if os.geteuid() != 0:
+        given_record = scratch / "given"
+        (scratch / "leaves-an-unremovable-directory-test.py").write_text(
+            "import os, pathlib\n"
+            f"pathlib.Path({str(given_record)!r}).write_text(os.environ['TMPDIR'])\n"
+            "locked = pathlib.Path(os.environ['TMPDIR']) / 'locked'\n"
+            "(locked / 'file').parent.mkdir()\n"
+            "(locked / 'file').write_text('x')\n"
+            "locked.chmod(0o500)\n")
+        unremovable = runner.run_one_suite(scratch, sys.executable,
+                                           "leaves-an-unremovable-directory-test.py", scratch)
+        given = pathlib.Path(given_record.read_text()) if given_record.exists() else None
+        check("a TMPDIR the runner cannot remove is named, with the command that removes it, "
+              "in the suite's output note",
+              unremovable["exit"] == 0 and given is not None and (given / "locked").is_dir()
+              and f"the temporary directory the suite was given, {given}, could not be removed ("
+              in (unremovable["output_note"] or "")
+              and f"`chmod -R u+rwx {shlex.quote(str(given))} && rm -rf {shlex.quote(str(given))}`"
+              in unremovable["output_note"],
+              (unremovable, given))
+        if given is not None and (given / "locked").is_dir():
+            (given / "locked").chmod(0o700)
+            shutil.rmtree(given)
+
+    (scratch / "prints-tmpdir-test.py").write_text("import os\nprint(os.environ.get('TMPDIR'))\n")
+    (scratch / "bwrap").write_text('#!/bin/sh\n"$@"\n')
+    (scratch / "bwrap").chmod(0o755)
+    in_sandbox = runner.run_one_suite(scratch, sys.executable, "prints-tmpdir-test.py", scratch,
+                                      sandbox_prefix=(str(scratch / "bwrap"),), platform="darwin")
+    check("a suite in an nc-test-sandbox keeps the TMPDIR the sandbox gives it",
+          in_sandbox["log"].read_text().strip() == str(os.environ.get("TMPDIR")),
+          in_sandbox["log"].read_text())
+
 for suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX:
     check(f"the suite listed to run outside the sandbox exists: {suite}",
           (SCRIPTS_DIR.parent / suite).is_file())
+
+# Each of these starts the real bwrap, which cannot start inside bwrap.
+for suite in ("nc-systems/cold-read/tests/cold-read-agy-cell-real-sandbox-test.py",
+              "nc-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-real-sandbox-test.py"):
+    check(f"a suite that starts the real bwrap runs outside the sandbox: {suite}",
+          suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX)
+# Each of these starts a program's bwrap through the cold-read fixture's
+# pass-through stand-in, so it runs inside the sandbox like any other suite.
+for suite in ("nc-systems/cold-read/tests/cold-read-agy-cell-test.py",
+              "nc-systems/cold-read/tests/cold-read-fast-read-test.py",
+              "nc-systems/cold-read/tests/cold-read-grid-test.py",
+              "nc-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-test.py",
+              "nc-systems/skills/explain/tests/explain-reply-cold-read-fast-read-test.py",
+              "nc-systems/skills/walk-me-through/tests/"
+              "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close-test.py"):
+    check(f"a suite whose bwrap is the stand-in runs inside the sandbox: {suite}",
+          suite not in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX)
 
 
 # --- Covers over listening sockets that vanish or cannot be reached -----------

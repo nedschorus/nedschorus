@@ -63,8 +63,8 @@ _python_libraries_pinned_requirements_install_if_missing_then_import_spec = impo
 python_libraries_pinned_requirements_install_if_missing_then_import_common = importlib.util.module_from_spec(_python_libraries_pinned_requirements_install_if_missing_then_import_spec)
 _python_libraries_pinned_requirements_install_if_missing_then_import_spec.loader.exec_module(python_libraries_pinned_requirements_install_if_missing_then_import_common)
 _failed_command_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
-    Path(__file__).resolve().with_name("failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py"))
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().with_name("failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py"))
 _failed_command_lines = importlib.util.module_from_spec(_failed_command_lines_spec)
 _failed_command_lines_spec.loader.exec_module(_failed_command_lines)
 
@@ -196,8 +196,12 @@ class SimpleCommand(list):
     command whose child_shell starts with another's runs inside it, so it sees
     that shell's cd but its own cd does not leak out. redirects holds
     (operator, target) pairs, heredocs the heredocs fed to this command or to
-    the pipeline that starts on its heredoc line.
+    the pipeline that starts on its heredoc line. in_while_or_until_loop_condition
+    is True for a command in the condition of a while or until loop, including
+    one inside a substitution there, and False for one in the loop's body.
     """
+
+    in_while_or_until_loop_condition = False
 
     def __init__(self, words, child_shell, redirects, heredocs):
         super().__init__(words)
@@ -266,7 +270,8 @@ def simple_command_program_index_skipping_wrappers(words):
     The program is the first word after environment assignments and after
     wrappers such as sudo, timeout and xargs with their options and operands;
     a later word, such as the file of `tee /tmp/bash`, is not the program.
-    index is None when no word is left to be the program. receives_standard_input
+    index is None when no word is left to be the program, and for `command -v`
+    and `command -V`, which run nothing. receives_standard_input
     is false when a wrapper, such as xargs, keeps its standard input from the
     program.
     """
@@ -301,10 +306,19 @@ def _wrappers_read(words):
         own = []
         options.append((name, own))
         index = _index_after_options(words, index + 1, wrapper, own)
+        if name == "command" and any(_is_short_option_cluster_holding(option, "vV")
+                                     for option, _ in own):
+            # command -v and command -V only describe the next word; they run nothing.
+            return None, receives_standard_input, options
         if wrapper.operands:
             # Options may follow the operand too, as in timeout 60 --signal=KILL.
             index = _index_after_options(words, index + wrapper.operands, wrapper, own)
     return None, receives_standard_input, options
+
+
+def _is_short_option_cluster_holding(option, letters):
+    return (option.startswith("-") and not option.startswith("--")
+            and any(letter in option[1:] for letter in letters))
 
 
 def _index_after_options(words, index, wrapper, options):
@@ -1011,6 +1025,15 @@ class _Collector:
                 node.start_byte, SUBSHELL if kind == "subshell" else SUBSTITUTION),)
         if kind in SEQUENCE_NODE_TYPES or kind in SIMPLE_COMMAND_NODE_TYPES:
             self.sequence(node, child_shell, heredocs)
+            return
+        if kind == "while_statement":
+            # tree-sitter-bash reads an until loop as a while_statement too.
+            for index, child in enumerate(node.children):
+                first = len(self.commands)
+                self.visit(child, child_shell, heredocs)
+                if node.field_name_for_child(index) == "condition":
+                    for command in self.commands[first:]:
+                        command.in_while_or_until_loop_condition = True
             return
         if kind == "expansion":
             for child in node.children:

@@ -73,7 +73,7 @@ Operating rules:
   the copy; a path that resolves outside the checkout is refused.
 - Reports land in `sanity-check-records/<date>-<target-stem>/` (suffixed -2,
   -3, ... claimed by creation, so a same-day second pass never overwrites
-  earlier reports; for a skill, whose file is always `SKILL.md`, the stem is
+  earlier reports, and skipping a name the log-store already holds; for a skill, whose file is always `SKILL.md`, the stem is
   `<skill directory>-SKILL`). Beside them the runner saves everything it
   printed, as `sanity-check-run.log`, and the request the fresh-eyes agents
   were given, as `sanity-check-request.md`. The record is gitignored, and
@@ -227,9 +227,8 @@ Running a sanity-check, and reading its output:
   the printed instruction, and a timeout. The classification is read from the
   CLI's own output, matched only at the start of a line and only on a launch
   that failed; a launch whose text misleads it is told to the user, who can
-  see the line. The cold-read-grid relaunches whatever the cause and uses the
-  class for its report alone; here the class decides, because a relaunch of a
-  logged-out CLI is a wasted launch and its failure sends the audit to triage
+  see the line. The class decides whether the runner relaunches, because a
+  relaunch of a logged-out CLI is a wasted launch and its failure sends the audit to triage
   with one report. The instructions do not depend on which agent finished
   first, or on whether this run launched the other runtime: a rerun of one
   agent is a run that launched one runtime, and the other runtime's report is
@@ -306,6 +305,10 @@ _common_spec = importlib.util.spec_from_file_location(
     "cold_read_cell_common", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-cell-common.py")
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
+_record_ship_spec = importlib.util.spec_from_file_location(
+    "sanity_check_record_ship", RECORD_SHIPPER)
+record_ship = importlib.util.module_from_spec(_record_ship_spec)
+_record_ship_spec.loader.exec_module(record_ship)
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
     REPO_ROOT / "nc-systems" / "general-tools"
@@ -314,11 +317,17 @@ git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
     REPO_ROOT / "nc-systems" / "general-tools"
-    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
+_command_line_prefix_spec = importlib.util.spec_from_file_location(
+    "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
+_command_line_prefix_spec.loader.exec_module(command_line_prefix)
 # The Codex cells' permission profile, as it appears in their sessions.
 CODEX_CREDENTIAL_DENYING_PERMISSION_PROFILE = "sanity-check-no-credentials"
 
@@ -616,8 +625,9 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
             # review nobody is left to save.
             break
         recognised_texts = RECOGNISED_FAILURE_TEXTS_FOR_MODEL["claude"](model)
+        # dontAsk: a tool call --allowedTools does not allow is refused, with no one to ask.
         command = [
-            "claude", "-p",
+            *command_line_prefix.claude_code_headless_run_command_line_prefix_build("dontAsk"),
             "--model", model,
             "--effort", REASONING_EFFORT,
             "--output-format", "text",
@@ -1449,16 +1459,21 @@ def fresh_record_dir(target_stem: str) -> pathlib.Path:
     The directory is claimed by creating it, not by testing first and creating
     after: two runs starting together on the same target and date both pass a
     look-then-create test and return the same path, and the second overwrites
-    the first."""
+    the first.
+
+    The name is claimed the same way in the log-store's sanity-check-records:
+    another checkout's record of the same target and day ships to the same
+    store, and shipping this one under its name is refused. When the store
+    cannot be reached to claim the name, the name is checked against this
+    checkout alone and a warning on stderr says so."""
     base = RECORDS_ROOT / f"{datetime.date.today().isoformat()}-{target_stem}"
-    counter = 1
-    while True:
-        out_dir = base if counter == 1 else pathlib.Path(f"{base}-{counter}")
-        try:
-            out_dir.mkdir(parents=True)
-            return out_dir
-        except FileExistsError:
-            counter += 1
+    out_dir, unclaimed = record_ship.shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_claimed_in_log_store_and_log_store_claim_failure_reason_or_none(
+        base, *record_ship.destination_for_this_machine())
+    record_ship.shipper.record_directory_being_written_lock_take(out_dir)
+    if unclaimed:
+        print(record_ship.shipper.log_store_claim_failed_so_record_name_may_collide_warning_line(
+            "sanity-check-adversarial-prompts.py", out_dir, unclaimed), file=sys.stderr)
+    return out_dir
 
 
 def cell_scratch_dir(out_dir: pathlib.Path, cell: str) -> pathlib.Path:
@@ -1738,6 +1753,7 @@ def ship_record(record_dir: pathlib.Path) -> str:
     found it, and the record stays on disk for a later run; the run's exit
     code says the record did not arrive.
     """
+    record_ship.shipper.record_directory_being_written_lock_release(record_dir)
     try:
         completed = subprocess.run(
             [sys.executable, str(RECORD_SHIPPER), str(record_dir)],

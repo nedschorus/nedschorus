@@ -16,7 +16,7 @@ A completed-but-held design draft exists on an unmerged branch and is recorded n
 
 ## Outcome: discarded, 2026-09-28
 
-The user ruled to discard the draft on 2026-09-28 ("Y"). The question it answered, where a new file belongs, is now settled by `docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md`. The layout it described is being replaced under GHI [Rationalize the repository layout: group components by owning system under nc-systems/, one built-in-process-planned document each, and a hook dispatcher](https://github.com/nedschorus/nedschorus/issues/224). Landing it would have meant re-adjudicating 83 findings against a layout that no longer matches it.
+The user ruled to discard the draft on 2026-09-28 ("Y"). The question it answered, where a new file belongs, is now settled by `docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md`. The layout it described is being replaced under GHI [Rationalize the repository layout: group components by owning system under nc-systems/](https://github.com/nedschorus/nedschorus/issues/224). Landing it would have meant re-adjudicating 83 findings against a layout that no longer matches it.
 
 - The branch `repo-boundary-and-runtime-layers` is deleted; its tip was 06083f3d. The link to it above no longer resolves.
 - The draft and its review cells, eleven files in all, are kept in the log-store at `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-backlog/repo-boundary-and-runtime-layers-branch-files-2026-09-28.tar.gz`.

@@ -29,7 +29,7 @@ HOOK_SCRIPT = Path(__file__).with_name("absence-claim-locator-reminder-hook.py")
 LABELLED_REPLIES = Path(
     "/home/nedlern/nedschorus-logs/seats/ned-box-helper/"
     "absence-claim-trigger-phrases-2026-10-05/out/precision/labels.csv")
-EXPECTED_PRECISION_LINE = "fires 102: correct 87, incorrect 15, unclear 0; precision 0.8529"
+EXPECTED_PRECISION_LINE = "fires 103: correct 88, incorrect 15, unclear 0; precision 0.8544"
 B01_CLAIM = "The transcripts it points to are gone."
 REMINDER_FOR_B01 = (
     "absence-claim reminder: your reply says a file or record is gone, missing "
@@ -296,6 +296,28 @@ for case_name, text in [
     ("pattern 6: an edited-element word heads the clause", "That change is not in the branch."),
     ("pattern 6: any ... that before the match",
      "I looked for any copy that might exist, but the file is not in the mirror."),
+    ("pattern 2: an edited-element word after a preposition is the artifact's object", "The transcript for that step is gone."),
+    ("pattern 2: an edited-element word ending the clause after a preposition", "The log of that command is gone."),
+    ("pattern 2: an edited-element word in a relative clause", "The file the link points to is gone."),
+    ("pattern 2: no after a preposition", "The file with no backup is gone."),
+    ("pattern 6: that means draws a conclusion", "That means the transcript is not in the repository."),
+    ("pattern 4: the search, with a first-person subject", "I cannot find the transcript after the search failed."),
+    ("pattern 4: a pronoun subject with a first-person clause", "I checked, and it can't find the transcript."),
+    ("pattern 2: an artifact word heads the subject, an edited-element word is its object",
+     "The transcript for the log parser is gone."),
+    ("pattern 2: an edited-element word in a relative clause after the artifact",
+     "The file that the link points to is gone."),
+    ("pattern 6: means with no colon after it", "This failure means the transcript is not in the repository."),
+    ("pattern 6: uses in an earlier clause", "The hook uses a cache, but the transcript is not in the repository."),
+    ("pattern 6: uses after the colon", "Result: the hook uses a cache, but the transcript is not in the repository."),
+    ("pattern 4: a search tool named before the claim's own subject", "I asked the locator, and I cannot find the transcript."),
+    ("pattern 4: a search tool in a phrase before a first-person subject", "Even with the search I cannot find the transcript."),
+    ("pattern 2: a second clause joined by and, with no comma", "The scan finished and the file is missing."),
+    ("pattern 4: a search tool in a first clause joined by and, with no comma",
+     "I asked the locator and I cannot find the transcript."),
+    ("pattern 6: a colon after the following announces, not defines",
+     "This means the following: the transcript is not in the repository."),
+    ("pattern 2: a participle after the artifact word ends the subject's head", "The logs showing parser failures are missing."),
 ]:
     check(f"trigger: {case_name}", bool(hook.absence_claim_matches(text)), text)
 
@@ -333,10 +355,24 @@ for case_name, text in [
     ("any that are missing", "It checks `x.md` for a fast read of each exact text, and runs the fast read for any that are missing."),
     ("advice that is gone",
      "- The advice to give the backup search a path for the Mac's local snapshots is gone."),
-    ("a removed code element heads the clause", "- TR1's checks on `scripts/x.py` are gone;"),
+    ("checks on an artifact", "- TR1's checks on `scripts/x.py` are gone;"),
+    ("a removed code element heads the clause", "The file's format is gone."),
+    ("a removed code element heads the subject, a modifier follows", "The log format used here is gone."),
+    ("a removed code element heads the subject, a prepositional phrase follows", "The file lock from the old implementation is gone."),
+    ("a removed code element heads the subject, its artifact possessive", "The report's checks for this step are gone."),
+    ("a removed code element before a relative clause", "- In `x-test.py`, the case that refused resume plus adoption is gone."),
+    ("a search tool as the subject after a first-person clause", "As I said, the locator cannot find branch names."),
+    ("a search tool as the subject after a first-person verb", "We know grep and glob don't find branch names."),
+    ("a search tool as the subject of a why clause", "My notes explain why keyword search cannot find files by modification time."),
+    ("pattern 13 on an edited element, read as pattern 2", "The file parser does not exist."),
+    ("pattern 13 in a sentence that says where the agent looked",
+     "The report says only where I looked, not that it does not exist."),
     ("what a search tool can find", "Naming: grep and glob don't find branch names."),
     ("where records belong", "Records like these belong in the log-store on ned-box, not in the repository."),
     ("a kind of commit", "Its one weakness, a commit on no branch, is guarded three ways."),
+    ("an edited-element word ending in -ing heads the subject", "The tmux waker, transcript parsing and reset-time arithmetic are gone."),
+    ("pattern 2 inside a relative clause that has its own subject",
+     "The log that confirms the parser is gone is still on disk."),
 ]:
     check(f"trigger: silent on {case_name}", not hook.absence_claim_matches(text),
           hook.absence_claim_matches(text))

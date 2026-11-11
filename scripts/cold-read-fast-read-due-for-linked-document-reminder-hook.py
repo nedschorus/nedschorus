@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Stop hook: tell the agent to give a cold-read-fast-read to each Markdown
-document its last reply linked for the user that has had none since the
-document's last change. It never asks for a cold-read-full-run.
+document its last reply linked for the user that this agent-session wrote or
+changed and that has had none since the document's last change. It never asks
+for a cold-read-full-run.
 
 Wired as a Stop hook in .claude/settings.json.
 
@@ -12,8 +13,27 @@ starting docs/, nc-systems/ or .claude/, which is resolved against the
 payload's cwd and then the top of that cwd's checkout. /Volumes/nedhome/<path>,
 the Mac's mount of ned-box, maps to /home/nedlern/<path> when that file exists.
 Skipped: files that do not exist, anything in the log-store or in a
-cold-read-records directory, and docs/walk/<name>-suggestions.md, which is a
+cold-read-records directory, and docs/walk/<name>-cold-read-fast-read.md, which is a
 fast read's own report.
+
+ONLY DOCUMENTS THIS AGENT-SESSION WROTE. A linked document is checked further
+only when a Write or Edit tool call on its path, whose tool_result has arrived
+without an error, appears anywhere in the agent-session's transcript or in a
+transcript under <transcript without .jsonl>/subagents/, where Claude Code
+keeps its subagents' transcripts. A reply that only cites a document, or names
+it as where something will go, therefore asks nothing, even for a git-ignored
+file such as a seat-brief, which the git test below would always call changed.
+A call a hook refused is recorded as a tool_result with is_error true, so it
+counts as no write; so does a call with no tool_result yet, such as one still
+waiting on a hook or a permission decision. Not seen, and so never asked
+about: a document written by a shell command, such as cp or a heredoc, and one
+written in an earlier agent-session that a session-handoff replaced. The
+last reply is read first, backward from the end of the transcript; the whole
+transcript and the subagent transcripts are read only when that reply links a
+document that is not skipped. Only
+lines holding "file_path" or the tool_use_id of a Write or Edit call already
+seen are parsed, since a transcript can pass 40 MB; such a line that is not
+JSON, as a line still being written is, is skipped.
 
 WHEN A DOCUMENT IS DUE. A document in a git checkout is due only when that
 checkout changed it from main: the document is not in the merge-base of the
@@ -43,7 +63,7 @@ the check, and goes on without that top.
 A document that passes it is not due when a fast read of its
 current text is on record. A walk-document named docs/walk/<name>-draft.md
 in any git worktree, fast-read from that checkout or another, writes
-docs/walk/<name>-suggestions.md beside it, so a suggestions file newer than
+docs/walk/<name>-cold-read-fast-read.md beside it, so a suggestions file newer than
 the walk-document counts as that read; only a draft in no git worktree gets a
 cold-read-record like any document.
 Records are the directories in the log-store's cold-read-records/ and in a
@@ -57,7 +77,9 @@ belongs to the document only when the copy sits at the document's path,
 relative to its checkout or absolute without the leading slash, the form a
 fast read run from another checkout writes; a record without target/ is
 matched by name alone. The document is not due when a record's frozen copy
-has the document's bytes, whatever the file times say: a checkout or a pull
+has the document's bytes, or those bytes with each file:///Volumes/nedhome/
+link rewritten to /home/nedlern/ as a cold read on ned-box freezes them,
+whatever the file times say: a checkout or a pull
 stamps a file with the time of the checkout, so file times alone would call
 every document in a new worktree due. Otherwise the document is due when its
 modification time is later than the newest file time in its newest record;
@@ -80,9 +102,9 @@ without that file, as older reads and reads run without the variable leave,
 or naming another agent-session, counts only by the file-time rule above, so
 this agent-session is reminded about its own later change to a document
 someone else read. The hook keeps no list of its own: a reminder the agent
-ignores comes back, because no read ran. When the transcript cannot be read,
-the hook checks nothing and tells the agent so, in additionalContext and on
-stderr.
+ignores comes back, because no read ran. When the transcript, or a subagent
+transcript the hook reads, cannot be read, the hook checks nothing and tells
+the agent so, in additionalContext and on stderr.
 
 SILENT when nothing is due, when this Stop ends the agent's answer to a Stop
 hook's output (the shared rule of
@@ -167,7 +189,7 @@ MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOM
 NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME + "/"
 WALK_DIRECTORY_PARTS = ("docs", "walk")
 WALK_DRAFT_SUFFIX = "-draft.md"
-WALK_SUGGESTIONS_SUFFIX = "-suggestions.md"
+WALK_SUGGESTIONS_SUFFIX = "-cold-read-fast-read.md"
 GIT_TIMEOUT_SECONDS = 5
 MAIN_REFERENCE = "refs/remotes/origin/main"
 FAST_READ_PROGRAM = "nc-systems/cold-read/cold-read-fast-read.py"
@@ -180,6 +202,11 @@ TRANSCRIPT_UNREADABLE_LINES = (
     + " --target <document path>",
 )
 
+WRITE_AND_EDIT_TOOL_NAMES = ("Write", "Edit")
+TOOL_CALL_FILE_PATH_MARK = b'"file_path"'
+TOOL_RESULT_CALL_ID_PATTERN = re.compile(rb'"tool_use_id"\s*:\s*"([^"]+)"')
+SUBAGENT_TRANSCRIPTS_DIRECTORY_NAME = "subagents"
+
 TRANSCRIPT_READER_FILE = Path(__file__).with_name("absence-claim-locator-reminder-hook.py")
 SUITE_RUNNER_FILE = Path(__file__).with_name("run-all-test-suites.py")
 
@@ -191,7 +218,8 @@ RELATIVE_PATH_PATTERN = re.compile(
 
 REMINDER_OPENING = (
     "cold-read-fast-read due: your last reply linked these documents for the "
-    "user, and none of them has had a cold-read-fast-read since the document's "
+    "user, this agent-session wrote or changed each with the Write or Edit tool, and "
+    "none of them has had a cold-read-fast-read since the document's "
     "last change. Each is either outside any git checkout, or new or changed in "
     "the git checkout that holds it, compared with the commit where that "
     "checkout's branch left origin/main:")
@@ -249,6 +277,46 @@ def last_reply_text(transcript_path):
     reader = load_module("absence_claim_locator_reminder_hook", TRANSCRIPT_READER_FILE)
     reply, _ = reader.read_turn(transcript_path)
     return reply
+
+
+def find_files_written_by_agent_session_and_its_subagents(transcript_path):
+    """The resolved paths of every Edit or Write call in the transcript and its subagents' whose result arrived without an error."""
+    transcripts = [transcript_path, *sorted(
+        (transcript_path.with_suffix("") / SUBAGENT_TRANSCRIPTS_DIRECTORY_NAME).rglob("*.jsonl"))]
+    paths_by_call = {}
+    succeeded_calls = set()
+    failed_calls = set()
+    for transcript in transcripts:
+        with open(transcript, "rb") as lines:
+            for line in lines:
+                # Only these lines are parsed: a transcript can pass 40 MB, and the hook runs on every Stop.
+                if (TOOL_CALL_FILE_PATH_MARK not in line
+                        and not any(match[1].decode(errors="replace") in paths_by_call
+                                    for match in TOOL_RESULT_CALL_ID_PATTERN.finditer(line))):
+                    continue
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    # A line still being written, as a running subagent's last line can be.
+                    continue
+                content = (record.get("message") or {}).get("content")
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if (record.get("type") == "assistant"
+                            and block.get("type") == "tool_use"
+                            and block.get("name") in WRITE_AND_EDIT_TOOL_NAMES):
+                        file_path = (block.get("input") or {}).get("file_path")
+                        if file_path:
+                            paths_by_call[block.get("id")] = file_path
+                    elif block.get("type") == "tool_result":
+                        # A hook's refusal, such as the instruction-file guard's, is recorded with is_error true.
+                        (failed_calls if block.get("is_error") is True
+                         else succeeded_calls).add(block.get("tool_use_id"))
+    return {Path(file_path).resolve() for call, file_path in paths_by_call.items()
+            if call in succeeded_calls and call not in failed_calls}
 
 
 class GitComparisonFailure(Exception):
@@ -407,6 +475,8 @@ def document_is_due(document, record_directories, document_top, record_names,
             return False
     pattern = record_names.record_directory_name_pattern_for_target(document)
     current_bytes = document.read_bytes()
+    current_bytes_as_frozen_on_ned_box = record_names.text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(
+        current_bytes.decode("utf-8", "surrogateescape")).encode("utf-8", "surrogateescape")
     newest_record_time = None
     for directory in record_directories:
         try:
@@ -429,7 +499,7 @@ def document_is_due(document, record_directories, document_top, record_names,
                 if frozen is None:
                     continue
                 try:
-                    if frozen.read_bytes() == current_bytes:
+                    if frozen.read_bytes() in (current_bytes, current_bytes_as_frozen_on_ned_box):
                         return False
                 except OSError:
                     pass
@@ -440,6 +510,16 @@ def document_is_due(document, record_directories, document_top, record_names,
     if newest_record_time is None:
         return True
     return document.stat().st_mtime > newest_record_time
+
+
+def transcript_unreadable_output(error):
+    lines = [line.format(reason=error) for line in TRANSCRIPT_UNREADABLE_LINES]
+    print(f"cold-read-fast-read-due-for-linked-document-reminder-hook: {lines[0]}",
+          file=sys.stderr)
+    return json.dumps({"hookSpecificOutput": {
+        "hookEventName": "Stop",
+        "additionalContext": "\n".join(lines),
+    }}, ensure_ascii=False)
 
 
 def run(stdin_text, environment):
@@ -460,16 +540,11 @@ def run(stdin_text, environment):
         return None
     log_store_directory = store.resolve().parent
     cwd = Path(payload["cwd"]) if payload.get("cwd") else None
+    transcript = Path(transcript_path).expanduser()
     try:
-        reply = last_reply_text(Path(transcript_path).expanduser())
+        reply = last_reply_text(transcript)
     except (OSError, UnicodeDecodeError) as error:
-        lines = [line.format(reason=error) for line in TRANSCRIPT_UNREADABLE_LINES]
-        print(f"cold-read-fast-read-due-for-linked-document-reminder-hook: {lines[0]}",
-              file=sys.stderr)
-        return json.dumps({"hookSpecificOutput": {
-            "hookEventName": "Stop",
-            "additionalContext": "\n".join(lines),
-        }}, ensure_ascii=False)
+        return transcript_unreadable_output(error)
     if not reply:
         return None
     git_environment = environment_without_git_redirection()
@@ -488,7 +563,16 @@ def run(stdin_text, environment):
     documents = find_markdown_file_paths_linked_or_named_in_agent_reply(
         reply, cwd, session_top,
         lambda path: is_skipped(path, log_store_directory, record_names))
+    written = set()
+    if documents:
+        # Only when a document is linked: the transcripts can pass 40 MB, and the hook runs on every Stop.
+        try:
+            written = find_files_written_by_agent_session_and_its_subagents(transcript)
+        except (OSError, UnicodeDecodeError) as error:
+            return transcript_unreadable_output(error)
     for document in documents:
+        if document not in written:
+            continue
         document_top = None
         reason = None
         try:

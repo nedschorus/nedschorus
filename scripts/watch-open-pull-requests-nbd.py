@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""Watch open pull requests and emit flushed OPENED and NEW-HEAD events.
+"""Watch open pull requests and emit flushed OPENED, NEW-HEAD and READY events.
+
+A draft pull request raises no event: it is not to be reviewed. The baseline
+line lists drafts apart. A pull request that was a draft at the last
+successful poll and is not one now raises READY, however it was marked
+ready. A pull request turned back into a draft raises nothing.
 
 The first successful poll establishes a silent baseline unless --from-start
 is set. Failed polls preserve state and announce blindness; activity that
-opens and closes between successful polls cannot be recovered.
+opens and closes between successful polls cannot be recovered. State lives
+only in the process: an opening or a draft marked ready while the watcher is
+not running is absorbed into the next baseline and raises no event.
 
 Polling needs no public webhook endpoint. GraphQL selects only needed fields
 and avoids gh versions’ differing --json field lists."""
@@ -180,46 +187,57 @@ def fetch_open_pull_requests(repo, token):
 
 
 def event_line(pull_request, event_name):
-    draft_marker = " [draft]" if pull_request["is_draft"] else ""
     return (f"PR #{pull_request['number']} {event_name} "
             f"{pull_request['head_sha'][:HEAD_SHA_PREFIX_CHARS]} "
-            f"{pull_request['author']}{draft_marker}: "
+            f"{pull_request['author']}: "
             f"{one_line_snippet(pull_request['title'], TITLE_SNIPPET_CHARS)}")
 
 
-def events_for_poll(known_head_shas, pull_requests):
-    """Return events from changes to (number, head_sha) since the last successful poll."""
+def events_for_poll(known_pull_requests, pull_requests):
+    """Return events from changes to (number, head_sha, is_draft) since the last successful poll."""
     lines = []
     for pull_request in pull_requests:
-        seen_head_sha = known_head_shas.get(pull_request["number"])
-        if seen_head_sha is None:
+        if pull_request["is_draft"]:
+            continue
+        seen = known_pull_requests.get(pull_request["number"])
+        if seen is None:
             lines.append(event_line(pull_request, "OPENED"))
-        elif seen_head_sha != pull_request["head_sha"]:
+        elif seen["is_draft"]:
+            lines.append(event_line(pull_request, "READY"))
+        elif seen["head_sha"] != pull_request["head_sha"]:
             lines.append(event_line(pull_request, "NEW-HEAD"))
     return lines
 
 
-def head_shas_by_number(pull_requests):
-    return {pull_request["number"]: pull_request["head_sha"]
+def pull_requests_by_number(pull_requests):
+    return {pull_request["number"]: pull_request
             for pull_request in pull_requests}
 
 
 def baseline_line(repo, poll_seconds, pull_requests, from_start):
-    numbers = " ".join(f"#{pull_request['number']}"
-                       for pull_request in pull_requests)
+    ready = [pull_request for pull_request in pull_requests
+             if not pull_request["is_draft"]]
+    drafts = [pull_request for pull_request in pull_requests
+              if pull_request["is_draft"]]
+    numbers = " ".join(f"#{pull_request['number']}" for pull_request in ready)
+    draft_numbers = " ".join(f"#{pull_request['number']}"
+                             for pull_request in drafts)
     what_happens_next = ("each reported below as OPENED" if from_start
                          else "not events; --from-start reports them")
     return (f"WATCH: watching {repo} every {poll_seconds:g}s; "
-            f"{len(pull_requests)} open at baseline"
+            f"{len(ready)} open at baseline"
             f"{': ' + numbers if numbers else ''} "
-            f"({what_happens_next})")
+            f"({what_happens_next})"
+            + (f"; {len(drafts)} draft(s), not to be reviewed until marked "
+               f"ready, which raises READY: {draft_numbers}" if drafts else ""))
 
 
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         description="Watch a repository's open pull requests; print one "
-                    "line per newly opened pull request and per new head "
-                    "commit on an open one.")
+                    "line per newly opened pull request, per new head "
+                    "commit on an open one, and per draft marked ready. "
+                    "A draft raises no line.")
     parser.add_argument("--repo", default=DEFAULT_REPO,
                         help=f"OWNER/NAME to watch (default: {DEFAULT_REPO})")
     parser.add_argument("--poll-seconds", type=float, default=DEFAULT_POLL_SECONDS,
@@ -231,12 +249,13 @@ def parse_arguments(argv):
                              f"GH_TOKEN and never printed (default: "
                              f"{DEFAULT_TOKEN_FILE})")
     parser.add_argument("--from-start", action="store_true",
-                        help="report every pull request already open at the "
-                             "first poll as OPENED, instead of taking them "
+                        help="report every pull request already open, and not "
+                             "a draft, at the first poll as OPENED, instead "
+                             "of taking them "
                              "as the silent baseline")
     parser.add_argument("--exit-after-first-poll-with-events", action="store_true",
                         help="exit 0 after the first poll that prints an "
-                             "OPENED or NEW-HEAD line, once every event of "
+                             "OPENED, NEW-HEAD or READY line, once every event of "
                              "that poll is printed")
     return parser.parse_args(argv)
 
@@ -261,7 +280,7 @@ def main(argv=None):
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
 
-    known_head_shas = None
+    known_pull_requests = None
     blind_since = None
     failed_polls = 0
 
@@ -281,7 +300,7 @@ def main(argv=None):
         if blind_since is not None:
             # Before the first baseline, outage openings cannot be distinguished from already-open pull requests.
             # --from-start reports all of them, so no loss warning applies.
-            lost_openings_silently = (known_head_shas is None
+            lost_openings_silently = (known_pull_requests is None
                                       and not arguments.from_start)
             emit(f"WATCH: query recovered after {failed_polls} failed poll(s), "
                  f"about {time.monotonic() - blind_since:.0f}s blind"
@@ -293,19 +312,19 @@ def main(argv=None):
             blind_since = None
             failed_polls = 0
 
-        if known_head_shas is None:
+        if known_pull_requests is None:
             emit(baseline_line(arguments.repo, arguments.poll_seconds,
                                pull_requests, arguments.from_start))
-            known_head_shas = ({} if arguments.from_start
-                               else head_shas_by_number(pull_requests))
+            known_pull_requests = ({} if arguments.from_start
+                                   else pull_requests_by_number(pull_requests))
 
-        event_lines = events_for_poll(known_head_shas, pull_requests)
+        event_lines = events_for_poll(known_pull_requests, pull_requests)
         for line in event_lines:
             emit(line)
         if event_lines and arguments.exit_after_first_poll_with_events:
             return 0
         # Drop closed pull requests so reopening produces another OPENED event.
-        known_head_shas = head_shas_by_number(pull_requests)
+        known_pull_requests = pull_requests_by_number(pull_requests)
         time.sleep(arguments.poll_seconds)
 
 

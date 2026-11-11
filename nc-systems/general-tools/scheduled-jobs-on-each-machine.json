@@ -45,7 +45,25 @@
           "label": "com.nedschorus.daily-full-test-run-of-main",
           "launchd_keys": {"StartCalendarInterval": {"Hour": 3, "Minute": 30}}
         },
-        "ned-box": {"scheduler": "cron", "schedule": "30 3 * * *"}
+        "ned-box": {"scheduler": "cron", "schedule": "0 0 * * *"}
+      }
+    },
+    {
+      "name": "no-sandbox-test-suites-run-on-main-in-a-quiet-gap",
+      "program": "scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py",
+      "arguments": [],
+      "output": ".claude/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "*/10 * * * *"}
+      }
+    },
+    {
+      "name": "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open",
+      "program": "scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py",
+      "arguments": [],
+      "output": ".claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "30 0 * * *"}
       }
     },
     {
@@ -63,10 +81,19 @@
       }
     },
     {
-      "name": "handoff-agent-seat-died-without-session-handoff-restart-watcher",
-      "program": "nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py",
+      "name": "handoff-agent-crash-watcher",
+      "program": "nc-systems/handoff/handoff-agent-crash-watcher.py",
       "arguments": [],
-      "output": ".claude/handoff-agent-seat-died-without-session-handoff-restart-watcher.log",
+      "output": ".claude/handoff-agent-crash-watcher.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "* * * * *"}
+      }
+    },
+    {
+      "name": "agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write",
+      "program": "scripts/agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.py",
+      "arguments": [],
+      "output": ".claude/agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.log",
       "on": {
         "ned-box": {"scheduler": "cron", "schedule": "* * * * *"}
       }
@@ -77,7 +104,8 @@
       "arguments": [],
       "output": ".claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log",
       "on": {
-        "ned-box": {"scheduler": "cron", "schedule": "* * * * *"}
+        "ned-box": {"scheduler": "cron", "schedule": "* * * * *"},
+        "mac": {"scheduler": "cron", "schedule": "* * * * *"}
       }
     },
     {
@@ -106,6 +134,28 @@
           "launchd_keys": {"StartCalendarInterval": {"Hour": 7, "Minute": 0}}
         },
         "ned-box": {"scheduler": "cron", "schedule": "0 7 * * *"}
+      }
+    },
+    {
+      "name": "nc-shared-database-nightly-backup-with-integrity-check",
+      "program": "nc-systems/nc-shared-database/nc-shared-database-nightly-backup-with-integrity-check.py",
+      "arguments": [],
+      "output": ".claude/nc-shared-database-nightly-backup-with-integrity-check.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "15 2 * * *"}
+      }
+    },
+    {
+      "name": "nc-shared-database-newest-backup-copy-to-mac",
+      "program": "nc-systems/nc-shared-database/nc-shared-database-newest-backup-copy-to-mac.py",
+      "arguments": [],
+      "output": ".claude/nc-shared-database-newest-backup-copy-to-mac.log",
+      "on": {
+        "mac": {
+          "scheduler": "launchd",
+          "label": "com.nedschorus.nc-shared-database-newest-backup-copy-to-mac",
+          "launchd_keys": {"StartCalendarInterval": {"Hour": 4, "Minute": 15}}
+        }
       }
     },
     {

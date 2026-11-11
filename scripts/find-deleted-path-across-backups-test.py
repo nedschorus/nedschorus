@@ -14,6 +14,7 @@ looking. Each blocked surface therefore has a case asserting both the status
 AND that the output says what to do about it.
 """
 
+import atexit
 import contextlib
 import importlib.util
 import io
@@ -41,6 +42,20 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 # Every copy this suite makes lands in a scratch folder, never in the user's Downloads.
 FOUND_COPIES_SCRATCH = tempfile.mkdtemp(prefix="find-deleted-path-found-copies-test-")
 os.environ["FIND_DELETED_PATH_FOUND_COPIES_ROOT"] = FOUND_COPIES_SCRATCH
+
+
+def remove_found_copies_scratch_left_by_a_run_that_raised():
+    # A run that reaches the end removes the folder there, where a failure can still fail the suite; this
+    # covers a run that raised or got Ctrl-C, whose exit status is already nonzero.
+    if os.path.isdir(FOUND_COPIES_SCRATCH):
+        try:
+            shutil.rmtree(FOUND_COPIES_SCRATCH)
+        except OSError as error:
+            print("the found-copies scratch folder %s could not be removed: %s: %s"
+                  % (FOUND_COPIES_SCRATCH, type(error).__name__, error), file=sys.stderr)
+
+
+atexit.register(remove_found_copies_scratch_left_by_a_run_that_raised)
 
 MODULE_PATH = Path(__file__).with_name("find-deleted-path-across-backups.py")
 spec = importlib.util.spec_from_file_location("find_deleted_path_across_backups", MODULE_PATH)
@@ -2811,7 +2826,7 @@ for abbreviated in (["--rep", "/x"], ["--rep=/x"]):
           refused.returncode == 2 and "unrecognized arguments: %s" % abbreviated[0] in refused.stderr,
           "exit %s\n%s" % (refused.returncode, refused.stderr))
 
-message = finder.build_agent_facing_message_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command("/r", "/r/a.md", "planted failure", {"reflog"}, "python3 p")
+message = finder.build_tool_message_to_agent_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command("/r", "/r/a.md", "planted failure", {"reflog"}, "python3 p")
 check("with only git reflog skipped, the git-failure message names the git surface alone and keeps exit 3 for no find",
       "The git surface cannot search, and its result line will say UNAVAILABLE for this failure; --skip left out "
       "the other git surface." in message
@@ -4118,6 +4133,35 @@ with tempfile.TemporaryDirectory() as tmp:
     check("... and argparse accepts that command once <checkout> is filled in",
           recovery.returncode != 2 and "usage:" not in recovery.stderr,
           "exit %s\n%s" % (recovery.returncode, recovery.stderr))
+
+# A copy of this suite whose finder raises on import, as an unhandled error or a Ctrl-C would, still removes
+# its found-copies scratch folder.
+for raised in ("RuntimeError('a case raised')", "KeyboardInterrupt()"):
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        copy, copy_temp = tmp / "scripts", tmp / "temp"
+        copy.mkdir()
+        copy_temp.mkdir()
+        (tmp / "nc-systems" / "general-tools").mkdir(parents=True)
+        shutil.copy(__file__, copy / Path(__file__).name)
+        shutil.copy(Path(__file__).with_name("git-redirecting-environment-removal-test-fixture.py"), copy)
+        shutil.copy(Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+                    / "git-redirecting-environment-variables-removal-common.py", tmp / "nc-systems" / "general-tools")
+        (copy / "find-deleted-path-across-backups.py").write_text("raise %s\n" % raised)
+        completed = subprocess.run([sys.executable, str(copy / Path(__file__).name)], capture_output=True, text=True,
+                                   env=dict(os.environ, TMPDIR=str(copy_temp)))
+        left = sorted(entry.name for entry in copy_temp.iterdir())
+        check("a run whose finder raises %s exits nonzero and leaves no found-copies scratch folder" % raised,
+              completed.returncode != 0 and left == [] and raised.split("(")[0] in completed.stderr,
+              "exit %s, left %s\n%s" % (completed.returncode, left, completed.stderr[-2000:]))
+
+# Removed here, before the exit status is decided, so a failed removal fails the suite; an atexit
+# callback that raises leaves the exit status 0.
+try:
+    shutil.rmtree(FOUND_COPIES_SCRATCH)
+except OSError as error:
+    check("the found-copies scratch folder %s is removed" % FOUND_COPIES_SCRATCH, False,
+          "%s: %s" % (type(error).__name__, error))
 
 print()
 if failures:

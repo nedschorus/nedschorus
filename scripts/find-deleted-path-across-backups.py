@@ -3,7 +3,7 @@
 
 WHY THIS EXISTS. On 2026-08-23 an agent followed a citation in nedschorus#46 to
 `md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md`, found
-nothing, and built the ghi-info tool without the eleven deferred findings that
+nothing, and built the ghi-guide-agent tool without the eleven deferred findings that
 file held. The path had been deleted on 2026-08-14 (commit ab541cc) when review
 records were retired. The content was never actually lost: it was in git, in the
 predecessor's own session transcript, in Timeshift on the box, and in Time
@@ -118,7 +118,7 @@ never replaces a file already in that folder. A version this run can only
 reach through a mount it did not make, a Time Machine snapshot or an unmounted
 local snapshot, gets a printed command that copies it into the same folder.
 It never writes backup state, which
-agents are forbidden to do (.claude/hooks/backup-and-snapshot-write-guard.py
+agents are forbidden to do (.claude/guard-hooks/backup-and-snapshot-write-guard.py
 holds the tool path; the rule binds shell commands too). Two calls it makes
 change mount state and nothing else. `diskutil mount` on the Time Machine
 destination mounts a disk the user already attached, which is how you read a
@@ -238,7 +238,7 @@ line changes the surface's status.
 for the Mac's ssh, and the second still leaves Timeshift out.
 
 A GIT BLOB ID. The guarded-file hook,
-.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py,
+.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py,
 names each version of a guarded file by its git blob id, logs a line for each
 version it sees, with that id and the time, and keeps a copy only of a version
 git does not hold. So a query of exactly 40 lowercase hexadecimal characters is
@@ -360,9 +360,9 @@ git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
     Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
@@ -2316,7 +2316,7 @@ def arguments_without_repo(arguments):
     return kept
 
 
-def build_agent_facing_message_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command(repo, named, failure, skip, repo_rerun):
+def build_tool_message_to_agent_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command(repo, named, failure, skip, repo_rerun):
     """The lines, before the shared next steps, for a git top-level failure; true for whichever git surfaces --skip left in."""
     git_surfaces = [name for flag, name in (("git", "git"), ("reflog", "git reflog")) if flag not in skip]
     if len(git_surfaces) == 2:
@@ -2525,7 +2525,7 @@ def main(argv=None, runner=run_command):
         # The git surfaces report the same failure as UNAVAILABLE; the other surfaces can still search.
         repo_rerun = rerun_command(["--repo", REPO_PLACEHOLDER]
                                    + arguments_without_repo(sys.argv[1:] if argv is None else argv))
-        print(build_agent_facing_message_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command(args.repo, named, failure, set(args.skip), repo_rerun)
+        print(build_tool_message_to_agent_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command(args.repo, named, failure, set(args.skip), repo_rerun)
               + "\n" + git_failure_next_steps(rerun), file=sys.stderr, flush=True)
         wanted = named
     shown = wanted if wanted == args.path else "%s (given as %s)" % (wanted, args.path)

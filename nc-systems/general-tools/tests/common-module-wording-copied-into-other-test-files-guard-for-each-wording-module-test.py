@@ -16,7 +16,7 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 WORDING_MODULES = (
     "nc-systems/cold-read/cold-read-cell-common.py",
-    "nc-systems/general-tools/failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py",
+    "nc-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py",
     "nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py",
     "nc-systems/general-tools/tmux-target-or-server-does-not-exist-error-pattern-common.py",
 )

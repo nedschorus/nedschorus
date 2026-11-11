@@ -279,6 +279,19 @@ def ruff_version():
     if done.returncode != 0:
         raise RuntimeError((done.stdout + done.stderr).strip()[-300:])
 attempt("run python3 -m ruff --version", ruff_version)
+def temporary_directory_paths():
+    import tempfile
+    made = tempfile.mkdtemp()
+    cwd_reported = subprocess.run([sys.executable, "-c", "import os; print(os.getcwd())"],
+                                  cwd=made, capture_output=True, text=True, timeout=60,
+                                  check=True).stdout.strip()
+    return {"tmpdir": os.environ.get("TMPDIR"), "tmpdir_is_link": os.path.islink(os.environ["TMPDIR"]),
+            "tmpdir_resolved": os.path.realpath(os.environ["TMPDIR"]), "made": made,
+            "made_resolved": os.path.realpath(made), "cwd_reported": cwd_reported}
+try:
+    report("see TMPDIR's paths", True, json.dumps(temporary_directory_paths()))
+except BaseException as error:
+    report("see TMPDIR's paths", False, repr(error))
 # Sockets this test makes outside only once the probe has started, in /var/tmp and in the
 # home directory: what a process outside makes later must not show inside either.
 # The handshake goes through the suite's own input record, the one file both sides write
@@ -611,6 +624,20 @@ def run_probe(scratch):
               sorted(probed))
         print("named machine sockets among those probed: "
               + (", ".join(path for path in MACHINE_SOCKETS_NAMED if path in probed) or "none"))
+
+        # Not an escape: TMPDIR is reached through a symbolic link, as macOS's /var is, so a
+        # suite that mixes a path built from TMPDIR with a resolved one fails here too.
+        record = attempts.get("see TMPDIR's paths")
+        paths = json.loads(record["detail"]) if record is not None and record["worked"] else {}
+        check("inside, TMPDIR names a symbolic link to a directory in the sandbox's private /tmp",
+              bool(paths) and paths["tmpdir_is_link"] and paths["tmpdir_resolved"] != paths["tmpdir"]
+              and paths["tmpdir_resolved"].startswith("/tmp/"), record)
+        check("inside, a directory tempfile makes is under TMPDIR as named, and a process "
+              "started in it reports the resolved path as its cwd",
+              bool(paths) and paths["made"].startswith(paths["tmpdir"] + "/")
+              and paths["cwd_reported"] == paths["made_resolved"]
+              and paths["made_resolved"].startswith(paths["tmpdir_resolved"] + "/")
+              and paths["cwd_reported"] != paths["made"], record)
 
         # Not an escape: a path the runner shows on purpose, which a suite needs, must work inside.
         ruff_binary = pathlib.Path.home() / ".local/bin/ruff"

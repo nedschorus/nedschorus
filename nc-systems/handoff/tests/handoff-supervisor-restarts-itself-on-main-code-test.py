@@ -3,10 +3,15 @@
 fast-forwards its own checkout to origin/main and replaces its process with a
 fresh start of itself from there, by os.execv.
 
-Covered: where the restart sits in the cycle; that a dont-restart handoff is
+Covered: where the restart sits in the cycle; that an ask-user-before-restart handoff is
 not restarted on; that a checkout which cannot fast-forward, or an os.execv
 that raises or returns, leaves the supervisor running its loaded code and tells the
-successor why; that the restarted process starts the successor from the
+successor why; that a reference-checkout which cannot fast-forward is put back on
+main by the back-on-main program, run by the supervisor itself, after which the
+supervisor restarts and tells the successor nothing of the leftovers branch, or, when
+the program fails, does not restart and gives the successor the notice with the
+program's output, each case driven through the supervisor's loop with the program
+stubbed; that the restarted process starts the successor from the
 unconsumed handoff and restarts again at the next one; that a retiring
 session without a transcript, at a handoff the supervisor could not restart
 on or in the restarted process, gives a successor started from the next
@@ -63,7 +68,8 @@ class ProcessReplaced(BaseException):
 
 
 class StubIgnitionPlan:
-    def compose(self, launch_time_git_sync_report, overview_refresh_due=(), memory_review_due=()):
+    def compose(self, launch_time_git_sync_report, overview_refresh_due=(), memory_review_due=(),
+                branch_state_instruction=""):
         return "SUCCESSOR PROMPT"
 
 
@@ -89,14 +95,16 @@ def supervise_one_handoff(workspace: Path, case: str, own_checkout_sync_report: 
         result.prompts.append(prompt)
         if len(result.prompts) == 1:
             settings.handoff_path.write_text(
-                f"restart-counter: 1\nnext-step: carry on\n{handoff_extra}", encoding="utf-8")
+                f"session-handoff-sequence-number: 1\nnext-step: carry on\n{handoff_extra}", encoding="utf-8")
             return StubLaunchedSession(-15, ended=False)
         return StubLaunchedSession(0)
 
     def sync(directory):
         if Path(directory) == supervisor.REPOSITORY_ROOT:
             result.events.append("sync own checkout")
-            return own_checkout_sync_report
+            # An iterator gives one report per sync of the own checkout.
+            return (own_checkout_sync_report if isinstance(own_checkout_sync_report, str)
+                    else next(own_checkout_sync_report))
         return "launch-time-git-sync: stubbed"
 
     def replace(arguments):
@@ -164,15 +172,164 @@ def run_restart_placement_cases(workspace: Path):
           "restarted on main's code" not in run.console, run.console[-400:])
 
 
-def run_dont_restart_case(workspace: Path):
+def run_ask_user_before_restart_case(workspace: Path):
     run = supervise_one_handoff(workspace, "dontrestart",
                                 "launch-time-git-sync: main fast-forwarded to main (abc1234)",
-                                handoff_extra="dont-restart: ask first\n", answer="y")
-    check("DONT-RESTART: a dont-restart handoff answered y starts the successor in this "
+                                handoff_extra="ask-user-before-restart: ask first\n", answer="y")
+    check("ASK-USER-BEFORE-RESTART: an ask-user-before-restart handoff answered y starts the successor in this "
           "process, with no git sync of its own checkout and no exec",
           not run.replaced and "sync own checkout" not in run.events
           and run.events == ["launch", "stop", "cleanup", "carry over", "launch"],
           str(run.events))
+
+
+HANDOFF_PROGRAMS = "~/Projects/nedschorus/nc-systems/handoff/"
+BACK_ON_MAIN_COMMAND = (f"python3 {HANDOFF_PROGRAMS}handoff-reference-checkout-back-on-main-after-"
+                        "pushing-leftovers-to-a-branch.py")
+
+
+def back_on_main_program_failed_ending(command: str, output: str) -> str:
+    return ("That checkout would not fast-forward to main, so the handoff-supervisor ran the "
+            "program that saves the checkout's leftovers to a pushed branch and puts it back on "
+            f"main, and that program failed, printing: \"{output}\". Work out the cause from what "
+            "it printed, asking an advisor if you have one, fix it without losing anything the "
+            f"checkout holds, and run the program again as {command}, the form that works from "
+            "this agent-session. Afterwards, tell the user what you found and did, and name any "
+            "branch a run of the program printed; when the cause is not one you can fix, quote "
+            "him what the program printed. The handoff-supervisor does not run the program again "
+            "once the checkout is on main, which it can be even after a failed push, so a "
+            "leftovers branch the program could not push stays only in that checkout until you "
+            "run the program again. Once the checkout is on main, the handoff-supervisor restarts "
+            "itself at the next session-handoff at which it starts the successor without stopping "
+            "to ask the user.")
+
+
+def run_not_restarted_notice_names_the_tool_cases(workspace: Path):
+    """The notice names the program that puts the reference-checkout back on main, with what
+    it printed, when the handoff-supervisor ran it and it failed, and the restart program for
+    any other cause; each command as this machine runs it."""
+    restart = (f"python3 {HANDOFF_PROGRAMS}handoff-supervisor-restart-onto-main-code-by-relaunch-"
+               "from-reference-checkout.py seatname")
+    commands = {
+        "restart on the Mac": f"`{restart}`",
+        "restart on ned-box": f"`ssh nedlern@ned-box '{restart}'`",
+        "back on main on the Mac": f"`{BACK_ON_MAIN_COMMAND}`",
+        "back on main on ned-box": f"`ssh nedlern@ned-box '{BACK_ON_MAIN_COMMAND}'`"}
+    cannot_fast_forward = "launch-time-git-sync: main left as is — 2 uncommitted tracked change(s)"
+    program_output = "handoff-reference-checkout-back-on-main-...: a step failed: git push refused"
+    for case, report, output, on_the_mac, expected in (
+            ("back-on-main program failed on ned-box", cannot_fast_forward, program_output,
+             False, "back on main on ned-box"),
+            ("back-on-main program failed on the Mac", cannot_fast_forward, program_output,
+             True, "back on main on the Mac"),
+            ("os.execv failed on ned-box",
+             "os.execv failed: PermissionError: [Errno 13] Permission denied", "", False,
+             "restart on ned-box"),
+            ("os.execv returned on the Mac",
+             "os.execv returned without replacing the process", "", True, "restart on the Mac"),
+            ("another checkout will not fast-forward on the Mac", cannot_fast_forward, "", True,
+             "restart on the Mac")):
+        notice = supervisor.handoff_supervisor_not_restarted_on_main_code_notice(
+            report, "seatname", back_on_main_program_failure_output=output, on_the_mac=on_the_mac)
+        ending = (
+            back_on_main_program_failed_ending(commands[expected], output)
+            if expected.startswith("back on main") else
+            "The restart program restarts it from the reference-checkout "
+            f"{supervisor.REFERENCE_CHECKOUT}. Once you have done what that program's docstring "
+            f"says the agent-seat does before running it, run {commands[expected]}, and then do "
+            "what the docstring says the agent-seat does after.")
+        check(f"NOTICE TOOL ({case}): the notice names {commands[expected]} and no other command",
+              f'reason: "{report}". Tell the user now' in notice
+              and f"name the checkout {supervisor.REPOSITORY_ROOT}. " in notice
+              and notice.endswith(ending)
+              and all((command in notice) == (name == expected)
+                      for name, command in commands.items()),
+              notice)
+
+
+def supervise_one_handoff_from_the_reference_checkout(workspace: Path, case: str,
+                                                      back_on_main, exec_raises=None):
+    """supervise_one_handoff with the supervisor's own checkout taken for the
+    reference-checkout, which first will not fast-forward and, once the stubbed back-on-main
+    program has run, is current with main."""
+    program = supervisor.reference_checkout_back_on_main
+    calls = []
+
+    def put_back_on_main(checkout, today):
+        calls.append(checkout)
+        return back_on_main(checkout)
+
+    stub_program = SimpleNamespace(
+        put_reference_checkout_back_on_main=put_back_on_main, StepFailed=program.StepFailed,
+        reference_checkout_back_on_main_failure_text_build=(
+            program.reference_checkout_back_on_main_failure_text_build),
+        reference_checkout_back_on_main_success_line_build=(
+            program.reference_checkout_back_on_main_success_line_build))
+    reports = iter(["launch-time-git-sync: main left as is — 2 uncommitted tracked change(s)",
+                    "launch-time-git-sync: main is current with main"])
+    with supervisor_names_replaced(REFERENCE_CHECKOUT=supervisor.REPOSITORY_ROOT,
+                                   reference_checkout_back_on_main=stub_program):
+        run = supervise_one_handoff(workspace, case, reports, exec_raises=exec_raises)
+    run.back_on_main_calls = calls
+    return run
+
+
+def run_reference_checkout_back_on_main_program_cases(workspace: Path):
+    cannot_fast_forward = "launch-time-git-sync: main left as is — 2 uncommitted tracked change(s)"
+    program = supervisor.reference_checkout_back_on_main
+
+    def fails(checkout):
+        raise program.StepFailed("git push refused by the test")
+
+    run = supervise_one_handoff_from_the_reference_checkout(workspace, "backonmainfails", fails)
+    output = program.reference_checkout_back_on_main_failure_text_build(
+        supervisor.REPOSITORY_ROOT, program.StepFailed("git push refused by the test"))
+    on_the_mac = sys.platform == "darwin"
+    command = (f"`{BACK_ON_MAIN_COMMAND}`" if on_the_mac
+               else f"`ssh nedlern@ned-box '{BACK_ON_MAIN_COMMAND}'`")
+    successor_prompt = run.prompts[-1] if len(run.prompts) == 2 else ""
+    check("BACK ON MAIN FAILS: the supervisor runs the program once on the reference-checkout, "
+          "does not restart, and starts the successor itself",
+          run.back_on_main_calls == [supervisor.REPOSITORY_ROOT] and not run.replaced
+          and "exec" not in run.events and run.events[-2:] == ["carry over", "launch"],
+          f"{run.events} {run.back_on_main_calls}")
+    check("BACK ON MAIN FAILS: the successor's initial-agent-instructions end with the notice "
+          "that quotes the sync's reason and the program's output, and names the program's "
+          "command for this machine",
+          successor_prompt.startswith("SUCCESSOR PROMPT ")
+          and f'reason: "{cannot_fast_forward}". Tell the user now' in successor_prompt
+          and successor_prompt.endswith(back_on_main_program_failed_ending(command, output)),
+          successor_prompt)
+    check("BACK ON MAIN FAILS: the console carries the program's output and says why it did "
+          "not restart",
+          output in run.console and "not restarted on main's code, carrying on with the code "
+          f"this process started with: {cannot_fast_forward}" in run.console, run.console[-900:])
+
+    branch = "reference-checkout-leftovers-2026-11-05"
+    run = supervise_one_handoff_from_the_reference_checkout(
+        workspace, "backonmainpushes", lambda checkout: ("abc1234", [branch]))
+    check("BACK ON MAIN SUCCEEDS: the supervisor restarts, passing the restarted process no "
+          "leftovers branch",
+          run.replaced and run.events == ["launch", "stop", "cleanup", "sync own checkout",
+                                          "sync own checkout", "exec"]
+          and run.exec_argv is not None and run.exec_argv[-1] == RESTART_FLAG
+          and not any(branch in argument for argument in run.exec_argv),
+          f"{run.events} {run.exec_argv}")
+    check("BACK ON MAIN SUCCEEDS: the console carries the program's success line",
+          f"is on main at origin/main abc1234; its leftovers are saved on {branch}" in run.console,
+          run.console[-900:])
+
+    run = supervise_one_handoff_from_the_reference_checkout(
+        workspace, "backonmainpushesexecfails", lambda checkout: ("abc1234", [branch]),
+        exec_raises=PermissionError(13, "Permission denied"))
+    successor_prompt = run.prompts[-1] if len(run.prompts) == 2 else ""
+    check("BACK ON MAIN SUCCEEDS, EXEC FAILS: the successor is told why it did not restart, "
+          "and nothing of the leftovers branch",
+          not run.replaced and 'reason: "os.execv failed: PermissionError: [Errno 13] '
+          'Permission denied"' in successor_prompt
+          and successor_prompt.endswith("then do what the docstring says the agent-seat does "
+                                        "after.")
+          and branch not in successor_prompt, successor_prompt)
 
 
 def run_restart_failure_cases(workspace: Path):
@@ -205,6 +362,19 @@ def run_restart_failure_cases(workspace: Path):
                   f"{supervisor.REPOSITORY_ROOT}." in successor_prompt
               and "only when the handoff-supervisor restarts" in successor_prompt,
               successor_prompt)
+        restart_command = (
+            f"python3 {HANDOFF_PROGRAMS}handoff-supervisor-restart-onto-main-code-by-relaunch-"
+            f"from-reference-checkout.py {case}")
+        if sys.platform != "darwin":
+            restart_command = f"ssh nedlern@ned-box '{restart_command}'"
+        check(f"NOT RESTARTED ({case}): the successor's initial agent instructions end with the "
+              "notice's restart-program ending, since its checkout is not the reference-checkout",
+              successor_prompt.endswith(
+                  "The restart program restarts it from the reference-checkout "
+                  f"{supervisor.REFERENCE_CHECKOUT}. Once you have done what that program's "
+                  "docstring says the agent-seat does before running it, run "
+                  f"`{restart_command}`, and then do what the docstring says the agent-seat "
+                  "does after."), successor_prompt)
         check(f"NOT RESTARTED ({case}): the console says why",
               f"not restarted on main's code, carrying on with the code this process started "
               f"with: {expected}" in run.console, run.console[-600:])
@@ -222,7 +392,7 @@ def run_restarted_process_cases(workspace: Path):
         started_by_handoff_supervisor_restarting_itself_on_main_code=True)
     supervisor.write_supervisor_state(settings.state_path, {
         supervisor.LAUNCHED_SESSION_ID_STATE_KEY: "retiring-session", "generation": 3})
-    settings.handoff_path.write_text("restart-counter: 1\nnext-step: carry on\n", encoding="utf-8")
+    settings.handoff_path.write_text("session-handoff-sequence-number: 1\nnext-step: carry on\n", encoding="utf-8")
     events, prompts, states_at_launch = [], [], []
 
     def launch(agent_command, session_id, working_directory, prompt, **_):
@@ -232,7 +402,7 @@ def run_restarted_process_cases(workspace: Path):
         # A process that failed to restart launches again; that session ends without a handoff, so the case ends.
         if len(prompts) > 1:
             return StubLaunchedSession(0)
-        settings.handoff_path.write_text("restart-counter: 2\nnext-step: again\n", encoding="utf-8")
+        settings.handoff_path.write_text("session-handoff-sequence-number: 2\nnext-step: again\n", encoding="utf-8")
         return StubLaunchedSession(-15, ended=False)
 
     def sync(directory):
@@ -278,7 +448,8 @@ def recovery_note_for_a_missing_transcript(occasion: str, session_id: str, works
     return (f"(Recovered at {occasion}: the previous session's conversation-tail is unavailable, "
             "because the handoff-supervisor could not extract session "
             f"{session_id}'s session-dialog, and that session's transcript is not at "
-            f"{transcript}; this next-step and the repository are your whole context.) ")
+            f"{transcript} or in any other folder under {supervisor.PROJECTS_ROOT}/; this "
+            "next-step and the repository are your whole context.) ")
 
 
 def run_missing_transcript_cases(workspace: Path):
@@ -299,7 +470,7 @@ def run_missing_transcript_cases(workspace: Path):
         launched_session_ids.append(session_id)
         prompts.append(prompt)
         if len(prompts) == 1:
-            settings.handoff_path.write_text("restart-counter: 1\nnext-step: carry on\n",
+            settings.handoff_path.write_text("session-handoff-sequence-number: 1\nnext-step: carry on\n",
                                              encoding="utf-8")
             return StubLaunchedSession(-15, ended=False)
         return StubLaunchedSession(0)
@@ -324,10 +495,12 @@ def run_missing_transcript_cases(workspace: Path):
           exit_code == 0 and len(prompts) == 2 and state.get("consumed_counter") == 1
           and "not relaunching" not in console.getvalue() + errors.getvalue(),
           f"{exit_code!r} {len(prompts)} {state} {errors.getvalue()[-400:]}")
-    check("MISSING TRANSCRIPT, NOT RESTARTED: the successor's prompt is the next step, says the "
-          "transcript is missing, and says why the supervisor did not restart",
+    check("MISSING TRANSCRIPT, NOT RESTARTED: the successor's prompt says the transcript is "
+          "missing and why the supervisor did not restart, then gives the next step",
           successor_prompt.startswith(
-              "carry on\n\n" + recovery_note_for_a_missing_transcript("a handoff", retiring, workspace))
+              recovery_note_for_a_missing_transcript("a handoff", retiring, workspace))
+          # The not-restarted line follows the next step, as it does in a prompt from a dialog.
+          and supervisor.NEXT_STEP_HEADING + "carry on " in successor_prompt
           and f'reason: "{cannot_fast_forward}"' in successor_prompt,
           successor_prompt[:900])
 
@@ -343,7 +516,7 @@ def run_missing_transcript_cases(workspace: Path):
         retiring = f"0badbeef-0000-4000-8000-{os.getpid():012d}"
         supervisor.write_supervisor_state(settings.state_path, {
             supervisor.LAUNCHED_SESSION_ID_STATE_KEY: retiring, "generation": 3})
-        settings.handoff_path.write_text("restart-counter: 1\nnext-step: carry on\n",
+        settings.handoff_path.write_text("session-handoff-sequence-number: 1\nnext-step: carry on\n",
                                          encoding="utf-8")
         prompts = []
 
@@ -363,7 +536,8 @@ def run_missing_transcript_cases(workspace: Path):
               f"says it was recovered at {occasion} and that the transcript is missing",
               len(prompts) == 1 and state.get("consumed_counter") == 1
               and prompts[0].startswith(
-                  "carry on\n\n" + recovery_note_for_a_missing_transcript(occasion, retiring, workspace)),
+                  recovery_note_for_a_missing_transcript(occasion, retiring, workspace))
+              and prompts[0].endswith(supervisor.NEXT_STEP_HEADING + "carry on"),
               f"{state} {prompts[:1]!r}"[:900])
 
 
@@ -495,14 +669,16 @@ def run_restart_flag_names_stay_accepted_case(workspace: Path):
     argv = ["--agent", "flagnames", "--cd", str(workspace),
             "--handoff-dir", str(workspace / "flagnames"),
             "--agent-command", "claude", "--agent-update-timeout-seconds", "0",
-            "--agent-append-system-prompt-file", str(prompt_file), RESTART_FLAG, "--check"]
+            "--agent-append-system-prompt-file", str(prompt_file),
+            RESTART_FLAG, "--check"]
     try:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             exit_code = supervisor.main(argv)
     except SystemExit as stopped:
         exit_code = f"SystemExit({stopped.code})"
     check("FLAG NAMES: main() accepts --agent, --cd, --handoff-dir, --agent-command, "
-          "--agent-update-timeout-seconds, --agent-append-system-prompt-file and the restart flag",
+          "--agent-update-timeout-seconds, --agent-append-system-prompt-file and the restart "
+          "flag",
           exit_code in (0, 1), str(exit_code))
 
 
@@ -597,7 +773,7 @@ def run_real_exec_cases(workspace: Path):
         "    agent='realexec', working_directory=Path(sys.argv[1]),\n"
         "    handoff_directory=Path(sys.argv[1]), agent_command='claude', first_prompt='')\n"
         "print('NOT RESTARTED ' + supervisor."
-        "handoff_supervisor_restart_itself_on_main_code_or_return_failure_report(settings))\n",
+        "handoff_supervisor_restart_itself_on_main_code_after_putting_reference_checkout_back_on_main_or_return_successor_notice(settings))\n",
         encoding="utf-8")
 
     checkout, tip = a_checkout_behind_origin_main(root)
@@ -632,14 +808,18 @@ def run_real_exec_cases(workspace: Path):
     check("REAL EXEC: a checkout with an uncommitted tracked change is left as is, and the "
           "process is not replaced but told why",
           "REPLACED " not in finished.stdout
-          and "NOT RESTARTED launch-time-git-sync: main left as is — 1 uncommitted tracked change(s)"
+          and "NOT RESTARTED The handoff-supervisor of this agent-seat did not restart"
+          in finished.stdout
+          and 'reason: "launch-time-git-sync: main left as is — 1 uncommitted tracked change(s)"'
           in finished.stdout, finished.stdout + finished.stderr)
 
 
 with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_restart_placement_cases(workspace)
-    run_dont_restart_case(workspace)
+    run_ask_user_before_restart_case(workspace)
     run_restart_failure_cases(workspace)
+    run_not_restarted_notice_names_the_tool_cases(workspace)
+    run_reference_checkout_back_on_main_program_cases(workspace)
     run_restarted_process_cases(workspace)
     run_missing_transcript_cases(workspace)
     run_restart_arguments_cases(workspace)

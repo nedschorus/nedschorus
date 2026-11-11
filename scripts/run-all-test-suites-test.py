@@ -236,6 +236,7 @@ def run(root, *arguments, checkout=None, lock_file=None, rendezvous_seconds="20"
                "--log-dir", str(root / "logs"),
                "--lock-file", str(lock_file if lock_file is not None else root / "run.lock"),
                "--recorded-inputs-directory", str(root / "recordings"),
+               "--suite-files-only-strace-saw-lists-directory", str(root / "recordings"),
                *arguments]
     return subprocess.run(command, capture_output=True, text=True, env=environment,
                           stdin=subprocess.DEVNULL, check=False)
@@ -956,7 +957,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # The runner reads its suite sandbox lists from the checkout's copy, so that copy assigns them.
     runner_copy_lists = "".join(f"{name} = {{}}\n"
                                 for name in module.SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST)
-    for changed in ("scripts/run-all-test-suites.py", ".claude/hooks/a-hook.py",
+    for changed in ("scripts/run-all-test-suites.py", ".claude/guard-hooks/a-guard.py",
                     ".claude/settings.json"):
         base = git(repo, "rev-parse", "HEAD").stdout.strip()
         commit_files(repo, {changed: f"# {changed}\n"
@@ -1287,6 +1288,223 @@ with tempfile.TemporaryDirectory() as scratch:
           "recorders recorded it",
           ran(root) == ["runs-git-show-test.py"] and result.returncode == 1,
           (ran(root), result.stdout))
+
+# --- strace only where asked, and the files only it saw kept for later runs --
+# A stand-in strace runs each suite, and writes one trace line saying STRACE_ONLY_SUITE opened
+# data.txt, as a git command or a shell script would, unseen by the audit hook. Real strace
+# cannot attach inside the daily full run, which traces this suite, so it is not used here.
+FAKE_STRACE_SOURCE = r'''import os, subprocess, sys
+arguments = sys.argv[1:]
+trace = arguments[arguments.index("-o") + 1]
+command = arguments[arguments.index("-o") + 2:]
+with open(os.environ["FAKE_STRACE_CALLED_FILE"], "a") as called:
+    called.write("called\n")
+code = subprocess.call(command)
+seen = os.environ["FAKE_STRACE_SAW"]
+suite_traced = any(argument.endswith(os.environ["FAKE_STRACE_SUITE"]) for argument in command)
+# A suite that fails before reaching data.txt, as when the daily run times out.
+stops_early = suite_traced and os.environ.get("FAKE_STRACE_SUITE_FAILS_BEFORE_READING")
+# A suite that skips, without the mark, the case that reads data.txt, and still passes.
+skips_reading = suite_traced and os.environ.get("FAKE_STRACE_SUITE_SKIPS_THE_CASE_THAT_READS")
+if skips_reading:
+    print("SKIP the case that reads data.txt", flush=True)
+with open(trace + ".1", "w") as written:
+    if suite_traced and not stops_early and not skips_reading:
+        written.write(f'openat(AT_FDCWD</>, "{seen}", O_RDONLY) = 3<{seen}>\n')
+sys.exit(1 if stops_early else code)
+'''
+FAKE_STRACE_DRIVER = r'''
+import importlib.util, os, sys
+program_path, *arguments = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("run_all_test_suites", program_path)
+program = importlib.util.module_from_spec(spec)
+sys.argv = [program_path, *arguments]
+spec.loader.exec_module(program)
+program.strace_usable = lambda: os.environ["FAKE_STRACE_PROGRAM"]
+sys.exit(program.main(arguments))
+'''
+STRACE_ONLY_SUITE = "reads-data-through-git-test.py"
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {STRACE_ONLY_SUITE: PASSES, "reads-nothing-else-test.py": PASSES})
+    base = commit_files(repo, {"data.txt": "a\n"}, "data")
+    fake_strace = root / "fake-strace.py"
+    fake_strace.write_text(f"#!{sys.executable}\n" + FAKE_STRACE_SOURCE)
+    fake_strace.chmod(0o755)
+    called = root / "fake-strace-called.txt"
+    fake = {"FAKE_STRACE_PROGRAM": str(fake_strace), "FAKE_STRACE_CALLED_FILE": str(called),
+            "FAKE_STRACE_SAW": os.path.realpath(repo / "data.txt"),
+            "FAKE_STRACE_SUITE": STRACE_ONLY_SUITE}
+
+    def kept_list(store):
+        found = list(store.glob(f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json"))
+        return json.loads(found[0].read_text()) if found else None
+
+    hook_alone = run(root, environment_extra=fake, driver=FAKE_STRACE_DRIVER)
+    check("a run not given --record-inputs-with-strace records with the audit hook alone, "
+          "where strace is usable too",
+          hook_alone.returncode == 0 and not called.exists()
+          and recording(root, STRACE_ONLY_SUITE).get("recorded_by") == ["python-audit-hook"]
+          and kept_list(root / "recordings") is None
+          and any(line.startswith("inputs recorded by python-audit-hook, kept in")
+                  for line in lines(hook_alone.stdout)), hook_alone.stdout)
+
+    traced = run(root, "--record-inputs-with-strace", environment_extra=fake,
+                 driver=FAKE_STRACE_DRIVER)
+    kept = kept_list(root / "recordings")
+    check("a run given --record-inputs-with-strace records with strace too, and keeps the "
+          "files only strace saw, without those the audit hook saw",
+          traced.returncode == 0 and called.exists()
+          and recording(root, STRACE_ONLY_SUITE).get("recorded_by")
+          == ["python-audit-hook", "strace"]
+          and kept is not None and kept["files_only_strace_saw"] == ["data.txt"]
+          and kept["suite"] == STRACE_ONLY_SUITE
+          and f"and strace ({fake_strace})" in traced.stdout, (traced.stdout, kept))
+
+    run(root, environment_extra=fake, driver=FAKE_STRACE_DRIVER)
+    check("a later run with the audit hook alone replaces the recording and leaves the list "
+          "of files only strace saw as it was",
+          recording(root, STRACE_ONLY_SUITE).get("recorded_by") == ["python-audit-hook"]
+          and kept_list(root / "recordings") == kept, kept_list(root / "recordings"))
+
+    # Recorded where no list was kept yet, so only the list read at selection names data.txt.
+    other_store = root / "another-store"
+    run(root, "--recorded-inputs-directory", str(other_store),
+        "--suite-files-only-strace-saw-lists-directory", str(root / "no-lists-here"))
+    commit_files(repo, {"data.txt": "b\n"}, "change data")
+    (root / "ran.txt").unlink(missing_ok=True)
+    selected = run(root, CHANGED_SINCE, base)
+    check("a change to a file only strace saw selects the suite through a recording made with "
+          "the audit hook alone, which holds that file from the list",
+          ran(root) == [STRACE_ONLY_SUITE]
+          and f"SELECTED {STRACE_ONLY_SUITE}: it reads data.txt, which differs"
+          in lines(selected.stdout), (ran(root), selected.stdout))
+    (root / "ran.txt").unlink(missing_ok=True)
+    unlisted = run(root, CHANGED_SINCE, base, "--recorded-inputs-directory", str(other_store),
+                   "--suite-files-only-strace-saw-lists-directory",
+                   str(root / "no-lists-here"))
+    check("without that list, the same change does not select the suite",
+          ran(root) == [], (ran(root), unlisted.stdout))
+    (root / "ran.txt").unlink(missing_ok=True)
+    selected = run(root, CHANGED_SINCE, base, "--recorded-inputs-directory", str(other_store))
+    check("a change to a file only strace saw selects the suite, with its list read from "
+          "another directory than the run's recordings, for a recording made without the list",
+          ran(root) == [STRACE_ONLY_SUITE]
+          and f"SELECTED {STRACE_ONLY_SUITE}: it reads data.txt, which differs, as only the "
+              f"strace run of {kept['recorded_at']} saw" in lines(selected.stdout),
+          (ran(root), selected.stdout))
+    check("a selective run says, on Linux only, that suites have no list of files only strace "
+          "saw",
+          any(line.startswith("run-all-test-suites: 2 of 2 suites have no list of the files "
+                              "only strace saw them read from the last 36 hours")
+              for line in lines(unlisted.stdout)) == sys.platform.startswith("linux"),
+          unlisted.stdout)
+
+    a_file = root / "a-file-not-a-directory"
+    a_file.write_text("")
+    unsaved = run(root, "--record-inputs-with-strace",
+                  "--suite-files-only-strace-saw-lists-directory",
+                  str(a_file), environment_extra=fake, driver=FAKE_STRACE_DRIVER)
+    check("a list of files only strace saw that cannot be saved is reported, and the "
+          "suite's recording is removed, so the next selective run selects the suite",
+          f"inputs of {STRACE_ONLY_SUITE} not recorded:" in unsaved.stdout
+          and recording(root, STRACE_ONLY_SUITE) == {}, unsaved.stdout)
+
+# A recording made with the audit hook alone in one checkout, used in another that holds
+# another copy of a file only strace saw; and a traced run that stopped before reaching it.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {STRACE_ONLY_SUITE: PASSES})
+    base = commit_files(repo, {"data.txt": "a\n"}, "data")
+    fake_strace = root / "fake-strace.py"
+    fake_strace.write_text(f"#!{sys.executable}\n" + FAKE_STRACE_SOURCE)
+    fake_strace.chmod(0o755)
+    fake = {"FAKE_STRACE_PROGRAM": str(fake_strace),
+            "FAKE_STRACE_CALLED_FILE": str(root / "fake-strace-called.txt"),
+            "FAKE_STRACE_SAW": os.path.realpath(repo / "data.txt"),
+            "FAKE_STRACE_SUITE": STRACE_ONLY_SUITE}
+    store = root / "recordings"
+    run(root, "--record-inputs-with-strace", environment_extra=fake, driver=FAKE_STRACE_DRIVER)
+    complete_list = json.loads(next(store.glob(
+        f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
+
+    stopped = run(root, "--record-inputs-with-strace",
+                  environment_extra={**fake, "FAKE_STRACE_SUITE_FAILS_BEFORE_READING": "1"},
+                  driver=FAKE_STRACE_DRIVER)
+    check("a traced run in which the suite failed keeps the last complete list of files only "
+          "strace saw, since it saw only what the suite reached before it stopped",
+          stopped.returncode == 1
+          and json.loads(next(store.glob(
+              f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
+          == complete_list, stopped.stdout)
+
+    skipped = run(root, "--record-inputs-with-strace",
+                  environment_extra={**fake, "FAKE_STRACE_SUITE_SKIPS_THE_CASE_THAT_READS": "1"},
+                  driver=FAKE_STRACE_DRIVER)
+    check("a traced run that passed but skipped a case without the mark that says this machine "
+          "cannot run it keeps the last complete list of files only strace saw",
+          skipped.returncode == 0
+          and recording(root, STRACE_ONLY_SUITE).get("skipped_cases") == 1
+          and json.loads(next(store.glob(
+              f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
+          == complete_list, (skipped.stdout, recording(root, STRACE_ONLY_SUITE)))
+
+    git(repo, "checkout", "-q", "-b", "holds-another-data")
+    commit_files(repo, {"data.txt": "b\n"}, "another data")
+    run(root)
+    check("a recording made with the audit hook alone holds the blob hash of each file on the "
+          "suite's list of files only strace saw",
+          "data.txt" in recording(root, STRACE_ONLY_SUITE).get("reads", {}),
+          recording(root, STRACE_ONLY_SUITE))
+    git(repo, "checkout", "-q", base)
+    (root / "ran.txt").unlink(missing_ok=True)
+    selected = run(root, CHANGED_SINCE, base)
+    check("that recording, used in a checkout holding another copy of the file, selects the "
+          "suite though the file does not differ from the commit given",
+          ran(root) == [STRACE_ONLY_SUITE]
+          and f"SELECTED {STRACE_ONLY_SUITE}: its recording read another copy of data.txt than "
+              f"the checkout holds, so what it reads here is unknown" in lines(selected.stdout),
+          (ran(root), selected.stdout))
+
+# Only the daily full run records these lists, once a day; a list older than the limit, or
+# none, means a daily run was missed, and the run says so.
+NOW = datetime.datetime(2026, 11, 4, 12, 0, tzinfo=datetime.timezone.utc)
+
+
+def kept_hours_before_now(hours):
+    return {"recorded_at": (NOW - datetime.timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "files_only_strace_saw": []}
+
+
+notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+    ["a-test.py", "b-test.py", "c-test.sh"],
+    {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(35)},
+    pathlib.Path("/store"), NOW)
+check("no notice when every recorded suite's list is younger than the limit, a shell suite, "
+      "which is never recorded, aside", notice is None, notice)
+notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+    ["a-test.py", "b-test.py"],
+    {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(37)},
+    pathlib.Path("/store"), NOW)
+check("a list older than the limit is named, with the time it was recorded",
+      notice is not None and notice.startswith("run-all-test-suites: 1 of 2 suites")
+      and "has not recorded every suite since 2026-11-02T23:00:00Z" in notice
+      and "If you have not yet told the user in this agent-session that the daily full test "
+          "run's lists are stale: tell him" in notice,
+      notice)
+notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+    ["a-test.py"], {}, pathlib.Path("/store"), NOW)
+check("a missing list is named, with the directory it was looked for in",
+      notice is not None and notice.startswith("run-all-test-suites: 1 of 1 suites")
+      and "36 hours in /store," in notice
+      and "has not recorded every suite at all," in notice, notice)
+with tempfile.TemporaryDirectory() as scratch:
+    store = pathlib.Path(scratch)
+    for name, body in (("not-json", "{"), ("no-list", '{"recorded_at": "2026-11-04T00:00:00Z"}'),
+                       ("no-time", '{"files_only_strace_saw": []}')):
+        (store / f"{name}-test.py.files-only-strace-saw.json").write_text(body)
+        check(f"a list that is {name.replace('-', ' ')} is not used",
+              module.load_files_only_strace_saw(store, f"{name}-test.py") is None, name)
 
 # --- Saving recordings while runs in other checkouts save them too -----------
 # A sitecustomize.py on the program's PYTHONPATH holds each run at a barrier
@@ -2730,6 +2948,142 @@ with tempfile.TemporaryDirectory() as scratch:
           explicit.exists())
     check("nor one with a trace deep inside it that changed recently",
           deep.exists())
+    # Root reads a directory whatever its mode, so the failure cannot be made.
+    if os.geteuid() != 0:
+        unreadable_log_dir = temp / "run-all-test-suites-unreadable"
+        (unreadable_log_dir / "closed").mkdir(parents=True)
+        (unreadable_log_dir / "closed").chmod(0o000)
+        try:
+            removed, removal_failures = (
+                module.remove_old_temporary_log_directories_without_run_records(
+                    runs, now=now, temp_dir=temp))
+        finally:
+            (unreadable_log_dir / "closed").chmod(0o700)
+        check("a log directory whose tree cannot be read is kept and reported with the reason",
+              unreadable_log_dir.exists() and removed == []
+              and [directory for directory, _ in removal_failures] == [unreadable_log_dir]
+              and "could not read it" in removal_failures[0][1], (removed, removal_failures))
+
+with tempfile.TemporaryDirectory() as scratch:
+    temp = pathlib.Path(scratch)
+    prefix = module.SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX
+    left_by_killed_runner = temp / f"{prefix}ab_cd123"
+    still_in_use = temp / f"{prefix}xy_z9876"
+    not_mkdtemp_shaped = temp / f"{prefix}another-program"
+    for directory in (left_by_killed_runner, still_in_use, not_mkdtemp_shaped):
+        (directory / "made-by-the-suite").mkdir(parents=True)
+        (directory / "made-by-the-suite" / "file").write_text("x")
+    now = time.time() + module.FINISHED_RUN_LOG_RETENTION_SECONDS + 60
+    os.utime(still_in_use / "made-by-the-suite" / "file", (now, now))
+    # Only root can give a directory another owner, so the sweep is told it runs as another account.
+    real_getuid = module.os.getuid
+    module.os.getuid = lambda: real_getuid() + 1
+    try:
+        removed, removal_failures = (
+            module.remove_old_suite_temporary_directories_left_by_killed_runners(
+                now=now, temp_dir=temp))
+    finally:
+        module.os.getuid = real_getuid
+    check("a per-suite TMPDIR another account owns is never touched",
+          removed == [] and removal_failures == [] and left_by_killed_runner.exists(),
+          (removed, removal_failures))
+    removed, removal_failures = module.remove_old_suite_temporary_directories_left_by_killed_runners(
+        now=now, temp_dir=temp)
+    check("a per-suite TMPDIR a killed runner left is removed once unchanged for two days",
+          removed == [left_by_killed_runner] and not left_by_killed_runner.exists()
+          and removal_failures == [], (removed, removal_failures))
+    check("but not one a suite changed recently, nor one whose name mkdtemp did not make",
+          still_in_use.exists() and not_mkdtemp_shaped.exists())
+    # Root reads and removes a directory whatever its mode, so neither failure can be made.
+    if os.geteuid() != 0:
+        unreadable = temp / f"{prefix}unread01"
+        unremovable = temp / f"{prefix}unremov1"
+        (unreadable / "closed").mkdir(parents=True)
+        (unremovable / "locked").mkdir(parents=True)
+        (unremovable / "locked" / "file").write_text("x")
+        (unremovable / "locked").chmod(0o500)
+        (unreadable / "closed").chmod(0o000)
+        try:
+            removed, removal_failures = (
+                module.remove_old_suite_temporary_directories_left_by_killed_runners(
+                    now=now, temp_dir=temp))
+        finally:
+            (unreadable / "closed").chmod(0o700)
+            (unremovable / "locked").chmod(0o700)
+        reasons = dict(removal_failures)
+        check("a per-suite TMPDIR whose tree cannot be read is kept and reported with the reason",
+              unreadable.exists() and unreadable not in removed
+              and "could not read it" in reasons.get(unreadable, "")
+              and "Permission denied" in reasons.get(unreadable, ""),
+              (removed, removal_failures))
+        check("a per-suite TMPDIR that cannot be removed is reported with the reason",
+              sorted(reasons) == sorted([unreadable, unremovable])
+              and reasons[unremovable] and "could not read it" not in reasons[unremovable],
+              removal_failures)
+    vanished = temp / f"{prefix}gone0001"
+    old_after_vanished = temp / f"{prefix}zz_old01"
+    vanished.mkdir()
+    old_after_vanished.mkdir()
+    real_newest = module.newest_modification_time_in_tree
+
+    def removed_by_another_run(directory):
+        if directory.name.endswith(("gone0001", "-aa-vanished")):
+            raise FileNotFoundError(2, "No such file or directory", str(directory))
+        return real_newest(directory)
+    module.newest_modification_time_in_tree = removed_by_another_run
+    try:
+        removed, removal_failures = (
+            module.remove_old_suite_temporary_directories_left_by_killed_runners(
+                now=now, temp_dir=temp))
+    finally:
+        module.newest_modification_time_in_tree = real_newest
+    check("a per-suite TMPDIR that vanished while it was read is skipped without a report, "
+          "and the sweep goes on to the next one",
+          vanished not in removed
+          and vanished not in [directory for directory, _ in removal_failures]
+          and old_after_vanished in removed and not old_after_vanished.exists(),
+          (removed, removal_failures))
+
+with tempfile.TemporaryDirectory() as scratch:
+    temp = pathlib.Path(scratch)
+    runs = temp / "runs"
+    runs.mkdir()
+    vanished = temp / "run-all-test-suites-aa-vanished"
+    old_after_vanished = temp / "run-all-test-suites-zz-old"
+    vanished.mkdir()
+    old_after_vanished.mkdir()
+    now = time.time() + module.FINISHED_RUN_LOG_RETENTION_SECONDS + 60
+    real_newest = module.newest_modification_time_in_tree
+
+    def removed_by_another_run(directory):
+        if directory.name.endswith(("gone0001", "-aa-vanished")):
+            raise FileNotFoundError(2, "No such file or directory", str(directory))
+        return real_newest(directory)
+    module.newest_modification_time_in_tree = removed_by_another_run
+    try:
+        removed, removal_failures = module.remove_old_temporary_log_directories_without_run_records(
+            runs, now=now, temp_dir=temp)
+    finally:
+        module.newest_modification_time_in_tree = real_newest
+    check("a log directory that vanished while it was read is skipped without a report, "
+          "and the sweep goes on to the next one",
+          removed == [old_after_vanished] and removal_failures == [],
+          (removed, removal_failures))
+
+swept = []
+real_sweep = module.remove_old_suite_temporary_directories_left_by_killed_runners
+module.remove_old_suite_temporary_directories_left_by_killed_runners = (
+    lambda: swept.append("swept") or ([pathlib.Path("/tmp/rts-ab_cd123")], []))
+with tempfile.TemporaryDirectory() as scratch:
+    lines = module.clean_up_after_earlier_runs(module.DEFAULT_LOCK_FILE, "", platform="darwin")
+    check("a run with the default lock file sweeps killed runners' per-suite TMPDIRs on macOS too, "
+          "and names each one it removed",
+          swept == ["swept"] and any("/tmp/rts-ab_cd123" in line for line in lines), lines)
+    swept.clear()
+    module.clean_up_after_earlier_runs(pathlib.Path(scratch) / "own.lock", "", platform="darwin")
+    check("a run with a lock file of its own leaves the shared temp directory alone",
+          swept == [], swept)
+module.remove_old_suite_temporary_directories_left_by_killed_runners = real_sweep
 
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
