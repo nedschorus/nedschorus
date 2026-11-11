@@ -380,7 +380,11 @@ launcher.ctypes.CDLL = lambda *arguments, **keywords: PrctlRefuses()
 real_stderr = sys.stderr
 sys.stderr = captured_stderr = __import__("io").StringIO()
 try:
+    # main ends with sys.exit when it starts the suite, which would end this whole test file
+    # with that status midway; count it as this case's result instead.
     refused_status = launcher.main(["true"])
+except SystemExit as exit_from_main:
+    refused_status = f"main started the suite and called sys.exit({exit_from_main.code!r})"
 finally:
     sys.stderr = real_stderr
     launcher.ctypes.CDLL = real_cdll
