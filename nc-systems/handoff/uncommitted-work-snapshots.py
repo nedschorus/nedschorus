@@ -917,7 +917,8 @@ def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
                     f"owner when to remove the worktree") from None
     except Exception as error:
         return undo_after(f"writing the owner file of {worktree}", f"{type(error).__name__}: {error}")
-    diff = subprocess.run(["git", "-C", str(worktree), "diff", "--binary", f"{ref}^", ref, "--",
+    diff = subprocess.run(["git", "--literal-pathspecs", "-C", str(worktree), "diff", "--binary",
+                           f"{ref}^", ref, "--",
                            *keep], capture_output=True, check=False)
     if diff.returncode:
         return undo_after(f"git diff --binary {ref}^ {ref}",

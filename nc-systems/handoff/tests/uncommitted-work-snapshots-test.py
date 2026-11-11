@@ -1055,6 +1055,20 @@ def test_restore_a_subset():
           "a worktree whose HEAD moved no longer matches, though the tree is the same")
 
 
+def test_restore_reads_a_kept_name_as_a_literal_path():
+    empty_restore_task_list()
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "glob", {"notes*.txt": "kept\n", "notes-old.txt": "dropped\n"},
+                                       "7-8")
+    code, lines = run_restore(main, ref, ["notes*.txt"])
+    target = restored_worktree_of(main, ref)
+    changed = git(target, "diff-tree", "-r", "--no-commit-id", "--name-only",
+                  "HEAD").splitlines() if target.is_dir() else []
+    check(code == 0 and changed == ["notes*.txt"],
+          "restore keeping a file whose name holds a glob character commits that file alone, not "
+          "the files the glob matches", (changed, lines))
+
+
 def unchanged_after_refusal(main, ref, code, lines, name, text):
     check(code == snapshots.EXIT_REFUSED and lines[:1] and lines[0].startswith("REFUSED: ")
           and any(text in line for line in lines),
@@ -1585,6 +1599,43 @@ def test_the_cleaner_reports_each_task_it_cannot_judge():
     check(failures_seen == 0 and json.loads(unrelated.read_text())["status"] == "pending"
           and json.loads(task_file.read_text())["status"] == "completed",
           "only a restored branch's task is closed", lines)
+
+
+def test_two_cleaners_rewriting_one_task_each_publish_their_own_text():
+    empty_restore_task_list()
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "race", {"new.txt": "work\n"}, "12-2")
+    code, lines = run_restore(main, ref, ["new.txt"])
+    git(main, "worktree", "remove", "--force", str(restored_worktree_of(main, ref)))
+    git(main, "branch", "-D", snapshots.restored_branch_name(ref))
+    key, _task = restored_task_of(main, ref)
+    task_file = restore_task_list() / f"{key}.json"
+    original = task_file.read_text()
+    real_replace = cleaner.os.replace
+    second_writer = {}
+
+    def replace_after_a_second_cleaner_wrote(source, target):
+        if not second_writer:
+            # A second cleaner, started by another session-handoff, rewrites the same task between
+            # this one's write and its rename.
+            second_writer["run"] = True
+            task_file.write_text(original)
+            second_writer["result"] = close_tasks(main, remove=True)
+        return real_replace(source, target)
+
+    cleaner.os.replace = replace_after_a_second_cleaner_wrote
+    try:
+        failures_seen, lines = close_tasks(main, remove=True)
+    finally:
+        cleaner.os.replace = real_replace
+    second_failures, second_lines = second_writer.get("result", (None, []))
+    written = json.loads(task_file.read_text())
+    leftovers = [path.name for path in restore_task_list().iterdir() if path.name.endswith(".partial")]
+    check(failures_seen == 0 and second_failures == 0 and written["status"] == "completed"
+          and written["description"].count("Marked completed by scripts/clean-worktrees.py") == 1
+          and leftovers == [],
+          "two cleaners rewriting one task at once each publish whole text of their own and fail "
+          "nothing", (lines, second_lines, leftovers))
 
 
 # ---------------------------------------------------------------- cleaner
@@ -2209,13 +2260,15 @@ def main():
                      test_macos_ps_failure_is_not_a_dead_owner,
                      test_live_and_dead_owners_listed, test_list_caps_and_failure,
                      test_supervisor_appends_the_list, test_restore_a_subset,
+                     test_restore_reads_a_kept_name_as_a_literal_path,
                      test_task_written_beside_one_claude_code_writes_at_the_same_moment,
                      test_restore_refusals_change_nothing, test_restore_step_failures,
                      test_restore_accepts_the_owner_file_git_worktree_add_wrote_naming_its_agent_seat,
                      test_restore_task_and_ref_deletion_failures, test_discard,
                      test_command_line_of_restore_and_discard, test_entries_end_with_their_command,
                      test_the_cleaner_closes_a_restored_branch_task_by_its_commit,
-                     test_the_cleaner_reports_each_task_it_cannot_judge, test_cleaner,
+                     test_the_cleaner_reports_each_task_it_cannot_judge,
+                     test_two_cleaners_rewriting_one_task_each_publish_their_own_text, test_cleaner,
                      test_in_place_and_duplicate_leftovers,
                      test_same_tree_on_another_head_is_not_a_duplicate,
                      test_unreadable_head_is_reported,

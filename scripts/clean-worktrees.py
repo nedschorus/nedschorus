@@ -196,7 +196,9 @@ id. --only-done prints only the ones --remove would delete.
 A live owner's work-snapshot is never touched.
 
 Last, it closes the tasks that `uncommitted-work-snapshots.py restore` opens,
-in every task list on the machine, ~/.claude/tasks/nedschorus-*-tasks. Each
+in every task list on the machine, ~/.claude/tasks/nedschorus-*-tasks, or under
+the directory CLEAN_WORKTREES_TASK_LISTS_DIRECTORY_OVERRIDE names, which is how
+the tests keep out of the machine's task lists. Each
 task not marked completed whose subject starts with
 RESTORED_BRANCH_TASK_SUBJECT_PREFIX is judged by the commit its description's
 `Restore commit: ` line names: --remove first runs `git fetch --prune
@@ -282,6 +284,7 @@ the run where it failed; with --remove-worktree-and-force-delete-its-branch
 or --force-delete-branch that is exit 1 with a FAILED line.
 """
 
+import contextlib
 import importlib.util
 import json
 import os
@@ -290,6 +293,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1474,7 +1478,16 @@ def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
     return failures
 
 
-TASK_LISTS_DIRECTORY = Path.home() / ".claude" / "tasks"
+TASK_LISTS_DIRECTORY_OVERRIDE_VARIABLE = "CLEAN_WORKTREES_TASK_LISTS_DIRECTORY_OVERRIDE"
+
+
+def task_lists_directory_from_override_or_home_claude_tasks():
+    """The directory of Claude Code task lists the cleaner judges: the override's, when set, or
+    ~/.claude/tasks."""
+    override = os.environ.get(TASK_LISTS_DIRECTORY_OVERRIDE_VARIABLE)
+    return Path(override) if override else Path.home() / ".claude" / "tasks"
+
+
 NEDSCHORUS_TASK_LISTS_GLOB = "nedschorus-*-tasks"
 RESTORED_BRANCH_TASKS_CLOSE_GIT_FETCH_TIMEOUT_SECONDS = 300
 
@@ -1540,7 +1553,8 @@ def restore_commit_done_reason(repo, commit):
 def close_restored_branch_tasks(repo, remove, only_done, task_lists_directory=None, out=print):
     """Mark completed each task restore opened whose restore commit is on origin/main or held
     by no ref; return the number of failures. Without remove, name them and change nothing."""
-    task_lists_directory = TASK_LISTS_DIRECTORY if task_lists_directory is None else task_lists_directory
+    if task_lists_directory is None:
+        task_lists_directory = task_lists_directory_from_override_or_home_claude_tasks()
     tasks, failures = open_restored_branch_tasks(task_lists_directory, out)
     if not tasks:
         return failures
@@ -1586,11 +1600,18 @@ def close_restored_branch_tasks(repo, remove, only_done, task_lists_directory=No
         task = dict(task, status="completed", description=(
             str(task.get("description", "")).rstrip("\n")
             + f"\nMarked completed by scripts/clean-worktrees.py at {now}: {reason}."))
-        partial = task_file.with_name(f".{task_file.name}.partial")
+        partial = None
         try:
-            partial.write_text(json.dumps(task, indent=2), encoding="utf-8")
+            # A partial file of its own: cleaners run at the same time, one per session-handoff.
+            descriptor, partial = tempfile.mkstemp(prefix=f".{task_file.name}.", suffix=".partial",
+                                                   dir=task_file.parent)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(json.dumps(task, indent=2))
             os.replace(partial, task_file)
         except OSError as error:
+            if partial is not None:
+                with contextlib.suppress(OSError):
+                    os.unlink(partial)
             out(f"FAILED: {name} could not be rewritten as completed ({type(error).__name__}: "
                 f"{error}); it is left as it was")
             failures += 1

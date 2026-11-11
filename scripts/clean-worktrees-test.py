@@ -107,6 +107,13 @@ _removals_log_for_every_run = tempfile.mkdtemp(prefix="clean-worktrees-test-remo
 atexit.register(shutil.rmtree, _removals_log_for_every_run, ignore_errors=True)
 os.environ[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(Path(_removals_log_for_every_run) / "log.txt")
 
+TASK_LISTS_DIRECTORY_OVERRIDE_VARIABLE = "CLEAN_WORKTREES_TASK_LISTS_DIRECTORY_OVERRIDE"
+# Without this, every run would judge the machine's open restored-branch tasks against this suite's
+# scratch clones, and fail on any one whose restore commit a scratch clone lacks.
+_task_lists_for_every_run = tempfile.mkdtemp(prefix="clean-worktrees-test-task-lists-")
+atexit.register(shutil.rmtree, _task_lists_for_every_run, ignore_errors=True)
+os.environ[TASK_LISTS_DIRECTORY_OVERRIDE_VARIABLE] = _task_lists_for_every_run
+
 # Every run finds this gh first: it prints FAKE_GH_PULL_REQUESTS, an empty list by default, or fails
 # with exit FAKE_GH_EXIT_CODE, so no run reaches GitHub. Like the real gh, it prints only the fields
 # named after --json, so a field the cleaner forgets to ask for is missing from what it reads.
@@ -2888,6 +2895,33 @@ with tempfile.TemporaryDirectory() as scratch:
           refused.returncode == 1 and (unwritable / ".git").exists()
           and "removal-file-unwritable-wt: removal FAILED, worktree kept" in refused.stdout,
           refused.stdout + refused.stderr)
+
+# --- The machine's task lists stay out of the suite's runs ---
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch).resolve()
+    checkout = scratch / "checkout"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    git(checkout, "update-ref", "refs/remotes/origin/main", "HEAD")
+    home = scratch / "home"
+    machine_task_list = home / ".claude" / "tasks" / "nedschorus-someseat-tasks"
+    machine_task_list.mkdir(parents=True)
+    (machine_task_list / "1.json").write_text(json.dumps({
+        "id": "1", "subject": "Restored branch restored-1-abc: open its pull request or delete it",
+        "status": "pending",
+        "description": "Restore commit: 1234567890abcdef1234567890abcdef12345678\n"}),
+        encoding="utf-8")
+    reported = run_clean_with_claude_home(checkout, home)
+    check("an open restored-branch task in HOME's task lists is not judged while the override "
+          "names the suite's own task lists",
+          reported.returncode == 0 and "FAILED" not in reported.stdout
+          and "restored-1-abc" not in reported.stdout,
+          reported.stdout + reported.stderr)
 
 check("no run of the suite shipped into the store every run defaults to",
       not any(Path(_ship_store_for_every_run).iterdir()),
