@@ -3,9 +3,13 @@
 
 Usage:
   nc-systems/nc-shared-database/nc-shared-database-service-on-ned-box-and-jobs-on-both-machines-install-from-the-mac.py
-      [--print]
+      [--print] [--skip-firewall-step-rule-added-by-hand]
 
   --print   print each step's machine and shell command, and run nothing
+  --skip-firewall-step-rule-added-by-hand
+            skip step 7, after the user has added the firewall rule himself
+            because ned-box's sudo asked for a password; steps 10 and 11 still
+            check that the Mac reaches the service
 
 Run it on the Mac: only the Mac can open an ssh session to ned-box. It runs
 these steps in order, each as one shell command on one machine, and stops at the
@@ -48,9 +52,9 @@ import sys
 from pathlib import Path
 
 _rerun_once_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
     Path(__file__).resolve().parents[1] / "general-tools"
-    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 _rerun_once_lines = importlib.util.module_from_spec(_rerun_once_lines_spec)
 _rerun_once_lines_spec.loader.exec_module(_rerun_once_lines)
 
@@ -75,6 +79,8 @@ MAC_TOKEN_STEP_NAME = "the Mac's token file is made"
 PROGRAM_IN_REFERENCE_CHECKOUT = (f"{REFERENCE_CHECKOUT}/nc-systems/nc-shared-database/"
                                  f"{Path(__file__).name}")
 INSTALL_RERUN_COMMAND = f"python3 {PROGRAM_IN_REFERENCE_CHECKOUT}"
+SKIP_FIREWALL_STEP_RULE_ADDED_BY_HAND_OPTION = "--skip-firewall-step-rule-added-by-hand"
+FIREWALL_STEP_NAME = "ned-box's firewall opens the service's port to the home network"
 INSTALL_RERUN_INSTRUCTION_LINE = f"To run this install again, run on the Mac: `{INSTALL_RERUN_COMMAND}`"
 SUBAGENT_REPORT_TO_DISPATCHING_AGENT_INSTRUCTION_LINE = ("If you are a subagent, do not ask or tell the user anything: send this whole "
                  "report, and what you did, to the agent that dispatched you, which asks or "
@@ -99,7 +105,10 @@ def install_step_failure_generic_advice(machine, command):
 
 
 def reference_checkout_missing_commit_failure_advice(machine, command):
-    pull = f"git -C {REFERENCE_CHECKOUT} pull --ff-only"
+    # git pull rejects --no-overwrite-ignore, and without it the merge replaces an ignored file
+    # at a path main tracks.
+    pull = (f"git -C {REFERENCE_CHECKOUT} fetch origin && "
+            f"git -C {REFERENCE_CHECKOUT} merge --ff-only --no-overwrite-ignore origin/main")
     return (f"The reference-checkout {REFERENCE_CHECKOUT} on {machine} does not yet hold main's "
             f"commit {MAIN_COMMIT_EACH_REFERENCE_CHECKOUT_MUST_HOLD[:9]}, which this install's files came "
             f"from. Fast-forward it to main by running on the Mac `{command_text_to_run_on_the_mac_ssh_wrapped_when_for_ned_box(machine, pull)}`, "
@@ -111,8 +120,11 @@ def sudo_advice(machine, command):
     return ("ned-box's sudo asked for a password to change the firewall (ufw), and this program "
             "cannot type one. Ask the user to run, in a Terminal on his Mac, "
             f"`{command_text_to_run_on_the_mac_ssh_wrapped_when_for_ned_box(machine, asking, for_the_user_to_type=True)}`, which asks him "
-            "for his ned-box password; when he says it succeeded, run the install again. When "
-            "he cannot or will not, the install stays stopped at this step: say so to him.")
+            "for his ned-box password. When he says it succeeded, run on the Mac "
+            f"`{INSTALL_RERUN_COMMAND} {SKIP_FIREWALL_STEP_RULE_ADDED_BY_HAND_OPTION}`, which skips this step: "
+            "without that option the install stops here again, because its sudo still cannot "
+            "type a password. When he cannot or will not, the install stays stopped at this step: "
+            "say so to him.")
 
 
 def service_wrong_http_answer_failure_advice(machine, command):
@@ -169,7 +181,7 @@ def install_steps():
          service_accepted_tokens_file_rewrite_shell_command(), True, None, install_step_failure_generic_advice),
         ("ned-box enables and starts the service", "ned-box",
          f"systemctl --user enable --now {NC_SHARED_DATABASE_SERVICE_SYSTEMD_UNIT_FILE_PATH}", False, None, install_step_failure_generic_advice),
-        ("ned-box's firewall opens the service's port to the home network", "ned-box",
+        (FIREWALL_STEP_NAME, "ned-box",
          f"sudo -n ufw allow from {HOME_NETWORK} to any port {PORT} proto tcp "
          f"comment 'nc-shared-database service from LAN'", False, None, sudo_advice),
         ("ned-box installs the nightly backup job", "ned-box", job_installed_command(NED_BOX_JOB),
@@ -216,6 +228,8 @@ def failure_report(number, name, machine, command, result, expected, advice):
 def main(arguments=None, run=run_on):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--print", action="store_true", dest="print_only")
+    parser.add_argument(SKIP_FIREWALL_STEP_RULE_ADDED_BY_HAND_OPTION, action="store_true",
+                        dest="skip_firewall_step_rule_added_by_hand")
     options = parser.parse_args(arguments)
     if options.print_only:
         for number, (name, machine, command, *_) in enumerate(install_steps(), 1):
@@ -235,6 +249,9 @@ def main(arguments=None, run=run_on):
     mac_token = None
     for number, (name, machine, command, reads_mac_token, expected, advice) in enumerate(
             install_steps(), 1):
+        if name == FIREWALL_STEP_NAME and options.skip_firewall_step_rule_added_by_hand:
+            print(f"step {number} skipped: {name}, on {machine}; the user added the rule by hand")
+            continue
         result = run(machine, command, mac_token if reads_mac_token else None)
         if result.returncode != 0 or (expected is not None and result.stdout.strip() != expected):
             print(failure_report(number, name, machine, command, result, expected, advice),

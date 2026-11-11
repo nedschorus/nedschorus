@@ -138,7 +138,7 @@ def hook_cases(workspace):
     code, output = run_main(GRID_COMMAND, blocked)
     check("a refused command that cannot be saved is refused, and the refusal gives the command",
           code == 0 and refused(output)
-          and "could not save the command" in output["permissionDecisionReason"]
+          and "could not save it for your successor" in output["permissionDecisionReason"]
           and GRID_COMMAND in output["permissionDecisionReason"]
           and "/work/checkout" in output["permissionDecisionReason"],
           output)
@@ -313,6 +313,20 @@ def marker_file_cases(workspace):
                                           if key != "awaited_work_is_unknown"})):
         check(f"a marker file holding {label} is reported unreadable",
               marker_read_problem(json.dumps(record)) is not None, label)
+    # A deferral begun before workflows were saved keeps its wait set across the upgrade.
+    path.write_text(json.dumps({key: value for key, value in good.items()
+                                if key != "awaited_workflow_ids"}), encoding="utf-8")
+    try:
+        before_workflows = markers.handoff_deferred_marker_read(handoffs, SESSION_ID)
+    except markers.HandoffDeferredMarkerUnreadable as problem:
+        before_workflows = problem
+    check("a marker written before workflows were saved reads back with no awaited workflows",
+          isinstance(before_workflows, markers.HandoffDeferredMarker)
+          and before_workflows.awaited_workflow_ids == []
+          and before_workflows.awaited_subagent_ids == ["a1"]
+          and before_workflows.awaited_background_task_ids == ["b1"],
+          before_workflows if not isinstance(before_workflows, markers.HandoffDeferredMarker)
+          else vars(before_workflows))
     check("an empty marker file is reported unreadable, naming its empty first line",
           "its first line is ''" in (marker_read_problem("") or ""), marker_read_problem(""))
     path.write_text("{}", encoding="utf-8")

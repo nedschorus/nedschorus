@@ -88,7 +88,7 @@ The immediate stop is duplication of commodity mechanisms before testing availab
 
 **First experiment: fix the review-plan subdirectory defect using Prime, then submit through the normal NedsChorus process.** The [GHI](https://github.com/nedschorus/nedschorus/issues/1011) remained open when checked for this report. The [Markdown reproduction](../issues/1011-the-pull-request-review-plan-silently-drops-agent.md) names the failure, cause, two acceptable corrections, and regression-test expectation. Reproduce against current main before changing code; an open GHI can outlive a correction.
 
-The defect is in [pull-request-review-plan.py](../../scripts/pull-request-review-plan.py): invocation from a checkout subdirectory can silently omit agent-facing text and split test suites. This is a useful bounded task because correcting the defect strengthens the process that will review later NedsChorus changes.
+The defect is in [pull-request-review-plan.py](../../scripts/pull-request-review-plan.py): invocation from a checkout subdirectory can silently omit tool-message-to-agent text and split test suites. This is a useful bounded task because correcting the defect strengthens the process that will review later NedsChorus changes.
 
 1. Spend at most 30 minutes establishing current assignments and choosing an unclaimed task. If the defect is already assigned or fixed, choose another small reproduced defect with an observable result.
 2. Start from a clean, isolated worktree and a pinned Prime release. Record the version, model, task, base commit, working directory, and effective instructions. Use the official release instructions; do not silently track changing main.

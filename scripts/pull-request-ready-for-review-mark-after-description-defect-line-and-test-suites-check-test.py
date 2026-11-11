@@ -69,18 +69,18 @@ def ancestors(*pairs):
 
 
 class FakeRunner:
-    """Answers gh pr view, git rev-parse HEAD, git branch --show-current, git cat-file -e, git
+    """Answers gh pr view, git rev-parse HEAD, git branch --show-current, git rev-parse --verify, git
     merge-base --is-ancestor, git status, the test suite runner and gh pr ready; any of them can
     be replaced by a behaviour(command) that returns or raises. Records each call."""
 
     def __init__(self, view=None, rev_parse=None, status=None, suites=None, ready=None,
-                 branch=None, cat_file=None, ancestor=None):
+                 branch=None, has_commit=None, ancestor=None):
         self.behaviours = {
             "view": view or (lambda command: completed(command, 0, view_answer())),
             "rev-parse": rev_parse or (lambda command: completed(command, 0,
                                                                    f"{CHECKOUT}\n{HEAD}\n")),
             "branch": branch or (lambda command: completed(command, 0, BRANCH + "\n")),
-            "cat-file": cat_file or (lambda command: completed(command, 0)),
+            "has-commit": has_commit or (lambda command: completed(command, 0)),
             "ancestor": ancestor or ancestors(),
             "status": status or (lambda command: completed(command, 0, "")),
             "suites": suites or (lambda command: completed(command, 0)),
@@ -91,12 +91,12 @@ class FakeRunner:
     def __call__(self, command, **options):
         if command[:3] == ["gh", "pr", "view"]:
             kind = "view"
+        elif command[:3] == ["git", "rev-parse", "--verify"]:
+            kind = "has-commit"
         elif command[:2] == ["git", "rev-parse"]:
             kind = "rev-parse"
         elif command == ["git", "branch", "--show-current"]:
             kind = "branch"
-        elif command[:3] == ["git", "cat-file", "-e"]:
-            kind = "cat-file"
         elif command[:3] == ["git", "merge-base", "--is-ancestor"]:
             kind = "ancestor"
         elif command == program.UNCOMMITTED_CHANGES_COMMAND:
@@ -149,8 +149,8 @@ def main():
           and f"#77 ({URL}) is marked ready for review." in output
           and "merge-lane-2" not in output + errors,
           (status, runner.calls, output, errors))
-    check("the test suites run with the checkout's own runner, by the command CLAUDE.md gives "
-          "for before a push",
+    check("the test suites run with the checkout's own runner, selecting the suites whose recorded "
+          "inputs changed since origin/main",
           program.selective_test_run_command(CHECKOUT) == [
               "python3", CHECKOUT + "/scripts/run-all-test-suites.py",
               "--only-suites-whose-recorded-inputs-changed-since", "origin/main"]
@@ -193,32 +193,35 @@ def main():
              [f"this checkout's HEAD, {'b' * 12}, is not #77 ({URL})'s pushed nc-head-commit, "
               f"{'a' * 12}", f"This checkout is on branch some-other-branch, not the pull "
               f"request's branch {BRANCH}: run this again from the checkout that has {BRANCH} "
-              "checked out."]),
+              "checked out; git worktree list names each checkout of this clone with its "
+              f"branch. If no checkout has it, make one with python3 "
+              f"scripts/agent-seat-worktree-create-with-owner-file.py {BRANCH}, which prints its "
+              "path, and run this again there."]),
             ("a checkout on a detached HEAD",
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"), branch=answers("\n")),
              ["view", "rev-parse", "branch"],
              [f"This checkout is on a detached HEAD, not the pull request's branch {BRANCH}"]),
             ("a checkout that has not fetched the pushed head",
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
-                        cat_file=exits(128, "fatal: Not a valid object name")),
-             ["view", "rev-parse", "branch", "cat-file"],
+                        has_commit=exits(1)),
+             ["view", "rev-parse", "branch", "has-commit"],
              [f"This checkout does not have the pushed commit yet: run git fetch origin {BRANCH}, "
               "then run this again, and it names what to do next."]),
             ("a checkout with commits the pull request lacks",
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
                         ancestor=ancestors((HEAD, OTHER))),
-             ["view", "rev-parse", "branch", "cat-file", "ancestor"],
+             ["view", "rev-parse", "branch", "has-commit", "ancestor"],
              [f"This checkout has commits the pull request lacks: push them with git push origin "
               f"HEAD:{BRANCH}, then run this again."]),
             ("a checkout behind the pull request",
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
                         ancestor=ancestors((OTHER, HEAD))),
-             ["view", "rev-parse", "branch", "cat-file", "ancestor", "ancestor"],
+             ["view", "rev-parse", "branch", "has-commit", "ancestor", "ancestor"],
              [f"The pull request has commits this checkout lacks: run git pull --ff-only origin "
               f"{BRANCH}, then run this again."]),
             ("a checkout and pull request that each have commits the other lacks",
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n")),
-             ["view", "rev-parse", "branch", "cat-file", "ancestor", "ancestor"],
+             ["view", "rev-parse", "branch", "has-commit", "ancestor", "ancestor"],
              [f"This checkout and the pull request each have commits the other lacks: run git "
               f"pull --no-rebase origin {BRANCH}, which merges the pull request's commits into "
               f"this checkout, then git push origin HEAD:{BRANCH}, then run this again.",
@@ -230,17 +233,33 @@ def main():
              ["this checkout has 1 uncommitted change(s), so the test suites would test files "
               f"that are not in #77 ({URL})'s pushed commits.",
               "The changes, as git status --porcelain lists them:\n  M scripts/example.py\n",
-              "If the changes belong in the pull request: commit and push them, then run this "
-              "again.",
-              "If they do not: set them aside with git stash push -u -m <a name of your own>, "
-              "then run this again. Afterwards bring them back: find your entry's commit, the "
-              "first word of the line that ends with your name, with git stash list "
+              "If the changes belong in the pull request: commit them, run the test suites and "
+              "the mutation pass that CLAUDE.md asks for before a push, push with git push origin "
+              f"HEAD:{BRANCH}, then run this again.",
+              "If they do not: set them aside with git stash push -u -m <a name no entry in git "
+              "stash list has>, then run this again. Keep them stashed until this command has "
+              "marked the pull request ready, even if it refuses again for another reason; then "
+              "bring them back: find your entry's commit, the "
+              "first word of the line that ends with the name you gave with -m, with git stash list "
               "--format='%H %gs', and run git stash apply <that commit>.",
               "If the apply reports a conflict: keep the stash entry, and tell the user, or the "
               "agent that dispatched you, which files conflict.",
               "If the apply succeeds: find the entry's current stash@{<n>} on the line that "
-              "ends with your name, with git stash list, and drop it with git stash drop "
+              "ends with the name you gave with -m, with git stash list, and drop it with git stash drop "
               "stash@{<n>}."]),
+            ("a checkout with an uncommitted change, on a branch whose name the shell would "
+             "split",
+             FakeRunner(view=answers(view_answer(headRefName="odd;branch")),
+                        status=answers(" M scripts/example.py\n")),
+             ["view", "rev-parse", "status"],
+             ["push with git push origin HEAD:'odd;branch', then run this again."]),
+            ("a pushed commit whose object fails its hash check, which git rev-parse --verify "
+             "reports with exit 1 and an error",
+             FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                        has_commit=exits(1, "error: hash mismatch " + HEAD)),
+             ["view", "rev-parse", "branch", "has-commit"],
+             ["looking for the pushed nc-head-commit in this checkout failed: git rev-parse "
+              f"--verify exited with status 1: error: hash mismatch {HEAD}."]),
             ("a checkout with untracked files that are not ignored",
              FakeRunner(status=answers("?? notes.txt\n?? more.txt\n")),
              ["view", "rev-parse", "status"],
@@ -268,10 +287,10 @@ def main():
              ["the test suites exited with status 1, so #77",
               "The failing suites are named above.",
               "Fix the cause of each suite's failure and commit the fix. Before you push it, "
-              "run the test suites and the mutation pass that CLAUDE.md asks for before a "
-              "push; then push, and run this again.",
-              "If git or a pre-push hook refuses the push: do what its message says, then run "
-              "this again; if it names nothing to do, tell the user, or the agent that "
+              "run the mutation pass that CLAUDE.md asks for before a push; then push, and run "
+              "this again, which runs the test suites again.",
+              "If git or a pre-push hook refuses the push: do what its message says, push again, "
+              "then run this again; if it names nothing to do, tell the user, or the agent that "
               "dispatched you, what it printed."]),
             ("a test suite runner that stops before judging every suite",
              FakeRunner(suites=exits(2)), ["view", "rev-parse", "status", "suites"],
@@ -295,6 +314,40 @@ def main():
     check("a checkout ahead of the pull request is told only how to push",
           "git pull" not in errors and "git fetch" not in errors
           and "not the pull request's branch" not in errors, errors)
+    _, _, errors = run(FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                                  has_commit=exits(1, "error: hash mismatch " + HEAD)))
+    check("a pushed commit that git reports as corrupt is not read as one to fetch",
+          "git fetch" not in errors, errors)
+    runner = FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                        has_commit=lambda command: completed(command, 0, "",
+                                                             "warning: refname is ambiguous"))
+    _, _, errors = run(runner)
+    check("a yes from git that also prints a warning is still a yes",
+          runner.calls == ["view", "rev-parse", "branch", "has-commit", "ancestor", "ancestor"]
+          and "failed" not in errors, (runner.calls, errors))
+
+    # A branch name the shell would split or expand is quoted in each command printed.
+    odd = "it's-a-topic-branch"
+    for label, runner, expected in [
+            ("not fetched", FakeRunner(view=answers(view_answer(headRefName=odd)),
+                                       rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                                       branch=answers(odd + "\n"), has_commit=exits(1)),
+             "git fetch origin 'it'\"'\"'s-a-topic-branch',"),
+            ("ahead", FakeRunner(view=answers(view_answer(headRefName=odd)),
+                                 rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                                 branch=answers(odd + "\n"), ancestor=ancestors((HEAD, OTHER))),
+             "git push origin HEAD:'it'\"'\"'s-a-topic-branch',"),
+            ("behind", FakeRunner(view=answers(view_answer(headRefName=odd)),
+                                  rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                                  branch=answers(odd + "\n"), ancestor=ancestors((OTHER, HEAD))),
+             "git pull --ff-only origin 'it'\"'\"'s-a-topic-branch',"),
+            ("diverged", FakeRunner(view=answers(view_answer(headRefName=odd)),
+                                    rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                                    branch=answers(odd + "\n")),
+             "git pull --no-rebase origin 'it'\"'\"'s-a-topic-branch', which")]:
+        _, _, errors = run(runner)
+        check(f"a branch name holding a quote is shell-quoted in the {label} command",
+              expected in errors, errors)
 
     # Failures of gh, git and python3, each reported with its cause and what to do.
     for label, runner, expected_lines in [
@@ -354,6 +407,12 @@ def main():
              ["reading this checkout's branch failed: git branch --show-current exited with "
               "status 129: error: unknown option.", "If git gave any other error: Run this "
               "command again once."]),
+            ("the pushed commit is in the clone but cannot be read",
+             FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
+                        has_commit=exits(128, "error: inflate: data stream error")),
+             ["looking for the pushed nc-head-commit in this checkout failed: git rev-parse "
+              "--verify exited with status 128: error: inflate: data stream error.",
+              "If git gave any other error: Run this command again once."]),
             ("git merge-base fails",
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
                         ancestor=exits(128, "fatal: Not a valid commit name")),

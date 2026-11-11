@@ -102,8 +102,11 @@ holds; otherwise it says nothing about it:
     hook's own reader and its DEFAULT_THRESHOLD_USED_PERCENTAGE: Claude Code
     runs the hooks of one Stop group in parallel, so at the stop that first
     reaches the threshold the asked marker may not be written yet;
-  - the handoff hook's work_in_flight finds no subagent or background task
-    running; a transcript it cannot fully read counts as work running;
+  - the payload's background_tasks list, read with the handoff hook's
+    work_in_flight_from_background_tasks, holds no running subagent,
+    workflow or background task; a payload without the list counts as no
+    work running, and a transcript the reader cannot fully read counts as
+    work running;
   - the session has run a tool since this hook last handed it the prompt.
     The state file's `next_action_prompt` entry holds the session id and the
     id of the newest tool call the transcript held when the prompt was
@@ -144,24 +147,17 @@ fault that recurs at every stop would then never let the agent stop.
 ONLY THE AGENT-SEAT'S OWN SESSION IS RAISED, never a headless `claude -p`
 child an agent-seat's program starts. A child inherits the agent-seat's
 environment, CLAUDE_CODE_TASK_LIST_ID included, and the raise text would be
-the last thing the child says, which its caller reads as the answer. Two
-signals silence the hook:
-
-  NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER set, the variable
-      scripts/ghi-guide-agent-ask.py sets for its child and the handoff hook also
-      honours.
-  CLAUDE_CODE_SESSION_ATTENDED == "0". Claude Code sets this for every hook
-      it runs: "1" in an interactive session, "0" in a `claude -p` child,
-      even when the child inherited "1" from the agent-seat. The Stop payload
-      carries no field that tells the two apart. A missing variable does not
-      silence the hook, so a Claude Code that stops setting it costs the
-      headless guard, not the agent-seat's reminders.
+the last thing the child says, which its caller reads as the answer. The
+hook stays silent when
+nc-systems/general-tools/agent-session-unattended-by-user-check-common.py
+says no user attends the agent-session; the Stop payload carries no field
+that tells an attended agent-session from a headless child.
 
 The project's own headless Claude callers run no project hook at all: the
 cold-read Claude cell, and the restater-judge cell through it, pass
 `--settings` with disableAllHooks; scripts/ghi-guide-agent-ask.py and
-scripts/sanity-check-adversarial-prompts.py pass `--setting-sources user`. The two
-signals cover a child started any other way.
+scripts/sanity-check-adversarial-prompts.py pass `--setting-sources user`. The attendance
+check covers a child started any other way.
 """
 
 import importlib.util
@@ -182,6 +178,15 @@ _stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_locat
 stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
 _stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
 
+_agent_session_unattended_by_user_check_common_specification = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "agent-session-unattended-by-user-check-common.py")
+agent_session_unattended_by_user_check_common = importlib.util.module_from_spec(
+    _agent_session_unattended_by_user_check_common_specification)
+_agent_session_unattended_by_user_check_common_specification.loader.exec_module(
+    agent_session_unattended_by_user_check_common)
+
 _HOOK_DIRECTORY = Path(__file__).resolve().parent
 
 
@@ -193,9 +198,6 @@ def _load_module_by_path(module_name: str, path: Path):
 
 
 TASK_LIST_ID_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
-REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
-SESSION_ATTENDED_VARIABLE = "CLAUDE_CODE_SESSION_ATTENDED"
-SESSION_UNATTENDED_VALUE = "0"
 TASKS_ROOT_UNDER_HOME = Path(".claude") / "tasks"
 STATE_DIRECTORY_UNDER_HOME = (Path(".local") / "state" / "claude"
                               / "agent-seat-due-task-raise-state")
@@ -363,10 +365,13 @@ class GitHubConditionChecker:
     for several agent-seats reads the entries its own calls appended.
     """
 
+    # The budget's clock; the test replaces it so its budget cases do not depend on machine speed.
+    clock = staticmethod(time.monotonic)
+
     def __init__(self, checks: dict, now_epoch: float):
         self.checks = checks
         self.now_epoch = now_epoch
-        self.started = time.monotonic()
+        self.started = self.clock()
         self.changed = False
         self.gh_failures = []
 
@@ -384,7 +389,7 @@ class GitHubConditionChecker:
                 and 0 <= self.now_epoch - cached["checked_at_epoch"]
                 < CONDITION_RECHECK_INTERVAL_SECONDS):
             return cached
-        remaining = GH_CALLS_TOTAL_BUDGET_SECONDS - (time.monotonic() - self.started)
+        remaining = GH_CALLS_TOTAL_BUDGET_SECONDS - (self.clock() - self.started)
         if remaining <= 0:
             # Out of budget: not met this run, and not recorded, so the next
             # run checks it.
@@ -705,15 +710,17 @@ def next_action_prompt_lines(payload: dict, tasks: dict, directory: Path, state:
             walk_directory, walk_finder.markdown_parser()):
         return None
     handoff = _load_module_by_path("handoff_context_threshold_hook", HANDOFF_THRESHOLD_HOOK_FILE)
-    if (handoff.fired_marker_path(session_id).exists()
+    if (handoff.handoff_asked_marker_path(session_id).exists()
             or handoff.deferred_marker_path(session_id).exists()):
         return None
     used_percentage = handoff.context_used_percentage_from_transcript(str(transcript))
     if used_percentage is not None and used_percentage >= handoff.DEFAULT_THRESHOLD_USED_PERCENTAGE:
         return None
+    background_tasks = payload.get(handoff.BACKGROUND_TASKS_PAYLOAD_KEY)
     try:
-        if handoff.work_in_flight(str(transcript),
-                                  handoff.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60, now=now):
+        if isinstance(background_tasks, list) and handoff.work_in_flight_from_background_tasks(
+                background_tasks, str(transcript),
+                handoff.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60, now=now):
             return None
     except handoff.TranscriptCouldNotBeFullyRead:
         return None  # running work that cannot be counted is not idleness
@@ -751,10 +758,8 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
                         "so no task was checked")
     if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
-    if environment.get(REINCARNATION_OWNED_BY_CALLER_VARIABLE):
-        return None  # a caller's headless child: the raise would replace its answer
-    if environment.get(SESSION_ATTENDED_VARIABLE) == SESSION_UNATTENDED_VALUE:
-        return None  # a `claude -p` child, not the agent-seat's own session
+    if agent_session_unattended_by_user_check_common.agent_session_unattended_by_user(environment):
+        return None  # a headless child: the raise would replace the answer its caller reads
     directory = task_list_directory(home, environment)
     if directory is None:
         return None

@@ -597,6 +597,55 @@ def test_supervisor_puts_leftovers_before_the_next_step():
           "an unreadable counts file is stated, and the entries are still listed", broken)
 
 
+def test_supervisor_puts_deleted_branches_above_the_leftovers_and_forgets_counts_when_none():
+    fixture_spec = importlib.util.spec_from_file_location(
+        "handoff_supervisor_test_fixture_deleted_and_counts",
+        SYSTEM_DIRECTORY / "tests" / "handoff-supervisor-test-fixture.py")
+    fixture = importlib.util.module_from_spec(fixture_spec)
+    fixture_spec.loader.exec_module(fixture)
+    supervisor = fixture.supervisor
+    counts = SCRATCH / "seat-w-leftovers-prompt-listing-counts.json"
+    prompt = f"Opening.{supervisor.NEXT_STEP_HEADING}Do the next thing."
+    deleted = "\n".join(listing.deleted_section(["deleted branch d1, whose every commit is a copy"]))
+    branches = ("This agent-seat's branches with no pull request: 1:\n- branch b1; 1 commit(s)\nSteps.\n"
+                + deleted)
+    both = supervisor.launch_prompt_with_leftovers_before_the_next_step(prompt, ("", branches), counts)
+    check(both.startswith("Opening.\n\n" + listing.ALREADY_DELETED_HEADING_START)
+          and both.index("- deleted branch d1,")
+          < both.index(supervisor.LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE)
+          < both.index("- (listed in 1 first prompt(s)) branch b1;")
+          and both.endswith(f"Steps.{supervisor.NEXT_STEP_HEADING}Do the next thing."),
+          "the deleted branches go above the leftovers' opening sentence", both)
+    only_deleted = supervisor.launch_prompt_with_leftovers_before_the_next_step(
+        prompt, ("", deleted), counts)
+    check(only_deleted == f"Opening.\n\n{deleted}{supervisor.NEXT_STEP_HEADING}Do the next thing."
+          and not counts.exists(),
+          "with only deleted branches, no leftovers sentence is shown and the counts file is deleted",
+          only_deleted)
+    again = supervisor.launch_prompt_with_leftovers_before_the_next_step(prompt, ("", branches), counts)
+    check("- (listed in 1 first prompt(s)) branch b1;" in again,
+          "a leftover listed after a launch that listed none starts its count again", again)
+    quoting = ("This agent-seat's branches with no pull request: 2:\n"
+               f"- branch b2; 1 commit(s), the newest \"Move the {listing.ALREADY_DELETED_HEADING_START} "
+               "heading\"\n- branch b3; 1 commit(s)\nSteps.\n" + deleted)
+    quoted = supervisor.launch_prompt_with_leftovers_before_the_next_step(prompt, ("", quoting), counts)
+    check("- (listed in 1 first prompt(s)) branch b2;" in quoted
+          and "- (listed in 1 first prompt(s)) branch b3;" in quoted
+          and quoted.index("- deleted branch d1,")
+          < quoted.index(supervisor.LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE),
+          "a commit subject quoting the deleted branches' heading does not start the deleted block",
+          quoted)
+    counts.unlink()
+    counts.mkdir()
+    stderr = io.StringIO()
+    with contextlib.redirect_stderr(stderr):
+        unchanged = supervisor.launch_prompt_with_leftovers_before_the_next_step(prompt, ("", ""), counts)
+    check(unchanged == prompt and "could not delete" in stderr.getvalue()
+          and str(counts) in stderr.getvalue(),
+          "a counts file that cannot be deleted is reported on the console", stderr.getvalue())
+    counts.rmdir()
+
+
 def test_supervisor_appends_the_list():
     fixture_spec = importlib.util.spec_from_file_location(
         "handoff_supervisor_test_fixture", SYSTEM_DIRECTORY / "tests" / "handoff-supervisor-test-fixture.py")
@@ -638,14 +687,156 @@ def test_supervisor_appends_the_list():
           launched[:1] and launched[0][:400])
 
 
+def task_list(agent_seat, tasks):
+    """Write tasks, {id: (status, metadata or None) or raw text}, as the agent-seat's task list."""
+    # Path.home(), not HOME: the handoff-supervisor case loads a module that moves HOME.
+    directory = Path.home() / ".claude" / "tasks" / f"nedschorus-{agent_seat}-tasks"
+    shutil.rmtree(directory, ignore_errors=True)
+    directory.mkdir(parents=True)
+    for task_id, task in tasks.items():
+        if isinstance(task, str):
+            (directory / f"{task_id}.json").write_text(task, encoding="utf-8")
+            continue
+        status, metadata = task
+        record = {"id": task_id, "subject": f"task {task_id}", "description": "", "status": status,
+                  "blocks": [], "blockedBy": []}
+        if metadata is not None:
+            record["metadata"] = metadata
+        (directory / f"{task_id}.json").write_text(json.dumps(record), encoding="utf-8")
+    return directory
+
+
+def test_open_tasks_hold_entries():
+    main = new_clone()
+    set_pull_requests([])
+    held_worktree = owned_worktree(main, "seat-t-held-tree", {"owner_kind": "agent-seat",
+                                                              "agent_seat": "seat-t"})
+    by_branch_worktree = owned_worktree(main, "seat-t-tree-by-branch",
+                                        {"owner_kind": "agent-seat", "agent_seat": "seat-t"})
+    free_worktree = owned_worktree(main, "seat-t-free-tree", {"owner_kind": "agent-seat",
+                                                              "agent_seat": "seat-t"})
+    for branch in ("seat-t-held-1", "seat-t-held-2", "seat-t-done", "seat-t-free"):
+        branch_with_commit(main, branch, "seat-t")
+    copied_tip = cherry_picked_branch(main, "seat-t-held-copy", "seat-t")
+    task_list("seat-t", {
+        "135": ("in_progress", {"branches": [str(held_worktree), "seat-t-held-1"]}),
+        "9": ("pending", {"branches": ["seat-t-held-2", "seat-t-tree-by-branch"],
+                          "prerequisites": [{"pr_merged": 1}]}),
+        "20": ("pending", {"branches": ["seat-t-held-copy"]}),
+        "40": ("completed", {"branches": ["seat-t-done", str(free_worktree)]}),
+        "41": ("pending", None),
+    })
+    text = listing.first_prompt_text(main, "seat-t")
+    check("This agent-seat also has 2 worktrees and 3 branches that open tasks hold "
+          "(tasks 9, 20, 135); they are not listed." in text,
+          "the entries open tasks hold are counted in one line naming the tasks in number order",
+          text)
+    check(str(held_worktree) not in text and str(by_branch_worktree) not in text,
+          "a worktree an open task names by its path or by its branch is left out", text)
+    check("seat-t-held-1" not in text and "seat-t-held-2" not in text,
+          "a branch an open task names is left out", text)
+    check("seat-t-held-copy" not in text
+          and git(main, "rev-parse", "seat-t-held-copy") == copied_tip,
+          "a branch an open task holds is not deleted as a cherry-picked copy", text)
+    check(f"worktree {free_worktree};" in text and "branch seat-t-done;" in text
+          and "branch seat-t-free;" in text,
+          "an entry only a completed task names, or none, is listed", text)
+    check("worktrees: 1:" in text and "branches with no pull request: 2:" in text
+          and listing.INSTRUCTIONS in text,
+          "the sections count only the entries listed", text)
+    check("could not be read" not in text, "a readable task list says nothing of reading", text)
+
+
+def test_open_task_names_a_worktree_by_a_path_written_differently():
+    main = new_clone()
+    set_pull_requests([])
+    record = {"owner_kind": "agent-seat", "agent_seat": "seat-w"}
+    by_dots = owned_worktree(main, "seat-w-by-dots", record)
+    by_slash = owned_worktree(main, "seat-w-by-slash", record)
+    by_link = owned_worktree(main, "seat-w-by-link", record)
+    link = SCRATCH / f"link-to-{main.parent.name}"
+    link.symlink_to(main.parent)
+    task_list("seat-w", {"5": ("pending", {"branches": [
+        str(by_dots.parent / "absent" / ".." / by_dots.name),
+        str(by_slash) + "/",
+        str(link / by_link.name),
+    ]})})
+    text = listing.first_prompt_text(main, "seat-w")
+    check(all(str(path) not in text for path in (by_dots, by_slash, by_link))
+          and "This agent-seat also has 3 worktrees" in text,
+          "a worktree an open task names by a path with .., a trailing slash or a symlink is left out",
+          text)
+
+
+def test_hidden_line_counts():
+    check(listing.hidden_line([]) == "", "nothing hidden prints no line")
+    check(listing.hidden_line([("branch", {"5"})])
+          == "This agent-seat also has 1 branch that open tasks hold (task 5); they are not listed.",
+          "a category whose count is zero is left out, and one entry is singular")
+    check(listing.hidden_line([("worktree", {"3"}), ("worktree", {"3", "x"})])
+          == "This agent-seat also has 2 worktrees that open tasks hold (tasks 3, x); "
+             "they are not listed.",
+          "task ids are listed once each, numbers before other ids")
+
+
+def test_everything_held():
+    main = new_clone()
+    set_pull_requests([])
+    branch_with_commit(main, "seat-u-only", "seat-u")
+    task_list("seat-u", {"7": ("pending", {"branches": ["seat-u-only"]})})
+    text, failed = listing.list_text_and_failure(main, "seat-u")
+    check(not failed and text == "This agent-seat also has 1 branch that open tasks hold "
+          "(task 7); they are not listed.",
+          "when open tasks hold every entry, only their line is printed", text)
+
+
+def test_unreadable_task_list_hides_nothing():
+    main = new_clone()
+    set_pull_requests([])
+    branch_with_commit(main, "seat-v-held", "seat-v")
+    branch_with_commit(main, "seat-v-other", "seat-v")
+    directory = task_list("seat-v", {"1": "{not json", "2": ("pending", {"branches": "seat-v-held"}),
+                                     "3": ("pending", {"branches": ["seat-v-other"]})})
+    text, failed = listing.list_text_and_failure(main, "seat-v")
+    check(not failed and "branch seat-v-held;" in text,
+          "an entry no readable task holds is listed", text)
+    check("(task 3)" in text and "branch seat-v-other;" not in text,
+          "a readable task still holds its entry", text)
+    check(text.count("could not be read in full") == 1 and str(directory / "1.json") in text
+          and str(directory / "2.json") in text,
+          "the list says once that the task list could not be read, naming each file", text)
+    directory.chmod(0)
+    try:
+        text, failed = listing.list_text_and_failure(main, "seat-v")
+    finally:
+        directory.chmod(0o755)
+    check(not failed and "branch seat-v-other;" in text and "branch seat-v-held;" in text
+          and f"task list could not be read in full (PermissionError: no permission to read "
+              f"{directory})" in text,
+          "a task list directory that cannot be read hides nothing and says so", text)
+    saved = listing.due_task_raise_hook_module
+    listing.due_task_raise_hook_module = lambda: (_ for _ in ()).throw(OSError("stand-in"))
+    try:
+        text, failed = listing.list_text_and_failure(main, "seat-v")
+    finally:
+        listing.due_task_raise_hook_module = saved
+    check(not failed and "branch seat-v-other;" in text
+          and "task list could not be read in full (OSError: stand-in)" in text,
+          "a task list reader that fails hides nothing and says so", text)
+
+
 for case in (test_branches, test_pushed_text, test_worktrees, test_gh_failure,
              test_other_failure_and_outside, test_more_than_the_limit,
              test_more_worktrees_than_the_limit, test_cherry_picked_copies_deleted,
              test_merge_commit_branch_not_deleted,
              test_deletion_reported_when_a_later_git_call_fails,
              test_supervisor_puts_leftovers_before_the_next_step,
+             test_supervisor_puts_deleted_branches_above_the_leftovers_and_forgets_counts_when_none,
              test_supervisor_puts_leftovers_before_the_next_step_without_a_conversation_tail,
-             test_supervisor_appends_the_list):
+             test_supervisor_appends_the_list, test_open_tasks_hold_entries,
+             test_open_task_names_a_worktree_by_a_path_written_differently,
+             test_hidden_line_counts, test_everything_held,
+             test_unreadable_task_list_hides_nothing):
     print(f"-- {case.__name__}")
     case()
     os.environ.pop("FAKE_GH_PULL_REQUESTS", None)

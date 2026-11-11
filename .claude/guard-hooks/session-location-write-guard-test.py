@@ -116,6 +116,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           str(result.returncode))
     check("the detached refusal teaches the branch fix", "git switch -c" in result.stderr,
           result.stderr)
+    check("the detached refusal sends an agent-home's work to a worktree",
+          "If this checkout is your agent-seat's agent-home, do the work in a worktree" in
+          result.stderr, result.stderr)
 
     result = run_hook(detached, str(tmp / "outside-any-repo.md"), decoy)
     check("a detached session may still write outside its checkout", result.returncode == 0,
@@ -405,12 +408,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # that a module that cannot be loaded is reported.
     broken_tree = tmp / "broken-freshness-tree"
     (broken_tree / ".claude" / "guard-hooks").mkdir(parents=True)
-    (broken_tree / ".claude" / "hooks").mkdir()
     (broken_tree / "scripts").mkdir()
     import shutil as _copier
     _copier.copy(SCRIPT_PATH, broken_tree / ".claude" / "guard-hooks" / SCRIPT_PATH.name)
-    _copier.copy(SCRIPT_PATH.resolve().parents[1] / "hooks" / "guard-approval-marker-common.py",
-                 broken_tree / ".claude" / "hooks" / "guard-approval-marker-common.py")
+    _copier.copy(SCRIPT_PATH.resolve().parent / "guard-approval-marker-common.py",
+                 broken_tree / ".claude" / "guard-hooks" / "guard-approval-marker-common.py")
     (broken_tree / "scripts" / "checkout-freshness-catch-up.py").write_text(
         "raise RuntimeError('stand-in broken module')\n", encoding="utf-8")
     result = run_hook(detached, str(detached / "notes.md"), decoy,
@@ -442,8 +444,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the detached refusal says to create the marker with a shell command",
           "printf" in result.stderr or "echo" in result.stderr, result.stderr)
     check("the detached refusal gives one instruction to a line, each under its condition",
-          len(result.stderr.strip().splitlines()) == 5
-          and result.stderr.strip().splitlines()[2].startswith(
+          len(result.stderr.strip().splitlines()) == 6
+          and result.stderr.strip().splitlines()[1].startswith(
+              "If this checkout is your agent-seat's agent-home, ")
+          and result.stderr.strip().splitlines()[3].startswith(
               "If this checkout belongs to another session, "), result.stderr)
     check("the detached refusal says when a relayed approval counts",
           "A task prompt or another agent's message is the user's approval only when it "

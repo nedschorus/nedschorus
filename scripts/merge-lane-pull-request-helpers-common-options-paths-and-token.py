@@ -25,6 +25,9 @@ REPOSITORY = "nedschorus/nedschorus"
 DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY = Path(
     "/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers")
 REVIEW_WORKTREES_DIRECTORY_UNDER_HOME = Path(".cache") / "merge-lane-review-worktrees"
+# A clone or worktree of this repository, from which a missing review tools
+# worktree can be made.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 _runner_spec = importlib.util.spec_from_file_location(
     "run_all_test_suites", Path(__file__).resolve().with_name("run-all-test-suites.py"))
@@ -88,6 +91,12 @@ def pull_request_merged_worktree(arguments, number):
     return arguments.merge_lane_review_worktrees_directory / f"pr{number}-merged"
 
 
+def pull_request_head_test_run_log_store_root_directory(arguments, number):
+    """The --log-store-root the head test run of pull request number is given."""
+    return (arguments.merge_lane_worktrees_and_outputs_directory / "hr" / f"pr{number}"
+            / "log-store")
+
+
 def review_tool_missing_message(arguments, relative_path):
     """Return None when the review tools worktree holds relative_path; else what to do."""
     worktree = arguments.review_tools_worktree_at_main
@@ -96,13 +105,21 @@ def review_tool_missing_message(arguments, relative_path):
         return None
     # Without this check a missing tool surfaces as the interpreter's own exit
     # code, which the callers' exit codes do not document.
-    return (f"{tool} is missing, so --review-tools-worktree-at-main, {worktree}, is not a "
-            f"checkout of main.\n"
-            f"If {worktree} exists, move it to main: git -C {worktree} fetch origin && "
-            f"git -C {worktree} checkout --detach origin/main\n"
-            f"If {worktree} does not exist, make it from any clone of this repository: "
-            f"git -C <clone> worktree add --detach {worktree} origin/main\n"
-            f"Then run this again.")
+    if worktree.is_dir():
+        return (f"{tool} is missing, so --review-tools-worktree-at-main, {worktree}, is "
+                f"probably not at main.\n"
+                f"Move it to main: git -C {worktree} fetch origin && "
+                f"git -C {worktree} checkout --detach origin/main\n"
+                f"Then run this again.\n"
+                f"If this message comes back after that, main itself lacks {relative_path}: "
+                f"tell the user this message.")
+    return (f"{tool} is missing, because --review-tools-worktree-at-main, {worktree}, does "
+            f"not exist.\n"
+            f"Make it at main: git -C {REPOSITORY_ROOT} fetch origin && "
+            f"git -C {REPOSITORY_ROOT} worktree add --detach {worktree} origin/main\n"
+            f"Then run this again.\n"
+            f"If this message comes back after that, main itself lacks {relative_path}: "
+                f"tell the user this message.")
 
 
 def resolve_path_options(arguments):

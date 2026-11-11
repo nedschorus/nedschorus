@@ -957,8 +957,8 @@ with tempfile.TemporaryDirectory() as scratch:
     # The runner reads its suite sandbox lists from the checkout's copy, so that copy assigns them.
     runner_copy_lists = "".join(f"{name} = {{}}\n"
                                 for name in module.SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST)
-    for changed in ("scripts/run-all-test-suites.py", ".claude/hooks/a-hook.py",
-                    ".claude/guard-hooks/a-guard.py", ".claude/settings.json"):
+    for changed in ("scripts/run-all-test-suites.py", ".claude/guard-hooks/a-guard.py",
+                    ".claude/settings.json"):
         base = git(repo, "rev-parse", "HEAD").stdout.strip()
         commit_files(repo, {changed: f"# {changed}\n"
                             + (runner_copy_lists if changed.endswith("run-all-test-suites.py")
@@ -1292,7 +1292,7 @@ with tempfile.TemporaryDirectory() as scratch:
 # --- strace only where asked, and the files only it saw kept for later runs --
 # A stand-in strace runs each suite, and writes one trace line saying STRACE_ONLY_SUITE opened
 # data.txt, as a git command or a shell script would, unseen by the audit hook. Real strace
-# cannot attach inside the daily full run, which traces this suite, so it is not used here.
+# cannot attach inside the scheduled full run, which traces this suite, so it is not used here.
 FAKE_STRACE_SOURCE = r'''import os, subprocess, sys
 arguments = sys.argv[1:]
 trace = arguments[arguments.index("-o") + 1]
@@ -1302,7 +1302,7 @@ with open(os.environ["FAKE_STRACE_CALLED_FILE"], "a") as called:
 code = subprocess.call(command)
 seen = os.environ["FAKE_STRACE_SAW"]
 suite_traced = any(argument.endswith(os.environ["FAKE_STRACE_SUITE"]) for argument in command)
-# A suite that fails before reaching data.txt, as when the daily run times out.
+# A suite that fails before reaching data.txt, as when the scheduled run times out.
 stops_early = suite_traced and os.environ.get("FAKE_STRACE_SUITE_FAILS_BEFORE_READING")
 # A suite that skips, without the mark, the case that reads data.txt, and still passes.
 skips_reading = suite_traced and os.environ.get("FAKE_STRACE_SUITE_SKIPS_THE_CASE_THAT_READS")
@@ -1466,8 +1466,8 @@ with tempfile.TemporaryDirectory() as scratch:
               f"the checkout holds, so what it reads here is unknown" in lines(selected.stdout),
           (ran(root), selected.stdout))
 
-# Only the daily full run records these lists, once a day; a list older than the limit, or
-# none, means a daily run was missed, and the run says so.
+# Only the scheduled full run records these lists, once a day; a list older than the limit, or
+# none, means a scheduled run was missed, and the run says so.
 NOW = datetime.datetime(2026, 11, 4, 12, 0, tzinfo=datetime.timezone.utc)
 
 
@@ -1489,7 +1489,7 @@ notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_o
 check("a list older than the limit is named, with the time it was recorded",
       notice is not None and notice.startswith("run-all-test-suites: 1 of 2 suites")
       and "has not recorded every suite since 2026-11-02T23:00:00Z" in notice
-      and "If you have not yet told the user in this agent-session that the daily full test "
+      and "If you have not yet told the user in this agent-session that the scheduled full test "
           "run's lists are stale: tell him" in notice,
       notice)
 notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
@@ -2613,6 +2613,90 @@ with tempfile.TemporaryDirectory() as scratch:
           and "not run to the end — stopped by SIGTERM" in stopped_output,
           (stub_pids, runner_process.returncode, stopped_output))
 
+# A suite outside an nc-test-sandbox whose grandchild starts a session of its own, which the
+# suite's process group does not hold. The grandchild writes outlived-its-tmpdir when it sees
+# the suite's TMPDIR removed while it still runs; it ends then, once this test no longer runs,
+# or after 60 s, so a kill that misses it leaves nothing running.
+TEST_PID_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_PID"
+TEST_START_TICKS_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_START_TICKS"
+GRANDCHILD_IN_A_SESSION_OF_ITS_OWN = r"""
+import pathlib, sys, time
+temporary_directory, record, test_pid, test_start_ticks = sys.argv[1:]
+
+
+def test_runs():
+    try:
+        stat = pathlib.Path(f"/proc/{test_pid}/stat").read_text()
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+    fields = stat.rsplit(")", 1)[1].split()
+    return fields[0] != "Z" and fields[19] == test_start_ticks
+
+
+deadline = time.monotonic() + 60
+while time.monotonic() < deadline and test_runs():
+    if not pathlib.Path(temporary_directory).exists():
+        pathlib.Path(record).write_text("outlived its TMPDIR")
+        break
+    time.sleep(0.01)
+"""
+STARTS_A_GRANDCHILD_IN_A_SESSION_OF_ITS_OWN = (
+    "import subprocess\n"
+    "here = pathlib.Path(os.environ['" + RAN_FILE_VARIABLE + "']).parent\n"
+    "grandchild = subprocess.Popen(\n"
+    "    [sys.executable, '-c', " + repr(GRANDCHILD_IN_A_SESSION_OF_ITS_OWN) + ",\n"
+    "     os.environ['TMPDIR'], str(here / 'outlived-its-tmpdir'),\n"
+    "     os.environ['" + TEST_PID_VARIABLE + "'], os.environ['" + TEST_START_TICKS_VARIABLE
+    + "']],\n"
+    "    start_new_session=True)\n"
+    "(here / 'grandchild.pid').write_text(str(grandchild.pid))\n"
+    "time.sleep(60)\n")
+FAILS_ONCE_THE_GRANDCHILD_STARTED = (
+    "here = pathlib.Path(os.environ['" + RAN_FILE_VARIABLE + "']).parent\n"
+    "deadline = time.monotonic() + 60\n"
+    "while not (here / 'grandchild.pid').exists() and time.monotonic() < deadline:\n"
+    "    time.sleep(0.05)\n"
+    "sys.exit(1)\n")
+
+
+def grandchild_killed_before_its_tmpdir_was_removed(root):
+    """(whether it was, what the case saw); a grandchild still running is killed here."""
+    pid_file = root / "grandchild.pid"
+    pid = int(pid_file.read_text()) if pid_file.exists() and pid_file.read_text() else None
+    gone = pid is not None and process_gone_within(pid, 10)
+    if pid is not None and not gone:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+    outlived = (root / "outlived-its-tmpdir").exists()
+    return pid is not None and gone and not outlived, (pid, gone, outlived)
+
+
+if linux_only_cases_run_here("a kill that reaches a suite's grandchild in a session of its own"):
+    test_identity = {TEST_PID_VARIABLE: str(os.getpid()),
+                     TEST_START_TICKS_VARIABLE: str(module.process_start_ticks(os.getpid()))}
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        make_repo(root, {"grandchild-test.py": STARTS_A_GRANDCHILD_IN_A_SESSION_OF_ITS_OWN})
+        timed_out = run(root, "-j", "1", driver=TIME_LIMITS_SHORTENED_DRIVER,
+                        environment_extra=test_identity)
+        killed_first, seen = grandchild_killed_before_its_tmpdir_was_removed(root)
+        check("a suite past its limit has its grandchild in a session of its own killed, and "
+              "ended, before the suite's TMPDIR is removed",
+              killed_first and "FAIL grandchild-test.py TIMEOUT" in timed_out.stdout,
+              (seen, timed_out.stdout))
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        make_repo(root, {"a-grandchild-test.py": STARTS_A_GRANDCHILD_IN_A_SESSION_OF_ITS_OWN,
+                         "b-fails-test.py": FAILS_ONCE_THE_GRANDCHILD_STARTED})
+        stopped = run(root, "--stop-at-first-failing-suite", "-j", "2",
+                      environment_extra=test_identity)
+        killed_first, seen = grandchild_killed_before_its_tmpdir_was_removed(root)
+        check("a suite stopped by --stop-at-first-failing-suite has its grandchild in a session "
+              "of its own killed, and ended, before the suite's TMPDIR is removed",
+              killed_first and "FAIL a-grandchild-test.py killed when the run was stopped by "
+                               "the first failing suite" in stopped.stdout,
+              (seen, stopped.stdout))
+
 # A command put in the background in a subshell starts with SIGINT ignored, and an
 # ignored signal passes on to every process it starts; a suite that interrupts itself
 # must still be interrupted.
@@ -2948,6 +3032,142 @@ with tempfile.TemporaryDirectory() as scratch:
           explicit.exists())
     check("nor one with a trace deep inside it that changed recently",
           deep.exists())
+    # Root reads a directory whatever its mode, so the failure cannot be made.
+    if os.geteuid() != 0:
+        unreadable_log_dir = temp / "run-all-test-suites-unreadable"
+        (unreadable_log_dir / "closed").mkdir(parents=True)
+        (unreadable_log_dir / "closed").chmod(0o000)
+        try:
+            removed, removal_failures = (
+                module.remove_old_temporary_log_directories_without_run_records(
+                    runs, now=now, temp_dir=temp))
+        finally:
+            (unreadable_log_dir / "closed").chmod(0o700)
+        check("a log directory whose tree cannot be read is kept and reported with the reason",
+              unreadable_log_dir.exists() and removed == []
+              and [directory for directory, _ in removal_failures] == [unreadable_log_dir]
+              and "could not read it" in removal_failures[0][1], (removed, removal_failures))
+
+with tempfile.TemporaryDirectory() as scratch:
+    temp = pathlib.Path(scratch)
+    prefix = module.SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX
+    left_by_killed_runner = temp / f"{prefix}ab_cd123"
+    still_in_use = temp / f"{prefix}xy_z9876"
+    not_mkdtemp_shaped = temp / f"{prefix}another-program"
+    for directory in (left_by_killed_runner, still_in_use, not_mkdtemp_shaped):
+        (directory / "made-by-the-suite").mkdir(parents=True)
+        (directory / "made-by-the-suite" / "file").write_text("x")
+    now = time.time() + module.FINISHED_RUN_LOG_RETENTION_SECONDS + 60
+    os.utime(still_in_use / "made-by-the-suite" / "file", (now, now))
+    # Only root can give a directory another owner, so the sweep is told it runs as another account.
+    real_getuid = module.os.getuid
+    module.os.getuid = lambda: real_getuid() + 1
+    try:
+        removed, removal_failures = (
+            module.remove_old_suite_temporary_directories_left_by_killed_runners(
+                now=now, temp_dir=temp))
+    finally:
+        module.os.getuid = real_getuid
+    check("a per-suite TMPDIR another account owns is never touched",
+          removed == [] and removal_failures == [] and left_by_killed_runner.exists(),
+          (removed, removal_failures))
+    removed, removal_failures = module.remove_old_suite_temporary_directories_left_by_killed_runners(
+        now=now, temp_dir=temp)
+    check("a per-suite TMPDIR a killed runner left is removed once unchanged for two days",
+          removed == [left_by_killed_runner] and not left_by_killed_runner.exists()
+          and removal_failures == [], (removed, removal_failures))
+    check("but not one a suite changed recently, nor one whose name mkdtemp did not make",
+          still_in_use.exists() and not_mkdtemp_shaped.exists())
+    # Root reads and removes a directory whatever its mode, so neither failure can be made.
+    if os.geteuid() != 0:
+        unreadable = temp / f"{prefix}unread01"
+        unremovable = temp / f"{prefix}unremov1"
+        (unreadable / "closed").mkdir(parents=True)
+        (unremovable / "locked").mkdir(parents=True)
+        (unremovable / "locked" / "file").write_text("x")
+        (unremovable / "locked").chmod(0o500)
+        (unreadable / "closed").chmod(0o000)
+        try:
+            removed, removal_failures = (
+                module.remove_old_suite_temporary_directories_left_by_killed_runners(
+                    now=now, temp_dir=temp))
+        finally:
+            (unreadable / "closed").chmod(0o700)
+            (unremovable / "locked").chmod(0o700)
+        reasons = dict(removal_failures)
+        check("a per-suite TMPDIR whose tree cannot be read is kept and reported with the reason",
+              unreadable.exists() and unreadable not in removed
+              and "could not read it" in reasons.get(unreadable, "")
+              and "Permission denied" in reasons.get(unreadable, ""),
+              (removed, removal_failures))
+        check("a per-suite TMPDIR that cannot be removed is reported with the reason",
+              sorted(reasons) == sorted([unreadable, unremovable])
+              and reasons[unremovable] and "could not read it" not in reasons[unremovable],
+              removal_failures)
+    vanished = temp / f"{prefix}gone0001"
+    old_after_vanished = temp / f"{prefix}zz_old01"
+    vanished.mkdir()
+    old_after_vanished.mkdir()
+    real_newest = module.newest_modification_time_in_tree
+
+    def removed_by_another_run(directory):
+        if directory.name.endswith(("gone0001", "-aa-vanished")):
+            raise FileNotFoundError(2, "No such file or directory", str(directory))
+        return real_newest(directory)
+    module.newest_modification_time_in_tree = removed_by_another_run
+    try:
+        removed, removal_failures = (
+            module.remove_old_suite_temporary_directories_left_by_killed_runners(
+                now=now, temp_dir=temp))
+    finally:
+        module.newest_modification_time_in_tree = real_newest
+    check("a per-suite TMPDIR that vanished while it was read is skipped without a report, "
+          "and the sweep goes on to the next one",
+          vanished not in removed
+          and vanished not in [directory for directory, _ in removal_failures]
+          and old_after_vanished in removed and not old_after_vanished.exists(),
+          (removed, removal_failures))
+
+with tempfile.TemporaryDirectory() as scratch:
+    temp = pathlib.Path(scratch)
+    runs = temp / "runs"
+    runs.mkdir()
+    vanished = temp / "run-all-test-suites-aa-vanished"
+    old_after_vanished = temp / "run-all-test-suites-zz-old"
+    vanished.mkdir()
+    old_after_vanished.mkdir()
+    now = time.time() + module.FINISHED_RUN_LOG_RETENTION_SECONDS + 60
+    real_newest = module.newest_modification_time_in_tree
+
+    def removed_by_another_run(directory):
+        if directory.name.endswith(("gone0001", "-aa-vanished")):
+            raise FileNotFoundError(2, "No such file or directory", str(directory))
+        return real_newest(directory)
+    module.newest_modification_time_in_tree = removed_by_another_run
+    try:
+        removed, removal_failures = module.remove_old_temporary_log_directories_without_run_records(
+            runs, now=now, temp_dir=temp)
+    finally:
+        module.newest_modification_time_in_tree = real_newest
+    check("a log directory that vanished while it was read is skipped without a report, "
+          "and the sweep goes on to the next one",
+          removed == [old_after_vanished] and removal_failures == [],
+          (removed, removal_failures))
+
+swept = []
+real_sweep = module.remove_old_suite_temporary_directories_left_by_killed_runners
+module.remove_old_suite_temporary_directories_left_by_killed_runners = (
+    lambda: swept.append("swept") or ([pathlib.Path("/tmp/rts-ab_cd123")], []))
+with tempfile.TemporaryDirectory() as scratch:
+    lines = module.clean_up_after_earlier_runs(module.DEFAULT_LOCK_FILE, "", platform="darwin")
+    check("a run with the default lock file sweeps killed runners' per-suite TMPDIRs on macOS too, "
+          "and names each one it removed",
+          swept == ["swept"] and any("/tmp/rts-ab_cd123" in line for line in lines), lines)
+    swept.clear()
+    module.clean_up_after_earlier_runs(pathlib.Path(scratch) / "own.lock", "", platform="darwin")
+    check("a run with a lock file of its own leaves the shared temp directory alone",
+          swept == [], swept)
+module.remove_old_suite_temporary_directories_left_by_killed_runners = real_sweep
 
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
@@ -3058,6 +3278,132 @@ check("a negative --wait-for-lock-seconds is a bad invocation, exit 2",
 check("--lock-file defaults to one file per machine under ~/.claude",
       pathlib.Path(defaults.lock_file) == pathlib.Path.home() / ".claude"
       / ".run-all-test-suites.lock", defaults.lock_file)
+
+# --- The kill reaches what the suite started in a session of its own -------------------
+def fake_proc(root, processes):
+    """A /proc holding only, for each pid, its stat and the children file of each of its
+    threads; processes maps pid -> (start ticks, {thread id: [child pids]})."""
+    for pid, (start_ticks, threads) in processes.items():
+        write_fake_stat(root, pid, start_ticks)
+        for thread, children in threads.items():
+            (root / str(pid) / "task" / str(thread)).mkdir(parents=True, exist_ok=True)
+            (root / str(pid) / "task" / str(thread) / "children").write_text(
+                " ".join(map(str, children)) + (" " if children else ""))
+    return root
+
+
+def write_fake_stat(root, pid, start_ticks, state="S"):
+    (root / str(pid)).mkdir(parents=True, exist_ok=True)
+    (root / str(pid) / "stat").write_text(
+        f"{pid} (a (fake) suite) {state} " + "1 " * 18 + f"{start_ticks} 0\n")
+
+
+class ProcWhereOneThreadEndsAsItsChildrenAreRead(type(pathlib.Path())):
+    """The kernel answers ESRCH to a read of the children of a thread that has just ended."""
+
+    def read_text(self, *arguments, **keywords):
+        if self.name == "children" and self.parent.name == "120":
+            raise ProcessLookupError(3, "No such process")
+        return super().read_text(*arguments, **keywords)
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    proc = fake_proc(pathlib.Path(scratch), {
+        100: (10, {100: [101, 102], 120: [106], 150: [105]}),
+        101: (11, {101: [103]}),
+        103: (13, {103: []}),
+        105: (15, {105: []}),
+        106: (16, {106: []}),
+    })
+    # 102 has ended since it was listed, and 104's thread has no children file left to read.
+    (proc / "104" / "task" / "104").mkdir(parents=True)
+    (proc / "104" / "task" / "104" / "children").symlink_to(proc / "104" / "gone")
+    write_fake_stat(proc, 104, 14)
+    (proc / "101" / "task" / "101" / "children").write_text("103 104 ")
+    found = sorted(module.descendant_processes_with_start_ticks(
+        100, ProcWhereOneThreadEndsAsItsChildrenAreRead(proc)))
+    check("the descendants read from /proc are every process below the suite, through every "
+          "thread, each with its start ticks, leaving out one that ended while the tree was "
+          "read and a thread that ended as its children were read",
+          found == [(101, 11), (103, 13), (104, 14), (105, 15)], found)
+    check("there is no descendant to read where there is no /proc",
+          module.descendant_processes_with_start_ticks(100, pathlib.Path(scratch) / "none") == [])
+
+
+class FakeSuiteProcess:
+    pid = 200
+
+
+def kill_with_fake_proc(proc, signalled, end_on_kill=True, kill_refused=(), sleeps=None,
+                        killpg_refused=False):
+    """Run the kill on the fake /proc; signalled records each signal sent, in order."""
+    now = [0.0]
+
+    def killpg(pid, number):
+        signalled.append(("killpg", pid, number))
+        # The kernel reparents a killed process's children away from it.
+        (proc / "200" / "task" / "200" / "children").write_text("")
+        # Another process took the pid of the one whose start ticks no longer match.
+        write_fake_stat(proc, 203, 99)
+        if killpg_refused:
+            raise ProcessLookupError(3, "No such process")
+
+    def kill(pid, number):
+        signalled.append(("kill", pid, number))
+        if pid in kill_refused:
+            raise ProcessLookupError(3, "No such process")
+        if end_on_kill:
+            write_fake_stat(proc, pid, 0, state="Z")
+
+    def sleep(seconds):
+        now[0] += seconds
+        if sleeps is not None:
+            sleeps.append(seconds)
+            if len(sleeps) == 2 and not end_on_kill:
+                for pid in (201, 202):
+                    write_fake_stat(proc, pid, 0, state="Z")
+
+    return module.kill_test_suite_process_group_and_descendants(
+        FakeSuiteProcess, proc=proc, kill=kill, killpg=killpg, clock=lambda: now[0], sleep=sleep)
+
+
+def suite_tree(root):
+    return fake_proc(root, {200: (20, {200: [201, 203]}), 201: (21, {201: [202]}),
+                            202: (22, {202: []}), 203: (23, {203: []})})
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled = []
+    still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled)
+    check("the kill reads the tree below the suite before it kills the suite's process group, "
+          "then sends SIGKILL to each process it read, except one whose pid another process "
+          "has taken since, and returns none still running once they have ended",
+          signalled == [("killpg", 200, signal.SIGKILL), ("kill", 201, signal.SIGKILL),
+                        ("kill", 202, signal.SIGKILL)] and still_running == [],
+          (signalled, still_running))
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled = []
+    still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled,
+                                        kill_refused=(201,), killpg_refused=True)
+    check("a process group or a process that has ended before its SIGKILL does not stop the "
+          "kill of the others",
+          [entry[1] for entry in signalled] == [200, 201, 202], signalled)
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled, sleeps = [], []
+    still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled,
+                                        end_on_kill=False, sleeps=sleeps)
+    check("the kill waits for the processes it killed to end before it returns",
+          still_running == [] and len(sleeps) == 2, (still_running, sleeps))
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled = []
+    still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled,
+                                        end_on_kill=False)
+    check("a killed process still running after TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS "
+          "is returned, and the kill does not wait longer",
+          still_running == [(201, 21), (202, 22)], still_running)
 
 print()
 # The count is printed so a short run is visible on sight: a run that ends

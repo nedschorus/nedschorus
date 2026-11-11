@@ -4,7 +4,7 @@
 Usage:
   PROGRAM <number> next-step
   PROGRAM <number> start-topic-branch <topic-branch> --finding-numbers <n>[,<n>...]
-  PROGRAM <number> open-pull-request [--handled-finding-numbers <n>[,<n>...]]
+  PROGRAM <number> open-pull-request [--handled-finding-numbers <n>[,<n>...]] [--confirm-dispatching-agent-checked-new-shared-names]
   PROGRAM <number> record-finding-leave-out-reason <n> --reason "<why>"
   PROGRAM <number> record-finding-as-waiting-for-user-ruling <n> --what-it-would-change "<what>"
   PROGRAM <number> reopen-waiting-finding-with-user-ruling <n> --user-ruling "<his words>"
@@ -37,7 +37,7 @@ runs once the user has answered. The judging and the change stay with the subage
 
 start-topic-branch, in the subagent's worktree: refuse a finding that does not exist or already has an answer, and a
 worktree with uncommitted changes to tracked files, which git switch could refuse to carry over; git
-fetch origin and git switch -c <topic-branch> origin/main; then record the branch and the worktree's path in
+fetch origin and git switch --no-overwrite-ignore -c <topic-branch> origin/main; then record the branch and the worktree's path in
 TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT, so remove-topic-branches-and-worktrees can remove them, and
 record under "started" in FINDING_ANSWERS_FILE_NAME_FORMAT that the branch takes on the findings, so next-step and
 open-pull-request know them; a finding named again moves to the new branch. A branch git could not make is not
@@ -51,7 +51,11 @@ branch for, a worktree whose checked-out branch, or detached HEAD, is not one st
 and a FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME at the worktree's root that is
 missing, is not a title, a blank line and a description, or whose description
 has no defect line, the rule scripts/merge-gate.sh applies, read by the same
-reader; then git push -u origin <branch>, where <branch> is the recorded topic branch the worktree has
+reader; unless --confirm-dispatching-agent-checked-new-shared-names is given, refuse while the new-shared-names
+lister lists names the worktree adds beside origin/main, leaving out the topic branch's name, which is not
+checked, and fail when git cannot list them, since the subagent cannot start the naming fresh-agent and must
+hand the names to the agent that dispatched it before the push; it waits until the topic branch holds a commit,
+because the agent harness removes a worktree with no change when its subagent ends; then git push -u origin <branch>, where <branch> is the recorded topic branch the worktree has
 checked out, and whose pre-push hook runs the test suites; gh pr create against main; record the pull request's link against each
 finding in FINDING_ANSWERS_FILE_NAME_FORMAT; then remove FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME, so the
 next topic branch's pull request cannot take this one's title and description. A gh pr create that fails, other than
@@ -83,8 +87,17 @@ recorded worktree with git worktree remove, unless the agent harness still
 locks it (a lock reason starting HARNESS_LOCK_REASON_START), something else
 locks it, or it holds changed or untracked files; then delete each recorded
 topic branch whose commits are all on a remote-tracking branch of origin.
-Each worktree or branch left in place is printed with what the author should
+Every git command after the worktree list runs in the main worktree, the
+first git worktree list names, so the step works from any worktree of the
+checkout, one it removes included. Each worktree or branch left in place is printed with what the author should
 do, and the exit code is 1.
+
+In remove-topic-branches-and-worktrees, a lock in the form Claude Code writes,
+"claude agent agent-<id> (pid N start T)", whose claude process has ended, as
+scripts/worktree-owner-file-read-and-write.py's
+claude_code_subagent_worktree_lock_dispatching_process_running_state() finds it,
+is unlocked first, and the worktree is then judged as an unlocked one; while
+whether that process runs cannot be read, the lock is kept as the harness's.
 
 print-follow-up-request-block-from-merge-lane-2-reviews, run by merge-lane-2 after the merge: read every
 review of the pull request that merge-lane-2's GitHub account posted, with its inline comments, replies left out, and
@@ -95,7 +108,10 @@ line; a nit is a fix-in-maintenance finding, so it is printed as one, whether or
 the block is parsed back with parse_follow_up_request_blocks_from_message_text(), as the hook parses it, and must
 read back as the same lines. With no such finding it prints nothing. It refuses when merge-lane-2 has no approving
 review of the pull request, and when one of merge-lane-2's comments opens with no mark, as a review posted before
-the posting program wrote category marks does.
+the posting program wrote category marks does. The findings of merge-lane-2's reviews of each pull request this one
+replaces, by its description's #replaces lines followed as REPLACES_READER_FILE_NAME reads them, come first, oldest
+pull request first, read the same way but with no approving review needed; a #replaces line that reader cannot
+follow is refused.
 
 A block that differs from the saved one is a new request: saving it removes
 the answers file, with its started findings and its finished mark, but keeps the topic branch records,
@@ -144,14 +160,20 @@ def load_script_beside_this_one(file_name):
     return module
 
 
+owner_file = load_script_beside_this_one("worktree-owner-file-read-and-write.py")
 defect_line_reader = load_script_beside_this_one(
     "pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
 pre_push_conflict_check = load_script_beside_this_one("git-client-side-hooks-pre-push-conflict-check.py")
+new_shared_names_lister = load_script_beside_this_one("new-shared-names-in-changed-files-list.py")
 
 PROGRAM = "scripts/" + Path(__file__).name
 REPOSITORY = "nedschorus/nedschorus"
 POSTING_PROGRAM_FILE_NAME = "merge-lane-pull-request-reviewer-review-post-and-read-back.py"
+REPLACES_READER_FILE_NAME = "pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py"
 FOLLOW_UP_REQUEST_LINE_START = "#follow_up_request"
+FOLLOW_UP_REQUEST_BLOCK_SAVE_HOOK_PATH = ("nc-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-and-"
+                  "forked-subagent-brief-hand-over-user-prompt-submit-hook.py")
+MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR = "the SendMessage message in which merge-lane-2 tells the pull request's author that the pull request merged"
 FOLLOW_UP_REQUEST_LINE_PATTERN = re.compile(r"^#follow_up_request pull request (\d+)[ \t]*$")
 FINDING_LINE_PATTERN = re.compile(r"^(\d+)\.\s+(\S.*)$")
 PULL_REQUEST_LINK_PATTERN = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+")
@@ -178,7 +200,7 @@ TITLE_AND_DESCRIPTION_FORM = "the pull request's title on the first line, a blan
 DO_NOT_COMMIT_LINE = "Do not commit it: it is never part of the pull request."
 SUBAGENT_LINE = "If you are a subagent, pass that sentence to the agent that dispatched you instead."
 # Each text this program hands an agent follows
-# docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 
 
 def push_time_limit_seconds(environment):
@@ -484,7 +506,7 @@ def start_topic_branch(number, branch, findings):
     records = read_json(branches_file, [])
     git(".", ["fetch", "origin"], timeout_seconds=FETCH_TIMEOUT_SECONDS)
     try:
-        git(".", ["switch", "-c", branch, "origin/main"])
+        git(".", ["switch", "--no-overwrite-ignore", "-c", branch, "origin/main"])
     except StepFailed as failure:
         raise StepFailed(str(failure),
                          "If git says the branch already exists or is not a valid branch name, run "
@@ -538,7 +560,7 @@ def unanswered_started_findings(record, branch=None):
                   if finding not in answers and branch in (None, started))
 
 
-def open_pull_request(number, findings):
+def open_pull_request(number, findings, confirm_dispatching_agent_checked_new_shared_names=False):
     states = state_directory()
     request = saved_follow_up_request(states, number)
     answers_file = state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, number)
@@ -582,6 +604,8 @@ def open_pull_request(number, findings):
                              "author, who decides whether to keep them.")))
     description_file = Path(worktree) / FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME
     title, description = read_title_and_description(description_file)
+    if not confirm_dispatching_agent_checked_new_shared_names:
+        refuse_new_shared_names_the_dispatching_agent_has_not_checked(number, worktree)
     try:
         # --quiet leaves on stderr only errors and what the hooks and the remote print.
         _, push_warnings = git_output.run_git(".", ["push", "--quiet", "-u", "origin", branch], return_stderr=True,
@@ -616,6 +640,20 @@ def open_pull_request(number, findings):
           "request, and recorded it.")
     remove_file(description_file)
     print(still_unanswered_text(number, request, answers))
+
+
+def refuse_new_shared_names_the_dispatching_agent_has_not_checked(number, worktree):
+    try:
+        names = new_shared_names_lister.new_shared_names(Path(worktree))
+    except new_shared_names_lister.GitFailure as failure:
+        raise StepFailed(f"the new shared names of the topic branch could not be listed, so open-pull-request "
+                         f"pushed nothing: {failure}") from None
+    if names:
+        raise Refused(new_shared_names_lister.unchecked_new_shared_names_refusal_text(
+            names, "open-pull-request pushed nothing",
+            "Make each rename in a commit on the topic branch.",
+            "the same open-pull-request command again, with "
+            f"{new_shared_names_lister.CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG} added"))
 
 
 def gh_pr_create_tried_twice(arguments):
@@ -835,14 +873,23 @@ def remove_topic_branches_and_worktrees(number):
               "nothing.")
         return 0
     again = command(number, "remove-topic-branches-and-worktrees")
-    worktrees = {worktree.path.rstrip("/"): worktree for worktree in git_output.worktree_records(
-        git(".", ["worktree", "list", "--porcelain", "-z"]))}
+    listed_worktrees = git_output.worktree_records(git(".", ["worktree", "list", "--porcelain", "-z"]))
+    # The worktree this program runs in may be one it removes; git run there after the removal fails at os.getcwd.
+    main_worktree = listed_worktrees[0].path
+    worktrees = {worktree.path.rstrip("/"): worktree for worktree in listed_worktrees}
     left_paths, left = set(), []
     for path in dict.fromkeys(record["worktree"] for record in records):
         worktree = worktrees.get(path.rstrip("/"))
         if worktree is None:
             continue
         reason = worktree.locked_reason
+        lock = owner_file.claude_code_subagent_worktree_lock_reason_parse(reason)
+        if lock is not None:
+            state, explanation = owner_file.claude_code_subagent_worktree_lock_dispatching_process_running_state(lock)
+            if state == owner_file.STOPPED:
+                git(path, ["worktree", "unlock", path])
+                print(f"Unlocked worktree {path}, since {explanation}.")
+                reason = None
         if reason is not None and reason.startswith(HARNESS_LOCK_REASON_START):
             left.append(f"Worktree {path} is locked by the agent harness (lock reason: {reason}), so "
                         "remove-topic-branches-and-worktrees left it and the topic branches recorded with it: the subagent may still be running.\n"
@@ -876,7 +923,7 @@ def remove_topic_branches_and_worktrees(number):
                             "SendMessage.\n"
                             f"Then run: git worktree remove --force {path}")
             else:
-                git(".", ["worktree", "remove", path])
+                git(main_worktree, ["worktree", "remove", path])
                 print(f"Removed worktree {path}.")
                 continue
         left_paths.add(path)
@@ -884,18 +931,18 @@ def remove_topic_branches_and_worktrees(number):
         branch = record["branch"]
         if record["worktree"] in left_paths:
             continue
-        if not git(".", ["rev-parse", "--verify", "--quiet", "refs/heads/" + branch],
+        if not git(main_worktree, ["rev-parse", "--verify", "--quiet", "refs/heads/" + branch],
                    accepted_exit_codes=(0, 1)).strip():
             continue
-        if not git(".", ["for-each-ref", "--contains", "refs/heads/" + branch, "refs/remotes/origin/"]).strip():
-            commits = git(".", ["log", "--oneline", "refs/heads/" + branch, "--not", "--remotes=origin"]).rstrip("\n")
+        if not git(main_worktree, ["for-each-ref", "--contains", "refs/heads/" + branch, "refs/remotes/origin/"]).strip():
+            commits = git(main_worktree, ["log", "--oneline", "refs/heads/" + branch, "--not", "--remotes=origin"]).rstrip("\n")
             left.append(f"Branch {branch} holds commits on no branch of origin, so remove-topic-branches-and-worktrees left it:\n"
                         f"{commits}\n"
                         f"Read them with git log -p {branch} --not --remotes=origin, copy out any that is work to keep, "
                         "and tell merge-lane-2 about it with SendMessage.\n"
                         f"Then run: git branch -D {branch}")
             continue
-        git(".", ["branch", "-D", branch])
+        git(main_worktree, ["branch", "-D", branch])
         print(f"Deleted branch {branch}.")
     if left:
         print("\n".join(left))
@@ -915,14 +962,12 @@ def gh_api_pages(path):
     try:
         return [item for page in json.loads(output) for item in page]
     except (ValueError, TypeError) as error:
-        raise StepFailed(f"gh api {path} printed output that is not the JSON list of result pages --paginate --slurp prints: "
-                         f"{error}") from None
+        raise StepFailed(f"gh api {path} exited 0, but its output is not the JSON list of result pages that "
+                         f"--paginate --slurp prints. The JSON decode error: {error}") from None
 
 
-def print_follow_up_request_block_from_merge_lane_2_reviews(number):
-    # Loaded here, not at the top, so the hook, which loads this program for every merge-lane-2 message, does not load it.
-    posting = load_script_beside_this_one(POSTING_PROGRAM_FILE_NAME)
-    account = posting.MERGE_LANE_ACCOUNT
+def merge_lane_2_reviews_and_their_comments(number, posting, account):
+    """merge-lane-2's reviews of the pull request, and their comments, each marked with the pull request's number."""
     try:
         reviews = sorted((review for review in gh_api_pages(f"pulls/{number}/reviews")
                           if review["user"]["login"] == account), key=lambda review: review["id"])
@@ -939,26 +984,50 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
     except (KeyError, TypeError, AttributeError) as error:
         raise StepFailed(f"GitHub's reviews of pull request {number} were not in the expected shape: "
                          f"{type(error).__name__}: {error}") from None
+    return reviews, [{**comment, "pull_request": number} for comment in comments]
+
+
+def replaced_pull_request_numbers(number):
+    """The pull requests this one replaces by its #replaces lines, oldest first."""
+    replaces_reader = load_script_beside_this_one(REPLACES_READER_FILE_NAME)
+
+    def read_description(replaced):
+        return gh(["pr", "view", str(replaced), "--repo", REPOSITORY, "--json", "body", "--jq", ".body"])
+    try:
+        return replaces_reader.replaced_pull_request_chain_numbers_oldest_first(number, REPOSITORY, read_description)
+    except replaces_reader.ReplacedPullRequestChainUnreadable as error:
+        raise Refused(f"{error} No {FOLLOW_UP_REQUEST_LINE_START} block was printed.") from None
+
+
+def print_follow_up_request_block_from_merge_lane_2_reviews(number):
+    # Loaded here, not at the top, so the hook, which loads this program for every merge-lane-2 message, does not load it.
+    posting = load_script_beside_this_one(POSTING_PROGRAM_FILE_NAME)
+    account = posting.MERGE_LANE_ACCOUNT
+    reviews, comments = merge_lane_2_reviews_and_their_comments(number, posting, account)
     if not any(review.get("state") == "APPROVED" for review in reviews):
-        raise Refused(f"{account}, merge-lane-2's GitHub account, has no approving review of pull request {number}, so "
-                      f"merge-lane-2 has not approved it yet: its review is still running or it requested changes. No "
+        raise Refused(f"{account}, merge-lane-2's GitHub account, has no approving review of pull request {number}: "
+                      f"merge-lane-2's review of pull request {number} is still running, or merge-lane-2 requested "
+                      f"changes and has not yet approved the author's fixes. No "
                       f"{FOLLOW_UP_REQUEST_LINE_START} block was printed.\n"
-                      f"Once {account}'s approving review is posted, run: "
+                      f"After {account} posts an approving review of pull request {number}, run: "
                       f"{command(number, 'print-follow-up-request-block-from-merge-lane-2-reviews')}")
+    replaced_comments = []
+    for replaced in replaced_pull_request_numbers(number):
+        replaced_comments += merge_lane_2_reviews_and_their_comments(replaced, posting, account)[1]
     findings = []
-    for comment in comments:
+    for comment in replaced_comments + comments:
         marked = posting.finding_category_and_text_read_from_review_comment_opening_mark(comment["body"])
         if marked is None:
             raise Refused(
-                f"{account}'s comment on {comment['path']}:{comment['line']} of pull request {number} does not open "
+                f"{account}'s comment on {comment['path']}:{comment['line']} of pull request {comment['pull_request']} does not open "
                 f"with a category mark, such as **fix-next**, so its category cannot be read and no "
                 f"{FOLLOW_UP_REQUEST_LINE_START} block was printed; reviews posted before "
                 f"scripts/{POSTING_PROGRAM_FILE_NAME} wrote category marks have none.\n"
                 "If merge-lane-2's reviews of the pull request hold a fix-next, fix-in-maintenance or file-for-later "
-                "finding, write the block by hand at the end of the message that tells the author the pull request merged: "
+                f"finding, write the block by hand at the end of {MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR}: "
                 "the line "
                 f"{FOLLOW_UP_REQUEST_LINE_START} pull request {number}, then one line for each such finding, numbered "
-                "from 1, such as: 1. fix-next: <path>:<line>: <the finding on one line>\n"
+                "from 1, such as: 1. fix-next: `<path>:<line>`: <the finding on one line>\n"
                 "If merge-lane-2's reviews hold no such finding, write no block.")
         category, text, _nit = marked
         finding = (category, comment["path"], " ".join(text.split()))
@@ -975,11 +1044,10 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
     except ValueError as error:
         read_back = str(error)
     if read_back != [lines]:
-        raise StepFailed(f"the block built from {account}'s reviews does not read back as itself, so the hook would "
-                         f"save something else: it reads back as {read_back!r}.\n"
-                         "Do not paste the block; write it by hand at the end of the message that tells the author the "
-                         "pull request merged, and report this failure to the owner of "
-                         "scripts/pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py.")
+        raise StepFailed(f"the block built from {account}'s reviews does not read back as itself, so the hook "
+                         f"{FOLLOW_UP_REQUEST_BLOCK_SAVE_HOOK_PATH}, which saves the block from merge-lane-2's message for the author, would "
+                         f"save something else: the block reads back as {read_back!r}.\n"
+                         f"The block was not printed; write it by hand at the end of {MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR}.")
     print(block, end="")
 
 
@@ -1019,6 +1087,9 @@ def main(argv=None):
     open_parser.add_argument("--handled-finding-numbers", type=finding_numbers,
                              help="the findings the pull request handles, such as 1,3; by default those "
                                   "start-topic-branch recorded for the branch that have no answer")
+    open_parser.add_argument(new_shared_names_lister.CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG, action="store_true",
+                             help="the agent that dispatched you has checked the new shared names the topic "
+                                  "branch adds, and the renames are committed")
     leave_out_parser = subcommands.add_parser("record-finding-leave-out-reason", help="record why a finding is left out")
     leave_out_parser.add_argument("finding", type=int)
     leave_out_parser.add_argument("--reason", required=True)
@@ -1050,7 +1121,8 @@ def main(argv=None):
         elif arguments.subcommand == "start-topic-branch":
             start_topic_branch(arguments.number, arguments.branch, arguments.finding_numbers)
         elif arguments.subcommand == "open-pull-request":
-            open_pull_request(arguments.number, arguments.handled_finding_numbers)
+            open_pull_request(arguments.number, arguments.handled_finding_numbers,
+                              arguments.confirm_dispatching_agent_checked_new_shared_names)
         elif arguments.subcommand == "record-finding-leave-out-reason":
             record_finding_leave_out_reason(arguments.number, arguments.finding, arguments.reason)
         elif arguments.subcommand == "record-finding-as-waiting-for-user-ruling":

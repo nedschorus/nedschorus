@@ -802,10 +802,14 @@ class IdleSeat(Seat):
     def minutes(self, name, text):
         (self.walk_directory / f"{name}-minutes.md").write_text(text)
 
-    def stop(self, session_id="idle-session"):
-        return self.run(stdin_text=json.dumps({
+    def stop(self, session_id="idle-session", background_tasks=()):
+        """background_tasks=None sends no list, as a claude that predates the list would."""
+        payload = {
             "session_id": session_id, "transcript_path": str(self.transcript),
-            "cwd": str(self.checkout), "hook_event_name": "Stop", "stop_hook_active": False}))
+            "cwd": str(self.checkout), "hook_event_name": "Stop", "stop_hook_active": False}
+        if background_tasks is not None:
+            payload["background_tasks"] = list(background_tasks)
+        return self.run(stdin_text=json.dumps(payload))
 
 
 seat = IdleSeat()
@@ -929,17 +933,26 @@ seat.state_path.write_text(json.dumps({"raised": {"3": {"prerequisites": hook.ca
 gh_calls_made = []
 
 
+# The budget is read off a fake clock that only the fake gh moves, 0.2 seconds a call, so the
+# cases do not depend on how fast the machine runs the rest of the hook. The fake gh also
+# sleeps for real longer than the whole budget, as a loaded machine would.
+fake_clock_seconds = [0.0]
+
+
 def slow_timing_out_gh(command, *arguments, **keywords):
     if command[0] != "gh":
         return real_subprocess_run(command, *arguments, **keywords)
     gh_calls_made.append(command[3])
-    time.sleep(0.2)
+    time.sleep(0.35)
+    fake_clock_seconds[0] += 0.2
     raise subprocess.TimeoutExpired(command, keywords.get("timeout"))
 
 
 real_budget = hook.GH_CALLS_TOTAL_BUDGET_SECONDS
+real_clock = hook.GitHubConditionChecker.clock
 real_home = os.environ.get("HOME")
 hook.subprocess.run = slow_timing_out_gh
+hook.GitHubConditionChecker.clock = staticmethod(lambda: fake_clock_seconds[0])
 hook.GH_CALLS_TOTAL_BUDGET_SECONDS = 0.3
 os.environ["HOME"] = str(seat.home)  # the handoff module finds its markers under Path.home()
 try:
@@ -950,6 +963,7 @@ try:
         seat.home, hook.datetime.now(hook.timezone.utc))
 finally:
     hook.subprocess.run = real_subprocess_run
+    hook.GitHubConditionChecker.clock = real_clock
     hook.GH_CALLS_TOTAL_BUDGET_SECONDS = real_budget
     if real_home is None:
         os.environ.pop("HOME", None)
@@ -970,14 +984,28 @@ check("one GitHub budget for the whole run: each condition gh could not answer i
 
 
 seat = IdleSeat()
+check("next-action: silent while the background_tasks list holds a running subagent",
+      silent(seat.stop(background_tasks=[{"id": "a1", "type": "subagent",
+                                          "status": "running"}])))
+
+# The transcript shows a subagent launched and never finished; only the list counts.
+seat = IdleSeat()
 seat.append({"type": "user", "timestamp": "2026-11-02T00:00:01Z",
              "toolUseResult": {"status": "async_launched", "agentId": "a1"}})
-check("next-action: silent while a subagent runs", silent(seat.stop()))
+text = context_of(seat.stop()) or ""
+check("next-action: an empty background_tasks list gets the prompt, whatever the transcript "
+      "shows", text.startswith(NEXT_ACTION_FIRST_LINE), text)
+seat = IdleSeat()
+seat.append({"type": "user", "timestamp": "2026-11-02T00:00:01Z",
+             "toolUseResult": {"status": "async_launched", "agentId": "a1"}})
+text = context_of(seat.stop(background_tasks=None)) or ""
+check("next-action: a payload without the background_tasks list counts no work running and "
+      "gets the prompt", text.startswith(NEXT_ACTION_FIRST_LINE), text)
 
 seat = IdleSeat()
 with seat.transcript.open("a") as handle:
-    handle.write('{"toolUseResult": {"status": "async_launched", broken\n')
-result = seat.stop()
+    handle.write('{"toolUseResult": {"backgroundTaskId": "b1", broken\n')
+result = seat.stop(background_tasks=[{"id": "b1", "type": "shell", "status": "running"}])
 check("next-action: silent, with no fault, when the work in flight cannot be counted",
       silent(result) and not seat.state_path.exists(), result)
 

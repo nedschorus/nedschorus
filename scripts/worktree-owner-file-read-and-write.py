@@ -22,16 +22,24 @@ work-snapshot's owner (boot id, process id and start time on Linux; process id
 and start time on macOS). agent_seat is the agent-seat whose agent-sessions
 are told about the worktree; the launchers set GIT_AUTHOR_NAME to it.
 
-WHO WRITES IT. The program that makes a worktree, through
-worktree_owner_file_write or the `write` command below. A subagent's worktree
-is made by Claude Code, which locks it while the subagent runs with the reason
-"claude agent agent-<id> (pid N start M)", N being the dispatching
+WHO WRITES IT. The git post-checkout hook,
+scripts/git-client-side-hooks/post-checkout, as `git worktree add` makes the
+worktree: its program,
+scripts/git-client-side-hooks-post-checkout-new-worktree-owner-file-write.py,
+says which owner it names and which worktrees get none. A program that makes a
+worktree in a clone whose core.hooksPath does not name that hook writes it
+through worktree_owner_file_write or the `write` command below. A subagent's
+worktree is made by Claude Code, which locks it while the subagent runs with
+the reason "claude agent agent-<id> (pid N start M)", N being the dispatching
 agent-session's `claude` process, and unlocks it when the subagent finishes;
+when the hook wrote no owner file there,
 scripts/uncommitted-work-snapshot-hook.py writes the agent-session's owner
 file after the subagent's Edit, Write, NotebookEdit or Bash calls there,
-while that lock still names the process; a subagent that makes none of those
-calls there leaves its worktree with no owner file. A worktree with no owner file is
-never removed by the cleaner.
+while that lock still names the process. The cleaner removes a worktree with
+no owner file only once nothing in it has changed for 2 days and it holds no
+uncommitted or untracked file, or, for a merge-lane review checkout, a worktree
+in ~/.cache/merge-lane-review-worktrees, once its pull request has been merged
+or closed for 24 hours.
 
 It refuses to write into the reference-checkout, whose git directory is the
 clone's common one, and over an existing owner file.
@@ -56,6 +64,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
+from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -68,9 +78,27 @@ RUNNING = "running"
 STOPPED = "stopped"
 UNKNOWN = "unknown"
 
-# Claude Code's lock reason on a subagent's worktree while the subagent runs.
+# Claude Code's lock reason on a subagent's worktree while the subagent runs. On Linux, start is
+# field 22 of /proc/<pid>/stat, the process's start in clock ticks after boot; on macOS it is the
+# process's start in local time as `ps -o lstart=` prints it, such as "Tue Nov  3 21:24:32 2026".
 CLAUDE_CODE_SUBAGENT_WORKTREE_LOCK_REASON = re.compile(
-    r"^claude agent agent-[0-9A-Za-z]+ \(pid (\d+) start \d+\)$")
+    r"^claude agent agent-([0-9A-Za-z]+) \(pid (\d+) start "
+    r"(\d+|[A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} \d{2}:\d{2}:\d{2} \d{4})\)$")
+MACOS_LOCK_START_FORMAT = "%a %b %d %H:%M:%S %Y"
+
+# Claude Code makes a subagent's worktree directly inside .claude/worktrees/ of the reference-checkout and
+# names its directory agent-a followed by 16 lowercase hex digits; other worktrees there, such as an
+# agent's own topic worktree or a restored-<name> one, are not a subagent's.
+CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY = Path(".claude") / "worktrees"
+CLAUDE_CODE_SUBAGENT_WORKTREE_DIRECTORY_NAME = re.compile(r"agent-a[0-9a-f]{16}")
+
+
+def worktree_is_claude_code_subagent_worktree_by_location_and_directory_name(worktree, main_checkout):
+    """True when worktree is where, and named as, Claude Code makes a subagent's worktree."""
+    worktree = Path(worktree).resolve()
+    return (worktree.parent == (Path(main_checkout) / CLAUDE_CODE_SUBAGENT_WORKTREES_DIRECTORY).resolve()
+            and CLAUDE_CODE_SUBAGENT_WORKTREE_DIRECTORY_NAME.fullmatch(worktree.name) is not None)
+
 
 AGENT_SEAT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -83,12 +111,15 @@ WORKTREE_OWNER_FILE_COMMAND_FAILED_NEXT_STEP_LINES = (
     "scripts/worktree-owner-file-read-and-write.py command again once, with the same "
     "arguments.\n"
     "If it fails the same way again, give the FAILED line to the agent that dispatched you, or to "
-    "the user if no agent did, and say that scripts/clean-worktrees.py never removes a worktree "
-    "that has no owner file, so the worktree stays on disk until someone runs "
-    "git worktree remove <the worktree's path>.")
+    "the user if no agent did, and say that scripts/clean-worktrees.py removes a worktree "
+    "that has no owner file only once nothing in it has changed for 2 days and it holds no "
+    "uncommitted or untracked file, apart from a merge-lane review checkout in "
+    "~/.cache/merge-lane-review-worktrees, so the worktree stays on disk until then, or until "
+    "someone runs git worktree remove <the worktree's path>.")
 
 _work_snapshots = None
 _handoff_supervisor = None
+_recover_crashed_seats = None
 
 
 class WorktreeOwnerFileError(Exception):
@@ -122,6 +153,15 @@ def handoff_supervisor_module():
         _handoff_supervisor = load_module(
             "handoff_supervisor", REPO_ROOT / "nc-systems" / "handoff" / "handoff-supervisor.py")
     return _handoff_supervisor
+
+
+def recover_crashed_seats_module():
+    """Loaded only to list the agent-seats, for the lock exception of scripts/clean-worktrees.py."""
+    global _recover_crashed_seats
+    if _recover_crashed_seats is None:
+        _recover_crashed_seats = load_module(
+            "recover_crashed_seats", REPO_ROOT / "scripts" / "recover-crashed-seats.py")
+    return _recover_crashed_seats
 
 
 def git_directories(worktree):
@@ -247,10 +287,105 @@ def worktree_owner_running_state(record, handoff_directory=None):
     return agent_session_running_state(record["owner_key"])
 
 
-def claude_code_subagent_worktree_lock_reason_dispatching_process_id_parse(lock_reason):
-    """The dispatching `claude` process's id in Claude Code's lock reason, or None for any other."""
+@dataclass(frozen=True)
+class ClaudeCodeSubagentWorktreeLock:
+    """Claude Code's lock reason on a subagent's worktree: the subagent's id, as in agent-<id>,
+    and the dispatching `claude` process's id and start."""
+    agent_id: str
+    process_id: int
+    start_ticks: str
+
+
+def claude_code_subagent_worktree_lock_reason_parse(lock_reason):
+    """The ClaudeCodeSubagentWorktreeLock in Claude Code's lock reason, or None for any other."""
     match = CLAUDE_CODE_SUBAGENT_WORKTREE_LOCK_REASON.match((lock_reason or "").strip())
-    return int(match.group(1)) if match else None
+    if match is None:
+        return None
+    return ClaudeCodeSubagentWorktreeLock(match.group(1), int(match.group(2)), match.group(3))
+
+
+def claude_code_subagent_worktree_lock_macos_start_seconds(lock):
+    """The macOS lock's start as whole seconds since 1970, the form
+    nc-systems/handoff/uncommitted-work-snapshots.py's macos_start_seconds gives; raises ValueError
+    when the start is not the date `ps -o lstart=` prints."""
+    started = time.strptime(" ".join(lock.start_ticks.split()), MACOS_LOCK_START_FORMAT)
+    return str(int(time.mktime(started)))
+
+
+def claude_code_subagent_worktree_lock_dispatching_process_running_state(lock, proc_root="/proc",
+                                                                         platform=sys.platform,
+                                                                         macos_start_seconds=None):
+    """Return (state, explanation): whether the `claude` process the lock names, the process with
+    its id that started at its start, runs; UNKNOWN when that cannot be read, and on any platform
+    but Linux and macOS. On macOS both starts are local times, so a time-zone change between
+    the lock's writing and this check, or a TZ that differs between claude and this program,
+    reads a live claude process as STOPPED."""
+    snapshots = load_uncommitted_work_snapshots_module_once()
+    if platform == "darwin":
+        try:
+            lock_started = claude_code_subagent_worktree_lock_macos_start_seconds(lock)
+        except ValueError:
+            return UNKNOWN, (f"Claude Code's lock names claude process {lock.process_id} with the "
+                             f"start {lock.start_ticks!r}, which is not the date macOS's ps prints")
+        try:
+            started = (macos_start_seconds or snapshots.macos_start_seconds)(lock.process_id)
+        except Exception as error:
+            return UNKNOWN, (f"whether claude process {lock.process_id} runs could not be read: "
+                             f"{type(error).__name__}: {error}")
+        if started == lock_started:
+            return RUNNING, (f"Claude Code's lock names claude process {lock.process_id}, "
+                             f"started at {lock.start_ticks}, which runs")
+        return STOPPED, (f"Claude Code's lock names claude process {lock.process_id}, started at "
+                         f"{lock.start_ticks}, which has ended")
+    if not platform.startswith("linux"):
+        return UNKNOWN, (f"whether claude process {lock.process_id} runs is read only on Linux "
+                         f"and macOS")
+    try:
+        started = snapshots.linux_start_ticks(lock.process_id, proc_root)
+    except (FileNotFoundError, ProcessLookupError):
+        started = None
+    except (OSError, IndexError) as error:
+        return UNKNOWN, (f"whether claude process {lock.process_id} runs could not be read: "
+                         f"{type(error).__name__}: {error}")
+    if started == lock.start_ticks:
+        return RUNNING, (f"Claude Code's lock names claude process {lock.process_id}, "
+                         f"started at {lock.start_ticks}, which runs")
+    return STOPPED, (f"Claude Code's lock names claude process {lock.process_id}, started at "
+                     f"{lock.start_ticks}, which has ended")
+
+
+def claude_code_subagent_worktree_lock_ended_agent_session_owner_key(lock, proc_root="/proc",
+                                                                   platform=sys.platform):
+    """The owner key of the ended agent-session a lock names, in the form
+    nc-systems/handoff/uncommitted-work-snapshots.py writes for the platform; after a reboot the
+    Linux boot id differs from the process's, and the key still reads as stopped. On macOS the
+    key holds the lock's start in seconds, which no later process with that id matches, so it
+    reads as stopped too; raises ValueError when that start cannot be read."""
+    if platform == "darwin":
+        return f"{lock.process_id}-{claude_code_subagent_worktree_lock_macos_start_seconds(lock)}"
+    snapshots = load_uncommitted_work_snapshots_module_once()
+    return f"{snapshots.linux_boot_id(proc_root)}-{lock.process_id}-{lock.start_ticks}"
+
+
+def agent_seats_whose_claude_code_transcripts_name_subagent(agent_id, agents_root=None,
+                                                            handoff_directory=None,
+                                                            projects_root=None):
+    """Return, sorted, the agent-seats whose agent-home's Claude Code project directory holds
+    <session>/subagents/agent-<id>.jsonl. An agent-seat is a directory under the agents root
+    that holds handoff records, as scripts/recover-crashed-seats.py lists them."""
+    seats = recover_crashed_seats_module()
+    transcripts = load_module(
+        "claude_code_session_transcript_lookup_and_text_search_common",
+        REPO_ROOT / "scripts" / "claude-code-session-transcript-lookup-and-text-search-common.py")
+    agents_root = agents_root or seats.default_agents_root()
+    projects_root = projects_root or Path.home() / ".claude" / "projects"
+    found = []
+    for seat in seats.list_agent_seat_names_with_agent_session_records(
+            agents_root, handoff_directory or seats.default_handoff_directory()):
+        project = transcripts.project_directory_for_seat(agents_root / seat, projects_root)
+        if any(project.glob(f"*/subagents/agent-{agent_id}.jsonl")):
+            found.append(seat)
+    return found
 
 
 def worktree_lock_reason_read(worktree):

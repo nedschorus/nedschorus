@@ -17,10 +17,12 @@ import io
 import json
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
+import types
 from pathlib import Path
 
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
@@ -57,11 +59,14 @@ DEFAULT_LIMIT_FOR_A_SUITE_WITHOUT_RECORDING = (
     + load_script_module().TEST_SUITE_RUNNER_START_UP_SECONDS)
 EXTRA_SECONDS = load_script_module(
 ).MUTANT_TIMEOUT_EXTRA_SECONDS_FOR_TEST_SUITE_RUNNER_TO_STOP_ITS_SUITES
+ADMISSION_WAIT_CEILING_SECONDS = load_test_suite_runner().TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS
 
 
 def cosmic_ray_timeout_line_and_test_command_words_for_limit(limit):
-    """The config's timeout line and the test command's first words, for this limit."""
-    return (f"timeout = {float(limit + EXTRA_SECONDS)!r}\n",
+    """The config's timeout line and the test command's first words, for this limit: cosmic-ray
+    waits for the admission ceiling and the limit, then for the test command's backstop to stop
+    the runner."""
+    return (f"timeout = {float(limit + ADMISSION_WAIT_CEILING_SECONDS + 2 * EXTRA_SECONDS)!r}\n",
             [sys.executable, str(SCRIPT.resolve()),
              load_script_module().COSMIC_RAY_TEST_COMMAND_RUN_TEST_SUITE_RUNNER_STOPPED_AFTER_SECONDS_FLAG, repr(float(limit))])
 
@@ -80,6 +85,14 @@ with (control / "calls.log").open("a") as log:
     log.write(json.dumps({{"tool": tool, "arguments": arguments,
                           "cwd": os.getcwd(), "head": head,
                           "session_attended": os.environ.get("CLAUDE_CODE_SESSION_ATTENDED")}}) + "\\n")
+if tool == "python":
+    worktrees = arguments[4:]
+    (control / "parallel-workers.json").write_text(json.dumps([
+        [worktree, subprocess.run(["git", "-C", worktree, "rev-parse", "HEAD"],
+                                  capture_output=True, text=True).stdout.strip()]
+        for worktree in worktrees]))
+    print("a parallel worker failed", file=sys.stderr)
+    sys.exit(plan.get("parallel_exit", 0))
 if tool == "cr-filter-git":
     sys.exit(plan.get("filter_exit", 0))
 if tool in ("cr-filter-pragma", "cr-filter-lines"):
@@ -111,13 +124,16 @@ if command == "baseline":
     sys.exit(plan.get("baseline_exit", 0))
 if command == "init":
     pathlib.Path(arguments[2]).write_text("session")
+    if plan.get("init_makes_kept_session_a_directory"):
+        kept = pathlib.Path(arguments[2][:-len(".partial")])
+        (kept / "in-the-way").mkdir(parents=True)
     sys.exit(0)
 if command == "exec":
     import time
     time.sleep(plan.get("exec_sleep_seconds", 0))
     sys.exit(plan.get("exec_exit", 0))
 if command == "dump":
-    if pathlib.Path(arguments[1]).read_text() == "baseline":
+    if pathlib.Path(arguments[1]).read_bytes() == b"baseline":
         if plan.get("baseline_dump_exit"):
             print("Traceback (most recent call last): the session cannot be read")
             sys.exit(plan["baseline_dump_exit"])
@@ -126,6 +142,13 @@ if command == "dump":
                                               "test_outcome": "survived", "diff": None}}]])
     else:
         lines = plan.get("dump", [])
+        for _, result in lines:
+            if result and "{{LOG_DIR}}" in (result.get("output") or ""):
+                import tempfile
+                words = json.loads((control / "test-command.json").read_text())
+                log_dir = tempfile.mkdtemp(dir=words[4])
+                pathlib.Path(log_dir, "test-run-report.txt").write_text(result["output"])
+                result["output"] = result["output"].replace("{{LOG_DIR}}", log_dir)
     for line in lines:
         print(json.dumps(line))
     sys.exit(0)
@@ -184,7 +207,7 @@ def advance_base_past_merge_base(repository, merge_base):
 def fake_venv(directory, plan):
     venv = Path(directory) / "venv"
     (venv / "bin").mkdir(parents=True)
-    for tool in ("cosmic-ray", "cr-filter-git", "cr-filter-pragma", "cr-filter-lines"):
+    for tool in ("cosmic-ray", "cr-filter-git", "cr-filter-pragma", "cr-filter-lines", "python"):
         path = venv / "bin" / tool
         path.write_text(FAKE_COSMIC_RAY_SOURCE)
         path.chmod(0o755)
@@ -228,6 +251,11 @@ def script_command_and_environment(repository, control, *flags, path_override=No
         environment[inside_variable] = "1"
     if path_override is not None:
         environment["PATH"] = path_override
+    # A temporary directory of the case's own, so what the script leaves there is the case's to
+    # see, and is removed with the case.
+    temporary_directory = control / "temporary-directory"
+    temporary_directory.mkdir(exist_ok=True)
+    environment["TMPDIR"] = str(temporary_directory)
     environment.update(extra_environment or {})
     # The full mutation pass, unless the case names a pass: it mutates every changed line.
     passes = (load_script_module().QUICK_MUTATION_PASS_COMMAND_LINE_FLAG,
@@ -332,7 +360,7 @@ def test_command_output_when_the_machine_lock_is_held(scratch):
         holder.flush()
         return subprocess.run(
             [sys.executable, str(SCRIPT), load_script_module().COSMIC_RAY_TEST_COMMAND_RUN_TEST_SUITE_RUNNER_STOPPED_AFTER_SECONDS_FLAG,
-             "60.0", sys.executable, str(SCRIPT.with_name("run-all-test-suites.py")),
+             "60.0", str(scratch), sys.executable, str(SCRIPT.with_name("run-all-test-suites.py")),
              "--checkout", str(repository), "--lock-file", str(lock_file),
              "--recorded-inputs-directory", str(Path(scratch) / "recordings"),
              "--only-suites-named", "scripts/thing-test.py"],
@@ -391,8 +419,9 @@ def suites_named(control):
 
 def run_recorded_mutant_killed_check(scratch_name, head_files, diff_text, *flags,
                                      origin_main_files=None, before_run=None,
-                                     extra_environment=None):
-    """Run --recorded-mutant-killed-check on a scratch repository holding head_files.
+                                     extra_environment=None, more_diff_texts=()):
+    """Run --recorded-mutant-killed-check on a scratch repository holding head_files, given
+    mutant.diff holding diff_text, then mutant-2.diff and on holding more_diff_texts.
 
     With origin_main_files, refs/remotes/origin/main names a commit on the base holding them.
     before_run, given the repository, runs just before the check.
@@ -413,12 +442,16 @@ def run_recorded_mutant_killed_check(scratch_name, head_files, diff_text, *flags
     diff_file = Path(scratch_name) / "mutant.diff"
     if diff_text is not None:
         diff_file.write_text(diff_text)
+    diff_files = [str(diff_file)]
+    for number, text in enumerate(more_diff_texts, start=2):
+        diff_files.append(str(Path(scratch_name) / f"mutant-{number}.diff"))
+        Path(diff_files[-1]).write_text(text)
     worktrees_before = worktrees_of(repository)
     if before_run is not None:
         before_run(repository)
     completed = run_script(repository, control,
                            survivors.RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG,
-                           str(diff_file), *flags, extra_environment=extra_environment)
+                           *diff_files, *flags, extra_environment=extra_environment)
     return completed, repository, worktrees_before, head
 
 
@@ -431,15 +464,23 @@ def run_recorded_mutant_killed_check_cases():
                     "spec.loader.exec_module(thing)\n"
                     "sys.exit(0 if thing.double(3) == 6 else 1)\n")
     killing_files = {**HEAD_FILES, "scripts/thing-test.py": killing_test}
+    killed_line = f"\n{survivors.MUTANT_KILLED_LINE_PREFIX}: "
+    survived_line = f"\n{survivors.MUTANT_SURVIVED_LINE_PREFIX}: "
+    no_longer_exists_line = f"\n{survivors.MUTANT_NO_LONGER_EXISTS_LINE_PREFIX}: "
+    could_not_be_judged_line = f"\n{survivors.MUTANT_COULD_NOT_BE_JUDGED_LINE_PREFIX}: "
 
     with tempfile.TemporaryDirectory() as scratch_name:
         completed, repository, worktrees_before, head = run_recorded_mutant_killed_check(
             scratch_name, killing_files, SURVIVOR_DIFF)
         last = completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else ""
-        check("the recorded mutant killed check exits 0 and its last line starts MUTANT KILLED "
-              "when a suite at the head fails with the mutant applied",
-              completed.returncode == 0 and last.startswith(survivors.MUTANT_KILLED_LINE_PREFIX)
-              and head[:12] in last,
+        check("the recorded mutant killed check exits 0 with a MUTANT KILLED line naming the "
+              "diff file and the head, and a last line counting 1 killed, when a suite at the "
+              "head fails with the mutant applied",
+              completed.returncode == 0
+              and f"{killed_line}{Path(scratch_name) / 'mutant.diff'}: at head {head[:12]}"
+                  in "\n" + completed.stdout
+              and last == f"RECORDED MUTANTS at head {head[:12]}: 1 killed, 0 survived, "
+                          f"0 no longer exist, 0 could not be judged",
               f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
         check("the recorded mutant killed check removes its scratch worktree, and leaves the "
               "checkout's file unmutated",
@@ -465,80 +506,280 @@ def run_recorded_mutant_killed_check_cases():
                 SURVIVOR_DIFF,
                 extra_environment=({"PYTHONPYCACHEPREFIX": str(Path(scratch_name) / "bytecode")}
                                    if with_prefix else None))
-            last = completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else ""
             check("the recorded mutant killed check removes the scratch worktree's bytecode "
                   "caches before the run with the mutant, so a cache the run without it left "
                   "cannot hide the mutant" + prefix_note,
-                  completed.returncode == 0
-                  and last.startswith(survivors.MUTANT_KILLED_LINE_PREFIX),
+                  completed.returncode == 0 and killed_line in "\n" + completed.stdout,
                   f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
+    # The variable's name sorts before PYTHONPYCACHEPREFIX, as PATH and HOME do.
+    environment_test = ("import os, sys\n"
+                        "sys.exit(0 if os.environ.get('MUTANT_SUITE_SEES_THIS') == '1' else 1)\n")
     with tempfile.TemporaryDirectory() as scratch_name:
-        # double(2) is 4 under x + x and x * x alike.
         completed, _, _, _ = run_recorded_mutant_killed_check(
-            scratch_name, {**HEAD_FILES, "scripts/thing-test.py":
-                           killing_test.replace("double(3) == 6", "double(2) == 4")},
-            SURVIVOR_DIFF)
-        check("the recorded mutant killed check exits 1 with a MUTANT SURVIVED line when every "
-              "suite passes with the mutant applied",
+            scratch_name, {**HEAD_FILES, "scripts/thing-test.py": environment_test},
+            SURVIVOR_DIFF, extra_environment={
+                "PYTHONPYCACHEPREFIX": str(Path(scratch_name) / "bytecode"),
+                "MUTANT_SUITE_SEES_THIS": "1"})
+        check("the recorded mutant killed check drops only PYTHONPYCACHEPREFIX from the "
+              "environment it gives the suites: a suite that needs another variable passes "
+              "without the mutant, and survives it",
+              completed.returncode == 1 and survived_line in "\n" + completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    # double(2) is 4 under x + x and x * x alike, and 0 under x - x.
+    surviving_test_files = {**HEAD_FILES, "scripts/thing-test.py":
+                            killing_test.replace("double(3) == 6", "double(2) == 4")}
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, surviving_test_files, SURVIVOR_DIFF)
+        check("the recorded mutant killed check exits 1 with a MUTANT SURVIVED line, and says to "
+              "write a test, when every suite passes with the mutant applied",
+              completed.returncode == 1 and survived_line in "\n" + completed.stdout
+              and "Write or change a test that fails with each surviving mutant"
+                  in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    subtracting_diff = SURVIVOR_DIFF.replace("x * x", "x - x")
+    with tempfile.TemporaryDirectory() as scratch_name:
+        verdicts_file = Path(scratch_name) / "verdicts.json"
+        completed, repository, worktrees_before, head = run_recorded_mutant_killed_check(
+            scratch_name, surviving_test_files, SURVIVOR_DIFF,
+            "--recorded-mutant-killed-check-verdicts-json-file-to-write", str(verdicts_file),
+            more_diff_texts=[subtracting_diff])
+        first, second = (str(Path(scratch_name) / "mutant.diff"),
+                         str(Path(scratch_name) / "mutant-2.diff"))
+        verdict_lines = [line for line in completed.stdout.splitlines()
+                         if line.startswith("MUTANT ")]
+        written = json.loads(verdicts_file.read_text()) if verdicts_file.exists() else {}
+        check("two recorded mutants in one command: a line for each in the order given, one "
+              "survived and one killed, exit 1, both counted, the verdicts written to the JSON "
+              "file, the worktree removed and the checkout's file unmutated",
               completed.returncode == 1
-              and f"\n{survivors.MUTANT_SURVIVED_LINE_PREFIX}: " in "\n" + completed.stdout,
+              and [line.split(": ")[:2] for line in verdict_lines]
+                  == [[survivors.MUTANT_SURVIVED_LINE_PREFIX, first],
+                      [survivors.MUTANT_KILLED_LINE_PREFIX, second]]
+              and "1 killed, 1 survived, 0 no longer exist, 0 could not be judged" in completed.stdout
+              and written.get("head") == head
+              and {name: verdict["verdict"] for name, verdict
+                   in written.get("verdicts", {}).items()} == {first: "survived",
+                                                               second: "killed"}
+              and written["verdicts"][second]["why"].startswith(f"at head {head[:12]}")
+              and worktrees_of(repository) == worktrees_before
+              and (repository / "scripts/thing.py").read_text() == HEAD_FILES["scripts/thing.py"],
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr} "
+              f"json={written}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        verdicts_file = Path(scratch_name) / "verdicts.json"
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, killing_files, None,
+            "--recorded-mutant-killed-check-verdicts-json-file-to-write", str(verdicts_file),
+            more_diff_texts=[SURVIVOR_DIFF])
+        written = json.loads(verdicts_file.read_text()) if verdicts_file.exists() else {}
+        check("a diff file that cannot be read beside one that can: the readable mutant is "
+              "judged killed, the other could not be judged, exit 2, and both are in the JSON file",
+              completed.returncode == 2
+              and f"{could_not_be_judged_line}{Path(scratch_name) / 'mutant.diff'}: the diff file cannot "
+                  f"be read" in "\n" + completed.stdout
+              and killed_line in "\n" + completed.stdout
+              and [verdict["verdict"] for verdict in written.get("verdicts", {}).values()]
+                  == ["could not be judged", "killed"],
+              f"rc={completed.returncode} out={completed.stdout} json={written}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        verdicts_file = Path(scratch_name) / "not-a-directory" / "verdicts.json"
+        (Path(scratch_name) / "not-a-directory").write_text("")
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, killing_files, SURVIVOR_DIFF,
+            "--recorded-mutant-killed-check-verdicts-json-file-to-write", str(verdicts_file))
+        check("a verdicts JSON file that cannot be written exits 2, saying the lines above are "
+              "the whole result",
+              completed.returncode == 2 and killed_line in "\n" + completed.stdout
+              and "the verdicts were not written to" in completed.stderr,
               f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
-        completed, repository, worktrees_before, _ = run_recorded_mutant_killed_check(
+        completed, repository, worktrees_before, head = run_recorded_mutant_killed_check(
             scratch_name, {**HEAD_FILES, "scripts/thing-test.py": "import sys\nsys.exit(1)\n"},
             SURVIVOR_DIFF)
         check("the recorded mutant killed check exits 2 when the suites fail without the "
-              "mutant, and removes its worktree",
+              "mutant, naming the head, and removes its worktree",
               completed.returncode == 2
-              and "do not pass at head" in completed.stderr
-              and "without the mutant" in completed.stderr
+              and f"do not pass at head {head[:12]} without a mutant" in completed.stderr
+              and "without a mutant" in completed.stderr
               and worktrees_of(repository) == worktrees_before,
               f"rc={completed.returncode} err={completed.stderr}")
+
+    for case_name, thing_source in [
+        ("the line ends with the pragma", "def double(x):\n    return x + x  # pragma: no mutate\n"),
+        ("the line ends with the pragma, and the same line without it is elsewhere in the file",
+         "def double(x):\n    return x + x  # pragma: no mutate, x * x differs\n\n\n"
+         "def twice(x):\n    return x + x\n"),
+    ]:
+        with tempfile.TemporaryDirectory() as scratch_name:
+            completed, _, _, _ = run_recorded_mutant_killed_check(
+                scratch_name, {**killing_files, "scripts/thing.py": thing_source}, SURVIVOR_DIFF)
+            check(f"a recorded mutant whose line at the head ends with a `# pragma: no mutate` "
+                  f"comment no longer exists, exit 0: {case_name}",
+                  completed.returncode == 0
+                  and f"{no_longer_exists_line}{Path(scratch_name) / 'mutant.diff'}: the line it changes in "
+                      f"scripts/thing.py ends with a `# pragma: no mutate` comment"
+                      in "\n" + completed.stdout,
+                  f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**HEAD_FILES, "scripts/thing.py":
+                           "def double(x):\n    return x + x\n\n\n"
+                           "def twice(x):\n    return x + x  # pragma: no mutate\n"},
+            SURVIVOR_DIFF)
+        check("a recorded mutant whose own line has no `# pragma: no mutate` comment is still "
+              "judged when the same line elsewhere in the file has one: it survives, exit 1",
+              completed.returncode == 1 and survived_line in "\n" + completed.stdout
+              and no_longer_exists_line not in "\n" + completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    # A later change edited the context line, so only the replaced line is looked for; read
+    # without the pragma it is in both functions, read exactly only in twice(), which no suite
+    # tests, so applying it there would make the mutant survive.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**killing_files, "scripts/thing.py":
+                           "def double(x):\n    # doubled\n    return x + x  # pragma: no mutate\n"
+                           "\n\ndef twice(x):\n    return x + x\n"},
+            SURVIVOR_DIFF)
+        check("a recorded mutant whose replaced line appears at the head both with and without "
+              "a `# pragma: no mutate` comment, its context line edited, could not be judged, "
+              "exit 2, and is not applied at the untagged twin",
+              completed.returncode == 2
+              and f"{could_not_be_judged_line}{Path(scratch_name) / 'mutant.diff'}: in "
+                  f"scripts/thing.py at head" in "\n" + completed.stdout
+              and "which copy is the mutant's own line cannot be told" in completed.stdout
+              and survived_line not in "\n" + completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    # Neither scripts/gone.py nor a suite for it is at the head, as after a deletion.
+    for case_name, origin_main_files, wanted_line, wanted_exit in [
+        ("origin/main lacks it too, so the mutant no longer exists, exit 0", {"OTHER": "x\n"},
+         no_longer_exists_line, 0),
+        ("origin/main still has it, so it could not be judged, exit 2",
+         {"scripts/gone.py": HEAD_FILES["scripts/thing.py"]}, could_not_be_judged_line, 2),
+    ]:
+        with tempfile.TemporaryDirectory() as scratch_name:
+            completed, _, _, _ = run_recorded_mutant_killed_check(
+                scratch_name, killing_files, SURVIVOR_DIFF.replace("thing.py", "gone.py"),
+                origin_main_files=origin_main_files)
+            check(f"a recorded mutant whose file and suites are gone from the head is judged by "
+                  f"whether it still exists before whether a suite reads it: {case_name}",
+                  completed.returncode == wanted_exit
+                  and f"{wanted_line}{Path(scratch_name) / 'mutant.diff'}: " in "\n" + completed.stdout
+                  and "no recorded suite reads" not in completed.stdout,
+                  f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        import fcntl
+        lock_file = Path(scratch_name) / "machine.lock"
+        with open(lock_file, "a+") as holder:
+            fcntl.flock(holder, fcntl.LOCK_EX)
+            holder.write("pid 7, the holder in this test\n")
+            holder.flush()
+            completed, repository, worktrees_before, head = run_recorded_mutant_killed_check(
+                scratch_name, killing_files, SURVIVOR_DIFF, "--lock-file", str(lock_file),
+                extra_environment={runner.SIGNAL_SANDBOX_INSIDE_VARIABLE: "1"})
+        check("the recorded mutant killed check exits 2 when the suite runner, run without a "
+              "mutant, is refused the machine's lock: it says the runner judged no suite and "
+              "prints the refusal, not that the suites fail, and removes its worktree",
+              completed.returncode == 2
+              and f"the suite runner scripts/run-all-test-suites.py, run at head {head[:12]} "
+                  f"without a mutant, exited {runner.EXIT_LOCKED}, which means it ran no suite"
+                  in completed.stderr
+              and "pid 7, the holder in this test" in completed.stderr
+              and "do not pass" not in completed.stderr
+              and "MUTANT " not in completed.stdout
+              and worktrees_of(repository) == worktrees_before,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, repository, worktrees_before, head = run_recorded_mutant_killed_check(
+            scratch_name, killing_files, SURVIVOR_DIFF,
+            "--python", str(Path(scratch_name) / "no-such-python"))
+        check("the recorded mutant killed check exits 2 when the suite runner, run without a "
+              "mutant, ends nonzero without reporting a suite as failed: it says so and prints "
+              "the runner's output, not that the suites fail",
+              completed.returncode == 2
+              and f"the suite runner scripts/run-all-test-suites.py, run at head {head[:12]} "
+                  f"without a mutant, exited " in completed.stderr
+              and "without reporting any suite as failed" in completed.stderr
+              and "do not pass" not in completed.stderr
+              and worktrees_of(repository) == worktrees_before,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    # scripts/gone.py is not at the head, but its sibling suite is, so its mutant gets as far as
+    # reading the file.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**killing_files, "scripts/gone-test.py": "import sys\nsys.exit(0)\n"},
+            SURVIVOR_DIFF.replace("thing.py", "gone.py"), more_diff_texts=[SURVIVOR_DIFF])
+        check("a recorded mutant whose file cannot be read at the head could not be judged, "
+              "saying why, and the next mutant is still judged",
+              completed.returncode == 2
+              and f"{could_not_be_judged_line}{Path(scratch_name) / 'mutant.diff'}: it does not "
+                  f"apply to scripts/gone.py at head" in "\n" + completed.stdout
+              and "the file cannot be read" in completed.stdout
+              and f"{killed_line}{Path(scratch_name) / 'mutant-2.diff'}: "
+                  in "\n" + completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**killing_files,
+                           "scripts/thing.py": "def double(x):\n    # doubled\n    return x + x\n"},
+            SURVIVOR_DIFF)
+        check("a recorded mutant whose context line a later change edited is applied where its "
+              "replaced line appears once, and judged",
+              completed.returncode == 0 and killed_line in "\n" + completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
         completed, repository, worktrees_before, _ = run_recorded_mutant_killed_check(
             scratch_name, {**killing_files,
                            "scripts/thing.py": "def double(x):\n    return 2 * x\n"},
             SURVIVOR_DIFF)
-        check("the recorded mutant killed check exits 2 when the mutant's diff does not apply "
-              "at the head, and removes its worktree",
-              completed.returncode == 2 and "does not apply to scripts/thing.py" in completed.stderr
+        check("the recorded mutant killed check exits 2 with a MUTANT COULD NOT BE JUDGED line when the "
+              "mutant's diff does not apply at the head, and removes its worktree",
+              completed.returncode == 2
+              and f"{could_not_be_judged_line}{Path(scratch_name) / 'mutant.diff'}: it does not apply to "
+                  f"scripts/thing.py" in "\n" + completed.stdout
               and worktrees_of(repository) == worktrees_before,
-              f"rc={completed.returncode} err={completed.stderr}")
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
     branch_changed_files = {**killing_files, "scripts/thing.py": "def double(x):\n    return 2 * x\n"}
-    for case_name, origin_main_files, wanted in [
-        ("the lines are gone from origin/main too, so it says to mark the survivor task "
-         "completed", {"scripts/thing.py": "def double(x):\n    return 2 * x\n"},
-         "so the mutant is gone from main and there is nothing to kill: mark the survivor task "
-         "that names"),
-        ("origin/main has no such file", {"OTHER": "x\n"},
-         "so the mutant is gone from main and there is nothing to kill"),
-        ("origin/main still has the lines, so it says the branch changed them",
-         {"scripts/thing.py": HEAD_FILES["scripts/thing.py"]},
-         "origin/main still has the lines the diff replaces in scripts/thing.py, so your "
-         "branch changed them.\nIf your branch changed them on purpose"),
+    for case_name, origin_main_files, wanted_line, wanted, wanted_exit in [
+        ("the lines are gone from origin/main too, so it no longer exists, exit 0",
+         {"scripts/thing.py": "def double(x):\n    return 2 * x\n"}, no_longer_exists_line,
+         "gone from origin/main too, so there is nothing to kill; the nightly mutation pass "
+         "drops it from its task", 0),
+        ("origin/main has no such file, so it no longer exists, exit 0", {"OTHER": "x\n"}, no_longer_exists_line,
+         "gone from origin/main too, so there is nothing to kill", 0),
+        ("origin/main still has the lines, so it says the branch changed them, exit 2",
+         {"scripts/thing.py": HEAD_FILES["scripts/thing.py"]}, could_not_be_judged_line,
+         "origin/main still has the lines it replaces, so your branch changed them.\n"
+         "If your branch changed them on purpose", 2),
+        ("origin/main changed only a context line beside the replaced line, so it still has the "
+         "replaced line and the branch changed it, exit 2",
+         {"scripts/thing.py": "def double(x):\n    # doubled\n    return x + x\n"},
+         could_not_be_judged_line, "so your branch changed them", 2),
     ]:
         with tempfile.TemporaryDirectory() as scratch_name:
             completed, _, _, _ = run_recorded_mutant_killed_check(
                 scratch_name, branch_changed_files, SURVIVOR_DIFF,
                 origin_main_files=origin_main_files)
             check(f"a recorded mutant that does not apply at the head: {case_name}",
-                  completed.returncode == 2 and wanted in completed.stderr,
-                  f"rc={completed.returncode} err={completed.stderr}")
-    both_cases = "If the line the diff changes is no longer at your head"
-    with tempfile.TemporaryDirectory() as scratch_name:
-        completed, _, _, _ = run_recorded_mutant_killed_check(
-            scratch_name, branch_changed_files, SURVIVOR_DIFF, origin_main_files={
-                "scripts/thing.py": "def double(x):\n    # doubled\n    return x + x\n"})
-        check("a recorded mutant that does not apply at the head, where origin/main changed "
-              "only a context line beside the replaced line: it does not say the mutant is "
-              "gone, and gives both cases",
-              completed.returncode == 2 and "gone from main" not in completed.stderr
-              and both_cases in completed.stderr,
-              f"rc={completed.returncode} err={completed.stderr}")
+                  completed.returncode == wanted_exit and wanted_line in "\n" + completed.stdout
+                  and wanted in completed.stdout,
+                  f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+    cannot_tell = "whether origin/main still has the lines it replaces cannot be told"
 
     def origin_main_file_unreadable(repository):
         blob = git(repository, "rev-parse", "refs/remotes/origin/main:scripts/thing.py").strip()
@@ -550,10 +791,10 @@ def run_recorded_mutant_killed_check_cases():
                 "scripts/thing.py": "def double(x):\n    return x + x\n# on main only\n"},
             before_run=origin_main_file_unreadable)
         check("a recorded mutant that does not apply at the head, where git cannot read "
-              "origin/main's file: it does not say the mutant is gone, and gives both cases",
-              completed.returncode == 2 and "gone from main" not in completed.stderr
-              and both_cases in completed.stderr,
-              f"rc={completed.returncode} err={completed.stderr}")
+              "origin/main's file: it could not be judged, and says why",
+              completed.returncode == 2 and no_longer_exists_line not in "\n" + completed.stdout
+              and cannot_tell in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout}")
 
     def origin_main_scripts_tree_unreadable(repository):
         tree = git(repository, "rev-parse", "refs/remotes/origin/main:scripts").strip()
@@ -565,41 +806,42 @@ def run_recorded_mutant_killed_check_cases():
                 "scripts/thing.py": "def double(x):\n    return x + x\n# on main only\n"},
             before_run=origin_main_scripts_tree_unreadable)
         check("a recorded mutant that does not apply at the head, where git cannot list "
-              "origin/main's tree: it does not say the mutant is gone, and gives both cases",
-              completed.returncode == 2 and "gone from main" not in completed.stderr
-              and both_cases in completed.stderr,
-              f"rc={completed.returncode} err={completed.stderr}")
+              "origin/main's tree: it could not be judged, and says why",
+              completed.returncode == 2 and no_longer_exists_line not in "\n" + completed.stdout
+              and cannot_tell in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
         completed, _, _, _ = run_recorded_mutant_killed_check(
             scratch_name, branch_changed_files, SURVIVOR_DIFF)
-        check("a recorded mutant that does not apply at the head, with no origin/main: it gives "
-              "both cases with their conditions",
-              completed.returncode == 2 and "If the line the diff changes is no longer at your "
-              "head" in completed.stderr and "Otherwise, make sure" in completed.stderr,
-              f"rc={completed.returncode} err={completed.stderr}")
+        check("a recorded mutant that does not apply at the head, with no origin/main: it could "
+              "not be judged, and says what to do",
+              completed.returncode == 2 and cannot_tell in completed.stdout
+              and "make sure your branch's head has scripts/thing.py as origin/main has it"
+                  in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
         completed, _, _, _ = run_recorded_mutant_killed_check(scratch_name, killing_files, None)
         check("the recorded mutant killed check exits 2 when the diff file cannot be read",
-              completed.returncode == 2 and "cannot be read" in completed.stderr,
-              f"rc={completed.returncode} err={completed.stderr}")
+              completed.returncode == 2 and "cannot be read" in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
         completed, _, _, _ = run_recorded_mutant_killed_check(
             scratch_name, killing_files, "--- mutation diff ---\n@@ -1 +1 @@\n-a\n+b\n")
         check("the recorded mutant killed check exits 2 when the diff names no file",
               completed.returncode == 2 and "names no file to mutate or no change to make"
-              in completed.stderr,
-              f"rc={completed.returncode} err={completed.stderr}")
+              in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
         completed, _, _, _ = run_recorded_mutant_killed_check(
             scratch_name, {"scripts/thing.py": HEAD_FILES["scripts/thing.py"]}, SURVIVOR_DIFF)
         check("the recorded mutant killed check exits 2 when the mutated file has no suite",
               completed.returncode == 2 and "no recorded suite reads scripts/thing.py"
-              in completed.stderr,
-              f"rc={completed.returncode} err={completed.stderr}")
+              in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout}")
 
     path, hunks = survivors.recorded_mutant_module_path_and_hunks(SURVIVOR_DIFF)
     check("a recorded mutant's diff names the file it changes, and its one hunk",
@@ -615,6 +857,11 @@ def run_recorded_mutant_killed_check_cases():
           apply_mutant("import os\n\n" + source, hunks)
           == "import os\n\ndef double(x):\n    return x * x\n",
           apply_mutant("import os\n\n" + source, hunks))
+    check("a recorded mutant whose context line changed applies where its replaced line appears "
+          "once",
+          apply_mutant("def double(y):\n    return x + x\n", hunks)
+          == "def double(y):\n    return x * x\n",
+          apply_mutant("def double(y):\n    return x + x\n", hunks))
     check("a recorded mutant whose lines appear twice away from its own line does not apply",
           apply_mutant("import os\n" + source + "\n" + source, hunks) is None)
     check("a recorded mutant whose lines are gone does not apply",
@@ -622,6 +869,22 @@ def run_recorded_mutant_killed_check_cases():
     two_hunks = [(1, ["a"], ["A"]), (3, ["c"], ["C"])]
     check("a recorded mutant with two hunks applies both",
           apply_mutant("a\nb\nc\n", two_hunks) == "A\nb\nC\n", apply_mutant("a\nb\nc\n", two_hunks))
+
+    # A context line of the mutant's own hunk carries the pragma; an exact twin of the hunk's
+    # lines, without it, is in twice(). The mutant must be applied in double(), not in twice().
+    twin_source = ("def double(x):\n    x = int(x)\n    y = x  # pragma: no mutate\n"
+                   "    return y * 2\n    # end\n\n\ndef twice(x):\n    x = int(x)\n    y = x\n"
+                   "    return y * 2\n    # end\n")
+    twin_hunks = [(2, ["    x = int(x)", "    y = x", "    return y * 2", "    # end"],
+                   ["    x = int(x)", "    y = x", "    return y + 2", "    # end"])]
+    twin_verdict, twin_mutated = survivors.recorded_mutant_verdict_without_a_suite_run(
+        None, "scripts/thing.py", twin_hunks, "0" * 40, twin_source, None, {})
+    check("a recorded mutant whose hunk has an exact twin elsewhere in the file is applied at "
+          "its own place, found reading a `# pragma: no mutate` comment as absent, and the "
+          "context line keeps its comment",
+          twin_verdict is None and twin_mutated == twin_source.replace(
+              "x  # pragma: no mutate\n    return y * 2", "x  # pragma: no mutate\n    return y + 2"),
+          (twin_verdict, twin_mutated))
 
     verdict = survivors.recorded_mutant_run_verdict
     check("a run with the mutant applied that exits 0 is a survivor",
@@ -653,6 +916,208 @@ def run_recorded_mutant_killed_check_cases():
     check("a pass with neither --pull-request nor --head exits 2 and says one is required",
           completed.returncode == 2 and "--pull-request --head is required" in completed.stderr,
           completed.stderr)
+
+
+def log_directories_left_in(control):
+    """(the suite runner's own log directories, this script's log directories parents) left in
+    the case's temporary directory, resolved as the script resolves the paths it prints."""
+    temporary_directory = (control / "temporary-directory").resolve()
+    return (sorted(temporary_directory.glob(f"{load_test_suite_runner().PROGRAM}-*")),
+            sorted(temporary_directory.glob(
+                f"{load_script_module().TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_PREFIX}*")))
+
+
+def run_test_suite_runner_log_directories_cases():
+    survivors = load_script_module()
+    killing_test = ("import importlib.util, sys\n"
+                    "spec = importlib.util.spec_from_file_location('thing', 'scripts/thing.py')\n"
+                    "thing = importlib.util.module_from_spec(spec)\n"
+                    "spec.loader.exec_module(thing)\n"
+                    "sys.exit(0 if thing.double(3) == 6 else 1)\n")
+    # double(2) is 4 under x + x and x * x alike, so this mutant survives and x - x is killed.
+    surviving_or_killing_test = killing_test.replace("double(3) == 6", "double(2) == 4")
+    subtracting_diff = SURVIVOR_DIFF.replace("x * x", "x - x")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**HEAD_FILES, "scripts/thing-test.py": surviving_or_killing_test},
+            SURVIVOR_DIFF, more_diff_texts=[subtracting_diff])
+        runner_log_directories, parents = log_directories_left_in(Path(scratch_name) / "control")
+        check("the recorded mutant killed check, judging one mutant killed and one survived, "
+              "leaves no log directory of the suite runner's runs in the temporary directory",
+              completed.returncode == 1
+              and f"\n{survivors.MUTANT_SURVIVED_LINE_PREFIX}: " in "\n" + completed.stdout
+              and f"\n{survivors.MUTANT_KILLED_LINE_PREFIX}: " in "\n" + completed.stdout
+              and runner_log_directories == [] and parents == []
+              and "are kept in" not in completed.stderr,
+              f"left={runner_log_directories + parents} rc={completed.returncode} "
+              f"out={completed.stdout} err={completed.stderr}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**HEAD_FILES, "scripts/thing-test.py": "import sys\nsys.exit(1)\n"},
+            SURVIVOR_DIFF)
+        runner_log_directories, parents = log_directories_left_in(Path(scratch_name) / "control")
+        kept = sorted(parents[0].iterdir()) if len(parents) == 1 else []
+        check("when the suites fail without a mutant, the recorded mutant killed check keeps "
+              "that run's log directory, which holds the failing suite's log the refusal "
+              "names, and names the directory it is kept in",
+              completed.returncode == 2 and runner_log_directories == [] and len(kept) == 1
+              and f" — log {kept[0]}/" in completed.stderr
+              and f"are kept in {parents[0]};" in completed.stderr,
+              f"left={runner_log_directories + parents} kept={kept} err={completed.stderr}")
+
+    # The fake cosmic-ray's baseline runs the test command, so the suite runner runs for real.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"run_test_command": True, "dump": [
+            [work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+             killed_with_output("run-all-test-suites: worktree; logs in {LOG_DIR}\n"
+                                + SUITE_FAILED_RUNNER_OUTPUT)],
+            [work_item("scripts/thing.py", 2, "core/ReplaceBinaryOperator_Add_Mul", "b"),
+             killed_with_output("run-all-test-suites: worktree; logs in {LOG_DIR}\n"
+                                "run-all-test-suites: not run to the end — stopped by SIGTERM\n")],
+        ]})
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv))
+        runner_log_directories, parents = log_directories_left_in(control)
+        kept = sorted(parents[0].iterdir()) if len(parents) == 1 else []
+        check("a pass whose baseline the suite runner ran, with one mutant killed and one "
+              "errored, leaves no log directory of the runner's own, keeps only the errored "
+              "mutant's log directory, and names the directory it is kept in",
+              completed.returncode == 1 and "1 killed" in completed.stdout
+              and "1 errored" in completed.stdout and runner_log_directories == []
+              and len(kept) == 1
+              and "not run to the end" in (kept[0] / "test-run-report.txt").read_text()
+              and f"are kept in {parents[0]};" in completed.stderr,
+              f"left={runner_log_directories + parents} kept={kept} "
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+
+    # cosmic-ray, stopping a run at its own limit, records only "timeout": no log directory named.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"run_test_command": True, "dump": [
+            [work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+             killed_with_output(survivors.TIMED_OUT_OUTPUT)],
+        ]})
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv))
+        runner_log_directories, parents = log_directories_left_in(control)
+        kept = sorted(parents[0].iterdir()) if len(parents) == 1 else []
+        check("a pass with a mutant cosmic-ray recorded only as \"timeout\", whose output names "
+              "no log directory, keeps every log directory of that file and names where",
+              "1 errored" in completed.stdout and len(kept) == 1
+              and f"are kept in {parents[0]};" in completed.stderr,
+              f"left={runner_log_directories + parents} kept={kept} "
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+def run_recorded_mutant_could_not_be_judged_log_directory_kept_case():
+    survivors = load_script_module()
+    runner = load_test_suite_runner()
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, _, head = scratch_repository(scratch_name, HEAD_FILES)
+        parent = Path(scratch_name) / "log-directories-parent"
+        parent.mkdir()
+        real_run = subprocess.run
+        runs = []
+
+        # The run without a mutant passes; the run with it exits 3 judging no suite failing.
+        def suite_runner_run(command, *args, **kwargs):
+            if "--log-dir" not in command:
+                return real_run(command, *args, **kwargs)
+            log_dir = Path(command[command.index("--log-dir") + 1])
+            (log_dir / "test-run-report.txt").write_text("stopped\n")
+            runs.append(log_dir)
+            return subprocess.CompletedProcess(
+                command, 0 if len(runs) == 1 else 3,
+                stdout="" if len(runs) == 1 else "run-all-test-suites: not run to the end\n")
+        real_verdict = survivors.recorded_mutant_verdict_without_a_suite_run
+        survivors.recorded_mutant_verdict_without_a_suite_run = \
+            lambda checkout, path, hunks, head, source, why, environment: (None, source)
+        subprocess.run = suite_runner_run
+        try:
+            verdicts = survivors.recorded_mutants_judged_in_one_worktree(
+                [("mutant.diff", "scripts/thing.py", [], ["scripts/thing-test.py"])], head,
+                types.SimpleNamespace(python=sys.executable, lock_file=None), repository,
+                dict(os.environ), runner, Path(scratch_name) / "recordings", parent)
+        finally:
+            subprocess.run = real_run
+            survivors.recorded_mutant_verdict_without_a_suite_run = real_verdict
+        check("a recorded mutant that could not be judged keeps its run's log directory, and the "
+              "passing run without a mutant does not keep its own",
+              verdicts.get("mutant.diff", ("",))[0] == "could not be judged"
+              and len(runs) == 2 and not runs[0].exists() and runs[1].exists(),
+              f"verdicts={verdicts} runs={runs} left={sorted(parent.iterdir())}")
+
+def run_log_directories_parent_retention_and_stop_signal_cases():
+    survivors = load_script_module()
+    prefix = survivors.TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_PREFIX
+    now = time.time()
+    with tempfile.TemporaryDirectory() as scratch_name:
+        scratch = Path(scratch_name)
+        old, fresh, other = scratch / f"{prefix}old", scratch / f"{prefix}fresh", scratch / "other-old"
+        for each in (old, fresh, other):
+            (each / "a-log-dir").mkdir(parents=True)
+        three_days_ago = now - 3 * 24 * 3600
+        for each in (old, other):
+            os.utime(each, (three_days_ago, three_days_ago))
+        survivors.test_suite_runner_log_directories_parents_past_retention_removed(scratch, now)
+        check("at start, a log directories parent an earlier run left more than two days ago is "
+              "removed, and a fresh one and a directory of another name are left",
+              not old.exists() and fresh.exists() and other.exists(),
+              sorted(p.name for p in scratch.iterdir()))
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        parent = Path(scratch_name) / f"{prefix}stopped"
+        (parent / "a-mutant-log-dir").mkdir(parents=True)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            survivors.test_suite_runner_log_directories_parent_removed_or_named_as_kept(
+                parent, stopped_by_signal=True)
+        check("on a stop signal the log directories parent is removed with the log directories "
+              "it still holds, and nothing is printed",
+              not parent.exists() and err.getvalue() == "", err.getvalue())
+
+    sessions_kept = ["--cosmic-ray-sessions-directory-kept-to-resume", "sessions"]
+    for code, extra, stopped in ((128 + signal.SIGTERM, [], True), (128 + signal.SIGHUP, [], True),
+                                 (2, [], False), (128 + signal.SIGTERM, sessions_kept, False)):
+        with tempfile.TemporaryDirectory() as scratch_name:
+            left_by_an_earlier_run = Path(scratch_name) / f"{prefix}earlier"
+            (left_by_an_earlier_run / "a-log-dir").mkdir(parents=True)
+            os.utime(left_by_an_earlier_run, (now - 3 * 24 * 3600, now - 3 * 24 * 3600))
+
+            def raising(arguments, checkout, runner, environment, log_directories_parent):
+                (log_directories_parent / "a-mutant-log-dir").mkdir()
+                raise SystemExit(code)
+            real = (survivors.quick_or_full_mutation_pass_or_recorded_mutant_killed_check,
+                    survivors.load_test_suite_runner, tempfile.tempdir)
+            survivors.quick_or_full_mutation_pass_or_recorded_mutant_killed_check = raising
+            survivors.load_test_suite_runner = lambda: types.SimpleNamespace(
+                launch_environment_for_a_test_suite_with_git_redirecting_agent_session_attendance_and_credential_variables_removed=dict)
+            tempfile.tempdir = scratch_name
+            err = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(err):
+                    survivors.main_with_stop_signals_raising_system_exit(
+                        ["--quick-mutation-pass", "--head", "HEAD", "--base", "HEAD", *extra])
+                raised = None
+            except SystemExit as exit_:
+                raised = exit_.code
+            finally:
+                (survivors.quick_or_full_mutation_pass_or_recorded_mutant_killed_check,
+                 survivors.load_test_suite_runner, tempfile.tempdir) = real
+            left = list(Path(scratch_name).glob(f"{prefix}*"))
+            kept_line = survivors.TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX in err.getvalue()
+            check(f"exit {code} out of the pass{' with kept sessions' if extra else ''}: a log "
+                  f"directories parent an earlier run left three days ago is removed at start, "
+                  f"and the log directories this run holds are "
+                  + ("removed, with no line naming them" if stopped
+                     else "kept, and one line names where"),
+                  raised == code and not left_by_an_earlier_run.exists()
+                  and (left == [] and not kept_line if stopped
+                       else len(left) == 1 and kept_line),
+                  f"raised={raised} left={left} err={err.getvalue()}")
 
 
 def run_quick_mutation_pass_cases():
@@ -869,7 +1334,417 @@ def run_quick_mutation_pass_cases():
           "silently kept in the quick mutation pass", missing == [], missing)
 
 
+# cosmic-ray's modules that the parallel workers import, faked: the session is a JSON file, and
+# each mutation's operator name says what its worker does.
+FAKE_COSMIC_RAY_PACKAGE = {
+    "__init__.py": "",
+    "config.py": """
+import json, types
+def load_config(path):
+    return types.SimpleNamespace(**json.loads(open(path).read()))
+""",
+    "work_item.py": """
+import enum, types
+class WorkerOutcome(enum.Enum):
+    NORMAL = "normal"
+    EXCEPTION = "exception"
+class TestOutcome(enum.Enum):
+    SURVIVED = "survived"
+    KILLED = "killed"
+def WorkResult(**fields):
+    return types.SimpleNamespace(**fields)
+def MutationSpec(**fields):
+    return types.SimpleNamespace(**fields)
+""",
+    "work_db.py": """
+import enum, json, types
+class WorkDB:
+    class Mode(enum.Enum):
+        open = 1
+    def __init__(self, path, mode):
+        self.path = path
+        self.data = json.loads(open(path).read())
+    @property
+    def pending_work_items(self):
+        return tuple(types.SimpleNamespace(job_id=item["job_id"], mutations=[
+            types.SimpleNamespace(**dict(mutation, start_pos=tuple(mutation["start_pos"]),
+                                         end_pos=tuple(mutation["end_pos"])))
+            for mutation in item["mutations"]])
+            for item in self.data["items"] if item["job_id"] not in self.data["results"])
+    def set_result(self, job_id, result):
+        self.data["results"][job_id] = {
+            "worker_outcome": result.worker_outcome.value, "output": result.output,
+            "test_outcome": None if result.test_outcome is None else result.test_outcome.value,
+            "diff": result.diff}
+        open(self.path, "w").write(json.dumps(self.data))
+    def close(self):
+        pass
+""",
+    "mutating.py": """
+import os, sys
+import time
+from cosmic_ray.work_item import TestOutcome, WorkerOutcome, WorkResult
+def mutate_and_test(mutations, test_command, timeout):
+    operator = mutations[0].operator_name
+    if operator == "worker-exits-3":
+        print("first line", file=sys.stderr)
+        print("last line", file=sys.stderr)
+        sys.exit(3)
+    if operator == "worker-prints-no-json":
+        print("not JSON")
+    if operator == "slow":
+        time.sleep(2)
+    return WorkResult(worker_outcome=WorkerOutcome.NORMAL,
+                      output=f"{os.getcwd()} {test_command} {timeout}",
+                      test_outcome=TestOutcome.KILLED, diff=f"diff of {operator}")
+""",
+}
+
+
+def run_parallel_mutant_workers_with_fake_cosmic_ray_package(scratch_name, operators,
+                                                             worktree_names):
+    """Run the parallel workers on a fake session whose work items have these operators; return
+    (the run, the session as it was left, the worktrees)."""
+    scratch = Path(scratch_name)
+    package = scratch / "site" / "cosmic_ray"
+    package.mkdir(parents=True)
+    for name, text in FAKE_COSMIC_RAY_PACKAGE.items():
+        (package / name).write_text(text)
+    worktrees = [scratch / name for name in worktree_names]
+    for worktree in worktrees:
+        if not worktree.name.startswith("missing"):
+            worktree.mkdir()
+    config = scratch / "config.json"
+    config.write_text(json.dumps({"test_command": "run the suites", "timeout": 12.5}))
+    session = scratch / "session.json"
+    session.write_text(json.dumps({"results": {}, "items": [
+        {"job_id": f"job-{number}", "mutations": [dict(
+            work_item("scripts/thing.py", 2, operator, "")["mutations"][0],
+            definition_name=None)]}
+        for number, operator in enumerate(operators)]}))
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT),
+         load_script_module().COSMIC_RAY_SESSION_PENDING_MUTANTS_RUN_BY_PARALLEL_WORKERS_FLAG,
+         str(config), str(session), *map(str, worktrees)],
+        capture_output=True, text=True, check=False, timeout=120,
+        env={**os.environ, "PYTHONPATH": str(scratch / "site")})
+    return completed, json.loads(session.read_text()), worktrees
+
+
+def run_parallel_mutant_workers_cases_with_fake_cosmic_ray_package():
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, session, worktrees = run_parallel_mutant_workers_with_fake_cosmic_ray_package(
+            scratch_name, ["first", "second", "third", "fourth"], ["one", "two"])
+        outputs = [result["output"] for result in session["results"].values()]
+        check("the parallel workers record a result for every pending mutant, each run in one "
+              "of the worktrees with the config's test command and limit, and exit 0",
+              completed.returncode == 0 and len(session["results"]) == 4
+              and all(Path(output.split(" ")[0]).resolve() in
+                      [worktree.resolve() for worktree in worktrees]
+                      and output.endswith(" run the suites 12.5") for output in outputs)
+              and session["results"]["job-1"]["diff"] == "diff of second",
+              f"rc={completed.returncode} err={completed.stderr} session={session}")
+    # Two mutants that each take two seconds, and two workers: each worker takes one before
+    # either finishes, so each must have run in a worktree of its own.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, session, worktrees = run_parallel_mutant_workers_with_fake_cosmic_ray_package(
+            scratch_name, ["slow", "slow"], ["one", "two"])
+        ran_in = sorted(str(Path(result["output"].split(" ")[0]).resolve())
+                        for result in session["results"].values())
+        check("mutants given to different workers run in different worktrees, one per worker",
+              completed.returncode == 0
+              and ran_in == sorted(str(worktree.resolve()) for worktree in worktrees),
+              f"rc={completed.returncode} err={completed.stderr} ran_in={ran_in}")
+    for case_name, operators, worktree_names, wanted in [
+        ("a worker that exits nonzero", ["first", "worker-exits-3"], ["one", "two"],
+         "work item job-1: the worker exited 3; its last line on standard error: last line"),
+        ("a worker that prints no JSON", ["first", "worker-prints-no-json"], ["one"],
+         "work item job-1: Expecting value"),
+        ("a worker that cannot be started", ["first", "second"], ["missing-worktree"],
+         "its worker could not be started (FileNotFoundError"),
+    ]:
+        with tempfile.TemporaryDirectory() as scratch_name:
+            completed, session, _ = run_parallel_mutant_workers_with_fake_cosmic_ray_package(
+                scratch_name, operators, worktree_names)
+            started = worktree_names != ["missing-worktree"]
+            check(f"{case_name}: exit 2, its mutant left with no result and named, and every "
+                  f"other mutant recorded",
+                  completed.returncode == 2 and wanted in completed.stderr
+                  and "got no result, so they stay unrun in the session" in completed.stderr
+                  and "job-1" not in session["results"]
+                  and ("job-0" in session["results"]) == started,
+                  f"rc={completed.returncode} err={completed.stderr} session={session}")
+
+
+def run_parallel_mutant_workers_case_with_real_cosmic_ray():
+    venv = Path.home() / ".local" / "share" / "nedschorus" / "cosmic-ray-venv"
+    if not (venv / "bin" / "cosmic-ray").is_file():
+        print(f"SKIP  [this machine cannot run it] the parallel workers with the real cosmic-ray: "
+              f"no cosmic-ray venv at {venv}")
+        return
+    # The sibling suite kills a mutant of double() and no mutant of the unused triple().
+    head_files = {"scripts/thing.py": "def double(x):\n    return x + x\n",
+                  "scripts/thing-test.py": "import importlib.util, pathlib\n"
+                  "spec = importlib.util.spec_from_file_location('thing', "
+                  "pathlib.Path(__file__).with_name('thing.py'))\n"
+                  "module = importlib.util.module_from_spec(spec)\n"
+                  "spec.loader.exec_module(module)\n"
+                  "assert module.double(3) == 6\nprint('all cases passed')\n"}
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, head_files)
+        control = Path(scratch_name) / "control"
+        control.mkdir()
+        results = []
+        # One worker: this case's suites take the machine lock, which a second worker's would be
+        # refused.
+        for flags in ([], ["--parallel-mutant-workers", "1"]):
+            completed = run_script(repository, control, "--head", head, "--base", base,
+                                   "--cosmic-ray-venv", str(venv), *flags)
+            summary = [line for line in completed.stdout.splitlines()
+                       if line.startswith("SUMMARY:")]
+            survived = sorted(line for line in completed.stdout.splitlines()
+                              if line.startswith("SURVIVED"))
+            results.append((completed.returncode, summary, survived, completed.stderr))
+        check("with the real cosmic-ray, the parallel worker judges every mutant as cosmic-ray "
+              "exec does, and leaves no worktree",
+              results[0][:3] == results[1][:3] and results[0][1]
+              and " 0 errored, 0 not run" in results[0][1][0]
+              and len(worktrees_of(repository)) == 1, results)
+
+
+def in_test_sandboxes_through_a_fake_bwrap(scratch_name):
+    """run_script's keyword arguments that make the suites run in nc-test-sandboxes, as on a
+    Linux machine with bwrap, through a fake bwrap on PATH; the variable that marks a run
+    already inside the sandbox is dropped, since this file itself runs inside the suite
+    runner's."""
+    fake_bin = Path(scratch_name) / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "bwrap").write_text("#!/bin/sh\nexit 0\n")
+    (fake_bin / "bwrap").chmod(0o755)
+    return {"path_override": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "dropped_variables": (load_test_suite_runner().SIGNAL_SANDBOX_INSIDE_VARIABLE,)}
+
+
+def run_parallel_mutants_and_kept_sessions_cases():
+    flag = load_script_module().PARALLEL_MUTANT_WORKERS_FLAG
+    kept_flag = load_script_module().COSMIC_RAY_SESSIONS_DIRECTORY_KEPT_TO_RESUME_FLAG
+    for case_name, flags, wanted in [
+        ("--parallel-mutant-workers without --cosmic-ray-venv", [flag, "2"],
+         "--parallel-mutant-workers needs --cosmic-ray-venv"),
+        ("--parallel-mutant-workers 0", [flag, "0", "--cosmic-ray-venv", "/nowhere"],
+         "--parallel-mutant-workers needs a count of 1 or more"),
+    ]:
+        completed = subprocess.run([sys.executable, str(SCRIPT), "--full-mutation-pass",
+                                    "--head", "a", "--base", "b", *flags],
+                                   capture_output=True, text=True, check=False)
+        check(f"{case_name} exits 2 and says why",
+              completed.returncode == 2 and wanted in completed.stderr, completed.stderr)
+    if not sys.platform.startswith("linux"):
+        print("SKIP  [this machine cannot run it] the parallel mutant workers' and kept "
+              "sessions' cases: parallel workers need nc-test-sandboxes, which bwrap gives only "
+              "on Linux, and the nightly pass that keeps sessions runs on ned-box only")
+        return
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"dump": [
+            [work_item("scripts/thing.py", 2, "core/ReplaceBinaryOperator_Add_Sub", "b"),
+             result("killed")]]})
+        sessions = Path(scratch_name) / "sessions"
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv), flag, "3", kept_flag,
+                               str(sessions), **in_test_sandboxes_through_a_fake_bwrap(
+                                   scratch_name))
+        recorded = calls(control)
+        steps = [c["tool"] if c["tool"].startswith("cr-filter") or c["tool"] == "python"
+                 else c["arguments"][0] for c in recorded]
+        parallel = [c for c in recorded if c["tool"] == "python"]
+        workers = json.loads((control / "parallel-workers.json").read_text()) \
+            if (control / "parallel-workers.json").exists() else []
+        kept = sorted(path.name for path in sessions.iterdir()) if sessions.is_dir() else []
+        check("with --parallel-mutant-workers 3: exit 0, and the venv's python runs this "
+              "script's parallel workers in place of cosmic-ray exec",
+              completed.returncode == 0
+              and steps == ["baseline", "dump", "init", "cr-filter-git", "cr-filter-pragma",
+                            "python", "dump"]
+              and parallel and parallel[0]["arguments"][:2] == [
+                  str(SCRIPT.resolve()),
+                  load_script_module().COSMIC_RAY_SESSION_PENDING_MUTANTS_RUN_BY_PARALLEL_WORKERS_FLAG],
+              f"rc={completed.returncode} steps={steps} err={completed.stderr}")
+        check("each of the 3 workers has a worktree of its own at the head, the first the one "
+              "cosmic-ray's own steps run in",
+              len(workers) == 3 and len({worktree for worktree, _ in workers}) == 3
+              and all(commit == head for _, commit in workers)
+              and workers[0][0] == recorded[0]["cwd"], (workers, recorded[:1]))
+        check("every worktree is removed after the run",
+              len(worktrees_of(repository)) == 1
+              and not any(Path(worktree).exists() for worktree, _ in workers),
+              worktrees_of(repository))
+        check("the session is kept in the directory given, filtered, with no partial file left",
+              len(kept) == 1 and kept[0].endswith(".sqlite")
+              and parallel[0]["arguments"][3] == str(sessions.resolve() / kept[0]), kept)
+        (control / "calls.log").write_text("")
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv), kept_flag, str(sessions))
+        steps = [c["tool"] if c["tool"].startswith("cr-filter") else c["arguments"][0]
+                 for c in calls(control)]
+        check("a second run finds the kept session, says RESUMED, and runs cosmic-ray exec on "
+              "it without init or the filters",
+              completed.returncode == 0
+              and "RESUMED  scripts/thing.py: its cosmic-ray session" in completed.stdout
+              and steps == ["baseline", "dump", "exec", "dump"]
+              and calls(control)[2]["arguments"][2] == str(sessions.resolve() / kept[0]),
+              f"rc={completed.returncode} steps={steps} out={completed.stdout}")
+        for pending, wanted_steps, wanted_out in [
+                (0, ["dump"], "so neither its baseline nor any mutant runs"),
+                (1, ["baseline", "dump", "exec", "dump"], "so only its mutants with no result run")]:
+            kept_session = sessions / kept[0]
+            kept_session.unlink()
+            connection = sqlite3.connect(kept_session)
+            connection.executescript(
+                "CREATE TABLE work_items (job_id TEXT PRIMARY KEY);"
+                "CREATE TABLE work_results (job_id TEXT PRIMARY KEY);"
+                "INSERT INTO work_items VALUES ('done'); INSERT INTO work_results VALUES ('done');"
+                + ("INSERT INTO work_items VALUES ('waiting');" if pending else ""))
+            connection.commit()
+            connection.close()
+            (control / "calls.log").write_text("")
+            completed = run_script(repository, control, "--head", head, "--base", base,
+                                   "--cosmic-ray-venv", str(venv), kept_flag, str(sessions))
+            steps = [c["tool"] if c["tool"].startswith("cr-filter") else c["arguments"][0]
+                     for c in calls(control)]
+            check(f"a kept session with {pending} mutant(s) with no result: "
+                  f"{'no baseline and nothing run, only its dump' if not pending else 'the baseline and exec run'}",
+                  completed.returncode == 0 and steps == wanted_steps
+                  and wanted_out in completed.stdout,
+                  f"rc={completed.returncode} steps={steps} out={completed.stdout} "
+                  f"err={completed.stderr}")
+    script = load_script_module()
+    kept_path = \
+        script.cosmic_ray_session_kept_to_resume_path_for_one_file_head_base_and_quick_or_full_mutation_pass
+    full = kept_path("/sessions", "h", "b", "scripts/thing.py", False)
+    quick = kept_path("/sessions", "h", "b", "scripts/thing.py", True)
+    earlier_name = script.scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(
+        "h", "b", "scripts/thing.py") + ".sqlite"
+    check("the quick and the full pass keep a file's session under different names, the full "
+          "pass's the name earlier runs kept it under",
+          full != quick and full.name == earlier_name, (full, quick))
+    for case_name, plan, flags, setup, wanted in [
+        ("a parallel worker run that fails", {"parallel_exit": 2}, [flag, "2"], None,
+         "the 2 parallel mutant workers for scripts/thing.py failed (exit 2): a parallel "
+         "worker failed"),
+        ("a venv with no python", {}, [flag, "2"], "remove python", "bin/python is not there"),
+        ("a sessions directory that is a file", {}, [kept_flag, "{scratch}/a-file"],
+         "make a-file", "the cosmic-ray session of scripts/thing.py could not be kept at"),
+        ("a kept session that cannot be put in place",
+         {"init_makes_kept_session_a_directory": True}, [kept_flag, "{scratch}/sessions"], None,
+         "the cosmic-ray session of scripts/thing.py could not be kept at"),
+    ]:
+        with tempfile.TemporaryDirectory() as scratch_name:
+            repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+            venv, control = fake_venv(scratch_name, dict(plan, dump=[]))
+            if setup == "remove python":
+                (venv / "bin" / "python").unlink()
+            if setup == "make a-file":
+                (Path(scratch_name) / "a-file").write_text("")
+            completed = run_script(repository, control, "--head", head, "--base", base,
+                                   "--cosmic-ray-venv", str(venv),
+                                   *[each.format(scratch=scratch_name) for each in flags],
+                                   **in_test_sandboxes_through_a_fake_bwrap(scratch_name))
+            check(f"{case_name}: exit 2, standard error says why, and the worktrees are removed",
+                  completed.returncode == 2 and wanted in completed.stderr
+                  and len(worktrees_of(repository)) == 1,
+                  f"rc={completed.returncode} err={completed.stderr} "
+                  f"worktrees={worktrees_of(repository)}")
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"dump": []})
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv), flag, "2")
+        check("more than one parallel worker where suites take the machine lock: exit 2 before "
+              "any worktree or cosmic-ray run, saying why",
+              completed.returncode == 2
+              and "every worker but one would be refused it" in completed.stderr
+              and len(worktrees_of(repository)) == 1 and calls(control) == [],
+              f"rc={completed.returncode} err={completed.stderr}")
+
+
+def run_hunk_shared_context_line_counts_and_replaced_lines_cases():
+    survivors = load_script_module()
+
+    def lines_of(letters):
+        # Built at run time, so equal lines are not the same object, as a diff's lines are not.
+        return [f"{letter} line" for letter in letters]
+
+    # (old, new, lines shared at the start and at the end, the letters of the replaced lines).
+    # The first case comes first because a mutant that negates the end loop's condition
+    # returns at once on it but loops forever on most other cases.
+    cases = [
+        ("ac", "bc", (0, 1), "a"),
+        ("", "", (0, 0), ""),
+        ("a", "b", (0, 0), "a"),
+        ("a", "ba", (0, 1), ""),
+        ("aa", "abaa", (1, 1), ""),
+        ("a", "a", (1, 0), ""),
+        ("aaa", "aaba", (2, 1), ""),
+        ("aa", "ba", (0, 1), "a"),
+        ("aaba", "ba", (0, 2), "aa"),
+        ("ab", "bb", (0, 1), "a"),
+        ("ab", "b", (0, 1), "a"),
+        ("a", "bab", (0, 0), "a"),
+        ("aa", "baba", (0, 1), "a"),
+        ("a", "", (0, 0), "a"),
+        # Past 256, where CPython stops sharing one object for each small int.
+        ("a" * 300 + "b", "a" * 300, (300, 0), "b"),
+        ("aa" + "b" * 300, "a" + "b" * 300, (1, 300), "a"),
+    ]
+    for old_letters, new_letters, counts, replaced_letters in cases:
+        old, new = lines_of(old_letters), lines_of(new_letters)
+        got = (survivors.hunk_shared_context_line_counts(old, new),
+               survivors.hunk_replaced_lines(old, new))
+        if got != (counts, lines_of(replaced_letters)):
+            check(f"a hunk's shared context line counts and replaced lines, old "
+                  f"{old_letters[:12]!r} ({len(old)} lines), new {new_letters[:12]!r} "
+                  f"({len(new)} lines)", False,
+                  f"want {(counts, replaced_letters)} got {got}")
+            # A mutant of these functions can loop forever in a later case.
+            sys.exit(1)
+    check("a hunk's shared context line counts and replaced lines are right for each case: "
+          "lines shared at the start, at the end, overlapping both, none, and over 256",
+          True)
+
+
+def run_recorded_mutant_lines_on_main_search_cases():
+    survivors = load_script_module()
+    # Each file is on origin/main without a last newline, so its last line ends the file.
+    # Hunk "dup" appears twice in each, so no mutant applies and the search for each hunk's
+    # replaced lines decides; hunk "b" appears once, so neither is gone.
+    files = {
+        "replaced-lines-are-the-whole-file.py": "dup\ndup",
+        "replaced-line-at-an-odd-place-and-the-end.py": "dup\ndup\nx\nb",
+        "replaced-line-at-place-one.py": "dup\nb\ndup",
+        "two-replaced-lines-at-the-end.py": "dup\ndup\nx\nb1\nb2",
+    }
+    replaced_lines = {
+        "replaced-lines-are-the-whole-file.py": ["dup", "dup"],
+        "replaced-line-at-an-odd-place-and-the-end.py": ["b"],
+        "replaced-line-at-place-one.py": ["b"],
+        "two-replaced-lines-at-the-end.py": ["b1", "b2"],
+    }
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, _, head = scratch_repository(scratch_name, files)
+        git(repository, "update-ref", "refs/remotes/origin/main", head)
+        for path, replaced in replaced_lines.items():
+            # Line 100 is past each file's end, so neither hunk is found at its own line.
+            hunks = [(100, replaced, ["changed"]), (100, ["dup"], ["changed"])]
+            on_main = survivors.recorded_mutant_lines_on_main(repository, path, hunks, None)
+            check(f"a recorded mutant whose replaced lines origin/main has once and twice is not "
+                  f"gone, and whether it applies cannot be told: {path}",
+                  on_main is None, on_main)
+
+
 def run_cases():
+    run_hunk_shared_context_line_counts_and_replaced_lines_cases()
+    run_recorded_mutant_lines_on_main_search_cases()
     # ------------------------------------------------------------------
     # The config written, the worktree used, and survivors parsed.
     # ------------------------------------------------------------------
@@ -912,12 +1787,16 @@ def run_cases():
               worktree_seen)
         check("the test command is this script, stopping at the given --mutant-timeout-seconds "
               "one run of the suite runner beside the script, on the "
-              "scratch worktree, of the sibling suite only, recording nothing and stopping at "
+              "worktree it runs in, of the sibling suite only, recording nothing and stopping at "
               "the first failing suite, with the given interpreter, recordings and lock",
-              test_command_words == [
-                  *cosmic_ray_timeout_line_and_test_command_words_for_limit(45)[1],
+              test_command_words[:4]
+              == cosmic_ray_timeout_line_and_test_command_words_for_limit(45)[1]
+              and Path(test_command_words[4]).parent == temporary_directory.resolve()
+              and Path(test_command_words[4]).name.startswith(
+                  load_script_module().TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_PREFIX)
+              and test_command_words[5:] == [
                   sys.executable, str(SCRIPT.resolve().with_name("run-all-test-suites.py")),
-                  "--checkout", worktree_seen, "--python", "/usr/bin/python3",
+                  "--checkout", ".", "--python", "/usr/bin/python3",
                   "--recorded-inputs-directory", str(control / "recordings"),
                   "--leave-recorded-inputs-and-failure-history-unchanged",
                   "--stop-at-first-failing-suite",
@@ -1107,6 +1986,15 @@ def run_cases():
                "run-all-test-suites: not run to the end — stopped by SIGTERM.\n")]],
          1, "ERRORED   scripts/thing.py:2 core/NumberReplacer (timeout: the suites ran past "
             "the limit of"),
+        ("a killed mutant the suite runner stopped at its run time limit is ERRORED with the "
+         "timeout, not killed",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           killed_with_output(
+               "PASS scripts/other-test.py (0.4s)\n"
+               f"{load_test_suite_runner().RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX}"
+               " of 45 s, not counting the time in which a suite waited for admission\n")]],
+         1, "ERRORED   scripts/thing.py:2 core/NumberReplacer (timeout: the suites ran past "
+            "the limit of"),
         ("a killed mutant whose failing suite was killed by a signal Python has no name for is "
          "killed",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
@@ -1229,17 +2117,54 @@ def run_cases():
               and "ran out of time on the unmutated head" in completed.stderr
               and "the limit of 15 s on one run of them" in completed.stderr,
               f"rc={completed.returncode} err={completed.stderr} ran={ran}")
-        check("the test command says it stopped the suite runner, and the runner says it was "
-              "stopped by SIGTERM",
+        check("the suite runner, given the limit by the test command, stops itself at that "
+              "limit and says so, so the test command's backstop never fires",
               ran.get("exit") == 2
-              and load_script_module().TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX
+              and load_test_suite_runner(
+              ).RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX
               in ran.get("stdout", "")
-              and "not run to the end — stopped by SIGTERM" in ran.get("stdout", ""), ran)
+              and load_script_module().TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX
+              not in ran.get("stdout", ""), ran)
         check("a suite running when the test command stops the suite runner has ended, before "
               "cosmic-ray's own limit",
               suite_pid is not None and not suite_still_running
               and seconds < 15 + EXTRA_SECONDS,
               (suite_pid, suite_still_running, seconds))
+
+    # ------------------------------------------------------------------
+    # The test command's backstop stops a runner that outlives the
+    # admission ceiling and its own run time limit together.
+    # ------------------------------------------------------------------
+    with tempfile.TemporaryDirectory() as scratch_name:
+        script = load_script_module()
+        backstops = []
+
+        def two_second_backstop(seconds, runner):
+            backstops.append((seconds, runner.TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS))
+            return 2
+
+        class OutputCountingFlushes(io.StringIO):
+            flushes = 0
+
+            def flush(self):
+                self.flushes += 1
+                super().flush()
+
+        script.test_suite_runner_backstop_seconds = two_second_backstop
+        started = time.monotonic()
+        # Flushed before the SIGTERM, so the line comes before what the runner prints as it stops.
+        with contextlib.redirect_stdout(OutputCountingFlushes()) as printed:
+            exit_code = script.run_test_suite_runner_with_its_stderr_on_stdout_stopped_before_cosmic_ray_limit(
+                1.0, scratch_name, [sys.executable, "-c", "import time; time.sleep(60)"])
+        seconds = time.monotonic() - started
+        check("a runner still running at the test command's backstop is sent SIGTERM, and the "
+              "test command says it stopped it, with the backstop's seconds",
+              exit_code == -signal.SIGTERM and seconds < 30
+              and backstops == [(1.0, ADMISSION_WAIT_CEILING_SECONDS)]
+              and printed.getvalue().startswith(
+                  f"{script.TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX}: it ran past 2 s")
+              and printed.flushes >= 1,
+              (exit_code, seconds, backstops, printed.getvalue(), printed.flushes))
 
     # ------------------------------------------------------------------
     # A baseline cosmic-ray passes although its suites never launched:
@@ -1495,30 +2420,80 @@ def run_cases():
 
     # ------------------------------------------------------------------
     # A baseline that ran out of time is reported as a timeout, not as
-    # failing suites; any other killed baseline still fails.
+    # failing suites, and exits 2; a baseline whose suite runner, run to
+    # its end, names a suite failing by its own exit exits 3 naming it;
+    # any other killed baseline exits 2 and still says the suites fail.
     # ------------------------------------------------------------------
     baseline_item = {"job_id": "baseline", "mutations": []}
-    for case_name, plan, flags, wanted, unwanted in [
+    runner = load_test_suite_runner()
+    survivors_module = load_script_module()
+    suite_fails_line = (f"{survivors_module.SUITE_FAILS_ON_UNMUTATED_HEAD_LINE_PREFIX}"
+                        f"scripts/thing-test.py\n")
+    for case_name, plan, flags, wanted_exit, wanted, unwanted in [
         ("a baseline killed with cosmic-ray's timeout output exits 2, says the suites ran out "
          "of time, gives the limit and says to raise --mutant-timeout-seconds",
          {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output("timeout")]]},
-         ("--mutant-timeout-seconds", "45"),
+         ("--mutant-timeout-seconds", "45"), survivors_module.EXIT_COULD_NOT_RUN,
          ["ran out of time on the unmutated head", "the limit of 45 s on one run of them",
           "Run this again with --mutant-timeout-seconds larger than 45."], ["fail"]),
         ("a baseline killed with the suite runner's TIMEOUT line exits 2 naming the suite and "
          "its own limit",
          {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
              runner_output_with_suites_timed_out([("scripts/thing-test.py", 1800)]))]]},
-         (), ["on the unmutated head, scripts/thing-test.py ran past its own limit of 1800 s",
-              "a larger --mutant-timeout-seconds does not raise it",
-              "--only-suites-named scripts/thing-test.py\n"], ["fail"]),
-        ("a baseline killed with any other output still says the suites fail",
+         (), survivors_module.EXIT_COULD_NOT_RUN,
+         ["on the unmutated head, scripts/thing-test.py ran past its own limit of 1800 s",
+          "a larger --mutant-timeout-seconds does not raise it",
+          "--only-suites-named scripts/thing-test.py\n"], ["fail"]),
+        ("a baseline the suite runner stopped at its run time limit exits 2, says the suites "
+         "ran out of time with that limit, admission waits not counted",
          {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
-             "FAIL scripts/thing-test.py exit 1 (0.2s)\n")]]},
-         (), ["fail on the unmutated head"], ["ran out of time", "ran past its own limit"]),
-        ("a failing baseline whose result cannot be dumped still says the suites fail",
+             f"{load_test_suite_runner().RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX}"
+             " of 45 s, not counting the time in which a suite waited for admission\n")]]},
+         ("--mutant-timeout-seconds", "45"), survivors_module.EXIT_COULD_NOT_RUN,
+         ["ran out of time on the unmutated head",
+          "the limit of 45 s on one run of them passed, admission waits not counted",
+          "Run this again with --mutant-timeout-seconds larger than 45."], ["fail"]),
+        ("a baseline whose suite got no test slot exits 2, quotes the runner's line, and says "
+         "to run again when the machine is quieter, not to raise --mutant-timeout-seconds",
+         {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
+             f"{load_test_suite_runner().TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX}: "
+             "scripts/thing-test.py waited 28800 s\n")]]},
+         (), survivors_module.EXIT_COULD_NOT_RUN,
+         ["got no test slot", "a larger --mutant-timeout-seconds does not help",
+          ": scripts/thing-test.py waited 28800 s\n",
+          "Run this again once the machine is quieter."],
+         ["fail", "ran out of time", "larger than"]),
+        ("a baseline killed with the suite runner's FAIL line for a suite's own exit exits 3 "
+         "and names that suite on a line of its own",
+         {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
+             runner_output_with_a_suite_failed_with_exit_code("scripts/thing-test.py", 1))]]},
+         (), survivors_module.EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD,
+         ["fails on the unmutated head", suite_fails_line, "give that commit as --head"],
+         ["ran out of time", "ran past its own limit"]),
+        ("a baseline killed with a suite's FAIL line from a suite runner not run to the end "
+         "exits 2, naming no suite as failing",
+         {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
+             runner_output_with_a_suite_failed_with_exit_code("scripts/thing-test.py", 1)
+             + f"{runner.NOT_RUN_TO_THE_END_LINE_PREFIX}: stopped\n")]]},
+         (), survivors_module.EXIT_COULD_NOT_RUN, ["fail on the unmutated head"],
+         ["suite fails on unmutated head", "ran out of time"]),
+        ("a baseline killed with an nc-test-sandbox that did not start exits 2, naming no "
+         "suite as failing",
+         {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
+             runner_output_with_test_sandbox_not_started("scripts/thing-test.py"))]]},
+         (), survivors_module.EXIT_COULD_NOT_RUN, ["fail on the unmutated head"],
+         ["suite fails on unmutated head", "ran out of time"]),
+        ("a baseline killed with output that names no failing suite exits 2 and still says "
+         "the suites fail",
+         {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
+             "Traceback (most recent call last): the suite runner crashed\n")]]},
+         (), survivors_module.EXIT_COULD_NOT_RUN, ["fail on the unmutated head"],
+         ["suite fails on unmutated head", "ran out of time", "ran past its own limit"]),
+        ("a failing baseline whose result cannot be dumped exits 2 and still says the suites "
+         "fail",
          {"baseline_exit": 1, "baseline_dump_exit": 4},
-         (), ["fail on the unmutated head"], ["ran out of time", "ran past its own limit"]),
+         (), survivors_module.EXIT_COULD_NOT_RUN, ["fail on the unmutated head"],
+         ["suite fails on unmutated head", "ran out of time", "ran past its own limit"]),
     ]:
         with tempfile.TemporaryDirectory() as scratch_name:
             repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
@@ -1526,7 +2501,7 @@ def run_cases():
             completed = run_script(repository, control, "--head", head, "--base", base,
                                    "--cosmic-ray-venv", str(venv), *flags)
             check(case_name,
-                  completed.returncode == 2
+                  completed.returncode == wanted_exit
                   and all(text in completed.stderr for text in wanted)
                   and not any(text in completed.stderr.lower() for text in unwanted)
                   and [c["arguments"][0] for c in calls(control)] == ["baseline", "dump"],
@@ -1540,8 +2515,8 @@ def run_cases():
         ("the test command runs the sibling suite through the suite runner, which passes it",
          "import sys\nsys.exit(0)\n", 0, 0, "PASS scripts/thing-test.py"),
         ("a suite that fails on the unmutated head, run through the suite runner, makes the "
-         "baseline fail",
-         "import sys\nsys.exit(1)\n", 2, 1, "FAIL scripts/thing-test.py exit 1"),
+         "baseline fail and the script exit 3",
+         "import sys\nsys.exit(1)\n", 3, 1, "FAIL scripts/thing-test.py exit 1"),
     ]:
         with tempfile.TemporaryDirectory() as scratch_name:
             repository, base, head = scratch_repository(scratch_name, {
@@ -1814,6 +2789,12 @@ def run_cases():
                   f"left={list(temporary_directory.iterdir())} out={out} err={err}")
 
     run_recorded_mutant_killed_check_cases()
+    run_test_suite_runner_log_directories_cases()
+    run_log_directories_parent_retention_and_stop_signal_cases()
+    run_recorded_mutant_could_not_be_judged_log_directory_kept_case()
+    run_parallel_mutants_and_kept_sessions_cases()
+    run_parallel_mutant_workers_cases_with_fake_cosmic_ray_package()
+    run_parallel_mutant_workers_case_with_real_cosmic_ray()
 
     # ------------------------------------------------------------------
     # Bad invocations.

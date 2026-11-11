@@ -166,7 +166,7 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           all(f"- `{kind}/` -- " in readme_text
               for kind in ("cold-read-records", "sanity-check-records", "walk",
                            "agent-session-files-by-machine", "session-dialogs", "seats", "analysis",
-                           "daily-full-test-runs", "pull-request-head-test-runs",
+                           "scheduled-full-test-runs-of-main", "pull-request-head-test-runs",
                            "daily-memory-review-marks",
                            "handoff-agent-seat-died-without-session-handoff-restart-watcher",
                            "uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-checks")),
@@ -1876,53 +1876,119 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
     (names_store / "SKILL-handoff-2026-10-25").mkdir()
     (names_store / "SKILL-handoff-2026-10-25-2").mkdir()
     (names_store / "item-19-1-2026-10-25").mkdir()
-    real_destination = os.environ.get(DESTINATION_VARIABLE)
-    os.environ[DESTINATION_VARIABLE] = str(names_store)
+    create_and_claim = (
+        names_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_claimed_in_log_store_and_log_store_claim_failure_reason_or_none)
+    handoff_record, handoff_unclaimed = create_and_claim(
+        names_records / "SKILL-handoff-2026-10-25", None, names_store)
+    item_record, item_unclaimed = create_and_claim(
+        names_records / "item-19-1-2026-10-25", None, names_store)
+    free_record, _ = create_and_claim(names_records / "c-2026-10-25", None, names_store)
+    names_shipper.SSH_COMMAND = unreachable_ssh_command
     try:
-        handoff_record, handoff_unlisted = (
-            names_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
-                names_records / "SKILL-handoff-2026-10-25"))
-        item_record, item_unlisted = (
-            names_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
-                names_records / "item-19-1-2026-10-25"))
-        free_record, _ = names_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
-            names_records / "c-2026-10-25")
-        os.environ[DESTINATION_VARIABLE] = "nobody@ned-box:" + str(names_store)
-        names_shipper.SSH_COMMAND = unreachable_ssh_command
-        try:
-            unlisted_record, unlisted_reason = (
-                names_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
-                    names_records / "SKILL-handoff-2026-10-25"))
-        finally:
-            names_shipper.SSH_COMMAND = real_ssh_command
+        unclaimed_record, unclaimed_reason = create_and_claim(
+            names_records / "SKILL-handoff-2026-10-25", "nobody@ned-box", names_store)
     finally:
-        if real_destination is None:
-            os.environ.pop(DESTINATION_VARIABLE, None)
-        else:
-            os.environ[DESTINATION_VARIABLE] = real_destination
+        names_shipper.SSH_COMMAND = real_ssh_command
     check("the SKILL-handoff case: a name the checkout holds and the -2 the store "
           "holds are both passed over, giving -3",
           handoff_record == names_records / "SKILL-handoff-2026-10-25-3"
-          and handoff_unlisted is None, f"{handoff_record} {handoff_unlisted}")
-    check("the item-19-1 case: a name only the store holds is passed over, giving -2",
-          item_record == names_records / "item-19-1-2026-10-25-2" and item_unlisted is None,
-          f"{item_record} {item_unlisted}")
+          and handoff_unclaimed is None, f"{handoff_record} {handoff_unclaimed}")
+    check("the item-19-1 case: a name only the store holds is passed over, giving -2, "
+          "and the checkout's directory of the passed-over name is removed",
+          item_record == names_records / "item-19-1-2026-10-25-2" and item_unclaimed is None
+          and not (names_records / "item-19-1-2026-10-25").exists(),
+          f"{item_record} {item_unclaimed}")
     check("a name free in both is used as it is, and the directory is made",
           free_record == names_records / "c-2026-10-25" and free_record.is_dir(),
           str(free_record))
-    check("when the store cannot be listed, the name free in the checkout is given "
-          "with the reason, for the caller to print",
-          unlisted_record == names_records / "SKILL-handoff-2026-10-25-2"
-          and "No route to host" in unlisted_reason, f"{unlisted_record} {unlisted_reason}")
-    line = names_shipper.log_store_listing_failed_record_name_may_collide_warning_line(
-        "some-program", unlisted_record, unlisted_reason)
+    check("each name given is claimed in the store before anything ships, so another "
+          "checkout's read cannot take it",
+          all((names_store / record.name).is_dir()
+              for record in (handoff_record, item_record, free_record)),
+          str(sorted(entry.name for entry in names_store.iterdir())))
+    check("when the store cannot be reached to claim the name, the name free in the "
+          "checkout is given with the reason, for the caller to print",
+          unclaimed_record == names_records / "SKILL-handoff-2026-10-25-2"
+          and "No route to host" in unclaimed_reason,
+          f"{unclaimed_record} {unclaimed_reason}")
+    line = names_shipper.log_store_claim_failed_so_record_name_may_collide_warning_line(
+        "some-program", unclaimed_record, unclaimed_reason)
     check("the line a caller prints names the program, the record name and the reason",
           line.startswith("some-program: ") and "SKILL-handoff-2026-10-25-2" in line
-          and unlisted_reason in line, line)
-    # The claims above created their directories; removed so the shipment's
-    # rename cases below see only the names they set up.
-    for claimed_record in (handoff_record, item_record, free_record, unlisted_record):
+          and unclaimed_reason in line, line)
+    # The claims above created their directories, here and in the store;
+    # removed so the shipment's rename cases below see only the names they set up.
+    for claimed_record in (handoff_record, item_record, free_record):
         claimed_record.rmdir()
+        (names_store / claimed_record.name).rmdir()
+    unclaimed_record.rmdir()
+
+    # The claim itself, remotely through a real sh in place of ssh, and locally.
+    claim = names_shipper.log_store_record_directory_name_claimed_by_mkdir_or_taken_or_claim_failure_reason
+    claim_store = names_scratch / "claim store" / "cold-read-records"
+    names_shipper.SSH_COMMAND = ["sh", "-c", 'eval "$2"', "ssh-replay"]
+    try:
+        remote_new = claim("nobody@ned-box", claim_store, "d-2026-10-25")
+        remote_taken = claim("nobody@ned-box", claim_store, "d-2026-10-25")
+        (claim_store / "a-file-2026-10-25").write_text("x\n", encoding="utf-8")
+        remote_file_taken = claim("nobody@ned-box", claim_store, "a-file-2026-10-25")
+        remote_unmakeable = claim("nobody@ned-box", claim_store / "a-file-2026-10-25", "e-2026-10-25")
+        names_shipper.SSH_COMMAND = unreachable_ssh_command
+        remote_unreachable = claim("nobody@ned-box", claim_store, "f-2026-10-25")
+        names_shipper.SSH_COMMAND = ["sh", "-c", "kill -TERM $$", "ssh-replay"]
+        remote_killed = claim("nobody@ned-box", claim_store, "f-2026-10-25")
+    finally:
+        names_shipper.SSH_COMMAND = real_ssh_command
+    check("remotely, a name the store lacks is claimed, the store's records directory "
+          "made first",
+          remote_new == (True, None) and (claim_store / "d-2026-10-25").is_dir(), str(remote_new))
+    check("remotely, a name the store holds, as a directory or a file, is taken, with no reason",
+          remote_taken == (False, None) and remote_file_taken == (False, None),
+          f"{remote_taken} {remote_file_taken}")
+    check("remotely, a store whose records directory cannot be made gives the reason, "
+          "not a taken name",
+          remote_unmakeable[0] is False and remote_unmakeable[1] is not None
+          and "exited 1" in remote_unmakeable[1], str(remote_unmakeable))
+    check("remotely, a claim ssh could not make gives ssh's exit and error",
+          remote_unreachable[0] is False and "exited 255" in remote_unreachable[1]
+          and "No route to host" in remote_unreachable[1], str(remote_unreachable))
+    check("remotely, a claim whose ssh a signal ended gives the reason, not a claimed name",
+          remote_killed[0] is False and "exited -15" in remote_killed[1], str(remote_killed))
+    local_new = claim(None, claim_store, "g-2026-10-25")
+    local_taken = claim(None, claim_store, "g-2026-10-25")
+    local_file_taken = claim(None, claim_store, "a-file-2026-10-25")
+    local_unmakeable = claim(None, claim_store / "a-file-2026-10-25" / "records", "h-2026-10-25")
+    check("locally, a name the store lacks is claimed; one it holds, as a directory or "
+          "a file, is taken",
+          local_new == (True, None) and (claim_store / "g-2026-10-25").is_dir()
+          and local_taken == (False, None) and local_file_taken == (False, None),
+          f"{local_new} {local_taken} {local_file_taken}")
+    check("locally, a store whose records directory cannot be made gives the reason",
+          local_unmakeable[0] is False and local_unmakeable[1].startswith("making "),
+          str(local_unmakeable))
+    if os.geteuid() != 0:
+        unwritable_store = names_scratch / "unwritable-store"
+        unwritable_store.mkdir()
+        unwritable_store.chmod(0o555)
+        try:
+            local_unwritable = claim(None, unwritable_store, "i-2026-10-25")
+            names_shipper.SSH_COMMAND = ["sh", "-c", 'eval "$2"', "ssh-replay"]
+            try:
+                remote_unwritable_unclaimed = claim("nobody@ned-box", unwritable_store, "i-2026-10-25")
+            finally:
+                names_shipper.SSH_COMMAND = real_ssh_command
+        finally:
+            unwritable_store.chmod(0o755)
+        check("locally, a store that will not take the directory gives the reason, "
+              "not a taken name",
+              local_unwritable[0] is False and local_unwritable[1].startswith("claiming ")
+              and str(unwritable_store) in local_unwritable[1], str(local_unwritable))
+        check("remotely, a store that will not take the directory gives mkdir's error, "
+              "not a taken name",
+              remote_unwritable_unclaimed[0] is False
+              and "exited 1" in remote_unwritable_unclaimed[1]
+              and "ermission denied" in remote_unwritable_unclaimed[1],
+              str(remote_unwritable_unclaimed))
 
     # The SKILL-handoff shipment itself: the store's record holds a full run's
     # files, and the local directory of that name holds a fast read's.

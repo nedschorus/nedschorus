@@ -392,7 +392,8 @@ def test_lines_inside_code_are_neither_an_items_start_nor_its_recommendation():
     for shape, hidden in (("a ``` fence", "```\nItem 6 of 9: an example\nRecommendation: hidden.\n```"),
                           ("a ~~~ fence", "~~~\nItem 6 of 9: an example\nRecommendation: hidden.\n~~~"),
                           ("an indented code block", "    Item 6 of 9: an example\n    Recommendation: hidden."),
-                          ("an HTML comment", "<!-- A drafter's note.\nItem 6 of 9: an example\nRecommendation: hidden.\n-->")):
+                          ("an HTML comment", "<!-- A drafter's note.\nItem 6 of 9: an example\nRecommendation: hidden.\n-->"),
+                          ("an HTML comment inside a <div> block", "<div>\n<!-- A drafter's note.\nItem 6 of 9: an example\nRecommendation: hidden.\n-->\n</div>")):
         # The hidden recommendation comes last, since the last recommendation of an item is the one read.
         document = WALK_DOCUMENT.replace(
             "Item 5 of 9 fixes a path. Recommendation: fix the path.\n",
@@ -1502,7 +1503,7 @@ def test_each_check_command_the_hook_names_runs_on_the_real_program():
         check(f"the check command the hook names for {prompt!r} runs and records the answer and his reply",
               result.returncode == 0 and result.stdout.startswith("no proposed text marked")
               and f"item 3 of 9: the user answered {word}" in minutes
-              and f') in his words "{prompt}", which makes its change.' in minutes,
+              and f') in his words "`{prompt}`", which makes its change.' in minutes,
               f"command {commands[0]!r}, exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
     case = Case(next_to_present="item 3 of 9")
     lines = case.lines("d") or []

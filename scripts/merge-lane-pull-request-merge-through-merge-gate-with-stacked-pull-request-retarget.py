@@ -17,6 +17,23 @@ succeeds, git in --review-tools-worktree-at-main removes the pull request's
 review worktrees, pr<n>-head and pr<n>-merged, with any changes in them; a
 worktree not there is left alone.
 
+Then main is tested where the merge changed it: the program fetches origin in
+--review-tools-worktree-at-main, makes a detached worktree pr<n>-merge-commit-on-main-worktree
+at the merge commit GitHub reports, and runs that worktree's own
+scripts/run-all-test-suites.py --only-suites-whose-recorded-inputs-changed-since
+<since>, so only the suites whose recorded inputs changed since a tested tree
+run. <since> is the pr<n>-merged commit the head test run passed on: of the
+records pull-request-head-test-run.py filed under hr/pr<n>/log-store in the
+worktrees and outputs directory, one test log per pr<n>-merged commit, named
+by its hash, the program takes each test log whose last record says it tested
+that commit and exited 0, and uses the one started last. When there is no
+such record, or a test log cannot be read, which the program prints, <since>
+is the nc-head-commit, which predates main's newer merges and so selects more
+suites, never fewer; the program prints that it fell back. The run's suite logs and test-run-report.txt go in
+<merge-lane-worktrees-and-outputs-directory>/pr<n>-after-merge-test-run-logs-<the
+merge commit's first 12 characters>. The program prints the run's SUMMARY line,
+each failed suite's line, and that directory, then removes the worktree.
+
 The merge command deletes the pull request's branch, and GitHub closes every
 open pull request whose base branch is deleted. The retarget is here, not in
 merge-gate.sh, because the gate only reads GitHub and its callers may run it
@@ -30,13 +47,17 @@ Before the gate runs, this program fetches origin in
 --review-tools-worktree-at-main and refuses unless that worktree's HEAD is
 origin/main, so a stale worktree never lets an older gate decide a merge.
 
-Exit codes: 0 merged, with the review worktrees removed; 1 the gate refused,
+Exit codes: 0 merged, with the review worktrees removed, and main's after-merge
+test run passed; 1 the gate refused,
 printed a merge command other than the expected one, or the merge failed; 2 the token file could not be read or
 was empty, --review-tools-worktree-at-main has no scripts/merge-gate.sh, could
 not be fetched or is not at origin/main, the gate could not run or exited with
 a code it does not document, or a read or a retarget on GitHub failed, each
-before any merge; 3 merged, but a review worktree could not be removed, named
-on stdout.
+before any merge; 3 merged, but a step after the merge was not done: a review
+worktree or the pr<n>-merge-commit-on-main-worktree worktree could not be removed, or the
+after-merge test run did not pass, because a suite failed, the runner gave no
+full verdict, or the merge commit could not be read or its worktree made; stdout
+names which.
 """
 
 import argparse
@@ -53,6 +74,11 @@ _common_spec = importlib.util.spec_from_file_location(
         "merge-lane-pull-request-helpers-common-options-paths-and-token.py"))
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
+_head_test_run_spec = importlib.util.spec_from_file_location(
+    "pull_request_head_test_run", Path(__file__).resolve().with_name(
+        "pull-request-head-test-run.py"))
+head_test_run = importlib.util.module_from_spec(_head_test_run_spec)
+_head_test_run_spec.loader.exec_module(head_test_run)
 
 REPOSITORY = common.REPOSITORY
 
@@ -69,7 +95,7 @@ OPEN_PULL_REQUEST_LIST_LIMIT = 1000
 EXIT_MERGED = 0
 EXIT_REFUSED = 1
 EXIT_COULD_NOT_RUN = 2
-EXIT_MERGED_REVIEW_WORKTREE_NOT_REMOVED = 3
+EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE = 3
 MERGE_GATE_DOCUMENTED_EXITS = (0, 1, 2)
 MERGE_GATE = Path("scripts") / "merge-gate.sh"
 
@@ -83,7 +109,7 @@ def parse_arguments(argv):
     parser.add_argument("head_commit", help="the nc-head-commit, all 40 characters")
     parser.add_argument("reviewed_since",
                         help="the reviewed-since time merge-gate.sh takes, YYYY-MM-DDTHH:MM:SSZ")
-    common.add_directory_options(parser, "nothing this program uses")
+    common.add_directory_options(parser, "the after-merge test runs' logs")
     return common.resolve_path_options(parser.parse_args(argv))
 
 
@@ -208,9 +234,128 @@ def review_worktrees_remove(arguments):
                   f"If git names a cause you can fix, fix it and remove the worktree: "
                   f"git -C {checkout} worktree remove --force {worktree}\n"
                   f"Otherwise, tell the user this message.")
-            exit_code = EXIT_MERGED_REVIEW_WORKTREE_NOT_REMOVED
+            exit_code = EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
             continue
         print(f"removed the review worktree {worktree}")
+    return exit_code
+
+
+def head_test_run_passed_merged_commit(arguments):
+    """Return (the pr<n>-merged commit of the newest passing head test run record, None),
+    or (None, why no record gave one)."""
+    kind = (common.pull_request_head_test_run_log_store_root_directory(arguments, arguments.pull_request)
+            / head_test_run.PULL_REQUEST_HEAD_TEST_RUNS_KIND_DIRECTORY_NAME)
+    newest = None
+    for test_log in sorted(kind.glob("*/*.txt")):
+        commit = test_log.stem
+        try:
+            started, record = (
+                head_test_run.pull_request_head_test_run_test_log_split_into_records(
+                    test_log.read_text(encoding="utf-8"))[-1])
+        except (OSError, UnicodeDecodeError,
+                head_test_run.PullRequestHeadTestRunTestLogNotWholeRecordsError) as error:
+            print(f"the head test run record {test_log} could not be read, so it is not "
+                  f"used: {error}\n"
+                  f"Nothing to do: without it the test run selects more suites, never fewer.")
+            continue
+        if not head_test_run.pull_request_head_test_run_record_passed_on_commit_check(
+                record, commit):
+            continue
+        if newest is None or started > newest[0]:
+            newest = (started, commit)
+    if newest is None:
+        return None, f"no readable head test run record under {kind} passed"
+    return newest[1], None
+
+
+def after_merge_test_run(arguments, merge_commit):
+    """Run the selective test run in a fresh worktree at merge_commit; return an exit code."""
+    checkout = arguments.review_tools_worktree_at_main
+    since, why_not = head_test_run_passed_merged_commit(arguments)
+    if since is None:
+        since = arguments.head_commit
+        print(f"selecting the nc-test-suites whose recorded inputs changed since the head "
+              f"commit {since[:12]}, which selects more suites than "
+              f"the merge changed: {why_not}.\n"
+              f"Nothing to do: this run still tests every suite the merge could have changed.",
+              flush=True)
+    else:
+        print(f"selecting the nc-test-suites whose recorded inputs changed since "
+              f"{since[:12]}, the commit the head test run passed on: "
+              f"pull request {arguments.pull_request}'s head merged with main as main was "
+              f"when that run started", flush=True)
+    by_hand = (f"python3 scripts/run-all-test-suites.py "
+               f"--only-suites-whose-recorded-inputs-changed-since {since}")
+    if not merge_commit:
+        print(f"STOP: merged, but the merge commit could not be read, so main was not "
+              f"tested.\n"
+              f"Read it: gh pr view {arguments.pull_request} --repo {REPOSITORY} "
+              f"--json mergeCommit\n"
+              f"Then, in a detached worktree at that commit, run: {by_hand}")
+        return EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
+    environment = common.run_all_test_suites.environment_without_git_redirecting_variables()
+
+    def git(*git_arguments):
+        return subprocess.run(["git", "-C", str(checkout), *git_arguments],
+                              capture_output=True, text=True, env=environment,
+                              stdin=subprocess.DEVNULL)
+
+    worktree = arguments.merge_lane_review_worktrees_directory / f"pr{arguments.pull_request}-merge-commit-on-main-worktree"
+    log_dir = (arguments.merge_lane_worktrees_and_outputs_directory
+               / f"pr{arguments.pull_request}-after-merge-test-run-logs-{merge_commit[:12]}")
+    fetch = git("fetch", "--quiet", "origin")
+    add = (git("worktree", "add", "--detach", str(worktree), merge_commit)
+           if fetch.returncode == 0 else fetch)
+    if add.returncode != 0:
+        print(f"STOP: merged, but main was not tested: could not make a worktree at the "
+              f"merge commit {merge_commit} from {checkout}: {add.stderr.strip()}\n"
+              f"If git names a cause you can fix, fix it; then, in a detached worktree at "
+              f"{merge_commit}, run: {by_hand}\n"
+              f"Otherwise, tell the user this message.")
+        return EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
+
+    print(f"testing main at the merge commit {merge_commit[:12]}: the suites whose recorded "
+          f"inputs changed since {since[:12]}", flush=True)
+    run_all = subprocess.run(
+        [sys.executable, str(worktree / "scripts" / "run-all-test-suites.py"),
+         "--only-suites-whose-recorded-inputs-changed-since", since,
+         "--log-dir", str(log_dir)],
+        cwd=worktree, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        env=environment, stdin=subprocess.DEVNULL)
+    runner = common.run_all_test_suites
+    lines = run_all.stdout.splitlines()
+    summaries = [line for line in lines if line.startswith(runner.SUMMARY_LINE_PREFIX)]
+    for line in lines:
+        if line.startswith((runner.FAILED_SUITE_LINE_PREFIX, runner.NOT_RUN_SUITE_LINE_PREFIX)):
+            print(line)
+    print(summaries[-1] if summaries
+          else f"the test run printed no {runner.SUMMARY_LINE_PREFIX} line; its output was:\n"
+               f"{run_all.stdout.rstrip()}")
+    print(f"the test run's logs and test-run-report.txt: {log_dir}")
+    exit_code = EXIT_MERGED
+    if run_all.returncode != 0:
+        print(f"STOP: merged, but the test run of main at {merge_commit} exited "
+              f"{run_all.returncode}, so main may be broken; the failed suites, if any, are "
+              f"listed above, each with its log.\n"
+              f"Tell the pull request's author, and the user, this message.")
+        exit_code = EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
+    elif not summaries:
+        print(f"STOP: merged, but the test run of main at {merge_commit} exited 0 and printed "
+              f"no {runner.SUMMARY_LINE_PREFIX} line, so it gave no verdict on main.\n"
+              f"In a detached worktree at {merge_commit}, run: {by_hand}\n"
+              f"If that run also prints no {runner.SUMMARY_LINE_PREFIX} line, tell the user "
+              f"this message.")
+        exit_code = EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
+
+    removal = git("worktree", "remove", "--force", str(worktree))
+    if removal.returncode != 0:
+        print(f"STOP: merged, but the worktree {worktree} was not removed: git worktree "
+              f"remove exited {removal.returncode}: {removal.stderr.strip()}\n"
+              f"If git names a cause you can fix, fix it and remove the worktree: "
+              f"git -C {checkout} worktree remove --force {worktree}\n"
+              f"Otherwise, tell the user this message.")
+        return EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
+    print(f"removed the worktree {worktree}")
     return exit_code
 
 
@@ -269,7 +414,14 @@ def main(argv=None, wait=time.sleep):
                f"merge: {gh_error(state)}")
     if merge.returncode != 0:
         return EXIT_REFUSED
-    return review_worktrees_remove(arguments)
+    removal_exit = review_worktrees_remove(arguments)
+    # A failed read prints nothing on stdout, which json.loads refuses.
+    try:
+        merge_commit = json.loads(state.stdout).get("mc") or ""
+    except (ValueError, AttributeError):
+        merge_commit = ""
+    test_exit = after_merge_test_run(arguments, merge_commit)
+    return removal_exit if test_exit == EXIT_MERGED else test_exit
 
 
 if __name__ == "__main__":

@@ -59,13 +59,14 @@ USAGE_OPTIONS = {"--help", "-h"}
 COLD_READ_FULL_RUN_REFUSED_AND_SAVED_REASON = (
     "This cold-read-full-run would outlast the handoff-deferral, so this hook refused it and "
     "saved the command for your successor, who runs it after the session-handoff. The handoff "
-    "writer adds the command to your session-handoff, so you need not. Report it to whoever "
-    "asked for it as put off, not failed."
+    "writer script, nc-systems/handoff/handoff-write-and-check-supervisor.py, adds the command "
+    "to your session-handoff, so you need not. Report the cold-read-full-run to whoever asked "
+    "for it, the user or the agent that dispatched you, as put off, not failed."
 )
 
 COLD_READ_FULL_RUN_REFUSED_NOT_SAVED_REASON = (
     "Refused on purpose: this cold-read-full-run would outlast the handoff-deferral, so this "
-    "hook refused it, but it could not save the command for your successor ({problem}).\n"
+    "hook refused the command, but could not save it for your successor ({problem}).\n"
     "Add a task to your task list (the TaskCreate tool) for your successor, holding the "
     "directory {working_directory} and the command between the two lines below.\n"
     "--- command ---\n"

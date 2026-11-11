@@ -46,17 +46,16 @@ def check(case_name, condition, detail=""):
             print(f"      {detail}")
 
 
-# What each machine had installed when this program was written, measured
-# with `crontab -l` on both on 2026-10-01. The table must give these lines
-# byte for byte: an install on either machine then changes nothing.
+# The cron lines the table must give each machine, byte for byte, in the form
+# `crontab -l` prints them.
 NED_BOX_MIRROR_LINE = (
     "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
     "transcript-mirror-to-log-store.py --failures-only >> "
     "/home/nedlern/.claude/transcript-mirror.log 2>&1")
-NED_BOX_DAILY_LINE = (
-    "30 3 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
-    "daily-full-test-run-of-main.py >> "
-    "/home/nedlern/.claude/daily-full-test-run-of-main.log 2>&1")
+NED_BOX_FULL_TEST_RUN_LINE = (
+    "0 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "scheduled-full-test-run-of-main.py >> "
+    "/home/nedlern/.claude/scheduled-full-test-run-of-main.log 2>&1")
 MAC_MIRROR_LINE = (
     "* * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedschorus/scripts/"
     "transcript-mirror-to-log-store.py --failures-only >> "
@@ -64,16 +63,16 @@ MAC_MIRROR_LINE = (
 NED_BOX_FOREIGN_COMMENT = (
     "# nedsmessenger stopped 2026-09-30 at the user's word: 15 3 * * * "
     "/home/nedlern/agent/nedsmessenger/scripts/nightly-backup.sh")
-MAC_DAILY_PLIST = {
-    "Label": "com.nedschorus.daily-full-test-run-of-main",
+MAC_FULL_TEST_RUN_PLIST = {
+    "Label": "com.nedschorus.scheduled-full-test-run-of-main",
     "ProgramArguments": ["/opt/homebrew/bin/python3",
-                         "/Users/el/Projects/nedschorus/scripts/daily-full-test-run-of-main.py"],
+                         "/Users/el/Projects/nedschorus/scripts/scheduled-full-test-run-of-main.py"],
     "EnvironmentVariables": {
         "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
                 "/usr/sbin:/sbin"},
     "StartCalendarInterval": {"Hour": 3, "Minute": 30},
-    "StandardOutPath": "/Users/el/.claude/daily-full-test-run-of-main.log",
-    "StandardErrorPath": "/Users/el/.claude/daily-full-test-run-of-main.log",
+    "StandardOutPath": "/Users/el/.claude/scheduled-full-test-run-of-main.log",
+    "StandardErrorPath": "/Users/el/.claude/scheduled-full-test-run-of-main.log",
 }
 NED_BOX_SESSION_DIALOGS_LINE = (
     "*/10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
@@ -88,6 +87,11 @@ NED_BOX_CRASH_RESTART_WATCHER_LINE = (
     "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
     "handoff-agent-crash-watcher.py >> "
     "/home/nedlern/.claude/handoff-agent-crash-watcher.log 2>&1")
+NED_BOX_IDLE_SWEEP_LINE = (
+    "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.py >> "
+    "/home/nedlern/.claude/agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-"
+    "write.log 2>&1")
 NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE = (
     "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
     "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> "
@@ -136,7 +140,8 @@ NED_BOX_GUARDED_FILE_PRUNE_LINE = (
 # The deletion of exited agent-sessions' Claude Code temp folders, on ned-box alone.
 NED_BOX_TEMP_FOLDERS_DELETE_LINE = (
     "30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
-    "claude-code-temp-folders-of-exited-agent-sessions-delete.py >> "
+    "claude-code-temp-folders-of-exited-agent-sessions-delete.py "
+    "--then-tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete >> "
     "/home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1")
 # The no-sandbox test suites' run on main in a quiet gap, on ned-box alone.
 NED_BOX_NO_SANDBOX_SUITES_LINE = (
@@ -262,25 +267,25 @@ def run_main(arguments, machine, stub=None, table_path=None):
 real_table = installer.load_table(REAL_TABLE_PATH)
 real_jobs = {job["name"]: job for job in real_table["jobs"]}
 mac, ned_box = real_table["machines"]["mac"], real_table["machines"]["ned-box"]
-mirror, daily = real_jobs["transcript-mirror-to-log-store"], real_jobs["daily-full-test-run-of-main"]
+mirror, full_test_run = real_jobs["transcript-mirror-to-log-store"], real_jobs["scheduled-full-test-run-of-main"]
 clean = real_jobs["clean-worktrees"]
 
 check("the table gives ned-box the transcript mirror's cron line it has installed, byte for byte",
       installer.cron_line(ned_box, mirror, mirror["on"]["ned-box"]) == NED_BOX_MIRROR_LINE,
       installer.cron_line(ned_box, mirror, mirror["on"]["ned-box"]))
-check("the table gives ned-box the daily full test run's cron line it has installed, byte for byte",
-      installer.cron_line(ned_box, daily, daily["on"]["ned-box"]) == NED_BOX_DAILY_LINE,
-      installer.cron_line(ned_box, daily, daily["on"]["ned-box"]))
+check("the table gives ned-box the scheduled full test run's cron line, byte for byte",
+      installer.cron_line(ned_box, full_test_run, full_test_run["on"]["ned-box"]) == NED_BOX_FULL_TEST_RUN_LINE,
+      installer.cron_line(ned_box, full_test_run, full_test_run["on"]["ned-box"]))
 check("the table gives the Mac the transcript mirror's cron line it has installed, byte for byte",
       installer.cron_line(mac, mirror, mirror["on"]["mac"]) == MAC_MIRROR_LINE,
       installer.cron_line(mac, mirror, mirror["on"]["mac"]))
-mac_plist = installer.launch_agent_plist(mac, daily, daily["on"]["mac"])
-check("the Mac's daily full test run is a launchd job at 03:30, not a cron line: a run missed "
+mac_plist = installer.launch_agent_plist(mac, full_test_run, full_test_run["on"]["mac"])
+check("the Mac's scheduled full test run is a launchd job at 03:30, not a cron line: a run missed "
       "while the Mac sleeps starts at the next wake",
-      daily["on"]["mac"]["scheduler"] == "launchd" and mac_plist == MAC_DAILY_PLIST
-      and list(mac_plist) == list(MAC_DAILY_PLIST), mac_plist)
-check("the table gives ned-box the worktree cleanup's cron line at 06:30, two hours after "
-      "the daily full test run",
+      full_test_run["on"]["mac"]["scheduler"] == "launchd" and mac_plist == MAC_FULL_TEST_RUN_PLIST
+      and list(mac_plist) == list(MAC_FULL_TEST_RUN_PLIST), mac_plist)
+check("the table gives ned-box the worktree cleanup's cron line at 06:30, after the scheduled "
+      "full test run",
       installer.cron_line(ned_box, clean, clean["on"]["ned-box"]) == NED_BOX_CLEAN_LINE,
       installer.cron_line(ned_box, clean, clean["on"]["ned-box"]))
 mac_clean_plist = installer.launch_agent_plist(mac, clean, clean["on"]["mac"])
@@ -289,13 +294,15 @@ check("the Mac's worktree cleanup is a launchd job at 06:30, so a run missed whi
       clean["on"]["mac"]["scheduler"] == "launchd" and mac_clean_plist == MAC_CLEAN_PLIST
       and list(mac_clean_plist) == list(MAC_CLEAN_PLIST), mac_clean_plist)
 check("the table's jobs are the two typed by hand before this program, the worktree "
-      "cleanup, ned-box's crash restart watcher, ned-box's Remote Control reconnect watcher, the "
+      "cleanup, ned-box's crash restart watcher, ned-box's agent-seat idle sweep, ned-box's Remote Control reconnect watcher, the "
       "weekly owner check of the work-snapshot hook, the session dialogs refresh, the "
       "guarded-file store's prune, the nc-shared-database's backup and its copy to the "
       "Mac, the deletion of exited agent-sessions' temp folders, the scheduled full "
       "mutation pass, the no-sandbox test suites' run on main, and no other",
-      sorted(real_jobs) == ["claude-code-temp-folders-of-exited-agent-sessions-delete",
-                            "clean-worktrees", "daily-full-test-run-of-main",
+      sorted(real_jobs) == ["agent-seat-idle-sweep-headless-judge-wake-messages-send-and-"
+                            "user-alerts-write",
+                            "claude-code-temp-folders-of-exited-agent-sessions-delete",
+                            "clean-worktrees",
                             "guarded-file-versions-and-approvals-store-removed-checkout-"
                             "copies-prune",
                             "handoff-agent-crash-watcher",
@@ -307,6 +314,7 @@ check("the table's jobs are the two typed by hand before this program, the workt
                             "no-sandbox-test-suites-run-on-main-in-a-quiet-gap",
                             "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-"
                             "tasks-open",
+                            "scheduled-full-test-run-of-main",
                             "transcript-mirror-to-log-store",
                             "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"],
       sorted(real_jobs))
@@ -326,7 +334,7 @@ check("every job's program is a file of this repository",
       all((REPOSITORY_ROOT / job["program"]).is_file() for job in real_table["jobs"]),
       [job["program"] for job in real_table["jobs"]])
 mirror_documentation = (REPOSITORY_ROOT / mirror["program"]).read_text(encoding="utf-8")
-daily_documentation = (REPOSITORY_ROOT / daily["program"]).read_text(encoding="utf-8")
+full_test_run_documentation = (REPOSITORY_ROOT / full_test_run["program"]).read_text(encoding="utf-8")
 clean_documentation = (REPOSITORY_ROOT / clean["program"]).read_text(encoding="utf-8")
 watcher_documentation = (REPOSITORY_ROOT / watcher["program"]).read_text(encoding="utf-8")
 remote_control_watcher = real_jobs[
@@ -378,7 +386,7 @@ nc_shared_database_backup_copy_documentation = (
 check("the lines each program documents are the table's lines, and each names this installer",
       f"  Mac:     {MAC_MIRROR_LINE}\n" in mirror_documentation
       and f"  ned-box: {NED_BOX_MIRROR_LINE}\n" in mirror_documentation
-      and f"    {NED_BOX_DAILY_LINE}\n" in daily_documentation
+      and f"    {NED_BOX_FULL_TEST_RUN_LINE}\n" in full_test_run_documentation
       and f"    {NED_BOX_CLEAN_LINE}\n" in clean_documentation
       and f"    {NED_BOX_CRASH_RESTART_WATCHER_LINE}\n" in watcher_documentation
       and f"    {NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE}\n" in remote_control_watcher_documentation
@@ -389,7 +397,7 @@ check("the lines each program documents are the table's lines, and each names th
       and all("nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py" in text
               for text in (nc_shared_database_backup_documentation,
                            nc_shared_database_backup_copy_documentation,
-                           mirror_documentation, daily_documentation, clean_documentation,
+                           mirror_documentation, full_test_run_documentation, clean_documentation,
                            watcher_documentation, remote_control_watcher_documentation,
                            weekly_live_check_documentation,
                            guarded_file_prune_documentation)))
@@ -404,7 +412,7 @@ check("--print as ned-box prints ned-box's cron lines from the real table and ru
           "machine: ned-box (linux, /home/nedlern)",
           "transcript-mirror-to-log-store — cron line:", NED_BOX_MIRROR_LINE,
           "log-store-session-dialogs-refresh — cron line:", NED_BOX_SESSION_DIALOGS_LINE,
-          "daily-full-test-run-of-main — cron line:", NED_BOX_DAILY_LINE,
+          "scheduled-full-test-run-of-main — cron line:", NED_BOX_FULL_TEST_RUN_LINE,
           "no-sandbox-test-suites-run-on-main-in-a-quiet-gap — cron line:",
           NED_BOX_NO_SANDBOX_SUITES_LINE,
           "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open — cron "
@@ -412,6 +420,8 @@ check("--print as ned-box prints ned-box's cron lines from the real table and ru
           "clean-worktrees — cron line:", NED_BOX_CLEAN_LINE,
           "handoff-agent-crash-watcher — cron line:",
           NED_BOX_CRASH_RESTART_WATCHER_LINE,
+          "agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write — cron "
+          "line:", NED_BOX_IDLE_SWEEP_LINE,
           "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher — "
           "cron line:", NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE,
           "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — cron line:",
@@ -434,7 +444,7 @@ weekly_heading = ("weekly-uncommitted-work-snapshot-hook-real-claude-session-own
                   "hook-real-claude-session-owner-check.plist:\n")
 remote_control_watcher_heading = (
     "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher — cron line:\n")
-daily_part, _, clean_and_weekly_part = mac_printed.partition(clean_heading)
+full_test_run_part, _, clean_and_weekly_part = mac_printed.partition(clean_heading)
 clean_and_watcher_part, _, weekly_and_prune_part = clean_and_weekly_part.partition(weekly_heading)
 clean_part, _, remote_control_watcher_part = clean_and_watcher_part.partition(
     remote_control_watcher_heading)
@@ -450,12 +460,12 @@ check("--print as the Mac prints the mirror's cron line, the full test run's and
       "cleanup's plists, the Remote Control reconnect watcher's cron line, the weekly owner check's and the guarded-file prune's plists, and the "
       "nc-shared-database backup copy's plist, and runs nothing",
       exit_code == 0 and stub.commands == [] and clean_part.startswith("<?xml")
-      and daily_part.startswith(
+      and full_test_run_part.startswith(
           "machine: mac (darwin, /Users/el)\ntranscript-mirror-to-log-store — cron line:\n"
-          f"{MAC_MIRROR_LINE}\ndaily-full-test-run-of-main — launchd job, /Users/el/Library/"
-          "LaunchAgents/com.nedschorus.daily-full-test-run-of-main.plist:\n<?xml")
-      and plistlib.loads(daily_part[daily_part.index("<?xml"):].encode("utf-8"))
-      == MAC_DAILY_PLIST
+          f"{MAC_MIRROR_LINE}\nscheduled-full-test-run-of-main — launchd job, /Users/el/Library/"
+          "LaunchAgents/com.nedschorus.scheduled-full-test-run-of-main.plist:\n<?xml")
+      and plistlib.loads(full_test_run_part[full_test_run_part.index("<?xml"):].encode("utf-8"))
+      == MAC_FULL_TEST_RUN_PLIST
       and plistlib.loads(clean_part.encode("utf-8")) == MAC_CLEAN_PLIST
       and remote_control_watcher_part == f"{MAC_REMOTE_CONTROL_RECONNECT_WATCHER_LINE}\n"
       and weekly_part.startswith("<?xml")
@@ -482,11 +492,11 @@ check("--help ends with the docstring's exit-codes paragraph and prints nothing 
       and " ".join(help_text.split()).endswith(
           "Exit codes: 0 done, or for --check every job matches; 1 a step failed after this "
           "program began changing the machine, or for --check a job differs or is not in the "
-          "table; 2 not run — a bad "
+          "table, or for --remove-not-in-table a crontab line was KEPT; 2 not run — a bad "
           "invocation, a table this program cannot use, a machine the table does not name, a "
           "job's program missing, a crontab that could not be read, or a shell parser that "
           "could not be installed; or for --check, a job not checked because `launchctl print` "
-          "could not report it.")
+          "could not report it, or a crontab line it could not read.")
       and "WHY THIS EXISTS" not in help_text and "THE TABLE is " not in help_text
       and "user-ruled" not in help_text, help_text)
 check("--check's help names both reasons for exit 1",
@@ -504,7 +514,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # jobs; the real-table cases above cover every job the table holds.
     fixture_table["jobs"] = [job for job in fixture_table["jobs"]
                              if job["name"] in ("transcript-mirror-to-log-store",
-                                                "daily-full-test-run-of-main")]
+                                                "scheduled-full-test-run-of-main")]
     for machine_name in ("mac", "ned-box"):
         machine_home = root / f"{machine_name}-home"
         clone = machine_home / "Projects" / "nedschorus"
@@ -531,11 +541,11 @@ with tempfile.TemporaryDirectory() as temporary:
     box = table["machines"]["ned-box"]
     box_lines = {name: installer.cron_line(box, jobs[name], jobs[name]["on"]["ned-box"])
                  for name in jobs}
-    BOX_MIRROR, BOX_DAILY = (box_lines["transcript-mirror-to-log-store"],
-                             box_lines["daily-full-test-run-of-main"])
+    BOX_MIRROR, BOX_FULL_TEST_RUN = (box_lines["transcript-mirror-to-log-store"],
+                             box_lines["scheduled-full-test-run-of-main"])
     BOX_ALONE = box_lines["runs-on-ned-box-alone"]
-    TWO_JOBS = ["--job", "transcript-mirror-to-log-store", "--job", "daily-full-test-run-of-main"]
-    as_installed_today = f"{NED_BOX_FOREIGN_COMMENT}\n{BOX_MIRROR}\n{BOX_DAILY}\n".encode("utf-8")
+    TWO_JOBS = ["--job", "transcript-mirror-to-log-store", "--job", "scheduled-full-test-run-of-main"]
+    as_installed_today = f"{NED_BOX_FOREIGN_COMMENT}\n{BOX_MIRROR}\n{BOX_FULL_TEST_RUN}\n".encode("utf-8")
 
     # --- cron: check and install change nothing that already matches -----
     stub = MachineStub(crontab=as_installed_today)
@@ -557,7 +567,7 @@ with tempfile.TemporaryDirectory() as temporary:
     stub = MachineStub(crontab=None)
     exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
     check("--install for a user with no crontab writes the table's lines in one crontab call",
-          exit_code == 0 and stub.crontab_writes == [f"{BOX_MIRROR}\n{BOX_DAILY}\n".encode()]
+          exit_code == 0 and stub.crontab_writes == [f"{BOX_MIRROR}\n{BOX_FULL_TEST_RUN}\n".encode()]
           and printed.count("installed: ") == 2
           and stub.commands == [["crontab", "-l"], ["crontab", "-"], ["crontab", "-l"]],
           (exit_code, printed, errors, stub.crontab_writes))
@@ -568,70 +578,70 @@ with tempfile.TemporaryDirectory() as temporary:
 
     # --- cron: only the selected jobs' lines change -----------------------
     foreign_line = "15 2 * * * /usr/local/bin/something-else --nightly"
-    differing_daily = BOX_DAILY.replace("30 3 * * *", "0 4 * * *")
+    differing_full_test_run = BOX_FULL_TEST_RUN.replace("0 0 * * *", "0 4 * * *")
     stub = MachineStub(crontab=(
-        f"{NED_BOX_FOREIGN_COMMENT}\n{differing_daily}\n{foreign_line}\n").encode())
+        f"{NED_BOX_FOREIGN_COMMENT}\n{differing_full_test_run}\n{foreign_line}\n").encode())
     exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
     check("a differing line for a job's program is replaced where it stood, the missing job's "
           "line is added, and every other line, the comment included, goes back byte for byte",
           exit_code == 0 and stub.crontab_writes == [(
-              f"{NED_BOX_FOREIGN_COMMENT}\n{BOX_DAILY}\n{foreign_line}\n{BOX_MIRROR}\n").encode()],
+              f"{NED_BOX_FOREIGN_COMMENT}\n{BOX_FULL_TEST_RUN}\n{foreign_line}\n{BOX_MIRROR}\n").encode()],
           (exit_code, stub.crontab_writes))
     check("and the line that was removed is printed",
-          f"replaced: daily-full-test-run-of-main" in printed
-          and f"  the line removed: {differing_daily}\n" in printed
+          f"replaced: scheduled-full-test-run-of-main" in printed
+          and f"  the line removed: {differing_full_test_run}\n" in printed
           and "installed: transcript-mirror-to-log-store" in printed, printed)
 
     not_utf8 = b"# a comment that is not UTF-8: \xff\xfe\nMAILTO=\"\"\n" + foreign_line.encode()
     stub = MachineStub(crontab=not_utf8)        # and no newline after the last line
     exit_code, printed, errors = run_main(
-        ["--install", "--job", "daily-full-test-run-of-main"], NED_BOX, stub)
+        ["--install", "--job", "scheduled-full-test-run-of-main"], NED_BOX, stub)
     check("bytes that are not UTF-8, a variable assignment and a last line with no newline "
           "all go back as they were, before the added line",
-          exit_code == 0 and stub.crontab_writes == [not_utf8 + b"\n" + BOX_DAILY.encode() + b"\n"],
+          exit_code == 0 and stub.crontab_writes == [not_utf8 + b"\n" + BOX_FULL_TEST_RUN.encode() + b"\n"],
           (exit_code, stub.crontab_writes))
-    stub = MachineStub(crontab=not_utf8 + b"\n" + BOX_DAILY.encode())
+    stub = MachineStub(crontab=not_utf8 + b"\n" + BOX_FULL_TEST_RUN.encode())
     exit_code, printed, errors = run_main(
-        ["--install", "--job", "daily-full-test-run-of-main"], NED_BOX, stub)
+        ["--install", "--job", "scheduled-full-test-run-of-main"], NED_BOX, stub)
     check("a crontab that needs no change is not rewritten to add its missing last newline",
           exit_code == 0 and stub.crontab_writes == [], stub.crontab_writes)
 
-    stub = MachineStub(crontab=f"{BOX_DAILY}\n{foreign_line}\n{BOX_DAILY}\n".encode())
+    stub = MachineStub(crontab=f"{BOX_FULL_TEST_RUN}\n{foreign_line}\n{BOX_FULL_TEST_RUN}\n".encode())
     exit_code, printed, errors = run_main(
-        ["--install", "--job", "daily-full-test-run-of-main"], NED_BOX, stub)
+        ["--install", "--job", "scheduled-full-test-run-of-main"], NED_BOX, stub)
     check("two lines for one job become one, where the first stood",
-          exit_code == 0 and stub.crontab_writes == [f"{BOX_DAILY}\n{foreign_line}\n".encode()]
+          exit_code == 0 and stub.crontab_writes == [f"{BOX_FULL_TEST_RUN}\n{foreign_line}\n".encode()]
           and printed.count("  the line removed: ") == 2, (exit_code, printed, stub.crontab_writes))
 
-    commented_out = f"# {BOX_DAILY}"
+    commented_out = f"# {BOX_FULL_TEST_RUN}"
     other_files = "".join(
-        BOX_DAILY.replace("daily-full-test-run-of-main.py", other_file_name) + "\n"
-        for other_file_name in ("daily-full-test-run-of-main-test.py",
-                                "daily-full-test-run-of-main.py.disabled",
-                                "earlier-daily-full-test-run-of-main.py"))
+        BOX_FULL_TEST_RUN.replace("scheduled-full-test-run-of-main.py", other_file_name) + "\n"
+        for other_file_name in ("scheduled-full-test-run-of-main-test.py",
+                                "scheduled-full-test-run-of-main.py.disabled",
+                                "earlier-scheduled-full-test-run-of-main.py"))
     stub = MachineStub(crontab=f"{commented_out}\n{other_files}".encode())
     exit_code, printed, errors = run_main(
-        ["--install", "--job", "daily-full-test-run-of-main"], NED_BOX, stub)
+        ["--install", "--job", "scheduled-full-test-run-of-main"], NED_BOX, stub)
     check("a commented-out line, and lines running other files whose names only begin or end "
           "with the program's, are not the job's line: all stay and the job's line is added",
           exit_code == 0 and stub.crontab_writes == [
-              f"{commented_out}\n{other_files}{BOX_DAILY}\n".encode()],
+              f"{commented_out}\n{other_files}{BOX_FULL_TEST_RUN}\n".encode()],
           (exit_code, stub.crontab_writes))
 
-    moved = BOX_DAILY.replace("/scripts/daily-full-test-run-of-main.py",
-                              "/an-earlier-directory/daily-full-test-run-of-main.py")
+    moved = BOX_FULL_TEST_RUN.replace("/scripts/scheduled-full-test-run-of-main.py",
+                              "/an-earlier-directory/scheduled-full-test-run-of-main.py")
     stub = MachineStub(crontab=f"{moved}\n".encode())
     exit_code, printed, errors = run_main(
-        ["--install", "--job", "daily-full-test-run-of-main"], NED_BOX, stub)
+        ["--install", "--job", "scheduled-full-test-run-of-main"], NED_BOX, stub)
     check("a line running the program from the directory it has since left is replaced, not "
           "left beside the new line: a job's line is known by its program's file name",
-          exit_code == 0 and stub.crontab_writes == [f"{BOX_DAILY}\n".encode()],
+          exit_code == 0 and stub.crontab_writes == [f"{BOX_FULL_TEST_RUN}\n".encode()],
           (exit_code, stub.crontab_writes))
 
     # --- cron: a crontab that cannot be read or written -------------------
     stub = MachineStub(crontab=as_installed_today)
     stub.crontab_list_failure = (1, b"crontab: must be privileged to use -u\n")
-    for mode in (["--install"], ["--check"], ["--remove", "--job", "daily-full-test-run-of-main"]):
+    for mode in (["--install"], ["--check"], ["--remove", "--job", "scheduled-full-test-run-of-main"]):
         exit_code, printed, errors = run_main(mode, NED_BOX, stub)
         check(f"{mode[0]}: a `crontab -l` that fails is not taken for an empty crontab — "
               "not run, exit 2, nothing written",
@@ -660,7 +670,7 @@ with tempfile.TemporaryDirectory() as temporary:
           (exit_code, printed, errors))
     stub = MachineStub(crontab=as_installed_today)
     stub.crontab_write_installs_empty_crontab = True
-    exit_code, printed, errors = run_main(["--remove", "--job", "daily-full-test-run-of-main"],
+    exit_code, printed, errors = run_main(["--remove", "--job", "scheduled-full-test-run-of-main"],
                                           NED_BOX, stub)
     check("--remove: a write that exits 0 but reads back different is FAILED, exit 1, and no "
           "line is reported removed",
@@ -743,7 +753,7 @@ with tempfile.TemporaryDirectory() as temporary:
     fresh_backup_directory()
     stub = MachineStub(crontab=original)
     run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
-    run_main(["--remove", "--job", "daily-full-test-run-of-main"], NED_BOX, stub)
+    run_main(["--remove", "--job", "scheduled-full-test-run-of-main"], NED_BOX, stub)
     saved = backups_in(box_backups)
     check("two writes within one second each keep their own backup",
           len(saved) == 2 and saved[0].read_bytes() == original
@@ -751,7 +761,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     fresh_backup_directory()
     stub = MachineStub(crontab=as_installed_today)
-    exit_code, printed, errors = run_main(["--remove", "--job", "daily-full-test-run-of-main"],
+    exit_code, printed, errors = run_main(["--remove", "--job", "scheduled-full-test-run-of-main"],
                                           NED_BOX, stub)
     saved = backups_in(box_backups)
     check("--remove backs up the crontab before its write",
@@ -759,9 +769,9 @@ with tempfile.TemporaryDirectory() as temporary:
           and "crontab backup:" in printed, (exit_code, printed, saved))
 
     fresh_backup_directory()
-    stub = MachineStub(crontab=f"{BOX_MIRROR}\n{BOX_DAILY}\n{NED_BOX_FOREIGN_COMMENT}\n".encode())
+    stub = MachineStub(crontab=f"{BOX_MIRROR}\n{BOX_FULL_TEST_RUN}\n{NED_BOX_FOREIGN_COMMENT}\n".encode())
     stub.exit_codes["crontab-write"] = 1
-    stray_line = BOX_DAILY.replace("daily-full-test-run-of-main.py", "retired-backup-case.py")
+    stray_line = BOX_FULL_TEST_RUN.replace("scheduled-full-test-run-of-main.py", "retired-backup-case.py")
     stub.crontab = f"{stray_line}\n".encode()
     exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
     saved = backups_in(box_backups)
@@ -826,14 +836,14 @@ with tempfile.TemporaryDirectory() as temporary:
     box_backups.unlink()
 
     # --- cron: check ------------------------------------------------------
-    stub = MachineStub(crontab=f"{NED_BOX_FOREIGN_COMMENT}\n{differing_daily}\n".encode())
+    stub = MachineStub(crontab=f"{NED_BOX_FOREIGN_COMMENT}\n{differing_full_test_run}\n".encode())
     exit_code, printed, errors = run_main(["--check"] + TWO_JOBS, NED_BOX, stub)
     check("--check names a missing line and a differing line, exits 1 and writes nothing",
           exit_code == 1 and stub.crontab_writes == []
           and "DIFFERS: transcript-mirror-to-log-store — the crontab holds no line for "
               "transcript-mirror-to-log-store.py" in printed
-          and f"DIFFERS: daily-full-test-run-of-main — the crontab holds {differing_daily}, "
-              f"not the table's line: {BOX_DAILY}.\n" in printed,
+          and f"DIFFERS: scheduled-full-test-run-of-main — the crontab holds {differing_full_test_run}, "
+              f"not the table's line: {BOX_FULL_TEST_RUN}.\n" in printed,
           (exit_code, printed, errors))
     check("and tells the agent what to do in each of the two cases, one instruction a line",
           printed.splitlines()[-2].startswith("When the table says what this machine should run, "
@@ -850,17 +860,17 @@ with tempfile.TemporaryDirectory() as temporary:
     # --- cron: remove -----------------------------------------------------
     stub = MachineStub(crontab=as_installed_today)
     exit_code, printed, errors = run_main(
-        ["--remove", "--job", "daily-full-test-run-of-main"], NED_BOX, stub)
+        ["--remove", "--job", "scheduled-full-test-run-of-main"], NED_BOX, stub)
     check("--remove takes the named job's line out and leaves every other line",
           exit_code == 0 and stub.crontab_writes == [
               f"{NED_BOX_FOREIGN_COMMENT}\n{BOX_MIRROR}\n".encode()]
-          and f"removed: daily-full-test-run-of-main — the line removed from the crontab: "
-              f"{BOX_DAILY}" in printed, (exit_code, printed, stub.crontab_writes))
+          and f"removed: scheduled-full-test-run-of-main — the line removed from the crontab: "
+              f"{BOX_FULL_TEST_RUN}" in printed, (exit_code, printed, stub.crontab_writes))
     exit_code, printed, errors = run_main(
-        ["--remove", "--job", "daily-full-test-run-of-main"], NED_BOX, stub)
+        ["--remove", "--job", "scheduled-full-test-run-of-main"], NED_BOX, stub)
     check("removing a job the crontab does not hold says so and writes nothing",
           exit_code == 0 and len(stub.crontab_writes) == 1
-          and "absent: daily-full-test-run-of-main" in printed, (exit_code, printed))
+          and "absent: scheduled-full-test-run-of-main" in printed, (exit_code, printed))
     stub = MachineStub(crontab=as_installed_today)
     exit_code, printed, errors = run_main(["--remove"], NED_BOX, stub)
     check("--remove without --job is refused: nothing removes every job at once",
@@ -873,7 +883,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a --job the table lacks is refused, naming the table's jobs",
           exit_code == 2 and "has no job `no-such-job`" in errors
           and "Pass --job with one of: transcript-mirror-to-log-store, "
-              "daily-full-test-run-of-main, runs-on-ned-box-alone." in errors
+              "scheduled-full-test-run-of-main, runs-on-ned-box-alone." in errors
           and stub.commands == [], (exit_code, errors))
     exit_code, printed, errors = run_main(
         ["--install", "--job", "runs-on-ned-box-alone"], MAC, stub)
@@ -941,10 +951,10 @@ with tempfile.TemporaryDirectory() as temporary:
                  claims_the_label, "name a key this program writes")
 
     def same_program_file(defective):
-        defective["jobs"][2]["program"] = "elsewhere/daily-full-test-run-of-main.py"
+        defective["jobs"][2]["program"] = "elsewhere/scheduled-full-test-run-of-main.py"
     table_defect("two jobs with one program file name are refused: each would take the "
                  "other's cron line for its own",
-                 same_program_file, "its program file `daily-full-test-run-of-main.py` twice")
+                 same_program_file, "its program file `scheduled-full-test-run-of-main.py` twice")
 
     def arguments_not_a_list(defective):
         defective["jobs"][0]["arguments"] = "--failures-only"
@@ -974,24 +984,24 @@ with tempfile.TemporaryDirectory() as temporary:
 
     # --- launchd: the Mac --------------------------------------------------
     mac_machine = table["machines"]["mac"]
-    daily_job = jobs["daily-full-test-run-of-main"]
-    daily_placement = daily_job["on"]["mac"]
-    expected_plist = installer.launch_agent_plist(mac_machine, daily_job, daily_placement)
-    LABEL = "com.nedschorus.daily-full-test-run-of-main"
+    full_test_run_job = jobs["scheduled-full-test-run-of-main"]
+    full_test_run_placement = full_test_run_job["on"]["mac"]
+    expected_plist = installer.launch_agent_plist(mac_machine, full_test_run_job, full_test_run_placement)
+    LABEL = "com.nedschorus.scheduled-full-test-run-of-main"
     TARGET = f"{DOMAIN}/{LABEL}"
     plist_path = LAUNCH_AGENTS / f"{LABEL}.plist"
     mac_mirror_line = installer.cron_line(
         mac_machine, jobs["transcript-mirror-to-log-store"],
         jobs["transcript-mirror-to-log-store"]["on"]["mac"])
-    DAILY = ["--job", "daily-full-test-run-of-main"]
+    FULL_TEST_RUN_JOB = ["--job", "scheduled-full-test-run-of-main"]
 
     stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode())
     exit_code, printed, errors = run_main(["--check"], MAC, stub)
-    check("--check on the Mac before the daily run is installed: the mirror matches, the "
+    check("--check on the Mac before the scheduled run is installed: the mirror matches, the "
           "launchd job is not there and not loaded, exit 1, nothing written",
           exit_code == 1 and "matches: transcript-mirror-to-log-store — cron." in printed
-          and f"DIFFERS: daily-full-test-run-of-main — {plist_path} is not there." in printed
-          and f"DIFFERS: daily-full-test-run-of-main — launchd has no job {LABEL} loaded in "
+          and f"DIFFERS: scheduled-full-test-run-of-main — {plist_path} is not there." in printed
+          and f"DIFFERS: scheduled-full-test-run-of-main — launchd has no job {LABEL} loaded in "
               f"{DOMAIN}." in printed
           and not LAUNCH_AGENTS.exists() and stub.crontab_writes == []
           and stub.launchctl_verbs() == ["print"],
@@ -999,12 +1009,12 @@ with tempfile.TemporaryDirectory() as temporary:
 
     before = len(stub.commands)
     exit_code, printed, errors = run_main(["--install"], MAC, stub)
-    check("--install on the Mac leaves the mirror's cron line alone and writes the daily "
+    check("--install on the Mac leaves the mirror's cron line alone and writes the scheduled "
           "run's plist as the table says",
           exit_code == 0 and stub.crontab_writes == []
           and "unchanged: transcript-mirror-to-log-store" in printed
           and plistlib.loads(plist_path.read_bytes()) == expected_plist
-          and f"installed: daily-full-test-run-of-main — wrote {plist_path} and loaded {LABEL} "
+          and f"installed: scheduled-full-test-run-of-main — wrote {plist_path} and loaded {LABEL} "
               f"into {DOMAIN}." in printed, (exit_code, printed, errors))
     check("in this order: read the crontab, lint the plist, boot out the label, bootstrap, "
           "confirm that launchd has the job",
@@ -1017,78 +1027,78 @@ with tempfile.TemporaryDirectory() as temporary:
           "03:30 calendar interval, and both streams to the job's output file",
           expected_plist["ProgramArguments"]
           == ["/opt/homebrew/bin/python3",
-              f"{root}/mac-home/Projects/nedschorus/scripts/daily-full-test-run-of-main.py"]
+              f"{root}/mac-home/Projects/nedschorus/scripts/scheduled-full-test-run-of-main.py"]
           and expected_plist["EnvironmentVariables"] == {
               "PATH": f"{root}/mac-home/.local/bin:/usr/bin:/bin"}
           and expected_plist["StartCalendarInterval"] == {"Hour": 3, "Minute": 30}
           and expected_plist["StandardOutPath"] == expected_plist["StandardErrorPath"]
-          == f"{root}/mac-home/.claude/daily-full-test-run-of-main.log"
+          == f"{root}/mac-home/.claude/scheduled-full-test-run-of-main.log"
           and "RunAtLoad" not in expected_plist, expected_plist)
 
     before = len(stub.commands)
-    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--install"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("a second --install finds the plist as the table says and the job loaded, and "
           "does nothing more than ask",
-          exit_code == 0 and "unchanged: daily-full-test-run-of-main" in printed
+          exit_code == 0 and "unchanged: scheduled-full-test-run-of-main" in printed
           and stub.commands[before:] == [["launchctl", "print", TARGET]],
           (exit_code, printed, stub.commands[before:]))
     exit_code, printed, errors = run_main(["--check"], MAC, stub)
     check("and --check then says both jobs match, exit 0",
           exit_code == 0 and printed.count("matches: ") == 2
-          and "matches: daily-full-test-run-of-main — launchd." in printed, (exit_code, printed))
+          and "matches: scheduled-full-test-run-of-main — launchd." in printed, (exit_code, printed))
 
     stub.loaded.clear()
     before = len(stub.commands)
-    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--install"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("a plist that matches with its job not loaded is loaded again",
-          exit_code == 0 and "installed: daily-full-test-run-of-main" in printed
+          exit_code == 0 and "installed: scheduled-full-test-run-of-main" in printed
           and [command[1] for command in stub.commands[before:]]
           == ["print", "-lint", "bootout", "bootstrap", "print"], stub.commands[before:])
     plist_path.write_bytes(plistlib.dumps(dict(expected_plist, StartCalendarInterval={
         "Hour": 4, "Minute": 0}), sort_keys=False))
-    exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--check"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("--check names a plist that does not say what the table says, and not as a missing "
           "marker line",
           exit_code == 1 and f"{plist_path} does not say what the table says" in printed
           and "lacks the line" not in printed, (exit_code, printed))
-    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--install"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("and --install writes the table's plist over it and loads it again",
           exit_code == 0 and plistlib.loads(plist_path.read_bytes()) == expected_plist
           and stub.launchctl_verbs()[-3:] == ["bootout", "bootstrap", "print"],
           (exit_code, printed, stub.commands[-5:]))
     plist_path.write_bytes(b"this is not a plist")
-    exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--check"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("a file that is not a plist at all is a difference, not a crash",
           exit_code == 1 and "does not say what the table says" in printed, (exit_code, printed))
     plist_path.unlink()
 
     # --- launchd: --start-once ---------------------------------------------
     stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode())
-    exit_code, printed, errors = run_main(["--install", "--start-once"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--install", "--start-once"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("--start-once asks launchd to run the job once, after it is installed",
           exit_code == 0 and stub.commands[-1] == ["launchctl", "kickstart", TARGET]
           and stub.launchctl_verbs() == ["bootout", "bootstrap", "print", "kickstart"]
-          and f"started: daily-full-test-run-of-main — launchd is running {LABEL} once, now"
+          and f"started: scheduled-full-test-run-of-main — launchd is running {LABEL} once, now"
               in printed, (exit_code, printed, stub.commands))
-    exit_code, printed, errors = run_main(["--install", "--start-once"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--install", "--start-once"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("and starts a job it found already installed as the table says",
-          exit_code == 0 and "unchanged: daily-full-test-run-of-main" in printed
+          exit_code == 0 and "unchanged: scheduled-full-test-run-of-main" in printed
           and stub.commands[-2:] == [["launchctl", "print", TARGET],
                                      ["launchctl", "kickstart", TARGET]],
           (exit_code, printed, stub.commands[-3:]))
     stub.exit_codes["kickstart"] = 3
-    exit_code, printed, errors = run_main(["--install", "--start-once"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--install", "--start-once"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("a kickstart that fails is FAILED with its exit code, exit 1",
           exit_code == 1 and f"`launchctl kickstart {TARGET}` exited 3; the job was not started"
                              in errors and "started:" not in printed, (exit_code, printed, errors))
     plist_path.unlink(missing_ok=True)
     stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode())
     stub.exit_codes["print"] = 5
-    exit_code, printed, errors = run_main(["--install", "--start-once"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--install", "--start-once"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("the rerun command a failed launchctl print prints carries --start-once when the run "
           "was given it",
           exit_code == 1 and (f"{SCRIPT_PATH.resolve()} --install --job "
-                              f"daily-full-test-run-of-main --start-once` on this machine.")
+                              f"scheduled-full-test-run-of-main --start-once` on this machine.")
           in errors, (exit_code, errors))
     stub = MachineStub(crontab=as_installed_today)
     exit_code, printed, errors = run_main(["--install", "--start-once"] + TWO_JOBS, NED_BOX, stub)
@@ -1105,7 +1115,7 @@ with tempfile.TemporaryDirectory() as temporary:
     plist_path.unlink()
     stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode())
     stub.exit_codes["bootstrap"] = 5
-    exit_code, printed, errors = run_main(["--install", "--start-once"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--install", "--start-once"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("a bootstrap that fails is FAILED with its exit code, exit 1, the plist left "
           "written and the job not started",
           exit_code == 1 and f"`launchctl bootstrap {DOMAIN} {plist_path}` exited 5" in errors
@@ -1118,39 +1128,39 @@ with tempfile.TemporaryDirectory() as temporary:
                                           "this again after that cause is removed."), errors)
     stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode())
     stub.exit_codes["lint"] = 1
-    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--install"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("a plist that fails plutil's lint is FAILED, exit 1, and is not bootstrapped",
           exit_code == 1 and f"`plutil -lint {plist_path}` exited 1" in errors
           and "bootstrap" not in stub.launchctl_verbs(), (exit_code, errors, stub.commands))
     stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode())
     stub.bootstrap_loads_the_job = False
-    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--install"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("a bootstrap that exits 0 with the job not found afterwards is FAILED, exit 1",
           exit_code == 1 and f"`launchctl print {TARGET}` does not find the job" in errors
           and "installed:" not in printed, (exit_code, printed, errors))
     plist_path.unlink(missing_ok=True)
     stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode())
     stub.exit_codes["print"] = 5
-    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--install"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("a bootstrap that exits 0 followed by a launchctl print that fails with other than "
           "service-not-found is FAILED with print's exit and error, exit 1, not installed",
           exit_code == 1
-          and (f"FAILED: daily-full-test-run-of-main — bootstrap exited 0, and then `launchctl "
+          and (f"FAILED: scheduled-full-test-run-of-main — bootstrap exited 0, and then `launchctl "
                f"print {TARGET}` exited 5, which is neither 0 (loaded) nor 113 (no such job loaded), "
                f"with the error: Could not print: injected launchctl failure; so "
                f"whether {LABEL} is loaded is unknown.") in errors
-          and f"{SCRIPT_PATH.resolve()} --install --job daily-full-test-run-of-main` on this machine." in errors
+          and f"{SCRIPT_PATH.resolve()} --install --job scheduled-full-test-run-of-main` on this machine." in errors
           and "installed:" not in printed, (exit_code, printed, errors))
-    exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--check"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("--check whose launchctl print fails with other than service-not-found reports the "
           "job NOT CHECKED with print's exit and error, not as unloaded, and exits 2",
           exit_code == 2
-          and (f"NOT CHECKED: daily-full-test-run-of-main — `launchctl print {TARGET}` exited 5, "
+          and (f"NOT CHECKED: scheduled-full-test-run-of-main — `launchctl print {TARGET}` exited 5, "
                f"which is neither 0 (loaded) nor 113 (no such job loaded), with the error: "
                f"Could not print: injected launchctl failure; so whether launchd has {LABEL} "
                f"loaded is unknown.") in errors
           and "Fix what launchctl's error names." in errors
-          and f"{SCRIPT_PATH.resolve()} --check --job daily-full-test-run-of-main` on this machine." in errors
+          and f"{SCRIPT_PATH.resolve()} --check --job scheduled-full-test-run-of-main` on this machine." in errors
           and "loaded in" not in printed and "matches: " not in printed,
           (exit_code, printed, errors))
     silent_failure = installer.LaunchctlPrintFailed(TARGET, 5, "")
@@ -1163,8 +1173,8 @@ with tempfile.TemporaryDirectory() as temporary:
                   "FAILED: j")],
           (silent_failure.cause, silent_failure.next_steps("the-rerun", "FAILED: j")))
     stub.print_error_text = b""
-    exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
-    check_rerun = f"{SCRIPT_PATH.resolve()} --check --job daily-full-test-run-of-main"
+    exit_code, printed, errors = run_main(["--check"] + FULL_TEST_RUN_JOB, MAC, stub)
+    check_rerun = f"{SCRIPT_PATH.resolve()} --check --job scheduled-full-test-run-of-main"
     check("--check whose launchctl print fails printing no error ends with the rerun and with "
           "when to stop, which is NOT CHECKED again, not a DIFFERS line, and exits 2",
           exit_code == 2 and errors.splitlines()[-3:] == [
@@ -1172,32 +1182,32 @@ with tempfile.TemporaryDirectory() as temporary:
               "A DIFFERS line is not this failure: it is drift the check found, and does not "
               "count as the rerun failing.",
               installer.next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
-                  "NOT CHECKED: daily-full-test-run-of-main")], (exit_code, errors))
-    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
-    install_rerun = f"{SCRIPT_PATH.resolve()} --install --job daily-full-test-run-of-main"
+                  "NOT CHECKED: scheduled-full-test-run-of-main")], (exit_code, errors))
+    exit_code, printed, errors = run_main(["--install"] + FULL_TEST_RUN_JOB, MAC, stub)
+    install_rerun = f"{SCRIPT_PATH.resolve()} --install --job scheduled-full-test-run-of-main"
     check("--install whose launchctl print fails printing no error ends with the rerun and "
           "with when to stop, and exits 1",
           exit_code == 1 and errors.splitlines()[-2:] == [
               f"Run `{install_rerun}` once more, on this machine; it tries this job alone.",
               installer.next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
-                  "FAILED: daily-full-test-run-of-main")], (exit_code, errors))
+                  "FAILED: scheduled-full-test-run-of-main")], (exit_code, errors))
     stub.print_error_text = b"Could not print: injected launchctl failure\n"
     before = len(stub.commands)
-    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--install"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("--install over a plist that says what the table says, whose launchctl print fails "
           "with other than service-not-found, is FAILED, exit 1, and boots nothing out",
           exit_code == 1
-          and (f"FAILED: daily-full-test-run-of-main — `launchctl print {TARGET}` exited 5, "
+          and (f"FAILED: scheduled-full-test-run-of-main — `launchctl print {TARGET}` exited 5, "
                f"which is neither 0 (loaded) nor 113 (no such job loaded), with the error: "
                f"Could not print: injected launchctl failure; so whether {LABEL} is loaded is "
                f"unknown, and the job was not installed.") in errors
           and stub.commands[before:] == [["launchctl", "print", TARGET]],
           (exit_code, printed, errors, stub.commands[before:]))
-    exit_code, printed, errors = run_main(["--install", "--start-once"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--install", "--start-once"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("over a plist that says what the table says, the rerun command a failed launchctl "
           "print prints carries --start-once when the run was given it",
           exit_code == 1 and "the job was not installed." in errors
-          and (f"{SCRIPT_PATH.resolve()} --install --job daily-full-test-run-of-main "
+          and (f"{SCRIPT_PATH.resolve()} --install --job scheduled-full-test-run-of-main "
                f"--start-once` on this machine.") in errors, (exit_code, errors))
     plist_path.unlink()
     stub = MachineStub(crontab=None)
@@ -1206,24 +1216,24 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a failed crontab write does not stop the launchd job from being installed, and "
           "the run still exits 1",
           exit_code == 1 and "FAILED: `crontab -` exited 1; no cron line was changed." in errors
-          and "installed: daily-full-test-run-of-main" in printed, (exit_code, printed, errors))
+          and "installed: scheduled-full-test-run-of-main" in printed, (exit_code, printed, errors))
 
     # --- launchd: remove ----------------------------------------------------
     stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode(), loaded=[TARGET])
-    exit_code, printed, errors = run_main(["--remove"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--remove"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("--remove boots the label out and deletes its plist, and leaves the crontab alone",
           exit_code == 0 and stub.commands == [["launchctl", "bootout", TARGET]]
           and not plist_path.exists() and stub.loaded == set()
-          and f"removed: daily-full-test-run-of-main — deleted {plist_path}.\n" in printed, (exit_code, printed, stub.commands))
-    exit_code, printed, errors = run_main(["--remove"] + DAILY, MAC, stub)
+          and f"removed: scheduled-full-test-run-of-main — deleted {plist_path}.\n" in printed, (exit_code, printed, stub.commands))
+    exit_code, printed, errors = run_main(["--remove"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("removing a launchd job with no plist still boots it out and says there was none",
           exit_code == 0
-          and f"absent: daily-full-test-run-of-main — there was no {plist_path}.\n" in printed,
+          and f"absent: scheduled-full-test-run-of-main — there was no {plist_path}.\n" in printed,
           (exit_code, printed))
     plist_path.write_bytes(b"a plist")
     stub = MachineStub(loaded=[TARGET])
     stub.exit_codes["bootout"] = 5
-    exit_code, printed, errors = run_main(["--remove"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--remove"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("a bootout that fails with the job still loaded is FAILED, exit 1, and the plist is "
           "kept",
           exit_code == 1 and plist_path.is_file() and "removed:" not in printed
@@ -1236,7 +1246,7 @@ with tempfile.TemporaryDirectory() as temporary:
     stub = MachineStub()
     stub.exit_codes["bootout"], stub.exit_codes["print"] = 5, 1
     stub.loaded.add(TARGET)
-    exit_code, printed, errors = run_main(["--remove"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--remove"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("a bootout that fails while launchctl print fails with other than service-not-found "
           "is FAILED, exit 1, and the plist is kept",
           exit_code == 1 and plist_path.is_file() and "removed:" not in printed
@@ -1248,7 +1258,7 @@ with tempfile.TemporaryDirectory() as temporary:
     retired_line = f"0 5 * * * /usr/bin/python3 {box_clone}/scripts/a-retired-job.py >> /tmp/x 2>&1"
     commented_retired = f"# {retired_line}"
     stub = MachineStub(crontab=(f"{NED_BOX_FOREIGN_COMMENT}\n{commented_retired}\n{BOX_MIRROR}\n"
-                                f"{BOX_DAILY}\n{BOX_ALONE}\n{retired_line}\n{foreign_line}\n").encode())
+                                f"{BOX_FULL_TEST_RUN}\n{BOX_ALONE}\n{retired_line}\n{foreign_line}\n").encode())
     exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
     check("--check reports a cron line that runs a program from the clone and is no job's "
           "line of the table, exit 1, and writes nothing",
@@ -1282,7 +1292,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("--remove-not-in-table takes out exactly that line, in one crontab write, and "
           "leaves every other line",
           exit_code == 0 and stub.crontab_writes == [(
-              f"{NED_BOX_FOREIGN_COMMENT}\n{commented_retired}\n{BOX_MIRROR}\n{BOX_DAILY}\n"
+              f"{NED_BOX_FOREIGN_COMMENT}\n{commented_retired}\n{BOX_MIRROR}\n{BOX_FULL_TEST_RUN}\n"
               f"{BOX_ALONE}\n{foreign_line}\n").encode()]
           and f"removed: not in the table — the line removed from the crontab: "
               f"{retired_line}\n" in printed, (exit_code, printed, stub.crontab_writes))
@@ -1296,7 +1306,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("and --check then finds every job matching and nothing outside the table, exit 0",
           exit_code == 0 and "NOT IN THE TABLE" not in printed, (exit_code, printed))
     exit_code, printed, errors = run_main(
-        ["--remove-not-in-table", "--job", "daily-full-test-run-of-main"], NED_BOX, stub)
+        ["--remove-not-in-table", "--job", "scheduled-full-test-run-of-main"], NED_BOX, stub)
     check("--remove-not-in-table with --job is refused before anything is read",
           exit_code == 2 and "--remove-not-in-table takes no --job: it removes every job "
                              "--check reports NOT IN THE TABLE" in errors,
@@ -1339,48 +1349,101 @@ with tempfile.TemporaryDirectory() as temporary:
                 env_option_takes_a_clone_directory, interpreter_option]
     runs = [runs_directly, runs_through_env, runs_at_reboot]
     stub = MachineStub(crontab="".join(
-        line + "\n" for line in [path_setting, BOX_MIRROR, BOX_DAILY, BOX_ALONE]
+        line + "\n" for line in [path_setting, BOX_MIRROR, BOX_FULL_TEST_RUN, BOX_ALONE]
         + not_runs + runs).encode())
     exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
     check("--check reports a line that runs a program from the clone, directly, through env "
           "or at reboot, and not a line that sets PATH to the clone, only reads or writes "
           "a file there, or gives env or an interpreter an option such as `env -C <clone>/data`",
-          exit_code == 1 and printed.count("NOT IN THE TABLE: ") == 3
+          printed.count("NOT IN THE TABLE: ") == 3
           and all(f"NOT IN THE TABLE: the crontab line {line} — " in printed for line in runs)
           and not any(line in printed for line in not_runs), (exit_code, printed))
+    unread = [env_option_takes_a_clone_directory, interpreter_option]
+    check("and names on stderr each line that gives env or an interpreter an option as NOT "
+          "CHECKED, and exits 2, not 1 or 0",
+          exit_code == 2 and errors.count("NOT CHECKED: the crontab line ") == 2
+          and all(f"NOT CHECKED: the crontab line {line} — it gives an interpreter or env an "
+                  f"option" in errors for line in unread)
+          and f"add its job to {FIXTURE_TABLE_PATH} through a pull request" in errors,
+          (exit_code, errors))
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [BOX_MIRROR, BOX_FULL_TEST_RUN, BOX_ALONE, interpreter_option]).encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("--check with every job matching and one line it cannot read does not report a clean "
+          "result: it names the line NOT CHECKED and exits 2",
+          exit_code == 2 and printed.count("matches: ") == 3 and "NOT IN THE TABLE" not in printed
+          and f"NOT CHECKED: the crontab line {interpreter_option} — " in errors,
+          (exit_code, printed, errors))
+    exit_code, printed, errors = run_main(["--check"] + TWO_JOBS, NED_BOX, stub)
+    check("and --check limited by --job does not read that line",
+          exit_code == 0 and errors == "", (exit_code, errors))
+    defines_a_function = f"0 5 * * * f() {{ {box_clone}/scripts/a-helper.py; }}; /usr/bin/other"
+    no_program_after_interpreter = f"0 11 * * * /usr/bin/python3 < {box_clone}/scripts/a.py"
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [BOX_MIRROR, BOX_FULL_TEST_RUN, BOX_ALONE, interpreter_option,
+                                 defines_a_function, no_program_after_interpreter]).encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("each NOT CHECKED line names its one cause: the option line its option, the function "
+          "line its function, the line with no program after its interpreter that, and none "
+          "another's",
+          exit_code == 2
+          and f"NOT CHECKED: the crontab line {no_program_after_interpreter} — it names no "
+              f"program after its interpreter or env, so whether" in errors
+          and f"NOT CHECKED: the crontab line {interpreter_option} — it gives an interpreter or "
+              f"env an option, which may take the next word, so whether" in errors
+          and f"NOT CHECKED: the crontab line {defines_a_function} — it defines a function, "
+              f"whose body may never run, so whether" in errors
+          and errors.count("it defines a function") == 1
+          and errors.count("it gives an interpreter or env an option") == 1
+          and "crontab -e" not in errors and "ask the user to take the line off" in errors,
+          (exit_code, errors))
+    full_test_run_behind_an_option = BOX_FULL_TEST_RUN.replace(
+        f" {box_clone}/scripts/scheduled-full-test-run-of-main.py",
+        f" -u {box_clone}/scripts/scheduled-full-test-run-of-main.py")
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [BOX_MIRROR, full_test_run_behind_an_option, BOX_ALONE]).encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("a table job's own line that gives its interpreter an option is that job's DIFFERS, "
+          "exit 1, and not NOT CHECKED",
+          full_test_run_behind_an_option != BOX_FULL_TEST_RUN and exit_code == 1
+          and "DIFFERS: scheduled-full-test-run-of-main" in printed and "NOT CHECKED" not in errors,
+          (full_test_run_behind_an_option, exit_code, printed, errors))
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [path_setting, BOX_MIRROR, BOX_FULL_TEST_RUN, BOX_ALONE]
+        + not_runs + runs).encode())
     exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
     check("--remove-not-in-table takes out only those three, and keeps the PATH line, the "
           "lines that only touch a file in the clone and the lines with an option",
           exit_code == 0 and stub.crontab_writes == ["".join(
-              line + "\n" for line in [path_setting, BOX_MIRROR, BOX_DAILY, BOX_ALONE]
+              line + "\n" for line in [path_setting, BOX_MIRROR, BOX_FULL_TEST_RUN, BOX_ALONE]
               + not_runs).encode()], (exit_code, printed, stub.crontab_writes))
 
     # A retired line that runs a program file of the same name as a cron job
     # of the table is found as that job's line, the way an install finds it:
     # --check reports it as that job's DIFFERS, and --install replaces it.
-    same_file_other_arguments = BOX_DAILY.replace("30 3 * * *", "0 2 * * *").replace(
-        "daily-full-test-run-of-main.py", "daily-full-test-run-of-main.py --a-retired-argument")
-    stub = MachineStub(crontab=(f"{BOX_MIRROR}\n{BOX_DAILY}\n{BOX_ALONE}\n"
+    same_file_other_arguments = BOX_FULL_TEST_RUN.replace(
+        "scheduled-full-test-run-of-main.py", "scheduled-full-test-run-of-main.py --a-retired-argument")
+    stub = MachineStub(crontab=(f"{BOX_MIRROR}\n{BOX_FULL_TEST_RUN}\n{BOX_ALONE}\n"
                                 f"{same_file_other_arguments}\n").encode())
     exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
     check("a retired line running a table job's program file is that job's DIFFERS, not NOT "
           "IN THE TABLE",
           exit_code == 1 and "NOT IN THE TABLE" not in printed
-          and f"DIFFERS: daily-full-test-run-of-main — the crontab holds {BOX_DAILY}; "
+          and f"DIFFERS: scheduled-full-test-run-of-main — the crontab holds {BOX_FULL_TEST_RUN}; "
               f"{same_file_other_arguments}, not the table's line" in printed,
           (exit_code, printed))
     exit_code, printed, errors = run_main(["--install"], NED_BOX, stub)
     check("and --install replaces both with the table's one line",
-          exit_code == 0 and stub.crontab == f"{BOX_MIRROR}\n{BOX_DAILY}\n{BOX_ALONE}\n".encode(),
+          exit_code == 0 and stub.crontab == f"{BOX_MIRROR}\n{BOX_FULL_TEST_RUN}\n{BOX_ALONE}\n".encode(),
           (exit_code, printed, stub.crontab))
 
     mac_clone = table["machines"]["mac"]["clone"]
-    stray_daily = installer.cron_line(mac_machine, daily_job, {"schedule": "30 3 * * *"})
-    stub = MachineStub(crontab=f"{mac_mirror_line}\n{stray_daily}\n".encode())
+    stray_full_test_run_line = installer.cron_line(mac_machine, full_test_run_job, {"schedule": "30 3 * * *"})
+    stub = MachineStub(crontab=f"{mac_mirror_line}\n{stray_full_test_run_line}\n".encode())
     exit_code, printed, errors = run_main(["--check"], MAC, stub)
     check("a cron line for a job the table gives this machine as a launchd job is NOT IN THE "
           "TABLE: the table names no cron line for it here",
-          exit_code == 1 and f"NOT IN THE TABLE: the crontab line {stray_daily}" in printed,
+          exit_code == 1 and f"NOT IN THE TABLE: the crontab line {stray_full_test_run_line}" in printed,
           (exit_code, printed))
 
     LAUNCH_AGENTS.mkdir(parents=True, exist_ok=True)
@@ -1395,7 +1458,7 @@ with tempfile.TemporaryDirectory() as temporary:
     unrelated_path.write_bytes(plistlib.dumps({"Label": "com.example.updater"}))
     stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode(),
                        loaded=[f"{DOMAIN}/com.nedschorus.a-retired-job"])
-    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--install"] + FULL_TEST_RUN_JOB, MAC, stub)
     exit_code, printed, errors = run_main(["--check"], MAC, stub)
     check("--check reports a plist this program wrote whose label the table does not name, "
           "exit 1",
@@ -1482,18 +1545,18 @@ with tempfile.TemporaryDirectory() as temporary:
 
     plist_path.write_bytes(plistlib.dumps(expected_plist, sort_keys=False))
     stub.loaded.add(TARGET)
-    exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--check"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("a plist that says what the table says but lacks this program's line is a "
           "difference of its own, so --install rewrites it with the line",
           exit_code == 1 and (
-              f"DIFFERS: daily-full-test-run-of-main — {plist_path} says what the table says "
+              f"DIFFERS: scheduled-full-test-run-of-main — {plist_path} says what the table says "
               "but lacks the line marking it as written by this installer; --install adds "
               "that line.\n") in printed
           and "does not say what the table says" not in printed
           and "--install` on this machine." in printed
           and "When this machine is right and the table is wrong" not in printed,
           (exit_code, printed))
-    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--install"] + FULL_TEST_RUN_JOB, MAC, stub)
     check("and --install writes the line into it",
           exit_code == 0 and installer.PLIST_WRITTEN_BY_THIS_PROGRAM in plist_path.read_bytes()
           and plistlib.loads(plist_path.read_bytes()) == expected_plist, (exit_code, printed))
@@ -1559,7 +1622,7 @@ with tempfile.TemporaryDirectory() as temporary:
                        f"/usr/bin/logger -t x")
     mixed = f"0 6 * * * (/usr/bin/other-job); {box_clone}/scripts/a-retired-mixed-job.py"
     stub = MachineStub(crontab="".join(
-        line + "\n" for line in [BOX_MIRROR, BOX_DAILY, BOX_ALONE, piped_to_logger, mixed]).encode())
+        line + "\n" for line in [BOX_MIRROR, BOX_FULL_TEST_RUN, BOX_ALONE, piped_to_logger, mixed]).encode())
     exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
     check("--check reports a retired job piped to logger, and a line that also runs another job, "
           "saying --remove-not-in-table leaves that line in place",
@@ -1571,7 +1634,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("--remove-not-in-table removes the job piped to logger, keeps the line that also runs "
           "another job, reports it as KEPT, and exits 1",
           exit_code == 1 and stub.crontab_writes == ["".join(
-              line + "\n" for line in [BOX_MIRROR, BOX_DAILY, BOX_ALONE, mixed]).encode()]
+              line + "\n" for line in [BOX_MIRROR, BOX_FULL_TEST_RUN, BOX_ALONE, mixed]).encode()]
           and f"KEPT: not in the table — the crontab line {mixed}" in printed,
           (exit_code, printed, stub.crontab_writes))
 
@@ -1623,6 +1686,18 @@ with tempfile.TemporaryDirectory() as temporary:
                           "\"tree-sitter-bash is missing on ", environment={}) in errors
                       and shell_reader.REQUIREMENTS_FILE.name in errors,
                       (install_calls, exit_code, printed, errors, stub.crontab_writes))
+        install_calls.clear()
+        shell_reader._parser = None
+        shutil.rmtree(shell_reader.STATE_DIRECTORY, ignore_errors=True)
+        shell_reader.load_parser = (lambda: real_load_parser(
+            importer=missing_until_installed, installer=failing_install))
+        stub = MachineStub(crontab=(BOX_MIRROR + "\n" + BOX_FULL_TEST_RUN + "\n" + BOX_ALONE + "\n").encode())
+        with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, None):
+            exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+        check("with tree-sitter-bash missing and its install failing, --check on a crontab that "
+              "holds only the table's own jobs reads no line with the parser and exits 0",
+              install_calls == [] and exit_code == 0 and printed.count("matches: ") == 3,
+              (install_calls, exit_code, printed, errors))
     finally:
         shell_reader.load_parser, shell_reader.STATE_DIRECTORY = real_load_parser, saved_state_directory
         shell_reader._parser = saved_parser

@@ -7,7 +7,7 @@ closing line but its checkout holds no open or paused walk, as NO WALK IN THE
 CHECKOUT says.
 
 Wired as a Stop hook in .claude/settings.json, beside the current-item Stop
-hook, walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py,
+hook, walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py,
 whose turn and transcript readers this hook loads, and the approval-walk
 finder, walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py,
 which finds the open walk, its waiting items and its walk-document's items. It
@@ -157,8 +157,8 @@ that is not JSON or a file it cannot read, the hook prints one line naming it
 on stderr and exits 1: Claude Code records a Stop hook's exit 1 as a
 non-blocking error and still ends the turn.
 
-Agent-facing messages follow
-docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+Tool-messages-to-agent follow
+docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 """
 import datetime
 import functools
@@ -172,7 +172,7 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-CURRENT_ITEM_HOOK_FILE = HERE / "walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py"
+CURRENT_ITEM_HOOK_FILE = HERE / "walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py"
 WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
 ANSWER_HOOK_FILE = (HERE / "walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-"
                     "user-prompt-submit-hook.py")
@@ -180,6 +180,8 @@ REPOSITORY_TOP = HERE.parents[2]
 STOP_HOOKS_STAY_SILENT_RULE_FILE = (
     REPOSITORY_TOP / "nc-systems" / "general-tools"
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+ATTENDANCE_CHECK_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
+                         / "agent-session-unattended-by-user-check-common.py")
 PATH_CONSTANTS_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
                        / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 CLAUDE_CODE_COMMAND_LINE_PREFIX_FILE = (
@@ -358,7 +360,7 @@ def load_module(name, path):
 
 walk_finder = load_module("walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
                           WALK_FINDER_FILE)
-current_item_hook = load_module("walk_me_through_current_item_shown_to_user_after_each_agent_message_stop_hook",
+current_item_hook = load_module("walk_me_through_agent_reply_to_user_not_ending_with_waiting_item_closing_line_refusal_stop_hook",
                                 CURRENT_ITEM_HOOK_FILE)
 answer_hook = load_module(
     "walk_me_through_user_short_answer_to_approval_walk_item_expanded_into_instructions_user_prompt_submit_hook",
@@ -534,7 +536,7 @@ def model_judgement(message_lines, question_like_lines, total, waiting, waiting_
         message="\n".join(message_lines),
         lines="\n".join(f"{number}. {line}" for number, line in enumerate(question_like_lines, 1)))
     command = [*command_line_prefix.claude_code_headless_run_command_line_prefix_build(
-                   "dontAsk", own_settings={"disableAllHooks": True}),
+                   "dontAsk", caller_claude_code_session_settings={"disableAllHooks": True}),
                "--model", MODEL, "--output-format", "json",
                "--json-schema", json.dumps(MODEL_SCHEMA), "--system-prompt", MODEL_SYSTEM_PROMPT,
                "--tools", "",
@@ -664,8 +666,8 @@ def run(stdin_text, environment):
 
 def output_for(payload, environment, model=model_judgement):
     """A block naming the sentence that asks the user something outside the walk's items, or None."""
-    if (environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
-            or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0"):
+    if load_module("agent_session_unattended_by_user_check_common",
+                   ATTENDANCE_CHECK_FILE).agent_session_unattended_by_user(environment):
         return None
     transcript_path = payload.get("transcript_path")
     if not transcript_path or not Path(transcript_path).expanduser().is_file() or not payload.get("cwd"):
