@@ -1995,6 +1995,15 @@ def reflog_copy_and_saved_state_cases(scratch):
     message = world.run()
     check("when the stored reflog line occurs twice, the change is asked about, not approved as "
           "git's own work", str(claude) in message and "has not approved" in message, message)
+    hook = load_hook_in_this_process()
+    entries = [["c1", "5", "checkout: x", "a c1 t 5 +0000\tcheckout: x"],
+               ["c2", "5", "commit: y", "c1 c2 t 5 +0000\tcommit: y"],
+               ["c1", "5", "checkout: x", "a c1 t 5 +0000\tcheckout: x"]]
+    check("a stored line that two entries hold, at an index that no longer finds it, leaves the "
+          "window unknown",
+          hook.entries_after(entries, ["c1", "5", 7, entries[0][3]]) is None
+          and hook.entries_after(entries, ["c1", "5", 0, entries[0][3]]) == entries[1:],
+          hook.entries_after(entries, ["c1", "5", 7, entries[0][3]]))
 
     # -- a reflog position stored by the earlier version of this hook is still read
     world = fresh(scratch, "earlier-reflog-position")
