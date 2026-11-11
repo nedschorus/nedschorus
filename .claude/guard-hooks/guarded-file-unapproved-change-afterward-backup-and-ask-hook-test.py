@@ -1999,11 +1999,21 @@ def reflog_copy_and_saved_state_cases(scratch):
     entries = [["c1", "5", "checkout: x", "a c1 t 5 +0000\tcheckout: x"],
                ["c2", "5", "commit: y", "c1 c2 t 5 +0000\tcommit: y"],
                ["c1", "5", "checkout: x", "a c1 t 5 +0000\tcheckout: x"]]
-    check("a stored line that two entries hold, at an index that no longer finds it, leaves the "
-          "window unknown",
+    check("a stored line that two entries hold leaves the window unknown, even at an index that "
+          "finds one of them, since expiry can move a later equal line there",
           hook.entries_after(entries, ["c1", "5", 7, entries[0][3]]) is None
-          and hook.entries_after(entries, ["c1", "5", 0, entries[0][3]]) == entries[1:],
-          hook.entries_after(entries, ["c1", "5", 7, entries[0][3]]))
+          and hook.entries_after(entries, ["c1", "5", 0, entries[0][3]]) is None
+          and hook.entries_after(entries, ["c1", "5", 2, entries[2][3]]) is None,
+          [hook.entries_after(entries, ["c1", "5", index, entries[0][3]]) for index in (7, 0, 2)])
+    check("a stored line that one entry holds is found wherever expiry has moved it",
+          hook.entries_after(entries, ["c2", "5", 9, entries[1][3]]) == entries[2:],
+          hook.entries_after(entries, ["c2", "5", 9, entries[1][3]]))
+    check("a stored line no entry holds leaves the window unknown, rather than guessing it from "
+          "times, which would leave out a commit made in the stored entry's second",
+          hook.entries_after(entries, ["c0", "4", 0, "a c0 t 4 +0000\tcommit: gone"]) is None
+          and hook.entries_after(entries, ["c0", "4"]) is None
+          and hook.entries_after([], ["c0", "4", 0, "a c0 t 4 +0000\tcommit: gone"]) is None,
+          hook.entries_after(entries, ["c0", "4", 0, "a c0 t 4 +0000\tcommit: gone"]))
 
     # -- a reflog position stored by the earlier version of this hook is still read
     world = fresh(scratch, "earlier-reflog-position")
@@ -2088,6 +2098,34 @@ def reflog_copy_and_saved_state_cases(scratch):
     check("and --restore puts back the approved version's own bytes",
           result.returncode == 0 and claude.read_bytes() == b"project v2\r\n",
           (message[:200], result.stderr, claude.read_bytes()))
+
+    # -- the copy --restore alone keeps under a line-ending filter can be read back
+    claude.write_bytes(b"project v4\r\n")
+    message = world.run()
+    declined = message.split(f"{claude}, version ", 1)[1].split(".", 1)[0] if message else ""
+    directory = world.store / str(claude).lstrip("/")
+    # As when the run that saw the version kept no copy of it, so logged no hash of its bytes.
+    (directory / declined).unlink(missing_ok=True)
+    rewritten = []
+    for body in hook.valid_line_bodies((directory / "log").read_bytes()):
+        fields = body.split("\t")
+        if fields[0] == "seen" and len(fields) > 7 and fields[4] == declined:
+            body = "\t".join(fields[:7])
+        rewritten.append(hook.checked_line(body))
+    (directory / "log").write_bytes(b"".join(rewritten))
+    result = world.command("--restore", claude, declined)
+    saved_environment = dict(os.environ)
+    try:
+        os.environ.update(world.environment())
+        store = hook.Store(world.machine)
+        read_back = store.copied_version(str(claude), declined, store.log(str(claude)))
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_environment)
+    check("a declined version that only --restore copied, under a line-ending filter, is read "
+          "back from its copy rather than judged damaged",
+          result.returncode == 0 and read_back == b"project v4\r\n",
+          (declined, result.stderr, read_back))
 
 
 def durable_ref_cases(scratch):

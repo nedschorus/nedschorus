@@ -467,8 +467,9 @@ class Store:
     def copy(self, path: str, copy_hash: str, data: bytes):
         """Keep one copy of a version, named by its copy hash, git's blob id of the version. A
         copy that matches its name or data's own hash is never replaced, even by an identical
-        one; any other counts as missing and is replaced once. Raises StoreUnreachable when the
-        replacement does not match either."""
+        one; any other counts as missing and is replaced once. Raises StoreUnreachable when
+        another run writes the copy again, matching neither, while this run replaces it; the
+        bytes this run writes are not read back."""
         bytes_hash = blob_hash(data)
         fd = self.path_directory(path, create=True)
         try:
@@ -483,8 +484,8 @@ class Store:
                         # Another run made the copy again after this one removed it, and has
                         # not finished or died part way; the version is not known to be kept.
                         raise StoreUnreachable(
-                            f"the copy {copy_hash} of {path} does not match its hash, and another "
-                            "run wrote it again while this run was replacing it")
+                            f"the copy {copy_hash} of {path} does not match its hash; this run was "
+                            "replacing the copy when another run wrote the copy again")
                     os.unlink(copy_hash, dir_fd=fd)
                     continue
                 try:
@@ -851,37 +852,33 @@ def reflog_entries(git_directory: Path):
 
 def reflog_position(entries):
     """The position stored after a run: [commit, time, index, whole line] of the newest entry.
-    The first two are what an earlier version of this hook stored and reads, so a checkout
-    whose sessions run hooks of both versions keeps working."""
+    Earlier versions of this hook read the first two, or the index, so a checkout whose
+    sessions run hooks of several versions keeps working; this version reads only the line."""
     if not entries:
         return None
     return entries[-1][:2] + [len(entries) - 1, entries[-1][3]]
 
 
 def entries_after(entries, position):
-    """The reflog entries newer than the stored position, or None when the position matches
-    more than one entry, so the entries since the previous run are not known.
+    """The reflog entries newer than the stored position, or None when they are not known:
+    when no entry, or more than one, holds the stored line.
 
-    The position is found by the entry's whole line: old and new commit, time and subject, not
-    by the reflog's length, which expiry can keep constant. A commit and a time alone can repeat
-    within one second, as after a commit, a switch back and a fast-forward merge, and a match on
-    the repeat would leave the agent's own commit out of the window. The stored index tells
-    apart two equal lines; when expiry has moved it, the line must be the only one equal to it.
-    A position an earlier version of this hook stored is [commit, time] alone."""
+    The position is found by the entry's whole line: old and new commit, time and subject. A
+    commit and a time alone can repeat within one second, as after a commit, a switch back and
+    a fast-forward merge, and a match on the repeat would leave the agent's own commit out of
+    the window. Neither the reflog's length nor a stored index tells two equal lines apart,
+    because expiry can drop older entries and move a later equal line to the stored index; and
+    when the line is gone, a guess from times can leave out a commit made in its second. A
+    position an earlier version of this hook stored is [commit, time] alone."""
     if not position:
         return []
     if len(position) < 4:
         matches = [index for index, entry in enumerate(entries) if entry[:2] == position[:2]]
     else:
-        index, line = position[2], position[3]
-        if 0 <= index < len(entries) and entries[index][3] == line:
-            return entries[index + 1:]
-        matches = [index for index, entry in enumerate(entries) if entry[3] == line]
-    if len(matches) > 1:
+        matches = [index for index, entry in enumerate(entries) if entry[3] == position[3]]
+    if len(matches) != 1:
         return None
-    if matches:
-        return entries[matches[0] + 1:]
-    return [entry for entry in entries if int(entry[1]) > int(position[1])]
+    return entries[matches[0] + 1:]
 
 
 def git_operation_in_progress(checkout: Path):
@@ -1596,6 +1593,11 @@ def restore(pairs):
             _, copy_hash, data = current[path]
             if key != DELETED and path not in held:
                 store.copy(path, copy_hash, data)
+                bytes_hash = blob_hash(data)
+                if bytes_hash != copy_hash:
+                    # The run that saw this version may have kept no copy of it, and so logged
+                    # no hash to check this copy by; without one the copy reads as damaged.
+                    log_seen(store, path, "command-line", "", key, copy_hash, "", bytes_hash)
             log = store.log(path)
             newest = newest_approved(store, path, log, key)
             content = None
