@@ -39,13 +39,15 @@ from pathlib import Path
 CREATOR = Path(__file__).resolve().parents[2] / "scripts" / "agent-seat-worktree-create-with-owner-file.py"
 # Claude Code names the branch of a worktree it makes itself worktree-<name>.
 BRANCH_PREFIX = "worktree-"
+FAILED_MESSAGE_TEMPLATE = (
+    "agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook: FAILED: {problem}, "
+    "so no worktree was made and the agent that needed it did not start.\n"
+    "Pass this message to the user word for word; the hook is in .claude/settings.json under "
+    "WorktreeCreate.")
 
 
 def fail(problem):
-    print(f"agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook: FAILED: {problem}, "
-          "so no worktree was made and the agent that needed it did not start.\n"
-          "Pass this message to the user word for word; the hook is in .claude/settings.json under "
-          "WorktreeCreate.", file=sys.stderr)
+    print(FAILED_MESSAGE_TEMPLATE.format(problem=problem), file=sys.stderr)
     return 1
 
 
