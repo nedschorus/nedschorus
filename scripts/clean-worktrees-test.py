@@ -2815,49 +2815,52 @@ with tempfile.TemporaryDirectory() as scratch:
               "scripts/clean-worktrees.py --remove was stopped partway" in undeletable.stdout,
           undeletable.stdout + undeletable.stderr)
 
-    sought = managed / "zz-sought-wt"
-    git(checkout, "worktree", "add", "-b", "zz-sought-wt-branch", str(sought), "origin/main")
-    unreadable_first = managed / "aa-unreadable-gitdir-wt"
-    git(checkout, "worktree", "add", "-b", "aa-unreadable-gitdir-wt-branch", str(unreadable_first),
-        "origin/main")
-    gitdir_file = Path(git(unreadable_first, "rev-parse", "--absolute-git-dir").strip()) / "gitdir"
-    gitdir_file.chmod(0o000)
-    try:
-        found = load_clean_worktrees_module().worktree_own_git_directory_find_even_with_its_dot_git_file_gone(checkout, sought)
-    finally:
-        gitdir_file.chmod(0o644)
-    check("a registration whose gitdir file cannot be read is passed over, and the search goes on",
-          found is not None and (found / "gitdir").read_text(encoding="utf-8").strip()
-          == str((sought / ".git").resolve()), str(found))
-
-    relative = managed / "relative-gitdir-wt"
-    git(checkout, "worktree", "add", "-b", "relative-gitdir-wt-branch", str(relative), "origin/main")
-    relative_registration = Path(git(relative, "rev-parse", "--absolute-git-dir").strip())
-    (relative_registration / "gitdir").write_text(
-        os.path.relpath(relative / ".git", relative_registration) + "\n", encoding="utf-8")
     module = load_clean_worktrees_module()
-    found_relative = module.worktree_own_git_directory_find_even_with_its_dot_git_file_gone(
-        checkout, relative)
-    check("a registration whose gitdir is relative, as --relative-paths writes it, is found",
-          found_relative == relative_registration, f"{found_relative} {relative_registration}")
 
-    undecodable = Path(git(checkout, "rev-parse", "--path-format=absolute",
-                           "--git-common-dir").strip()) / "worktrees" / "aa-undecodable-gitdir"
-    undecodable.mkdir()
-    (undecodable / "gitdir").write_bytes(b"/tmp/not-utf-8-\xff/.git\n")
-    try:
-        found_past_undecodable = module.worktree_own_git_directory_find_even_with_its_dot_git_file_gone(
-            checkout, sought)
-    finally:
-        shutil.rmtree(undecodable)
-    check("a registration whose gitdir is not valid UTF-8 is read, and the search goes on",
-          found_past_undecodable is not None
-          and (found_past_undecodable / "gitdir").read_text(encoding="utf-8").strip()
-          == str((sought / ".git").resolve()), str(found_past_undecodable))
+    def record_of(path):
+        record_file = module.unfinished_worktree_removal_record_file(checkout, path)
+        return json.loads(record_file.read_text(encoding="utf-8")) if record_file.exists() else None
+
+    def registration_of(path):
+        return Path(record_of(path)["registration"])
+
+    detached_after, _ = stopped_partway("stopped-partway-head-gone-wt")
+    after_registration = registration_of(detached_after)
+    # The case of a finish that deleted HEAD and commondir and then failed on logs/: git then
+    # lists the registration as detached, but the record still holds the branch.
+    (after_registration / "HEAD").unlink()
+    (after_registration / "commondir").unlink()
+    head_gone = run_clean(checkout, "--remove-worktree-and-force-delete-its-branch", str(detached_after))
+    check("a finish after the registration's HEAD went still deletes the branch the record names",
+          head_gone.returncode == 0 and not detached_after.exists()
+          and not after_registration.exists()
+          and git(checkout, "branch", "--list", "stopped-partway-head-gone-wt-branch").strip() == ""
+          and "branch stopped-partway-head-gone-wt-branch deleted" in head_gone.stdout
+          and record_of(detached_after) is None,
+          head_gone.stdout + head_gone.stderr)
+
+    emptied, _ = stopped_partway("stopped-partway-registration-emptied-wt")
+    emptied_registration = registration_of(emptied)
+    # The case of a finish that deleted every entry of the registration, gitdir included, and
+    # then failed to delete the directory: the record outside the registration is still there.
+    for entry in list(emptied_registration.iterdir()):
+        shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+    emptied_log = scratch / "emptied-removals-log.txt"
+    emptied_environment = dict(os.environ)
+    emptied_environment[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(emptied_log)
+    emptied_run = subprocess.run(
+        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), "--remove"],
+        capture_output=True, text=True, check=False, env=emptied_environment)
+    emptied_logged = emptied_log.read_text(encoding="utf-8") if emptied_log.is_file() else ""
+    check("a registration emptied of every entry is found by its record, removed and logged",
+          emptied_run.returncode == 0 and not emptied_registration.exists()
+          and not emptied.exists() and record_of(emptied) is None
+          and f"path={emptied}\t" in emptied_logged
+          and "discarded-files=1" in emptied_logged,
+          emptied_run.stdout + emptied_run.stderr + emptied_logged)
 
     held, _ = stopped_partway("stopped-partway-registration-held-wt")
-    held_registration = module.worktree_own_git_directory_find_even_with_its_dot_git_file_gone(
-        checkout, held)
+    held_registration = registration_of(held)
     (held_registration / "logs").mkdir(exist_ok=True)
     (held_registration / "logs" / "HEAD").write_text("x\n", encoding="utf-8")
     (held_registration / "logs").chmod(0o500)
@@ -2865,35 +2868,145 @@ with tempfile.TemporaryDirectory() as scratch:
         held_run = run_clean(checkout, "--remove")
     finally:
         (held_registration / "logs").chmod(0o755)
-    check("a finish that cannot delete all of the registration keeps its gitdir and marker",
-          held_run.returncode == 1 and (held_registration / "gitdir").exists()
-          and (held_registration / module.REMOVAL_STARTED_MARKER_FILE_NAME).exists(),
+    check("a finish that cannot delete all of the registration fails and keeps the record",
+          held_run.returncode == 1 and record_of(held) is not None
+          and "stopped-partway-registration-held-wt: removal FAILED" in held_run.stdout,
           held_run.stdout + held_run.stderr)
-    held_log = scratch / "held-removals-log.txt"
-    held_environment = dict(os.environ)
-    held_environment[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(held_log)
-    held_again = subprocess.run(
-        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), "--remove"],
-        capture_output=True, text=True, check=False, env=held_environment)
-    held_logged = held_log.read_text(encoding="utf-8") if held_log.is_file() else ""
-    check("the next --remove then finishes it, logging the files deleted with it as unknown",
+    held_again = run_clean(checkout, "--remove")
+    check("the next --remove then finishes it, branch included",
           held_again.returncode == 0 and not held_registration.exists() and not registered(held)
-          and f"path={held}\t" in held_logged and "discarded-files=unknown" in held_logged,
-          held_again.stdout + held_again.stderr + held_logged)
+          and git(checkout, "branch", "--list", "stopped-partway-registration-held-wt-branch").strip() == ""
+          and record_of(held) is None,
+          held_again.stdout + held_again.stderr)
+
+    records_directory = module.unfinished_worktree_removal_records_directory(checkout)
+    undeleted, _ = stopped_partway("stopped-partway-record-undeletable-wt")
+    records_directory.chmod(0o500)
+    try:
+        undeleted_run = run_clean(checkout, "--remove")
+    finally:
+        records_directory.chmod(0o755)
+    check("a finish whose record cannot be deleted removes the worktree and its branch, then "
+          "fails naming the record",
+          undeleted_run.returncode == 1 and not undeleted.exists() and not registered(undeleted)
+          and git(checkout, "branch", "--list", "stopped-partway-record-undeletable-wt-branch").strip() == ""
+          and "stopped-partway-record-undeletable-wt: deleting its removal record" in undeleted_run.stdout
+          and record_of(undeleted) is not None,
+          undeleted_run.stdout + undeleted_run.stderr)
+    undeleted_again = run_clean(checkout, "--remove")
+    check("the next --remove deletes that record, naming no branch, since its branch is already "
+          "gone, and prints no FAILED line",
+          undeleted_again.returncode == 0 and record_of(undeleted) is None
+          and "FAILED" not in undeleted_again.stdout
+          and "stopped-partway-record-undeletable-wt: removed" in undeleted_again.stdout.splitlines(),
+          undeleted_again.stdout + undeleted_again.stderr)
+
+    def never_began_record(name):
+        # No owner file, so --remove keeps the worktree without a failure of its own.
+        path = managed / name
+        git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
+        record_file = module.unfinished_worktree_removal_record_file(checkout, path)
+        record_file.parent.mkdir(exist_ok=True)
+        record_file.write_text(json.dumps({
+            "worktree": str(path.resolve()),
+            "registration": git(path, "rev-parse", "--absolute-git-dir").strip(),
+            "branch": f"{name}-branch", "head": "unknown", "discarded": []}), encoding="utf-8")
+        return path, record_file
+
+    for flag, name in (("--remove", "never-began-record-undeletable-wt"),
+                       ("--remove-worktree-and-force-delete-its-branch",
+                        "never-began-record-undeletable-named-wt")):
+        path, record_file = never_began_record(name)
+        records_directory.chmod(0o500)
+        try:
+            stuck_run = run_clean(checkout, flag, *([] if flag == "--remove" else [str(path)]))
+        finally:
+            records_directory.chmod(0o755)
+        check(f"{flag} fails, exit 1, when the record of a removal that never began cannot "
+              f"be deleted, and keeps the worktree",
+              stuck_run.returncode == 1 and (path / ".git").exists() and record_file.exists()
+              and f"{name}: deleting its removal record" in stuck_run.stdout
+              and "whose removal never began, FAILED" in stuck_run.stdout,
+              stuck_run.stdout + stuck_run.stderr)
+        record_file.unlink()
+
+    never_began = managed / "removal-never-began-wt"
+    git(checkout, "worktree", "add", "-b", "removal-never-began-wt-branch", str(never_began),
+        "origin/main")
+    stale_record = module.unfinished_worktree_removal_record_file(checkout, never_began)
+    stale_record.parent.mkdir(exist_ok=True)
+    stale_record.write_text(json.dumps({
+        "worktree": str(never_began.resolve()),
+        "registration": git(never_began, "rev-parse", "--absolute-git-dir").strip(),
+        "branch": "removal-never-began-wt-branch", "head": "unknown", "discarded": []}),
+        encoding="utf-8")
+    dropped = run_clean(checkout, "--remove")
+    check("a record of a removal that never began is dropped, and the worktree judged as any other",
+          (never_began / ".git").exists() and not stale_record.exists()
+          and "removal-never-began-wt: removed" not in dropped.stdout,
+          dropped.stdout + dropped.stderr)
+
+    broken_record = module.unfinished_worktree_removal_records_directory(checkout) / "0123456789abcdef.json"
+    broken_record.write_text("{not json", encoding="utf-8")
+    broken_run = run_clean(checkout, "--remove")
+    broken_record.unlink()
+    check("a removal record that cannot be read is a failure naming the file, exit 1",
+          broken_run.returncode == 1
+          and "0123456789abcdef.json: FAILED — scripts/clean-worktrees.py cannot read this "
+              "removal record" in broken_run.stdout,
+          broken_run.stdout + broken_run.stderr)
+
+    records_directory = module.unfinished_worktree_removal_records_directory(checkout)
+    (records_directory / "a-no-worktree.json").write_text(json.dumps({"registration": "x"}),
+                                                          encoding="utf-8")
+    (records_directory / "b-a-list.json").write_text("[]", encoding="utf-8")
+    (records_directory / "c-a-directory.json").mkdir()
+    try:
+        _, unreadable_records = module.unfinished_worktree_removal_records(checkout)
+    finally:
+        (records_directory / "a-no-worktree.json").unlink()
+        (records_directory / "b-a-list.json").unlink()
+        (records_directory / "c-a-directory.json").rmdir()
+    check("a record missing a field, one that is not an object and one that cannot be read "
+          "are each named as unreadable, with their error",
+          [(record_file.name, error.split(":")[0]) for record_file, error in unreadable_records]
+          == [("a-no-worktree.json", "KeyError"), ("b-a-list.json", "TypeError"),
+              ("c-a-directory.json", "IsADirectoryError")],
+          str(unreadable_records))
+
+    reused = managed / "registration-reused-wt"
+    git(checkout, "worktree", "add", "-b", "registration-reused-wt-branch", str(reused), "origin/main")
+    reused_registration = Path(git(reused, "rev-parse", "--absolute-git-dir").strip())
+    (reused_registration / "gitdir").write_text(
+        os.path.relpath(reused / ".git", reused_registration) + "\n", encoding="utf-8")
+    check("a registration whose relative gitdir names the worktree is the worktree's own",
+          module.registration_points_to_worktree_or_has_no_gitdir_file(reused_registration, reused), "")
+    check("a registration whose gitdir names another worktree is not the worktree's",
+          not module.registration_points_to_worktree_or_has_no_gitdir_file(reused_registration, managed / "other-wt"),
+          "")
+    unreadable_gitdir_registration = scratch / "unreadable-gitdir-registration"
+    (unreadable_gitdir_registration / "gitdir").mkdir(parents=True)
+    check("a registration whose gitdir file cannot be read is not the worktree's",
+          not module.registration_points_to_worktree_or_has_no_gitdir_file(unreadable_gitdir_registration, reused),
+          "")
+    check("a registration whose gitdir file is gone is deleted as the worktree's",
+          module.registration_points_to_worktree_or_has_no_gitdir_file(scratch / "no-such-registration", reused), "")
 
     unwritable = managed / "removal-file-unwritable-wt"
     git(checkout, "worktree", "add", "-b", "removal-file-unwritable-wt-branch", str(unwritable),
         "origin/main")
     give_stopped_owner(unwritable)
-    registration = Path(git(unwritable, "rev-parse", "--absolute-git-dir").strip())
-    registration.chmod(0o500)
+    records_directory = module.unfinished_worktree_removal_records_directory(checkout)
+    records_directory.mkdir(exist_ok=True)
+    records_directory.chmod(0o500)
     try:
         refused = run_clean(checkout, "--remove")
     finally:
-        registration.chmod(0o755)
-    check("a removal whose removal-started file cannot be written is not begun, and fails",
+        records_directory.chmod(0o755)
+    check("a removal whose removal record cannot be written is not begun, and fails",
           refused.returncode == 1 and (unwritable / ".git").exists()
-          and "removal-file-unwritable-wt: removal FAILED, worktree kept" in refused.stdout,
+          and "removal-file-unwritable-wt: removal FAILED, worktree kept — "
+              "scripts/clean-worktrees.py could not write its removal record" in refused.stdout,
           refused.stdout + refused.stderr)
 
 # --- The machine's task lists stay out of the suite's runs ---

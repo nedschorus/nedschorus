@@ -109,24 +109,24 @@ checks and the shipments, that the worktree holds no uncommitted or untracked
 file, so a file written meanwhile keeps it.
 
 STOPPED PARTWAY. Just before `git worktree remove --force`, --remove writes
-the file clean-worktrees-removal-started-marker into the worktree's directory
-under the clone's .git/worktrees/, its registration. git deletes the
-worktree's files, its .git file among them, before that directory, so a run
-killed inside the removal can leave a registration git would prune that still
-holds the file. The cleaner finds a worktree's registration by the gitdir
-file inside it, which names the worktree's .git file, so it finds it with the
-worktree's directory gone; --remove-worktree-and-force-delete-its-branch PATH
-finds it this way too. A later --remove, or
---remove-worktree-and-force-delete-its-branch naming it, finishes that
-removal: it deletes what is left of the worktree's directory, then the
-registration's directory, its gitdir file and the marker last, so a deletion
-that fails partway leaves what the next run needs to try again. It then
-deletes the branch as for any removal: --remove with `git branch -d`, as
-BRANCHES says, and --remove-worktree-and-force-delete-its-branch with
-`git branch -D`. It logs the files deleted with it as unknown, since git can
-no longer list them. Its records were shipped and its work kept before the
-file was written. The
-report modes name it as done, and the dead-registration line leaves it out.
+an unfinished-worktree removal record, a JSON file in clean-worktrees-unfinished-worktree-removal-records/ in the
+clone's git directory, outside the worktree and its registration under
+.git/worktrees/. It holds the worktree's path, its registration's path, its
+branch, its HEAD and the files the removal discards, and it is deleted last,
+after the removal is reported and logged, or its log line failed, so a run
+killed or failing at any point of the removal leaves it whole. Each later --remove first finishes the removal of
+every record: it deletes what is left of the worktree's directory and of its
+registration, unless that registration's gitdir file names another worktree,
+then deletes the branch as for any removal, --remove with `git branch -d`,
+as BRANCHES says, and logs the removal with the record's discarded files.
+--remove-worktree-and-force-delete-its-branch PATH finishes the record of
+PATH the same way, deleting the branch with `git branch -D`. A record whose
+worktree still has its .git file and a registration git would not prune
+names a removal that never began: --remove deletes it, and the worktree is
+judged as any other. The report modes name a recorded worktree as done, and
+the dead-registration line leaves it out. A record that cannot be read is,
+for --remove, a failure named with its file, and the run exits 1;
+--remove-worktree-and-force-delete-its-branch names it as kept and goes on.
 
 BRANCHES. The cleaner deletes a local branch other than main whose commits
 are all on origin/main and which no worktree has checked out, with
@@ -285,6 +285,7 @@ or --force-delete-branch that is exit 1 with a FAILED line.
 """
 
 import contextlib
+import hashlib
 import importlib.util
 import json
 import os
@@ -468,41 +469,59 @@ def list_worktrees(repo, main_checkout):
 
 
 def dead_worktree_registrations(repo):
-    """Return (path, git reason) for unlocked prunable registrations; raise
-    git_output.GitCommandFailed when git cannot list them."""
+    """Return (path, git reason) for unlocked prunable registrations no removal record names;
+    raise git_output.GitCommandFailed when git cannot list them."""
+    recorded = {Path(record["worktree"]).resolve() for record in unfinished_worktree_removal_records(repo)[0]}
     # A prunable directory can still exist and hold work; report git's reason without inferring absence.
     listing = git_output.run_git(repo, ["worktree", "list", "--porcelain", "-z"])
     return [(record.path, record.prunable_reason or "no reason given")
             for record in git_output.worktree_records(listing)
             if record.prunable_reason is not None
-            and not removal_was_started(repo, Path(record.path))]
+            and Path(record.path).resolve() not in recorded]
 
 
-REMOVAL_STARTED_MARKER_FILE_NAME = "clean-worktrees-removal-started-marker"
+UNFINISHED_WORKTREE_REMOVAL_RECORDS_DIRECTORY_NAME = "clean-worktrees-unfinished-worktree-removal-records"
 
 
-def worktree_own_git_directory_find_even_with_its_dot_git_file_gone(repo, worktree):
-    """Return the worktree's directory under the clone's .git/worktrees/, found by its gitdir
-    file, or None when no readable gitdir file names it; raise git_output.GitCommandFailed when
-    git cannot name the clone's git directory."""
+def unfinished_worktree_removal_records_directory(repo):
+    """Return the directory of unfinished-worktree removal records in the clone's git directory; raise
+    git_output.GitCommandFailed when git cannot name it."""
     common = os.fsdecode(git_output.run_git(
         repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).strip()
-    wanted = (worktree / ".git").resolve()
-    for registration in sorted((Path(common) / "worktrees").glob("*")):
+    return Path(common) / UNFINISHED_WORKTREE_REMOVAL_RECORDS_DIRECTORY_NAME
+
+
+def unfinished_worktree_removal_record_file(repo, worktree):
+    name = hashlib.sha256(os.fsencode(str(Path(worktree).resolve()))).hexdigest()[:16]
+    return unfinished_worktree_removal_records_directory(repo) / f"{name}.json"
+
+
+def unfinished_worktree_removal_records(repo):
+    """Return (records, unreadable): each readable removal record as a dict with its "file",
+    and (file, error text) for each that cannot be read; raise git_output.GitCommandFailed
+    when git cannot name the directory."""
+    records, unreadable = [], []
+    directory = unfinished_worktree_removal_records_directory(repo)
+    if not directory.is_dir():
+        return records, unreadable
+    for record_file in sorted(directory.glob("*.json")):
         try:
-            # git writes a relative gitdir, under --relative-paths, relative to the registration.
-            named = registration / os.fsdecode((registration / "gitdir").read_bytes().strip())
-        except OSError:
+            record = json.loads(record_file.read_text(encoding="utf-8"))
+            record["worktree"], record["registration"]
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            unreadable.append((record_file, f"{type(error).__name__}: {error}"))
             continue
-        if named.resolve() == wanted:
-            return registration
-    return None
+        record["file"] = record_file
+        records.append(record)
+    return records, unreadable
 
 
-def removal_was_started(repo, worktree):
-    """Whether a --remove run wrote its removal-started file for this worktree's registration."""
-    registration = worktree_own_git_directory_find_even_with_its_dot_git_file_gone(repo, worktree)
-    return registration is not None and (registration / REMOVAL_STARTED_MARKER_FILE_NAME).exists()
+def removal_never_began(record, listed):
+    """Whether the worktree a record names still has its .git file and a registration git
+    would not prune, as `git worktree list` showed it in listed."""
+    worktree = Path(record["worktree"])
+    entry = listed.get(worktree.resolve())
+    return entry is not None and entry.prunable_reason is None and (worktree / ".git").exists()
 
 
 def branch_refs_with_no_worktree_fully_on_main(repo):
@@ -840,8 +859,6 @@ class Verdict:
     # Kept locked by Claude Code's lock of an ended agent-session that no agent-seat's
     # transcripts name: the count lines name it for the user.
     for_the_user_to_keep_or_delete: bool = False
-    # A removal an earlier --remove began and was killed in; --remove finishes it.
-    removal_stopped_partway: bool = False
 
 
 def owner_text(owner):
@@ -1214,8 +1231,6 @@ def remove_worktree(worktree, branch, repo, verdict, one_named=False):
     """Ship its log-store records, keep what the removal would lose, then remove a done worktree
     and delete its branch when every commit of the branch is on origin/main, or, for one named
     worktree, whatever the branch holds; return False when something failed."""
-    if verdict.removal_stopped_partway:
-        return finish_removal_stopped_partway(worktree, branch, repo, verdict, one_named)
     unshipped = ship_log_store_records(worktree)
     if unshipped:
         if one_named:
@@ -1275,13 +1290,18 @@ def remove_worktree(worktree, branch, repo, verdict, one_named=False):
               f"untracked or ignored file(s): {discarded_files_text(discarded)}")
     head = commit_of(worktree, "HEAD")
     git_directory = os.fsdecode(git_output.run_git(worktree, ["rev-parse", "--absolute-git-dir"]))
+    record_file = unfinished_worktree_removal_record_file(repo, worktree)
+    record = {"worktree": str(worktree.resolve()), "registration": git_directory.strip(),
+              "branch": branch, "head": head, "discarded": list(discarded)}
     try:
-        (Path(git_directory.strip()) / REMOVAL_STARTED_MARKER_FILE_NAME).write_text("", encoding="utf-8")
+        record_file.parent.mkdir(exist_ok=True)
+        written = record_file.with_suffix(".json.writing")
+        written.write_text(json.dumps(record), encoding="utf-8")
+        os.replace(written, record_file)
     except OSError as error:
-        print(f"{worktree.name}: removal FAILED, worktree kept — the cleaner could not write "
-              f"{REMOVAL_STARTED_MARKER_FILE_NAME} into the worktree's registration directory under the "
-              f"clone's .git/worktrees/: {error}. It writes that file before every removal, so "
-              f"that a later run can finish a removal stopped partway")
+        print(f"{worktree.name}: removal FAILED, worktree kept — scripts/clean-worktrees.py could "
+              f"not write its removal record {record_file}: {error}. It writes that record before "
+              f"every removal, so that a later run can finish a removal stopped partway")
         print_next_remove_run_line(
             WORKTREE_KEPT_AFTER_FAILURE_NEXT_REMOVE_RUN_RETRIES_LINE_TEMPLATE.format(name=worktree.name),
             one_named)
@@ -1289,48 +1309,106 @@ def remove_worktree(worktree, branch, repo, verdict, one_named=False):
     # A single --force removes untracked and modified files but still refuses a locked worktree.
     removal = run_git(repo, "worktree", "remove", "--force", str(worktree))
     if removal.returncode != 0:
+        # A refusal that deleted nothing leaves a record the next run drops as never begun.
         print(f"{worktree.name}: removal FAILED — {removal.stderr.strip()[:120]}")
         return False
-    return report_removal_and_delete_branch(worktree, branch, repo, head, discarded, one_named)
+    record["file"] = record_file
+    return report_removal_and_delete_branch_then_delete_unfinished_worktree_removal_record(record, repo, one_named)
 
 
-def removal_stopped_partway_verdict(record):
-    return Verdict(True, "an earlier scripts/clean-worktrees.py --remove was stopped while removing "
-                         "this worktree, and the next --remove finishes that removal",
-                   judged_head=record.head, removal_stopped_partway=True)
-
-
-def finish_removal_stopped_partway(worktree, branch, repo, verdict, one_named):
-    """Delete what a stopped `git worktree remove` left, the worktree's directory and its
-    registration's directory, then report and delete the branch as for any removal."""
-    registration = worktree_own_git_directory_find_even_with_its_dot_git_file_gone(repo, worktree)
+def finish_recorded_removal(record, repo, one_named):
+    """Delete what a removal stopped partway left of the worktree's directory and of its
+    registration, then report the removal, delete its branch and delete its record; return False
+    when something failed, keeping the record for the next run."""
+    worktree = Path(record["worktree"])
+    registration = Path(record["registration"])
     try:
         if worktree.exists():
             shutil.rmtree(worktree)
-        # The caller found the registration a moment ago; None means another process removed it.
-        if registration is not None:
-            # gitdir and the marker go last, so a deletion that fails partway leaves what the
-            # next run needs to find this registration and finish the removal.
-            last = ("gitdir", REMOVAL_STARTED_MARKER_FILE_NAME)
-            for entry in sorted(registration.iterdir(), key=lambda entry: entry.name in last):
-                if entry.is_dir() and not entry.is_symlink():
-                    shutil.rmtree(entry)
-                else:
-                    entry.unlink()
-            registration.rmdir()
+        if registration.exists() and registration_points_to_worktree_or_has_no_gitdir_file(registration, worktree):
+            shutil.rmtree(registration)
     except OSError as error:
         print(f"{worktree.name}: removal FAILED — an earlier scripts/clean-worktrees.py --remove "
               f"was stopped partway through removing this worktree, and deleting what that run "
-              f"left of its directory and of its registration directory under .git/worktrees/ "
+              f"left of its directory and of its registration directory {registration} "
               f"failed: {error}")
         print_next_remove_run_line(
             f"{worktree.name}: do nothing now: the next scripts/clean-worktrees.py --remove, daily "
-            f"or at a handoff, tries again to finish the removal; if it fails the same way there, "
-            f"fix the cause the line above names", one_named)
+            f"or at a handoff, tries again to finish the removal from its record "
+            f"{record['file']}; if it fails the same way there, fix the cause the line above "
+            f"names", one_named)
         return False
-    # The worktree's .git file is gone, so git can no longer list the files deleted with it.
-    return report_removal_and_delete_branch(worktree, branch, repo,
-                                            verdict.judged_head or "unknown", None, one_named)
+    branch = record.get("branch")
+    if branch and run_git(repo, "rev-parse", "--verify", "--quiet",
+                          f"refs/heads/{branch}").returncode != 0:
+        branch = None
+    record["branch"] = branch
+    return report_removal_and_delete_branch_then_delete_unfinished_worktree_removal_record(record, repo, one_named)
+
+
+def registration_points_to_worktree_or_has_no_gitdir_file(registration, worktree):
+    """Whether the registration's gitdir file names the worktree's .git file, or is gone; a
+    registration git has since given to another worktree is not deleted."""
+    try:
+        # git writes a relative gitdir, under --relative-paths, relative to the registration.
+        named = registration / os.fsdecode((registration / "gitdir").read_bytes().strip())
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return named.resolve() == (worktree / ".git").resolve()
+
+
+def report_removal_and_delete_branch_then_delete_unfinished_worktree_removal_record(record, repo, one_named):
+    """Report the recorded removal and delete its branch, then delete its record; return False
+    when something failed."""
+    worktree = Path(record["worktree"])
+    reported = report_removal_and_delete_branch(
+        worktree, record.get("branch"), repo, record.get("head") or "unknown",
+        record.get("discarded"), one_named)
+    try:
+        record["file"].unlink()
+    except OSError as error:
+        print(f"{worktree.name}: deleting its removal record {record['file']} FAILED: {error}; "
+              f"the next scripts/clean-worktrees.py --remove finds the worktree gone and "
+              f"deletes the record then")
+        return False
+    return reported
+
+
+def finish_or_drop_recorded_removals(repo, main_checkout, remove):
+    """Finish, with --remove, each recorded removal that began, and drop each that never began;
+    in the report modes name each that began as done. Return (failures, the worktree paths the
+    worktree loop leaves out); raise git_output.GitCommandFailed when git cannot list them."""
+    records, unreadable = unfinished_worktree_removal_records(repo)
+    failures = 0
+    for record_file, error in unreadable:
+        print(f"{record_file.name}: FAILED — scripts/clean-worktrees.py cannot read this removal "
+              f"record in {record_file.parent}: {error}. Read it; finish the removal it names by "
+              f"hand, or delete the file if it names none")
+        failures += 1
+    listed = {Path(worktree).resolve(): record
+              for worktree, _, record in list_worktrees(repo, main_checkout)}
+    handled = set()
+    for record in records:
+        worktree = Path(record["worktree"])
+        if removal_never_began(record, listed):
+            if remove:
+                try:
+                    record["file"].unlink()
+                except OSError as error:
+                    print(f"{worktree.name}: deleting its removal record {record['file']}, "
+                          f"whose removal never began, FAILED: {error}")
+                    failures += 1
+            continue
+        handled.add(worktree.resolve())
+        if not remove:
+            print(f"{worktree.name}: done — an earlier scripts/clean-worktrees.py --remove was "
+                  f"stopped while removing this worktree, and the next --remove finishes that "
+                  f"removal")
+        elif not finish_recorded_removal(record, repo, one_named=False):
+            failures += 1
+    return failures, handled
 
 
 def report_removal_and_delete_branch(worktree, branch, repo, head, discarded, one_named):
@@ -1421,10 +1499,12 @@ def print_count_lines(repo, kept_verdicts, pull_requests):
 def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
     """Report or remove the worktrees and orphaned branch refs, and report dead registrations;
     return the number of failures, or raise git_output.GitCommandFailed when git cannot list them."""
-    failures = 0
+    failures, recorded = finish_or_drop_recorded_removals(repo, main_checkout, remove)
     pull_requests = PullRequestsByHeadBranchLazyCache(repo)
     kept_verdicts = []
     for worktree, branch, record in list_worktrees(repo, main_checkout):
+        if worktree.resolve() in recorded:
+            continue
         verdict = None
         if remove and record.locked_reason is not None:
             verdict, ended_lock = claude_code_subagent_lock_verdict_or_ended_lock(worktree, record)
@@ -1435,9 +1515,6 @@ def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
                         False, "its owner file or its unlock failed", KEPT_NOT_CHECKABLE)))
                     continue
                 record = record._replace(locked_reason=None)
-        if verdict is None and record.prunable_reason is not None and record.locked_reason is None \
-                and removal_was_started(repo, worktree):
-            verdict = removal_stopped_partway_verdict(record)
         if verdict is None:
             verdict = classify(worktree, branch, record, pull_requests)
         if not verdict.done:
@@ -1686,6 +1763,23 @@ def remove_one_named_worktree(repo, main_checkout, path):
     removed, or kept for an open pull request, with nothing failing. Raise
     git_output.GitCommandFailed when git cannot list the worktrees."""
     wanted = Path(path).resolve()
+    listed = {Path(worktree).resolve(): record
+              for worktree, _, record in list_worktrees(repo, main_checkout)}
+    records, unreadable = unfinished_worktree_removal_records(repo)
+    for record_file, error in unreadable:
+        print(f"{record_file.name}: kept — scripts/clean-worktrees.py cannot read this removal "
+              f"record in {record_file.parent}: {error}")
+    for record in records:
+        if Path(record["worktree"]).resolve() != wanted:
+            continue
+        if not removal_never_began(record, listed):
+            return finish_recorded_removal(record, repo, one_named=True)
+        try:
+            record["file"].unlink()
+        except OSError as error:
+            print(f"{Path(path).name}: deleting its removal record {record['file']}, whose "
+                  f"removal never began, FAILED: {error}")
+            return False
     found = [(worktree, branch, record)
              for worktree, branch, record in list_worktrees(repo, main_checkout)
              if worktree.resolve() == wanted]
@@ -1694,10 +1788,6 @@ def remove_one_named_worktree(repo, main_checkout, path):
               f"as `git worktree list` shows them")
         return False
     worktree, branch, record = found[0]
-    if record.prunable_reason is not None and record.locked_reason is None \
-            and removal_was_started(repo, worktree):
-        return remove_worktree(worktree, branch, repo, removal_stopped_partway_verdict(record),
-                               one_named=True)
     try:
         by_head_branch = list_all_pull_requests_grouped_by_head_branch(repo)
     except PullRequestListingFailed as error:
