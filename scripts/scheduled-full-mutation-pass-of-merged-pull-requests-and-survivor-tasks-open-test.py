@@ -14,6 +14,7 @@ import fcntl
 import importlib.util
 import json
 import os
+import re
 import signal
 import sqlite3
 import subprocess
@@ -315,6 +316,17 @@ def run_every_exit_but_0_6_7_9_opens_a_job_failure_task_cases():
           set(opened_for_exit) == exits
           and all(tasks for runs in opened_for_exit.values() for tasks in runs),
           (sorted(exits), opened_for_exit))
+
+    # A reader of the job log matches an exit code to its meaning by the docstring's numbers.
+    documented = {name: int(number) for name, number
+                  in re.findall(r"\b(EXIT_[A-Z_]+) \((\d+)\)", job.__doc__)}
+    exit_constants = {name: value for name, value in vars(job).items()
+                      if name.startswith("EXIT_") and isinstance(value, int)}
+    check("each exit code has a value of its own, and each the docstring numbers has that number",
+          len(set(exit_constants.values())) == len(exit_constants)
+          and len(documented) >= 6
+          and all(exit_constants.get(name) == number for name, number in documented.items()),
+          (exit_constants, documented))
 
 
 def run_untestable_merge_cases():
@@ -1084,6 +1096,38 @@ def run_cases():
               completed.returncode == 0 and "TASK LOST" not in fixture.records()[-1].read_text()
               and fixture.state_json()["tasks_opened"] == {},
               (completed.returncode, completed.stderr, fixture.state_json()))
+
+    # Tasks that still hold their mutant, or are completed, come before the lost ones in the
+    # state, so a loop that stops at either misses the lost tasks after it.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        merge = fixture.commit("scripts/thing.py",
+                               "def double(x):\n    return x + x\nVALUE = 1\nOTHER = 2\n",
+                               author="alpha")
+        fixture.run({merge: {"json": verdict(survived=[
+            survivor(1, "core/ReplaceBinaryOperator_Add_Sub"), survivor(),
+            survivor(3, "core/ReplaceBinaryOperator_Add_Div"),
+            survivor(4, "core/ReplaceBinaryOperator_Add_Mod")])}})
+        order = [given["task_id"] for given in fixture.state_json()["tasks_opened"].values()]
+        finished = json.loads((alpha_list / "2.json").read_text())
+        finished["status"] = "completed"
+        (alpha_list / "2.json").write_text(json.dumps(finished))
+        (alpha_list / "3.json").unlink()
+        (alpha_list / "4.json").unlink()
+        completed = fixture.run()
+        record = fixture.records()[-1].read_text()
+        check("after a held task and a completed task, each of two lost tasks gets its own "
+              "TASK LOST line, and the run exits 7",
+              order == [1, 2, 3, 4]
+              and completed.returncode == job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR
+              and record.count("TASK LOST: ") == 2
+              and "TASK LOST: task #3 on alpha's task list" in record
+              and "TASK LOST: task #4 on alpha's task list" in record
+              and [given["task_id"] for given in fixture.state_json()["tasks_opened"].values()]
+              == [1],
+              (order, completed.returncode, record, fixture.state_json()))
 
     # A mutant whose task file is gone, as after a fold of its task into another and the
     # handoff prune of the completed task, follows the one open task that names its diff file;
