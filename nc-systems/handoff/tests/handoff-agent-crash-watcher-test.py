@@ -282,11 +282,12 @@ def run_decision_cases(root: Path):
           and "had restarted it at 2026-10-12 03:16 UTC" in text
           and "/home/nedlern/.claude/projects/-merge-lane-2" in text, text)
     check("a task tells the agent-seat to find and fix the cause, and when to tell the user",
-          "Find the cause and fix it going forward, in a pull request.\n" in text
+          "Find the cause and fix it going forward. A fix to code, settings or instructions goes "
+          "in a pull request.\n" in text
           and "If the fix needs a change to a guarded-file, tell the user" in text
           and "If you cannot find the cause, or cannot fix it, tell the user" in text, text)
-    check("a task gives the record's path on ned-box",
-          f"Record: {root / 'second-crash' / 'decisions.jsonl'}\n" in text, text)
+    check("a task cites the record as a path on ned-box, which works from either machine",
+          f"Record: nedlern@ned-box:{root / 'second-crash' / 'decisions.jsonl'}\n" in text, text)
     check("the task written is logged with its id and task list",
           any(entry["decision"] == "task written for the agent-seat to find the cause and fix it"
               and entry["kind"] == "second-crash" and entry["task"] == 1
@@ -317,14 +318,14 @@ def run_decision_cases(root: Path):
     failed = harness.tasks("recovery-failed")
     text = failed[0]["description"] if failed else ""
     check("the failed-recovery task quotes recovery's last line, not its earlier ones",
-          "Its last line was:\n  merge-lane-2: REFUSED — the seat directory is in use\n" in text
+          "Recovery's last line was:\n  merge-lane-2: REFUSED — the seat directory is in use\n" in text
           and "checking the seat" not in text, text)
     harness = Harness(root / "recovery-failed-silent", recovery_result=(1, ""))
     crash_after_running(harness)
     failed = harness.tasks("recovery-failed")
     text = failed[0]["description"] if failed else ""
     check("a recovery that printed nothing is said to have printed nothing",
-          "Its last line was:\n  (it printed nothing)\n" in text, text)
+          "Recovery's last line was:\n  (it printed nothing)\n" in text, text)
     check("a failed recovery is logged",
           any(entry["decision"].startswith("recovery failed") for entry in harness.decisions()),
           repr(harness.decisions()))
@@ -1505,7 +1506,7 @@ def run_user_alert_cases(root: Path):
           and "Task subject: Crash watcher, recovery-failed: scripts/recover-crashed-seats.py could not "
               "restart merge-lane-2; find why and fix the cause\n" in text
           and "  merge-lane-2: REFUSED it\n" in text
-          and "Find the cause and fix it going forward, in a pull request.\n" in text, text)
+          and "Find the cause and fix it going forward." in text, text)
     check("that notice gets one alert, titled by the failure's kind, whose action is to fix the task "
           "write and do the task",
           len(written) == 1

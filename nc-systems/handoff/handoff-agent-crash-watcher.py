@@ -225,7 +225,7 @@ AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME = "fleet-restart-at-login"
 # the fix needs a guarded-file changed or the cause cannot be found.
 FAILURE_KIND_TO_AGENT_SEAT_TASK_SUBJECT_TEMPLATE = {
     "second-crash": "Crash watcher, second-crash: {seat} stopped twice within an hour without a "
-                    "handoff; find why and fix the cause",
+                    "session-handoff; find why and fix the cause",
     "recovery-failed": "Crash watcher, recovery-failed: scripts/recover-crashed-seats.py could "
                        "not restart {seat}; find why and fix the cause",
     "assessment-failed": "Crash watcher, assessment-failed: the crash watcher cannot check {seat}; "
@@ -239,20 +239,20 @@ FAILURE_KIND_TO_AGENT_SEAT_TASK_SUBJECT_TEMPLATE = {
 }
 FAILURE_KIND_TO_AGENT_SEAT_TASK_DESCRIPTION_TEMPLATE = {
     "second-crash": (
-        "{seat} stopped at about {died_at} without writing a handoff. The crash watcher "
+        "{seat} stopped at about {died_at} without writing a session-handoff. The crash watcher "
         "{earlier_attempt}. The watcher restarts an agent-seat at most once an hour, so it left "
         "{seat} down after this second stop.\n"
         "The conversations that stopped are the newest .jsonl files in {transcripts}.\n"),
     "recovery-failed": (
-        "{seat} stopped at about {died_at} without writing a handoff, and the crash watcher could "
-        "not restart it: scripts/recover-crashed-seats.py {seat} exited {exit_code}. Its last "
-        "line was:\n"
+        "{seat} stopped at about {died_at} without writing a session-handoff, and the crash "
+        "watcher could not restart it: scripts/recover-crashed-seats.py {seat} exited {exit_code}. "
+        "Recovery's last line was:\n"
         "  {recovery_last_line}\n"
-        "Its whole output is in the record named below. The watcher did not try again for that "
-        "stop.\n"),
+        "Recovery's whole output is in the record named below. The watcher did not try again for "
+        "that stop.\n"),
     "assessment-failed": (
         "The crash watcher could not check {seat}: {error}\n"
-        "Until the cause is fixed, the watcher cannot restart {seat} if it crashes. The watcher "
+        "Until the cause is fixed, the watcher cannot restart {seat} if {seat} crashes. The watcher "
         "writes this task again only if the error changes; until then each run writes the error "
         "to the record.\n"),
     "run-failed": (
@@ -268,13 +268,14 @@ FAILURE_KIND_TO_AGENT_SEAT_TASK_DESCRIPTION_TEMPLATE = {
         "left {seat} down.\n"),
     "recovery-refuses": (
         "{seat} was down, or could not be shown to be running, and the crash watcher could not "
-        "restart it: scripts/recover-crashed-seats.py refused it, saying:\n"
+        "restart {seat}: scripts/recover-crashed-seats.py refused {seat}, saying:\n"
         "  {refusal}\n"
         "The watcher had seen {seat} running; its supervisor last checked in at about "
         "{died_at}.\n"),
 }
 AGENT_SEAT_TASK_DESCRIPTION_CLOSING_TEMPLATE = (
-    "Find the cause and fix it going forward, in a pull request.\n"
+    "Find the cause and fix it going forward. A fix to code, settings or instructions goes in a "
+    "pull request.\n"
     "If the fix needs a change to a guarded-file, tell the user what change it needs and why.\n"
     "If you cannot find the cause, or cannot fix it, tell the user what you found.\n"
     "A subagent tells the agent that dispatched it instead of the user.\n"
@@ -567,7 +568,7 @@ class Watcher:
         subject = FAILURE_KIND_TO_AGENT_SEAT_TASK_SUBJECT_TEMPLATE[kind].format(seat=seat)
         description = (FAILURE_KIND_TO_AGENT_SEAT_TASK_DESCRIPTION_TEMPLATE[kind]
                        + AGENT_SEAT_TASK_DESCRIPTION_CLOSING_TEMPLATE).format(
-            seat=seat, record=self.decisions_path, **fields)
+            seat=seat, record=f"nedlern@ned-box:{self.decisions_path}", **fields)
         try:
             task_id, task_list = self.agent_seat_task_write(owner, subject, description)
         except OSError as error:
