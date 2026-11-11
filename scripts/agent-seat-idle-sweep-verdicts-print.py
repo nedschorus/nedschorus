@@ -664,23 +664,26 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         task_directory = paths.tasks_root / f"nedschorus-{seat}-tasks"
         open_waiting_tasks = open_tasks_with_prerequisites_or_blocked_by(task_directory)
         verdict["sentences"] = matched_sentences(facts, since, open_waiting_tasks)
-        raised = [item for item in verdict["sentences"] if item["code_reading"] != fields.NOT_RAISED]
-        if not raised:
-            verdict.update(rules_three_to_five(verdict, put_off_at, checker, task_directory))
-        elif any(item["code_reading"] == fields.JUDGE for item in raised):  # pragma: no mutate, raised holds only the UNBACKED and JUDGE constants themselves, and "unbacked" sorts after "judge", so <= and is give what == gives
-            judged = [item for item in raised if item["code_reading"] == fields.JUDGE]
+        sentences_by_code_reading = {}
+        for item in verdict["sentences"]:
+            sentences_by_code_reading.setdefault(item["code_reading"], []).append(item)
+        judged = sentences_by_code_reading.get(fields.JUDGE)
+        unbacked = sentences_by_code_reading.get(fields.UNBACKED)
+        if judged:
             verdict[fields.TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE] = (
                 tool_calls_since_start_of_earliest_turn_with_sentence_to_judge(facts, judged))
             verdict[fields.OPEN_TASKS_WITH_PREREQUISITES_OR_BLOCKED_BY] = open_waiting_tasks
             # Only the judge can find every sentence backed, and then rules 3 to 5 decide; a
             # sentence code already found unbacked means that can never happen. Rule 2 is set
             # after those reads, so one that fails leaves the rule null.
-            if not any(item["code_reading"] == fields.UNBACKED for item in raised):
+            if not unbacked:
                 verdict[fields.IF_EVERY_SENTENCE_BACKED] = rules_three_to_five(
                     verdict, put_off_at, checker, task_directory)
             verdict.update({fields.RULE: 2, fields.DECISION: fields.JUDGE})
-        else:
+        elif unbacked:
             verdict.update({fields.RULE: 2, fields.DECISION: fields.SEND_UNBACKED})
+        else:
+            verdict.update(rules_three_to_five(verdict, put_off_at, checker, task_directory))
     except ReadFailure as error:
         verdict["errors"].append(str(error))
     return verdict
