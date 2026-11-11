@@ -18,7 +18,7 @@ Change the file only with `scripts/proposed-improvements-or-changes-file-entry-s
 
 ## 1. Read every file of the GHI-MD first
 
-Read every proposed-improvements-or-changes-file of the GHI-MD before you act, not only the one you were given, and run the program's `show` subcommand on each. They are the files in the log-store directory above whose names start with the GHI-MD's file name without `.md`, or with that name without its leading issue number and hyphen, followed by `-proposed-improvements-or-changes-`. List them with `ls` on ned-box, through `ssh nedlern@ned-box ls <directory>` when you are elsewhere.
+Read every proposed-improvements-or-changes-file of the GHI-MD before you act, not only the one you were given, and run the program's `show` subcommand on each. The GHI-MD's name is the part of the given file's name before `-proposed-improvements-or-changes-`. The files are those in the log-store directory above whose names start with that name, with or without its leading issue number and hyphen, followed by `-proposed-improvements-or-changes-`. List them with `ls` on ned-box, through `ssh nedlern@ned-box ls <directory>` when you are elsewhere.
 
 Work through every open entry in them before you report, even when one of them goes to the user.
 
@@ -30,9 +30,9 @@ Work through every open entry in them before you report, even when one of them g
 
 ## 3. Work on an entry: at most 3 tries
 
-A try is one attempt to settle an entry: reading its sources, finding out whether it is real and worth doing, and, when it is, making the change. Record each try with the `try` subcommand once you have done the work, saying in `--found` what you read and what you found, with the words of each source you rely on, on one line. After a try brings an entry to 3 tries, the program says so; unless that try settles the entry, mark it with `needs-the-user --because three-tries`.
+A try is one attempt to settle an entry: reading its sources, finding out whether it is real and worth doing, and, when it is, making the change. Record each try with the `try` subcommand once you have done the work, saying in `--found` what you read and what you found, with the words of each source you rely on, on one line. After a try brings an entry to 3 tries, the program says so; unless that try settles the entry, run `needs-the-user` on the entry with `--because three-tries`.
 
-An entry of the first kind in "4. What goes to the user", whose change would alter a design, such as a GHI-MD that is a design, may go to the user at once, without a try.
+An entry of the first kind in "4. What goes to the user", whose change would alter a design, such as a GHI-MD that is a design, may go to the user at once, without a try: run `needs-the-user` on it with `--because cold-read-document`.
 
 Each try ends in one of these five ways.
 
@@ -43,10 +43,10 @@ An entry is not worth doing when the problem is not real, or the improvement doe
 A second, independent agent must agree:
 
 1. Record your try with `try`, ending `--found` with your conclusion.
-2. Run `second-agent-input` on the entry, with one `--source` for each source your try cites: a path in this repository, a log-store path, a pull request or a GHI.
+2. Run `second-agent-input` on the entry, with one `--source` for each source your try cites: a path in this repository, a log-store path, `PR <number>` or `GHI <number>`.
 3. Start a new general-purpose subagent with the Agent tool, not a fork, since a fork would see your conclusion, and give it exactly the text `second-agent-input` printed, adding nothing.
-4. Record the verdict its last line gives with `second-agent-verdict`: `--agrees` for `VERDICT: agrees`, and `--disagrees` for `VERDICT: disagrees` or for a reply that ends with neither line. Give `--who` as "fresh general-purpose subagent of" followed by your `--by` name.
-5. If it agrees, mark the entry with `settle --kind not-worth-doing`, giving in `--how` the reason in one sentence. If it disagrees, the try is spent and the entry stays open: read its reasons, and start another try if the program allows one.
+4. Record the verdict its last line gives with `second-agent-verdict`: `--agrees` for `VERDICT: agrees`, and `--disagrees` for `VERDICT: disagrees`, for a reply that ends with neither line, and for no reply. Give `--who` as "fresh general-purpose subagent of" followed by your `--by` name.
+5. If it agrees, mark the entry with `settle --kind not-worth-doing`, giving in `--how` the reason in one sentence. If it disagrees, the try is spent and the entry stays open: read the reasons in its reply, and start another try if the program allows one; when it does not, run `needs-the-user` on the entry with `--because three-tries`.
 
 ### Worth doing, and doable now
 
@@ -58,7 +58,7 @@ When the change is new work rather than an edit of the GHI-MD, file a new GHI, a
 
 ### Worth doing, but not doable now
 
-Leave the entry open, with its try recorded: the open entry is the reminder, and no task is needed. A maintenance-job of GHI [Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedschorus/nedschorus/issues/1058) is to list every entry open more than 7 days. When a program the change needs fails, such as `scripts/ghi-issue-write.py`, say in the try what it printed.
+Leave the entry open, with its try recorded: the open entry is the reminder, and no task is needed. A maintenance-job of GHI [Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedschorus/nedschorus/issues/1058) is to list every entry open more than 7 days. When a program the change needs fails, such as `scripts/ghi-issue-write.py`, and running it again does not help, the change is not doable now: say in the try what the program printed.
 
 ### Goes to the user
 
@@ -72,7 +72,7 @@ Only these three kinds of entry, and nothing else:
 - an entry that asks whether a user-ruling should change, because the sources show that the user-ruling still applies and the GHI-MD goes against it: `--because user-ruling-change`;
 - an entry still open after 3 tries: `--because three-tries`.
 
-In `--why`, say in one sentence what the user must decide. Do not ask him yourself.
+In `--why`, say in one sentence what the user must decide; for three tries, what the tries could not settle. Do not ask him yourself.
 
 ## 5. Your report
 

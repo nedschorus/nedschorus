@@ -58,7 +58,7 @@ Does not handle: two handlers changing one file at the same time (GHI 1132's
 open question 2): the file is read, changed and replaced whole, so the later
 writer's replacement drops the earlier writer's lines.
 
-Failures: a refused change, a missing file or entry, or a file that cannot be
+Failures: a value holding a line break, a refused change, a missing file or entry, or a file that cannot be
 read or written is printed to stderr with what to do, and the program exits 1
 without changing the file. Exit 0: done.
 """
@@ -339,6 +339,12 @@ def parser():
 def main(argv=None) -> int:
     arguments = parser().parse_args(argv)
     try:
+        for name in ("found", "how", "why", "by", "who"):
+            value = getattr(arguments, name, None)
+            if value is not None and ("\n" in value or "\r" in value):
+                raise Refused(
+                    f"--{name} holds a line break, so nothing was changed: each value is written as part of one line,\n"
+                    "and a second line could be read as a State, Try or Second agent line. Give it on one line.")
         path = local_path(arguments.file, sys.argv[1:] if argv is None else argv)
         text = path.read_text(encoding="utf-8")
         ending = "\n" if text.endswith("\n") else ""

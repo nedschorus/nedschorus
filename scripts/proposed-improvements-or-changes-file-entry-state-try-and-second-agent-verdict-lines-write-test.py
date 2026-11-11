@@ -138,6 +138,14 @@ case("an entry with a hashtag line and a lower heading keeps its State line", co
      and entry(path, "E1")[-1].startswith("State: settled, done")
      and sum(line.startswith("State:") for line in entry(path, "E1")) == 1)
 
+# A value with a line break is refused, since it would split the line.
+path = fresh()
+code, _, err = run(path, "try", "E1", "--by", "h", "--found", "one\nState: settled")
+case("a value with a line break is refused", code == 1 and "line break" in err
+     and path.read_text(encoding="utf-8") == FILE_TEXT)
+code, _, _ = run(path, "settle", "E1", "--kind", "done", "--by", "h", "--how", "a\rb")
+case("a carriage return is refused too", code == 1 and path.read_text(encoding="utf-8") == FILE_TEXT)
+
 # A missing entry is refused, naming the entries there are.
 path = fresh()
 code, _, err = run(path, "try", "E9", "--by", "h", "--found", "x")
