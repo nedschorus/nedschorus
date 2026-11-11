@@ -289,6 +289,20 @@ CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET = 1
 
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 
+WALK_ME_THROUGH_DIRECTORY = REPOSITORY_ROOT / "nc-systems" / "skills" / "walk-me-through"
+_walk_finder_spec = importlib.util.spec_from_file_location(
+    "walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
+    WALK_ME_THROUGH_DIRECTORY / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py")
+walk_finder = importlib.util.module_from_spec(_walk_finder_spec)
+_walk_finder_spec.loader.exec_module(walk_finder)
+# Loaded for heading_points alone, so the point is read as the closing line the hooks check reads it.
+_walk_short_answer_hook_spec = importlib.util.spec_from_file_location(
+    "walk_me_through_user_short_answer_to_approval_walk_item_expanded_into_instructions_user_prompt_submit_hook",
+    WALK_ME_THROUGH_DIRECTORY
+    / "walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py")
+walk_short_answer_hook = importlib.util.module_from_spec(_walk_short_answer_hook_spec)
+_walk_short_answer_hook_spec.loader.exec_module(walk_short_answer_hook)
+
 _claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(
     "claude_code_session_transcript_lookup_and_text_search_common",
     SCRIPTS_DIRECTORY / "claude-code-session-transcript-lookup-and-text-search-common.py")
@@ -561,6 +575,27 @@ ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION = (
     "2. While he answers, or at once when nothing needs him, take the next step, "
     "then start each ready task on your task list: a task another agent-seat owns "
     "goes to that agent-seat, any other to a background subagent or Codex."
+)
+
+WAITING_APPROVAL_WALK_ITEM_INSTRUCTION_TEMPLATE = (
+    "Approval-walk {walk}: item {count_and_point} is waiting for the user; its last page link is "
+    "{link}. Before your first message, open that page with the Artifact tool. If it is gone, publish "
+    "the item again from docs/walk/{walk}.md and append the line \"#item_page item {count} <new link>\" "
+    "to docs/walk/{walk}-minutes.md. Show the item in full, and end your first message with its closing "
+    "line, holding the link that opens."
+)
+
+WAITING_APPROVAL_WALK_ITEM_WITHOUT_PAGE_LINK_INSTRUCTION_TEMPLATE = (
+    "Approval-walk {walk}: item {count_and_point} is waiting for the user; the walk-minutes record no "
+    "page link for it. Before your first message, publish the item from docs/walk/{walk}.md and append "
+    "the line \"#item_page item {count} <new link>\" to docs/walk/{walk}-minutes.md. Show the item in "
+    "full, and end your first message with its closing line, holding the link that opens."
+)
+
+WAITING_APPROVAL_WALK_ITEM_UNREADABLE_INSTRUCTION_TEMPLATE = (
+    "The handoff-supervisor could not read the waiting item of the open approval-walk in "
+    "{walk_directory}: {error}. Find it in the walk-minutes as /walk-me-through says, and tell the user "
+    "this error."
 )
 
 # Subagent IDs resolve only within their session, so a successor must re-commission unfinished work.
@@ -1136,17 +1171,58 @@ def spawned_subagent_roster_from(handoff_fields: dict) -> list:
     return numbered_field_values_from(handoff_fields, SPAWNED_SUBAGENT_FIELD_PREFIX)
 
 
+def waiting_approval_walk_item_first_prompt_lines(working_directory: Path) -> tuple:
+    """Return the first prompt's line naming the open approval-walk's waiting item and its last page link, or no
+    lines when no approval-walk is open or every one is paused; never block launch.
+
+    The walk is the one with the latest walk-minutes, by modification time, among the open ones in
+    working_directory's docs/walk/, as /walk-me-through chooses when several are open. When the walk-minutes'
+    `#next_to_present` line names several items, the line names the first, where the walk resumes. Any failure
+    to read the walk files gives a line naming the error instead."""
+    walk_directory = working_directory / walk_finder.WALK_DIRECTORY
+    if not walk_directory.is_dir():
+        return ()
+    try:
+        parser = walk_finder.markdown_parser()
+        walks = [walk for walk in walk_finder.unclosed_approval_walks_including_paused(walk_directory, parser)
+                 if not walk[3]]
+        if not walks:
+            return ()
+        minutes, value, _, _ = max(walks, key=lambda walk: walk[0].stat().st_mtime)
+        name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
+        numbers, total = walk_finder.parse_items(value)
+        document = minutes.with_name(name + ".md")
+        text = document.read_text(encoding="utf-8")
+        spans = walk_finder.item_unit_spans(text, parser)
+        total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser, spans)
+        number = numbers[0]
+        point = walk_short_answer_hook.heading_points(text.split("\n"), spans, parser).get(number)
+        link = walk_finder.newest_item_page_link_per_item_from_walk_minutes(
+            minutes.read_text(encoding="utf-8"), parser).get(number)
+    except Exception as error:
+        print(f"handoff-supervisor: waiting approval-walk item check failed: {type(error).__name__}: {error}")
+        return (WAITING_APPROVAL_WALK_ITEM_UNREADABLE_INSTRUCTION_TEMPLATE.format(
+            walk_directory=walk_directory, error=f"{type(error).__name__}: {error}"),)
+    count = f"{number} of {total}"
+    values = {"walk": name, "count": count, "count_and_point": f"{count}, {point}," if point else count}
+    if link is None or link == walk_finder.ITEM_PAGE_PUBLISH_FAILED:
+        return (WAITING_APPROVAL_WALK_ITEM_WITHOUT_PAGE_LINK_INSTRUCTION_TEMPLATE.format(**values),)
+    return (WAITING_APPROVAL_WALK_ITEM_INSTRUCTION_TEMPLATE.format(link=link, **values),)
+
+
 def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
                           predecessor_session_directory: Optional[Path] = None,
                           launch_time_git_sync_report: str = "",
                           overview_refresh_due: tuple = (),
                           memory_review_due: tuple = (),
-                          branch_state_instruction: str = "") -> str:
+                          branch_state_instruction: str = "",
+                          waiting_approval_walk_item: tuple = ()) -> str:
     next_step = next_step_from(handoff_fields)
     lines = [
         f"Read {extract_path} — the dialog from the session you are continuing, "
         + written_at_wariness_sentence(handoff_fields.get(session_handoff_field_names.WRITTEN_AT_FIELD, "")),
         ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION,
+        *waiting_approval_walk_item,
     ]
     if launch_time_git_sync_report:
         lines.append(launch_time_git_sync_report_in_prompt(launch_time_git_sync_report,
@@ -1192,13 +1268,15 @@ class DialogIgnitionPlan:
     def compose(self, launch_time_git_sync_report: str,
                 overview_refresh_due: tuple = (),
                 memory_review_due: tuple = (),
-                branch_state_instruction: str = "") -> str:
+                branch_state_instruction: str = "",
+                waiting_approval_walk_item: tuple = ()) -> str:
         return build_ignition_prompt(self.extract_path, self.handoff_fields,
                                      self.predecessor_session_directory,
                                      launch_time_git_sync_report=launch_time_git_sync_report,
                                      overview_refresh_due=overview_refresh_due,
                                      memory_review_due=memory_review_due,
-                                     branch_state_instruction=branch_state_instruction)
+                                     branch_state_instruction=branch_state_instruction,
+                                     waiting_approval_walk_item=waiting_approval_walk_item)
 
 
 @dataclass
@@ -1217,7 +1295,8 @@ class IgnitionPlanWithoutConversationTail:
     def compose(self, launch_time_git_sync_report: str,
                 overview_refresh_due: tuple = (),
                 memory_review_due: tuple = (),
-                branch_state_instruction: str = "") -> str:
+                branch_state_instruction: str = "",
+                waiting_approval_walk_item: tuple = ()) -> str:
         if self.unextracted_transcript_path is not None:
             recovery_note = (
                 "the previous session's conversation-tail is unavailable, because the "
@@ -1246,6 +1325,8 @@ class IgnitionPlanWithoutConversationTail:
                              "this next-step and the repository are your whole context.")
         prompt = (f"(Recovered at {self.occasion}: {recovery_note}) "
                   + ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION)
+        for line in waiting_approval_walk_item:
+            prompt += " " + line
         if launch_time_git_sync_report:
             prompt += " " + launch_time_git_sync_report_in_prompt(launch_time_git_sync_report,
                                                                   branch_state_instruction)
@@ -2553,9 +2634,11 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             branch_state_instruction = (
                 choose_branch_state_instruction_from_working_directory_push_state(
                     settings.working_directory))
+            waiting_approval_walk_item = waiting_approval_walk_item_first_prompt_lines(settings.working_directory)
             prompt = ignition_plan.compose(
                 launch_time_git_sync_report, overview_refresh_due, memory_review_due,
-                branch_state_instruction=branch_state_instruction)
+                branch_state_instruction=branch_state_instruction,
+                waiting_approval_walk_item=waiting_approval_walk_item)
             ignition_plan = None
             if successor_notice:
                 prompt += " " + successor_notice
