@@ -171,7 +171,11 @@ non-blocking error and still ends the turn.
 
 Tool-messages-to-agent follow
 docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
-"""
+
+DURING AN EMERGENCY STOP, while the emergency-stop file is in force or cannot
+be read, this hook is silent: an agent-seat shows no approval-walk item then,
+and every reply goes through. The stop is read by
+nc-systems/skills/emergency-stop/emergency-stop-file-in-force-read-common.py."""
 import datetime
 import functools
 import importlib.util
@@ -190,6 +194,8 @@ WALK_CHECK_PROGRAM = HERE / "walk-me-through-answer-added-texts-cold-read-fast-r
 ANSWER_HOOK_FILE = (HERE / "walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-"
                     "user-prompt-submit-hook.py")
 REPOSITORY_TOP = HERE.parents[2]
+EMERGENCY_STOP_READER_FILE = (Path(__file__).resolve().parent.parent / "emergency-stop"
+                              / "emergency-stop-file-in-force-read-common.py")
 STOP_HOOKS_STAY_SILENT_RULE_FILE = (
     REPOSITORY_TOP / "nc-systems" / "general-tools"
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
@@ -697,6 +703,10 @@ def output_for(payload, environment, model=model_judgement):
     """A block naming the sentence that asks the user something outside the walk's items, or None."""
     if load_module("agent_session_unattended_by_user_check_common",
                    ATTENDANCE_CHECK_FILE).agent_session_unattended_by_user(environment):
+        return None
+    emergency_stop = load_module("emergency_stop_file_in_force_read_common", EMERGENCY_STOP_READER_FILE)
+    stop_state = emergency_stop.read_state(emergency_stop.emergency_stop_folder(environment))
+    if isinstance(stop_state, (emergency_stop.InForce, emergency_stop.Unreadable)):
         return None
     transcript_path = payload.get("transcript_path")
     if not transcript_path or not Path(transcript_path).expanduser().is_file() or not payload.get("cwd"):
