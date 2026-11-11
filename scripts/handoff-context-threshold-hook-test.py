@@ -664,6 +664,14 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a compaction record Claude Code is still writing is skipped",
           hook.compaction_dropped_tokens_from_transcript(str(partial_compaction)) == 150_000,
           str(hook.compaction_dropped_tokens_from_transcript(str(partial_compaction))))
+    torn_compaction = Path(workspace) / "compaction-torn-then-whole.jsonl"
+    torn_compaction.write_text(
+        json.dumps(compaction_record(100_000))[:60] + "\n"
+        + json.dumps(compaction_record(150_000)) + "\n" + json.dumps(usage_record(200_000)) + "\n",
+        encoding="utf-8")
+    check("a line naming a compaction that is not JSON does not stop the scan before later records",
+          hook.compaction_dropped_tokens_from_transcript(str(torn_compaction)) == 150_000,
+          str(hook.compaction_dropped_tokens_from_transcript(str(torn_compaction))))
 
     # --- Which subagents are still in flight -------------------------------
     # A reincarnation kills the session's in-process subagents with it (2026-08-27),
