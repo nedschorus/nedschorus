@@ -3335,21 +3335,27 @@ class FakeSuiteProcess:
 
 
 def kill_with_fake_proc(proc, signalled, end_on_kill=True, kill_refused=(), sleeps=None,
-                        killpg_refused=False):
-    """Run the kill on the fake /proc; signalled records each signal sent, in order."""
+                        killpg_refused=False, pid_taken_after_read=None):
+    """Run the kill on the fake /proc; signalled records each signal sent, in order.
+
+    pid_taken_after_read: a pid whose process another process replaces as soon as the
+    first SIGKILL is sent, after the tree was read."""
     now = [0.0]
 
     def killpg(pid, number):
         signalled.append(("killpg", pid, number))
-        # The kernel reparents a killed process's children away from it.
-        (proc / "200" / "task" / "200" / "children").write_text("")
-        # Another process took the pid of the one whose start ticks no longer match.
-        write_fake_stat(proc, 203, 99)
+        if number == signal.SIGKILL:
+            # The kernel reparents a killed process's children away from it.
+            (proc / "200" / "task" / "200" / "children").write_text("")
         if killpg_refused:
             raise ProcessLookupError(3, "No such process")
 
     def kill(pid, number):
         signalled.append(("kill", pid, number))
+        if pid_taken_after_read is not None:
+            write_fake_stat(proc, pid_taken_after_read, 99)
+            # The process now at that pid is no child of the suite's.
+            (proc / "200" / "task" / "200" / "children").write_text("201 ")
         if pid in kill_refused:
             raise ProcessLookupError(3, "No such process")
         if end_on_kill:
@@ -3360,11 +3366,29 @@ def kill_with_fake_proc(proc, signalled, end_on_kill=True, kill_refused=(), slee
         if sleeps is not None:
             sleeps.append(seconds)
             if len(sleeps) == 2 and not end_on_kill:
-                for pid in (201, 202):
+                for pid in (201, 202, 203):
                     write_fake_stat(proc, pid, 0, state="Z")
 
     return module.kill_test_suite_process_group_and_descendants(
         FakeSuiteProcess, proc=proc, kill=kill, killpg=killpg, clock=lambda: now[0], sleep=sleep)
+
+
+class ProcWhereAChildEndsAsItsChildrenAreRead(type(pathlib.Path())):
+    """The first read of 201's children finds 201 ended, and its child 205 already reparented
+    to the suite's process, whose children the read has passed."""
+
+    reads_of_201 = 0
+
+    def read_text(self, *arguments, **keywords):
+        if self.name == "children" and self.parent.name == "201":
+            type(self).reads_of_201 += 1
+            if type(self).reads_of_201 == 1:
+                root = self.parents[3]
+                write_fake_stat(root, 201, 0, state="Z")
+                (root / "200" / "task" / "200" / "children").write_text("201 205 ")
+                fake_proc(root, {205: (25, {205: []})})
+                raise ProcessLookupError(3, "No such process")
+        return super().read_text(*arguments, **keywords)
 
 
 def suite_tree(root):
@@ -3375,12 +3399,33 @@ def suite_tree(root):
 with tempfile.TemporaryDirectory() as scratch:
     signalled = []
     still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled)
-    check("the kill reads the tree below the suite before it kills the suite's process group, "
-          "then sends SIGKILL to each process it read, except one whose pid another process "
-          "has taken since, and returns none still running once they have ended",
-          signalled == [("killpg", 200, signal.SIGKILL), ("kill", 201, signal.SIGKILL),
-                        ("kill", 202, signal.SIGKILL)] and still_running == [],
+    check("the kill stops the suite's process group, sends SIGKILL to each process it reads "
+          "below the suite, reads the tree again until it finds none new, then kills the "
+          "group, and returns none still running once they have ended",
+          signalled == [("killpg", 200, signal.SIGSTOP), ("kill", 201, signal.SIGKILL),
+                        ("kill", 203, signal.SIGKILL), ("kill", 202, signal.SIGKILL),
+                        ("killpg", 200, signal.SIGKILL)] and still_running == [],
           (signalled, still_running))
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled = []
+    still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled,
+                                        pid_taken_after_read=203)
+    check("a process whose pid another process took after the tree was read is not sent "
+          "SIGKILL",
+          ("kill", 203, signal.SIGKILL) not in signalled
+          and ("kill", 202, signal.SIGKILL) in signalled, signalled)
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled = []
+    proc = fake_proc(pathlib.Path(scratch), {200: (20, {200: [201]}), 201: (21, {201: [205]})})
+    still_running = kill_with_fake_proc(ProcWhereAChildEndsAsItsChildrenAreRead(proc),
+                                        signalled)
+    check("a process reparented to the suite's process after the read passed it, because its "
+          "parent ended while the tree was read, is found by the next read and killed before "
+          "the group is",
+          signalled[-2:] == [("kill", 205, signal.SIGKILL), ("killpg", 200, signal.SIGKILL)]
+          and still_running == [], (signalled, still_running))
 
 with tempfile.TemporaryDirectory() as scratch:
     signalled = []
@@ -3388,7 +3433,7 @@ with tempfile.TemporaryDirectory() as scratch:
                                         kill_refused=(201,), killpg_refused=True)
     check("a process group or a process that has ended before its SIGKILL does not stop the "
           "kill of the others",
-          [entry[1] for entry in signalled] == [200, 201, 202], signalled)
+          [entry[1] for entry in signalled] == [200, 201, 203, 202, 200], signalled)
 
 with tempfile.TemporaryDirectory() as scratch:
     signalled, sleeps = [], []
@@ -3403,7 +3448,7 @@ with tempfile.TemporaryDirectory() as scratch:
                                         end_on_kill=False)
     check("a killed process still running after TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS "
           "is returned, and the kill does not wait longer",
-          still_running == [(201, 21), (202, 22)], still_running)
+          still_running == [(201, 21), (203, 23), (202, 22)], still_running)
 
 print()
 # The count is printed so a short run is visible on sight: a run that ends
