@@ -311,6 +311,13 @@ for case_name, text in [
     ("pattern 6: uses in an earlier clause", "The hook uses a cache, but the transcript is not in the repository."),
     ("pattern 6: uses after the colon", "Result: the hook uses a cache, but the transcript is not in the repository."),
     ("pattern 4: a search tool named before the claim's own subject", "I asked the locator, and I cannot find the transcript."),
+    ("pattern 4: a search tool in a phrase before a first-person subject", "Even with the search I cannot find the transcript."),
+    ("pattern 2: a second clause joined by and, with no comma", "The scan finished and the file is missing."),
+    ("pattern 4: a search tool in a first clause joined by and, with no comma",
+     "I asked the locator and I cannot find the transcript."),
+    ("pattern 6: a colon after the following announces, not defines",
+     "This means the following: the transcript is not in the repository."),
+    ("pattern 2: a participle after the artifact word ends the subject's head", "The logs showing parser failures are missing."),
 ]:
     check(f"trigger: {case_name}", bool(hook.absence_claim_matches(text)), text)
 
@@ -363,6 +370,9 @@ for case_name, text in [
     ("what a search tool can find", "Naming: grep and glob don't find branch names."),
     ("where records belong", "Records like these belong in the log-store on ned-box, not in the repository."),
     ("a kind of commit", "Its one weakness, a commit on no branch, is guarded three ways."),
+    ("an edited-element word ending in -ing heads the subject", "The tmux waker, transcript parsing and reset-time arithmetic are gone."),
+    ("pattern 2 inside a relative clause that has its own subject",
+     "The log that confirms the parser is gone is still on disk."),
 ]:
     check(f"trigger: silent on {case_name}", not hook.absence_claim_matches(text),
           hook.absence_claim_matches(text))

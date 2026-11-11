@@ -169,10 +169,14 @@ CLAUSE_BREAK = re.compile(r"[;:(—–]|\s-\s")
 # Code and text elements an edit removes; "the fallback is gone" reports a change, not a missing artifact.
 EDITED_ELEMENT = re.compile(r"(?<![\w-])(?:parsing|parser|lookup|comparison|rules?|guards?|comments?|fallback|scan|tail|property|words?|phrases?|names?|commands?|gap|rows?|arithmetic|waker|advice|alignment|minimum|mod|change|premise|reason|cases?|binary|style|options?|flags?|code|helper|function|stand-ins|owner|lock|refusal|checks?|format|steps?|fork|clog|mark|link|distinction)(?![\w-])", re.I)
 # Words that open a clause inside a sentence; the claim's subject stands after the last one before the match.
-CLAUSE_OPENER = re.compile(r"[,;:(—–]|\s-\s|\b(?:that|which|who|whether|why|how|what|because|since|while|but|so|although|though)\b", re.I)
+# "and" opens one only when a subject follows it: "the scan finished and the file", not "grep and glob".
+CLAUSE_OPENER = re.compile(r"[,;:(—–]|\s-\s|\b(?:that|which|who|whether|why|how|what|because|since|while|but|so|although|though)\b|\band(?=\s+(?:I|we|you|they|it|he|she|the|a|an|this|these|those|its|their|my|our)\b)", re.I)
 # After the subject's first noun, a preposition, a pronoun or a determiner starts what modifies it: "the transcript
 # for that step", "the folders it checks", "the file the link points to".
-POST_MODIFIER = re.compile(r"\b(?:of|for|to|from|on|in|at|by|with|about|it|they|we|I|you|he|she|the|a|an|this|these|those|its|their)\b", re.I)
+# A participle does too: "the logs showing parser failures".
+POST_MODIFIER = re.compile(r"\b(?:of|for|to|from|on|in|at|by|with|about|it|they|we|I|you|he|she|the|a|an|this|these|those|its|their|\w+ing)\b", re.I)
+# An object relative clause opens with its own subject: "that the link points to"; a subject relative opens with its verb.
+RELATIVE_CLAUSE_WITH_ITS_OWN_SUBJECT = re.compile(r"\s*(?:I|we|you|they|it|he|she|the|a|an|this|these|those|its|their|my|our)\b", re.I)
 FIRST_PERSON = re.compile(r"\b(?:I|[Ww]e|[Mm]y|[Oo]ur|me|us)\b")
 SCORING_REPLY = re.compile(r"\b(?:match file|match to|report covers|answer-key entries)\b", re.I)
 
@@ -236,15 +240,21 @@ def edited_element_heads_subject(before):
     parts = re.split(f"({CLAUSE_OPENER.pattern})", before, flags=re.I)
     index = len(parts) - 1
     # Right after a noun, "that" opens a relative clause, which modifies that noun: "the file that the link points to".
+    # A relative clause that opens with its verb and names a noun before the match holds the match's own subject:
+    # in "the log that confirms the parser is gone", the parser is what is gone.
     while (index >= 2 and parts[index - 1].lower() in ("that", "which", "who")
-           and re.search(f"(?:{ARTIFACT.pattern}|{EDITED_ELEMENT.pattern})\\s*$", parts[index - 2], re.I)):
+           and re.search(f"(?:{ARTIFACT.pattern}|{EDITED_ELEMENT.pattern})\\s*$", parts[index - 2], re.I)
+           and not (not RELATIVE_CLAUSE_WITH_ITS_OWN_SUBJECT.match(parts[index])
+                    and re.search(f"{ARTIFACT.pattern}|{EDITED_ELEMENT.pattern}", parts[index], re.I))):
         index -= 2
     subject = parts[index]
     nouns = [(word.start(), word.end(), bool(ARTIFACT.fullmatch(word[0])))
              for word in re.finditer(ARTIFACT.pattern + "|" + EDITED_ELEMENT.pattern, subject, re.I)]
     if not nouns:
         return False
-    modifier = POST_MODIFIER.search(subject, nouns[0][1])
+    # "parsing" in "the transcript parsing" is the head noun, not a participle.
+    modifier = next((word for word in POST_MODIFIER.finditer(subject, nouns[0][1])
+                     if not EDITED_ELEMENT.fullmatch(word[0])), None)
     head = [noun for noun in nouns if not modifier or noun[0] < modifier.start()][-1]
     return not head[2]
 
@@ -326,9 +336,10 @@ def match_is_excluded(number, sentence, before, after):
     if number == 12 and re.search(r"\b(?:that|which)\s+(?:(?:is|are|was|were)\s+)?$", before, re.I):
         return True
     # A definition: "step 4 uses the word for another file: the old version kept beside a revised text that is not in the repository".
-    # The defining verb stands before the colon that opens the definition; "This failure means the transcript is
-    # not in the repository" draws a conclusion and defines nothing.
-    if number == 6 and ":" in before and re.search(r"\b(?:uses?|means|refers? to|stands? for)\b", before.rsplit(":", 1)[0], re.I):
+    # The defining verb stands before the colon that opens the definition, and the match sits in a relative clause of
+    # the defining phrase; "This means the following: the transcript is not in the repository" makes a claim.
+    if (number == 6 and ":" in before and re.search(r"\b(?:uses?|means|refers? to|stands? for)\b", before.rsplit(":", 1)[0], re.I)
+            and re.search(r"\b(?:that|which)\s+(?:(?:is|are|was|were)\s+)?$", before, re.I)):
         return True
     # "missing" as a verb: "the record is missing a field".
     if number == 2 and re.match(r"\s+(?:a|an|something)\b", after, re.I) and "missing" in sentence[len(before):].lower():
@@ -344,7 +355,7 @@ def match_is_excluded(number, sentence, before, after):
     if number == 2 and re.search(r"\b(?:advice|conditional)\b", before, re.I):
         return True
     # What a search tool can do: "grep and glob don't find branch names".
-    if number == 4 and re.search(r"\b(?:the locator|keyword search|grep and glob|the pre-push hook|the search)\b", claim_subject(before), re.I) and re.search(r"\b(?:cannot|can't|don't)\b", sentence, re.I):
+    if number == 4 and re.search(r"\b(?:the locator|keyword search|grep and glob|the pre-push hook|the search)\s*$", claim_subject(before), re.I) and re.search(r"\b(?:cannot|can't|don't)\b", sentence, re.I):
         return True
     # "Records like these belong in the log-store, not in the repository": where things should go.
     if number == 6 and re.search(r"\bbelongs?\b", re.split(r"[;:]", before)[-1], re.I):
