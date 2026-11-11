@@ -112,11 +112,15 @@ def paths_processes_use(proc: Path) -> list:
         raise NeededFileOrListingUnreadable(f"the process table {proc} could not be listed: {error.strerror}")
     try:
         # An open socket's fd link reads socket:[inode], so a bound socket's path is only here:
-        # the eighth field of a line, when there is one. It is the path as given to bind(), which
-        # may hold "//" or "/./", so it is normalized before it is compared.
-        used = [os.path.normpath(fields[7]) for fields in (line.split(maxsplit=7)
-                                         for line in (proc / "net" / "unix").read_text().splitlines()[1:])
-                if len(fields) == 8]
+        # the eighth field of a line, when there is one. It is the path as given to bind(), so both
+        # it and its normalized form are kept: normalizing drops "//" and "/./", but turns a
+        # "link/.." that the kernel followed through a symbolic link into a different path.
+        # realpath is not used because it resolves links as they are now, not as bind() saw them.
+        # normpath keeps exactly two leading slashes, as POSIX allows, so those are collapsed too.
+        bound = [fields[7] for fields in (line.split(maxsplit=7)
+                                          for line in (proc / "net" / "unix").read_text().splitlines()[1:])
+                 if len(fields) == 8]
+        used = bound + [re.sub(r"^/+", "/", os.path.normpath(path)) for path in bound]
     except OSError as error:
         raise NeededFileOrListingUnreadable(f"the unix socket table {proc / 'net' / 'unix'} could not be "
                                             f"read: {error.strerror}")
