@@ -631,7 +631,23 @@ def run_carry_on_and_job_failure_task_cases():
           "the cores", counts == [12, 1, 16, 1], counts)
 
 
+def run_last_line_said_cases():
+    kept = (f"{job.mutation_testing.TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX}/tmp/x; "
+            f"remove that directory once you have read them.")
+    check("last_line_said quotes the refusal on standard error, not the line naming where the "
+          "suite runner's logs are kept after it",
+          job.last_line_said("MUTATING a.py", f"refused: the suites fail\n{kept}\n")
+          == "refused: the suites fail")
+    check("last_line_said falls back to standard output's last line when standard error holds "
+          "only the kept-logs line",
+          job.last_line_said("MUTATING a.py with b-test.py\n", f"{kept}\n")
+          == "MUTATING a.py with b-test.py")
+    check("last_line_said says nothing when neither stream holds another line",
+          job.last_line_said("", f"{kept}\n") == "nothing")
+
+
 def run_cases():
+    run_last_line_said_cases()
     # The first run writes the state file and tests nothing.
     with tempfile.TemporaryDirectory() as scratch:
         fixture = Fixture(scratch)

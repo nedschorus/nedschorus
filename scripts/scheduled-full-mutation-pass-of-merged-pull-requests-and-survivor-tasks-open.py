@@ -322,6 +322,8 @@ def module_loaded_by_path(module_name, path):
     return module
 
 
+mutation_testing = module_loaded_by_path(
+    "mutation_testing_changed_lines_quick_or_full_pass_survivors", MUTATION_TESTING_PROGRAM)
 git_redirecting_removal = module_loaded_by_path(
     "git_redirecting_environment_variables_removal_common",
     REPOSITORY_ROOT / "nc-systems" / "general-tools"
@@ -705,7 +707,12 @@ def job_failure_task_opened_unless_open(subject, description, arguments,
 
 
 def last_line_said(stdout, stderr):
-    return (stderr.strip() or stdout.strip() or "nothing").splitlines()[-1]
+    """The mutation testing program's last line, on standard error when it wrote any there,
+    leaving out the line that only names where it kept the suite runner's logs."""
+    def said(text):
+        return [line for line in text.strip().splitlines()
+                if not line.startswith(mutation_testing.TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX)]
+    return (said(stderr) or said(stdout) or ["nothing"])[-1]
 
 
 def survivor_tasks_rechecked(state, state_file, arguments, main_commit, record, record_citation,

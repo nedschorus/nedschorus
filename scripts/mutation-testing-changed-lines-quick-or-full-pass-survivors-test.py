@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 from pathlib import Path
 
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
@@ -929,7 +930,7 @@ def run_test_suite_runner_log_directories_cases():
               "names, and names the directory it is kept in",
               completed.returncode == 2 and runner_log_directories == [] and len(kept) == 1
               and f" — log {kept[0]}/" in completed.stderr
-              and f"are kept in {parents[0]}." in completed.stderr,
+              and f"are kept in {parents[0]};" in completed.stderr,
               f"left={runner_log_directories + parents} kept={kept} err={completed.stderr}")
 
     # The fake cosmic-ray's baseline runs the test command, so the suite runner runs for real.
@@ -954,9 +955,70 @@ def run_test_suite_runner_log_directories_cases():
               and "1 errored" in completed.stdout and runner_log_directories == []
               and len(kept) == 1
               and "not run to the end" in (kept[0] / "test-run-report.txt").read_text()
-              and f"are kept in {parents[0]}." in completed.stderr,
+              and f"are kept in {parents[0]};" in completed.stderr,
               f"left={runner_log_directories + parents} kept={kept} "
               f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+
+def run_log_directories_parent_retention_and_stop_signal_cases():
+    survivors = load_script_module()
+    prefix = survivors.TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_PREFIX
+    now = time.time()
+    with tempfile.TemporaryDirectory() as scratch_name:
+        scratch = Path(scratch_name)
+        old, fresh, other = scratch / f"{prefix}old", scratch / f"{prefix}fresh", scratch / "other-old"
+        for each in (old, fresh, other):
+            (each / "a-log-dir").mkdir(parents=True)
+        three_days_ago = now - 3 * 24 * 3600
+        for each in (old, other):
+            os.utime(each, (three_days_ago, three_days_ago))
+        survivors.test_suite_runner_log_directories_parents_past_retention_removed(scratch, now)
+        check("at start, a log directories parent an earlier run left more than two days ago is "
+              "removed, and a fresh one and a directory of another name are left",
+              not old.exists() and fresh.exists() and other.exists(),
+              sorted(p.name for p in scratch.iterdir()))
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        parent = Path(scratch_name) / f"{prefix}stopped"
+        (parent / "a-mutant-log-dir").mkdir(parents=True)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            survivors.test_suite_runner_log_directories_parent_removed_or_named_as_kept(
+                parent, stopped_by_signal=True)
+        check("on a stop signal the log directories parent is removed with the log directories "
+              "it still holds, and nothing is printed",
+              not parent.exists() and err.getvalue() == "", err.getvalue())
+
+    for code, stopped in ((128 + signal.SIGTERM, True), (128 + signal.SIGHUP, True), (2, False)):
+        with tempfile.TemporaryDirectory() as scratch_name:
+            def raising(arguments, checkout, runner, environment, log_directories_parent):
+                (log_directories_parent / "a-mutant-log-dir").mkdir()
+                raise SystemExit(code)
+            real = (survivors.quick_or_full_mutation_pass_or_recorded_mutant_killed_check,
+                    survivors.load_test_suite_runner, tempfile.tempdir)
+            survivors.quick_or_full_mutation_pass_or_recorded_mutant_killed_check = raising
+            survivors.load_test_suite_runner = lambda: types.SimpleNamespace(
+                launch_environment_for_a_test_suite_with_git_redirecting_agent_session_attendance_and_credential_variables_removed=dict)
+            tempfile.tempdir = scratch_name
+            err = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(err):
+                    survivors.main_with_stop_signals_raising_system_exit(
+                        ["--quick-mutation-pass", "--head", "HEAD", "--base", "HEAD"])
+                raised = None
+            except SystemExit as exit_:
+                raised = exit_.code
+            finally:
+                (survivors.quick_or_full_mutation_pass_or_recorded_mutant_killed_check,
+                 survivors.load_test_suite_runner, tempfile.tempdir) = real
+            left = list(Path(scratch_name).glob(f"{prefix}*"))
+            kept_line = survivors.TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX in err.getvalue()
+            check(f"exit {code} out of the pass: the log directories it holds are "
+                  + ("removed, with no line naming them" if stopped
+                     else "kept, and one line names where"),
+                  raised == code and (left == [] and not kept_line if stopped
+                                      else len(left) == 1 and kept_line),
+                  f"raised={raised} left={left} err={err.getvalue()}")
 
 
 def run_quick_mutation_pass_cases():
@@ -2457,6 +2519,7 @@ def run_cases():
 
     run_recorded_mutant_killed_check_cases()
     run_test_suite_runner_log_directories_cases()
+    run_log_directories_parent_retention_and_stop_signal_cases()
     run_parallel_mutants_and_kept_sessions_cases()
     run_parallel_mutant_workers_cases_with_fake_cosmic_ray_package()
     run_parallel_mutant_workers_case_with_real_cosmic_ray()

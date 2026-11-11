@@ -76,11 +76,15 @@ directory and named with TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_PREFIX. A
 run's log directory is removed once its outcome is known, unless the script
 reports that run's failure: a run on the unmutated head that fails, a mutant
 printed as ERRORED, or a recorded mutant that could not be judged. A pass that
-stops before a changed file's mutants are all judged, as on exit 2 or a stop
-signal, keeps every log directory of that file. At the end,
-that one directory is removed when it is empty; otherwise the script names it
-on standard error as holding the logs of the failures it reported. A log
-directory that cannot be removed is left there, and so named.
+stops before a changed file's mutants are all judged, as on exit 2, keeps
+every log directory of that file. At the end,
+that one directory is removed when it is empty, or when a stop signal ended
+the script, since no one reads a stopped run's output; otherwise the script
+names it on standard error, in a line opening with
+TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX, as holding the logs of the failures it
+reported. At start, the script removes each such directory an earlier run left
+that has not changed for TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_RETENTION_SECONDS,
+two days. A log directory that cannot be removed is left there, and so named.
 
 The limit on one run of the suites, per changed file, is the longest of its
 suites' time limits, computed as the runner computes them from the
@@ -219,6 +223,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 PROGRAM = "mutation-testing-changed-lines-quick-or-full-pass-survivors"
@@ -276,6 +281,10 @@ COSMIC_RAY_ONE_WORK_ITEM_MUTATE_AND_TEST_FLAG = "--cosmic-ray-one-work-item-muta
 
 TEST_SUITE_RUNNER_PATH = Path(__file__).resolve().with_name("run-all-test-suites.py")
 TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_PREFIX = f"{PROGRAM}-test-suite-runner-logs-"
+# The scheduled full mutation pass quotes this script's last line; it skips a line opening so.
+TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX = (
+    f"{PROGRAM}: the suite runner's logs of the runs whose failure is reported above are kept in ")
+TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_RETENTION_SECONDS = 2 * 24 * 3600
 
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
@@ -798,14 +807,30 @@ def remove_test_suite_runner_log_directories_not_kept(log_directories_parent, ke
             shutil.rmtree(log_dir, ignore_errors=True)
 
 
-def test_suite_runner_log_directories_parent_removed_or_named_as_kept(log_directories_parent):
-    """Remove the parent when no log directory is left in it; otherwise print where they are."""
-    if any(log_directories_parent.iterdir()):
-        print(f"{PROGRAM}: the suite runner's logs of the runs whose failure is reported above "
-              f"are kept in {log_directories_parent}.\n"
-              f"Remove that directory once you have read them.", file=sys.stderr)
+def test_suite_runner_log_directories_parent_removed_or_named_as_kept(log_directories_parent,
+                                                                    stopped_by_signal=False):
+    """Remove the parent when no log directory is left in it, or when a stop signal ended the
+    script, since no one reads a stopped run's output; otherwise print where they are."""
+    if stopped_by_signal:
+        shutil.rmtree(log_directories_parent, ignore_errors=True)
+    elif any(log_directories_parent.iterdir()):
+        print(f"{TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX}{log_directories_parent}; "
+              f"remove that directory once you have read them.", file=sys.stderr)
     else:
         log_directories_parent.rmdir()
+
+
+def test_suite_runner_log_directories_parents_past_retention_removed(
+        temporary_directory, now, retention_seconds=TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_RETENTION_SECONDS):
+    """Remove each log directories parent an earlier run of this script left in
+    temporary_directory and last changed more than retention_seconds before now. One that
+    cannot be read or removed is left."""
+    for parent in Path(temporary_directory).glob(f"{TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_PREFIX}*"):
+        try:
+            if now - parent.stat().st_mtime > retention_seconds:
+                shutil.rmtree(parent, ignore_errors=True)
+        except OSError:
+            continue
 
 
 def scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(*paths):
@@ -1519,13 +1544,20 @@ def main_with_stop_signals_raising_system_exit(argv):
     # and cosmic-ray launches the suites with this environment, as the runner launches them.
     environment = runner.launch_environment_for_a_test_suite_with_git_redirecting_agent_session_attendance_and_credential_variables_removed()
     # Resolved, as the runner resolves the --log-dir it names in its first line.
+    test_suite_runner_log_directories_parents_past_retention_removed(tempfile.gettempdir(),
+                                                                     time.time())
     log_directories_parent = Path(tempfile.mkdtemp(
         prefix=TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_PREFIX)).resolve()
+    stopped_by_signal = False
     try:
         return quick_or_full_mutation_pass_or_recorded_mutant_killed_check(
             arguments, checkout, runner, environment, log_directories_parent)
+    except SystemExit as stop:
+        stopped_by_signal = stop.code in {128 + number for number in stop_signals.STOP_SIGNALS}
+        raise
     finally:
-        test_suite_runner_log_directories_parent_removed_or_named_as_kept(log_directories_parent)
+        test_suite_runner_log_directories_parent_removed_or_named_as_kept(
+            log_directories_parent, stopped_by_signal)
 
 
 def quick_or_full_mutation_pass_or_recorded_mutant_killed_check(
