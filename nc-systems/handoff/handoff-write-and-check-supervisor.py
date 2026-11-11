@@ -295,6 +295,9 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
     # Predecessor rosters are not inherited; deferred work must remain in next-step.
     roster = []
     by_agent_id = {}
+    # Agent-ids a TaskStop ended and no resume has restarted since; a later event such as a
+    # final-notification echo does not lift the stop.
+    stopped_ids = set()
     with transcript_path.open("r", encoding="utf-8", errors="replace") as handle:
         for line in handle:
             if not any(marker in line for marker in SUBAGENT_EVENT_RECORD_MARKERS):
@@ -325,11 +328,13 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
                     continue
                 resumed = by_agent_id.get(result.get("resumedAgentId"))
                 if resumed is not None:
+                    stopped_ids.discard(resumed["agent_id"])
                     resumed["last_event"] = "resumed"
                     resumed["last_event_at"] = stamp
                     continue
                 stopped = by_agent_id.get(result.get("task_id"))
                 if stopped is not None and threshold_hook.TASK_STOP_TOOL_RESULT_MARKER_KEY in result:
+                    stopped_ids.add(stopped["agent_id"])
                     stopped["last_event"] = STOPPED_BY_TASK_STOP_EVENT
                     stopped["last_event_at"] = stamp
                     continue
@@ -350,8 +355,7 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
                 if entry is None:
                     continue
                 # An interim notice queued before a TaskStop can arrive after it.
-                if entry["last_event"] == STOPPED_BY_TASK_STOP_EVENT and \
-                        event == WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT:
+                if task_id in stopped_ids and event == WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT:
                     continue
                 # Repeated notifications are echoes, not new events; preserve the first arrival time.
                 if event != entry["last_event"]:

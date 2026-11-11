@@ -1134,6 +1134,34 @@ def run_spawned_subagent_roster_cases(workspace: Path):
           and interim_copy_roster[0]["last_event"] == "stopped"
           and interim_copy_roster[0]["last_event_at"] == "2026-10-27T21:50:00Z",
           str(interim_copy_roster))
+    echo_then_interim_copy_path = workspace / "roster-final-echo-then-interim-copy-after-task-stop.jsonl"
+    echo_then_interim_copy_path.write_text(
+        stopped_path.read_text(encoding="utf-8")
+        + "\n".join(json.dumps(record) for record in [
+            *delivered(final_body, "2026-10-27T21:50:30.000Z"),
+            *delivered(interim_body, "2026-10-27T21:51:00.000Z")]) + "\n",
+        encoding="utf-8")
+    echo_then_interim_roster = writer.spawned_subagent_roster(echo_then_interim_copy_path)
+    check("an interim copy after a TaskStop and a final-notification echo leaves the subagent "
+          "not working",
+          writer.still_working_subagent_entries(echo_then_interim_roster) == [],
+          str(echo_then_interim_roster))
+    resumed_final_then_interim_path = workspace / "roster-task-stop-resume-final-then-interim.jsonl"
+    resumed_final_then_interim_path.write_text(
+        stopped_path.read_text(encoding="utf-8")
+        + "\n".join(json.dumps(record) for record in [
+            resume_record(incident_agent, "2026-10-27T21:55:00.000Z"),
+            *delivered(final_body, "2026-10-27T21:58:00.000Z"),
+            *delivered(interim_body, "2026-10-27T22:01:00.000Z")]) + "\n",
+        encoding="utf-8")
+    resumed_final_then_interim_roster = writer.spawned_subagent_roster(
+        resumed_final_then_interim_path)
+    check("a resume lifts a TaskStop, so a later interim notification counts the subagent "
+          "as working again",
+          [entry["agent_id"]
+           for entry in writer.still_working_subagent_entries(resumed_final_then_interim_roster)]
+          == [incident_agent],
+          str(resumed_final_then_interim_roster))
 
     # An empty transcript is not an error: a session may spawn nothing.
     empty_path = workspace / "roster-empty.jsonl"
