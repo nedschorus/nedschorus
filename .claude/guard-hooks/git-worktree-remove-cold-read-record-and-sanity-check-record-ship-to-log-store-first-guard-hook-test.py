@@ -834,6 +834,18 @@ check("two paths given to one removal leave the hook unable to tell",
 check("a removal naming no worktree leaves the hook unable to tell, never removing none",
       hook.worktrees_removed_or_unresolved_reason("git worktree remove /a/nowhere", "/", worktrees)
       == (None, "the path /a/nowhere names no worktree the hook can find from the command's directory"))
+unshipped = [(Path("/s/ship.py"), Path("/a/b/one"), Path("/a/b/one/cold-read-records/r"), "FAILED: no space")]
+for label, unresolved, instruction in (
+        ("a written-out path that names no worktree",
+         hook.PATH_NAMES_NO_WORKTREE_REASON_TEMPLATE.format(argument="/a/nowhere"),
+         hook.PATH_NAMES_NO_WORKTREE_RUN_AGAIN_INSTRUCTION_TEMPLATE.format(force=" -f")),
+        ("a path holding a variable", "the path holds a variable, a glob or a substitution",
+         hook.GIT_WORKTREE_REMOVE_PATH_WRITTEN_OUT_RUN_AGAIN_INSTRUCTION_TEMPLATE.format(force=" -f"))):
+    reason = hook.shipment_failed_refusal(unshipped, unresolved, " -f")
+    check(f"the shipment-failed refusal of a removal the hook cannot place, for {label}, gives that reason's "
+          f"run-again instruction",
+          unresolved in reason and instruction in reason
+          and ("written out in full" in reason) == ("written out in full" in instruction), reason)
 check("a removal naming no path in the command text, as through xargs, leaves the hook unable to tell",
       hook.worktrees_removed_or_unresolved_reason("echo /a/b/two | xargs git worktree remove", "/", worktrees)
       == (None, "`worktree remove` names no path in the command text, so the path reaches git only when "
