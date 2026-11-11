@@ -997,7 +997,7 @@ def item_lines(walk_finder, minutes, value, numbers, total, parser):
     new_marks returns them, the problem line of each mark whose text would not be read whole)."""
     document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
     lines = walk_finder.prose_lines(text, parser, tokens)
-    marks = new_marks(text, tokens, ranges)
+    marks = new_marks(text, tokens, ranges, lines)
     return (document, [line for first, end in ranges for line in lines[first:end]], marks,
             unreadable_new_marks(marks))
 
@@ -1006,7 +1006,8 @@ def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None
     """Return (walk-document path, the items' text as the user is shown it, heading and fenced code included).
     With refused_unless_marks_read, (item, command), a Failure when a mark's text would not be read whole."""
     document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_by)
-    unreadable = unreadable_new_marks(new_marks(text, tokens, ranges)) if refused_unless_marks_read else []
+    unreadable = (unreadable_new_marks(new_marks(text, tokens, ranges, walk_finder.prose_lines(text, parser, tokens)))
+                  if refused_unless_marks_read else [])
     if unreadable:
         item, command = refused_unless_marks_read
         raise Failure(UNREADABLE_NEW_MARKS.format(item=item, document=document, problems="\n".join(unreadable),
@@ -1080,28 +1081,27 @@ for a mark in code or with no text, the lines it may have meant; lines below the
 quotation markers."""
 
 
-def new_marks(text, tokens, ranges):
-    """Return a NewMark for each `#new` or `#new_if_d` mark in the ranges outside an HTML comment, in order.
+def new_marks(text, tokens, ranges, shown):
+    """Return a NewMark for each `#new` or `#new_if_d` mark in the ranges outside an HTML comment, in order;
+    shown are the walk finder's prose_lines of text, from which every HTML comment is cut.
     This is the one place that decides where a marked text ends, so that check reads the text
     unreadable_new_marks judged: at the end of its Markdown paragraph, or before the first line below it that
     this program reads on its own, such as the next `#new` or a `#case_against` line, even when Markdown keeps
     that line in the same paragraph."""
     lines = text.split("\n")
-    code, comments, paragraphs = {}, set(), []
+    code, paragraphs = {}, []
     for token in tokens:
         if token.map is None:
             continue
         if token.type in ("fence", "code_block"):
             code.update((number, token.map[1]) for number in range(*token.map))
-        elif token.type == "html_block" and token.content.lstrip().startswith("<!--"):
-            comments.update(range(*token.map))
         elif token.type == "paragraph_open":
             paragraphs.append(token.map)
     marks = []
     for first, end in ranges:
         for number in range(first, end):
-            match = NEW_LINE.match(lines[number])
-            if not match or number in comments:
+            match = NEW_LINE.match(lines[number] if number in code else shown[number])
+            if not match:
                 continue
             if number in code:
                 below = lines_until_blank_or_fence(lines, number + 1, min(code[number], end))
