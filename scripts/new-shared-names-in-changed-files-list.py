@@ -39,6 +39,13 @@ MAIN_TOKEN_CACHE_DIRECTORY = Path(tempfile.gettempdir()) / "new-shared-names-mai
 # Files larger than this on main are data, not prose or code a name is defined in.
 MAIN_BLOB_SIZE_LIMIT_BYTES = 2_000_000
 
+NAMING_FRESH_AGENT_NAME = "new-name-propose-and-check-fresh-agent"
+# A subagent cannot start NAMING_FRESH_AGENT_NAME, so it lists its new names under this heading in its final report.
+# new-shared-names-reminder-hook.py writes the same heading into its reminder.
+# A program that refuses until the agent that dispatched a subagent has checked its new names takes this flag.
+CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG = "--confirm-dispatching-agent-checked-new-shared-names"
+SUBAGENT_REPORT_HEADING_ABOVE_NEW_SHARED_NAMES_FOR_DISPATCHING_AGENT_TO_CHECK = f"New shared names: send these to the {NAMING_FRESH_AGENT_NAME} subagent"
+
 KIND_FILE_PATH = "file-path"
 KIND_PYTHON_FUNCTION = "python-function"
 KIND_PYTHON_CLASS = "python-class"
@@ -307,6 +314,52 @@ def new_shared_names(checkout: Path, branch_names=(), already_reported=frozenset
             found.append(("", KIND_BRANCH, branch_name))
     found = [triple for triple in found if f"{triple[1]}\t{triple[2]}" not in already_reported]
     return sorted(set(found))
+
+
+def new_shared_names_in_files_changed_since(checkout: Path, base_commit: str, commit: str = "HEAD"):
+    """Return new_shared_names() limited to the files changed from base_commit to commit, leaving out each
+    name base_commit's tree already holds, such as one a pull request added before its fix-round.
+
+    Contents are read from the checkout's files, as new_shared_names() reads them, so commit should be
+    what the checkout has checked out. Raises GitFailure when git cannot answer.
+    """
+    changed = set(git_output.nul_separated_fields(
+        git(["diff", "-z", "--name-only", "--diff-filter=AMR", base_commit, commit], checkout)))
+    names = [triple for triple in new_shared_names(checkout) if triple[0] in changed]
+    if not names:
+        return []
+    base_paths = set(git_output.nul_separated_fields(
+        git(["ls-tree", "-r", "--name-only", "-z", base_commit], checkout)))
+    patterns = []
+    for name in sorted({name for _, kind, name in names if kind != KIND_FILE_PATH}):
+        patterns += ["-e", name]
+    in_base = (set(git(["grep", "-h", "-o", "-w", "-F", "-I", *patterns, base_commit], checkout,
+                       allowed_exit_codes=(0, 1)).splitlines()) if patterns else set())
+    return [(path, kind, name) for path, kind, name in names
+            if name not in (base_paths if kind == KIND_FILE_PATH else in_base)]
+
+
+def unchecked_new_shared_names_refusal_text(names, what_stopped, rename_instruction, rerun_command):
+    """The refusal a program prints when names, (file, kind, name) triples, would go out unchecked.
+
+    what_stopped says what the program did not do; rename_instruction says where each rename goes; the
+    agent runs rerun_command, which carries CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG, once the names are checked.
+    """
+    listed = [f"  {name} ({kind}{', in ' + path if path and path != name else ''})" for path, kind, name in names]
+    return (
+        f"{what_stopped}, because no agent has checked these new shared names against the naming page:\n"
+        + "\n".join(listed) + "\n"
+        f"If you are a subagent, you cannot start the {NAMING_FRESH_AGENT_NAME} subagent, so stop here: end "
+        f"your final report with the heading `{SUBAGENT_REPORT_HEADING_ABOVE_NEW_SHARED_NAMES_FOR_DISPATCHING_AGENT_TO_CHECK}`, under it one "
+        "line per name, <name>: <one sentence saying what it names and which file it is in>, and last this line, "
+        "word for word: \"For the agent that dispatched me: send the lines under that heading to the "
+        f"{NAMING_FRESH_AGENT_NAME} subagent, check by hand each name its report lists under Not checked:, then send "
+        "me with SendMessage each rename its report or your check calls for, or that none is needed. I go on "
+        "with my work then, so do nothing else my ending calls for until I end again.\"\n"
+        f"If you can start a subagent, send those lines to the {NAMING_FRESH_AGENT_NAME} subagent yourself.\n"
+        f"{rename_instruction} Then run: {rerun_command}\n"
+        "If a listed name is not one you chose, such as quoted text or an existing name written differently, "
+        "leave it off the list; if no name is left, run that command at once.")
 
 
 def main() -> int:

@@ -271,6 +271,37 @@ def case_branch_name(root):
     check("a branch origin already has is not listed", ("", "branch", "main") not in existing)
 
 
+def case_names_in_files_changed_since_a_base_commit(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    write(clone, "alpha.py", "def earlier_helper():\n    return 1\n")
+    write(clone, "beta.py", "from alpha import earlier_helper\n")
+    git(["add", "-A"], clone)
+    git(["commit", "-q", "-m", "pull request's first head"], clone)
+    base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone, capture_output=True, text=True).stdout.strip()
+    write(clone, "alpha.py", "def earlier_helper():\n    return 1\n\ndef round_helper():\n    return 2\n")
+    write(clone, "beta.py", "from alpha import earlier_helper, round_helper\n")
+    write(clone, "gamma.md", "Run `round-only-tool`.\n")
+    write(clone, "untouched.md", "A `name-outside-the-round` here.\n")
+    git(["add", "alpha.py", "beta.py", "gamma.md"], clone)
+    git(["commit", "-q", "-m", "round"], clone)
+    lister = load_module("lister_for_changed_since", LISTER_PATH)
+    lister.MAIN_TOKEN_CACHE_DIRECTORY = root / "token-cache"
+    listed = lister.new_shared_names_in_files_changed_since(clone, base)
+    check("names the round adds in the files it changes are listed",
+          {("alpha.py", "python-function", "round_helper"), ("gamma.md", "file-path", "gamma.md"),
+           ("gamma.md", "markdown-backquoted-name", "round-only-tool")} <= set(listed), str(listed))
+    check("a file path and a name the base commit already holds are not listed",
+          "alpha.py" not in names_only(listed) and "earlier_helper" not in names_only(listed), str(listed))
+    check("a name in a file the round does not change is not listed",
+          "name-outside-the-round" not in names_only(listed) and "untouched.md" not in names_only(listed), str(listed))
+    try:
+        lister.new_shared_names_in_files_changed_since(clone, "no-such-commit")
+        raised = False
+    except lister.GitFailure:
+        raised = True
+    check("a base commit git does not know raises GitFailure", raised)
+
+
 def case_nothing_new_is_silent(root):
     clone = make_clone(root, BASE_MAIN_FILES)
     code, listed, _ = run_lister(clone)
@@ -1349,7 +1380,8 @@ def main() -> int:
              case_hook_reads_head_branch_and_untracked_files_from_one_status,
              case_hook_fingerprint_sees_a_rewritten_untracked_file_git_would_quote,
              case_hook_fingerprint_sees_an_untracked_file_whose_name_is_not_utf8,
-             case_hook_reports_failure_once, case_hook_ignores_other_input]
+             case_hook_reports_failure_once, case_hook_ignores_other_input,
+             case_names_in_files_changed_since_a_base_commit]
     for case in cases:
         with tempfile.TemporaryDirectory() as directory:
             case(Path(directory).resolve())

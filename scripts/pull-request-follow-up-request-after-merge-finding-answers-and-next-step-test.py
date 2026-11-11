@@ -102,6 +102,11 @@ def git(directory, *arguments):
                           capture_output=True, text=True).stdout.strip()
 
 
+CONFIRMED = "--confirm-dispatching-agent-checked-new-shared-names"
+NAME_CHECKED_SUBCOMMANDS = ("open-pull-request",)
+HEADING = "New shared names: send these to the new-name-propose-and-check-fresh-agent subagent"
+
+
 class Case:
     """A bare origin, the author's clone, a fake gh, and the subagent's worktree once made."""
 
@@ -140,7 +145,11 @@ class Case:
         git(self.repository, "worktree", "add", "-q", "--detach", str(self.worktree))
         return self.worktree
 
-    def run(self, directory, *arguments, **environment):
+    def run(self, directory, *arguments, confirmed=True, **environment):
+        """confirmed: pass the flag saying the dispatching agent checked the new shared names, as a subagent does
+        once it has, to the subcommand that refuses without it."""
+        if confirmed and arguments and arguments[0] in NAME_CHECKED_SUBCOMMANDS:
+            arguments = (*arguments, CONFIRMED)
         completed = subprocess.run([sys.executable, str(PROGRAM), str(NUMBER), *map(str, arguments)],
                                    cwd=directory, capture_output=True, text=True,
                                    stdin=subprocess.DEVNULL, env={**self.environment, **environment})
@@ -564,6 +573,43 @@ def test_open():
         case.close()
 
 
+def test_new_shared_names_wait_for_the_dispatching_agent():
+    case = Case()
+    try:
+        worktree = started(case, findings="1,2")
+        case.commit_change("new-tool.txt")
+        description = case.write_description()
+        code, out, err = case.run(worktree, "open-pull-request", confirmed=False)
+        check("open refuses a file no agent has checked with exit 1, naming it, the subagent's report heading and the "
+              "command to run once it is checked, leaves out the topic branch's name, and pushes and opens nothing",
+              code == 1 and "REFUSED: open-pull-request pushed nothing, because" in err
+              and "  new-tool.txt (file-path)\n" in err and "(branch)" not in err
+              and f"the heading `{HEADING}`" in err
+              and "Make each rename in a commit on the topic branch. Then run: "
+                  f"the same open-pull-request command again, with {CONFIRMED} added\n" in err
+              and "rename-topic-branch" not in err
+              and "topic-one" not in git(case.origin, "branch", "--list") and case.gh_pr_create_calls() == []
+              and description.exists(), err)
+        code, out, err = case.run(worktree, "rename-topic-branch", "topic-renamed")
+        check("there is no rename-topic-branch subcommand", code == 2 and "invalid choice" in err, err)
+        git(worktree, "update-ref", "-d", "refs/remotes/origin/main")
+        code, out, err = case.run(worktree, "open-pull-request", confirmed=False)
+        check("open fails with exit 2 when git cannot list the new shared names, and pushes nothing",
+              code == 2 and "FAILED: the new shared names of the topic branch could not be listed, so "
+                            "open-pull-request pushed nothing: git rev-parse exited 128" in err
+              and "topic-one" not in git(case.origin, "branch", "--list") and case.gh_pr_create_calls() == [], err)
+        git(worktree, "fetch", "-q", "origin")
+        git(worktree, "reset", "-q", "--hard", "origin/main")
+        (worktree / "base.txt").write_text("changed\n")
+        git(worktree, "commit", "-q", "-am", "change a file main has")
+        code, out, err = case.run(worktree, "open-pull-request", confirmed=False)
+        check("open goes on without the flag when the topic branch adds no new shared name, though origin has no "
+              "branch of its name",
+              code == 0 and f"Opened {LINK} for findings 1 and 2" in out, out + err)
+    finally:
+        case.close()
+
+
 def test_open_pushes_the_checked_out_recorded_branch_not_the_last():
     case = Case()
     try:
@@ -613,7 +659,7 @@ def test_open_failures():
         program.push_time_limit_seconds = lambda environment: 0.5
         try:
             with case.in_process(worktree):
-                program.open_pull_request(NUMBER, [1])
+                program.open_pull_request(NUMBER, [1], confirm_dispatching_agent_checked_new_shared_names=True)
         except program.StepFailed as error:
             check("a push that does not finish in time is a StepFailed with the usual instructions",
                   str(error) == "git push -u origin topic-one failed (did not finish within 0.5 s), so no pull request was opened."
@@ -635,7 +681,7 @@ def test_open_failures():
         try:
             with case.in_process(worktree, **{program.pre_push_conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7.5"}), \
                     contextlib.redirect_stderr(io.StringIO()) as stderr:
-                code = program.main([str(NUMBER), "open-pull-request", "--handled-finding-numbers", "1"])
+                code = program.main([str(NUMBER), "open-pull-request", "--handled-finding-numbers", "1", CONFIRMED])
         finally:
             program.git_output.run_git = original_run_git
         check("a push that times out is given the conflict check's budget from the environment plus 120 s, rounded up to whole "
@@ -654,7 +700,7 @@ def test_open_failures():
         program.git_output.run_git = push_cannot_start
         try:
             with case.in_process(worktree):
-                program.open_pull_request(NUMBER, [1])
+                program.open_pull_request(NUMBER, [1], confirm_dispatching_agent_checked_new_shared_names=True)
         except program.StepFailed as error:
             check("a push that cannot start is a StepFailed with the usual instructions",
                   "could not start git: injected" in str(error) and error.instructions is None, str(error))
@@ -800,7 +846,7 @@ def test_open_gh_pr_create_second_try_and_gh_pr_list():
     try:
         with case.in_process(worktree, FAKE_GH_CREATE_FAILS_FIRST=str(case.root / "failed-once"), FAKE_GH_FIRST_SLEEPS="1"), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
-            program.open_pull_request(NUMBER, None)
+            program.open_pull_request(NUMBER, None, confirm_dispatching_agent_checked_new_shared_names=True)
         check("gh pr create that does not finish in time once and passes on the second try is recorded, with the notice",
               len(case.gh_pr_create_calls()) == 2
               and out.getvalue().startswith("Notice: gh pr create failed once (gh pr create did not finish within "
@@ -1569,7 +1615,8 @@ def test_print_block_with_replaced_pull_requests():
 
 
 for test in (test_help, test_block_parsing, test_print_block, test_print_block_with_replaced_pull_requests, test_brief_text, test_no_saved_block, test_start,
-             test_open_refusals, test_open, test_open_pushes_the_checked_out_recorded_branch_not_the_last,
+             test_open_refusals, test_open, test_new_shared_names_wait_for_the_dispatching_agent,
+             test_open_pushes_the_checked_out_recorded_branch_not_the_last,
              test_open_failures, test_open_passes_on_what_a_push_that_succeeds_prints,
              test_open_gh_pr_create_second_try_and_gh_pr_list,
              test_push_time_limit_is_the_pre_push_conflict_check_budget_plus_120_seconds,

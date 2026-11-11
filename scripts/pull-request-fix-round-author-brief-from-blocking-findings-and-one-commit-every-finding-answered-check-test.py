@@ -251,6 +251,9 @@ def answers_file(root, text):
     return str(path)
 
 
+# The flag the agent passes once the agent that dispatched it has checked the new shared names.
+CONFIRMED = "--confirm-dispatching-agent-checked-new-shared-names"
+HEADING = "New shared names: send these to the new-name-propose-and-check-fresh-agent subagent"
 GOOD_ANSWERS = "1. Fixed: the error is raised,\n   and a case covers it.\n2. Added the timeout case.\n"
 
 
@@ -317,6 +320,10 @@ def brief_cases(root, repository, base, frozen_head):
           and "If the push itself fails, do not retry it by force or rewrite the branch: tell "
           "merge-lane-2 with SendMessage what git printed." in out, out)
 
+    check("brief: tells the author to do what a final report holding new shared names asks, before removing the worktree",
+          f"as it does when it lists new shared names under the heading `{HEADING}`: do what that line says "
+          "before the removal below." in out
+          and out.index(f"`{HEADING}`") > out.index("For the author, when the subagent has finished"), out)
     check("brief: tells the author to dispatch the subagent in a worktree of its own",
           "subagent_type: \"fork\") with isolation: \"worktree\"" in out and "a git worktree of its own" in out, out)
     local_branch = f"fix-round-pull-request-{NUMBER}-review-11"
@@ -831,7 +838,13 @@ def check_cases(root, repository, base, frozen_head):
           code == 1 and ANSWERS_NAME in err and "git rm --cached" in err, out + err)
     git(repository, "rm", "-q", "--cached", ANSWERS_NAME)
     git(repository, "commit", "-q", "--amend", "--no-edit")
+    # origin/main was deleted above, so the new shared names cannot be listed.
     code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews), "--check")
+    check("check: a round's commit whose new shared names git cannot list fails with exit 2, before any suite runs",
+          code == 2 and "the new shared names the round's commit adds could not be listed: git rev-parse exited 128"
+          in err and "Not pushed yet" not in out, out + err)
+    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews), "--check",
+                         CONFIRMED)
     check("check: the same fix without the answers file passes", code == 0 and "Not pushed yet" in out,
           out + err)
     git(repository, "reset", "-q", "--hard", unignored_head)
@@ -1723,8 +1736,9 @@ def suite_cases(root, repository, _base, _frozen_head):
     environment = {"FAKE_RUNNER_CALLS": str(root / "runner-calls.jsonl")}
 
     def check_with_head(head, extra=None):
+        # The round's new file c-test.py is a new shared name, which the dispatching agent has checked.
         return run(root, repository, routes_for(head, reviews), "--check", "--answers", answers,
-                   environment_extra=dict(environment, **(extra or {})))
+                   CONFIRMED, environment_extra=dict(environment, **(extra or {})))
 
     code, out, err = check_with_head(frozen_head)
     check("suites: a round with no commit runs no suite", code == 0 and runner_calls(root) == [], out + err)
@@ -1732,6 +1746,16 @@ def suite_cases(root, repository, _base, _frozen_head):
     (repository / "c-test.py").write_text("suite\n")
     git(repository, "add", "c-test.py")
     broken = commit_file(repository, "failing-suites.txt", "a-test.py b-test.py c-test.py\n", "round breaks two")
+    code, out, err = run(root, repository, routes_for(frozen_head, reviews), "--check", "--answers", answers,
+                         environment_extra=environment)
+    check("names: a round's commit adding a shared name no agent has checked refuses with exit 1, before any "
+          "suite runs, naming it, the subagent's report heading and the command to run once it is checked",
+          code == 1 and runner_calls(root) == [] and "  c-test.py (file-path)\n" in err
+          and f"the heading `{HEADING}`" in err
+          and f"Then run: the same check command again, with {CONFIRMED} added\n" in err
+          and "Not pushed yet" not in out, out + err)
+    check("names: a name the frozen-head already holds, though origin/main does not, is not listed",
+          "failing-suites.txt" not in err and "a-test.py" not in err, err)
     code, out, err = check_with_head(frozen_head)
     calls = runner_calls(root)
     check("suites: a suite failing at the round's commit and passing at the frozen-head refuses, naming it, "
@@ -1772,8 +1796,10 @@ def suite_cases(root, repository, _base, _frozen_head):
           code == 2 and "did not judge every suite: it printed\n  run-all-test-suites: not run to the end" in err
           and "Not pushed yet" not in out, out + err)
     runner_calls(root)
-    code, out, err = check_with_head(fixed)
-    check("suites: after the push the message for merge-lane-2 names that suite, and no suite runs",
+    code, out, err = run(root, repository, routes_for(fixed, reviews), "--check", "--answers", answers,
+                         environment_extra=environment)
+    check("suites: after the push the message for merge-lane-2 names that suite, and no suite runs, and the "
+          "new shared names are not listed again",
           code == 0 and "nc-test-suites that fail at the frozen-head too, so not because of this round: "
           "a-test.py." in out and runner_calls(root) == [], out + err)
 

@@ -4,7 +4,7 @@
 Usage:
   PROGRAM <number> next-step
   PROGRAM <number> start-topic-branch <topic-branch> --finding-numbers <n>[,<n>...]
-  PROGRAM <number> open-pull-request [--handled-finding-numbers <n>[,<n>...]]
+  PROGRAM <number> open-pull-request [--handled-finding-numbers <n>[,<n>...]] [--confirm-dispatching-agent-checked-new-shared-names]
   PROGRAM <number> record-finding-leave-out-reason <n> --reason "<why>"
   PROGRAM <number> record-finding-as-waiting-for-user-ruling <n> --what-it-would-change "<what>"
   PROGRAM <number> reopen-waiting-finding-with-user-ruling <n> --user-ruling "<his words>"
@@ -51,7 +51,11 @@ branch for, a worktree whose checked-out branch, or detached HEAD, is not one st
 and a FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME at the worktree's root that is
 missing, is not a title, a blank line and a description, or whose description
 has no defect line, the rule scripts/merge-gate.sh applies, read by the same
-reader; then git push -u origin <branch>, where <branch> is the recorded topic branch the worktree has
+reader; unless --confirm-dispatching-agent-checked-new-shared-names is given, refuse while the new-shared-names
+lister lists names the worktree adds beside origin/main, leaving out the topic branch's name, which is not
+checked, and fail when git cannot list them, since the subagent cannot start the naming fresh-agent and must
+hand the names to the agent that dispatched it before the push; it waits until the topic branch holds a commit,
+because the agent harness removes a worktree with no change when its subagent ends; then git push -u origin <branch>, where <branch> is the recorded topic branch the worktree has
 checked out, and whose pre-push hook runs the test suites; gh pr create against main; record the pull request's link against each
 finding in FINDING_ANSWERS_FILE_NAME_FORMAT; then remove FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME, so the
 next topic branch's pull request cannot take this one's title and description. A gh pr create that fails, other than
@@ -160,6 +164,7 @@ owner_file = load_script_beside_this_one("worktree-owner-file-read-and-write.py"
 defect_line_reader = load_script_beside_this_one(
     "pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
 pre_push_conflict_check = load_script_beside_this_one("git-client-side-hooks-pre-push-conflict-check.py")
+new_shared_names_lister = load_script_beside_this_one("new-shared-names-in-changed-files-list.py")
 
 PROGRAM = "scripts/" + Path(__file__).name
 REPOSITORY = "nedschorus/nedschorus"
@@ -555,7 +560,7 @@ def unanswered_started_findings(record, branch=None):
                   if finding not in answers and branch in (None, started))
 
 
-def open_pull_request(number, findings):
+def open_pull_request(number, findings, confirm_dispatching_agent_checked_new_shared_names=False):
     states = state_directory()
     request = saved_follow_up_request(states, number)
     answers_file = state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, number)
@@ -599,6 +604,8 @@ def open_pull_request(number, findings):
                              "author, who decides whether to keep them.")))
     description_file = Path(worktree) / FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME
     title, description = read_title_and_description(description_file)
+    if not confirm_dispatching_agent_checked_new_shared_names:
+        refuse_new_shared_names_the_dispatching_agent_has_not_checked(number, worktree)
     try:
         # --quiet leaves on stderr only errors and what the hooks and the remote print.
         _, push_warnings = git_output.run_git(".", ["push", "--quiet", "-u", "origin", branch], return_stderr=True,
@@ -633,6 +640,20 @@ def open_pull_request(number, findings):
           "request, and recorded it.")
     remove_file(description_file)
     print(still_unanswered_text(number, request, answers))
+
+
+def refuse_new_shared_names_the_dispatching_agent_has_not_checked(number, worktree):
+    try:
+        names = new_shared_names_lister.new_shared_names(Path(worktree))
+    except new_shared_names_lister.GitFailure as failure:
+        raise StepFailed(f"the new shared names of the topic branch could not be listed, so open-pull-request "
+                         f"pushed nothing: {failure}") from None
+    if names:
+        raise Refused(new_shared_names_lister.unchecked_new_shared_names_refusal_text(
+            names, "open-pull-request pushed nothing",
+            "Make each rename in a commit on the topic branch.",
+            "the same open-pull-request command again, with "
+            f"{new_shared_names_lister.CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG} added"))
 
 
 def gh_pr_create_tried_twice(arguments):
@@ -1066,6 +1087,9 @@ def main(argv=None):
     open_parser.add_argument("--handled-finding-numbers", type=finding_numbers,
                              help="the findings the pull request handles, such as 1,3; by default those "
                                   "start-topic-branch recorded for the branch that have no answer")
+    open_parser.add_argument(new_shared_names_lister.CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG, action="store_true",
+                             help="the agent that dispatched you has checked the new shared names the topic "
+                                  "branch adds, and the renames are committed")
     leave_out_parser = subcommands.add_parser("record-finding-leave-out-reason", help="record why a finding is left out")
     leave_out_parser.add_argument("finding", type=int)
     leave_out_parser.add_argument("--reason", required=True)
@@ -1097,7 +1121,8 @@ def main(argv=None):
         elif arguments.subcommand == "start-topic-branch":
             start_topic_branch(arguments.number, arguments.branch, arguments.finding_numbers)
         elif arguments.subcommand == "open-pull-request":
-            open_pull_request(arguments.number, arguments.handled_finding_numbers)
+            open_pull_request(arguments.number, arguments.handled_finding_numbers,
+                              arguments.confirm_dispatching_agent_checked_new_shared_names)
         elif arguments.subcommand == "record-finding-leave-out-reason":
             record_finding_leave_out_reason(arguments.number, arguments.finding, arguments.reason)
         elif arguments.subcommand == "record-finding-as-waiting-for-user-ruling":
