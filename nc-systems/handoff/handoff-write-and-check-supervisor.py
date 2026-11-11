@@ -49,8 +49,9 @@ marker string as its entire instruction, silently.
 Before it writes the handoff, the writer prunes the completed tasks from the
 agent-seat's task list, the one CLAUDE_CODE_TASK_LIST_ID names, because Claude
 Code lists every completed task in each task reminder and never removes one
-itself. A completed task is removed only when the log-store holds a copy with
-the same bytes, so nothing is lost; it is kept when an open task links to it
+itself. The writer first copies each completed task it would remove into the
+log-store, and removes it only when the log-store's copy then has the same
+bytes, so nothing is lost; it is kept when an open task links to it
 in either direction, or when the next step names its id or its subject. The
 high-water mark is raised before anything is removed, so Claude Code never
 gives a removed task's id to a new task, which would overwrite the
@@ -599,6 +600,23 @@ class LogStoreCopyUnreadable(Exception):
         self.unreadable_names = unreadable_names
 
 
+def copy_task_files_to_log_store(host, list_directory: Path, store_list_directory, file_names) -> None:
+    """Copy the named task files into the log-store's copy of the list; raise if rsync fails."""
+    # The mirror runs on a timer, so a task completed since its last run has an older copy, or none.
+    completed = subprocess.run(transcript_mirror.rsync_command(host, list_directory, store_list_directory,
+                                                               files_on_stdin=True),
+                               input="".join(f"{name}\n" for name in file_names),
+                               capture_output=True, text=True, check=False)
+    if completed.returncode == 0:
+        return
+    said = collapse_to_one_line(completed.stderr) or "nothing on stderr"
+    # An unreachable host makes rsync exit 255 or 12, depending on timing, so its exit cannot tell.
+    if host:
+        raise LogStoreUnreachable(f"rsync to {host} exited {completed.returncode}: {said}")
+    raise RuntimeError(f"rsync of the completed tasks to {store_list_directory} exited "
+                       f"{completed.returncode}: {said}")
+
+
 def log_store_copy_sha256_of_each_task_file(host, store_list_directory, file_names) -> dict:
     """Return {file name: sha256 hex} for the named files the log-store holds."""
     if host is None:
@@ -736,10 +754,12 @@ def prune_completed_tasks_unguarded(next_step_text: str) -> str:
     store_list_directory = machine_path / store_directory / list_name
     store_text = log_store_task_list_copy_location_in_scp_form(host, store_list_directory)
     kept_parts = [f"{len(kept_linked)} linked to open tasks", f"{len(kept_cited)} cited by the next step"]
+    candidate_names = [tasks[task_id][0].name for task_id in candidates]
+    store_hashes = {}
     try:
-        store_hashes = log_store_copy_sha256_of_each_task_file(host, store_list_directory,
-                                         [tasks[task_id][0].name for task_id in candidates]) \
-            if candidates else {}
+        if candidates:
+            copy_task_files_to_log_store(host, list_directory, store_list_directory, candidate_names)
+            store_hashes = log_store_copy_sha256_of_each_task_file(host, store_list_directory, candidate_names)
     except LogStoreUnreachable as error:
         return (f"kept every completed task in {list_name}, because the log-store copy at "
                 f"{store_text} could not be checked ({error}). Check that ned-box is up and that "
