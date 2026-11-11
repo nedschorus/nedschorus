@@ -464,7 +464,7 @@ def open_tasks_nothing_holds(task_directory, checker):
     # The checker is shared by every agent-seat, so only the failures appended here are this one's.
     failures_before = len(checker.gh_failures)
     free, _ = due_task_hook.unheld_and_held_tasks(tasks, task_directory, checker)
-    if len(checker.gh_failures) > failures_before:
+    if len(checker.gh_failures) > failures_before:  # pragma: no mutate, gh_failures is only appended to, so != gives what > gives; a test kills is not
         kind, number, cause = checker.gh_failures[failures_before]
         raise ReadFailure(f"GitHub could not say whether {kind} {number} holds: {cause}")
     return [{"id": task_id, "subject": tasks[task_id].get("subject")} for task_id in free]
@@ -675,7 +675,7 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
             # Only the judge can find every sentence backed, and then rules 3 to 5 decide; a
             # sentence code already found unbacked means that can never happen. Rule 2 is set
             # after those reads, so one that fails leaves the rule null.
-            if not any(item["code_reading"] == fields.UNBACKED for item in raised):
+            if not any(item["code_reading"] == fields.UNBACKED for item in raised):  # pragma: no mutate, raised holds only the UNBACKED and JUDGE constants themselves, and "judge" sorts before "unbacked", so >= and is give what == gives
                 verdict[fields.IF_EVERY_SENTENCE_BACKED] = rules_three_to_five(
                     verdict, put_off_at, checker, task_directory)
             verdict.update({fields.RULE: 2, fields.DECISION: fields.JUDGE})

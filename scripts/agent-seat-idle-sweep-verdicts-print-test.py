@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 PROGRAM = Path(__file__).with_name("agent-seat-idle-sweep-verdicts-print.py")
@@ -779,6 +780,20 @@ code, verdicts, _ = machine.run("--agent-seat", "alpha", "--agent-seat", "beta")
 check("one agent-seat's gh failure is not reported for the next agent-seat",
       code == 1 and "pr_merged 51" in verdicts["alpha"]["errors"][0]
       and verdicts["beta"]["errors"] == [] and verdicts["beta"]["rule"] == 5, verdicts)
+# Past 256 the two equal failure counts are different int objects, so this case tells a test of
+# identity from a comparison of the counts.
+many_failures_tasks = Path(tempfile.mkdtemp(dir=str(SUITE_ROOT)))
+(many_failures_tasks / "1.json").write_text(
+    json.dumps({"id": "1", "subject": "Free", "status": "pending"}))
+earlier_seats_checker = types.SimpleNamespace(
+    gh_failures=[("pr_merged", number, "gh failed") for number in range(300)])
+try:
+    free = program.open_tasks_nothing_holds(many_failures_tasks, earlier_seats_checker)
+except Exception as error:
+    free = error
+check("open tasks nothing holds, after 300 gh failures of earlier agent-seats and none of its own: "
+      "the free task, no error",
+      free == [{"id": "1", "subject": "Free"}], free)
 
 # --- rule 2 settled by code asks GitHub nothing ----------------------------------------------
 machine = Machine()
