@@ -116,31 +116,57 @@ def suggestions_ending_disagrees_failure_detail(written, roles):
         RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
 
 
-skill_text = SKILL_FILE.read_text()
-# A role suffix as the skill writes it: "-draft", "" for the walk text itself.
-skill_suffixes = {match.group(1) or "" for match in SKILL_ENDING.finditer(skill_text)}
-check("the skill names the walk files' endings",
-      len(skill_suffixes) >= 4, too_few_skill_endings_failure_detail(skill_suffixes))
+def skill_suffixes_in(skill_text):
+    """Each role suffix the skill writes: "-draft", "" for the walk text itself."""
+    return {match.group(1) or "" for match in SKILL_ENDING.finditer(skill_text)}
+
+
+SKILL_NAMES_ENDINGS_CASE = "the skill names the walk files' endings"
+SHIPPER_ROLES_NAMED_CASE = "every walk-files-ship.py role suffix is one the skill names"
+FAST_READ_REPORT_SHIPPED_CASE = "the fast read's report ending is the shipper's cold-read-fast-read report role"
+
+
+def fast_read_ending_named_case(constant_name):
+    return f"cold-read-fast-read.py {constant_name} is an ending the skill names"
+
+
+def walk_file_endings_cases(skill_text, fast_read_endings, walk_file_roles):
+    """Every case holding the two programs' endings to the skill, as (case
+    name, passed, detail) triples, given the skill's text, the fast read's
+    (constant name, ending) pairs and the shipper's WALK_FILE_ROLES; a planted
+    input prints the messages the real files would."""
+    skill_suffixes = skill_suffixes_in(skill_text)
+    cases = [(SKILL_NAMES_ENDINGS_CASE, len(skill_suffixes) >= 4,
+              too_few_skill_endings_failure_detail(skill_suffixes))]
+    for constant_name, ending in fast_read_endings:
+        cases.append((fast_read_ending_named_case(constant_name),
+                      ending.removesuffix(".md") in skill_suffixes,
+                      fast_read_ending_unnamed_failure_detail(constant_name, ending)))
+    unnamed = [suffix for suffix, _role in walk_file_roles if suffix not in skill_suffixes]
+    cases.append((SHIPPER_ROLES_NAMED_CASE, not unnamed,
+                  shipper_role_unnamed_failure_detail(unnamed)))
+    # The two programs must also agree with each other, or a walk draft's
+    # report lands where the shipper will not look for it.
+    shipper_roles = [suffix for suffix, _role in walk_file_roles]
+    written = dict(fast_read_endings)["WALK_SUGGESTIONS_SUFFIX"]
+    cases.append((FAST_READ_REPORT_SHIPPED_CASE,
+                  written.removesuffix(".md") in set(shipper_roles),
+                  suggestions_ending_disagrees_failure_detail(written, shipper_roles)))
+    return cases
+
+
+def case_outcome(cases, case_name):
+    return next((passed, detail) for name, passed, detail in cases if name == case_name)
+
 
 fast_read = load("cold-read-fast-read.py", "nc-systems/cold-read")
-for constant_name in ("WALK_DRAFT_SUFFIX", "WALK_SUGGESTIONS_SUFFIX"):
-    ending = getattr(fast_read, constant_name)
-    check(f"cold-read-fast-read.py {constant_name} is an ending the skill names",
-          ending.removesuffix(".md") in skill_suffixes,
-          fast_read_ending_unnamed_failure_detail(constant_name, ending))
-
 shipper = load("walk-files-ship.py")
-unnamed = [suffix for suffix, _role in shipper.WALK_FILE_ROLES
-           if suffix not in skill_suffixes]
-check("every walk-files-ship.py role suffix is one the skill names",
-      not unnamed, shipper_role_unnamed_failure_detail(unnamed))
-
-# The two programs must also agree with each other, or a walk draft's
-# report lands where the shipper will not look for it.
-shipper_roles = [suffix for suffix, _role in shipper.WALK_FILE_ROLES]
-check("the fast read's report ending is the shipper's cold-read-fast-read report role",
-      fast_read.WALK_SUGGESTIONS_SUFFIX.removesuffix(".md") in set(shipper_roles),
-      suggestions_ending_disagrees_failure_detail(fast_read.WALK_SUGGESTIONS_SUFFIX, shipper_roles))
+for case_name, passed, detail in walk_file_endings_cases(
+        SKILL_FILE.read_text(),
+        [(constant_name, getattr(fast_read, constant_name))
+         for constant_name in ("WALK_DRAFT_SUFFIX", "WALK_SUGGESTIONS_SUFFIX")],
+        shipper.WALK_FILE_ROLES):
+    check(case_name, passed, detail)
 
 shipped_beyond_the_skill = [suffix for suffix, _role in shipper.APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX
                             if (suffix, _role) not in shipper.WALK_FILE_ROLES]
@@ -154,9 +180,22 @@ check("the shipper ships one ending beyond the skill's roles, an earlier walk's 
       + RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE)
 
 # Each failure above, made to print from a planted input rather than the real files.
+PLANTED_SKILL_TEXT = "<name>-draft.md, <name>-cold-read-fast-read.md, <name>.md and <name>-minutes.md"
+PLANTED_FAST_READ_ENDINGS = [("WALK_DRAFT_SUFFIX", "-draft.md"),
+                             ("WALK_SUGGESTIONS_SUFFIX", "-cold-read-fast-read.md")]
+PLANTED_WALK_FILE_ROLES = [("-draft", "draft"), ("-cold-read-fast-read", "report"),
+                           ("", "walk"), ("-minutes", "minutes")]
+check("the planted input passes every case, or the planted failures below prove nothing",
+      all(passed for _name, passed, _detail in walk_file_endings_cases(
+          PLANTED_SKILL_TEXT, PLANTED_FAST_READ_ENDINGS, PLANTED_WALK_FILE_ROLES)),
+      walk_file_endings_cases(PLANTED_SKILL_TEXT, PLANTED_FAST_READ_ENDINGS, PLANTED_WALK_FILE_ROLES))
+
+too_few_passed, too_few_detail = case_outcome(
+    walk_file_endings_cases("", PLANTED_FAST_READ_ENDINGS, PLANTED_WALK_FILE_ROLES),
+    SKILL_NAMES_ENDINGS_CASE)
 check("too few endings in the skill fails with the rule, the fix, the guarded-file line and the "
       "line for a rule main broke",
-      too_few_skill_endings_failure_detail(set()).split("\n") == [
+      not too_few_passed and too_few_detail.split("\n") == [
           "found only [] in .claude/skills/walk-me-through/SKILL.md, which decides the endings of "
           "an approval-walk's files; this suite reads them from names written as <name>.md and "
           "<name>-<ending>.md, and needs at least four.",
@@ -164,9 +203,16 @@ check("too few endings in the skill fails with the rule, the fix, the guarded-fi
           "<name>-<ending>.md.",
           RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(".claude/skills/walk-me-through/SKILL.md"),
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
-      too_few_skill_endings_failure_detail(set()))
+      too_few_detail)
+
+unnamed_ending_passed, unnamed_ending_detail = case_outcome(
+    walk_file_endings_cases(
+        PLANTED_SKILL_TEXT,
+        [("WALK_DRAFT_SUFFIX", "-draft.md"), ("WALK_SUGGESTIONS_SUFFIX", "-review.md")],
+        PLANTED_WALK_FILE_ROLES),
+    fast_read_ending_named_case("WALK_SUGGESTIONS_SUFFIX"))
 check("a fast-read ending the skill does not name fails with one fix per cause",
-      fast_read_ending_unnamed_failure_detail("WALK_SUGGESTIONS_SUFFIX", "-review.md").split("\n") == [
+      not unnamed_ending_passed and unnamed_ending_detail.split("\n") == [
           "builds '-review.md', which .claude/skills/walk-me-through/SKILL.md does not name; the "
           "skill decides the endings of an approval-walk's files.",
           "If the new ending was not meant to change the skill, set WALK_SUGGESTIONS_SUFFIX in "
@@ -175,9 +221,14 @@ check("a fast-read ending the skill does not name fails with one fix per cause",
           "approve that change to .claude/skills/walk-me-through/SKILL.md, which the "
           "instruction-file guard protects.",
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
-      fast_read_ending_unnamed_failure_detail("WALK_SUGGESTIONS_SUFFIX", "-review.md"))
+      unnamed_ending_detail)
+
+unnamed_role_passed, unnamed_role_detail = case_outcome(
+    walk_file_endings_cases(PLANTED_SKILL_TEXT, PLANTED_FAST_READ_ENDINGS,
+                            PLANTED_WALK_FILE_ROLES + [("-notes", "notes")]),
+    SHIPPER_ROLES_NAMED_CASE)
 check("a shipper role the skill does not name fails with one fix per cause",
-      shipper_role_unnamed_failure_detail(["-notes"]).split("\n") == [
+      not unnamed_role_passed and unnamed_role_detail.split("\n") == [
           "ships ['-notes'], which .claude/skills/walk-me-through/SKILL.md does not name; the "
           "skill decides the endings of an approval-walk's files.",
           "If the new or changed ending was not meant to change the skill, set that role in "
@@ -187,10 +238,16 @@ check("a shipper role the skill does not name fails with one fix per cause",
           "approve that change to .claude/skills/walk-me-through/SKILL.md, which the "
           "instruction-file guard protects.",
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
-      shipper_role_unnamed_failure_detail(["-notes"]))
+      unnamed_role_detail)
+
+unshipped_passed, unshipped_detail = case_outcome(
+    walk_file_endings_cases(
+        PLANTED_SKILL_TEXT + " <name>-suggestions.md <name>-suggestion.md",
+        [("WALK_DRAFT_SUFFIX", "-draft.md"), ("WALK_SUGGESTIONS_SUFFIX", "-suggestions.md")],
+        [("-draft", "draft"), ("-suggestion", "report"), ("", "walk")]),
+    FAST_READ_REPORT_SHIPPED_CASE)
 check("a suggestions ending the shipper does not ship fails saying what is lost and which to set back",
-      suggestions_ending_disagrees_failure_detail(
-          "-suggestions.md", ["-draft", "-suggestion", ""]).split("\n") == [
+      not unshipped_passed and unshipped_detail.split("\n") == [
           "the fast read writes '-suggestions.md' but the shipper's roles are "
           "['-draft', '-suggestion', ''], so scripts/walk-files-ship.py would not ship a walk's "
           "cold-read-fast-read report to the log-store.",
@@ -199,7 +256,7 @@ check("a suggestions ending the shipper does not ship fails saying what is lost 
           "in WALK_FILE_ROLES in scripts/walk-files-ship.py, which does not; without its .md, the "
           "first must equal the second.",
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
-      suggestions_ending_disagrees_failure_detail("-suggestions.md", ["-draft", "-suggestion", ""]))
+      unshipped_detail)
 
 print()
 if failures:

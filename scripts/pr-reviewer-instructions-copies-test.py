@@ -191,15 +191,28 @@ NAMES_THE_FILE_AND_THIS_TEST_FAILURE_DETAIL = "\n".join([
     RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
 
 
+COPIES_SAY_THE_SAME_CASE = "the two copies say the same thing"
+NAMES_THE_FILE_AND_THIS_TEST_CASE = "CLAUDE.md names the file and this test beside its copy"
+
+
+def copies_cases(instructions_text, claude_md_text):
+    """Both cases on a pair of texts, as (case name, passed, detail) triples,
+    so a planted pair prints the messages the real files would."""
+    found = differences(instructions_text, claude_md_text)
+    return [(COPIES_SAY_THE_SAME_CASE, not found, copies_differ_failure_detail(found)),
+            (NAMES_THE_FILE_AND_THIS_TEST_CASE, names_the_file_and_this_test(claude_md_text),
+             NAMES_THE_FILE_AND_THIS_TEST_FAILURE_DETAIL)]
+
+
+def case_outcome(cases, case_name):
+    return next((passed, detail) for name, passed, detail in cases if name == case_name)
+
+
 instructions = INSTRUCTIONS_FILE.read_text(encoding="utf-8")
 claude_md = CLAUDE_MD.read_text(encoding="utf-8")
 
-found = differences(instructions, claude_md)
-check("the two copies say the same thing",
-      not found, copies_differ_failure_detail(found))
-
-check("CLAUDE.md names the file and this test beside its copy",
-      names_the_file_and_this_test(claude_md), NAMES_THE_FILE_AND_THIS_TEST_FAILURE_DETAIL)
+for case_name, passed, detail in copies_cases(instructions, claude_md):
+    check(case_name, passed, detail)
 
 # --- The two one-sided edits containment used to pass --------------------
 # Both run differences() over a pair of synthetic copies built here, never
@@ -253,27 +266,30 @@ check("a sentence appended to CLAUDE.md's bullet alone is caught",
       "has gone back to containment")
 
 planted_difference = differences(shortened_file, FIXTURE_CLAUDE_MD)
+planted_cases = copies_cases(shortened_file, FIXTURE_CLAUDE_MD)
+copies_passed, copies_detail = case_outcome(planted_cases, COPIES_SAY_THE_SAME_CASE)
 check("the copies' failure lists the differences, names the rule's home, then gives the "
       "guarded-file line and the line for a rule main broke",
-      copies_differ_failure_detail(planted_difference).split("\n") == (
+      not copies_passed and copies_detail.split("\n") == (
           [""] + ("  " + "\n  ".join(planted_difference)).split("\n")
           + ["  The file is the rule's home; make CLAUDE.md's bullet its section again.",
              RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal("CLAUDE.md"),
              RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE]),
-      copies_differ_failure_detail(planted_difference))
+      copies_detail)
 
+naming_passed, naming_detail = case_outcome(planted_cases, NAMES_THE_FILE_AND_THIS_TEST_CASE)
 check("a CLAUDE.md that no longer names the file and this test fails the naming case",
-      not names_the_file_and_this_test(FIXTURE_CLAUDE_MD), FIXTURE_CLAUDE_MD)
+      not naming_passed, FIXTURE_CLAUDE_MD)
 check("the naming case's failure says which names the bullet must carry, the fix, the "
       "guarded-file line and the line for a rule main broke",
-      NAMES_THE_FILE_AND_THIS_TEST_FAILURE_DETAIL.split("\n") == [
+      naming_detail.split("\n") == [
           "CLAUDE.md's review-scope bullet must name docs/agents/pr-reviewer-instructions.md, "
           "where the rule lives, and scripts/pr-reviewer-instructions-copies-test.py, which keeps "
           "the two copies identical.",
           "If your change removed either name from that bullet, put it back.",
           RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal("CLAUDE.md"),
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
-      NAMES_THE_FILE_AND_THIS_TEST_FAILURE_DETAIL)
+      naming_detail)
 
 check("an edit to the framing around the copied intro is caught",
       differences(FIXTURE_INSTRUCTIONS,
