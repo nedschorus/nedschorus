@@ -1050,7 +1050,8 @@ with tempfile.TemporaryDirectory() as scratch:
               "no commit, as the topic worktrees removed 4 and 38 seconds after creation were not",
               line_of(report, "fresh-wt").startswith("fresh-wt: kept — its owner, an agent-session of "
                                                      "seat-running")
-              and "has no merged or closed pull request whose head commit is its HEAD"
+              and "has no merged or closed pull request holding its HEAD as one of the pull "
+                  "request's own commits"
               in line_of(report, "fresh-wt"), report)
         check("a worktree whose owner runs is done once its branch's pull request has merged",
               line_of(report, "merged-wt").startswith("merged-wt: done — its owner")
@@ -1084,6 +1085,38 @@ with tempfile.TemporaryDirectory() as scratch:
               "request on that name started from, is kept though its HEAD is an ancestor of that "
               "pull request's head",
               line_of(report, "reused-base-wt").startswith("reused-base-wt: kept"), report)
+
+        # git cannot be made to fail these two reads for real, so a stand-in run_git fails them.
+        in_process = load_clean_worktrees_module()
+        real_run_git = in_process.run_git
+        ancestor_record = next(record for worktree, _, record in in_process.list_worktrees(
+            checkout, in_process.main_checkout_of(checkout)) if worktree.name == "ancestor-merged-wt")
+
+        class PullRequestsListedOnce:
+            def by_head_branch(self):
+                by_head_branch = {}
+                for pull_request in pull_requests:
+                    by_head_branch.setdefault(pull_request["headRefName"], []).append(pull_request)
+                return by_head_branch
+
+        for failing_subcommand in ("merge-base", "rev-list --first-parent"):
+            def run_git_failing_one_read(directory, *arguments, failing=failing_subcommand.split()):
+                if list(arguments[:len(failing)]) == failing:
+                    return subprocess.CompletedProcess(arguments, 128, "", "fatal: stand-in failure\n")
+                return real_run_git(directory, *arguments)
+            in_process.run_git = run_git_failing_one_read
+            try:
+                verdict = in_process.classify_unlocked(
+                    ancestor_merged_wt, "ancestor-merged-wt-branch", ancestor_record,
+                    PullRequestsListedOnce())
+            finally:
+                in_process.run_git = real_run_git
+            check(f"a worktree whose owner runs is kept as not checkable when `git "
+                  f"{failing_subcommand}` fails while the cleaner reads whether a finished pull "
+                  f"request holds its HEAD",
+                  not verdict.done and verdict.kept_for == in_process.KEPT_NOT_CHECKABLE
+                  and "whether a finished pull request holds its HEAD could not be read" in verdict.reason
+                  and "exited 128: fatal: stand-in failure" in verdict.reason, verdict)
         check("an agent-seat whose handoff-supervisor runs keeps its worktree",
               line_of(report, "seat-running-wt").startswith(
                   "seat-running-wt: kept — its owner, the agent-seat seat-running, runs"), report)
@@ -1107,9 +1140,9 @@ with tempfile.TemporaryDirectory() as scratch:
               report)
         check("the count line gives the kept worktrees by reason, the worktrees with no owner file, "
               "the branches with no pull request and the work-snapshots present",
-              "worktree counts: 10 kept (locked 1, no owner file 0, owner running 5, open pull "
+              "worktree counts: 11 kept (locked 1, no owner file 0, owner running 6, open pull "
               "request 2, in use 0, could not be checked 2); worktrees with no owner file 0; "
-              "branches with no pull request 5; work-snapshots still present 0" in report, report)
+              "branches with no pull request 6; work-snapshots still present 0" in report, report)
         check("a line names the kept worktrees of an agent-seat whose handoff-supervisor is not "
               "running",
               f"worktrees kept whose agent-seat's handoff-supervisor is not running: "

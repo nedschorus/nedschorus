@@ -28,11 +28,17 @@ running. A worktree that is not idle is KEPT, with the reason, when:
     working directories at all.
 
 Otherwise the owner and the branch's pull request decide. The pull requests
-come from one `gh pr list --state all` per invocation; a pull request is the
-branch's when its head branch has the branch's name, and, for a merged or
-closed one, when its head commit is the worktree's HEAD, so a new worktree on a
-reused branch name is not judged by an old pull request. If gh fails, every
-worktree whose verdict needs a pull request is kept.
+come from one `gh pr list --state all` per invocation; an open pull request is
+the branch's when its head branch has the branch's name. A merged or closed
+one is the branch's when it holds the worktree's HEAD as one of its own
+commits: its head branch has the branch's name and its head commit is HEAD;
+or HEAD is not a commit of origin/main's first-parent line and either its head
+commit is HEAD under any head branch, as when HEAD was pushed under another
+name, or its head branch has the branch's name and HEAD is an ancestor of its
+head commit, as when a fix-round pushed later commits from another worktree.
+So a new worktree on a reused branch name, which stands on a main commit, is
+not judged by an old pull request. If gh fails, every worktree whose verdict
+needs a pull request is kept, as is one whose ancestry git cannot read.
 
   WHILE ITS OWNER RUNS, a worktree is removed only when its branch's pull
   request has merged or been closed and it holds no uncommitted or untracked
@@ -1094,6 +1100,53 @@ def idle_worktree_removal_keep_reason(worktree, verdict):
     return None
 
 
+FINISHED_PULL_REQUEST_STATES = ("MERGED", "CLOSED")
+
+
+def finished_pull_requests_holding_head(worktree, head, pull_requests_of_branch, by_head_branch):
+    """Return (the merged or closed pull requests that hold the worktree's HEAD as one of their
+    own commits, None), or (None, git's error).
+
+    One on the worktree's branch whose head commit is HEAD always counts. Otherwise HEAD must not be
+    a commit of origin/main's first-parent line, where a new worktree cut from main stands, so that
+    a new worktree on a reused branch name is not judged by an earlier pull request; then one counts
+    whose head commit is HEAD under another branch name, as when HEAD was pushed under that name,
+    or one on the worktree's branch whose head commit HEAD is an ancestor of, as when a fix-round
+    pushed later commits from another worktree."""
+    finished_on_branch = [pull_request for pull_request in pull_requests_of_branch
+                          if pull_request["state"] in FINISHED_PULL_REQUEST_STATES]
+    exact = [pull_request for pull_request in finished_on_branch
+             if pull_request["headRefOid"] == head]
+    if exact or not head:
+        return exact, None
+    candidates = [pull_request for pull_requests in by_head_branch.values()
+                  for pull_request in pull_requests
+                  if pull_request["state"] in FINISHED_PULL_REQUEST_STATES
+                  and pull_request["headRefOid"] == head]
+    for pull_request in finished_on_branch:
+        later = pull_request["headRefOid"]
+        # A head commit missing from the clone, as a deleted branch's can be, cannot be shown to
+        # hold HEAD, so it counts for nothing and the worktree is kept.
+        if run_git(worktree, "cat-file", "-e", f"{later}^{{commit}}").returncode != 0:
+            continue
+        ancestry = run_git(worktree, "merge-base", "--is-ancestor", head, later)
+        if ancestry.returncode == 0:
+            candidates.append(pull_request)
+        elif ancestry.returncode != 1:
+            return None, (f"`git merge-base --is-ancestor {head} {later}` exited "
+                          f"{ancestry.returncode}: "
+                          f"{' '.join(ancestry.stderr.split())[:120] or 'no error text'}")
+    if not candidates:
+        return [], None
+    main_line = run_git(worktree, "rev-list", "--first-parent", "origin/main")
+    if main_line.returncode != 0:
+        return None, (f"`git rev-list --first-parent origin/main` exited {main_line.returncode}: "
+                      f"{' '.join(main_line.stderr.split())[:120] or 'no error text'}")
+    if head in main_line.stdout.split():
+        return [], None
+    return candidates, None
+
+
 def classify_unlocked(worktree, branch, record, pull_requests, owner_to_write=None):
     """Return the Verdict for an unlocked worktree, or one --remove will have unlocked and given
     owner_to_write as its owner file."""
@@ -1147,11 +1200,6 @@ def classify_unlocked(worktree, branch, record, pull_requests, owner_to_write=No
                                   f"{error}", KEPT_NOT_CHECKABLE, owner, state)
     open_pull_requests = [pull_request for pull_request in pull_requests_of_branch
                           if pull_request["state"] == "OPEN"]
-    # A merged or closed pull request counts only for the commit it was opened on, so a new
-    # worktree on a reused branch name is not judged by an earlier pull request.
-    finished_pull_requests = [pull_request for pull_request in pull_requests_of_branch
-                              if pull_request["state"] in ("MERGED", "CLOSED")
-                              and pull_request["headRefOid"] == record.head]
 
     detached_commit = None
     if running:
@@ -1159,9 +1207,17 @@ def classify_unlocked(worktree, branch, record, pull_requests, owner_to_write=No
             return Verdict(False, f"its owner, {owner_text(owner)}, runs, and "
                                   f"{pull_request_text(open_pull_requests[0])} on its branch "
                                   f"{branch} is open", KEPT_OWNER_RUNNING, owner, state)
+        finished_pull_requests = []
+        if branch is not None:
+            # by_head_branch() already succeeded above, so it cannot raise here.
+            finished_pull_requests, git_error = finished_pull_requests_holding_head(
+                worktree, record.head, pull_requests_of_branch, pull_requests.by_head_branch())
+            if finished_pull_requests is None:
+                return Verdict(False, f"whether a finished pull request holds its HEAD could not "
+                                      f"be read: {git_error}", KEPT_NOT_CHECKABLE, owner, state)
         if not finished_pull_requests:
-            what = (f"its branch {branch} has no merged or closed pull request whose head commit "
-                    f"is its HEAD" if branch is not None
+            what = (f"its branch {branch} has no merged or closed pull request holding its HEAD "
+                    f"as one of the pull request's own commits" if branch is not None
                     else "its HEAD is detached, so no pull request is its")
             return Verdict(False, f"its owner, {owner_text(owner)}, runs, and {what}",
                            KEPT_OWNER_RUNNING, owner, state)
@@ -1170,8 +1226,12 @@ def classify_unlocked(worktree, branch, record, pull_requests, owner_to_write=No
                                   f"{len(uncommitted)} uncommitted or untracked file(s): "
                                   f"{discarded_files_text(uncommitted)}",
                            KEPT_OWNER_RUNNING, owner, state)
+        finished = finished_pull_requests[0]
+        on_which_branch = (f"on its branch {branch}" if finished["headRefName"] == branch
+                           else f"on the branch {finished['headRefName']}, whose head commit is "
+                                f"its HEAD,")
         why = (f"its owner, {owner_text(owner)}, runs, and "
-               f"{pull_request_text(finished_pull_requests[0])} on its branch {branch} is finished")
+               f"{pull_request_text(finished)} {on_which_branch} is finished")
     else:
         if open_pull_requests:
             return Verdict(False, f"its owner, {owner_text(owner)}, has stopped, and "
