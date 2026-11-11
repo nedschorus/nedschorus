@@ -976,12 +976,57 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     drifted_file = detached / "lib/drifted.py"
     drifted_file.write_text("the agent edited the drifted file\n", encoding="utf-8")
     warning = detached_warning(drifted_file)
-    check("detached: a file main moved and then rewrote past rename detection is told "
-          "its new path, not that main deleted it",
-          warning.split("\n")[-1].startswith(
-              "main moved lib/drifted.py to lib/drifted-to.py.")
-          and "main deleted" not in warning, warning)
+    check("detached, unpushed: a file main moved and then rewrote past rename detection "
+          "is told its new path and to carry the edit there by hand",
+          warning.split("\n")[-1] == (
+              "main moved lib/drifted.py to lib/drifted-to.py and then changed it so much "
+              "that git no longer pairs the two paths, so neither a rebase nor a merge "
+              "carries your edit there: both stop on a modify/delete conflict at "
+              "lib/drifted.py. Drop the edit with `git checkout -- lib/drifted.py`. After "
+              "you make the branch, run `git rebase origin/main`, then make the same "
+              "change by hand in lib/drifted-to.py."), warning)
     git(["checkout", "-q", "--", "lib/drifted.py"], detached)
+
+    # The line's advice, followed in worktrees of the same clone, so that they
+    # see its origin/main: committing at the old path and rebasing stops on a
+    # modify/delete conflict there, as the line says; the line's own steps do not.
+    old_advice = tmp / "drifted-old-advice-worktree"
+    git(["worktree", "add", "-q", "-b", "drifted-old-advice", str(old_advice), "HEAD"],
+        detached)
+    configure_identity(old_advice)
+    (old_advice / "lib" / "drifted.py").write_text("the agent's edit\n", encoding="utf-8")
+    git(["commit", "-q", "-am", "the edit at the old path"], old_advice)
+    old_rebase = subprocess.run(["git", "rebase", "origin/main"], cwd=old_advice,
+                                capture_output=True, text=True)
+    old_status = git(["status", "--porcelain"], old_advice).stdout
+    check("detached, unpushed: a rebase of an edit committed at the moved-and-rewritten "
+          "path stops on a modify/delete conflict at that path",
+          old_rebase.returncode != 0 and "DU lib/drifted.py" in old_status,
+          old_rebase.stdout + old_rebase.stderr + old_status)
+    subprocess.run(["git", "rebase", "--abort"], cwd=old_advice, capture_output=True)
+    followed = tmp / "drifted-followed-advice-worktree"
+    git(["worktree", "add", "-q", "--detach", str(followed), "HEAD"], detached)
+    configure_identity(followed)
+    (followed / "lib" / "drifted.py").write_text("the agent's edit\n", encoding="utf-8")
+    git(["checkout", "-q", "--", "lib/drifted.py"], followed)
+    git(["switch", "-q", "-c", "drifted-followed-advice"], followed)
+    followed_rebase = subprocess.run(["git", "rebase", "origin/main"], cwd=followed,
+                                     capture_output=True, text=True)
+    new_copy = followed / "lib" / "drifted-to.py"
+    carried = followed_rebase.returncode == 0 and new_copy.exists()
+    if carried:
+        new_copy.write_text(new_copy.read_text(encoding="utf-8") + "the agent's edit\n",
+                            encoding="utf-8")
+        git(["commit", "-q", "-am", "the edit, carried by hand"], followed)
+    check("detached, unpushed: the line's steps rebase cleanly and put the edit in "
+          "lib/drifted-to.py, with no file left at lib/drifted.py",
+          carried and not (followed / "lib" / "drifted.py").exists()
+          and git(["status", "--porcelain"], followed).stdout == "",
+          followed_rebase.stdout + followed_rebase.stderr)
+    for worktree, branch in ((old_advice, "drifted-old-advice"),
+                             (followed, "drifted-followed-advice")):
+        git(["worktree", "remove", "--force", str(worktree)], detached)
+        git(["branch", "-q", "-D", branch], detached)
 
     moved_file = detached / "lib/moved.py"
     moved_file.write_text("".join(edited_far_away), encoding="utf-8")
@@ -1192,6 +1237,29 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "scripts/branch-conflict-check.py` reports a conflict, do what its report "
               "says."), warning)
     git(["checkout", "-q", "--", "lib/moved.py"], detached)
+    drifted_file.write_text("the agent edited the drifted file\n", encoding="utf-8")
+    warning = detached_warning(drifted_file)
+    check("detached at a pushed head: a file main moved and then rewrote is not "
+          "committed on top, but carried by hand on a topic branch from origin/main",
+          warning.split("\n")[-1] == (
+              "main moved lib/drifted.py to lib/drifted-to.py and then changed it so much "
+              "that git no longer pairs the two paths, so when the pull request merges, "
+              "git does not carry your edit there: the merge stops on a modify/delete "
+              "conflict at lib/drifted.py. Do not commit the edit: drop it with `git "
+              "checkout -- lib/drifted.py`, start a topic branch with `git switch -c "
+              "<a-branch-name> origin/main`, and make the same change by hand in "
+              "lib/drifted-to.py there."), warning)
+    git(["checkout", "-q", "--", "lib/drifted.py"], detached)
+    pushed_advice = tmp / "drifted-pushed-advice-worktree"
+    git(["worktree", "add", "-q", "-b", "drifted-pushed-advice", str(pushed_advice),
+         "origin/main"], detached)
+    check("detached at a pushed head: the topic branch that line names holds "
+          "lib/drifted-to.py for the edit, and no lib/drifted.py",
+          (pushed_advice / "lib" / "drifted-to.py").exists()
+          and not (pushed_advice / "lib" / "drifted.py").exists(),
+          git(["status"], pushed_advice).stdout)
+    git(["worktree", "remove", "--force", str(pushed_advice)], detached)
+    git(["branch", "-q", "-D", "drifted-pushed-advice"], detached)
 
     own_commits_failing_git_directory = git_failing_when(
         "own-commits-failing-git", '[ "$1" = "rev-list" ] && [ "$2" = "origin/main..HEAD" ]')
