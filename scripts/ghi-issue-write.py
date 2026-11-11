@@ -321,7 +321,7 @@ file, which carries the issue's recorded outcome, and closes the issue with
 main holding that file. The run that opens the edit's pull request reports
 the close pending; a rerun while that pull request is unmerged is refused;
 the rerun after it merges finishes the edit and closes the issue. See
-`close`.
+`close_ghi_after_its_outcome_edit_merges_to_main`.
 
 A rerun after the merge is given the file that still exists: the source
 where filing left it alone, its landed copy under docs/issues/ where filing
@@ -2940,7 +2940,7 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
 def edit_saying_whether_this_run_opened_its_pull_request(
         path: Path, repo: str, repository_root: Path, runner, report):
     """`edit`, returning also whether this run pushed the edit or opened its
-    pull request: `close` tells its pending state from its refusal by it."""
+    pull request: the close operation tells its pending state from its refusal by it."""
     text, title, number, relative = validate_edit(path, repository_root)
     # Read here, before a fetch, a model call, a push or a pull request: the
     # number is the file's NAME, or a landed design's `issue:` line, so one
@@ -3048,7 +3048,7 @@ def edit_saying_whether_this_run_opened_its_pull_request(
     return number, finished, opened
 
 
-CLOSE_REFUSED_WHILE_OUTCOME_EDIT_UNMERGED_EXIT_CODE = 67
+CLOSE_GHI_REFUSED_WHILE_OUTCOME_EDIT_PULL_REQUEST_UNMERGED_EXIT_CODE = 67
 CLOSE_REASON_COMPLETED = "completed"
 CLOSE_REASON_NOT_PLANNED = "not planned"
 CLOSE_REASON_DUPLICATE = "duplicate"
@@ -3085,8 +3085,9 @@ def close_reason_gh_arguments(reason_words, number: int):
         "issue's own number", 64)
 
 
-def close(path: Path, reason_words, repo: str, repository_root: Path,
-          runner, report):
+def close_ghi_after_its_outcome_edit_merges_to_main(
+        path: Path, reason_words, repo: str, repository_root: Path, runner,
+        report):
     """Record the outcome through `edit`, then close the issue with its
     reason, once main holds that outcome.
 
@@ -3125,7 +3126,7 @@ def close(path: Path, reason_words, repo: str, repository_root: Path,
         "hold.\n\n"
         "Wait for that pull request to merge.\n"
         f"After it merges, run: {rerun}",
-        CLOSE_REFUSED_WHILE_OUTCOME_EDIT_UNMERGED_EXIT_CODE)
+        CLOSE_GHI_REFUSED_WHILE_OUTCOME_EDIT_PULL_REQUEST_UNMERGED_EXIT_CODE)
 
 
 def repository_root_of(path: Path, runner=run) -> Path:
@@ -3244,7 +3245,8 @@ def main_with_stop_signals_raising_system_exit(argv):
             create(path, arguments.repo, root, run, report)
             return 0
         if arguments.operation == "close":
-            close(path, arguments.reason, arguments.repo, root, run, report)
+            close_ghi_after_its_outcome_edit_merges_to_main(
+                path, arguments.reason, arguments.repo, root, run, report)
             return 0
         if arguments.dry_run:
             text, title, number, relative = validate_edit(path, root)

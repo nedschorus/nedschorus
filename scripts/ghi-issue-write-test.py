@@ -4283,11 +4283,12 @@ def run_main_dispatch_cases(scratch: Path):
     def close_recorder(path, reason_words, repo, root, runner, report):
         calls.append(("close", path, reason_words, repo, root, runner))
 
-    saved = (tool.repository_root_of, tool.create, tool.edit, tool.close)
+    saved = (tool.repository_root_of, tool.create, tool.edit,
+             tool.close_ghi_after_its_outcome_edit_merges_to_main)
     tool.repository_root_of = looked_up
     tool.create = operation_recorder("create")
     tool.edit = operation_recorder("edit")
-    tool.close = close_recorder
+    tool.close_ghi_after_its_outcome_edit_merges_to_main = close_recorder
     try:
         for case_name, argv, reason_words, repo in [
                 ("main() hands a close to close with the reason's words",
@@ -4341,7 +4342,7 @@ def run_main_dispatch_cases(scratch: Path):
                   f"code {code}, {calls}")
     finally:
         (tool.repository_root_of, tool.create, tool.edit,
-         tool.close) = saved
+         tool.close_ghi_after_its_outcome_edit_merges_to_main) = saved
 
 
 # --- close: the outcome edit's pull request first, the close after it merges
@@ -4375,8 +4376,8 @@ def run_close_cases(scratch: Path):
         "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     lines = []
-    result = tool.close(source, ["completed"], REPO, scratch, opening,
-                        lines.append)
+    result = tool.close_ghi_after_its_outcome_edit_merges_to_main(
+        source, ["completed"], REPO, scratch, opening, lines.append)
     said = "\n".join(lines)
     check("close's first run opens the outcome edit's pull request and "
           "reports the close pending without closing the issue",
@@ -4398,8 +4399,8 @@ def run_close_cases(scratch: Path):
         "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     lines = []
-    result = tool.close(source, ["completed"], REPO, scratch, resumed,
-                        lines.append)
+    result = tool.close_ghi_after_its_outcome_edit_merges_to_main(
+        source, ["completed"], REPO, scratch, resumed, lines.append)
     check("a run that opens the pull request an earlier push left without "
           "one reports the close pending too",
           result == (570, False) and resumed.ran("gh pr create")
@@ -4417,13 +4418,14 @@ def run_close_cases(scratch: Path):
         "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     try:
-        tool.close(source, ["not", "planned"], REPO, scratch, waiting, quiet)
+        tool.close_ghi_after_its_outcome_edit_merges_to_main(
+            source, ["not", "planned"], REPO, scratch, waiting, quiet)
         check("close is refused while the outcome edit's pull request is "
               "unmerged", False, "it was not refused")
     except tool.Refused as refusal:
         check("close is refused while the outcome edit's pull request is "
               "unmerged, with its own exit code, and the issue stays open",
-              refusal.code == tool.CLOSE_REFUSED_WHILE_OUTCOME_EDIT_UNMERGED_EXIT_CODE
+              refusal.code == (tool.CLOSE_GHI_REFUSED_WHILE_OUTCOME_EDIT_PULL_REQUEST_UNMERGED_EXIT_CODE)
               and refusal.code == 67 and not closes_of(waiting)
               and not waiting.ran("gh pr create"),
               f"code {refusal.code}, {waiting.commands()}")
@@ -4440,8 +4442,8 @@ def run_close_cases(scratch: Path):
             ("duplicate given as #12", ["duplicate", "#12"],
              ["--duplicate-of", "12"])]:
         finishing = finished_edit()
-        result = tool.close(source, reason_words, REPO, scratch, finishing,
-                            quiet)
+        result = tool.close_ghi_after_its_outcome_edit_merges_to_main(
+            source, reason_words, REPO, scratch, finishing, quiet)
         check(f"once the outcome edit has merged, close closes the issue "
               f"with its reason: {case_name}",
               result == (570, True) and closes_of(finishing)
@@ -4455,7 +4457,8 @@ def run_close_cases(scratch: Path):
     failing = finished_edit({"gh issue close": Completed(
         returncode=1, stderr="HTTP 502: Bad Gateway")})
     try:
-        tool.close(source, ["completed"], REPO, scratch, failing, quiet)
+        tool.close_ghi_after_its_outcome_edit_merges_to_main(
+            source, ["completed"], REPO, scratch, failing, quiet)
         check("a failed gh issue close is reported", False, "it passed")
     except tool.Refused as refusal:
         check("a failed gh issue close is an operating failure, with gh's "
@@ -4468,7 +4471,8 @@ def run_close_cases(scratch: Path):
                 ["duplicate", "twelve"]):
         nothing = Recorder()
         try:
-            tool.close(source, bad, REPO, scratch, nothing, quiet)
+            tool.close_ghi_after_its_outcome_edit_merges_to_main(
+                source, bad, REPO, scratch, nothing, quiet)
             check(f"--reason {' '.join(bad)} is refused", False,
                   "it was accepted")
         except tool.Refused as refusal:
