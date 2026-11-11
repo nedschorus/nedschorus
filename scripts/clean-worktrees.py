@@ -1020,10 +1020,11 @@ def idle_worktree_verdict(worktree, branch, record, pull_requests):
     """Return the Verdict for a worktree that holds no unsaved work and in which nothing has changed
     for IDLE_WORKTREE_REMOVED_AFTER_DAYS, owner file or not; or None when the rule does not apply, so
     that the other rules judge it."""
-    located = run_git(worktree, "rev-parse", "--absolute-git-dir")
-    if located.returncode != 0:
+    try:
+        git_directory = Path(os.fsdecode(
+            git_output.run_git(worktree, ["rev-parse", "--absolute-git-dir"])).strip())
+    except git_output.GitCommandFailed:
         return None
-    git_directory = Path(located.stdout.strip())
     if is_agent_home(worktree, git_directory):
         return None
     cutoff = time.time() - IDLE_WORKTREE_REMOVED_AFTER_DAYS * 86400
@@ -1032,11 +1033,13 @@ def idle_worktree_verdict(worktree, branch, record, pull_requests):
             return None
     except OSError:
         return None
+    try:
+        if git_output.run_git(worktree, ["rev-list", "HEAD", "--not", "--remotes=origin"]).strip():
+            return None
+    except git_output.GitCommandFailed:
+        return None
     uncommitted, _ = uncommitted_or_untracked_files(worktree)
     if uncommitted is None or uncommitted:
-        return None
-    not_on_github = run_git(worktree, "rev-list", "--count", "HEAD", "--not", "--remotes=origin")
-    if not_on_github.returncode != 0 or int(not_on_github.stdout.strip() or 1) != 0:
         return None
     try:
         by_head_branch = pull_requests.by_head_branch()

@@ -3154,6 +3154,10 @@ with tempfile.TemporaryDirectory() as scratch:
     git(unpushed_worktree, "add", "-A")
     git(unpushed_worktree, "commit", "-q", "-m", "not on origin")
     age(unpushed_worktree)
+    unborn_head_worktree = idle_candidate("unborn-head-wt")
+    (idle_git_directory(unborn_head_worktree) / "HEAD").write_text("ref: refs/heads/gone\n",
+                                                                   encoding="utf-8")
+    age(unborn_head_worktree)
     open_pull_request_worktree = age(idle_candidate("open-pr-wt"))
     git(checkout, "switch", "-q", "-c", "elsewhere")
     (checkout / "elsewhere.txt").write_text("elsewhere\n", encoding="utf-8")
@@ -3227,6 +3231,7 @@ with tempfile.TemporaryDirectory() as scratch:
                           (untracked_worktree, "it holds an untracked file"),
                           (modified_worktree, "it holds an uncommitted change"),
                           (unpushed_worktree, "it holds a commit GitHub lacks"),
+                          (unborn_head_worktree, "git cannot list the commits of its HEAD"),
                           (open_pull_request_worktree, "its branch is an open pull request's"),
                           (open_head_worktree,
                            "its detached HEAD is an open pull request's head commit"),
