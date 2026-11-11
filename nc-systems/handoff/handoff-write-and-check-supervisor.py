@@ -166,7 +166,7 @@ STILL_WORKING_SUBAGENT_LAST_EVENTS = ("spawned", "resumed", WAITING_ON_ITS_OWN_B
 
 # Prefilter megabytes of tool output before parsing possible subagent events.
 SUBAGENT_EVENT_RECORD_MARKERS = ("async_launched", "resumedAgentId", "<task-notification>",
-                                 threshold_hook.TASK_STOP_RESULT_KEY)
+                                 threshold_hook.TASK_STOP_TOOL_RESULT_MARKER_KEY)
 # The last event of a subagent a TaskStop call stopped, which gets no task-notification.
 STOPPED_BY_TASK_STOP_EVENT = "stopped"
 
@@ -329,7 +329,7 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
                     resumed["last_event_at"] = stamp
                     continue
                 stopped = by_agent_id.get(result.get("task_id"))
-                if stopped is not None and threshold_hook.TASK_STOP_RESULT_KEY in result:
+                if stopped is not None and threshold_hook.TASK_STOP_TOOL_RESULT_MARKER_KEY in result:
                     stopped["last_event"] = STOPPED_BY_TASK_STOP_EVENT
                     stopped["last_event_at"] = stamp
                     continue
