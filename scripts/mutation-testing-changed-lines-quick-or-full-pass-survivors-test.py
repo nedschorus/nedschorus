@@ -2129,9 +2129,51 @@ def run_recorded_mutant_lines_on_main_search_cases():
                   on_main is None, on_main)
 
 
+def run_recorded_mutant_lines_on_main_context_lines_cases():
+    survivors = load_script_module()
+    # Each recorded hunk replaces a bare "continue"; each file has "continue" more than once,
+    # so no hunk is found once and the context lines beside each copy decide.
+    hunk = (100, ["b1", "b2", "continue", "a1", "a2"], ["b1", "b2", "break", "a1", "a2"])
+    blank_after = (100, ["b1", "continue", ""], ["b1", "break", ""])
+    blank_only = (100, ["", "continue", ""], ["", "break", ""])
+    # Adds a line between context lines that no file has, so it replaces no line.
+    insert_only = (100, ["q1", "q2"], ["q1", "added", "q2"])
+    cases = {
+        "context-gone-copies-in-the-middle.py": ("x\ncontinue\ny\nz\ncontinue\nw", [hunk], "gone"),
+        # A copy at the file's start has the file's last lines at negative offsets, and one
+        # at its end has no lines after it; neither is a context line beside the copy.
+        "context-lines-before-the-file-start.py": ("continue\nx\ncontinue\nb1\nb2", [hunk],
+                                                   "gone"),
+        "context-lines-past-the-file-end.py": ("a1\na2\ncontinue\nx\ncontinue", [hunk], "gone"),
+        "context-line-at-another-offset.py": ("a1\ncontinue\nb2\nx\ncontinue\nb1", [hunk],
+                                              "gone"),
+        "line-before-kept-beside-one-copy.py": ("b1\nchanged\ncontinue\nx\ncontinue", [hunk],
+                                                None),
+        "line-after-kept-beside-one-copy.py": ("continue\nx\ncontinue\nchanged\na2", [hunk],
+                                               None),
+        "line-after-kept-at-the-file-end.py": ("continue\nx\ncontinue\na1", [hunk], None),
+        "line-before-kept-at-the-file-start.py": ("b2\ncontinue\nx\ncontinue", [hunk], None),
+        "blank-context-line-beside-a-copy.py": ("x\ncontinue\n\ny\ncontinue", [blank_after],
+                                                "gone"),
+        "only-blank-context-lines.py": ("x\ncontinue\ny\ncontinue", [blank_only], None),
+        "insert-only-hunk-before-a-gone-hunk.py": ("x\ncontinue\ny\ncontinue",
+                                                   [insert_only, hunk], "gone"),
+    }
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, _, head = scratch_repository(
+            scratch_name, {path: text for path, (text, _, _) in cases.items()})
+        git(repository, "update-ref", "refs/remotes/origin/main", head)
+        for path, (_, hunks, wanted) in cases.items():
+            on_main = survivors.recorded_mutant_lines_on_main(repository, path, hunks, None)
+            check(f"a recorded mutant whose short replaced line origin/main has more than once "
+                  f"is gone only when no non-blank context line stands beside any copy: {path}",
+                  on_main == wanted, f"want {wanted!r} got {on_main!r}")
+
+
 def run_cases():
     run_hunk_shared_context_line_counts_and_replaced_lines_cases()
     run_recorded_mutant_lines_on_main_search_cases()
+    run_recorded_mutant_lines_on_main_context_lines_cases()
     # ------------------------------------------------------------------
     # The config written, the worktree used, and survivors parsed.
     # ------------------------------------------------------------------
