@@ -4466,13 +4466,16 @@ def main(argv=None, platform=None):
                        for suite in chosen]
             pending = set(running)
             stop_acted_on = False
+            # The first failure that ends the run; the loop still collects the suites
+            # already running, so a suite that failed counts toward the exit.
+            run_ended_by = None
             run_started = time.monotonic()
             while pending:
                 done, pending = concurrent.futures.wait(
                     pending, timeout=RUN_STOP_SIGNAL_CHECK_SECONDS,
                     return_when=concurrent.futures.FIRST_COMPLETED)
-                if arguments.run_time_limit_seconds is not None and not run_stops and \
-                        time.monotonic() - run_started - (
+                if arguments.run_time_limit_seconds is not None and pending and not run_stops \
+                        and run_ended_by is None and time.monotonic() - run_started - (
                             admission.seconds_while_any_suite_of_this_run_waited_for_admission()
                             if admission is not None else 0.0) \
                         > arguments.run_time_limit_seconds:
@@ -4491,7 +4494,7 @@ def main(argv=None, platform=None):
                         result = finished.result()
                     except (TestRunStoppedBeforeSuiteStarted,
                             MachineWideTestSuiteAdmissionCancelled):
-                        if run_stops:
+                        if run_stops or run_ended_by is not None:
                             continue
                         raise
                     except (MachineWideTestSuiteAdmissionCouldNotDecide,
@@ -4502,30 +4505,31 @@ def main(argv=None, platform=None):
                         # A suite already waiting for admission is running as far as its future knows.
                         if admission is not None:
                             admission.cancel()
-                        if isinstance(error, MachineWideTestSuiteAdmissionWaitedPastCeiling):
-                            report.line(f"{TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX}: "
-                                        f"{error}")
-                            report.line("The machine stayed too busy to start it. Run this again "
-                                        "once the machine is quieter. The suites already running "
-                                        "finish first.")
-                            report.close()
-                            return (EXIT_SOME_FAILED if any(map(suite_failed, results))
-                                    else EXIT_COULD_NOT_RUN)
-                        what = ("admission failed" if isinstance(error, MachineWideTestSuiteAdmissionCouldNotDecide)
-                                else "a suite's nc-test-sandbox could not be built"
-                                if isinstance(error, SignalSandboxCouldNotStart)
-                                else "a suite could not be started")
-                        report.line(f"{PROGRAM}: not run to the end — {what}: {error}")
-                        report.line("Fix what it names, then run this again. The suites already "
-                                    "running finish first.")
-                        report.close()
-                        return (EXIT_SOME_FAILED if any(map(suite_failed, results))
-                                else EXIT_COULD_NOT_RUN)
-                    results.append(result)
-                    report.line(suite_line(result))
-                    if result.get("output_note"):
-                        report.line(f"{result['suite']}: {result['output_note']}")
+                        run_ended_by = run_ended_by or error
+                    else:
+                        results.append(result)
+                        report.line(suite_line(result))
+                        if result.get("output_note"):
+                            report.line(f"{result['suite']}: {result['output_note']}")
         restore_signal_handlers(signal_handlers_replaced)
+        if run_ended_by is not None:
+            if isinstance(run_ended_by, MachineWideTestSuiteAdmissionWaitedPastCeiling):
+                report.line(f"{TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX}: "
+                            f"{run_ended_by}")
+                report.line("The machine stayed too busy to start it. Run this again "
+                            "once the machine is quieter. The suites already running "
+                            "finished first.")
+            else:
+                what = ("admission failed"
+                        if isinstance(run_ended_by, MachineWideTestSuiteAdmissionCouldNotDecide)
+                        else "a suite's nc-test-sandbox could not be built"
+                        if isinstance(run_ended_by, SignalSandboxCouldNotStart)
+                        else "a suite could not be started")
+                report.line(f"{PROGRAM}: not run to the end — {what}: {run_ended_by}")
+                report.line("Fix what it names, then run this again. The suites already "
+                            "running finished first.")
+            report.close()
+            return EXIT_SOME_FAILED if any(map(suite_failed, results)) else EXIT_COULD_NOT_RUN
         # A stop that came after the last suite ended cut nothing short, so the run is
         # reported and recorded as usual.
         if run_stop_signals and (len(results) < len(chosen)
