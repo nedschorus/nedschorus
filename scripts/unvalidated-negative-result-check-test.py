@@ -2,8 +2,10 @@
 """Tests for unvalidated-negative-result-check.py.
 
 The firings of the sorted table are replayed with the machines' answers of their day put
-in: the dash-named directories, and rg missing on ned-box before it was installed. The
-agent's grep is the real one, because whether it refuses a pattern is the fact under test.
+in: the dash-named directories, rg missing on ned-box before it was installed, and the grep
+arguments the agent's grep refused. A stand-in for the agent's grep gives the refusals the
+fixture records, because the test sandbox holds no claude binary; where the real one runs,
+the last section checks the record against it, and prints a SKIP line where it does not.
 Each of the 16 firings with a cause must name that cause; every NOISE firing, and the 5
 SELF-CAUGHT firings that have none of the three causes, must stay silent.
 
@@ -53,14 +55,40 @@ def check(case_name, condition, detail=""):
 DASH_NAMED_ENTRIES = ["-Users-el-agents-merge-lane", "-Users-el-agents-reboot-test",
                       "-home-nedlern-agents-merge-lane-2"]
 PLAIN_ENTRIES = ["README.md", "docs", "scripts", "a.jsonl"]
+
+REFUSED_IN_THESE_TESTS = [["-oE", ".{0,180}(a|b).{0,180}"], ["-oE", "--", ".{0,180}(a|b).{0,180}"],
+                          ["-o", "-e", ".{0,180}(a|b).{0,180}", "-E"]]
+firings = json.loads(FIXTURE.read_text(encoding="utf-8"))["firings"]
+REFUSALS_FILE = SCRATCH / "arguments-the-agents-grep-refuses.json"
+REFUSALS_FILE.write_text(json.dumps(
+    REFUSED_IN_THESE_TESTS
+    + [arguments for firing in firings for arguments in firing["arguments_the_agents_grep_refuses"]]))
+STAND_IN_AGENTS_GREP = SCRATCH / "stand-in-agents-grep"
+STAND_IN_AGENTS_GREP.write_text(
+    f"#!{sys.executable}\n"
+    "import json, sys\n"
+    f"leading = {len(check_module.AGENTS_GREP_LEADING_OPTIONS)}\n"
+    f"refused = json.load(open({str(REFUSALS_FILE)!r}))\n"
+    "if sys.argv[1 + leading:-1] in refused:\n"
+    "    sys.stderr.write('ugrep: error: error at position 9\\n  exceeds complexity limits\\n')\n"
+    "    sys.exit(2)\n"
+    "sys.exit(1)\n")
+STAND_IN_AGENTS_GREP.chmod(0o755)
+
+
+def machines_with_the_stand_in_agents_grep():
+    """Machines answering for real, but with the stand-in as the agent's grep."""
+    return check_module.Machines(environment={"CLAUDE_CODE_EXECPATH": str(STAND_IN_AGENTS_GREP)})
+
 RIPGREP_INSTALLED_ON_NED_BOX = "2026-10-01T17:44"
 
 
 class MachinesOfTheDay(check_module.Machines):
-    """The answers each machine gave on the day of one firing; the agent's grep is real."""
+    """The answers each machine gave on the day of one firing."""
 
     def __init__(self, machine="mac", timestamp="2026-10-02", missing=()):
-        super().__init__(runner=self.refuse_other_programs)
+        super().__init__(runner=self.refuse_other_programs,
+                         environment={"CLAUDE_CODE_EXECPATH": str(STAND_IN_AGENTS_GREP)})
         self.machine = machine
         self.timestamp = timestamp
         self.missing = set(missing)
@@ -96,7 +124,6 @@ def judge(command, cwd="/work", output="", exit_code=0, machines=None):
 
 # --------------------------------------------- the firings of the sorted table
 
-firings = json.loads(FIXTURE.read_text(encoding="utf-8"))["firings"]
 check("the fixture holds the 83 sorted firings", len(firings) == 83, len(firings))
 verdicts = {}
 for firing in firings:
@@ -177,8 +204,9 @@ for near_miss in ("grep -oE '.{0,80}link-type' notes.md",
     check(f"S2 stays silent: {near_miss}", not judge(near_miss).fires,
           judge(near_miss).signals)
 check("S2 leaves the file names out of the probe",
-      check_module.agents_grep_arguments(
-          ["grep", "-rn", "--include", "*.md", "-A", "2", "needle", "docs", "notes.md"])
+      check_module.agents_grep_arguments(check_module.Placed(
+          None, "/work", ["grep", "-rn", "--include", "*.md", "-A", "2", "needle", "docs",
+                          "notes.md"], 0))
       == ["-rn", "--include", "*.md", "-A", "2", "needle"])
 
 
@@ -277,17 +305,19 @@ verdict = check_module.judge_command_result(
 check("an agent's grep that cannot be found leaves S2 unchecked and says so",
       not verdict.fires and len(verdict.unchecked) == 1
       and "was not found" in verdict.unchecked[0], verdict.unchecked)
-real_agents_grep = check_module.Machines().agents_grep()
-check("the agent's grep is found through $CLAUDE_CODE_EXECPATH",
-      check_module.Machines(environment={"CLAUDE_CODE_EXECPATH": real_agents_grep,
+home_with_claude = SCRATCH / "home-with-claude"
+(home_with_claude / ".local" / "bin").mkdir(parents=True)
+(home_with_claude / ".local" / "bin" / "claude").symlink_to(STAND_IN_AGENTS_GREP)
+check("the agent's grep is found through $CLAUDE_CODE_EXECPATH first",
+      check_module.Machines(environment={"CLAUDE_CODE_EXECPATH": str(STAND_IN_AGENTS_GREP),
                                          "HOME": str(SCRATCH)}).agents_grep()
-      == real_agents_grep)
+      == str(STAND_IN_AGENTS_GREP))
 check("the agent's grep is found at ~/.local/bin/claude without $CLAUDE_CODE_EXECPATH",
-      check_module.Machines(environment={"HOME": os.path.expanduser("~")}).agents_grep()
-      == os.path.expanduser("~/.local/bin/claude"))
+      check_module.Machines(environment={"HOME": str(home_with_claude)}).agents_grep()
+      == str(home_with_claude / ".local" / "bin" / "claude"))
 
 failed_listing = check_module.judge_command_result(
-    "grep -l x */*.jsonl", str(SCRATCH / "absent"), "", 0, check_module.Machines())
+    "grep -l x */*.jsonl", str(SCRATCH / "absent"), "", 0, machines_with_the_stand_in_agents_grep())
 check("a listing that fails leaves S1 unchecked and says which glob",
       not failed_listing.fires and len(failed_listing.unchecked) == 1
       and "`*/*.jsonl`" in failed_listing.unchecked[0], failed_listing.unchecked)
@@ -377,7 +407,7 @@ code, out = run_main("--command", "grep -l x docs", "--cwd", "/work")
 check("a silent command exits 0 and says nothing to report",
       code == 0 and "nothing to report" in out, f"{code} {out!r}")
 code, out = run_main("--command", "grep -l x */*.jsonl", "--cwd", str(SCRATCH / "absent"),
-                     machines=check_module.Machines())
+                     machines=machines_with_the_stand_in_agents_grep())
 check("a cause that could not be checked exits 3 and says what",
       code == 3 and "could not check" in out, f"{code} {out!r}")
 output_file = SCRATCH / "output.txt"
@@ -410,6 +440,24 @@ code, out = run_main("--transcripts", str(SCRATCH / "transcripts"))
 check("the measurement counts recorded runs and the ones that fire",
       code == 0 and "pairs           : 2" in out and "fired           : 1" in out
       and GLOB_DASH_NAME in out, out)
+
+
+# --------------------------------------- the record against the real agent's grep
+
+try:
+    real_machines = check_module.Machines()
+    real_machines.agents_grep()
+except check_module.ProbeFailed as error:
+    print(f"SKIP  [this machine cannot run it] the fixture's refusals checked against the "
+          f"real agent's grep: {error}")
+else:
+    for firing in firings:
+        refused = [arguments for command in check_module.placed_commands(
+                       firing["command"], firing["cwd"])
+                   if (arguments := check_module.agents_grep_arguments(command))
+                   and real_machines.agents_grep_refuses(arguments, None)]
+        check(f"{firing['id']}: the real agent's grep refuses what the fixture records",
+              refused == firing["arguments_the_agents_grep_refuses"], refused)
 
 
 if failures:

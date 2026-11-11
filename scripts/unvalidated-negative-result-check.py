@@ -360,10 +360,17 @@ def glob_dash_name_causes(placed, machines, unchecked):
     return causes
 
 
-def agents_grep_arguments(words):
-    """Return the options and patterns of a bare grep, its file names left out, or None
-    when Claude Code's grep function passes these arguments to the system grep."""
-    arguments = [plain(word) for word in words[1:]]
+def agents_grep_arguments(command):
+    """Return the options and patterns of a grep that Claude Code's grep function hands to
+    ugrep, its file names left out; or None for any other command."""
+    # Only a bare grep run by this machine's shell reaches the function; a wrapper such as
+    # xargs or timeout runs the system grep.
+    if command.host is not None or command.program_index is None \
+            or command.words[command.program_index] != "grep" \
+            or any(not shell_reader.ENVIRONMENT_ASSIGNMENT_PATTERN.match(word)
+                   for word in command.words[:command.program_index]):
+        return None
+    arguments = [plain(word) for word in command.words[command.program_index + 1:]]
     if any(fnmatch.fnmatchcase(argument, rule) for argument in arguments
            for rule in AGENTS_GREP_PASSES_TO_SYSTEM_GREP):
         return None
@@ -405,13 +412,7 @@ def agents_grep_arguments(words):
 def pattern_too_complex_causes(placed, machines, unchecked):
     causes = []
     for command in placed:
-        # Only a bare grep run by this machine's shell reaches Claude Code's grep function.
-        if command.host is not None or command.program_index is None \
-                or command.words[command.program_index] != "grep" \
-                or any(not shell_reader.ENVIRONMENT_ASSIGNMENT_PATTERN.match(word)
-                       for word in command.words[:command.program_index]):
-            continue
-        arguments = agents_grep_arguments(command.words[command.program_index:])
+        arguments = agents_grep_arguments(command)
         if not arguments:
             continue
         try:

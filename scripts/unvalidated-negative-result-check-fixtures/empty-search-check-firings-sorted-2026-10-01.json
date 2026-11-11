@@ -12,7 +12,8 @@
    "command": "find ~/.claude/plugins -path \"*design*ux-copy*\" -name \"SKILL.md\" 2>/dev/null | head -2",
    "exit_code": 0,
    "output": "",
-   "sought": "the ux-copy skill's SKILL.md under ~/.claude/plugins"
+   "sought": "the ux-copy skill's SKILL.md under ~/.claude/plugins",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G002",
@@ -25,7 +26,8 @@
    "command": "cd \"/private/tmp/claude-501/-Users-el-Projects-nedschorus--claude-worktrees-shared-conversation-discussion-eb34e2/3581efe2-2b6f-4d97-ba7c-eb03f694c24d/scratchpad\" && git clone --depth 1 https://github.com/obra/superpowers.git 2>&1 | tail -1 && find superpowers -name \"SKILL.md\" | wc -l && ls superpowers",
    "exit_code": 1,
    "output": "(eval):cd:1: no such file or directory: /private/tmp/claude-501/-Users-el-Projects-nedschorus--claude-worktrees-shared-conversation-discussion-eb34e2/3581efe2-2b6f-4d97-ba7c-eb03f694c24d/scratchpad",
-   "sought": "count SKILL.md in a fresh clone of obra/superpowers"
+   "sought": "count SKILL.md in a fresh clone of obra/superpowers",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G003",
@@ -38,7 +40,8 @@
    "command": "find ~/.claude -name \"*5b34ff54*\" 2>/dev/null",
    "exit_code": 0,
    "output": "",
-   "sought": "a file named for desktop session 5b34ff54 under ~/.claude"
+   "sought": "a file named for desktop session 5b34ff54 under ~/.claude",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G004",
@@ -51,7 +54,8 @@
    "command": "grep -rn \"closing-sentence\" .claude/ docs/ 2>/dev/null | head -5; ls .claude/output-styles 2>&1",
    "exit_code": 1,
    "output": "ls: .claude/output-styles: No such file or directory",
-   "sought": "existing references to \"closing-sentence\" in .claude/ docs/ before creating the output style"
+   "sought": "existing references to \"closing-sentence\" in .claude/ docs/ before creating the output style",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G005",
@@ -64,7 +68,8 @@
    "command": "cd /private/tmp/claude-501/-Users-el-Projects-nedschorus--claude-worktrees-linters-tool-usage-f8b0a0/cd0d8c04-cd46-41f8-a006-8999e092a226/scratchpad/pr58-tree && grep -rn \"handoff-next-step\" --include=\"*.py\" --include=\"*.md\" --include=\"*.sh\" . .claude 2>/dev/null | grep -v \"^Binary\" | head -20",
    "exit_code": 0,
    "output": "",
-   "sought": "references to handoff-next-step in the PR 58 review tree"
+   "sought": "references to handoff-next-step in the PR 58 review tree",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G006",
@@ -77,7 +82,8 @@
    "command": "find ~/.claude ~/.local -iname \"*simplify*\" 2>/dev/null | head -40",
    "exit_code": 0,
    "output": "",
-   "sought": "a file for the built-in /simplify skill under ~/.claude and ~/.local"
+   "sought": "a file for the built-in /simplify skill under ~/.claude and ~/.local",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G007",
@@ -90,7 +96,8 @@
    "command": "find /private/tmp/claude-501/-Users-el-agents-MD-skills/666b926c-87d7-4ff2-817b-819a47e775dc/scratchpad -type f 2>/dev/null | head -20",
    "exit_code": 0,
    "output": "",
-   "sought": "files in a previous session's scratchpad"
+   "sought": "files in a previous session's scratchpad",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G008",
@@ -103,7 +110,8 @@
    "command": "ls -la ~/bin/merge-gate.sh /Users/el/Projects/nedschorus/merge-gate.sh 2>/dev/null; find /Users/el -maxdepth 3 -name 'merge-gate*' -not -path '*/.git/*' 2>/dev/null | head",
    "exit_code": 0,
    "output": "",
-   "sought": "merge-gate.sh anywhere under /Users/el"
+   "sought": "merge-gate.sh anywhere under /Users/el",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G009",
@@ -116,7 +124,8 @@
    "command": "grep -rn \"seat_name\\|seat-name\\|SEAT\\b\\|seat_branch\" scripts/handoff-supervisor.py scripts/clean-worktrees.py 2>/dev/null | cut -c1-150 | head -25",
    "exit_code": 0,
    "output": "",
-   "sought": "seat-name identifiers in handoff-supervisor.py and clean-worktrees.py"
+   "sought": "seat-name identifiers in handoff-supervisor.py and clean-worktrees.py",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G010",
@@ -129,7 +138,8 @@
    "command": "grep -rln \"test skill\\|draft-test\\|testing skill\\|test-skill\" --include=\"*.md\" docs/ nc-queue/ .claude/ 2>/dev/null | head -20",
    "exit_code": 0,
    "output": "",
-   "sought": "notes or drafts for a test skill in docs/ nc-queue/ .claude/"
+   "sought": "notes or drafts for a test skill in docs/ nc-queue/ .claude/",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G011",
@@ -142,7 +152,8 @@
    "command": "cd ~/.claude/projects && grep -l -i \"three speeds\\|3 speeds\\|fast, medium\\|fast medium slow\\|medium cold\\|medium.tier\\|three tiers of cold\\|three cold.read\" */*.jsonl 2>/dev/null | head -20",
    "exit_code": 0,
    "output": "",
-   "sought": "the user's discussion of \"3 speeds\" of cold-reads in session transcripts"
+   "sought": "the user's discussion of \"3 speeds\" of cold-reads in session transcripts",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G012",
@@ -155,7 +166,8 @@
    "command": "grep -rn -i \"peril\\|telling the truth\\|from where it stands\" /Users/el/agents/reboot-test/.claude/skills/cold-read/ /Users/el/agents/MD-skills/.claude/skills/cold-read/ 2>/dev/null | head",
    "exit_code": 0,
    "output": "",
-   "sought": "whether the \"telling the truth / peril\" line had landed in either checkout's cold-read skill"
+   "sought": "whether the \"telling the truth / peril\" line had landed in either checkout's cold-read skill",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G013",
@@ -168,7 +180,8 @@
    "command": "grep -rn -E \"design-reviewer-node|test-design-reviewer-node|design-review-node\" docs/ .claude/ scripts/ 2>/dev/null | head",
    "exit_code": 0,
    "output": "",
-   "sought": "an existing design-reviewer node in docs/ .claude/ scripts/"
+   "sought": "an existing design-reviewer node in docs/ .claude/ scripts/",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G014",
@@ -181,7 +194,8 @@
    "command": "cd /private/tmp/claude-501/pr283-review/wt && ls scripts/ | grep -iE 'run-all|all-test|suite' ; grep -rn \"all .* test suites\\|run all tests\" --include='*.md' CLAUDE.md AGENTS.md 2>/dev/null | head",
    "exit_code": 0,
    "output": "",
-   "sought": "a run-all-test-suites program or instruction in the PR 283 review tree"
+   "sought": "a run-all-test-suites program or instruction in the PR 283 review tree",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G015",
@@ -194,7 +208,8 @@
    "command": "cd /private/tmp/claude-501/-Users-el-agents-merge-lane/2d881068-90f4-4213-b15e-22f751ce48a1/scratchpad/pr286-review-worktree && grep -rl \"34 suites\\|all suites\\|every suite\" .claude/skills docs/agents CLAUDE.md 2>/dev/null | head; grep -rn \"for .* in scripts/\\*-test.py\\|\\*-test.py\" .claude/skills/*/SKILL.md docs/agents/*.md 2>/dev/null | head -5",
    "exit_code": 0,
    "output": "",
-   "sought": "a stated suite count or suite loop in the PR 286 review tree"
+   "sought": "a stated suite count or suite loop in the PR 286 review tree",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G016",
@@ -207,7 +222,8 @@
    "command": "cd /private/tmp/claude-501/-Users-el-agents-merge-lane/e846c4ea-935c-4f5b-b87c-321bfac076f7/scratchpad/pr328 && grep -rn \"check\\b.*supervisor\\|supervisor.*--check\\|handoff_supervisor\\.\" scripts/handoff-context-threshold-hook.py scripts/restart-live-seats-at-login.py .claude/hooks/*.py 2>/dev/null | head -30",
    "exit_code": 0,
    "output": "",
-   "sought": "callers that string-match the supervisor check in three files of the PR 328 tree"
+   "sought": "callers that string-match the supervisor check in three files of the PR 328 tree",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G017",
@@ -220,7 +236,8 @@
    "command": "cd ~/agents/merge-lane && grep -n -A 25 -i \"composer\\|usage\" walk-ledgers/mac-claude-reviewer-brief-standing-text.md 2>/dev/null | head -50 || ls walk-ledgers/",
    "exit_code": 0,
    "output": "",
-   "sought": "composer usage notes in walk-ledgers/mac-claude-reviewer-brief-standing-text.md"
+   "sought": "composer usage notes in walk-ledgers/mac-claude-reviewer-brief-standing-text.md",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G018",
@@ -233,7 +250,8 @@
    "command": "ls scripts | grep -i \"suite\\|run-all\\|all-tests\"; grep -rn \"48/48\\|suite SUMMARY\\|summary file\" walk-ledgers/*.md 2>/dev/null | head -5",
    "exit_code": 0,
    "output": "",
-   "sought": "a prior \"48/48\" or suite-summary note in walk-ledgers/*.md"
+   "sought": "a prior \"48/48\" or suite-summary note in walk-ledgers/*.md",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G019",
@@ -246,7 +264,8 @@
    "command": "grep -rn \"DEFAULT_AGENT_NAME_RULE_TEXT\\|seat_directory\\b\" scripts/handoff-write-and-check-supervisor.py scripts/handoff-write-and-check-supervisor-test.py | head -5; grep -rln \"DEFAULT_AGENT_NAME_RULE_TEXT\" scripts .claude docs 2>/dev/null",
    "exit_code": 0,
    "output": "",
-   "sought": "collision check: DEFAULT_AGENT_NAME_RULE_TEXT before introducing it"
+   "sought": "collision check: DEFAULT_AGENT_NAME_RULE_TEXT before introducing it",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G020",
@@ -259,7 +278,8 @@
    "command": "cd /private/tmp/claude-501/-Users-el-agents-merge-lane/208be99f-70cd-439d-b553-ef5023220e7f/scratchpad/pr426-worktree && grep -rn \"seat_supervisor_confirmed_by_ps\\|SUPERVISOR_CONFIRMED_BY_PS\\|SUPERVISOR_ASSUMED_WITHOUT_PS\\|SUPERVISOR_NOT_CONFIRMED\\|confirmed-by-ps\\|assumed-without-ps\\|supervisor-not-confirmed\" . 2>/dev/null | head",
    "exit_code": 0,
    "output": "",
-   "sought": "collision check for new names (seat_supervisor_confirmed_by_ps, SUPERVISOR_* constants) in the PR 426 tree"
+   "sought": "collision check for new names (seat_supervisor_confirmed_by_ps, SUPERVISOR_* constants) in the PR 426 tree",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G021",
@@ -272,7 +292,8 @@
    "command": "R=/private/tmp/claude-501/-Users-el-agents-MD-skills/6fb14b80-63ae-4de9-8a3e-0e4ba194197a/scratchpad/wt-codex-terminology-prompt/cold-read-records/2026-09-16-cold-read-terminology-prompt-for-codex-draft-2; F=$R/*codex-terminology-good.md; grep -n \"^[0-9]\\+\\. \" $F | cut -c1-300; tail -c 400 $F",
    "exit_code": 1,
    "output": "ugrep: warning: /private/tmp/claude-501/-Users-el-agents-MD-skills/6fb14b80-63ae-4de9-8a3e-0e4ba194197a/scratchpad/wt-codex-terminology-prompt/cold-read-records/2026-09-16-cold-read-terminology-prompt-for-codex-draft-2/*codex-terminology-good.md: No such file or directory\ntail: /private/tmp/claude-501/-Users-el-agents-MD-skills/6fb14b80-63ae-4de9-8a3e-0e4ba194197a/scratchpad/wt-codex-terminology-prompt/cold-read-records/2026-09-16-cold-read-terminology-prompt-for-codex-draft-2/*codex-terminology-good.md: No such file or directory",
-   "sought": "numbered findings in a cold-read report found by glob"
+   "sought": "numbered findings in a cold-read report found by glob",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G022",
@@ -285,7 +306,8 @@
    "command": "ssh -o ConnectTimeout=5 nedlern@ned-box 'ps -eo args | grep \"[c]laude --session-id\" | cut -c1-200 | head -5; grep -n -i \"subagent\\|unless the user\" ~/.claude/CLAUDE.md 2>/dev/null | head -3'",
    "exit_code": 0,
    "output": "",
-   "sought": "a live claude seat process on ned-box, and a subagent rule in ned-box's ~/.claude/CLAUDE.md"
+   "sought": "a live claude seat process on ned-box, and a subagent rule in ned-box's ~/.claude/CLAUDE.md",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G023",
@@ -298,7 +320,8 @@
    "command": "ssh -o ConnectTimeout=5 nedlern@ned-box 'grep -il \"auton\\|label pair\\|ghi-issue-write\" ~/.claude/handoffs/ghi-info-handoff.md ~/.claude/handoffs/ghi-info-next-step-20260916-172639.md 2>/dev/null; grep -i -m5 \"write tool\\|ghi-issue-write\\|label\" ~/.claude/handoffs/ghi-info-next-step-20260916-172639.md 2>/dev/null | cut -c1-300'",
    "exit_code": 0,
    "output": "",
-   "sought": "auton / label-pair / ghi-issue-write mentions in two ghi-info handoff files on ned-box"
+   "sought": "auton / label-pair / ghi-issue-write mentions in two ghi-info handoff files on ned-box",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G024",
@@ -311,7 +334,14 @@
    "command": "cd ~/.claude/projects && grep -rhoE '\"command\":\"[^\"]{0,300}git (-C [^ ]+ )?push [^\"]{0,160}' --include='*.jsonl' . 2>/dev/null | grep -E -- '--force|--force-with-lease| -f |origin \\+' | sort -u > /private/tmp/claude-501/-Users-el-agents-merge-lane/fd0d6a2f-050d-44e1-bd71-0f6925921d61/scratchpad/forcepushes.txt; wc -l < /private/tmp/claude-501/-Users-el-agents-merge-lane/fd0d6a2f-050d-44e1-bd71-0f6925921d61/scratchpad/forcepushes.txt; grep -E '(do |then |\\{ |timeout [0-9]+ |env [A-Z]|command git|xargs|nohup|sudo )git' /private/tmp/claude-501/-Users-el-agents-merge-lane/fd0d6a2f-050d-44e1-bd71-0f6925921d61/scratchpad/forcepushes.txt | head -20",
    "exit_code": 0,
    "output": "       0",
-   "sought": "force-push commands with wrapper prefixes in the Mac's transcripts"
+   "sought": "force-push commands with wrapper prefixes in the Mac's transcripts",
+   "arguments_the_agents_grep_refuses": [
+    [
+     "-rhoE",
+     "\"command\":\"[^\"]{0,300}git (-C [^ ]+ )?push [^\"]{0,160}",
+     "--include=*.jsonl"
+    ]
+   ]
   },
   {
    "id": "G025",
@@ -324,7 +354,8 @@
    "command": "cd /private/tmp/claude-501/-Users-el-agents-merge-lane/2948412c-4156-468e-a374-c3d28097c964/scratchpad/pr538-review && grep -rn \"duration_s\\|tokens=\\|target=\" .claude/skills/ docs/ --include=\"*.md\" 2>/dev/null | grep -v \"^docs/nedschorus-wiki/queue/notes-on-using-codex-and-gemini.md:125\" | head -20",
    "exit_code": 0,
    "output": "",
-   "sought": "other provenance-stamp fields in .claude/skills/ and docs/ of the PR 538 tree"
+   "sought": "other provenance-stamp fields in .claude/skills/ and docs/ of the PR 538 tree",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G026",
@@ -337,7 +368,13 @@
    "command": "grep -oE \".{0,180}(merge-lane|announce).{0,180}\" /Users/el/.claude/handoffs/fleet-restart-at-login-dialog-0009-complete.md 2>/dev/null | grep -iE \"announce\" | head -8",
    "exit_code": 0,
    "output": "",
-   "sought": "how this seat announced PRs to merge-lane, in its earlier dialog file"
+   "sought": "how this seat announced PRs to merge-lane, in its earlier dialog file",
+   "arguments_the_agents_grep_refuses": [
+    [
+     "-oE",
+     ".{0,180}(merge-lane|announce).{0,180}"
+    ]
+   ]
   },
   {
    "id": "G027",
@@ -350,7 +387,8 @@
    "command": "grep -rn \"durable checkout\" docs/nedschorus-wiki/*.md 2>/dev/null | head -5",
    "exit_code": 0,
    "output": "",
-   "sought": "the phrase \"durable checkout\" in docs/nedschorus-wiki/*.md"
+   "sought": "the phrase \"durable checkout\" in docs/nedschorus-wiki/*.md",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G028",
@@ -363,7 +401,8 @@
    "command": "grep -rn \"run_dialog_extracted\\|dialog_extracted_from\\|handoffs_own_session\\|written_by_session\" /Users/el/agents/MD-skills/scripts/ 2>/dev/null | head",
    "exit_code": 0,
    "output": "",
-   "sought": "collision check for the identifiers a fix was about to add (written_by_session etc.) in MD-skills/scripts"
+   "sought": "collision check for the identifiers a fix was about to add (written_by_session etc.) in MD-skills/scripts",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G029",
@@ -376,7 +415,8 @@
    "command": "grep -n -i \"isolat\\|intent-gam\\|attack-artifact\\|attacker sees\" .claude/skills/cold-read/SKILL.md 2>/dev/null | head -20",
    "exit_code": 0,
    "output": "",
-   "sought": "isolation / attack wording in .claude/skills/cold-read/SKILL.md"
+   "sought": "isolation / attack wording in .claude/skills/cold-read/SKILL.md",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G030",
@@ -389,7 +429,8 @@
    "command": "cd /Users/el/agents/fleet-restart-at-login\ngrep -rli \"watchexec\" --include='*.py' --include='*.md' . 2>/dev/null | grep -v '^./docs/issues/36'\ngit ls-files | grep -iE 'codex.*monitor|monitor.*codex'",
    "exit_code": 0,
    "output": "",
-   "sought": "watchexec mentions and a codex-monitor file in the worktree"
+   "sought": "watchexec mentions and a codex-monitor file in the worktree",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G031",
@@ -402,7 +443,8 @@
    "command": "cd /Users/el/agents/fleet-restart-at-login\ngit ls-files | grep -iE 'watch-your-back'\nfind . -iname '*watch-your-back*' -not -path './.git/*' 2>/dev/null",
    "exit_code": 0,
    "output": "",
-   "sought": "a watch-your-back file in the worktree"
+   "sought": "a watch-your-back file in the worktree",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G032",
@@ -415,7 +457,8 @@
    "command": "grep -rn \"system-term\" docs/ nc-queue/ walk-ledgers/ nc-systems/ 2>/dev/null | grep -v \"md-skills-seat-open-decisions-2026-09-20\" | head -30",
    "exit_code": 0,
    "output": "",
-   "sought": "other uses of \"system-term\" beyond the walk that coined it"
+   "sought": "other uses of \"system-term\" beyond the walk that coined it",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G033",
@@ -428,7 +471,8 @@
    "command": "cd ~/.claude/projects\ngrep -l \"multi-file exception\\|title follows a change to the heading\\|GHI title = file name\" -r -Users-el-agents-*/ 2>/dev/null | head -20",
    "exit_code": 0,
    "output": "",
-   "sought": "the user's approving turn (\"GHI title = file name\") in the Mac's transcripts"
+   "sought": "the user's approving turn (\"GHI title = file name\") in the Mac's transcripts",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G034",
@@ -441,7 +485,8 @@
    "command": "ssh -o BatchMode=yes nedlern@ned-box 'grep -rl \"explain-skill\\|explain skill\\|/explain\\|an explain\" /home/nedlern/nedschorus-logs/walk/ /home/nedlern/nedschorus-logs/seats/ /home/nedlern/nedschorus-logs/analysis/ /home/nedlern/nedschorus-logs/README.md 2>/dev/null' 2>&1 | head -40",
    "exit_code": 0,
    "output": "",
-   "sought": "explain-skill mentions in the log-store's walk/, seats/, analysis/ on ned-box"
+   "sought": "explain-skill mentions in the log-store's walk/, seats/, analysis/ on ned-box",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G035",
@@ -454,7 +499,8 @@
    "command": "ssh -o BatchMode=yes nedlern@ned-box 'grep -hoE \".{100}(explain-skill|/explain[^a-z]|explain skill).{200}\" /home/nedlern/.claude/projects/-home-nedlern-agents-ghi-info/99dae4c8-1f61-465e-a443-743682264c3d.jsonl /home/nedlern/.claude/projects/-home-nedlern-agents-prof/08d3928c-f205-4772-986d-2c1e78b21512/subagents/agent-afb8026a77f8dec9d.jsonl 2>/dev/null | sort -u | head -30' 2>&1",
    "exit_code": 0,
    "output": "",
-   "sought": "explain-skill context lines in two ned-box transcripts"
+   "sought": "explain-skill context lines in two ned-box transcripts",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G036",
@@ -467,7 +513,8 @@
    "command": "grep -n \"explain\" /home/nedlern 2>/dev/null; ssh -o BatchMode=yes nedlern@ned-box 'grep -n \"explain\" /home/nedlern/nedschorus-logs/walk/cold-read-research-three-rulings-waiting-on-the-user-2026-09-21.md /home/nedlern/nedschorus-logs/walk/cold-read-research-three-rulings-waiting-on-the-user-2026-09-21-draft.md 2>/dev/null | head -20' 2>&1",
    "exit_code": 0,
    "output": "",
-   "sought": "explain in two ned-box walk files"
+   "sought": "explain in two ned-box walk files",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G037",
@@ -480,7 +527,8 @@
    "command": "cd /Users/el/agents/reboot-test && grep -nE \"FAILED|failed|error|limit|login|REFUSED|report written|record:\" /private/tmp/claude-501/-Users-el-agents-reboot-test/d7420c20-1d92-471b-a1a1-9fad0b85577c/tasks/b0m667wd6.output 2>/dev/null | head -12 | cut -c1-190",
    "exit_code": 0,
    "output": "",
-   "sought": "failure lines in a background grid run's output file"
+   "sought": "failure lines in a background grid run's output file",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G038",
@@ -493,7 +541,13 @@
    "command": "cd /Users/el/agents/reboot-test/cold-read-records/nedschorus-glossary-2026-09-21-2 && grep -hoiE \".{0,80}link-type.{0,130}\" claude-hunt-deep.md codex-hunt-deep.md claude-terminology-deep.md codex-terminology-deep.md 2>/dev/null | grep -iE \"defect|contradict|unclear|missing|ambiguous|wrong|cannot|undefined|inconsist\" | sort -u | head -12",
    "exit_code": 0,
    "output": "",
-   "sought": "findings about \"link-type\" in a cold-read record's four reports"
+   "sought": "findings about \"link-type\" in a cold-read record's four reports",
+   "arguments_the_agents_grep_refuses": [
+    [
+     "-hoiE",
+     ".{0,80}link-type.{0,130}"
+    ]
+   ]
   },
   {
    "id": "G039",
@@ -506,7 +560,8 @@
    "command": "cd /tmp/claude-1000/-home-nedlern-agents-merge-lane-2/773ec12d-f93a-4d46-b4ae-68e77e796887/scratchpad/wt/pr618 && grep -n -i -A8 '\"sandbox\"' .claude/settings.json ~/.claude/settings.json 2>/dev/null | head -40; ls -la ~/.claude/.run-all-test-suites.lock 2>&1; cat ~/.claude/.run-all-test-suites.lock 2>&1",
    "exit_code": 1,
    "output": "ls: cannot access '/home/nedlern/.claude/.run-all-test-suites.lock': No such file or directory\ncat: /home/nedlern/.claude/.run-all-test-suites.lock: No such file or directory",
-   "sought": "a \"sandbox\" key in the PR 618 worktree's and ned-box's settings.json"
+   "sought": "a \"sandbox\" key in the PR 618 worktree's and ned-box's settings.json",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G040",
@@ -519,7 +574,8 @@
    "command": "cd /home/nedlern/nedschorus-logs/transcripts && grep -rl --include=*.jsonl \"only survive as long as the worktree\" . 2>/dev/null | while read f; do python3 - \"$f\" <<'EOF'\nimport json,sys\nfor line in open(sys.argv[1]):\n    try: d=json.loads(line)\n    except: continue\n    if d.get('type')!='user': continue\n    c=d.get('message',{}).get('content')\n    texts=[c] if isinstance(c,str) else [b.get('text','') for b in (c or []) if isinstance(b,dict) and b.get('type')=='text']\n    for t in texts:\n        if 'only survive as long as the worktree' in t and not t.lstrip().startswith(('Another Claude','<','This session','[')) and len(t)<1500:\n            print(sys.argv[1], d.get('timestamp'), d.get('userType'), repr(t[:400]))\nEOF\ndone 2>/dev/null | head",
    "exit_code": 0,
    "output": "",
-   "sought": "the user's own typed \"Tasks only survive as long as the worktree\" in the log-store's transcripts"
+   "sought": "the user's own typed \"Tasks only survive as long as the worktree\" in the log-store's transcripts",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G041",
@@ -532,7 +588,8 @@
    "command": "grep -A 50 \"## SessionStart\" \"/Users/el/.claude/projects/-Users-el-agents-merge-lane-backlog/f63d7920-6a5f-4882-ab3b-51e0063c41c5/tool-results/toolu_015HsMdiDqRFHEmqm8rAs9As.txt\" 2>/dev/null | head -80",
    "exit_code": 0,
    "output": "",
-   "sought": "a \"## SessionStart\" heading in a fetched hooks-guide file"
+   "sought": "a \"## SessionStart\" heading in a fetched hooks-guide file",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G042",
@@ -545,7 +602,8 @@
    "command": "grep -r \"initialUserMessage\" \"/Users/el/.claude/projects/-Users-el-agents-merge-lane-backlog/f63d7920-6a5f-4882-ab3b-51e0063c41c5/tool-results/\" 2>/dev/null",
    "exit_code": 0,
    "output": "",
-   "sought": "initialUserMessage in the fetched docs under tool-results/"
+   "sought": "initialUserMessage in the fetched docs under tool-results/",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G043",
@@ -558,7 +616,8 @@
    "command": "grep -c \"Seat\" ~/.claude/projects/-Users-el-agents-reboot-test/*.jsonl 2>/dev/null | head -20",
    "exit_code": 0,
    "output": "/Users/el/.claude/projects/-Users-el-agents-reboot-test/2078c7b5-4f38-49e0-a912-3a4111d85fc5.jsonl:0\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/21501c63-2dd6-4323-b38d-f7f4f58c7e6f.jsonl:14\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/1c1c9d7e-efef-4061-884d-1489ec1e671e.jsonl:35\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/1d990e99-c569-4b8f-9918-c46e88d400a2.jsonl:1\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/2f1ff62d-99c0-47d4-8809-d54a2dc35984.jsonl:1\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/5c004adb-318f-4eba-ad2d-fb18f98d1177.jsonl:0\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/29e221d6-f32d-40f6-955c-31ba1e0662f1.jsonl:0\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/3713269d-fe87-44bc-a6cc-f62c13bb111a.jsonl:3\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/5ca971ec-5cdf-406d-bfbe-202634bc4b90.jsonl:0\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/6a08050d-3870-4b75-af96-ba66e0ccf684.jsonl:4\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/6d900979-a7b8-456e-9f3c-051eac8b3c30.jsonl:5\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/79d553fe-65eb-46df-8a50-d6af05449f12.jsonl:1\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/7c6850cb-bd9c-44f8-9451-440d8623cdc1.jsonl:2\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/8cd92f73-1c8a-4990-81a7-c82600f4b9e6.jsonl:0\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/8c21a943-3c22-4a31-a689-4c14632233d8.jsonl:2\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/2f1a87ca-d91c-46bf-a2df-1fa970d40fa8.jsonl:1\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/2e791a7d-a065-4880-b712-ab32d47d4361.jsonl:6\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/3b223486-5c09-47d6-8e37-a0f9886b20f1.jsonl:0\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/bde05a98-6782-49e2-b362-314d78410450.jsonl:7\n/Users/el/.claude/projects/-Users-el-agents-reboot-test/bd441eb9-5ddd-45dd-9a4c-b893dbc983e8.jsonl:18",
-   "sought": "which reboot-test transcripts mention \"Seat\""
+   "sought": "which reboot-test transcripts mention \"Seat\"",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G044",
@@ -571,7 +630,8 @@
    "command": "cd /home/nedlern/nedschorus-logs/transcripts/mac/projects/ && grep -rlF \"pretty simple\" -- */ecf80ee9* */6a08050d* 2>/dev/null; grep -rlF \"I'm assuming a task\" . 2>/dev/null | head -3; grep -rlF \"show-seat-task-lists\" . 2>/dev/null | head",
    "exit_code": 0,
    "output": "",
-   "sought": "three phrases of the PR 634 author's session in the log-store's Mac transcript mirror"
+   "sought": "three phrases of the PR 634 author's session in the log-store's Mac transcript mirror",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G045",
@@ -584,7 +644,8 @@
    "command": "grep -n \"frozen_target_path\\|write_bytes\\|shutil.copy\" scripts/cold-read-cell-common.py scripts/cold-read-claude-cell.py scripts/cold-read-codex-cell.py 2>/dev/null | head -12",
    "exit_code": 0,
    "output": "",
-   "sought": "frozen_target_path / write_bytes / shutil.copy in three cold-read cell scripts"
+   "sought": "frozen_target_path / write_bytes / shutil.copy in three cold-read cell scripts",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G046",
@@ -597,7 +658,8 @@
    "command": "ssh nedlern@ned-box 'cd ~/.claude/projects && rg -il --glob \"*.jsonl\" -e \"bare name\" -e \"bare file name\" -e \"bare filename\" $(find ~/.claude/projects -name \"*.jsonl\" -mtime -5) 2>/dev/null | sed \"s|.*/projects/||\" | sort'",
    "exit_code": 0,
    "output": "",
-   "sought": "which ned-box transcripts mention \"bare name\" (where a file-citation convention was discussed)"
+   "sought": "which ned-box transcripts mention \"bare name\" (where a file-citation convention was discussed)",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G047",
@@ -610,7 +672,8 @@
    "command": "ssh nedlern@ned-box 'rg -c -i -e \"bare-name\" -e \"bare name\" -e \"agent-friendly\" -e \"clickable path\" -e \"two forms\" -e \"so I can click\" $(find ~/.claude/projects -name \"*.jsonl\" -mtime -5) 2>/dev/null | sed \"s|.*/projects/||\" | sort -t: -k2 -rn | head -20'",
    "exit_code": 0,
    "output": "",
-   "sought": "ned-box transcripts counting bare-name / agent-friendly / clickable phrases"
+   "sought": "ned-box transcripts counting bare-name / agent-friendly / clickable phrases",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G048",
@@ -623,7 +686,8 @@
    "command": "cd /Users/el/.claude/projects && rg -o -i -e '.{250}(searches for the file.s name, not its old path|EXACT NAME IS ENOUGH TO SEARCH ON).{300}' --no-filename $(find /Users/el/.claude/projects -name '*.jsonl' -mtime -5 -path '*cold-read-research*') 2>/dev/null | sort -u | head -6",
    "exit_code": 0,
    "output": "",
-   "sought": "the user's phrases about name-not-path search in cold-read-research transcripts"
+   "sought": "the user's phrases about name-not-path search in cold-read-research transcripts",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G049",
@@ -636,7 +700,8 @@
    "command": "cd /Users/el/.claude/projects && rg -o -i -e '[^\"]{0,400}(bare name|bare file name|full path)[^\"]{0,300}' --no-filename /Users/el/.claude/projects/-Users-el-agents-fleet-restart-at-login/072306de-41a2-4217-8d77-07554a06e263.jsonl 2>/dev/null | grep -i -e 'agent friendly' -e 'agent-friendly' -e 'clickable' | sort -u | head -10",
    "exit_code": 0,
    "output": "",
-   "sought": "agent-friendly / clickable lines around \"bare name\" in one session file"
+   "sought": "agent-friendly / clickable lines around \"bare name\" in one session file",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G050",
@@ -649,7 +714,8 @@
    "command": "cd /home/nedlern/nedschorus-logs/transcripts/mac/projects/ && grep -rlE \"git version 2\\.(39\\.5|55\\.0)\" . 2>/dev/null | xargs ls -t 2>/dev/null | head -5 | while read f; do echo \"== $f\"; grep -oE \".{150}git version 2\\.(39\\.5|55\\.0).{60}\" \"$f\" | tail -2; done",
    "exit_code": 0,
    "output": "",
-   "sought": "the newest Mac transcripts showing \"git version 2.39.5/2.55.0\", to learn the Mac's git version"
+   "sought": "the newest Mac transcripts showing \"git version 2.39.5/2.55.0\", to learn the Mac's git version",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G051",
@@ -662,7 +728,8 @@
    "command": "cd ~/.claude/projects; grep -l -E 'historic sweep|exemption covers|written tomorrow' */*.jsonl 2>/dev/null | head; ",
    "exit_code": 0,
    "output": "",
-   "sought": "the user's words \"historic sweep / exemption covers / written tomorrow\" in the Mac's transcripts"
+   "sought": "the user's words \"historic sweep / exemption covers / written tomorrow\" in the Mac's transcripts",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G052",
@@ -675,7 +742,8 @@
    "command": "cd ~ && grep -rlF \"dont try again\" ~/.claude/projects/ /home/nedlern/nedschorus-logs/transcripts/ 2>/dev/null | grep -v subagents | while read f; do python3 - \"$f\" <<'EOF'\nimport json,sys\nfor l in open(sys.argv[1]):\n    try: r=json.loads(l)\n    except: continue\n    if r.get(\"type\")!=\"user\": continue\n    c=r.get(\"message\",{}).get(\"content\")\n    t=c if isinstance(c,str) else \" \".join(x.get(\"text\",\"\") for x in c if isinstance(x,dict) and x.get(\"type\")==\"text\")\n    if \"dont try again\" in t and len(t)<2000 and \"tool_result\" not in str(c)[:50]:\n        print(sys.argv[1], r.get(\"sessionId\"), r.get(\"timestamp\"), repr(t[:400]))\nEOF\ndone",
    "exit_code": 0,
    "output": "",
-   "sought": "the user's typed \"If resume doesn't work, then dont try again\" in ned-box's and the log-store's transcripts"
+   "sought": "the user's typed \"If resume doesn't work, then dont try again\" in ned-box's and the log-store's transcripts",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G053",
@@ -688,7 +756,8 @@
    "command": "cd ~/agents/merge-lane-2 && grep -n \"defaultMode\" .claude/settings.json; grep -rn \"settings.local\" .gitignore .git/info/exclude $(git rev-parse --git-common-dir)/info/exclude 2>/dev/null",
    "exit_code": 2,
    "output": "",
-   "sought": "a defaultMode key in .claude/settings.json and a settings.local entry in the ignore files of merge-lane-2"
+   "sought": "a defaultMode key in .claude/settings.json and a settings.local entry in the ignore files of merge-lane-2",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G054",
@@ -701,7 +770,8 @@
    "command": "cd ~/.claude/projects; grep -l 'how-to-find' */*.jsonl 2>/dev/null | head; ",
    "exit_code": 0,
    "output": "",
-   "sought": "the term \"how-to-find\" in the Mac's transcripts, to check four \"RULED 2026-08-23\" marks against the user's own words"
+   "sought": "the term \"how-to-find\" in the Mac's transcripts, to check four \"RULED 2026-08-23\" marks against the user's own words",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G055",
@@ -714,7 +784,8 @@
    "command": "ssh nedlern@ned-box 'cd /home/nedlern/nedschorus-logs/transcripts/mac/projects 2>/dev/null && grep -l \"how-to-find\" */*.jsonl 2>/dev/null | head -5'",
    "exit_code": 0,
    "output": "",
-   "sought": "the same term in the log-store's mirror of Mac transcripts"
+   "sought": "the same term in the log-store's mirror of Mac transcripts",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G056",
@@ -727,7 +798,8 @@
    "command": "cd /Users/el/agents/merge-lane/.claude/worktrees/reference-catch-up-reports-failed-fetch && grep -rn \"reference_catch_up\\|fetch_failure_note\" --include='*.md' . 2>/dev/null | head; grep -rl \"backlog-recheck\\|backlog recheck\" docs nc-queue 2>/dev/null | head; grep -rl \"reference_catch_up\\|fetch_failure_note\" /Users/el/agents/merge-lane/docs 2>/dev/null | head",
    "exit_code": 0,
    "output": "",
-   "sought": "mentions of a fix's new identifiers (reference_catch_up, fetch_failure_note) and \"backlog-recheck\" in docs of a worktree"
+   "sought": "mentions of a fix's new identifiers (reference_catch_up, fetch_failure_note) and \"backlog-recheck\" in docs of a worktree",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G057",
@@ -740,7 +812,8 @@
    "command": "F=/private/tmp/claude-501/-Users-el-agents-merge-lane-backlog/b12b72d4-15eb-4564-a39e-b94ad01fba6c/tasks/blcbnrm9m.output; for i in $(seq 1 110); do grep -q \"exit=\" $F 2>/dev/null && break; sleep 5; done; cat $F | tail -30",
    "exit_code": 0,
    "output": "",
-   "sought": "(not a search) a polling loop waiting for \"exit=\" in a background task's output file, then cat of that file"
+   "sought": "(not a search) a polling loop waiting for \"exit=\" in a background task's output file, then cat of that file",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G058",
@@ -753,7 +826,8 @@
    "command": "S=/tmp/claude-1000/-home-nedlern-agents-merge-lane-2/f25d9c6b-957d-4062-9e19-feae0280a2ea/scratchpad/pr698-seat-cell; H=$S/wt/pr698-seat-cell-head; grep -n -i \"sudo\\|timeshift\" $H/.claude/settings.json ~/.claude/settings.json 2>/dev/null; grep -rln -i \"sudo\" $H/.claude/hooks/ | head; cat $S/sweep-result.txt 2>/dev/null; tail -3 $S/sweep-stdout.txt 2>/dev/null",
    "exit_code": 0,
    "output": "",
-   "sought": "sudo / timeshift in the PR 698 head's and ned-box's settings.json, and sudo in its hooks"
+   "sought": "sudo / timeshift in the PR 698 head's and ned-box's settings.json, and sudo in its hooks",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G059",
@@ -766,7 +840,8 @@
    "command": "for i in $(seq 1 55); do grep -q . /private/tmp/claude-501/-Users-el-agents-merge-lane/ec9357fa-919a-48d3-b919-3549b563b9a1/tasks/bdsdyq1ma.output 2>/dev/null && break; sleep 10; done; cat /private/tmp/claude-501/-Users-el-agents-merge-lane/ec9357fa-919a-48d3-b919-3549b563b9a1/tasks/bdsdyq1ma.output",
    "exit_code": 0,
    "output": "",
-   "sought": "(not a search) a polling loop waiting for a background sweep's output file to be non-empty, then cat"
+   "sought": "(not a search) a polling loop waiting for a background sweep's output file to be non-empty, then cat",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G060",
@@ -779,7 +854,8 @@
    "command": "find /home/nedlern/nedschorus-logs/seats /home/nedlern/nedschorus-logs/walk /home/nedlern/nedschorus-logs/cold-read-records -name \"* *\" 2>/dev/null | head; find /home/nedlern/nedschorus-logs/seats /home/nedlern/nedschorus-logs/walk /home/nedlern/nedschorus-logs/cold-read-records -name \"*[\\$\\`'\\\"*?\\[]*\" 2>/dev/null | head",
    "exit_code": 0,
    "output": "",
-   "sought": "file names with spaces or shell metacharacters in three log-store dirs on ned-box"
+   "sought": "file names with spaces or shell metacharacters in three log-store dirs on ned-box",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G061",
@@ -792,7 +868,8 @@
    "command": "cd /home/nedlern/nedschorus-logs/transcripts/mac/projects/ && ls -d *backlog* 2>/dev/null; for f in $(ls -d *merge-lane*/ | sed 's:/$::'); do for j in $f/*.jsonl; do grep -q '\"timestamp\":\"2026-09-2[23]' \"$j\" 2>/dev/null && grep -q 'F7' \"$j\" && echo \"$j\"; done; done 2>/dev/null | head",
    "exit_code": 0,
    "output": "",
-   "sought": "merge-lane transcripts of 2026-09-22/23 mentioning F7, in the log-store's Mac mirror"
+   "sought": "merge-lane transcripts of 2026-09-22/23 mentioning F7, in the log-store's Mac mirror",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G062",
@@ -805,7 +882,8 @@
    "command": "cd /tmp/claude-1000/-home-nedlern-agents-merge-lane-2/4740db94-ecae-40d5-9d04-ee7fd62e0a42/scratchpad/pr702r4-mac-claude/wt/head && grep -rn \"find-deleted-path\\|build_report\\|--skip git\" .claude/ CLAUDE.md scripts/*.sh 2>/dev/null | head; grep -rn \"skip git\\|--skip\" docs/issues/18-write-test-plan-riders-and-test-evidence-rules.md | head -5",
    "exit_code": 0,
    "output": "",
-   "sought": "references to find-deleted-path / build_report / --skip git outside the tool, in the PR 702 head"
+   "sought": "references to find-deleted-path / build_report / --skip git outside the tool, in the PR 702 head",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G063",
@@ -818,7 +896,8 @@
    "command": "cd /tmp/claude-1000/-home-nedlern-agents-merge-lane-2/34e2bc2c-032f-4896-b323-374a223dd6ca/scratchpad/pr707-mac-claude/wt/head; grep -rn \"claude-opus-5\\b\" --include=*.md .claude CLAUDE.md nc-systems scripts 2>/dev/null | grep -v \"opus-5-5\" | head -20",
    "exit_code": 0,
    "output": "",
-   "sought": "stale \"claude-opus-5\" model ids in markdown at the PR 707 head"
+   "sought": "stale \"claude-opus-5\" model ids in markdown at the PR 707 head",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G064",
@@ -831,7 +910,8 @@
    "command": "cd /tmp/claude-1000/-home-nedlern-agents-merge-lane-2/ebe7fda3-b662-4e5e-8aca-6e2b0549e6a9/scratchpad/pr739-mac-claude/wt/head && grep -rnE \"send-keys|send_keys\" scripts/ .claude/ 2>/dev/null | grep -E \"\\\"/|'/|/(model|effort|compact|walk|handoff|loop|clear)\" | head -30",
    "exit_code": 0,
    "output": "",
-   "sought": "tmux send-keys lines that type a slash command, in the PR 739 head's scripts and .claude"
+   "sought": "tmux send-keys lines that type a slash command, in the PR 739 head's scripts and .claude",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G065",
@@ -844,7 +924,8 @@
    "command": "cd /tmp/claude-1000/-home-nedlern-agents-merge-lane-2/ebe7fda3-b662-4e5e-8aca-6e2b0549e6a9/scratchpad/pr739-mac-claude/wt/head && grep -rnE \"(\\\"|')/(model|effort|compact|walk-me-through|handoff|loop|clear|cold-read)\\b\" scripts/ .claude/hooks 2>/dev/null | grep -v -- \"-test.py\" | head -30",
    "exit_code": 0,
    "output": "",
-   "sought": "quoted slash-command strings in the PR 739 head's scripts and hooks"
+   "sought": "quoted slash-command strings in the PR 739 head's scripts and hooks",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G066",
@@ -857,7 +938,8 @@
    "command": "cd /home/nedlern/agents/ghi-info && grep -rln \"merge-gate\" docs/issues/*.md 2>/dev/null | grep -v \"^docs/issues/729-\\|^docs/issues/735-\"",
    "exit_code": 0,
    "output": "",
-   "sought": "other GHI-MDs mentioning merge-gate besides 729 and 735, in ghi-info's checkout"
+   "sought": "other GHI-MDs mentioning merge-gate besides 729 and 735, in ghi-info's checkout",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G067",
@@ -870,7 +952,8 @@
    "command": "cd /home/nedlern/nedschorus-logs/transcripts/mac/projects/ && grep -l 'merge-gate-leaves-out-inline-comments-of-the-reviews-that-bound-it' */*.jsonl 2>/dev/null | head; ",
    "exit_code": 0,
    "output": "",
-   "sought": "the Mac session that worked on branch merge-gate-leaves-out-inline-comments-..., in the log-store's Mac mirror"
+   "sought": "the Mac session that worked on branch merge-gate-leaves-out-inline-comments-..., in the log-store's Mac mirror",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G068",
@@ -883,7 +966,8 @@
    "command": "cd ~/.claude/projects && grep -l '\"timestamp\":\"2026-09-28T16:01:2' */*.jsonl 2>/dev/null | head",
    "exit_code": 0,
    "output": "",
-   "sought": "the merge-lane-2 session holding the user's typed turn at 2026-09-28T16:01:2x"
+   "sought": "the merge-lane-2 session holding the user's typed turn at 2026-09-28T16:01:2x",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G069",
@@ -896,7 +980,8 @@
    "command": "f=/home/nedlern/nedschorus-logs/empty-search-check/empty-search-check-firings-sorted-2026-09-28.md; grep -n -E 'md-review-records|failed `cd`|cd: ' $f | cut -c1-600; grep -n '56d8d488' $f | cut -c1-200; ls /home/nedlern/.claude/projects/-home-nedlern-agents-prof/56d8d488-5049-4c57-addf-0dee013207de.jsonl 2>&1",
    "exit_code": 2,
    "output": "ls: cannot access '/home/nedlern/.claude/projects/-home-nedlern-agents-prof/56d8d488-5049-4c57-addf-0dee013207de.jsonl': No such file or directory",
-   "sought": "the deleted sorted-firings table's entries for a failed cd and session 56d8d488"
+   "sought": "the deleted sorted-firings table's entries for a failed cd and session 56d8d488",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G070",
@@ -909,7 +994,8 @@
    "command": "cd /Users/el/agents/wt-cold-read-reviewers-never-open-credential-files && cat > /private/tmp/claude-501/-Users-el-agents-cold-read-research/e7b18bdc-1a0a-458c-b57e-9bb37dcc5950/scratchpad/mac-probe.sh <<'EOF'\n#!/bin/bash\ncd /Users/el/agents/wt-cold-read-reviewers-never-open-credential-files\nP=cold-read-records/credential-probe-2026-09-28\nprobe() {\n  r=$1; shift\n  rm -f $P/$r-report.md\n  timeout 900 python3 nc-systems/cold-read/cold-read-$r-cell.py --cell credential-probe --prompt-file $P/prompt.md --target README.md --report $PWD/$P/$r-report.md \"$@\" > $P/$r-run.log 2>&1\n  echo \"$r exit $?\"\n  printf '  leaked: '; for c in $(cat $P/expected-canaries.txt); do printf '%s ' \"$(cat $P/$r-report.md $P/$r-run.log 2>/dev/null | grep -c \"$c\")\"; done; echo\n  grep -v '^<!--' $P/$r-report.md 2>/dev/null | cut -c1-160 | sed 's/^/  /' | head -6\n  [ -f $P/$r-report.md ] || tail -4 $P/$r-run.log | sed 's/^/  log: /'\n}\nprobe claude --model claude-opus-5-5 --effort low --tier deep\nprobe codex --model gpt-6-luna --effort low --tier second\nprobe agy --tier fast\nEOF\nchmod +x /private/tmp/claude-501/-Users-el-agents-cold-read-research/e7b18bdc-1a0a-458c-b57e-9bb37dcc5950/scratchpad/mac-probe.sh",
    "exit_code": 0,
    "output": "",
-   "sought": "(not a search) the greps are inside a here-document that writes a probe script to a file; nothing searched"
+   "sought": "(not a search) the greps are inside a here-document that writes a probe script to a file; nothing searched",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G071",
@@ -922,7 +1008,8 @@
    "command": "sleep 1; ps -ef | grep -v grep | grep -E \"3430211|3430247|3430249|cold-read-agy-cell-test|\\bagy\\b\" | head; ls -la /tmp/claude-1000/-home-nedlern-agents-merge-lane-2/7f66ce3d-de7a-41c8-9e0a-41c58aab52a2/scratchpad/review-765r2.json 2>&1",
    "exit_code": 2,
    "output": "ls: cannot access '/tmp/claude-1000/-home-nedlern-agents-merge-lane-2/7f66ce3d-de7a-41c8-9e0a-41c58aab52a2/scratchpad/review-765r2.json': No such file or directory",
-   "sought": "leftover agy test processes after stopping a background task"
+   "sought": "leftover agy test processes after stopping a background task",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G072",
@@ -935,7 +1022,8 @@
    "command": "find /home/nedlern -maxdepth 4 -newermt '2026-09-29 01:27:00' -not -path '*/.claude/*' -not -path '*/nedschorus-logs/*' -not -path '*/.cache/claude-cli-nodejs/*' -not -path '*/agents/*' -not -path '*/.codex/sessions*' 2>/dev/null | head -20",
    "exit_code": 0,
    "output": "",
-   "sought": "files written under ned-box's home since 01:27 outside excluded paths, after a cold read"
+   "sought": "files written under ned-box's home since 01:27 outside excluded paths, after a cold read",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G073",
@@ -948,7 +1036,8 @@
    "command": "grep -n \"Closes #\\|Fixes #\\|closes #\" -r docs/agents/*.md CLAUDE.md .claude/skills 2>/dev/null | head -5; gh pr list --repo nedschorus/nedschorus --state merged --limit 60 --json body -q '.[].body' | grep -ciE \"\\b(closes|fixes|resolves) #[0-9]+\"",
    "exit_code": 0,
    "output": "0",
-   "sought": "GitHub auto-close keywords (\"Closes #\") in docs/agents, CLAUDE.md, skills, and in 60 merged PR bodies"
+   "sought": "GitHub auto-close keywords (\"Closes #\") in docs/agents, CLAUDE.md, skills, and in 60 merged PR bodies",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G074",
@@ -961,7 +1050,13 @@
    "command": "cd /Users/el/.claude/projects/-Users-el-agents-merge-lane/ && grep -ho '\"command\":\"[^\"]*gh pr create[^\"]\\{0,120\\}' e9e9eb6c-f6f4-435b-828b-2a650a170e0c.jsonl 073d01b3-52b2-4eed-8421-58e3d0d54fa8.jsonl ec9357fa-919a-48d3-b919-3549b563b9a1.jsonl 2>/dev/null | head -4; ls -t *.jsonl | head -12 | xargs grep -ho '\"command\":\"[^\"]\\{0,80\\}gh pr create[^\"]\\{0,60\\}' 2>/dev/null | head -4",
    "exit_code": 0,
    "output": "",
-   "sought": "how earlier PRs were created (gh pr create commands) in three merge-lane transcripts"
+   "sought": "how earlier PRs were created (gh pr create commands) in three merge-lane transcripts",
+   "arguments_the_agents_grep_refuses": [
+    [
+     "-ho",
+     "\"command\":\"[^\"]*gh pr create[^\"]\\{0,120\\}"
+    ]
+   ]
   },
   {
    "id": "G075",
@@ -974,7 +1069,8 @@
    "command": "H=/tmp/claude-1000/-home-nedlern-agents-merge-lane-2/b384c539-858c-4bf0-b8fa-d6bca9dd743b/scratchpad/pr793r1-seat-cell/wt/pr793-seat-review-head; cd $H && grep -rn \"python3\\.1[0-9]\\|3\\.1[0-9]\\.[0-9]\" scripts/run-all-test-suites.py docs/nedschorus-wiki 2>/dev/null | grep -iv \"http\" | head -8",
    "exit_code": 0,
    "output": "",
-   "sought": "Python version pins in run-all-test-suites.py and docs/nedschorus-wiki at the PR 793 head"
+   "sought": "Python version pins in run-all-test-suites.py and docs/nedschorus-wiki at the PR 793 head",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G076",
@@ -987,7 +1083,8 @@
    "command": "cd ~/agents/merge-lane-2 && grep -l -F \"obsidian publish\" /home/nedlern/nedschorus-logs/transcripts/mac/projects/*/*.jsonl 2>/dev/null; python3 - <<'EOF'\nimport json,glob\nfor f in glob.glob('/home/nedlern/nedschorus-logs/transcripts/mac/projects/*/*.jsonl'):\n    for line in open(f,errors='replace'):\n        if 'bsidian publish' not in line: continue\n        try: r=json.loads(line)\n        except: continue\n        if r.get('type')=='queue-operation':\n            print('QUEUE',r.get('timestamp'),f.split('/')[-2],repr(r.get('content'))[:300])\n        elif r.get('type')=='user' and not r.get('isMeta'):\n            c=r.get('message',{}).get('content')\n            if isinstance(c,str) and 'bsidian publish' in c and len(c)<1000: print('USER',r.get('timestamp'),r.get('userType'),f.split('/')[-2],repr(c)[:300])\n            elif isinstance(c,list):\n                for b in c:\n                    if isinstance(b,dict) and b.get('type')=='text' and 'bsidian publish' in b.get('text','') and len(b['text'])<1000: print('USERLIST',r.get('timestamp'),f.split('/')[-2],repr(b['text'])[:300])\nEOF",
    "exit_code": 0,
    "output": "",
-   "sought": "the user's \"obsidian publish\" words in the log-store's Mac mirror"
+   "sought": "the user's \"obsidian publish\" words in the log-store's Mac mirror",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G077",
@@ -1000,7 +1097,8 @@
    "command": "cd ~/agents/merge-lane-2 && grep -l -F 'Agents are bad at writing prose' /home/nedlern/nedschorus-logs/transcripts/mac/projects/*/*.jsonl 2>/dev/null; python3 - <<'EOF'\nimport json,glob\nfor f in glob.glob('/home/nedlern/nedschorus-logs/transcripts/mac/projects/-Users-el-agents-MD-skills/*.jsonl'):\n    for line in open(f,errors='replace'):\n        if 'bad at writing prose' not in line: continue\n        try: r=json.loads(line)\n        except: continue\n        if r.get('type')=='queue-operation' or (r.get('type')=='user' and isinstance(r.get('message',{}).get('content'),str)):\n            c=r.get('content') or r['message']['content']\n            if len(c)<800: print(r.get('timestamp'),f.split('/')[-1][:8],repr(c)[:400])\nEOF",
    "exit_code": 0,
    "output": "",
-   "sought": "the user's \"Agents are bad at writing prose\" in the log-store's Mac mirror"
+   "sought": "the user's \"Agents are bad at writing prose\" in the log-store's Mac mirror",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G078",
@@ -1013,7 +1111,8 @@
    "command": "cd ~/.claude/projects && grep -l \"Founding program — boot up nedschorus\" */*.jsonl 2>/dev/null | head -5; ssh nedlern@ned-box 'cd ~/.claude/projects && grep -l \"Founding program — boot up nedschorus\" */*.jsonl 2>/dev/null | head -5'",
    "exit_code": 0,
    "output": "",
-   "sought": "the session that wrote issue 1's \"Founding program\" title, on both machines"
+   "sought": "the session that wrote issue 1's \"Founding program\" title, on both machines",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G079",
@@ -1026,7 +1125,8 @@
    "command": "cd /home/nedlern/nedschorus-logs/transcripts/mac/projects/ && timeout 60 grep -rhoE '.{0,80}Control(Master|Persist|Path).{0,80}' --include='*.jsonl' . 2>/dev/null | sort | uniq -c | sort -rn | head -8; grep -n -i -E 'control(master|persist)|serveralive' ~/.ssh/config 2>/dev/null",
    "exit_code": 2,
    "output": "",
-   "sought": "ssh ControlMaster/ControlPersist use in the log-store's Mac mirror, and in ned-box's ~/.ssh/config"
+   "sought": "ssh ControlMaster/ControlPersist use in the log-store's Mac mirror, and in ned-box's ~/.ssh/config",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G080",
@@ -1039,7 +1139,8 @@
    "command": "ssh -o ConnectTimeout=8 nedlern@ned-box 'grep -n -i -E \"skill.{0,40}(did not|didn.t|never|not) (fire|trigger|load|invoke)|(without|never) (invoking|loading|using) (the )?(skill|/ghi-write|/cold-read|/handoff)|forgot to (invoke|use|run) (the )?skill|skill was not (invoked|used|loaded)\" /home/nedlern/nedschorus-logs/walk/*minutes* /home/nedlern/nedschorus-logs/*.md 2>/dev/null | cut -c1-500 | head -30'",
    "exit_code": 0,
    "output": "",
-   "sought": "walk minutes on ned-box recording that a skill did not fire"
+   "sought": "walk minutes on ned-box recording that a skill did not fire",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G081",
@@ -1052,7 +1153,8 @@
    "command": "F=/private/tmp/claude-501/-Users-el-agents-merge-lane/3741f3d6-582c-420b-80e5-508277198881/tasks/bwx5x9l5x.output; for i in $(seq 1 57); do grep -q '^attempt' \"$F\" 2>/dev/null && break; sleep 10; done; date -u +%H:%M:%SZ; cat ~/.claude/.run-all-test-suites.lock; echo; tail -3 \"$F\"",
    "exit_code": 137,
    "output": "",
-   "sought": "(not a search) a polling loop waiting for \"attempt\" in a background task's output, killed at exit 137"
+   "sought": "(not a search) a polling loop waiting for \"attempt\" in a background task's output, killed at exit 137",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G082",
@@ -1065,7 +1167,8 @@
    "command": "ssh -o ConnectTimeout=10 nedlern@ned-box 'cd /home/nedlern/agents/merge-lane-2/walk-ledgers; grep -n -i -E \"one topic|describes what|description.*(match|diff)|fail(s)? without the fix|fail first|contradict\" merge-lane-2-first-prompt.md mac-claude-reviewer-brief-standing-text.md 2>/dev/null | cut -c1-220 | head -12'",
    "exit_code": 0,
    "output": "",
-   "sought": "review-standard phrases in two merge-lane-2 walk-ledgers files on ned-box"
+   "sought": "review-standard phrases in two merge-lane-2 walk-ledgers files on ned-box",
+   "arguments_the_agents_grep_refuses": []
   },
   {
    "id": "G083",
@@ -1078,7 +1181,8 @@
    "command": "cd /home/nedlern/nedschorus-logs/transcripts/mac/projects && grep -l \"not liking component-contracts\" */*.jsonl 2>/dev/null | head -3; f=$(grep -l \"not liking component-contracts\" */*.jsonl 2>/dev/null | head -1); S=/tmp/claude-1000/-home-nedlern-agents-merge-lane-2/1aa690de-1c26-4db9-901e-5be519e0c671/scratchpad; [ -n \"$f\" ] && python3 $S/user-turns.py \"$f\" 2026-09-30T19:00:00Z | cut -c1-220",
    "exit_code": 1,
    "output": "",
-   "sought": "the user's \"not liking component-contracts\" turn in the log-store's Mac mirror"
+   "sought": "the user's \"not liking component-contracts\" turn in the log-store's Mac mirror",
+   "arguments_the_agents_grep_refuses": []
   }
  ]
 }
