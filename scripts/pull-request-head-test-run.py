@@ -6,13 +6,18 @@ a change made and reverted during the suites remains undetectable.
 
 A partial append can leave a torn record that prevents subsequent records from being read.
 
-Exit codes: 0 suites passed, 1 suite failed, 2 refused or unable to start, 4 failed step,
+The runner's output is copied to stderr line by line as it arrives, so a run stopped before
+it ends still shows its progress; stdout keeps only the SUMMARY line and where the record went.
+
+Exit codes: 0 suites passed, 1 suite failed, 2 refused, unable to start, or no suite failed but
+one did not run because its test sandbox did not start, 4 failed step,
 5 record not written, 7 uncaught exception. Local logs and the record remain available for recovery."""
 
 import argparse
 import importlib.util
 import locale
 import os
+import re
 import shlex
 import sys
 import tempfile
@@ -28,12 +33,26 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 EXIT_STOPPED_BY_AN_UNCAUGHT_EXCEPTION = 7
 
 
+def stop_using_stderr():
+    """Point sys.stderr at /dev/null, so a stream whose reader has gone cannot fail again."""
+    # Python flushes sys.stderr again at exit, and a failure there replaces the exit code with 120.
+    sys.stderr = open(os.devnull, "w")
+
+
+def write_to_stderr(message: str):
+    """Write every line of this program's stderr here: the first failed write must not stop the run."""
+    try:
+        print(message, file=sys.stderr, flush=True)
+    except (OSError, ValueError):
+        stop_using_stderr()
+
+
 def exit_code_after_reporting_the_uncaught_exception() -> int:
     """Report the active exception and return an exit code distinct from a failed suite."""
-    traceback.print_exc()
-    print(f"{PROGRAM}: not finished — the error above stopped this program, and this run "
+    write_to_stderr(traceback.format_exc())
+    write_to_stderr(f"{PROGRAM}: not finished — the error above stopped this program, and this run "
           f"gives no verdict.\n"
-          f"Tell the user what the error above says.", file=sys.stderr)
+          f"Tell the user what the error above says.")
     return EXIT_STOPPED_BY_AN_UNCAUGHT_EXCEPTION
 
 
@@ -48,7 +67,7 @@ try:
     daily_full_test_run_of_main = module_loaded_by_path(
         "daily_full_test_run_of_main",
         Path(__file__).resolve().with_name("daily-full-test-run-of-main.py"))
-    daily_memory_review_mark = daily_full_test_run_of_main.daily_memory_review_mark
+    handoff_user_review_of_agent_memory_stores_mark = daily_full_test_run_of_main.handoff_user_review_of_agent_memory_stores_mark
     run_all_test_suites = daily_full_test_run_of_main.run_all_test_suites
     EXIT_CHECKOUT_REFUSED = run_all_test_suites.EXIT_COULD_NOT_RUN
     git_output = module_loaded_by_path(
@@ -67,8 +86,13 @@ PULL_REQUEST_HEAD_TEST_RUN_LOGS_DIRECTORY_NAME = "logs"
 PULL_REQUEST_HEAD_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME = "pull-request-head-test-run-record.txt"
 
 # Use the runner beside this program so a pull request cannot pass itself by modifying its runner.
+# The runner reads only its suite sandbox lists from the checkout under test.
 PULL_REQUEST_HEAD_TEST_RUN_RUNNER_BESIDE_THIS_FILE = Path(__file__).resolve().with_name(
     "run-all-test-suites.py")
+
+# Appended to the SUMMARY line on stdout, so a caller that shows the line beside exit 4 does not
+# read a passing count as a verdict.
+OUTPUT_COPY_FAILED_SUMMARY_SUFFIX = "output copy failed, verdict not given"
 
 MAIN_AS_THE_CLONE_HAS_IT = "refs/remotes/origin/main"
 
@@ -95,6 +119,61 @@ PULL_REQUEST_HEAD_TEST_LOG_APPEND_PROGRAM = "; ".join((
     f'not written: {TEST_LOG_TOOK_PART_OF_THE_RECORD}.'
     f'\\nBefore appending another record, repair the partial record in the test log by hand.")',
 ))
+
+PULL_REQUEST_HEAD_TEST_RUN_RECORD_FIRST_LINE = re.compile(
+    rf"{PROGRAM}: \S+, started (\S+), a record of (\d+) lines")
+PULL_REQUEST_HEAD_TEST_RUN_RECORD_HEAD_LINE_PREFIX = "head: "
+PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX = f"{PROGRAM} exit code: "
+
+
+class PullRequestHeadTestRunTestLogNotWholeRecordsError(ValueError):
+    pass
+
+
+def pull_request_head_test_run_test_log_split_into_records(text: str) -> list:
+    """Return (started, the record's lines) for each record of a test log, in the order written.
+
+    Raise PullRequestHeadTestRunTestLogNotWholeRecordsError when the text does not split into whole
+    records by the line count each record's first line gives, as after a torn append.
+    """
+    lines = text.split("\n")
+    if lines[-1] != "":
+        raise PullRequestHeadTestRunTestLogNotWholeRecordsError("the test log does not end with a line feed")
+    lines.pop()
+    records = []
+    at = 0
+    while at < len(lines):
+        first_line = PULL_REQUEST_HEAD_TEST_RUN_RECORD_FIRST_LINE.fullmatch(lines[at])
+        if first_line is None:
+            raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
+                f"line {at + 1} should begin a record and does not: {lines[at][:200]!r}")
+        count = int(first_line.group(2))
+        if count == 0:
+            raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
+                f"the record that begins at line {at + 1} says it has 0 lines, but that count "
+                f"includes the record's first line, so it is at least 1")
+        record = lines[at:at + count]
+        if len(record) != count:
+            raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
+                f"the record that begins at line {at + 1} says it has {count} lines, but the test "
+                f"log ends after {len(record)} lines")
+        if not record[-1].startswith(PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX):
+            raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
+                f"the record that begins at line {at + 1} does not end with its "
+                f"{PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX!r} line: line "
+                f"{at + count} is {record[-1][:200]!r}")
+        records.append((first_line.group(1), record))
+        at += count
+    if not records:
+        raise PullRequestHeadTestRunTestLogNotWholeRecordsError("the test log is empty")
+    return records
+
+
+def pull_request_head_test_run_record_passed_on_commit_check(record: list, commit: str) -> bool:
+    """Return whether a record's lines say it tested commit and this program exited 0."""
+    head = f"{PULL_REQUEST_HEAD_TEST_RUN_RECORD_HEAD_LINE_PREFIX}commit {commit}"
+    return ((record[1] == head or record[1].startswith(f"{head} ("))
+            and record[-1] == f"{PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX}0")
 
 
 def commit_named_for_the_record(checkout: Path, commit: str) -> str:
@@ -168,10 +247,15 @@ def bytes_of_text_sent_to_a_command(text: str) -> int:
     return len(text.encode(locale.getpreferredencoding(False)))
 
 
+def stream_for_the_runners_output():
+    """Where the runner's lines are copied as they arrive: this program's stderr."""
+    return sys.stderr
+
+
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         prog=PROGRAM,
-        description="Run the test suites a pull request's head reaches and file the test "
+        description="Run the nc-test-suites a pull request's head reaches and file the test "
                     "log in the log-store under the head's commit hash.")
     parser.add_argument("--checkout", default=str(REPOSITORY_ROOT))
     parser.add_argument("--since", metavar="COMMIT")
@@ -184,11 +268,11 @@ def parse_arguments(argv):
     return parser.parse_args(argv)
 
 
-def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
+def main(argv=None, now=None, monotonic=time.monotonic) -> int:
     arguments = parse_arguments(argv)
     now = now or datetime.now(timezone.utc)
     daily = daily_full_test_run_of_main
-    mark = daily_memory_review_mark
+    mark = handoff_user_review_of_agent_memory_stores_mark
     on_ned_box = mark.this_machine_is_ned_box()
     machine = (daily.DAILY_FULL_TEST_RUN_MACHINE_NAME_ON_NED_BOX if on_ned_box
                else daily.DAILY_FULL_TEST_RUN_MACHINE_NAME_ELSEWHERE)
@@ -197,21 +281,20 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
 
     resolved = daily.git(checkout, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
     if resolved.returncode != 0 or not resolved.stdout.strip():
-        print(f"{PROGRAM}: not run — git cannot resolve HEAD to a commit in {checkout}.\n"
-              f"Pass --checkout the top directory of a checkout at the commit to test.",
-              file=sys.stderr)
+        write_to_stderr(f"{PROGRAM}: not run — git cannot resolve HEAD to a commit in {checkout}.\n"
+                        f"Pass --checkout the top directory of a checkout at the commit to test.")
         return EXIT_CHECKOUT_REFUSED
     head = resolved.stdout.strip()
     differing, why_status_failed = first_tracked_file_that_differs(checkout)
     if why_status_failed is not None:
-        print(f"{PROGRAM}: not run — git status failed in {checkout}: {why_status_failed}\n"
-              f"Fix what git reports, then run this again.", file=sys.stderr)
+        write_to_stderr(f"{PROGRAM}: not run — git status failed in {checkout}: {why_status_failed}\n"
+              f"Fix what git reports, then run this again.")
         return EXIT_CHECKOUT_REFUSED
     if differing is not None:
-        print(f"{PROGRAM}: not run — a tracked file in {checkout} differs from its commit "
+        write_to_stderr(f"{PROGRAM}: not run — a tracked file in {checkout} differs from its commit "
               f"{head}: {differing}\n"
               f"Pass --checkout a checkout whose tracked files match the commit to test, "
-              f"such as a detached worktree at that commit.", file=sys.stderr)
+              f"such as a detached worktree at that commit.")
         return EXIT_CHECKOUT_REFUSED
 
     steps_failed = []
@@ -248,6 +331,9 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
                  / PULL_REQUEST_HEAD_TEST_RUN_DIRECTORY_NAME / f"{head}-{run_name}")
     directory.mkdir(parents=True, exist_ok=True)
     logs = directory / PULL_REQUEST_HEAD_TEST_RUN_LOGS_DIRECTORY_NAME
+    local_copy = directory / PULL_REQUEST_HEAD_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME
+    this_command = shlex.join([sys.executable, str(Path(__file__).resolve()),
+                               *(sys.argv[1:] if argv is None else argv)])
     # Resolve before changing cwd so a relative override cannot select the checkout's own runner.
     runner = (Path(arguments.test_suite_runner_program).resolve()
               if arguments.test_suite_runner_program
@@ -255,6 +341,7 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
     completed = None
     verdict_is_on_the_head = True
     seconds_waiting_for_lock = 0
+    copy_failure = None
     if since is not None:
         command = [
             sys.executable, str(runner), "--checkout", str(checkout),
@@ -262,16 +349,23 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
             "--log-dir", str(logs)]
         if arguments.recorded_inputs_directory:
             command += ["--recorded-inputs-directory", arguments.recorded_inputs_directory]
-        completed, seconds_waiting_for_lock, lock_never_released = (
-            daily.run_test_suite_runner_waiting_for_the_machine_lock(
-                command, checkout, wait, monotonic))
-        if lock_never_released:
+        try:
+            completed, seconds_waiting_for_lock, lock_never_released = (
+                daily.run_test_suite_runner_waiting_for_the_machine_lock(
+                    command, checkout, monotonic, stream_to=stream_for_the_runners_output()))
+        except daily.RunnerOutputCopyFailed as failure:
+            completed, lock_never_released, copy_failure = failure.completed, False, failure.reason
+        if copy_failure is not None:
             steps_failed.append((
-                f"not run — the lock was never released: {run_all_test_suites.PROGRAM} "
-                f"exited {run_all_test_suites.EXIT_LOCKED} on every attempt for "
-                f"{seconds_waiting_for_lock:.0f} s; its last refusal: "
-                f"{daily.first_stderr_line_or_no_detail(completed.stderr)}",
-                "Run this again after the run holding that lock has finished."))
+                f"writing {run_all_test_suites.PROGRAM}'s output to this program's stderr "
+                f"failed ({copy_failure}); the runner ran to its end and its output is in "
+                f"the record, whose local copy is {local_copy}, but a run whose output was "
+                "lost on the way is no verdict",
+                "To get a verdict, run this command again with a stderr that can be written, "
+                f"such as a file or a terminal that stays open: {this_command}"))
+        if lock_never_released:
+            steps_failed.append(
+                daily.lock_never_taken_step_failed(completed, seconds_waiting_for_lock))
         elif completed.returncode < 0:
             steps_failed.append((
                 f"{run_all_test_suites.PROGRAM} was "
@@ -282,7 +376,7 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
               and daily.runner_summary_line(completed) is None):
             steps_failed.append((
                 f"{run_all_test_suites.PROGRAM} exited {completed.returncode} and printed "
-                f"no {daily.RUNNER_SUMMARY_LINE_PREFIX} line, which is no verdict",
+                f"no {run_all_test_suites.SUMMARY_LINE_PREFIX} line, which is no verdict",
                 "Read the runner's stderr in the record, then run this again."))
         if completed.returncode in (run_all_test_suites.EXIT_ALL_PASSED,
                                     run_all_test_suites.EXIT_SOME_FAILED):
@@ -297,7 +391,7 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
 
     summary = daily.runner_summary_line(completed) if completed is not None else None
     record_lines = [
-        f"head: {commit_named_for_the_record(checkout, head)}",
+        f"{PULL_REQUEST_HEAD_TEST_RUN_RECORD_HEAD_LINE_PREFIX}{commit_named_for_the_record(checkout, head)}",
         f"selecting since: {since_for_the_record}",
         f"runner: {runner_named_for_the_record(runner)}"]
     record_lines.extend(what_failed for what_failed, _ in steps_failed)
@@ -310,38 +404,41 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
             record_lines.extend(printed)
             if summary is None:
                 record_lines.append(
-                    f"the runner printed no {daily.RUNNER_SUMMARY_LINE_PREFIX} line; its "
+                    f"the runner printed no {run_all_test_suites.SUMMARY_LINE_PREFIX} line; its "
                     f"stderr:")
                 record_lines.extend(f"  {line}"
                                     for line in completed.stderr.strip().splitlines())
         record_lines.append(f"runner exit code: {completed.returncode}")
     record_lines.append(
         f"seconds waiting for the machine's lock: {seconds_waiting_for_lock:.0f}")
+    admission_wait = daily.runner_output_line_on_seconds_suites_waited_for_admission(completed)
+    if admission_wait is not None:
+        record_lines.append(admission_wait)
     record_lines.append(f"wall-clock seconds: {monotonic() - run_started:.0f}")
     record_lines.append(f"logs: {logs} on {machine}")
     exit_code_once_the_record_is_written = (
         daily.EXIT_STEP_OF_THIS_PROGRAM_FAILED if steps_failed else completed.returncode)
-    record_lines.append(f"{PROGRAM} exit code: {exit_code_once_the_record_is_written}")
+    record_lines.append(
+        f"{PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX}{exit_code_once_the_record_is_written}")
     # Count the complete record, including this header, so quoted runner output cannot impersonate records.
     after_the_first_line = "\n".join(record_lines)
     record = (f"{PROGRAM}: {machine}, started {started}, a record of "
               f"{after_the_first_line.count(chr(10)) + 2} lines\n{after_the_first_line}")
 
     for what_failed, instruction in steps_failed:
-        print(f"{PROGRAM}: {what_failed}\n{instruction}", file=sys.stderr)
+        write_to_stderr(f"{PROGRAM}: {what_failed}\n{instruction}")
 
     file_name = f"{head}.txt"
     citation = (f"{mark.NED_BOX_SSH_TARGET}:{arguments.log_store_root}/"
                 f"{PULL_REQUEST_HEAD_TEST_RUNS_KIND_DIRECTORY_NAME}/{machine}/{file_name}")
     ssh_target = None if on_ned_box else mark.NED_BOX_SSH_TARGET
-    local_copy = directory / PULL_REQUEST_HEAD_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME
     try:
         local_copy.write_text(record + "\n", encoding="utf-8")
     except OSError as error:
-        print(f"{PROGRAM}: the record was not written: its local copy {local_copy} could "
+        write_to_stderr(f"{PROGRAM}: the record was not written: its local copy {local_copy} could "
               f"not be written ({type(error).__name__}: {error}).\n"
               f"Tell the user what the line above says.\n"
-              f"Fix what the error names, then run this again.", file=sys.stderr)
+              f"Fix what the error names, then run this again.")
         return daily.EXIT_RECORD_NOT_WRITTEN
     write_command = write_record_command(
         arguments.log_store_root, machine, file_name,
@@ -360,25 +457,24 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
         append_by_hand = (f"{' '.join(shlex.quote(part) for part in by_hand)} < "
                           f"{shlex.quote(str(local_copy))}")
         if TEST_LOG_TOOK_PART_OF_THE_RECORD in str(error):
-            print(f"{PROGRAM}: the record was not written to {citation} ({error}): "
+            write_to_stderr(f"{PROGRAM}: the record was not written to {citation} ({error}): "
                   f"a partial record now ends that test log, and appending the record "
                   f"again would leave it in the middle.\n"
                   f"Tell the user what the line above says, and the remedy in the lines "
                   f"below.\n"
                   f"Remove the partial record from the end of {citation} by hand.\n"
                   f"Once it is removed, write the record by running on this machine: "
-                  f"{append_by_hand}", file=sys.stderr)
+                  f"{append_by_hand}")
             return daily.EXIT_RECORD_NOT_WRITTEN
         when = ("When ned-box answers ssh again" if ssh_target
                 else "When the cause is fixed")
-        print(f"{PROGRAM}: the record was not written to {citation} ({error}).\n"
-              f"Tell the user what the line above says, and the remedy in the line below.\n"
-              f"{when}, write the record by running on this machine: {append_by_hand}",
-              file=sys.stderr)
+        write_to_stderr(f"{PROGRAM}: the record was not written to {citation} ({error}).\n"
+                        f"Tell the user what the line above says, and the remedy in the line below.\n"
+                        f"{when}, write the record by running on this machine: {append_by_hand}")
         return daily.EXIT_RECORD_NOT_WRITTEN
 
     if summary is not None and verdict_is_on_the_head:
-        print(summary)
+        print(f"{summary}; {OUTPUT_COPY_FAILED_SUMMARY_SUFFIX}" if copy_failure else summary)
     print(f"{PROGRAM}: record written to {citation}")
     return exit_code_once_the_record_is_written
 

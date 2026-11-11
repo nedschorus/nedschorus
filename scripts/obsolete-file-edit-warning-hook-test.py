@@ -4,7 +4,7 @@
 Run: python3 scripts/obsolete-file-edit-warning-hook-test.py
 Prints one line per case and exits non-zero if any case fails. Every case
 runs against throwaway repositories under a temporary directory: an "origin"
-reached by path, and a clone on a topic branch standing in for a seat's
+reached by path, and a clone on an nc-topic-branch standing in for a seat's
 checkout.
 
 Two things are asserted by INSTRUMENT rather than by inspection, because
@@ -34,6 +34,13 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 SCRIPT_PATH = Path(__file__).with_name("obsolete-file-edit-warning-hook.py")
 
 failures = []
@@ -48,8 +55,13 @@ def check(case_name, condition, detail=""):
 
 
 def git(arguments, cwd: Path):
-    return subprocess.run(["git", *arguments], cwd=str(cwd),
-                          capture_output=True, text=True, check=False)
+    """Run a fixture's git step; a step that fails stops the suite, with git's error."""
+    result = subprocess.run(["git", *arguments], cwd=str(cwd),
+                            capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise SystemExit(f"ABORT: fixture step git {' '.join(arguments)} in {cwd} "
+                         f"exited {result.returncode}: {result.stderr.strip()}")
+    return result
 
 
 def configure_identity(repository: Path):
@@ -114,6 +126,48 @@ def silent(result) -> bool:
     return result.returncode == 0 and result.stdout.strip() == ""
 
 
+LOCK_FILE_WAIT_CLAUSE = next_step_lines.lock_file_named_by_git_error_wait_then_rerun_instruction(
+    "the command below this paragraph")
+GIT_FAILURE_RERUN_LINE = (
+    "A later run of this hook checks only the file that run's Edit or Write touched, so check "
+    "{path} by running the command printed on its own line below this paragraph. If git's error above names no lock file, run that "
+    "command now. "
+    + next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION + ", "
+    + LOCK_FILE_WAIT_CLAUSE.replace("{", "{{").replace("}", "}}")
+    + ". The command "
+    "prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
+    "whose hookSpecificOutput.additionalContext field holds one of two texts: this hook's warning, "
+    "whose instructions you follow; or, when git fails again, a git-failure message like this one, "
+    "and the last line here says what to do then.")
+GIT_FAILURE_RERUN_FAILS_TOO_LINE = (
+    next_step_lines.hook_agent_instruction_if_rerun_command_reports_git_failure_tell_user_both_outputs_line(
+        "obsolete-file-edit-warning-hook:"))
+
+
+def named_rerun_command(result, edited_path) -> str:
+    """The command a git-failure report tells the agent to run on edited_path, or "" when the report names none."""
+    lines = agent_text(result).splitlines()
+    if len(lines) != 4 or lines[1] != GIT_FAILURE_RERUN_LINE.format(path=edited_path):
+        return ""
+    return lines[2]
+
+
+def reported_git_failure(result, command_words, git_error, edited_path) -> bool:
+    """A git failure: exit 0 and nothing on stderr, because Claude Code never passes a
+    PostToolUse exit 1's stderr to the model; in additionalContext, a cause line naming
+    the git command and quoting git's error, then a line giving the command that reruns
+    the hook on the edited file and the command itself, then the line for when that
+    rerun fails too."""
+    lines = agent_text(result).splitlines()
+    return (result.returncode == 0 and result.stderr == "" and len(lines) == 4
+            and lines[0].startswith("obsolete-file-edit-warning-hook: git " + command_words)
+            and git_error in lines[0]
+            and lines[0].endswith(", so the edited file was not checked against "
+                                  "origin/main; the edit itself succeeded.")
+            and named_rerun_command(result, edited_path) != ""
+            and lines[3] == GIT_FAILURE_RERUN_FAILS_TOO_LINE)
+
+
 def reported(result, fault_words) -> bool:
     """A fault: exit 1, no warning on stdout, one stderr line naming the hook and the fault."""
     lines = result.stderr.splitlines()
@@ -144,11 +198,38 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         f'exec "{real_git}" "$@"\n', encoding="utf-8")
     (recording_git_directory / "git").chmod(0o755)
 
+    def git_failing_when(name: str, condition: str, exit_code: int = 128):
+        """A directory holding a `git` that, when the shell test condition holds,
+        prints "fatal: shimmed <name>" and exits exit_code, and otherwise runs the
+        real git."""
+        directory = tmp / name
+        directory.mkdir()
+        (directory / "git").write_text(
+            "#!/bin/sh\n"
+            f"if {condition}; then\n"
+            f'  printf "fatal: shimmed {name}\\n" >&2\n'
+            f"  exit {exit_code}\n"
+            "fi\n"
+            f'exec "{real_git}" "$@"\n', encoding="utf-8")
+        (directory / "git").chmod(0o755)
+        return directory
+
+    def git_shimmed_when(name: str, condition: str, action: str):
+        """A directory holding a `git` that runs the shell commands of action when
+        the shell test condition holds, and otherwise runs the real git."""
+        directory = tmp / name
+        directory.mkdir()
+        (directory / "git").write_text(
+            "#!/bin/sh\n"
+            f"if {condition}; then\n"
+            f"  {action}\n"
+            "fi\n"
+            f'exec "{real_git}" "$@"\n', encoding="utf-8")
+        (directory / "git").chmod(0o755)
+        return directory
+
     # A `git` that always fails, and a PATH with no git on it at all.
-    failing_git_directory = tmp / "failing-git"
-    failing_git_directory.mkdir()
-    (failing_git_directory / "git").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    (failing_git_directory / "git").chmod(0o755)
+    failing_git_directory = git_failing_when("failing-git", "true")
     no_git_directory = tmp / "no-git-on-path"
     no_git_directory.mkdir()
 
@@ -163,7 +244,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         f'printf "%s\\n" "$1" >> "{every_call_log}"\n'
         'if [ "$1" = "diff" ]; then\n'
         '  printf "shimmed: this diff fails, every other call does not\\n" >&2\n'
-        "  exit 3\n"
+        "  exit 128\n"
         "fi\n"
         f'exec "{real_git}" "$@"\n', encoding="utf-8")
     (diff_failing_git_directory / "git").chmod(0o755)
@@ -176,7 +257,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                 log.read_text(encoding="utf-8").splitlines()].count(subcommand)
 
     # The "remote", and a clone standing in for a seat's checkout, on its own
-    # topic branch cut from main.
+    # nc-topic-branch cut from main.
     origin = tmp / "origin-repo"
     origin.mkdir()
     git(["init", "-q", "-b", "main"], origin)
@@ -276,22 +357,28 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
     # -----------------------------------------------------------------------
     # THE CACHE. Same origin/main tip, same HEAD: the answer cannot have
-    # changed, and the diff is not run again.
+    # changed, and the diff is not run again. The warning already given is not
+    # given again word for word.
     # -----------------------------------------------------------------------
     call_log.unlink()
     first = run_hook(hook_payload(checkout, edited_file), path_prefix=recording_git_directory)
     diffs_after_first = recorded_calls("diff")
     second = run_hook(hook_payload(checkout, edited_file), path_prefix=recording_git_directory)
-    check("the cached path set still warns on a second edit of the same file",
-          "scripts/recover-crashed-seats.py" in agent_text(second), second.stdout)
+    check("a second edit of the same file, whose warning would be the same text, is silent",
+          silent(second) and second.stderr == "", second.stdout + second.stderr)
     check("and the second call runs no further diff — the set was cached",
           recorded_calls("diff") == diffs_after_first,
           f"{diffs_after_first} then {recorded_calls('diff')}: "
           + call_log.read_text(encoding="utf-8"))
-    check("the cache is keyed on both origin/main's tip and this checkout's HEAD",
+    check("the cache is keyed on both origin/main's tip and this checkout's HEAD, "
+          "and holds the warnings given",
           sorted(json.loads(cache_path.read_text(encoding="utf-8")).keys())
-          == ["head", "main_tip", "paths"],
+          == ["head", "main_tip", "paths", "warned"],
           cache_path.read_text(encoding="utf-8") if cache_path.exists() else "no cache written")
+    check("the record holds the text of the warning given about the file",
+          json.loads(cache_path.read_text(encoding="utf-8")).get("warned", {}).get(
+              "scripts/recover-crashed-seats.py") == warning,
+          cache_path.read_text(encoding="utf-8"))
     check("the cache sits in the checkout's own git directory, beside the freshness stamp",
           cache_path.parent == checkout_git_dir, str(cache_path))
 
@@ -308,6 +395,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           recorded_calls("diff") == 1, call_log.read_text(encoding="utf-8"))
     check("and a file that has only just gone obsolete now warns",
           "scripts/untouched-by-main.py" in agent_text(result), result.stdout)
+    result = run_hook(hook_payload(checkout, edited_file), path_prefix=recording_git_directory)
+    check("when main moves, a file already warned about is warned about again",
+          "scripts/recover-crashed-seats.py" in agent_text(result), result.stdout)
 
     # -----------------------------------------------------------------------
     # HEAD MOVES: so does the merge base, so the answer can change.
@@ -320,6 +410,32 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           recorded_calls("diff") == 1, call_log.read_text(encoding="utf-8"))
     check("and the warning is still made from the fresh set",
           "scripts/recover-crashed-seats.py" in agent_text(result), result.stdout)
+
+    # -----------------------------------------------------------------------
+    # A RECORD THAT CANNOT BE WRITTEN. A directory where the cache file should
+    # be: the warning is still given, says the record was not written, and so
+    # is given again at the next edit.
+    # -----------------------------------------------------------------------
+    cache_path.unlink()
+    cache_path.mkdir()
+    try:
+        unrecorded_first = run_hook(hook_payload(checkout, edited_file),
+                                    path_prefix=recording_git_directory)
+        unrecorded_second = run_hook(hook_payload(checkout, edited_file),
+                                     path_prefix=recording_git_directory)
+    finally:
+        cache_path.rmdir()
+    for label, result in (("first", unrecorded_first), ("second", unrecorded_second)):
+        text = agent_text(result)
+        check(f"a record that cannot be written: the {label} edit is still warned, exit 0",
+              result.returncode == 0 and "scripts/recover-crashed-seats.py" in text
+              and "so your edit is built on an old copy of the file." in text,
+              result.stdout + result.stderr)
+        check(f"a record that cannot be written: the {label} warning says so and why",
+              text.split("\n")[-1].startswith(
+                  "obsolete-file-edit-warning could not record that it gave this warning, so it "
+                  "will give it again at your next edit of this file (")
+              and "IsADirectoryError" in text, text)
 
     # -----------------------------------------------------------------------
     # A PUSHED head gets the other advice: the frozen-head rule, not a rebase.
@@ -344,13 +460,17 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("and told its next topic starts from origin/main",
           "git checkout -b <name> origin/main" in pushed_warning, pushed_warning)
     # A conflict with main is the one case a commit on top cannot clear; the
-    # advice sends it to the hand-merge (CLAUDE.md, "How a change reaches main",
-    # worded 2026-09-30). The whole advice is pinned.
-    check("the pushed advice is word for word, the hand-merge for a conflict included",
+    # advice sends it to scripts/branch-conflict-check.py's report. The whole
+    # advice is pinned.
+    check("the pushed advice is word for word, scripts/branch-conflict-check.py's report "
+          "for a conflict included",
           "This branch is pushed, so its review may be running: do not rebase or amend "
-          "it. A fix for this topic is a new commit on top. If it conflicts with main, "
-          "clear the conflict with the hand-merge that scripts/branch-conflict-check.py "
-          "describes. Your next topic starts with `git checkout -b <name> origin/main`."
+          "it. A fix for this topic is a new commit on top. To learn whether the branch "
+          "conflicts with main, run python3 scripts/branch-conflict-check.py in this "
+          "checkout. If it prints `VERDICT: CONFLICT`, do what its report says. If it exits "
+          "2, it has no answer: do what its lines say, then run it again. Your next "
+          "topic starts with "
+          "`git checkout -b <name> origin/main`."
           in pushed_warning, pushed_warning)
     check("the pushed warning is also one line",
           pushed_warning != "" and "\n" not in pushed_warning, repr(pushed_warning))
@@ -378,8 +498,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "This branch's commits are already on GitHub under another branch name, so the "
           "branch is treated as pushed and is not rebased: a pushed head may be under "
           "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
-          "fix is a new commit on top. If it conflicts with main, clear the conflict with "
-          "the hand-merge that scripts/branch-conflict-check.py describes."
+          "fix is a new commit on top. If the branch conflicts with main, as python3 "
+          "scripts/branch-conflict-check.py run in its checkout reports, do what that "
+          "report says."
           in history_warning, history_warning)
     check("the pushed-history warning is one line", history_warning != ""
           and "\n" not in history_warning, repr(history_warning))
@@ -390,6 +511,52 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("with an unpushed fix commit on top, the advice is still the pushed-history advice",
           "already on GitHub under another branch name" in agent_text(result)
           and "never been pushed" not in agent_text(result), agent_text(result))
+
+    # BEHIND ITS REMOTE, DIVERGED FROM IT, AND ON MAIN: pushed or main, but a
+    # new commit on top is a push git rejects, so each gets its own first step.
+    edited_on_main = pushed_checkout / "scripts/recover-crashed-seats.py"
+    git(["checkout", "-q", "a-pushed-topic-branch"], pushed_checkout)
+    commit_file(pushed_checkout, "scripts/fix-from-elsewhere.py", "fix\n",
+                "a fix pushed from elsewhere")
+    git(["push", "-q", "origin", "a-pushed-topic-branch"], pushed_checkout)
+    git(["reset", "-q", "--hard", "HEAD~1"], pushed_checkout)
+    warning = agent_text(run_hook(hook_payload(pushed_checkout, edited_on_main)))
+    check("behind its remote: told to pull the remote's commits in with a rebase of only "
+          "its own new commit",
+          "origin/a-pushed-topic-branch has commits this checkout lacks" in warning
+          and "`git pull --rebase origin a-pushed-topic-branch`" in warning
+          and "This branch is pushed, so its review may be running" not in warning
+          and "\n" not in warning, warning)
+    commit_file(pushed_checkout, "scripts/local-work.py", "local\n", "new work made here")
+    warning = agent_text(run_hook(hook_payload(pushed_checkout, edited_on_main)))
+    check("diverged from its remote: told not to push, how to see both sides, and what "
+          "each case means",
+          warning.endswith(
+              "This branch has diverged from origin/a-pushed-topic-branch: each side has "
+              "commits the other lacks, so a push is rejected, and a force-push would "
+              "move a pushed head that may be under review. Do not push yet. Run `git log "
+              "--oneline --left-right origin/a-pushed-topic-branch...HEAD`: lines marked "
+              "< are only on origin/a-pushed-topic-branch, lines marked > only here. If "
+              "every > commit is new work made here since the last push, commit your "
+              "edit and run `git pull --rebase origin a-pushed-topic-branch`, which moves "
+              "only the > commits onto origin/a-pushed-topic-branch; then push once. If a "
+              "> commit is a rewritten copy of a < commit, as an amend or a rebase after "
+              "the push makes, do not push: tell the user that the pushed history was "
+              "rewritten in this checkout, list both sides' commits, and recommend "
+              "keeping origin/a-pushed-topic-branch and adding this checkout's changes "
+              "as a new commit on top of it."), warning)
+    git(["checkout", "-q", "main"], pushed_checkout)
+    git(["reset", "-q", "--hard", early_main_sha], pushed_checkout)
+    warning = agent_text(run_hook(hook_payload(pushed_checkout, edited_on_main)))
+    check("on main: told to move the edit to a topic branch and how to start the next one",
+          warning.endswith(
+              "This checkout is on main, and a change reaches main only through a pull "
+              "request from a topic branch. Run `git switch -c <a-branch-name>`, with a "
+              "name for your change, which keeps your edit; commit the edit there, then "
+              "run `git rebase origin/main`, which is allowed because the new branch has "
+              "never been pushed. From now on, start each topic with `git switch -c "
+              "<a-branch-name> origin/main` before its first edit."), warning)
+    git(["checkout", "-q", "a-fix-round-under-a-new-name"], pushed_checkout)
 
     # -----------------------------------------------------------------------
     # OUTSIDE THE CHECKOUT. Another worktree of the same repository, and a
@@ -429,7 +596,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # A payload that is not a JSON object is a fault, reported on stderr.
     for case_name, payload, fault_words in (
             ("an unreadable payload", "{not json at all", "JSONDecodeError"),
-            ("a payload that is a JSON list", "[1, 2]", "a JSON list, not an object"),
+            ("a payload that is a JSON list", "[1, 2]", "JSON, but not an object"),
             ("empty stdin", "", "JSONDecodeError")):
         result = run_hook(payload)
         check(f"{case_name} is reported on stderr, exit 1",
@@ -458,22 +625,53 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           silent(run_hook(vanished)), "")
 
     # -----------------------------------------------------------------------
-    # GIT ITSELF FAILING. A shim that exits 1, and a PATH carrying no git.
-    # Both are silence, not a traceback on the agent's tool call.
+    # GIT ITSELF FAILING: exit 0, the cause and what to do next in additionalContext,
+    # never the silence that reads as "not obsolete".
     # -----------------------------------------------------------------------
     result = run_hook(hook_payload(checkout, edited_file), path_prefix=failing_git_directory)
-    check("a git that exits 1 on every call exits 0 and prints nothing",
-          silent(result), result.stdout + result.stderr)
+    check("a git that fails on every call is reported in additionalContext, exit 0",
+          reported_git_failure(result, "rev-parse", "fatal: shimmed failing-git", edited_file),
+          result.stdout + result.stderr)
+    rerun_line = (agent_text(result).splitlines() + ["", ""])[1]
+    check("a git failure's rerun line says to run the command now when git names no lock file, "
+          "and gives the lock-file wait otherwise",
+          "names no lock file, run that command now. " + next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION
+          + ", " + LOCK_FILE_WAIT_CLAUSE + "." in rerun_line, rerun_line)
+    check("a git failure's rerun line says what the command prints when git fails again "
+          "and points to the closing line",
+          "or, when git fails again, a git-failure message like this one, and the last line here "
+          "says what to do then." in rerun_line, rerun_line)
 
     result = run_hook(hook_payload(checkout, edited_file),
                       path_replacement=no_git_directory)
-    check("no git on PATH at all exits 0 and prints nothing",
-          silent(result), result.stdout + result.stderr)
+    check("no git on PATH at all is reported in additionalContext, exit 0",
+          reported_git_failure(result, "rev-parse --show-toplevel", "FileNotFoundError", edited_file),
+          result.stdout + result.stderr)
+
+    # Only the four-answer rev-parse fails; HEAD and origin/main both exist, so
+    # the failure is git's, not a missing revision.
+    checkout_facts_failing_git_directory = git_failing_when(
+        "checkout-facts-failing-git", '[ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]')
+    result = run_hook(hook_payload(checkout, edited_file),
+                      path_prefix=checkout_facts_failing_git_directory)
+    check("a failed rev-parse of the checkout's facts, with HEAD and origin/main present, "
+          "is reported in additionalContext, exit 0",
+          reported_git_failure(result, "rev-parse --show-toplevel --absolute-git-dir HEAD "
+                               "origin/main", "fatal: shimmed checkout-facts-failing-git", edited_file),
+          result.stdout + result.stderr)
+
+    no_commit_repository = tmp / "no-commit-repository"
+    no_commit_repository.mkdir()
+    git(["init", "-q", "-b", "main"], no_commit_repository)
+    (no_commit_repository / "first.py").write_text("not committed\n", encoding="utf-8")
+    check("a repository with no commit yet exits 0 and prints nothing",
+          silent(run_hook(hook_payload(no_commit_repository,
+                                       no_commit_repository / "first.py"))), "")
 
     # -----------------------------------------------------------------------
     # A FAILED DIFF IS NOT AN EMPTY ANSWER (user-ruled 2026-09-17). git answers
     # every other call here, so the hook gets as far as the diff and the diff
-    # alone fails. It must stay silent AND cache nothing: a failure written to
+    # alone fails. It must be reported AND cache nothing: a failure written to
     # the cache as "nothing obsolete" would silence this hook for every edit
     # until the next commit or fetch. The file below is one the checkout is
     # genuinely behind on, so anything cached would be wrong as well as sticky.
@@ -483,8 +681,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     call_log.unlink()
     result = run_hook(hook_payload(checkout, edited_file),
                       path_prefix=diff_failing_git_directory)
-    check("a git whose diff fails exits 0 and prints nothing",
-          silent(result), result.stdout + result.stderr)
+    check("a git whose diff fails is reported in additionalContext with git's error, exit 0",
+          reported_git_failure(result, "diff -z --name-only --no-renames HEAD...origin/main",
+                               "shimmed: this diff fails, every other call does not", edited_file),
+          result.stdout + result.stderr)
     check("the failed diff was actually reached, not short-circuited earlier",
           recorded_calls("diff") == 1, call_log.read_text(encoding="utf-8"))
     check("a failed diff writes NO cache file",
@@ -495,8 +695,21 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook(hook_payload(checkout, edited_file),
                       path_prefix=diff_failing_git_directory)
     check("and the NEXT call attempts the diff again rather than trusting a cache",
-          recorded_calls("diff") == 1 and silent(result),
-          call_log.read_text(encoding="utf-8") + result.stdout)
+          recorded_calls("diff") == 1 and reported_git_failure(
+              result, "diff -z --name-only --no-renames HEAD...origin/main",
+              "shimmed: this diff fails, every other call does not", edited_file),
+          call_log.read_text(encoding="utf-8") + result.stdout + result.stderr)
+
+    # The skipped file is checked by the command the report names, run once git works again.
+    rerun = subprocess.run(named_rerun_command(result, edited_file) or "false", shell=True,
+                           capture_output=True, text=True, check=False, cwd=str(tmp))
+    check("the command a failed diff's report names reruns the hook on the edited file, "
+          "which then warns that origin/main has changed the file",
+          rerun.returncode == 0 and agent_text(rerun).startswith(
+              f"obsolete-file-edit-warning: you just changed {edited_file.relative_to(checkout)}, "),
+          rerun.stdout + rerun.stderr)
+    if cache_path.exists():
+        cache_path.unlink()
 
     call_log.unlink()
     result = run_hook(hook_payload(checkout, edited_file),
@@ -504,6 +717,23 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("once git answers again, the warning comes back and the cache is written",
           "scripts/recover-crashed-seats.py" in agent_text(result) and cache_path.exists(),
           result.stdout + result.stderr)
+
+    # A COMMIT COUNT GIT CANNOT GIVE is said in the warning, which is given again
+    # at the next edit rather than held back as a repeat.
+    count_failing_git_directory = git_failing_when(
+        "count-failing-git", '[ "$1" = "rev-list" ] && [ "$3" = "HEAD..origin/main" ]')
+    count_failure_warnings = [
+        agent_text(run_hook(hook_payload(checkout, edited_file),
+                            path_prefix=count_failing_git_directory))
+        for _ in range(2)]
+    check("a commit count git cannot give is said in the warning, with git's error",
+          "so your edit is built on an old copy of the file. git could not count the "
+          "commits on origin/main that changed the file (git rev-list --count "
+          "HEAD..origin/main -- scripts/recover-crashed-seats.py in " in count_failure_warnings[0]
+          and "fatal: shimmed count-failing-git)). This branch has never been pushed"
+          in count_failure_warnings[0], count_failure_warnings[0])
+    check("the count-failure warning is given again at the next edit",
+          count_failure_warnings[1] == count_failure_warnings[0], count_failure_warnings[1])
 
     # -----------------------------------------------------------------------
     # A FILE MAIN RENAMED AWAY from the path this branch still holds it at.
@@ -525,8 +755,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the branch still holds the renamed file at the old path, so the case is real",
           renamed_away_file.is_file(), str(renamed_away_file))
     check("and origin/main no longer has that path at all, so an edit there must conflict",
-          git(["cat-file", "-e", "origin/main:scripts/main-will-rename-this.py"],
-              checkout).returncode != 0,
+          subprocess.run(["git", "cat-file", "-e",
+                          "origin/main:scripts/main-will-rename-this.py"],
+                         cwd=str(checkout), capture_output=True, check=False).returncode != 0,
           "origin/main still has scripts/main-will-rename-this.py")
     result = run_hook(hook_payload(checkout, renamed_away_file),
                       path_prefix=recording_git_directory)
@@ -576,6 +807,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     (detached_origin / "lib" / "latin1.txt").write_bytes(b"".join(latin1_lines))
     git(["add", "lib/latin1.txt"], detached_origin)
     git(["commit", "-q", "-m", "a file that is not UTF-8"], detached_origin)
+    commit_file(detached_origin, "lib/moved.py", "".join(shared_lines), "a file main moves")
+    commit_file(detached_origin, "lib/drifted.py",
+                "".join(f"drifted line {n}\\n" for n in range(1, 13)),
+                "a file main moves and then rewrites")
     detached = tmp / "detached-checkout"
     git(["clone", "-q", str(detached_origin), str(detached)], tmp)
     configure_identity(detached)
@@ -591,7 +826,19 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     git(["commit", "-q", "-m", "main rewrites line 2 of the file that is not UTF-8"], detached_origin)
     git(["rm", "-q", "lib/gone.py"], detached_origin)
     git(["commit", "-q", "-m", "main deletes gone.py"], detached_origin)
+    git(["mv", "lib/moved.py", "lib/renamed.py"], detached_origin)
+    git(["commit", "-q", "-m", "main moves moved.py"], detached_origin)
+    # Moved, then rewritten: the merge-base-to-main diff no longer pairs the two
+    # paths, though the moving commit's own diff does.
+    git(["mv", "lib/drifted.py", "lib/drifted-to.py"], detached_origin)
+    git(["commit", "-q", "-m", "main moves drifted.py"], detached_origin)
+    (detached_origin / "lib" / "drifted-to.py").write_text(
+        "".join(f"rewritten line {n}\n" for n in range(1, 13)), encoding="utf-8")
+    git(["add", "lib/drifted-to.py"], detached_origin)
+    git(["commit", "-q", "-m", "main rewrites drifted-to.py"], detached_origin)
     git(["fetch", "-q", "origin"], detached)
+    deleting_commit = git(["log", "-1", "--format=%h (%s)", "origin/main", "--",
+                           "lib/gone.py"], detached).stdout.strip()
     shared_file = detached / "lib/shared.py"
 
     def detached_warning(edited):
@@ -628,23 +875,223 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "main's changes to lib/latin1.txt do not overlap this checkout's copy; a "
               "rebase merges them cleanly."), result.stdout + result.stderr)
 
+    check("detached: the same edit again, whose warning would be the same text, is silent",
+          detached_warning(shared_file) == "", "")
+
     edited_same_line = list(shared_lines)
     edited_same_line[1] = "line 2, as the agent edited it\n"
     shared_file.write_text("".join(edited_same_line), encoding="utf-8")
     warning = detached_warning(shared_file)
-    check("detached: an edit of the lines main changed is told they overlap",
+    check("detached: an edit of the lines main changed is told they overlap, "
+          "though the file was warned about before",
           warning.split("\n")[-1] == (
               "main's changes to lib/shared.py overlap this checkout's copy: after you "
               "make the branch and commit your edit, run git rebase origin/main, which "
               "will stop on this file, and resolve the conflict there."), warning)
+    check("detached: the same overlapping edit again, whose warning would be the same "
+          "text, is silent", detached_warning(shared_file) == "", "")
 
     gone_file = detached / "lib/gone.py"
     gone_file.write_text("the agent edited this\n", encoding="utf-8")
     warning = detached_warning(gone_file)
-    check("detached: an edit of a file main deleted is told main no longer has it",
+    check("detached: an edit of a file main deleted is told which commit deleted it and "
+          "what to do",
           warning.split("\n")[-1] == (
-              "main no longer has a file at lib/gone.py: find out whether main moved or "
-              "deleted it (git log origin/main -- lib/gone.py) before you commit."), warning)
+              f"main deleted lib/gone.py in commit {deleting_commit}, so your edit has no "
+              "file to land in. Read why with `git log -1 --stat origin/main -- "
+              "lib/gone.py`. If your fix is still needed, drop this edit with `git "
+              "checkout -- lib/gone.py`, start a topic branch with `git switch -c "
+              "<a-branch-name> origin/main`, and make the same fix in the file that does "
+              "that job on main now. If no file on main does that job, drop the edit and "
+              "do not make the fix."), warning)
+    # A git log that prints a line and then fails, by exit code or by a signal,
+    # has not named the commit that removed the path, so the hook cannot tell a
+    # move from a deletion: the could-not-tell line, said again at the next edit.
+    rename_listing = '[ "$1" = "diff" ] && [ "$5" = "--diff-filter=R" ]'
+    deleting_lookup = '[ "$1" = "log" ] && [ "$3" = "--format=%h (%s)" ]'
+    for case_name, shim_name, action, fallback in (
+            ("exits non-zero", "deleting-log-exit-failing-git",
+             'printf "abc1234 (partial)\\n"; exit 128', "(git log exited 128)"),
+            ("is killed by a signal", "deleting-log-killed-git",
+             'printf "abc1234 (partial)\\n"; kill -KILL $$', "(git log exited -9)")):
+        gone_file.write_text(f"the agent edited this, {shim_name}\n", encoding="utf-8")
+        shim_directory = git_shimmed_when(shim_name, deleting_lookup, action)
+        warning = agent_text(run_hook(hook_payload(detached, gone_file),
+                                      path_prefix=shim_directory))
+        check(f"detached: when the git log that names the removing commit {case_name}, "
+              "the line says git could not tell moved from deleted, with its exit code",
+              warning.split("\n")[-1].startswith(
+                  "main no longer has a file at lib/gone.py, and git could not tell "
+                  "whether main moved or deleted it " + fallback + ". ")
+              and "abc1234" not in warning, warning)
+        repeated = agent_text(run_hook(hook_payload(detached, gone_file),
+                                       path_prefix=shim_directory))
+        check(f"detached: when the git log that names the removing commit {case_name}, "
+              "the same line at the next edit is said again, never held back as a repeat",
+              repeated == warning, repeated)
+    gone_file.write_text("the agent edited this, deleting-log-erring-git\n", encoding="utf-8")
+    warning = agent_text(run_hook(
+        hook_payload(detached, gone_file),
+        path_prefix=git_shimmed_when("deleting-log-erring-git", deleting_lookup,
+                                     'printf "fatal: shimmed log\\n" >&2; exit 128')))
+    check("detached: when the git log that names the removing commit fails with an "
+          "error, the could-not-tell line carries git's text",
+          "could not tell whether main moved or deleted it (fatal: shimmed log). "
+          in warning, warning)
+    removing_commit_show = '[ "$1" = "show" ] && [ "$2" = "-z" ]'
+    gone_file.write_text("the agent edited this, removing-show-killed-git\n", encoding="utf-8")
+    warning = agent_text(run_hook(
+        hook_payload(detached, gone_file),
+        path_prefix=git_shimmed_when("removing-show-killed-git", removing_commit_show,
+                                     "kill -KILL $$")))
+    check("detached: when the show of the removing commit is killed by a signal, the "
+          "line names the signal as a negative exit code",
+          "could not tell whether main moved or deleted it (git show exited -9). "
+          in warning, warning)
+    gone_file.write_text("the agent edited this, removing-show-failing-git\n",
+                         encoding="utf-8")
+    show_failing_directory = git_shimmed_when(
+        "removing-show-failing-git", removing_commit_show,
+        'printf "fatal: shimmed show\\n" >&2; exit 128')
+    warning = agent_text(run_hook(hook_payload(detached, gone_file),
+                                  path_prefix=show_failing_directory))
+    check("detached: when git cannot show the removing commit's own renames, the line "
+          "says it could not tell moved from deleted, with git's text",
+          warning.split("\n")[-1].startswith(
+              "main no longer has a file at lib/gone.py, and git could not tell whether "
+              "main moved or deleted it (fatal: shimmed show). "), warning)
+    repeated = agent_text(run_hook(hook_payload(detached, gone_file),
+                                   path_prefix=show_failing_directory))
+    check("detached: that could-not-tell line at the next edit is said again, never "
+          "held back as a repeat", repeated == warning, repeated)
+    show_silent_directory = git_shimmed_when(
+        "removing-show-silent-failing-git", removing_commit_show, "exit 128")
+    gone_file.write_text("the agent edited this, removing-show-silent-failing-git\n",
+                         encoding="utf-8")
+    warning = agent_text(run_hook(hook_payload(detached, gone_file),
+                                  path_prefix=show_silent_directory))
+    check("detached: when that show fails with no error text, the line names git's "
+          "exit code",
+          "could not tell whether main moved or deleted it (git show exited 128). "
+          in warning, warning)
+    # Back to the line that names the commit, so later cases are no repeat.
+    detached_warning(gone_file)
+
+    drifted_file = detached / "lib/drifted.py"
+    drifted_file.write_text("the agent edited the drifted file\n", encoding="utf-8")
+    warning = detached_warning(drifted_file)
+    check("detached, unpushed: a file main moved and then rewrote past rename detection "
+          "is told its new path and to carry the edit there by hand",
+          warning.split("\n")[-1] == (
+              "main moved lib/drifted.py to lib/drifted-to.py and then changed it so much "
+              "that git no longer pairs the two paths, so neither a rebase nor a merge "
+              "carries your edit there: both stop on a modify/delete conflict at "
+              "lib/drifted.py. Drop the edit with `git checkout -- lib/drifted.py`. After "
+              "you make the branch, run `git rebase origin/main`, then make the same "
+              "change by hand in lib/drifted-to.py."), warning)
+    git(["checkout", "-q", "--", "lib/drifted.py"], detached)
+
+    # The line's advice, followed in worktrees of the same clone, so that they
+    # see its origin/main: committing at the old path and rebasing stops on a
+    # modify/delete conflict there, as the line says; the line's own steps do not.
+    old_advice = tmp / "drifted-old-advice-worktree"
+    git(["worktree", "add", "-q", "-b", "drifted-old-advice", str(old_advice), "HEAD"],
+        detached)
+    configure_identity(old_advice)
+    (old_advice / "lib" / "drifted.py").write_text("the agent's edit\n", encoding="utf-8")
+    git(["commit", "-q", "-am", "the edit at the old path"], old_advice)
+    old_rebase = subprocess.run(["git", "rebase", "origin/main"], cwd=old_advice,
+                                capture_output=True, text=True)
+    old_status = git(["status", "--porcelain"], old_advice).stdout
+    check("detached, unpushed: a rebase of an edit committed at the moved-and-rewritten "
+          "path stops on a modify/delete conflict at that path",
+          old_rebase.returncode != 0 and "DU lib/drifted.py" in old_status,
+          old_rebase.stdout + old_rebase.stderr + old_status)
+    subprocess.run(["git", "rebase", "--abort"], cwd=old_advice, capture_output=True)
+    followed = tmp / "drifted-followed-advice-worktree"
+    git(["worktree", "add", "-q", "--detach", str(followed), "HEAD"], detached)
+    configure_identity(followed)
+    (followed / "lib" / "drifted.py").write_text("the agent's edit\n", encoding="utf-8")
+    git(["checkout", "-q", "--", "lib/drifted.py"], followed)
+    git(["switch", "-q", "-c", "drifted-followed-advice"], followed)
+    followed_rebase = subprocess.run(["git", "rebase", "origin/main"], cwd=followed,
+                                     capture_output=True, text=True)
+    new_copy = followed / "lib" / "drifted-to.py"
+    carried = followed_rebase.returncode == 0 and new_copy.exists()
+    if carried:
+        new_copy.write_text(new_copy.read_text(encoding="utf-8") + "the agent's edit\n",
+                            encoding="utf-8")
+        git(["commit", "-q", "-am", "the edit, carried by hand"], followed)
+    check("detached, unpushed: the line's steps rebase cleanly and put the edit in "
+          "lib/drifted-to.py, with no file left at lib/drifted.py",
+          carried and not (followed / "lib" / "drifted.py").exists()
+          and git(["status", "--porcelain"], followed).stdout == "",
+          followed_rebase.stdout + followed_rebase.stderr)
+    for worktree, branch in ((old_advice, "drifted-old-advice"),
+                             (followed, "drifted-followed-advice")):
+        git(["worktree", "remove", "--force", str(worktree)], detached)
+        git(["branch", "-q", "-D", branch], detached)
+
+    moved_file = detached / "lib/moved.py"
+    moved_file.write_text("".join(edited_far_away), encoding="utf-8")
+    warning = detached_warning(moved_file)
+    check("detached, unpushed: an edit of a file main moved is told the new path and to "
+          "rebase, which carries the edit there",
+          warning.split("\n")[-1] == (
+              "main moved lib/moved.py to lib/renamed.py. After you make the branch and "
+              "commit your edit at lib/moved.py, run `git rebase origin/main`: git follows "
+              "the move and applies your edit to lib/renamed.py. If the rebase stops on "
+              "lib/renamed.py, resolve the conflict there."), warning)
+
+    # git could list main's renames is the step that separates moved from
+    # deleted; when it fails, the line says so with git's text. The path set is
+    # cached by now, so only the rename listing reaches the failing diff.
+    result = run_hook(hook_payload(detached, moved_file),
+                      path_prefix=diff_failing_git_directory)
+    last_line = agent_text(result).split("\n")[-1]
+    check("detached: when git cannot list main's renames, the line says it could not "
+          "tell moved from deleted, with git's text, and claims neither",
+          last_line.startswith("main no longer has a file at lib/moved.py, and git could "
+                               "not tell whether main moved or deleted it (shimmed: this "
+                               "diff fails")
+          and "main deleted lib/moved.py" not in last_line
+          and "main moved lib/moved.py to" not in last_line,
+          agent_text(result))
+    check("detached: the could-not-tell line names a show command whose R line gives "
+          "the new path",
+          "`git show --name-status -M --format= <that commit>`. If a line there starts "
+          "with R and names lib/moved.py, main moved the file, and your edit belongs at "
+          "the second path on that line." in last_line, last_line)
+    removing_commit = git(["log", "-1", "--format=%h", "origin/main", "--",
+                           "lib/moved.py"], detached).stdout.strip()
+    shown = git(["show", "--name-status", "-M", "--format=", removing_commit],
+                detached).stdout.splitlines()
+    check("detached: that show command prints the move as R, the old path, the new path",
+          any(line.startswith("R") and line.split("\t")[1:] == ["lib/moved.py",
+                                                                  "lib/renamed.py"]
+              for line in shown), "\n".join(shown))
+    repeated = run_hook(hook_payload(detached, moved_file),
+                        path_prefix=diff_failing_git_directory)
+    check("detached: the could-not-tell line is said again at the next edit, never held "
+          "back as a repeat",
+          agent_text(repeated) == agent_text(result), agent_text(repeated))
+    # git's error text is what the line normally carries; with no text from git,
+    # the line names git's exit code, or the signal as a negative exit code.
+    for case_name, shim_name, action, fallback in (
+            ("exits non-zero with no error text", "rename-listing-silent-failing-git",
+             "exit 128", "(git diff exited 128)"),
+            ("is killed by a signal", "rename-listing-killed-git",
+             "kill -KILL $$", "(git diff exited -9)")):
+        result = run_hook(hook_payload(detached, moved_file),
+                          path_prefix=git_shimmed_when(shim_name, rename_listing, action))
+        last_line = agent_text(result).split("\n")[-1]
+        check(f"detached: when the rename listing {case_name}, the could-not-tell line "
+              "names git's exit code",
+              result.returncode == 0
+              and last_line.startswith("main no longer has a file at lib/moved.py, and git "
+                                       "could not tell whether main moved or deleted it "
+                                       + fallback + ". "), agent_text(result) + result.stderr)
+    git(["checkout", "-q", "--", "lib/moved.py"], detached)
 
     (detached_git_dir / "rebase-merge").mkdir()
     try:
@@ -674,8 +1121,12 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         main_blob_file.rename(hidden_blob_file)
         try:
             warning = detached_warning(shared_file)
+            repeated_warning = detached_warning(shared_file)
         finally:
             hidden_blob_file.rename(main_blob_file)
+        check("detached: main's copy still unreadable at the next edit is reported again, "
+              "never held back as a repeat",
+              repeated_warning == warning, repeated_warning)
         last_line = warning.split("\n")[-1]
         check("detached: main's copy that git cannot read is reported with git's text, "
               "not as a deleted file",
@@ -703,6 +1154,133 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "git could not read lib/shared.py on origin/main (" in warning
               and "no longer has" not in warning, warning)
 
+    # THE OVERLAP CHECK'S OWN GIT STEPS failing: each is said in the warning,
+    # never dropped, so the agent is not left believing the check ran.
+    for case_name, shim_name, condition, exit_code, command_words in (
+            ("a merge base git cannot find", "merge-base-failing-git",
+             '[ "$1" = "merge-base" ]', 128, "git merge-base HEAD origin/main"),
+            ("a merge-base copy git cannot read", "base-copy-failing-git",
+             '[ "$1" = "show" ] && [ "${2#origin/main:}" = "$2" ]', 128, "git show "),
+            ("a git merge-file that fails", "merge-file-failing-git",
+             '[ "$1" = "merge-file" ]', 255, "git merge-file -p -q ")):
+        shim_directory = git_failing_when(shim_name, condition, exit_code)
+        result = run_hook(hook_payload(detached, shared_file), path_prefix=shim_directory)
+        last_line = agent_text(result).split("\n")[-1]
+        check(f"detached: {case_name} is said in the warning, with git's error, exit 0",
+              result.returncode == 0
+              and last_line.startswith("git could not tell whether main's changes to "
+                                       "lib/shared.py overlap this checkout's copy ("
+                                       + command_words)
+              and f"fatal: shimmed {shim_name})" in last_line
+              and last_line.endswith(": stop and tell the user before you make the branch "
+                                     "or commit."), result.stdout + result.stderr)
+        repeated = run_hook(hook_payload(detached, shared_file), path_prefix=shim_directory)
+        check(f"detached: {case_name} is said again at the next edit",
+              agent_text(repeated).split("\n")[-1].startswith(
+                  "git could not tell whether main's changes to lib/shared.py overlap"),
+              agent_text(repeated))
+
+    no_common_ancestor_git_directory = git_failing_when(
+        "no-common-ancestor-git", '[ "$1" = "merge-base" ]', 1)
+    lines = agent_text(run_hook(hook_payload(detached, shared_file),
+                                path_prefix=no_common_ancestor_git_directory)).split("\n")
+    check("detached: no merge base at all, git merge-base's exit 1, gives no overlap line",
+          len(lines) == 2 and lines[1].startswith("This checkout is on a detached HEAD"),
+          "\n".join(lines))
+
+    commit_file(detached_origin, "lib/added-on-main.py", "main's new file\n", "main adds a file")
+    git(["fetch", "-q", "origin"], detached)
+    added_file = detached / "lib/added-on-main.py"
+    added_file.write_text("the agent's own copy\n", encoding="utf-8")
+    result = run_hook(hook_payload(detached, added_file))
+    lines = agent_text(result).split("\n")
+    added_file.unlink()
+    check("detached: a file the merge base lacks gives no overlap line, and no failure",
+          result.returncode == 0 and len(lines) == 2
+          and lines[1].startswith("This checkout is on a detached HEAD"),
+          result.stdout + result.stderr)
+
+    # A DETACHED HEAD AT A PULL REQUEST'S PUSHED HEAD: the worktree a fix-round
+    # agent works in. A rebase there rewrites commits under review with every
+    # hook allowing it, so no line may tell the agent to rebase.
+    git(["checkout", "-q", "-b", "a-pull-request-branch"], detached)
+    commit_file(detached, "lib/pull-request-work.py", "under review\n", "work under review")
+    git(["push", "-q", "origin", "a-pull-request-branch"], detached)
+    git(["checkout", "-q", "--detach"], detached)
+    shared_file.write_text("".join(edited_far_away), encoding="utf-8")
+    lines = detached_warning(shared_file).split("\n")
+    check("detached at a pushed head: the warning names the remote branch and forbids "
+          "the rebase",
+          len(lines) == 3 and lines[1] == (
+              "This checkout is on a detached HEAD whose commits are already on "
+              "origin/a-pull-request-branch, so they may be a pull request's head under "
+              "review: do not rebase or amend them. Make a branch (git switch -c "
+              "<a-branch-name>) before you commit, because a commit on a detached HEAD is "
+              "on no branch; your fix is a new commit on top."), "\n".join(lines))
+    check("detached at a pushed head: no overlap is told the merge carries it, not a rebase",
+          lines[-1] == (
+              "main's changes to lib/shared.py do not overlap this checkout's copy, so "
+              "they merge cleanly when the pull request merges: commit your edit on top, "
+              "and do not rebase to pick them up."), "\n".join(lines))
+    shared_file.write_text("".join(edited_same_line), encoding="utf-8")
+    warning = detached_warning(shared_file)
+    check("detached at a pushed head: an overlap is sent to scripts/branch-conflict-check.py, never a rebase",
+          warning.split("\n")[-1] == (
+              "main's changes to lib/shared.py overlap this checkout's copy, so the pull "
+              "request will conflict with main on this file. Commit your edit on top "
+              "first, and do not rebase; then do what `python3 "
+              "scripts/branch-conflict-check.py` reports.")
+          and "git rebase origin/main" not in warning, warning)
+    moved_file.write_text("".join(edited_far_away), encoding="utf-8")
+    warning = detached_warning(moved_file)
+    check("detached at a pushed head: a moved file is committed on top, not rebased",
+          warning.split("\n")[-1] == (
+              "main moved lib/moved.py to lib/renamed.py. Commit your edit on top at "
+              "lib/moved.py, and do not rebase: when the pull request merges, git follows "
+              "the move and carries your edit to lib/renamed.py. If `python3 "
+              "scripts/branch-conflict-check.py` reports a conflict, do what its report "
+              "says."), warning)
+    git(["checkout", "-q", "--", "lib/moved.py"], detached)
+    drifted_file.write_text("the agent edited the drifted file\n", encoding="utf-8")
+    warning = detached_warning(drifted_file)
+    check("detached at a pushed head: a file main moved and then rewrote is not "
+          "committed on top, but carried by hand on a topic branch from origin/main",
+          warning.split("\n")[-1] == (
+              "main moved lib/drifted.py to lib/drifted-to.py and then changed it so much "
+              "that git no longer pairs the two paths, so when the pull request merges, "
+              "git does not carry your edit there: the merge stops on a modify/delete "
+              "conflict at lib/drifted.py. Do not commit the edit: drop it with `git "
+              "checkout -- lib/drifted.py`, start a topic branch with `git switch -c "
+              "<a-branch-name> origin/main`, and make the same change by hand in "
+              "lib/drifted-to.py there."), warning)
+    git(["checkout", "-q", "--", "lib/drifted.py"], detached)
+    pushed_advice = tmp / "drifted-pushed-advice-worktree"
+    git(["worktree", "add", "-q", "-b", "drifted-pushed-advice", str(pushed_advice),
+         "origin/main"], detached)
+    check("detached at a pushed head: the topic branch that line names holds "
+          "lib/drifted-to.py for the edit, and no lib/drifted.py",
+          (pushed_advice / "lib" / "drifted-to.py").exists()
+          and not (pushed_advice / "lib" / "drifted.py").exists(),
+          git(["status"], pushed_advice).stdout)
+    git(["worktree", "remove", "--force", str(pushed_advice)], detached)
+    git(["branch", "-q", "-D", "drifted-pushed-advice"], detached)
+
+    own_commits_failing_git_directory = git_failing_when(
+        "own-commits-failing-git", '[ "$1" = "rev-list" ] && [ "$2" = "origin/main..HEAD" ]')
+    warning = agent_text(run_hook(hook_payload(detached, shared_file),
+                                  path_prefix=own_commits_failing_git_directory))
+    lines = warning.split("\n")
+    check("detached, push state unknown: treated as pushed, with no rebase line",
+          len(lines) == 3 and lines[1].startswith(
+              "This checkout is on a detached HEAD, and git could not check whether its "
+              "commits are already on a remote branch, so treat them as pushed")
+          and "git rebase origin/main" not in warning, warning)
+    repeated = agent_text(run_hook(hook_payload(detached, shared_file),
+                                   path_prefix=own_commits_failing_git_directory))
+    check("detached, push state unknown: the same edit at the next run gives the "
+          "push-state line again, never held back as a repeat",
+          repeated == warning, repeated)
+
     branch_state_failing_git_directory = tmp / "branch-state-failing-git"
     branch_state_failing_git_directory.mkdir()
     (branch_state_failing_git_directory / "git").write_text(
@@ -720,6 +1298,90 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           len(lines) == 2 and lines[1] == (
               "git could not report this checkout's branch state (shimmed: no branch "
               "state): stop and tell the user before you commit."), agent_text(result))
+    result = run_hook(hook_payload(detached, shared_file),
+                      path_prefix=branch_state_failing_git_directory)
+    check("unknown branch state: the same failure at the next edit is reported again, "
+          "never held back as a repeat",
+          agent_text(result) == "\n".join(lines), agent_text(result))
+
+    # head_state() answering "unknown" on a branch: no origin/<branch>, and the
+    # walk of the branch's own commits fails, so whether they were pushed is unknown.
+    unknown_state_checkout = tmp / "unknown-head-state-checkout"
+    git(["clone", "-q", str(origin), str(unknown_state_checkout)], tmp)
+    configure_identity(unknown_state_checkout)
+    git(["checkout", "-q", "-b", "a-branch-whose-pushes-git-cannot-check"],
+        unknown_state_checkout)
+    commit_file(unknown_state_checkout, "lib/branch-own.py", "own\n", "the branch's own commit")
+    unknown_state_main_tip = git(["rev-parse", "origin/main"], unknown_state_checkout).stdout.strip()
+    git(["checkout", "-q", "--detach", "origin/main"], unknown_state_checkout)
+    commit_file(unknown_state_checkout, "scripts/recover-crashed-seats.py",
+                "main moved this file\n", "main moves a file the branch has")
+    moved_main_tip = git(["rev-parse", "HEAD"], unknown_state_checkout).stdout.strip()
+    git(["checkout", "-q", "a-branch-whose-pushes-git-cannot-check"], unknown_state_checkout)
+    git(["update-ref", "refs/remotes/origin/main", moved_main_tip, unknown_state_main_tip],
+        unknown_state_checkout)
+    own_commit_walk_failing_git_directory = tmp / "own-commit-walk-failing-git"
+    own_commit_walk_failing_git_directory.mkdir()
+    (own_commit_walk_failing_git_directory / "git").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "rev-list" ] && [ "$2" = "origin/main..HEAD" ]; then\n'
+        '  printf "shimmed: the own-commit walk fails\\n" >&2\n'
+        "  exit 128\n"
+        "fi\n"
+        f'exec "{real_git}" "$@"\n', encoding="utf-8")
+    (own_commit_walk_failing_git_directory / "git").chmod(0o755)
+    unknown_state_file = unknown_state_checkout / "scripts/recover-crashed-seats.py"
+    result = run_hook(hook_payload(unknown_state_checkout, unknown_state_file),
+                      path_prefix=own_commit_walk_failing_git_directory)
+    first_unknown_state_warning = agent_text(result)
+    check("unknown head state on a branch: the warning says git could not report the "
+          "branch state",
+          "git could not report this checkout's branch state (head state unknowable"
+          in first_unknown_state_warning, result.stdout + result.stderr)
+    result = run_hook(hook_payload(unknown_state_checkout, unknown_state_file),
+                      path_prefix=own_commit_walk_failing_git_directory)
+    check("unknown head state on a branch: the same warning at the next edit is given "
+          "again, never held back as a repeat",
+          agent_text(result) == first_unknown_state_warning, result.stdout + result.stderr)
+
+    # A path on main whose name is not UTF-8: git's output is decoded with
+    # surrogateescape, so the path set holds a lone surrogate the record must
+    # still be able to write. The name only ever lives in git's objects, never
+    # on disk, so the case runs on a filesystem that refuses such names.
+    byte_path_checkout = tmp / "byte-path-checkout"
+    git(["clone", "-q", str(origin), str(byte_path_checkout)], tmp)
+    configure_identity(byte_path_checkout)
+    git(["checkout", "-q", "-b", "a-branch-beside-a-byte-named-path"], byte_path_checkout)
+    byte_path_main_tip = git(["rev-parse", "origin/main"], byte_path_checkout).stdout.strip()
+    byte_path_index = tmp / "byte-path-index"
+    index_environment = dict(os.environ, GIT_INDEX_FILE=str(byte_path_index))
+    def plumbing(arguments, stdin=b""):
+        return subprocess.run(["git", *arguments], cwd=str(byte_path_checkout),
+                              input=stdin, capture_output=True, check=True,
+                              env=index_environment).stdout.decode().strip()
+    plumbing(["read-tree", byte_path_main_tip])
+    byte_named_blob = plumbing(["hash-object", "-w", "--stdin"], b"named in bytes\n")
+    moved_blob = plumbing(["hash-object", "-w", "--stdin"], b"main moved this file too\n")
+    plumbing(["update-index", "--index-info"],
+             b"100644 " + byte_named_blob.encode() + b"\tdocs/byte-\xff-named.md\n"
+             + b"100644 " + moved_blob.encode() + b"\tscripts/recover-crashed-seats.py\n")
+    byte_path_tree = plumbing(["write-tree"])
+    byte_path_commit = plumbing(["commit-tree", byte_path_tree, "-p", byte_path_main_tip,
+                                 "-m", "main adds a path whose name is not UTF-8"])
+    git(["update-ref", "refs/remotes/origin/main", byte_path_commit, byte_path_main_tip],
+        byte_path_checkout)
+    byte_path_neighbour = byte_path_checkout / "scripts/recover-crashed-seats.py"
+    result = run_hook(hook_payload(byte_path_checkout, byte_path_neighbour))
+    check("a path on main whose name is not UTF-8: an edit of an ordinary file main "
+          "changed still warns, exit 0",
+          result.returncode == 0
+          and "scripts/recover-crashed-seats.py" in agent_text(result)
+          and "could not record" not in agent_text(result),
+          result.stdout + result.stderr)
+    result = run_hook(hook_payload(byte_path_checkout, byte_path_neighbour))
+    check("a path on main whose name is not UTF-8: the record was written and read back, "
+          "so the same warning is not repeated",
+          silent(result), result.stdout + result.stderr)
 
     # -----------------------------------------------------------------------
     # NEVER FETCHES. The Stop hook fetches on its own throttle; a PostToolUse

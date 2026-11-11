@@ -99,11 +99,19 @@ Prints one line per case and exits non-zero if any case fails.
 """
 
 import ast
+import importlib.util
 import sys
 import textwrap
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+THIS_SUITE_RELATIVE_PATH = "scripts/" + Path(__file__).name
+_rule_failure_lines_spec = importlib.util.spec_from_file_location(
+    "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
+RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
+_rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
 SCRIPTS_DIRECTORY = REPO_ROOT / "scripts"
 # Production code lives in two places since nc-systems/ was made: scripts/,
 # and one directory per system. Tests sit a level deeper, in
@@ -131,7 +139,7 @@ PROGRAMS_THAT_NEED_THESE_FILE_NAMES = ("handoff-supervisor.py",
 # sites this guard was extended for -- would be exempted as a helper.
 COMPOSING_HELPERS = ("supervisor_state_path", "supervisor_lock_path",
                      "supervisor_state_paths", "handoff_file_path",
-                     "handoff_file_paths")
+                     "handoff_file_paths", "leftover_prompt_listing_counts_path")
 # The three file names, as they read on disk. This is a copy, so the last
 # check below reads the same three out of handoff-supervisor.py and compares.
 # Until 2026-09-21 nothing did, and a copy nothing anchors goes stale at
@@ -141,7 +149,7 @@ COMPOSING_HELPERS = ("supervisor_state_path", "supervisor_lock_path",
 # prevent would come back invisible, and the guard would go on printing PASS
 # until the rename after that.
 SPELLED_OUT_NAMES = ("-supervisor-state.json", "-supervisor.lock",
-                     "-handoff.md")
+                     "-handoff.md", "-leftovers-prompt-listing-counts.json")
 # The names of the constants that hold them are not typed here: they are read
 # out of handoff-supervisor.py below, as SUFFIX_CONSTANTS. These three are the
 # floor that reading must reach, checked before any other case, so a reading
@@ -240,6 +248,47 @@ check("the supervisor's syntax tree yields at least the three known suffix "
       f"it is still in use, define it there as a module-level assignment "
       f"whose name ends in _SUFFIX; fix this case before any fixture case "
       f"below that also fails")
+
+
+def programs_not_read_failure_detail(programs_not_read):
+    return "\n".join([
+        f"{programs_not_read} not found directly in scripts/ or in an nc-systems/<system>/ "
+        f"directory, the places this suite reads; the cases below cannot check a program they "
+        f"do not read.",
+        f"If your change moved one of those programs, put it directly in scripts/ or in an "
+        f"nc-systems/<system>/ directory; if it must live deeper, change production_scripts() "
+        f"in {THIS_SUITE_RELATIVE_PATH} to read that whole directory, not to name the one program.",
+        f"If your change renamed one of those programs, rename it in "
+        f"PROGRAMS_THAT_NEED_THESE_FILE_NAMES in {THIS_SUITE_RELATIVE_PATH}.",
+        f"If your change deleted one of those programs, remove it from "
+        f"PROGRAMS_THAT_NEED_THESE_FILE_NAMES in {THIS_SUITE_RELATIVE_PATH}.",
+        RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
+
+
+def suffix_constants_defining_failure_detail(defining):
+    supervisor = SUPERVISOR_SCRIPT.name
+    return "\n".join([
+        f"defined in {defining or 'no script'}, expected only {supervisor}; every other script "
+        f"imports them from {supervisor}, so that a renamed suffix changes in one definition.",
+        f"If a script other than {supervisor} defines one, delete that definition there and "
+        f"import the constant from nc-systems/handoff/{supervisor}.",
+        f"If {supervisor} no longer defines them, put the definitions back in "
+        f"nc-systems/handoff/{supervisor}.",
+        RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
+
+
+def every_program_read_case(names_read):
+    """(passed, detail) of the case that every program needing these names
+    is among the scripts read, given the names of the scripts read."""
+    programs_not_read = [name for name in PROGRAMS_THAT_NEED_THESE_FILE_NAMES
+                         if name not in names_read]
+    return not programs_not_read, programs_not_read_failure_detail(programs_not_read)
+
+
+def suffix_constants_defined_once_case(defining):
+    """(passed, detail) of the case that only the supervisor defines the
+    suffix constants, given the names of the scripts that define them."""
+    return defining == [SUPERVISOR_SCRIPT.name], suffix_constants_defining_failure_detail(defining)
 
 
 def production_scripts():
@@ -696,16 +745,28 @@ for script in scripts_read:
 # Asked first, because it is the question every case below assumes an answer
 # to. Each of them reports what it found in the scripts that were read; none
 # of them can say anything about a script that was not.
-names_read = {script.name for script in scripts_read}
-programs_not_read = [name for name in PROGRAMS_THAT_NEED_THESE_FILE_NAMES
-                     if name not in names_read]
 check("every program that needs these names is among the scripts read",
-      not programs_not_read,
-      f"{programs_not_read} not found under scripts/ or nc-systems/*/ -- a "
-      f"program this suite exists to watch has moved somewhere it does not "
-      f"read, and the cases below now pass on it by finding nothing")
+      *every_program_read_case({script.name for script in scripts_read}))
+moved_out_passed, moved_out_detail = every_program_read_case(
+    set(PROGRAMS_THAT_NEED_THESE_FILE_NAMES) - {"recover-crashed-seats.py"})
+check("a program moved out of the places this suite reads fails with the rule and one fix "
+      "per cause",
+      not moved_out_passed and moved_out_detail.split("\n") == [
+          "['recover-crashed-seats.py'] not found directly in scripts/ or in an "
+          "nc-systems/<system>/ directory, the places this suite reads; the cases below cannot "
+          "check a program they do not read.",
+          "If your change moved one of those programs, put it directly in scripts/ or in an "
+          "nc-systems/<system>/ directory; if it must live deeper, change production_scripts() "
+          "in scripts/supervisor-file-names-defined-once-test.py to read that whole directory, "
+          "not to name the one program.",
+          "If your change renamed one of those programs, rename it in "
+          "PROGRAMS_THAT_NEED_THESE_FILE_NAMES in scripts/supervisor-file-names-defined-once-test.py.",
+          "If your change deleted one of those programs, remove it from "
+          "PROGRAMS_THAT_NEED_THESE_FILE_NAMES in scripts/supervisor-file-names-defined-once-test.py.",
+          RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
+      moved_out_detail)
 
-check("no production script composes any of the three file names itself",
+check("no production script composes any of these file names itself",
       not composing,
       "composed at " + ", ".join(composing) + " -- call "
       "supervisor_state_path(), supervisor_lock_path(), "
@@ -784,9 +845,25 @@ check("the names this guard hunts are the supervisor's own, not a stale copy",
          and not duplicated_constants else ""))
 
 check("the suffix constants are defined in one script",
-      defining == [SUPERVISOR_SCRIPT.name],
-      f"defined in {defining or 'no script'}, expected only "
-      f"{SUPERVISOR_SCRIPT.name}")
+      *suffix_constants_defined_once_case(defining))
+second_definer_passed, second_definer_detail = suffix_constants_defined_once_case(
+    ["handoff-supervisor.py", "recover-crashed-seats.py"])
+check("a second script defining the suffix constants fails with the rule and one fix per cause",
+      not second_definer_passed and second_definer_detail.split("\n") == [
+          "defined in ['handoff-supervisor.py', 'recover-crashed-seats.py'], expected only "
+          "handoff-supervisor.py; every other script imports them from handoff-supervisor.py, so "
+          "that a renamed suffix changes in one definition.",
+          "If a script other than handoff-supervisor.py defines one, delete that definition there "
+          "and import the constant from nc-systems/handoff/handoff-supervisor.py.",
+          "If handoff-supervisor.py no longer defines them, put the definitions back in "
+          "nc-systems/handoff/handoff-supervisor.py.",
+          RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
+      second_definer_detail)
+no_definer_passed, no_definer_detail = suffix_constants_defined_once_case([])
+check("no script defining the suffix constants says so",
+      not no_definer_passed and no_definer_detail.startswith(
+          "defined in no script, expected only handoff-supervisor.py;"),
+      no_definer_detail)
 
 print()
 if failures:

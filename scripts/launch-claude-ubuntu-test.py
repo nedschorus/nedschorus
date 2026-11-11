@@ -19,34 +19,21 @@ must arrive tilde-EXPANDED (the box shell resolves it at P1), while the
 supervisor's --cd arrives as the literal ~ path (handoff-supervisor.py
 expanduser()s it live, handoff-supervisor.py:855).
 
-The seat-credential cases turn that same layer model on a secret, and they
-are why the launcher reads its token file with `IFS= read -r` rather than
-`$(cat ...)`. A `$(...)` in the pane command is run at P1, by the box's
-login shell, which then hands tmux a string with the token substituted
-into it — a `ps` listing on the box carrying the credential for as long as
-the seat lives. So absence is asserted against the tmux argv capture, the
-pane command as tmux received it AFTER P1, and not against the remote
-string the launcher composed: the launcher never holds the value, so the
-remote string is clean under either implementation and a case that looked
-only there would pass on the leaking one. Presence is asserted against the
-supervisor's environment in the same case, so neither half can pass alone.
-
-Run: python3 scripts/launch-claude-ubuntu-test.py
-
-The suite is self-contained (this file plus launch-claude-ubuntu and
-agent-binary-update-under-lock.py beside it; every other participant is
-stubbed, and the helper is copied into the sandbox HOME's checkout path,
-where the box-side command looks for it) and runs unmodified ON THE BOX,
-where P1 is parsed by the real /bin/sh (dash) instead of macOS sh standing
-in — the one caveat the PR #137/#139 reviews carried (user-directed
-2026-08-22):
-  scp scripts/launch-claude-ubuntu scripts/launch-claude-ubuntu-test.py scripts/agent-binary-update-under-lock.py ned:/tmp/x/
-  ssh ned 'cd /tmp/x && chmod +x launch-claude-ubuntu && python3 launch-claude-ubuntu-test.py'
+Run it from a checkout, on ned-box, where P1 is parsed by the real /bin/sh
+(dash) rather than by macOS sh standing in for it:
+  python3 scripts/launch-claude-ubuntu-test.py
+The GitHub token cases run the real handoff-supervisor from the checkout's
+nc-systems/, and it loads modules from the checkout's scripts/, so the suite
+does not run from a copy of a few files.
 """
 
+import errno
 import fcntl
 import os
+import pty
+import selectors
 import shlex
+import signal
 import shutil
 import subprocess
 import sys
@@ -57,6 +44,9 @@ from pathlib import Path
 LAUNCHER = Path(__file__).with_name("launch-claude-ubuntu")
 UPDATE_LOCK_HELPER_NAME = "agent-binary-update-under-lock.py"
 UPDATE_LOCK_HELPER = Path(__file__).with_name(UPDATE_LOCK_HELPER_NAME)
+# The bytes launch-claude-ubuntu writes to switch an iTerm2 session back to
+# the user's own profile: iTerm2's SetProfile sequence, OSC 1337 ... BEL.
+ITERM2_DEFAULT_PROFILE_SEQUENCE = "\x1b]1337;SetProfile=Default\x07"
 
 failures = []
 
@@ -124,7 +114,25 @@ class LaunchHarness:
         write_stub(self.stubs, "claude",
                    '[ "${1:-}" = "update" ] || exit 0\n'
                    'echo update >> "$LCU_TEST_DIR/claude-updates.txt"\n')
-        write_stub(self.stubs, "git", "exit 0\n")
+        # A case that sets agent_home_is_a_checkout to False has the agent-home
+        # fail git's checkout test, so the launcher makes it a worktree; the
+        # stub records the GIT_AUTHOR_NAME and the arguments of each `git
+        # worktree add`, and names LCU_AGENT_HOME_GIT_DIRECTORY as the new
+        # agent-home's git directory, or fails to when
+        # LCU_AGENT_HOME_GIT_DIRECTORY_UNREADABLE is set.
+        write_stub(self.stubs, "git",
+                   'case "$*" in\n'
+                   '  *"rev-parse --show-toplevel"*) [ -z "${LCU_AGENT_HOME_NOT_A_CHECKOUT:-}" ] || exit 1 ;;\n'
+                   '  *"rev-parse --absolute-git-dir"*) '
+                   '[ -z "${LCU_AGENT_HOME_GIT_DIRECTORY_UNREADABLE:-}" ] || exit 128; '
+                   'echo "$LCU_AGENT_HOME_GIT_DIRECTORY" ;;\n'
+                   '  *"worktree add"*) echo "${GIT_AUTHOR_NAME-<unset>}" '
+                   '>> "$LCU_TEST_DIR/git-worktree-add-author-names.txt"; '
+                   'printf \'%s\\n\' "$*" >> "$LCU_TEST_DIR/git-worktree-add-arguments.txt" ;;\n'
+                   'esac\n'
+                   'exit 0\n')
+        self.agent_home_git_directory = root / "agent-home-git-directory"
+        self.agent_home_git_directory.mkdir()
         # The remote side asks whether the box's own seat restart is still
         # running; "inactive" is the answer on a box that has been up a while,
         # so no case waits unless it says so. sleep records instead of
@@ -150,7 +158,6 @@ class LaunchHarness:
                    '${CLAUDE_CODE_TASK_LIST_ID-<unset>}";\n'
                    '      echo "CLAUDE_CODE_ENABLE_TODO_TOOLS='
                    '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}";\n'
-                   '      echo "GH_TOKEN=${GH_TOKEN-<unset>}";\n'
                    + GIT_IDENTITY_ECHO_LINES +
                    ' } '
                    '> "$LCU_TEST_DIR/supervisor-environment.txt";;\n'
@@ -169,7 +176,6 @@ class LaunchHarness:
                    '${CLAUDE_CODE_TASK_LIST_ID-<unset>}";\n'
                    '  echo "CLAUDE_CODE_ENABLE_TODO_TOOLS='
                    '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}";\n'
-                   '  echo "GH_TOKEN=${GH_TOKEN-<unset>}";\n'
                    + GIT_IDENTITY_ECHO_LINES +
                    ' } '
                    '> "$LCU_TEST_DIR/after-exit-environment.txt"\n')
@@ -203,19 +209,21 @@ class LaunchHarness:
         }
         # Box-side, as on the real box: the update limit is read from the
         # box shell's environment, not carried from this Mac.
+        environment["LCU_AGENT_HOME_GIT_DIRECTORY"] = str(self.agent_home_git_directory)
+        if not self.agent_home_is_a_checkout:
+            environment["LCU_AGENT_HOME_NOT_A_CHECKOUT"] = "1"
+            environment["GIT_AUTHOR_NAME"] = "seat-running-the-launcher"
+        if self.agent_home_git_directory_unreadable:
+            environment["LCU_AGENT_HOME_GIT_DIRECTORY_UNREADABLE"] = "1"
         if self.update_timeout_seconds is not None:
             environment["LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS"] = str(
                 self.update_timeout_seconds)
-        # This whitelist is what keeps the replay clean, so an ambient
-        # GH_TOKEN can only appear here on purpose: it stands in for a box
-        # shell that already carries one, which the seat must not keep.
-        if self.ambient_gh_token is not None:
-            environment["GH_TOKEN"] = self.ambient_gh_token
         return environment
 
     unit_state = "inactive"
+    agent_home_is_a_checkout = True
+    agent_home_git_directory_unreadable = False
     update_timeout_seconds = None
-    ambient_gh_token = None
 
     def update_lock_path(self):
         return self.home / ".local" / "state" / "claude" / "agent-binary-update.lock"
@@ -264,37 +272,76 @@ class LaunchHarness:
         return len(path.read_text(encoding="utf-8").splitlines()) if path.is_file() else 0
 
     def prepare_ran(self) -> bool:
-        """The prepare step's trust mark is a python3 -c call naming
-        hasTrustDialogAccepted; the supervisor call never does."""
+        """The prepare step's presets write is a python3 call naming
+        claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py;
+        the supervisor call never does."""
         calls = self.captures / "python3-calls.txt"
-        return calls.is_file() and "hasTrustDialogAccepted" in calls.read_text(encoding="utf-8")
+        return calls.is_file() and (
+            "claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py"
+            in calls.read_text(encoding="utf-8"))
 
-    def write_seat_token(self, account: str, token: str,
-                         trailing_newline: bool = True) -> Path:
-        """Put a token file for one account in the sandbox HOME, which stands
-        in for the BOX's home: the launcher composes ~/.config/nedschorus/,
-        and P1 resolves that ~ against this HOME. Never a real credential —
-        the value is the thing the cases hunt for in the post-P1 command, so
-        it has to be a string this suite invented."""
-        token_file = self.home / ".config" / "nedschorus" / f"{account}.token"
-        token_file.parent.mkdir(parents=True, exist_ok=True)
-        token_file.write_text(token + ("\n" if trailing_newline else ""),
-                              encoding="utf-8")
-        token_file.chmod(0o600)
-        return token_file
+    def python3_script_order(self) -> list:
+        """The scripts the box-side command ran through python3, in order."""
+        calls = self.captures / "python3-calls.txt"
+        if not calls.is_file():
+            return []
+        return [Path(block.split("\n", 1)[0]).name
+                for block in calls.read_text(encoding="utf-8").split(
+                    "=== call boundary ===\n") if block.strip()]
+
+    def boot_programs_fail(self):
+        """Make the python3 stub fail clean-worktrees.py and
+        checkout-freshness-catch-up.py the way a broken run does: a line on
+        stderr naming the program, then exit 2."""
+        python3 = self.stubs / "python3"
+        python3.write_text(python3.read_text(encoding="utf-8").replace(
+            'case "${1:-}" in (*' + UPDATE_LOCK_HELPER_NAME + ')',
+            'case "${1:-}" in (*clean-worktrees.py|*checkout-freshness-catch-up.py) '
+            'echo "stand-in failure of ${1##*/}" >&2; exit 2;; esac\n'
+            'case "${1:-}" in (*' + UPDATE_LOCK_HELPER_NAME + ')', 1),
+            encoding="utf-8")
+
+    def github_token_check_runs_the_real_supervisor(self, token_file_accounts=()):
+        """Hand the supervisor's GitHub token check to the real interpreter and
+        the real supervisor, linked into the sandbox HOME's checkout path, so
+        the case measures the refusal the supervisor itself prints.
+        token_file_accounts names the accounts given a token file."""
+        (self.home / "Projects" / "nedschorus" / "nc-systems").symlink_to(
+            LAUNCHER.resolve().parent.parent / "nc-systems")
+        token_directory = self.home / ".config" / "nedschorus"
+        for account in token_file_accounts:
+            token_directory.mkdir(parents=True, exist_ok=True)
+            (token_directory / f"{account}.token").write_text(
+                "stand-in-token\n", encoding="utf-8")
+        python3 = self.stubs / "python3"
+        python3.write_text(python3.read_text(encoding="utf-8").replace(
+            'case "${1:-}" in (*' + UPDATE_LOCK_HELPER_NAME + ')',
+            'case " $* " in (*" --agent-seat-github-token-file-readable-check-only "*) '
+            f'exec "{sys.executable}" "$@";; esac\n'
+            'case "${1:-}" in (*' + UPDATE_LOCK_HELPER_NAME + ')', 1),
+            encoding="utf-8")
 
     def run(self, launcher_arguments, mac_environment_agents_root=None,
-            extra_arguments=None, seat_github_account=None):
+            extra_arguments=None, seat_github_account=None,
+            term_program=None, stdout_on_terminal=False):
         """Launcher -> captured remote string -> P1 replay (-> P2 inside the
         tmux stub). Returns a dict of everything observable.
 
         mac_environment_agents_root sets NEDSCHORUS_AGENTS_ROOT in the
         launcher's own (Mac-side) environment, the way a Mac seat inherits
-        it, so a case can show the launcher ignores it."""
+        it, so a case can show the launcher ignores it.
+
+        term_program sets TERM_PROGRAM, which is otherwise stripped so the
+        terminal the suite runs in cannot decide a case. stdout_on_terminal
+        gives the launcher a pseudo-terminal as stdout in place of a pipe,
+        and puts what it wrote there in the launched result's stdout."""
         for leftover in self.captures.iterdir():
             leftover.unlink()
         environment = {key: value for key, value in os.environ.items()
-                       if not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_"))}
+                       if key != "TERM_PROGRAM"
+                       and not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_"))}
+        if term_program is not None:
+            environment["TERM_PROGRAM"] = term_program
         environment["PATH"] = f"{self.stubs}:{environment.get('PATH', '')}"
         environment["LCU_TEST_DIR"] = str(self.captures)
         environment["NEDSCHORUS_AGENT_BOX"] = "stub-box"
@@ -304,10 +351,15 @@ class LaunchHarness:
             environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = extra_arguments
         if seat_github_account is not None:
             environment["NEDSCHORUS_SEAT_GITHUB_ACCOUNT"] = seat_github_account
-        launched = subprocess.run(
-            [str(LAUNCHER), *launcher_arguments],
-            capture_output=True, text=True, check=False, env=environment,
-            cwd=str(self.workdir))
+        if stdout_on_terminal:
+            launched = run_with_stdout_on_terminal(
+                [str(LAUNCHER), *launcher_arguments], str(self.workdir),
+                environment)
+        else:
+            launched = subprocess.run(
+                [str(LAUNCHER), *launcher_arguments],
+                capture_output=True, text=True, check=False, env=environment,
+                cwd=str(self.workdir))
         ssh_capture = self.captures / "ssh-argv.txt"
         remote = (ssh_capture.read_text(encoding="utf-8").splitlines()[-1]
                   if ssh_capture.is_file() else "")
@@ -380,6 +432,75 @@ class AnotherUpdateHoldsTheLock:
         self.lock_file.close()
 
 
+def run_with_stdout_on_terminal(command, working_directory, environment,
+                                timeout_seconds=60):
+    """Run command with a pseudo-terminal as its stdout, so `[ -t 1 ]` holds
+    in it, and return a CompletedProcess whose stdout is what it wrote
+    there.
+
+    The terminal and the stderr pipe are read together while the command
+    runs: a command blocked on either full buffer never closes the other,
+    so reading one to its end before the other can wait forever.
+    timeout_seconds bounds the whole read. When it runs out, the command's
+    process group is killed and subprocess.TimeoutExpired is raised, so a
+    hung case fails the suite instead of holding the machine's test lock.
+    The same helper is in scripts/launch-claude-mac-test.py; this suite
+    keeps its own copy because it must run on its own, copied to the box."""
+    controller, terminal = pty.openpty()
+    process = subprocess.Popen(
+        command, stdin=subprocess.DEVNULL, stdout=terminal,
+        stderr=subprocess.PIPE, cwd=working_directory, env=environment,
+        start_new_session=True)
+    os.close(terminal)
+    stderr_descriptor = process.stderr.fileno()
+    written = {controller: bytearray(), stderr_descriptor: bytearray()}
+    deadline = time.monotonic() + timeout_seconds
+
+    def stop_command_and_raise_timeout():
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        raise subprocess.TimeoutExpired(
+            command, timeout_seconds,
+            output=bytes(written[controller]),
+            stderr=bytes(written[stderr_descriptor]))
+
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(controller, selectors.EVENT_READ)
+            selector.register(stderr_descriptor, selectors.EVENT_READ)
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    stop_command_and_raise_timeout()
+                for key, _ in selector.select(remaining):
+                    try:
+                        chunk = os.read(key.fd, 65536)
+                    except OSError as error:
+                        # Linux reports the last writer closing the
+                        # terminal as EIO.
+                        if error.errno != errno.EIO:
+                            raise
+                        chunk = b""
+                    if chunk:
+                        written[key.fd].extend(chunk)
+                    else:
+                        selector.unregister(key.fd)
+        # A command can close both streams and keep running, so the wait
+        # is bounded by the same deadline and stopped the same way.
+        try:
+            returncode = process.wait(
+                timeout=max(deadline - time.monotonic(), 0.1))
+        except subprocess.TimeoutExpired:
+            stop_command_and_raise_timeout()
+    finally:
+        os.close(controller)
+        process.stderr.close()
+    return subprocess.CompletedProcess(
+        command, returncode,
+        written[controller].decode("utf-8", errors="replace"),
+        written[stderr_descriptor].decode("utf-8", errors="replace"))
+
+
 def tmux_argv_sets_mouse_mode_on(tmux_argv_text):
     """True when the tmux argv, one argument per line, sets mouse mode on as
     its own set-option command."""
@@ -399,6 +520,17 @@ def main() -> int:
         check("detached: tmux gets mouse mode on",
               tmux_argv_sets_mouse_mode_on(result["tmux_argv"]),
               result["tmux_argv"])
+        # A pane command that ends with the supervisor call lets the pane's
+        # shell exec into it, and tmux, then its parent, wakes it from a
+        # `kill -STOP` at once.
+        detached_pane_commands = [argument for argument
+                                  in result["tmux_argv"].splitlines()
+                                  if "handoff-supervisor.py" in argument]
+        check("detached: the pane command ends with `; exit $?`, so the shell "
+              "stays the supervisor's parent",
+              len(detached_pane_commands) == 1
+              and detached_pane_commands[0].endswith("; exit $?"),
+              detached_pane_commands)
         check("default root: tmux -c arrives tilde-EXPANDED (P1 resolved it)",
               result["pane_directory"] == f"{harness.home}/agents/seat-a",
               result["pane_directory"])
@@ -414,6 +546,16 @@ def main() -> int:
         check("default root: the seat directory was created at P1",
               (harness.home / "agents" / "seat-a").is_dir(),
               str(harness.home / "agents"))
+        # The presets script runs from the box's checkout, so the box's
+        # checkout must be fast-forwarded first, or a box checkout older than
+        # the script stops every launch on a file it does not have yet.
+        scripts_run = harness.python3_script_order()
+        freshness = "checkout-freshness-catch-up.py"
+        presets = "claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py"
+        check("prepare: the box checkout is fast-forwarded before the presets script runs",
+              freshness in scripts_run and presets in scripts_run
+              and scripts_run.index(freshness) < scripts_run.index(presets),
+              scripts_run)
 
         # --- 1b. the launcher itself must have reached ssh — without this,
         # a launcher that exits before the transport leaves an empty remote
@@ -609,6 +751,41 @@ def main() -> int:
               == seat_git_identity("seat-i"),
               git_identity(result["supervisor_environment"]))
 
+        # --- a new agent-home is made a worktree under the NEW seat's name,
+        # whichever seat's shell runs the launcher, so the post-checkout hook
+        # sees the seat's own agent-home and writes it no owner file. --------
+        harness = LaunchHarness(root / "new-agent-home-worktree-author")
+        harness.agent_home_is_a_checkout = False
+        harness.run(["seat-j", "--no-attach"])
+        authors_capture = harness.captures / "git-worktree-add-author-names.txt"
+        authors = (authors_capture.read_text(encoding="utf-8").split()
+                   if authors_capture.is_file() else [])
+        check("new agent-home: git worktree add runs with GIT_AUTHOR_NAME set to the new seat",
+              authors and set(authors) == {"seat-j"}, authors)
+        arguments_capture = harness.captures / "git-worktree-add-arguments.txt"
+        worktree_add_arguments = (arguments_capture.read_text(encoding="utf-8")
+                                  if arguments_capture.is_file() else "")
+        check("new agent-home: made on a detached HEAD at origin/main, on no seat-branch",
+              worktree_add_arguments.strip().endswith("worktree add --detach "
+                                                      f"{harness.home}/agents/seat-j origin/main")
+              and worktree_add_arguments.count("worktree add") == 1,
+              worktree_add_arguments)
+        check("new agent-home: marked with agent-home-marker in its git directory",
+              (harness.agent_home_git_directory / "agent-home-marker").is_file(),
+              list(harness.agent_home_git_directory.iterdir()))
+
+        harness = LaunchHarness(root / "new-agent-home-marker-not-written")
+        harness.agent_home_is_a_checkout = False
+        harness.agent_home_git_directory_unreadable = True
+        result = harness.run(["seat-k", "--no-attach"])
+        check("new agent-home whose git directory cannot be read: says the marker was not "
+              "written and the launch goes on",
+              "launch-claude-ubuntu: could not write agent-home-marker into the git directory of "
+              in result["replay"].stderr
+              and not (harness.agent_home_git_directory / "agent-home-marker").exists()
+              and result["replay"].returncode == 0,
+              (result["replay"].returncode, result["replay"].stderr[-600:]))
+
         # --- 9. the same binding on the ATTACHED path, including the
         # after-exit shell: that shell offers `claude --continue`, and a
         # continue run without the pin binds to a session-keyed store whose
@@ -738,117 +915,58 @@ def main() -> int:
               result["launched"].returncode == 255 and harness.count("ssh-calls.txt") == 1,
               (result["launched"].returncode, harness.count("ssh-calls.txt")))
 
-        # --- 12. the seat's own GitHub credential (credential ruling C4,
-        # nc-systems/main-gatekeeper/main-gatekeeper-design.md: each agent
-        # host holds a fine-grained token for this repository only, never a
-        # classic all-repository token and never the `workflow` scope).
-        # Measured on the box 2026-09-22: `gh` is logged in as
-        # `ubuntu-claude` — the right identity — but with a CLASSIC token
-        # carrying read:org, repo and workflow, and no `ubuntu-claude.token`
-        # file exists on the box at all. The default account here is the
-        # BOX's.
-        seat_token = "github_pat_UBUNTU_CLAUDE_TEST_ONLY_not-a-real-credential"
-        harness = LaunchHarness(root / "seat-token-present")
-        harness.write_seat_token("ubuntu-claude", seat_token)
+        # --- 12. the seat's GitHub account is the handoff-supervisor's to
+        # decide: the pane command sets no GH_TOKEN of its own, so the one the
+        # supervisor sets for its agent-sessions is the only one they see.
+        harness = LaunchHarness(root / "pane-sets-no-github-token")
         result = harness.run(["seat-r1", "--no-attach"])
-        check("seat token: the default account is the BOX's, and its token "
-              "reaches the box-side supervisor's environment",
+        check("GitHub token: the launch reaches the supervisor and composes no GH_TOKEN",
               result["replay"].returncode == 0
-              and result["supervisor_environment"].get("GH_TOKEN") == seat_token,
-              (result["replay"].returncode,
-               result["supervisor_environment"].get("GH_TOKEN"),
-               result["replay"].stderr[:300]))
+              and "handoff-supervisor.py" in " ".join(result["supervisor_argv"])
+              and "GH_TOKEN" not in result["remote"]
+              and ".config/nedschorus" not in result["remote"],
+              (result["replay"].returncode, result["remote"][:400]))
 
-        # The property the read-not-substitute shape exists for, asserted
-        # where it can actually fail: the tmux argv capture is the pane
-        # command AFTER the box shell parsed it at P1, so a `$(cat ...)`
-        # that P1 ran would show the token there. The remote string the
-        # launcher composed is checked too, but it proves less — the
-        # launcher never holds the value — so the two are asserted together
-        # with the environment half, and no one of them passes alone.
-        check("seat token: the token text is ABSENT from the pane command "
-              "tmux received (post-P1), present only in the environment",
-              seat_token not in result["tmux_argv"]
-              and seat_token not in result["remote"]
-              and seat_token not in result["replay"].stdout
-              and seat_token not in result["replay"].stderr
-              and result["supervisor_environment"].get("GH_TOKEN") == seat_token,
-              ("token in the post-P1 pane command"
-               if seat_token in result["tmux_argv"] else
-               "token in the remote string" if seat_token in result["remote"]
-               else "token in the replay output"
-               if (seat_token in result["replay"].stdout
-                   or seat_token in result["replay"].stderr)
-               else result["supervisor_environment"].get("GH_TOKEN")))
-        # The other half of the same property: the pane command names the
-        # token FILE and exports GH_TOKEN from it, so the read happens in the
-        # seat's own shell on the box. Without this, a launcher that simply
-        # never exported anything would satisfy the absence case above.
-        check("seat token: the pane command names the box-side token file and "
-              "defers the read to the seat's own shell",
-              ".config/nedschorus/ubuntu-claude.token" in result["tmux_argv"]
-              and "GH_TOKEN" in result["tmux_argv"],
-              result["tmux_argv"][:400])
-
-        # --- 13. no token file on the box — the box's state today. GH_TOKEN
-        # stays UNSET rather than empty (`gh` falls back to its keyring login
-        # on an unset variable and fails outright on an empty one), the
-        # launch still happens, and the warning comes back down the ssh
-        # connection because it rides the PREPARE step rather than the pane
-        # command: a pane-command warning would land in the seat's tmux pane,
-        # which a detached launch leaves nobody watching.
-        harness = LaunchHarness(root / "seat-token-absent")
-        result = harness.run(["seat-r2", "--no-attach"])
-        check("no seat token: the launch still happens (warn, never refuse)",
-              result["launched"].returncode == 0
-              and result["replay"].returncode == 0
-              and "handoff-supervisor.py" in " ".join(result["supervisor_argv"]),
-              (result["launched"].returncode, result["replay"].returncode,
-               result["replay"].stderr[:300]))
-        check("no seat token: GH_TOKEN is UNSET in the supervisor's environment",
-              result["supervisor_environment"].get("GH_TOKEN") == "<unset>",
-              result["supervisor_environment"])
-        check("no seat token: the warning comes back over the connection, "
-              "naming the account, the box-side path and the fallback",
-              "ubuntu-claude" in result["replay"].stderr
-              and f"{harness.home}/.config/nedschorus/ubuntu-claude.token"
-              in result["replay"].stderr
-              and "GH_TOKEN stays unset" in result["replay"].stderr
-              and "keyring" in result["replay"].stderr,
-              result["replay"].stderr[-900:])
-
-        # --- 14. the override, and the ruling it inherits: an override
-        # either works or is blocked, never a third state (user-ruled
-        # 2026-08-22). Both accounts hold a token file, so the case measures
-        # a CHOICE rather than the only file present.
-        merge_token = "github_pat_NED_REVIEW_MERGE_TEST_ONLY_not-a-real-credential"
-        harness = LaunchHarness(root / "seat-token-override")
-        harness.write_seat_token("ubuntu-claude", seat_token)
-        harness.write_seat_token("ned-review-merge", merge_token)
-        result = harness.run(["seat-r3", "--no-attach"],
-                             seat_github_account="ned-review-merge")
-        check("override: the named account's token is the one exported, not "
-              "the host default's",
-              result["replay"].returncode == 0
-              and result["supervisor_environment"].get("GH_TOKEN") == merge_token,
-              (result["replay"].returncode,
-               result["supervisor_environment"].get("GH_TOKEN")))
-        check("override: neither token text reaches the post-P1 pane command",
-              merge_token not in result["tmux_argv"]
-              and seat_token not in result["tmux_argv"],
-              result["tmux_argv"][:400])
-
-        harness = LaunchHarness(root / "seat-account-refused")
+        # --- 13. the account override is refused, not ignored: the
+        # launcher does not choose an account, so a value there could only
+        # mislead the operator who set it.
+        harness = LaunchHarness(root / "seat-account-override-refused")
         result = harness.run(["seat-r4", "--no-attach"],
-                             seat_github_account="../../etc/passwd")
-        check("bad override: refused with exit 2, naming what the value is",
+                             seat_github_account="ned-review-merge")
+        check("account override: refused with exit 2, naming the variable and the table",
               result["launched"].returncode == 2
               and "NEDSCHORUS_SEAT_GITHUB_ACCOUNT" in result["launched"].stderr
-              and "GitHub account name" in result["launched"].stderr,
+              and "AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT"
+              in result["launched"].stderr,
               (result["launched"].returncode,
                result["launched"].stderr[:300]))
-        check("bad override: nothing was sent to the box",
+        check("account override: nothing was sent to the box",
               result["remote"] == "", result["remote"][:200])
+
+        # --- 14. a detached pane closes when the supervisor exits, so the
+        # launch itself must run the supervisor's GitHub token check before
+        # it creates the tmux session, and report its refusal and exit 5.
+        harness = LaunchHarness(root / "no-attach-missing-github-token-file")
+        harness.github_token_check_runs_the_real_supervisor()
+        result = harness.run(["seat-r5", "--no-attach"])
+        check("missing token file: a detached launch exits 5 with the supervisor's refusal",
+              result["replay"].returncode == 5
+              and "handoff-supervisor: the agent-seat seat-r5 was not started, because the token file"
+              in result["replay"].stderr
+              and "does not exist" in result["replay"].stderr,
+              (result["replay"].returncode, result["replay"].stderr[-600:]))
+        check("missing token file: no tmux session was created",
+              result["tmux_argv"] == "", result["tmux_argv"][:200])
+        harness = LaunchHarness(root / "no-attach-github-token-file-present")
+        # Both machine accounts, because the supervisor picks one by hostname.
+        harness.github_token_check_runs_the_real_supervisor(
+            token_file_accounts=("ubuntu-claude", "mac-claude"))
+        result = harness.run(["seat-r6", "--no-attach"])
+        check("token file present: the detached launch goes on to create the tmux session",
+              result["replay"].returncode == 0
+              and "new-session" in result["tmux_argv"]
+              and "was not started" not in result["replay"].stderr,
+              (result["replay"].returncode, result["replay"].stderr[-600:]))
 
         # --help alone prints the usage and exits 0 before any side effect.
         harness = LaunchHarness(root / "help-option-alone")
@@ -883,67 +1001,164 @@ def main() -> int:
                   not (harness.home / "agents" / arguments[0]).exists(),
                   str(harness.home / "agents"))
 
-        # --- 15. the after-exit shell inherits the credential, as it
-        # inherits the task-list pin and for the same reason: the
-        # `claude --continue` that shell offers is the same seat.
-        harness = LaunchHarness(root / "seat-token-attached")
-        harness.write_seat_token("ubuntu-claude", seat_token)
-        result = harness.run(["seat-r5"])
-        check("attached: the supervisor still gets the seat's token",
-              result["replay"].returncode == 0
-              and result["supervisor_environment"].get("GH_TOKEN") == seat_token,
-              (result["replay"].returncode,
-               result["supervisor_environment"].get("GH_TOKEN")))
-        check("attached: the after-exit shell keeps the seat's credential",
-              result["after_exit_environment"].get("GH_TOKEN") == seat_token,
-              result["after_exit_environment"].get("GH_TOKEN"))
-
-        # --- 16. an inherited GH_TOKEN is DROPPED box-side, not kept: the
-        # seat's account is decided by this launcher and never inherited
-        # from the shell the pane was started under, or the prepare step's
-        # warning would announce a fallback that did not happen.
-        inherited_token = "github_pat_INHERITED_TEST_ONLY_not-a-real-credential"
-        harness = LaunchHarness(root / "seat-token-ambient-dropped")
-        harness.ambient_gh_token = inherited_token
-        result = harness.run(["seat-r6", "--no-attach"])
-        check("no seat token: an inherited GH_TOKEN is dropped, not passed on",
-              result["replay"].returncode == 0
-              and result["supervisor_environment"].get("GH_TOKEN") == "<unset>",
-              result["supervisor_environment"].get("GH_TOKEN"))
-
-        # --- 17. the real token files carry NO trailing newline (measured
-        # 2026-09-22: 93 bytes, `tail -c1 | wc -l` reports 0). `read` returns
-        # non-zero on such a file AFTER setting the variable, so the value
-        # must still arrive whole through both parses.
-        harness = LaunchHarness(root / "seat-token-no-trailing-newline")
-        harness.write_seat_token("ubuntu-claude", seat_token,
-                                 trailing_newline=False)
-        result = harness.run(["seat-r7", "--no-attach"])
-        check("seat token: a file with no trailing newline still yields the "
-              "whole token",
-              result["replay"].returncode == 0
-              and result["supervisor_environment"].get("GH_TOKEN") == seat_token,
-              (result["replay"].returncode,
-               result["supervisor_environment"].get("GH_TOKEN")))
-
         harness = LaunchHarness(root / "update-lock-bound")
-        harness.write_seat_token("ubuntu-claude", "test-token")
         harness.update_timeout_seconds = 30
         with AnotherUpdateHoldsTheLock(harness.update_lock_path()):
-            started = time.monotonic()
             result = harness.run(["seat-v", "--no-attach"])
-            elapsed = time.monotonic() - started
         check("update lock (box): a held lock skips this update immediately",
               harness.claude_updates() == [], harness.claude_updates())
         check("update lock (box): the skip is reported in exactly one line",
               "Another claude update is running; this launch uses the claude already installed.\n"
               == result["replay"].stderr,
               result["replay"].stderr[:400])
-        check("update lock (box): the seat is still prepared, without hanging",
+        # The skip line above is the marker that the lock was tried without
+        # waiting; handoff-supervisor-session-launch-and-seat-lock-test.py counts
+        # the helper's lock attempts.
+        check("update lock (box): the seat is still prepared",
+              result["replay"].returncode == 0 and harness.prepare_ran(),
+              (result["replay"].returncode, result["replay"].stderr[:300]))
+
+        # The timed-out outcome and the killed command are what show the
+        # helper's timeout fired; elapsed time is only a backstop, at
+        # least ten times the timeout so a busy machine cannot fail it.
+        helper_timeout_seconds = 2
+        helper_timeout_backstop_seconds = 15 * helper_timeout_seconds
+
+        # --- the pseudo-terminal helper: a command that closes its terminal
+        # and its stderr and then keeps running is stopped at the timeout
+        # too, and does not outlive the helper.
+        pid_file = root / "helper-closed-streams-command.pid"
+        started = time.monotonic()
+        try:
+            run_with_stdout_on_terminal(
+                [sys.executable, "-c",
+                 "import os, sys, time; "
+                 f"open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
+                 "os.close(1); os.close(2); time.sleep(600)"],
+                str(root), dict(os.environ),
+                timeout_seconds=helper_timeout_seconds)
+            closed_streams_timed_out = False
+        except subprocess.TimeoutExpired:
+            closed_streams_timed_out = True
+        elapsed = time.monotonic() - started
+        closed_streams_command_survived = False
+        if pid_file.is_file():
+            closed_streams_pid = int(pid_file.read_text(encoding="utf-8"))
+            try:
+                os.kill(closed_streams_pid, 0)
+                closed_streams_command_survived = True
+                os.kill(closed_streams_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        check("pseudo-terminal helper: a command that closes both streams "
+              "and keeps running is stopped at the timeout and does not "
+              "survive",
+              closed_streams_timed_out and elapsed < helper_timeout_backstop_seconds
+              and pid_file.is_file() and not closed_streams_command_survived,
+              (closed_streams_timed_out, f"{elapsed:.1f}s",
+               pid_file.is_file(), closed_streams_command_survived))
+
+        # --- the iTerm2 profile: an attached launch from an iTerm2 terminal
+        # switches the tab back to the user's own profile before ssh
+        # connects, so a tab a Mac seat coloured does not keep that colour.
+        # A pipe, another terminal program or a --no-attach launch must
+        # receive no escape bytes, and each must still reach ssh.
+        harness = LaunchHarness(root / "iterm2-profile-written")
+        result = harness.run(["seat-w"], term_program="iTerm.app",
+                             stdout_on_terminal=True)
+        check("iTerm2 profile: an attached launch in iTerm2 on a terminal "
+              "writes the SetProfile sequence for Default",
+              result["launched"].returncode == 0
+              and ITERM2_DEFAULT_PROFILE_SEQUENCE in result["launched"].stdout
+              and result["remote"],
+              (result["launched"].returncode,
+               repr(result["launched"].stdout[-300:]),
+               result["launched"].stderr[:300]))
+        for label, slug, term_program, stdout_on_terminal, arguments in (
+                ("TERM_PROGRAM is another terminal", "other-terminal",
+                 "Apple_Terminal", True, ["seat-w"]),
+                ("stdout is not a terminal", "stdout-pipe",
+                 "iTerm.app", False, ["seat-w"]),
+                ("--no-attach", "no-attach", "iTerm.app", True,
+                 ["seat-w", "--no-attach"])):
+            harness = LaunchHarness(root / f"iterm2-profile-not-written-{slug}")
+            result = harness.run(arguments, term_program=term_program,
+                                 stdout_on_terminal=stdout_on_terminal)
+            check(f"iTerm2 profile: no escape sequence when {label}, and the "
+                  "launch still reaches ssh",
+                  result["launched"].returncode == 0
+                  and "\x1b]1337;" not in result["launched"].stdout
+                  and result["remote"],
+                  (result["launched"].returncode,
+                   repr(result["launched"].stdout[-300:]),
+                   result["launched"].stderr[:300]))
+
+        # --- 18. a detached launch whose prepare step fails reports the
+        # failure and exits nonzero; only a seat that really exists gets the
+        # "already exists" line. A regular file where the box's agents
+        # directory belongs makes the prepare step's mkdir fail.
+        harness = LaunchHarness(root / "detached-prepare-fails")
+        (harness.home / "agents").write_text("not a directory\n",
+                                             encoding="utf-8")
+        result = harness.run(["seat-w", "--no-attach"])
+        check("detached, prepare fails: the remote side exits nonzero",
+              result["replay"].returncode != 0,
+              (result["replay"].returncode, result["replay"].stdout[:200]))
+        check("detached, prepare fails: no 'already exists' line, and the "
+              "failure is named on stderr",
+              "already exists" not in result["replay"].stdout
+              and "preparing or starting seat-w on the box failed"
+              in result["replay"].stderr,
+              (result["replay"].stdout[:200], result["replay"].stderr[:400]))
+        check("detached, prepare fails: no tmux session is started",
+              result["tmux_argv"] == "", result["tmux_argv"][:200])
+
+        harness = LaunchHarness(root / "detached-seat-exists")
+        harness.seat_exists_on_the_box()
+        result = harness.run(["seat-x", "--no-attach"])
+        check("detached onto a live seat: 'already exists', exit 0, and the "
+              "prepare step does not run",
+              result["replay"].returncode == 0
+              and "a tmux session named seat-x already exists"
+              in result["replay"].stdout
+              and not harness.prepare_ran() and result["tmux_argv"] == "",
+              (result["replay"].returncode, result["replay"].stdout[:200],
+               harness.prepare_ran()))
+
+        # --- 19. the launch-time worktree report and fast-forward fail on
+        # ned-box: each failure's own error and lines saying the launch goes
+        # on reach stderr, and the seat is still prepared and started.
+        harness = LaunchHarness(root / "boot-programs-fail")
+        harness.boot_programs_fail()
+        result = harness.run(["seat-f", "--no-attach"])
+        check("boot programs fail: the remote side exits 0, prepares the seat and starts tmux",
               result["replay"].returncode == 0 and harness.prepare_ran()
-              and elapsed < 15,
-              (result["replay"].returncode, f"{elapsed:.1f}s",
-               result["replay"].stderr[:300]))
+              and result["tmux_argv"] != "",
+              (result["replay"].returncode, result["replay"].stderr[:400]))
+        for program, step in (("clean-worktrees.py", "worktree report"),
+                              ("checkout-freshness-catch-up.py", "fast-forward")):
+            check(f"boot programs fail: {program}'s own error reaches stderr",
+                  f"stand-in failure of {program}" in result["replay"].stderr,
+                  result["replay"].stderr)
+            lines = result["replay"].stderr.splitlines()
+            first = [index for index, line in enumerate(lines)
+                     if line.startswith(f"launch-claude-ubuntu: the launch-time {step}")
+                     and "failed with exit 2" in line and "the launch goes on" in line]
+            check(f"boot programs fail: stderr says the {step} failed with exit 2, "
+                  "that the launch goes on, where its error is, and who acts",
+                  len(first) == 1
+                  and (lines + ["", ""])[first[0] + 1].startswith(f"launch-claude-ubuntu: any error the ")
+                  and "if none is there" in (lines + ["", ""])[first[0] + 1]
+                  and (lines + ["", "", ""])[first[0] + 2].startswith(f"launch-claude-ubuntu: if you are an agent that ran this launch, tell the user")
+                  and (lines + ["", "", ""])[first[0] + 3].startswith(f"launch-claude-ubuntu: if you are the user, run the command in the first of these lines")
+                  and "if it fails and prints nothing, ask an agent" in (lines + ["", "", ""])[first[0] + 3],
+                  result["replay"].stderr)
+        harness = LaunchHarness(root / "boot-programs-succeed")
+        result = harness.run(["seat-g", "--no-attach"])
+        check("boot programs succeed: no line says the launch goes on after a failure",
+              result["replay"].returncode == 0
+              and "the launch goes on" not in result["replay"].stderr,
+              (result["replay"].returncode, result["replay"].stderr[:300]))
 
     print()
     if failures:

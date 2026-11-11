@@ -3,7 +3,7 @@
 
 User-walked 2026-08-17 (git-infra rules walk, deployment-boundary item). The
 fleet already had the between-sessions half: handoff-supervisor.py's
-sync_working_branch_with_main fast-forwards a clean seat branch at launch,
+launch_time_git_sync fast-forwards a clean seat branch at launch,
 and its own docstring names the gap — "a long-lived session drifts
 arbitrarily far from main with nothing announcing it." This script is the
 announcing, and where safe the catching up, DURING a session:
@@ -17,19 +17,18 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
      is always safe — it is the MERGE that needs guarding).
   3. Runs the MISBEHAVIOUR detectors, every turn, before anything else: a
      merge commit from main on the working branch whose parents merge cleanly
-     both with git's rename detection and without it (ruled out 2026-09-14,
-     nedschorus#324; one whose parents CONFLICT either way is the hand-merge
-     the user allowed 2026-09-21 and is not reported), or a pushed
-     head whose history was rewritten (an amend or rebase after a push, ruled
-     out 2026-09-08). What they find is the ONLY thing the user hears from
-     this hook — "If the agents are doing the wrong thing, or not doing the
-     right thing, that's when I probably need to be told" (ruled 2026-09-15).
-     Routine drift is never reported to the user; the stamp carries the
-     numbers for the status line.
+     both with git's rename detection and without it (one whose parents
+     CONFLICT either way resolved a conflict, is no catch-up, and is not
+     reported), or a
+     pushed head whose history was rewritten (an amend or rebase after a
+     push). What they find is told to the AGENT, once per distinct finding,
+     with what to do about it. Routine drift is never reported to the user;
+     the stamp carries the numbers for the status line.
   4. If the branch is behind origin/main and has NEVER been pushed, REBASES
      it onto origin/main here, and tells the agent at its next turn what
-     moved and which files changed. Skips a dirty tree; aborts cleanly on a
-     conflict and names the files. This is not the merge #324 removed: that
+     moved and which files changed. Skips a dirty tree, and a tree holding an
+     ignored file that checking out origin/main would overwrite or delete,
+     naming those files; aborts cleanly on a conflict and names the files. This is not the merge #324 removed: that
      landed merge commits on FROZEN heads; this moves only heads nobody else
      has, creates no merge commit, and leaves the pushed-head rule untouched.
      Walked and ruled 2026-09-15 (docs/walk/keeping-branches-current-telling-
@@ -46,31 +45,58 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
      and to leave the branch alone and cut its next topic from origin/main.
   5b. If HEAD is detached and behind, and holds no commits of its own, no
      uncommitted tracked change and no operation in progress, fast-forwards
-     it to origin/main and tells the agent which files moved: an agent-seat's
-     own checkout sits detached while its work happens in other worktrees,
-     and CLAUDE.md, the skills and the hooks load from it. Otherwise it is
-     not moved, and the agent is told why and what to do, once per update of
-     main; a refusal git gives for anything but an untracked file is also a
-     user line, once per distinct error.
+     it to origin/main: an agent-seat's own checkout sits detached while its
+     work happens in other worktrees, and CLAUDE.md, the skills and the hooks
+     load from it. Otherwise it is not moved, and the agent is told why and
+     what to do, once per update of main; a refusal git gives for anything
+     but an untracked file is also a user line, once per distinct error.
+  5c. A move of a checkout with no commits of its own (a never-pushed branch
+     with 0 own commits that rebased, or a detached HEAD that moved) is told
+     only when main changed a standing instruction the agent may hold in its
+     context: a CLAUDE.md, whose changed lines the note carries; a skill's
+     SKILL.md, whose skill the agent is told to invoke again; or an
+     -instructions.md or -prompt.md file. Claude Code reloads skills' list,
+     hooks and subagent definitions by itself, and reads CLAUDE.md only at an
+     agent-session's start and after a compaction, so nothing else needs
+     telling. A diff git cannot produce is told as such, never read as
+     "nothing changed".
   6. The machine's reference checkout — the main worktree of the same
      repository, parked on main — gets a fast-forward-only pull on the same
      rhythm, under its own stamp. Never a real merge there: the reference
      copy carries no work of its own by construction, and 2026-08-17 it sat
      33 commits stale, running a superseded extractor under every supervisor
      on the machine. A reference that cannot update — someone left work
-     there — is a user line; a success is silent.
+     there — is a user line; a success is silent, unless git's output from
+     the fast-forward carries a FAILED line from the post-merge hook, which
+     git does not count as a failure.
 
-The agent's messages travel as the hook's `hookSpecificOutput.additionalContext`
-and the user's as `systemMessage`, in one JSON object. Plain stdout on exit 0
-reaches neither for a Stop hook — which is why, before 2026-09-15, every
-report this script made was read by nobody. Every note the agent receives
-ends by saying it is not for the user, because agents were repeating these
-notes to him (ruled 2026-09-18: "you don't need to tell me what other agents
-are doing").
+The user's lines travel as the Stop hook's `systemMessage`. The agent's notes
+are NOT emitted at Stop: a Stop hook's `additionalContext` makes Claude Code
+continue the conversation, so every note would cost the agent a turn spent
+answering it. They are queued in the stamp's `pending_agent_notes`, and the
+same script, registered as a UserPromptSubmit hook with
+--deliver-pending-agent-notes, hands them to the agent with its next prompt
+as `additionalContext` and clears the queue. A note about a move adds to the
+queue; every other note describes the checkout as it now is, so it replaces
+the previous one of its kind, and is dropped once what it describes is gone.
+A count of how far behind main the checkout is that git cannot make is told
+to the agent once per distinct error, and for the reference checkout to the
+user, once per distinct error. If the queue cannot be saved,
+the notes go out at Stop after all, with a line saying why, rather than
+being lost. Every note the agent receives ends by saying it is not for the
+user, because agents were repeating these notes to him.
 
-Everything here exits 0: a freshness fault must never block a turn from
-ending, and nothing here costs the agent a turn (the decision:block channel
-went with the merge, and no `decision` field is ever emitted).
+Both hook modes and --report exit 0: a freshness fault must never block a
+turn from ending, and no `decision` field is ever emitted. --reference-pull
+exits 1 whenever the reference checkout did not end at origin/main as a
+fetch that worked shows it: git failed, the fetch failed, local work blocked
+the fast-forward, or no checkout was found. It exits 0 when the checkout
+ended there, whether it moved or was already current. A launcher reads the
+exit code only to print a warning, and launches anyway. A git command that
+fails where the script needs its answer stops the run, and the failure is
+told: to the user at Stop, to the agent at --deliver-pending-agent-notes,
+and on stdout in the operator-facing modes. Only a hook run in a directory
+in no repository at all stays silent.
 Silence is meaningful — no output means nothing changed. The stamp
 (<git-dir>/checkout-freshness-stamp.json) is what the status line and boot
 reports display, so "0 behind" is only ever claimed off a real fetch, with
@@ -79,9 +105,13 @@ its age known.
 Modes (only the first speaks JSON; the operator-facing ones stay plain text,
 because launchers read them on a terminal):
   (default)             Stop-hook mode; reads the hook payload from stdin
-  --cwd PATH            hook mode without stdin (tests, ad-hoc runs)
+  --deliver-pending-agent-notes
+                        UserPromptSubmit-hook mode: hand the queued notes
+                        to the agent and clear the queue
+  --cwd PATH            either hook mode without stdin (tests, ad-hoc runs)
   --report              print the stamp's one-line summary, fetch if stale
-  --reference-pull      only the reference-checkout fast-forward
+  --reference-pull      only the reference-checkout fast-forward; exits 1
+                        unless the checkout ends at origin/main
   --repo PATH           the checkout --report/--reference-pull operate on
   --interval-seconds    how long a fetch stays fresh (default 300)
 """
@@ -93,7 +123,7 @@ import os
 import subprocess
 import sys
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
@@ -101,6 +131,28 @@ _git_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
+
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
+# Every Stop hook obeys this rule first: see the module's docstring.
+_stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
+    "claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
+_stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
+
+_rebase_or_replace_spec = importlib.util.spec_from_file_location(
+    "pull_request_conflict_with_main_rebase_or_replace_answer_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "pull-request-conflict-with-main-rebase-or-replace-answer-common.py")
+rebase_or_replace = importlib.util.module_from_spec(_rebase_or_replace_spec)
+_rebase_or_replace_spec.loader.exec_module(rebase_or_replace)
 
 STAMP_FILE_NAME = "checkout-freshness-stamp.json"
 
@@ -143,10 +195,9 @@ GIT_IN_PROGRESS_MARKERS = tuple(GIT_IN_PROGRESS_OPERATION_BY_MARKER)
 # itself, so REBASE_ADVICE is what the agent gets only when the hook could
 # not — a dirty tree, or a conflict it aborted. A pushed branch is never
 # moved by anyone but its author, and then only forward.
-# A pushed branch that conflicts with main is the one exception: no commit on
-# top can clear a conflict, so it is cleared by a hand-merge (CLAUDE.md, "How a
-# change reaches main"). Forbidding every merge here would send an agent with a
-# conflict away from the one move that clears it.
+# No commit on top can clear a conflict with main, so a pushed branch that
+# conflicts is sent to scripts/branch-conflict-check.py, whose report says
+# whether it is rebased or its pull request replaced.
 # The runner selects the suites a change can affect, so no agent picks them by hand.
 SELECTIVE_TEST_RUN_COMMAND = (
     "python3 scripts/run-all-test-suites.py "
@@ -168,11 +219,22 @@ REBASE_ADVICE = (
     "the user which files conflict: a conflict you cannot resolve changes the work "
     "you are doing with him, so the last line of this note does not forbid telling him."
 )
+# Told instead of REBASE_ADVICE when ignored files stopped the rebase, because
+# REBASE_ADVICE's `git rebase origin/main` would replace them.
+IGNORED_FILES_IN_THE_WAY_ADVICE = (
+    "`git rebase` overwrites or deletes an ignored file that is in the way of a file "
+    "origin/main tracks, and has no option to refuse, so the rebase was not started.\n"
+    "Move each file listed above out of this checkout, or copy what you need from it to "
+    "a path origin/main does not track; the next turn's end then rebases the branch.\n"
+    "Do not run `git rebase origin/main` yourself while those files are there: it would "
+    "overwrite or delete them."
+)
 LEAVE_IT_ADVICE = (
     "This branch is pushed, so its review may be running. Do not rebase or "
-    "amend it. A fix for this topic is a new commit on top, pushed once. If it "
-    "conflicts with main, clear the conflict with the hand-merge that "
-    "scripts/branch-conflict-check.py describes. "
+    "amend it. A fix for this topic is a new commit on top, pushed once. To learn "
+    "whether the branch conflicts with main, run python3 scripts/branch-conflict-check.py "
+    "in this checkout. If it prints `VERDICT: CONFLICT`, do what its report says. If it "
+    "exits 2, it has no answer: do what its lines say, then run it again. "
     "Start your next topic with `git checkout -b <name> origin/main`."
 )
 # A branch whose own commits are already on a remote branch, under another
@@ -185,8 +247,9 @@ PUSHED_HISTORY_ADVICE = (
     "This branch's commits are already on GitHub under another branch name, so the "
     "branch is treated as pushed and is not rebased: a pushed head may be under "
     "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
-    "fix is a new commit on top. If it conflicts with main, clear the conflict with "
-    "the hand-merge that scripts/branch-conflict-check.py describes."
+    "fix is a new commit on top. If the branch conflicts with main, as python3 "
+    "scripts/branch-conflict-check.py run in its checkout reports, do what that "
+    "report says."
 )
 # A detached HEAD with no work of its own is moved forward by this hook; these
 # are what the agent is told after a move (A) or when it could not be made (B).
@@ -211,9 +274,11 @@ DETACHED_OPERATION_IN_PROGRESS_LINE = (
     "checkout forward."
 )
 DETACHED_WORK_OF_ITS_OWN_LINE = (
-    "It holds work of its own: run `git switch -c <branch name>` to put that work on a "
-    "branch, and commit any uncommitted changes there; from then on the hook's rules for a "
-    "branch apply."
+    "It holds work of its own.\n"
+    "If this checkout is an agent-home, git refuses commits in it: carry that work to a "
+    "worktree of your own on an nc-topic-branch, as the refusal of `git commit` here says how.\n"
+    "Otherwise run `git switch -c <branch name>` to put that work on a branch, and commit any "
+    "uncommitted changes there; from then on the hook's rules for a branch apply."
 )
 DETACHED_FAST_FORWARD_REFUSED_LINES = (
     "Git refused the fast-forward: {error}\n"
@@ -225,13 +290,40 @@ DETACHED_FAST_FORWARD_REFUSED_LINES = (
 # Git's wording when a fast-forward would overwrite an untracked file: the one
 # refusal the agent can clear, so the one not sent to the user.
 GIT_UNTRACKED_FILE_WOULD_BE_OVERWRITTEN_TEXT = "untracked working tree files would be overwritten"
+# A git command failed where this script needed its answer: the run stops
+# there, having moved nothing past what it already reported. The next-step
+# lines depend on the reader and on when the hook runs again: the Stop
+# hook's message reaches only the user, the notes delivery's only the agent,
+# and the other modes' reader ran the command and can run it again.
+GIT_FAILED_CAUSE_LINE = "{prefix}: {what}, because a git command failed: {error}\n"
+GIT_FAILED_STOP_HOOK_USER_NEXT_STEP_LINES = (
+    "This check runs again at the end of the agent's next turn.\n"
+    "If that run also reports a git failure, whether this error or another, paste both "
+    "messages to the agent and ask it to find the cause: the agent does not see these messages."
+)
+GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES = (
+    "Nothing needs rerunning: this check runs again when the next prompt arrives.\n"
+    "If the same failure is reported again with the next prompt, tell the user what "
+    "{program} printed, git's error included."
+)
+GIT_FAILED_RERUN_NEXT_STEP_LINES = next_step_lines.git_failure_next_step_lines(
+    "{rerun}", text_the_failure_line_contains="because a git command failed")
+
+
+def git_failed_text(prefix: str, what: str, error, next_steps: str, rerun: str = None) -> str:
+    """The message for a GitCommandFailed: GIT_FAILED_CAUSE_LINE, then next_steps."""
+    return (GIT_FAILED_CAUSE_LINE + next_steps).format(
+        prefix=prefix, what=what, error=error, rerun=rerun, program=Path(__file__).name)
+
+
 UNKNOWN_ADVICE = ("Your head state could not be determined (a git command failed); nothing "
                   "was changed. Check `git status` before working.")
 AFTER_REBASE_ADVICE = f"Run `{SELECTIVE_TEST_RUN_COMMAND}`: your work now sits on newer code."
 
-# Appended to EVERY note the agent receives, by tell() itself, so no note can
-# forget it. Without it, agents relay these notes to the user, who does not
-# need to hear what other agents merged.
+# Appended by tell() itself to every note the agent receives except one that
+# tells the agent to tell the user, so no other note can forget it. Without
+# it, agents relay these notes to the user, who does not need to hear what
+# other agents merged.
 NOT_FOR_THE_USER_ADVICE = (
     "Do not report this to the user: he does not need to hear that main moved, or "
     "what other agents merged, unless it changes the work you are doing with him."
@@ -254,7 +346,8 @@ DRIFT_PATH_CATEGORIES = (
     ("skills you run under",
      lambda path: path.startswith(".claude/skills/")),
     ("hooks and wiring that run on your work",
-     lambda path: path.startswith(".claude/hooks/") or path == ".claude/settings.json"),
+     lambda path: path.startswith(".claude/guard-hooks/")
+     or path == ".claude/settings.json"),
     ("systems you build on, code and design of record",
      lambda path: path.startswith("nc-systems/")),
     ("scripts your tests run against",
@@ -270,38 +363,34 @@ DRIFT_PATH_CATEGORIES = (
 DRIFT_FILES_NAMED_PER_CATEGORY = 4
 
 
-def obsolete_files_by_category(checkout: Path):
-    """[(label, [path, ...]), ...] — the files main has moved that this
-    checkout has not, grouped by why they matter. Empty when there is nothing
-    to say or the comparison cannot be made.
+def changed_paths_against_main(checkout: Path, base: str = "HEAD"):
+    """(paths, error): the files main has changed since its merge base with
+    `base`, sorted, and None; or [] and git's error when the diff could not be
+    made. A failed diff is never an empty one: "nothing changed" would be a
+    claim the hook cannot make.
 
-    NAMED RATHER THAN ASSUMED. A fixed sentence such as "your tests, hooks,
-    skills and documents here are older than main" is false wherever one of
-    those kinds did not move, which is most gaps, and an agent that reads one
-    false clause learns to discount the whole line. So the files are measured
-    and only the kinds that moved are named.
-
-    Three dots, not two: `HEAD...origin/main` diffs from the MERGE BASE, so it
+    Three dots, not two: `base...origin/main` diffs from the MERGE BASE, so it
     answers "what did main change that I do not have". Two dots would compare
     the trees outright and report this branch's OWN work as though main had
-    changed it, claiming the branch's own new files as ones it was missing.
+    changed it.
 
     --no-renames, because rename detection is on by default and prints only a
     rename's DESTINATION. Without the flag, a file main renamed away from the
     path this branch still holds it at goes unlisted — the one file guaranteed
-    to conflict, since main has deleted that path. With it, a rename lists both
-    paths: the old one main deleted and the new one main added. The same fix,
-    for the same reason, is in obsolete-file-edit-warning-hook.py's
-    obsolete_path_set(), so both programs run the same diff.
+    to conflict, since main has deleted that path. The same fix is in
+    obsolete-file-edit-warning-hook.py's obsolete_path_set(), so both programs
+    run the same diff.
     """
-    listed = run_git(["diff", "-z", "--name-only", "--no-renames", "HEAD...origin/main"],
+    listed = run_git(["diff", "-z", "--name-only", "--no-renames", f"{base}...origin/main"],
                      checkout, timeout=30)
     if listed.returncode != 0:
-        return []
-    paths = sorted(git_output.nul_separated_fields(listed.stdout))
-    if not paths:
-        return []
+        detail = "; ".join(line.strip() for line in listed.stderr.splitlines() if line.strip())
+        return [], detail or f"git diff exited {listed.returncode}"
+    return sorted(git_output.nul_separated_fields(listed.stdout)), None
 
+
+def grouped_by_category(paths):
+    """[(label, [path, ...]), ...]: the paths grouped by why they matter."""
     grouped = {}
     for path in paths:
         for label, matches in DRIFT_PATH_CATEGORIES:
@@ -310,6 +399,22 @@ def obsolete_files_by_category(checkout: Path):
                 break
     return [(label, grouped[label]) for label, _ in DRIFT_PATH_CATEGORIES
             if label in grouped]
+
+
+def obsolete_files_by_category(checkout: Path):
+    """[(label, [path, ...]), ...] — the files main has moved that this
+    checkout has not, grouped by why they matter. Empty when there is nothing
+    to say or the comparison cannot be made; callers that must tell the two
+    apart use changed_paths_against_main().
+
+    NAMED RATHER THAN ASSUMED. A fixed sentence such as "your tests, hooks,
+    skills and documents here are older than main" is false wherever one of
+    those kinds did not move, which is most gaps, and an agent that reads one
+    false clause learns to discount the whole line. So the files are measured
+    and only the kinds that moved are named.
+    """
+    paths, _ = changed_paths_against_main(checkout)
+    return grouped_by_category(paths)
 
 
 def format_obsolete_files(groups) -> str:
@@ -325,21 +430,244 @@ def format_obsolete_files(groups) -> str:
     return "\n".join(lines)
 
 
-# Two queues, two audiences, flushed once at the end of the run so the
-# session's report and the reference checkout's read as one message.
+# Standing instructions an agent may hold in its context from earlier in the
+# agent-session, which Claude Code does not reload when the file changes. A
+# skill's text is reloaded only when the skill is invoked again; CLAUDE.md only
+# at the agent-session's start and after a compaction. Seat-briefs
+# (CLAUDE.local.md) are not tracked, so main never changes one.
+def is_claude_md(path: str) -> bool:
+    return path == "CLAUDE.md" or path.endswith("/CLAUDE.md")
+
+
+def skill_of(path: str):
+    """The skill's name for a .claude/skills/<name>/SKILL.md path, else None."""
+    parts = path.split("/")
+    if len(parts) == 4 and parts[:2] == [".claude", "skills"] and parts[3] == "SKILL.md":
+        return parts[2]
+    return None
+
+
+def is_instruction_file(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    return name.endswith("-instructions.md") or name.endswith("-prompt.md")
+
+
+def standing_instruction_paths(paths):
+    return [path for path in paths
+            if is_claude_md(path) or skill_of(path) or is_instruction_file(path)]
+
+
+# A CLAUDE.md diff longer than this is named by its changed lines instead of
+# shown, so that one note cannot crowd out the rest; and a delivery longer
+# than DELIVERY_CHARACTER_LIMIT is cut to the notes' short forms, because
+# Claude Code replaces additionalContext over 10,000 characters with a file
+# path and a 2,000-character preview, which an agent may not open.
+CLAUDE_MD_DIFF_CHARACTER_LIMIT = 6000
+DELIVERY_CHARACTER_LIMIT = 9000
+
+CLAUDE_MD_CHANGED_NOTE = (
+    "checkout-freshness: main changed {path}, which this agent-session read at its start. "
+    "Its changed lines follow, old lines marked - and new lines marked +; from now on, "
+    "follow the new lines.\n{diff}"
+)
+CLAUDE_MD_CHANGED_SHORT_NOTE = (
+    "checkout-freshness: main changed {path}, which this agent-session read at its start, "
+    "at {places}. Read {path} again before your next action."
+)
+CLAUDE_MD_CHANGE_UNREADABLE_NOTE = (
+    "checkout-freshness: main changed {path}, which this agent-session read at its start, "
+    "but git could not show the change ({error}). Read {path} again before your next action."
+)
+SKILL_CHANGED_NOTE = (
+    "checkout-freshness: main changed {path}. If you are following the {skill} skill, "
+    "invoke it again before its next step, so that its new text loads."
+)
+INSTRUCTION_FILE_CHANGED_NOTE = (
+    "checkout-freshness: main changed {path}, a file of standing instructions. If you are "
+    "following it, read it again before you next act on it."
+)
+STANDING_INSTRUCTION_DELETED_NOTE = (
+    "checkout-freshness: main deleted {path}. If you are following it, stop: it is no "
+    "longer on main."
+)
+SKILL_RELOAD_LINES = (
+    "If you are following a skill, invoke it again before its next step.\n"
+    "If that skill's .claude/skills/<name>/SKILL.md is no longer in this checkout, main "
+    "deleted the skill: stop following it."
+)
+MOVED_WITHOUT_LIST_NOTE = (
+    "checkout-freshness: this checkout was moved forward to origin/main, but git could not "
+    "list what main changed ({error}).\n"
+    "Read CLAUDE.md again before your next action.\n"
+    f"{SKILL_RELOAD_LINES}"
+)
+NOTES_DID_NOT_FIT_LINE = (
+    "checkout-freshness: {count} older note(s) did not fit and were left out.\n"
+    "Read CLAUDE.md again before your next action.\n"
+    f"{SKILL_RELOAD_LINES}"
+)
+NOTES_NOT_QUEUED_LINE = (
+    "checkout-freshness: these notes come now, not with your next prompt, because they "
+    "could not be saved to {path} ({error})."
+)
+NOTES_UNREADABLE_LINE = (
+    "checkout-freshness: notes queued for you could not be read from {path} ({error}).\n"
+    "Read CLAUDE.md again before your next action.\n"
+    f"{SKILL_RELOAD_LINES}"
+)
+COUNT_FAILED_NOTE = (
+    "checkout-freshness: git could not count how far {branch} is behind origin/main "
+    "({error}), so this checkout was not compared with main and may be older than main.\n"
+    "Run `git fetch origin` and then `git rev-list --count HEAD..origin/main` to see the "
+    "count, or git's message.\n"
+    "If git cannot make the count either, tell the user what git said: a checkout that "
+    "cannot be compared with main changes the work you are doing with him."
+)
+NOTES_NOT_CLEARED_LINE = (
+    "checkout-freshness: these notes could not be cleared from {path} ({error}), so they "
+    "may come again with your next prompt."
+)
+PENDING_AGENT_NOTES_KEY = "pending_agent_notes"
+
+# Kinds of note. A "moved" note tells what one move changed, so moves add up.
+# Every other kind describes the checkout as it now is, so the newest replaces
+# older ones of its kind: "blocked" (a move that could not be made) and
+# "pushed" (what a pushed branch lacks), both dropped once the checkout is
+# level with main, "blocked" also by a successful move; "merges-from-main" and
+# "rewritten-head", dropped once the branch no longer shows them; and
+# "count-failed", dropped once a count succeeds.
+NOTE_KIND_MOVED = "moved"
+NOTE_KIND_BLOCKED = "blocked"
+NOTE_KIND_PUSHED = "pushed"
+NOTE_KIND_MERGES_FROM_MAIN = "merges-from-main"
+NOTE_KIND_REWRITTEN_HEAD = "rewritten-head"
+NOTE_KIND_COUNT_FAILED = "count-failed"
+NOTE_KINDS_DROPPED_WHEN_LEVEL_WITH_MAIN = (NOTE_KIND_BLOCKED, NOTE_KIND_PUSHED)
+NOTE_KINDS_REPLACED_BY_NEWER = (NOTE_KIND_BLOCKED, NOTE_KIND_PUSHED,
+                                NOTE_KIND_MERGES_FROM_MAIN, NOTE_KIND_REWRITTEN_HEAD,
+                                NOTE_KIND_COUNT_FAILED)
+
+# Two queues, two audiences. The user's lines are shown at Stop; the agent's
+# notes are queued in the stamp for its next prompt.
 REPORT_LINES = []   # the user, on the display
-AGENT_LINES = []    # the agent, in its context
+AGENT_NOTES = []    # the agent, at its next prompt: {"kind", "text", "short"}
+NOTE_KINDS_DROPPED = set()
+STOP_AGENT_LINES = []   # notes that could not be queued, sent at Stop instead
 
 
+# Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 def report(line: str) -> None:
     """Queue one line for the USER's display."""
     REPORT_LINES.append(line)
 
 
-def tell(text: str) -> None:
-    """Queue text for the AGENT's context, ending with the line that says it
-    is not for the user — here, the one place every note passes through."""
-    AGENT_LINES.append(f"{text}\n{NOT_FOR_THE_USER_ADVICE}")
+def tell(text: str, kind: str = NOTE_KIND_MOVED, short: str = None,
+         for_the_user_too: bool = False) -> None:
+    """Queue a note for the AGENT, ending with the line that says it is not
+    for the user — here, the one place every note passes through — unless
+    `for_the_user_too`, for a note that tells the agent to tell the user.
+    `short` is the form used when the delivery would be too long."""
+    tail = "" if for_the_user_too else f"\n{NOT_FOR_THE_USER_ADVICE}"
+    note = {"kind": kind, "text": f"{text}{tail}"}
+    if short is not None:
+        note["short"] = f"{short}{tail}"
+    AGENT_NOTES.append(note)
+
+
+def drop_queued_notes_of_kinds(*kinds) -> None:
+    """Drop already-queued notes of these kinds when the notes are next saved."""
+    NOTE_KINDS_DROPPED.update(kinds)
+
+
+def merged_pending_notes(pending, new_notes, kinds_dropped):
+    """The queue after this run: older notes, minus dropped and replaced kinds,
+    then this run's notes."""
+    if not isinstance(pending, list):
+        pending = []
+    replaced = {note["kind"] for note in new_notes
+                if note["kind"] in NOTE_KINDS_REPLACED_BY_NEWER}
+    kept = [note for note in pending
+            if isinstance(note, dict) and isinstance(note.get("text"), str)
+            and note.get("kind") not in kinds_dropped and note.get("kind") not in replaced]
+    return kept + list(new_notes)
+
+
+def write_stamp_or_error(stamp_path: Path, stamp: dict):
+    """Write the stamp; return None, or the error when it could not be written."""
+    try:
+        stamp_path.write_text(json.dumps(stamp, indent=2) + "\n", encoding="utf-8")
+    except OSError as error:
+        return str(error)
+    return None
+
+
+def save_stamp_with_queued_notes(stamp_path: Path, stamp: dict) -> None:
+    """Write the stamp with this run's notes added to its queue.
+
+    The queue is re-read from disk just before the write, not taken from the
+    copy read at the run's start, so that a delivery made meanwhile is not
+    undone. If the stamp cannot be written, the notes go out at Stop after
+    all, with a line saying why: a note lost is worse than a turn spent.
+    """
+    on_disk = read_stamp(stamp_path).get(PENDING_AGENT_NOTES_KEY)
+    stamp[PENDING_AGENT_NOTES_KEY] = merged_pending_notes(on_disk, AGENT_NOTES,
+                                                          NOTE_KINDS_DROPPED)
+    if not stamp[PENDING_AGENT_NOTES_KEY]:
+        stamp.pop(PENDING_AGENT_NOTES_KEY)
+    error = write_stamp_or_error(stamp_path, stamp)
+    if error is not None and AGENT_NOTES:
+        STOP_AGENT_LINES.extend(note["text"] for note in AGENT_NOTES)
+        STOP_AGENT_LINES.append(NOTES_NOT_QUEUED_LINE.format(path=stamp_path, error=error))
+    AGENT_NOTES.clear()
+    NOTE_KINDS_DROPPED.clear()
+
+
+def delivery_text(notes) -> str:
+    """The queued notes as one text within DELIVERY_CHARACTER_LIMIT: in full if
+    they fit, else each note's short form, else the newest that fit."""
+    full = "\n\n".join(note["text"] for note in notes)
+    if len(full) <= DELIVERY_CHARACTER_LIMIT:
+        return full
+    shorts = [note.get("short") or note["text"] for note in notes]
+    if len("\n\n".join(shorts)) <= DELIVERY_CHARACTER_LIMIT:
+        return "\n\n".join(shorts)
+    kept = []
+    for text in reversed(shorts):
+        if len("\n\n".join([text, *kept])) > DELIVERY_CHARACTER_LIMIT - 300:
+            break
+        kept.insert(0, text)
+    left_out = len(shorts) - len(kept)
+    return "\n\n".join([NOTES_DID_NOT_FIT_LINE.format(count=left_out), *kept])
+
+
+def deliver_pending_agent_notes(checkout: Path):
+    """UserPromptSubmit mode: the queued notes as text for the agent, the queue
+    cleared; "" when nothing is queued."""
+    git_dir = git_directory(checkout)
+    if git_dir is None:
+        return ""
+    stamp_path = git_dir / STAMP_FILE_NAME
+    try:
+        raw = stamp_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+    except OSError as error:
+        return NOTES_UNREADABLE_LINE.format(path=stamp_path, error=error)
+    try:
+        stamp = json.loads(raw)
+    except ValueError as error:
+        return NOTES_UNREADABLE_LINE.format(path=stamp_path, error=error)
+    if not isinstance(stamp, dict):
+        return NOTES_UNREADABLE_LINE.format(path=stamp_path, error="not a JSON object")
+    notes = merged_pending_notes(stamp.get(PENDING_AGENT_NOTES_KEY), [], set())
+    if not notes:
+        return ""
+    text = delivery_text(notes)
+    stamp.pop(PENDING_AGENT_NOTES_KEY, None)
+    error = write_stamp_or_error(stamp_path, stamp)
+    if error is not None:
+        text += "\n\n" + NOTES_NOT_CLEARED_LINE.format(path=stamp_path, error=error)
+    return text
 
 
 def flush_report() -> None:
@@ -349,26 +677,24 @@ def flush_report() -> None:
 
 
 def flush_hook_output() -> None:
-    """The Stop hook's one JSON object: what the user sees, what the agent reads.
+    """The Stop hook's one JSON object: what the user sees, and, only when the
+    queue could not be saved, the agent's notes.
 
-    A Stop hook's plain stdout on exit 0 reaches neither — only
-    `UserPromptSubmit`, `SessionStart` and their kin get plain stdout added to
-    the agent's context, so plain stdout here would be read by nobody.
-    `systemMessage` is shown to the user;
-    `hookSpecificOutput.additionalContext` is added to the AGENT's context.
-
-    No `decision` field, ever: blocking costs the agent a turn, and this hook
-    only tells. Silence stays meaningful: nothing queued prints nothing at all.
+    A Stop hook's plain stdout on exit 0 reaches neither audience.
+    `systemMessage` is shown to the user; `hookSpecificOutput.additionalContext`
+    is added to the AGENT's context and continues the conversation, which is
+    why it is used here only as the fallback. No `decision` field, ever.
+    Silence stays meaningful: nothing queued prints nothing at all.
     """
-    if not REPORT_LINES and not AGENT_LINES:
+    if not REPORT_LINES and not STOP_AGENT_LINES:
         return
     payload = {}
     if REPORT_LINES:
         payload["systemMessage"] = "\n".join(REPORT_LINES)
-    if AGENT_LINES:
+    if STOP_AGENT_LINES:
         payload["hookSpecificOutput"] = {
             "hookEventName": "Stop",
-            "additionalContext": "\n".join(AGENT_LINES),
+            "additionalContext": "\n".join(STOP_AGENT_LINES),
         }
     # ensure_ascii=False: the display line carries em dashes, and a
     # \u2014 in a log is a line a human has to decode.
@@ -396,18 +722,51 @@ def run_git(arguments, working_directory: Path, timeout: int = 60):
                                            f"{type(error).__name__}: {error}")
 
 
-def checkout_root(directory: Path):
-    result = run_git(["rev-parse", "--show-toplevel"], directory, timeout=15)
-    if result.returncode != 0:
+def git_command_failed(arguments, directory: Path, result):
+    """The GitCommandFailed error for a run_git result git did not accept."""
+    returncode = None if result.returncode == GIT_DID_NOT_RUN else result.returncode
+    return git_output.GitCommandFailed(arguments, directory, returncode, result.stderr)
+
+
+def run_git_or_raise(arguments, directory: Path, timeout: int = 60, accepted_exit_codes=(0,)):
+    """run_git, raising GitCommandFailed for any exit code not accepted."""
+    result = run_git(arguments, directory, timeout=timeout)
+    if result.returncode not in accepted_exit_codes:
+        raise git_command_failed(arguments, directory, result)
+    return result
+
+
+def path_unless_outside_a_repository(arguments, directory: Path):
+    """The path git prints, or None when directory does not exist or is in no
+    git repository; GitCommandFailed for any other failure."""
+    if not directory.is_dir():
         return None
-    return Path(result.stdout.strip())
+    result = run_git(arguments, directory, timeout=15)
+    if result.returncode == 0:
+        return Path(result.stdout.strip())
+    if (result.returncode != GIT_DID_NOT_RUN
+            and git_output.git_stderr_says_outside_a_repository(result.stderr)):
+        return None
+    raise git_command_failed(arguments, directory, result)
+
+
+def checkout_root(directory: Path):
+    return path_unless_outside_a_repository(["rev-parse", "--show-toplevel"], directory)
 
 
 def git_directory(checkout: Path):
-    result = run_git(["rev-parse", "--absolute-git-dir"], checkout, timeout=15)
-    if result.returncode != 0:
+    return path_unless_outside_a_repository(["rev-parse", "--absolute-git-dir"], checkout)
+
+
+def current_branch(checkout: Path):
+    """The checked-out branch's name, "HEAD" when detached, None when HEAD is
+    unborn: a repository with no commit yet has no branch to compare."""
+    # --abbrev-ref exits 128 on an unborn HEAD, so that case is asked first.
+    if run_git_or_raise(["rev-parse", "--verify", "--quiet", "HEAD"], checkout, timeout=15,
+                        accepted_exit_codes=(0, 1)).returncode == 1:
         return None
-    return Path(result.stdout.strip())
+    return run_git_or_raise(["rev-parse", "--abbrev-ref", "HEAD"], checkout,
+                            timeout=15).stdout.strip()
 
 
 def read_stamp(stamp_path: Path) -> dict:
@@ -439,19 +798,32 @@ def fetch_if_stale(checkout: Path, stamp_path: Path, interval_seconds: int) -> d
     return stamp
 
 
+def failure(command, result):
+    """One line naming the git command that failed, its exit code and its stderr."""
+    detail = "; ".join(line.strip() for line in result.stderr.splitlines() if line.strip())
+    return f"git {command} exited {result.returncode}" + (f": {detail}" if detail else "")
+
+
 def counts_against_main(checkout: Path):
-    """(behind, ahead) of HEAD against origin/main, or None when unknowable."""
-    if run_git(["rev-parse", "--verify", "--quiet", "origin/main"], checkout,
-               timeout=15).returncode != 0:
-        return None
+    """((behind, ahead), None) of HEAD against origin/main, or (None, error)
+    when git could not make the count."""
+    main = run_git(["rev-parse", "--verify", "--quiet", "origin/main"], checkout, timeout=15)
+    if main.returncode != 0:
+        # --quiet makes a missing ref exit 1 with nothing on stderr; anything
+        # else is a failure whose reason the agent needs.
+        if main.returncode == 1 and not main.stderr.strip():
+            return None, "there is no origin/main"
+        return None, failure("rev-parse", main)
     behind = run_git(["rev-list", "--count", "HEAD..origin/main"], checkout, timeout=30)
     ahead = run_git(["rev-list", "--count", "origin/main..HEAD"], checkout, timeout=30)
-    if behind.returncode != 0 or ahead.returncode != 0:
-        return None
+    for counted in (behind, ahead):
+        if counted.returncode != 0:
+            return None, failure("rev-list", counted)
     try:
-        return int(behind.stdout.strip()), int(ahead.stdout.strip())
+        return (int(behind.stdout.strip()), int(ahead.stdout.strip())), None
     except ValueError:
-        return None
+        return None, (f"git rev-list printed {behind.stdout.strip()!r} and "
+                      f"{ahead.stdout.strip()!r}, not counts")
 
 
 def own_commit_count(checkout: Path):
@@ -485,7 +857,8 @@ def remote_branches_holding_own_commits(checkout: Path):
     Every remote-tracking ref counts, origin's and any other remote's, and so
     does a ref left behind by a branch deleted on GitHub: a commit that was
     ever pushed may be under review or in someone's hands, and leaving such a
-    branch unrebased costs only a hand-merge if it ever conflicts.
+    branch unrebased costs only what scripts/branch-conflict-check.py reports
+    if it ever conflicts.
     """
     own = run_git(["rev-list", "origin/main..HEAD"], checkout, timeout=30)
     if own.returncode != 0:
@@ -537,8 +910,11 @@ def head_state(checkout: Path, branch: str):
     as pushed, never rebased. A new key rather
     than "pushed", because "pushed" says HEAD equals origin/<branch>, which
     is false here, and the head state is what the agent and the stamp read.
-    A git failure in that check is "unknown", never "unpushed": "unpushed" is
-    the one answer that authorises a rebase."""
+    A git failure anywhere here is "unknown", never "unpushed", "detached" or
+    "diverged-from-remote": "unpushed" is the one answer that authorises a
+    rebase, and "diverged-from-remote" accuses the agent of rewriting a pushed
+    head. Only exit 1 from `rev-parse --verify --quiet` means "no such branch",
+    and only exit 1 from `merge-base --is-ancestor` means "not an ancestor"."""
     if branch in ("", "HEAD"):
         return "detached", "detached HEAD"
     remote = run_git(["rev-parse", "--verify", "--quiet", f"origin/{branch}"],
@@ -549,7 +925,9 @@ def head_state(checkout: Path, branch: str):
         # match counts_against_main, which treats the same failure class as
         # unknowable.
         return "unknown", "head state unknowable (git did not run)"
-    if remote.returncode != 0:
+    if remote.returncode not in (0, 1):
+        return "unknown", f"head state unknowable ({failure('rev-parse', remote)})"
+    if remote.returncode == 1:
         holders = remote_branches_holding_own_commits(checkout)
         if holders is None:
             return "unknown", ("head state unknowable (git could not check whether this "
@@ -562,29 +940,37 @@ def head_state(checkout: Path, branch: str):
         return "pushed-history", (f"no branch of this name on origin, but its commits are "
                                   f"already on {named} (pushed history: a fix is a new "
                                   f"commit on top, never a rebase)")
-    head = run_git(["rev-parse", "HEAD"], checkout, timeout=15).stdout.strip()
-    if remote.stdout.strip() == head:
+    head = run_git(["rev-parse", "HEAD"], checkout, timeout=15)
+    if head.returncode != 0:
+        return "unknown", f"head state unknowable ({failure('rev-parse', head)})"
+    if remote.stdout.strip() == head.stdout.strip():
         return "pushed", (f"head pushed and equal to origin/{branch} (frozen: a fix is a "
-                          "new commit on top, never an amend; a conflict with main is "
-                          "cleared by a hand-merge)")
+                          "new commit on top, never an amend; for a conflict with main, "
+                          "do what scripts/branch-conflict-check.py reports)")
     local = run_git(["rev-list", "--count", f"origin/{branch}..HEAD"], checkout, timeout=30)
-    count = local.stdout.strip() if local.returncode == 0 else "some"
+    if local.returncode != 0:
+        return "unknown", f"head state unknowable ({failure('rev-list', local)})"
+    count = local.stdout.strip()
     if count == "0":
         # HEAD is behind its own remote branch: the shape the fix-on-frozen-head
         # process leaves once the authoring seat fetches a fresh agent's fix
         # commit. The truth is that the remote is ahead.
         remote_only = run_git(["rev-list", "--count", f"HEAD..origin/{branch}"], checkout,
                               timeout=30)
-        remote_count = remote_only.stdout.strip() if remote_only.returncode == 0 else "some"
+        if remote_only.returncode != 0:
+            return "unknown", f"head state unknowable ({failure('rev-list', remote_only)})"
+        remote_count = remote_only.stdout.strip()
         return "behind-remote", (f"head behind origin/{branch} by {remote_count} commit(s) "
                                  f"pushed from elsewhere (a fix on the frozen head, most "
                                  f"likely); fast-forward to it before working here")
     ancestor = run_git(["merge-base", "--is-ancestor", f"origin/{branch}", "HEAD"],
                        checkout, timeout=15)
-    if ancestor.returncode != 0:
+    if ancestor.returncode not in (0, 1):
+        return "unknown", f"head state unknowable ({failure('merge-base', ancestor)})"
+    if ancestor.returncode == 1:
         # Neither side contains the other: the pushed history was rewritten —
         # an amend or a rebase after a push, which moves a frozen head under
-        # its reviewer (CLAUDE.md's frozen-head rule). Named to the user.
+        # its reviewer (CLAUDE.md's frozen-head rule). Told to the agent.
         return "diverged-from-remote", (f"head has diverged from origin/{branch}: the pushed "
                                         f"history was rewritten after the push")
     return "pushed-with-local-commits", (f"head pushed, with {count} local commit(s) not "
@@ -593,11 +979,10 @@ def head_state(checkout: Path, branch: str):
 
 def merge_blockers(checkout: Path, git_dir: Path):
     """Why the reference fast-forward must not run here right now; empty
-    list means safe."""
+    list means safe. Raises GitCommandFailed when git cannot read the branch."""
     blockers = []
-    branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], checkout,
-                     timeout=15).stdout.strip()
-    if branch in ("", "HEAD"):
+    branch = current_branch(checkout)
+    if branch == "HEAD":
         blockers.append("detached HEAD")
     if branch == "main":
         blockers.append("parked on main (reference checkouts fast-forward only)")
@@ -673,7 +1058,7 @@ def move_detached_checkout_forward(checkout: Path, git_dir: Path, ahead: int):
         lines.append(DETACHED_WORK_OF_ITS_OWN_LINE)
     if reasons:
         return "blocked", reasons, lines, ""
-    moved = run_git(["merge", "--ff-only", "origin/main"], checkout, timeout=120)
+    moved = run_git(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"], checkout, timeout=120)
     if moved.returncode == 0:
         return "moved", [], [], ""
     # Every line, not the first: git names the untracked file on a later line.
@@ -691,12 +1076,18 @@ def drift_facts(checkout: Path, stamp: dict, branch: str, state_key: str, state_
     turn — the misbehaviour detectors run whether or not the branch is behind —
     and computing them twice would be two chances to disagree.
     """
-    counts = counts_against_main(checkout)
+    counts, error = counts_against_main(checkout)
     if counts is None:
         # Unknowable is not "still whatever it was": a preserved stale count
         # would render as knowledge (silent-safety rule).
         stamp["behind"] = stamp["ahead"] = None
+        if stamp.get("last_count_error") != error:
+            tell(COUNT_FAILED_NOTE.format(branch=branch or "detached HEAD", error=error),
+                 kind=NOTE_KIND_COUNT_FAILED, for_the_user_too=True)
+        stamp["last_count_error"] = error
         return None, None
+    if stamp.pop("last_count_error", None) is not None:
+        drop_queued_notes_of_kinds(NOTE_KIND_COUNT_FAILED)
     behind, ahead = counts
     stamp["behind"], stamp["ahead"] = behind, ahead
     if behind == 0:
@@ -723,8 +1114,8 @@ def merge_parents_conflict(checkout: Path, first_parent: str, second_parent: str
     False when neither re-merge reports one, whether each was clean or errored.
 
     TWO RE-MERGES, BECAUSE EACH SEES CONFLICTS THE OTHER MERGES CLEANLY, and a
-    hand-merge of either kind is one the author had no choice about. The two
-    paragraphs below say which hand-merge each re-merge exists to recognise.
+    merge that resolved a conflict of either kind is no catch-up. The two
+    paragraphs below say which conflict each re-merge exists to recognise.
 
     -X NO-RENAMES IS LOAD-BEARING, not tidiness. When main renames a file out
     of a directory while the branch holds edits to the old path, git's default
@@ -740,11 +1131,10 @@ def merge_parents_conflict(checkout: Path, first_parent: str, second_parent: str
     CONFLICT (file location), and -X no-renames merges it cleanly. Those are
     conflicts the author really faced, because scripts/branch-conflict-check.py
     asks git with detection on, and so do `git merge` and the pre-push hook that
-    runs that check: the check prints VERDICT: CONFLICT, CLAUDE.md sends the
-    author to the hand-merge, and git's own merge stops until it is resolved by
-    hand. With the no-renames re-merge alone this function would return False
-    for that hand-merge, and the user would be told the branch had made a
-    banned catch-up merge. merges_from_main's docstring says why asking both
+    runs that check: the check prints VERDICT: CONFLICT, and git's own merge
+    stops until it is resolved by hand. With the no-renames re-merge alone this
+    function would return False for a merge that resolved such a conflict, and
+    the agent would be told the branch had made a banned catch-up merge. merges_from_main's docstring says why asking both
     ways loses nothing.
 
     EXIT 1 IS NOT ENOUGH ON ITS OWN, for either re-merge. merge-tree exits 1 for
@@ -763,7 +1153,7 @@ def merge_parents_conflict(checkout: Path, first_parent: str, second_parent: str
     is skipped only when that one positively shows a conflict, and is reported
     when that one is clean or errors as well. With both erroring this detector
     degrades to exactly what it did before this exception existed — it reports
-    every merge from main. A false report is visible to the user and corrects
+    every merge from main. A false report is visible to the agent and corrects
     itself in one exchange; a misbehaviour that is skipped is invisible for
     good. Nothing here can block a turn either way: the caller only shortens a
     list.
@@ -784,22 +1174,24 @@ def merges_from_main(checkout: Path):
     """Short SHAs of merge commits on this branch whose second parent lies on
     origin/main AND whose two parents merge cleanly, with rename detection and
     without it — the catch-up merge CLAUDE.md bans, because such merges moved
-    frozen heads under running reviews.
+    frozen heads under running reviews. None when git could not list the
+    branch's merges. Raises GitCommandFailed when git cannot read a merge's
+    second parent or cannot say whether that parent is on origin/main.
 
-    A merge of another topic branch is not the banned thing, so the second
+    A merge of another nc-topic-branch is not the banned thing, so the second
     parent is tested for being on main rather than every merge being flagged.
     A branch that carries older catch-up merges is flagged once, which is
-    correct: those merges are real and the user has not been told of them.
+    correct: those merges are real and the agent has not been told of them.
 
-    WHY A CLEAN RE-MERGE IS THE TEST. CLAUDE.md allows one exception: a branch
-    that genuinely CONFLICTS with main merges origin/main in by hand, once,
-    resolves only the conflict, reruns its tests and announces the new head.
-    That hand-merge has the same shape as the banned one — a merge commit whose
-    second parent is on main — so shape alone would report every author who
-    obeys the rule. Re-merging the parents tells the two apart: parents that
-    CONFLICT mean the author had no choice, so the merge is skipped; parents
-    that merge cleanly mean the merge was unnecessary, which is the banned
-    catch-up, and it is still reported. Over main's own history, the merges
+    WHY A CLEAN RE-MERGE IS THE TEST. A merge that resolved a real conflict
+    with main has the same shape as the banned catch-up — a merge commit whose
+    second parent is on main — but this detector reports catch-ups only; a
+    conflict with main is answered by the rebase or the replacement pull
+    request scripts/branch-conflict-check.py reports, never by this detector.
+    Re-merging the parents tells the two apart: parents that CONFLICT mean the
+    merge resolved a conflict, so it is skipped; parents that merge cleanly
+    mean the merge was unnecessary, which is the banned catch-up, and it is
+    still reported. Over main's own history, the merges
     this skips are, almost to a merge, ones whose commit messages say they
     resolved a conflict and whose recorded trees differ from the clean
     automatic merge of their parents.
@@ -815,24 +1207,23 @@ def merges_from_main(checkout: Path):
     asking both ways loses no misbehaviour. merge_parents_conflict therefore
     re-merges both ways and the merge is skipped when either conflicts.
 
-    WHAT ASKING BOTH WAYS GIVES UP. CLAUDE.md's conflict rule has two branches:
-    a conflict with work main deleted or replaced closes the pull request, and
-    any other conflict is cleared by a hand-merge. This detector does not tell
-    the two apart: a merge made over a modify/delete conflict is skipped, and
-    so is one made over a branch that RENAMED a file main deleted, which
-    conflicts only with rename detection.
+    WHAT ASKING BOTH WAYS GIVES UP. A merge made over a modify/delete conflict
+    is skipped, and so is one made over a branch that RENAMED a file main
+    deleted, which conflicts only with rename detection.
     """
     merges = run_git(["rev-list", "--merges", "origin/main..HEAD"], checkout, timeout=30)
     if merges.returncode != 0:
-        return []
+        return None
     flagged = []
     for sha in merges.stdout.split():
-        second = run_git(["rev-parse", "--verify", "--quiet", f"{sha}^2"], checkout, timeout=15)
-        if second.returncode != 0:
+        second = run_git_or_raise(["rev-parse", "--verify", "--quiet", f"{sha}^2"], checkout,
+                                  timeout=15, accepted_exit_codes=(0, 1))
+        if second.returncode == 1:
             continue
-        on_main = run_git(["merge-base", "--is-ancestor", second.stdout.strip(), "origin/main"],
-                          checkout, timeout=15)
-        if on_main.returncode != 0:
+        on_main = run_git_or_raise(["merge-base", "--is-ancestor", second.stdout.strip(),
+                                    "origin/main"], checkout, timeout=15,
+                                   accepted_exit_codes=(0, 1))
+        if on_main.returncode == 1:
             continue
         first = run_git(["rev-parse", "--verify", "--quiet", f"{sha}^1"], checkout, timeout=15)
         # A first parent that does not resolve cannot be re-merged, so the merge
@@ -844,10 +1235,50 @@ def merges_from_main(checkout: Path):
     return flagged
 
 
+def ignored_files_a_rebase_onto_main_would_replace(checkout: Path):
+    """The ignored files in the checkout that checking out origin/main would
+    replace, sorted. Raises GitCommandFailed when git cannot list them.
+
+    Three placements are replaced: the path origin/main tracks; a file inside
+    a directory where origin/main tracks a file; and a file where origin/main
+    tracks files under a directory of that name. git lists an ignored nested
+    repository as its directory with a trailing slash, so that directory is
+    checked like a file of that name. A path HEAD tracks is in the index, so it
+    never appears among the ignored files.
+    """
+    main_paths = set(git_output.nul_separated_fields(run_git_or_raise(
+        ["ls-tree", "-r", "-z", "--name-only", "origin/main"], checkout, timeout=30).stdout))
+    main_directories = {parent for path in main_paths
+                        for parent in map(str, PurePosixPath(path).parents)} - {"."}
+    ignored = git_output.nul_separated_fields(run_git_or_raise(
+        ["ls-files", "-z", "--others", "--ignored", "--exclude-standard"], checkout,
+        timeout=30).stdout)
+    return sorted(path for path in ignored
+                  if path.rstrip("/") in main_paths or path.rstrip("/") in main_directories
+                  or any(str(parent) in main_paths
+                         for parent in PurePosixPath(path).parents))
+
+
+IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT = 1500
+
+
+def shortened_file_list(file_list: str) -> str:
+    """A comma-separated file list cut to about
+    IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT characters, ending with where to
+    see the rest."""
+    if len(file_list) <= IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT:
+        return file_list
+    kept = file_list[:IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT].rsplit(", ", 1)[0]
+    return f"{kept}, and more; run `git status --ignored --untracked-files=all` to see them all"
+
+
 def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
     """Move a never-pushed branch onto origin/main, or say why not.
 
-    Returns (outcome, detail): "rebased"; "skipped" with the blockers; "conflict"
+    Returns (outcome, detail): "rebased"; "ignored-files-in-the-way" with the
+    ignored files the rebase would replace, whatever else blocks it, git having
+    been asked nothing that moves the tree; "skipped" with the blockers;
+    "conflict"
     with the conflicting paths, the tree put back exactly as it was; or
     "abort-failed", the one outcome that is a fault — the tree was left
     mid-rebase — and is reported to the user.
@@ -865,6 +1296,12 @@ def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
     because the Stop hook has a budget of its own and a rebase of a few commits
     is sub-second; a rebase that takes longer is one to abort, not wait on.
     """
+    # Ignored files are checked before the other blockers: a "skipped" note
+    # carries REBASE_ADVICE, which tells the agent to rebase by hand, and that
+    # rebase would overwrite them.
+    in_the_way = ignored_files_a_rebase_onto_main_would_replace(checkout)
+    if in_the_way:
+        return "ignored-files-in-the-way", ", ".join(in_the_way)
     blockers, _ = merge_blockers(checkout, git_dir)
     if blockers:
         return "skipped", "; ".join(blockers)
@@ -895,6 +1332,72 @@ def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
     return "conflict", ", ".join(conflicting) or (rebased.stderr.strip() or "no detail")
 
 
+def changed_line_places(diff_text: str) -> str:
+    """Where a -U0 diff changed the new file, from its hunk headers:
+    "lines 12-18, line 30, after line 40"."""
+    places = []
+    for line in diff_text.splitlines():
+        if not line.startswith("@@ "):
+            continue
+        try:
+            new_range = line.split(" ")[2]
+            start_text, _, count_text = new_range[1:].partition(",")
+            start, count = int(start_text), int(count_text or "1")
+        except (IndexError, ValueError):
+            continue
+        if count == 0:
+            places.append(f"after line {start}")
+        elif count == 1:
+            places.append(f"line {start}")
+        else:
+            places.append(f"lines {start}-{start + count - 1}")
+    return ", ".join(places) or "lines git did not number"
+
+
+def claude_md_change_note(checkout: Path, old_head: str, path: str):
+    """(text, short) for a changed CLAUDE.md: the changed lines themselves, or,
+    when they are too long, where they are; git's error when the diff fails."""
+    shown = run_git(["diff", "--no-color", "--no-ext-diff", "-U0", f"{old_head}...origin/main",
+                     "--", path], checkout, timeout=30)
+    if shown.returncode != 0:
+        detail = ("; ".join(line.strip() for line in shown.stderr.splitlines() if line.strip())
+                  or f"git diff exited {shown.returncode}")
+        text = CLAUDE_MD_CHANGE_UNREADABLE_NOTE.format(path=path, error=detail)
+        return text, text
+    body = [line for line in shown.stdout.splitlines()
+            if line[:1] in "+-@" and not line.startswith(("+++", "---"))]
+    diff = "\n".join(body)
+    short = CLAUDE_MD_CHANGED_SHORT_NOTE.format(path=path, places=changed_line_places(diff))
+    if len(diff) > CLAUDE_MD_DIFF_CHARACTER_LIMIT:
+        return short, short
+    return CLAUDE_MD_CHANGED_NOTE.format(path=path, diff=diff), short
+
+
+def tell_standing_instructions_moved(checkout: Path, old_head: str, paths, diff_error) -> None:
+    """After a checkout with no commits of its own was moved forward: one note
+    naming each standing instruction main changed, or nothing when main changed
+    none; and, when git could not list the changes, a note saying so."""
+    if diff_error is not None:
+        tell(MOVED_WITHOUT_LIST_NOTE.format(error=diff_error))
+        return
+    texts, shorts = [], []
+    for path in standing_instruction_paths(paths):
+        # The checkout is at origin/main now, so a listed path it lacks is one
+        # main deleted; --name-only does not say which paths those are.
+        if not (checkout / path).exists():
+            text = short = STANDING_INSTRUCTION_DELETED_NOTE.format(path=path)
+        elif is_claude_md(path):
+            text, short = claude_md_change_note(checkout, old_head, path)
+        elif skill_of(path):
+            text = short = SKILL_CHANGED_NOTE.format(path=path, skill=skill_of(path))
+        else:
+            text = short = INSTRUCTION_FILE_CHANGED_NOTE.format(path=path)
+        texts.append(text)
+        shorts.append(short)
+    if texts:
+        tell("\n".join(texts), short="\n".join(shorts))
+
+
 def fetch_failure_note(stamp: dict, what_may_be_stale: str = "this list") -> str:
     """One line when the numbers rest on a fetch that failed, or "".
     A stale list must say it is stale. The reference checkout's path passes
@@ -912,8 +1415,7 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
       1. Misbehaviour detectors run EVERY turn, before and independent of the
          drift path — a branch that merged main into itself is 0 behind, which
          is exactly where a drift-first design would return early. What they
-         find goes to the USER, and it is the only thing the user hears: agents
-         doing the wrong thing, or not doing the right thing. Routine drift is
+         find is told to the AGENT, with what to do about it. Routine drift is
          not reported to the user at all.
       2. Drift is counted. If none, every "already said" key is cleared.
       3. A never-pushed branch is REBASED onto origin/main here, and the agent
@@ -927,28 +1429,50 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
         return
     stamp_path = git_dir / STAMP_FILE_NAME
     stamp = fetch_if_stale(checkout, stamp_path, interval_seconds)
-    branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], checkout, timeout=15).stdout.strip()
+    branch = current_branch(checkout)
+    if branch is None:
+        return
     state_key, state_text = head_state(checkout, branch)
 
-    # 1. Misbehaviour, to the user, once per distinct finding.
+    # 1. Misbehaviour, to the agent, once per distinct finding of each
+    # detector: a change in one detector's finding does not tell the other's
+    # again. A check git could not make is not an answer: the last finding
+    # stands, so its queued note is neither dropped nor told again.
     found = {}
+    last_found = stamp.get("last_misbehaviour")
+    last_found = last_found if isinstance(last_found, dict) else {}
     merged = merges_from_main(checkout)
     if merged:
         found["merges_from_main"] = merged
+    elif merged is None and "merges_from_main" in last_found:
+        found["merges_from_main"] = last_found["merges_from_main"]
     if state_key == "diverged-from-remote":
         head = run_git(["rev-parse", "HEAD"], checkout, timeout=15).stdout.strip()[:12]
         remote = run_git(["rev-parse", f"origin/{branch}"], checkout, timeout=15).stdout.strip()[:12]
         found["rewritten_head"] = [head, remote]
-    if found and stamp.get("last_misbehaviour") != found:
-        if "merges_from_main" in found:
-            report(f"catch-up: {branch} carries {len(merged)} merge commit(s) from main "
-                   f"({', '.join(merged)}); merging main into a working branch was ruled "
-                   f"out 2026-09-14 (nedschorus#324)")
-        if "rewritten_head" in found:
-            head, remote = found["rewritten_head"]
-            report(f"catch-up: {branch} rewrote its pushed head — origin/{branch} ({remote}) "
-                   f"is no longer an ancestor of HEAD ({head}); an amend or rebase after a "
-                   f"push moves a frozen head under its reviewer (ruled 2026-09-08)")
+    elif state_key == "unknown" and "rewritten_head" in last_found:
+        found["rewritten_head"] = last_found["rewritten_head"]
+    if "merges_from_main" not in found:
+        drop_queued_notes_of_kinds(NOTE_KIND_MERGES_FROM_MAIN)
+    if "rewritten_head" not in found:
+        drop_queued_notes_of_kinds(NOTE_KIND_REWRITTEN_HEAD)
+    if "merges_from_main" in found and found["merges_from_main"] != last_found.get(
+            "merges_from_main"):
+        merged = found["merges_from_main"]
+        tell(f"checkout-freshness: {branch} carries {len(merged)} merge commit(s) from "
+             f"main ({', '.join(merged)}). This project brings a branch up to date by "
+             f"rebasing it onto main, not by merging main into it. If the branch was "
+             f"never pushed, rebase it onto origin/main. If it was pushed, leave its "
+             f"history and tell the agent-seat merge-lane-2, with SendMessage, which "
+             f"merge commits it carries.", kind=NOTE_KIND_MERGES_FROM_MAIN)
+    if "rewritten_head" in found and found["rewritten_head"] != last_found.get(
+            "rewritten_head"):
+        head, remote = found["rewritten_head"]
+        tell(f"checkout-freshness: {branch}'s HEAD ({head}) no longer contains its pushed "
+             f"head origin/{branch} ({remote}): an amend or a rebase rewrote pushed "
+             f"commits, which moves the code under its reviewer. Do not push this HEAD. "
+             f"Put your change back as one commit on top of origin/{branch}, then push.",
+             kind=NOTE_KIND_REWRITTEN_HEAD)
     if found:
         stamp["last_misbehaviour"] = found
     else:
@@ -958,7 +1482,11 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     facts, parts = drift_facts(checkout, stamp, branch, state_key, state_text)
     if facts is None:
         stamp.pop("last_told", None)
-        write_stamp(stamp_path, stamp)
+        # Only a count of 0 behind shows the checkout caught up; a count git
+        # could not make leaves the queued notes as they are.
+        if stamp.get("behind") == 0:
+            drop_queued_notes_of_kinds(*NOTE_KINDS_DROPPED_WHEN_LEVEL_WITH_MAIN)
+        save_stamp_with_queued_notes(stamp_path, stamp)
         return
     told = {"branch": parts["branch"], "main_tip": facts["main_tip"],
             "pushed": state_key != "unpushed"}
@@ -966,29 +1494,46 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     heading = (f"checkout-freshness: {parts['branch']} is {parts['behind']} behind "
                f"origin/main ({parts['own_text']}; {parts['state_text']}).")
     # Computed BEFORE any rebase: afterwards it is empty, and it is the list of
-    # what moved under the agent.
-    listing = format_obsolete_files(obsolete_files_by_category(checkout))
+    # what moved under the agent. old_head names the pre-move commit, so the
+    # diff can still be shown after the move.
+    old_head = run_git(["rev-parse", "HEAD"], checkout, timeout=15).stdout.strip() or "HEAD"
+    changed_paths, diff_error = changed_paths_against_main(checkout)
+    listing = format_obsolete_files(grouped_by_category(changed_paths))
     # The heading must be true of every path the diff lists: changed, added,
     # and deleted. "Older here than on main" would be false of a file main
     # ADDED, since this checkout has no copy at all.
-    changed_on_main_clause = (f"\nChanged on main since your merge base:\n{listing}"
-                              if listing else "")
+    if diff_error is not None:
+        changed_on_main_clause = (f"\nGit could not list the files main changed since your "
+                                  f"merge base: {diff_error}")
+    else:
+        changed_on_main_clause = (f"\nChanged on main since your merge base:\n{listing}"
+                                  if listing else "")
+    # A move of a checkout with no commits of its own is told only for the
+    # standing instructions it changed; an unknown count is not zero.
+    nothing_of_its_own = facts["own"] == 0
     note = fetch_failure_note(stamp)
 
     # 3a. Never pushed: this hook moves the branch. A success is ALWAYS told —
     # files just changed under the agent, and that is never deduplicated. A
     # skip or a conflict is told once per key, but ATTEMPTED every turn end,
     # so the moment the tree is clean it goes.
-    if state_key == "unpushed":
+    # A never-pushed branch has no pull request on origin.
+    if state_key == "unpushed" and (
+            rebase_or_replace.pull_request_conflict_with_main_rebase_or_replace_answer(False)
+            == rebase_or_replace.REBASE_ONTO_MAIN):
         outcome, detail = rebase_never_pushed_branch(checkout, git_dir)
         if outcome == "rebased":
             stamp["behind"], stamp["ahead"] = 0, stamp.get("own")
             stamp["last_action"] = f"rebased {parts['behind']} under a never-pushed head"
             stamp.pop("last_told", None)
-            tell(f"checkout-freshness: {parts['branch']} was rebased onto origin/main "
-                 f"({parts['behind']} commit(s) moved under your {parts['own_text']}; "
-                 f"never pushed, so nothing was under review).{changed_on_main_clause}\n"
-                 f"{AFTER_REBASE_ADVICE}")
+            drop_queued_notes_of_kinds(NOTE_KIND_BLOCKED)
+            if nothing_of_its_own:
+                tell_standing_instructions_moved(checkout, old_head, changed_paths, diff_error)
+            else:
+                tell(f"checkout-freshness: {parts['branch']} was rebased onto origin/main "
+                     f"({parts['behind']} commit(s) moved under your {parts['own_text']}; "
+                     f"never pushed, so nothing was under review).{changed_on_main_clause}\n"
+                     f"{AFTER_REBASE_ADVICE}")
         elif outcome == "abort-failed":
             # No repeat key needed: this fires at most once per real
             # occurrence, and NOT because merge_blockers sees the rebase
@@ -1013,17 +1558,32 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
                  f"aborted cleanly ({detail}). Inspect `git status` before doing anything else.")
         else:
             stamp["last_action"] = f"rebase {outcome}: {detail}"
-            if not already_told:
-                stamp["last_told"] = told
+            # The outcome is part of the key: a note told for a dirty tree must
+            # not silence the different advice for ignored files in the way.
+            told_with_outcome = {**told, "outcome": outcome}
+            if stamp.get("last_told") != told_with_outcome:
+                stamp["last_told"] = told_with_outcome
+                advice = REBASE_ADVICE
+                short = None
                 if outcome == "skipped":
                     reason = f"Not updated: {detail}."
+                elif outcome == "ignored-files-in-the-way":
+                    reason = (f"Not updated: a rebase onto origin/main would overwrite or "
+                              f"delete these ignored files, which are in the way of files "
+                              f"origin/main tracks: {detail}.")
+                    advice = IGNORED_FILES_IN_THE_WAY_ADVICE
+                    short = (f"{heading} Not updated: a rebase onto origin/main would "
+                             f"overwrite or delete these ignored files, which are in the way "
+                             f"of files origin/main tracks: "
+                             f"{shortened_file_list(detail)}.{note}\n{advice}")
                 elif outcome == "refused":
                     reason = f"Not updated: git refused — {detail}."
                 else:
                     reason = (f"A rebase onto origin/main was tried and put back: it "
                               f"conflicts on {detail}.")
-                tell(f"{heading} {reason}{changed_on_main_clause}{note}\n{REBASE_ADVICE}")
-        write_stamp(stamp_path, stamp)
+                tell(f"{heading} {reason}{changed_on_main_clause}{note}\n{advice}",
+                     kind=NOTE_KIND_BLOCKED, short=short)
+        save_stamp_with_queued_notes(stamp_path, stamp)
         return
 
     # 3b. Detached: moved forward when it holds nothing of its own. A move is
@@ -1037,8 +1597,12 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
             stamp["last_action"] = f"moved a detached HEAD forward {parts['behind']}"
             stamp.pop("last_told", None)
             stamp.pop("last_detached_refusal", None)
-            tell(f"{heading}{changed_on_main_clause}\n{DETACHED_MOVED_ADVICE}")
-            write_stamp(stamp_path, stamp)
+            drop_queued_notes_of_kinds(NOTE_KIND_BLOCKED)
+            if nothing_of_its_own:
+                tell_standing_instructions_moved(checkout, old_head, changed_paths, diff_error)
+            else:
+                tell(f"{heading}{changed_on_main_clause}\n{DETACHED_MOVED_ADVICE}")
+            save_stamp_with_queued_notes(stamp_path, stamp)
             return
         if outcome == "refused":
             stamp["last_action"] = f"detached fast-forward refused: {error}"
@@ -1053,8 +1617,9 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
         if not already_told:
             stamp["last_told"] = told
             advice = DETACHED_NOT_MOVED_ADVICE.format(reason="; ".join(reasons))
-            tell(f"{heading}{changed_on_main_clause}{note}\n{advice}\n" + "\n".join(lines))
-        write_stamp(stamp_path, stamp)
+            tell(f"{heading}{changed_on_main_clause}{note}\n{advice}\n" + "\n".join(lines),
+                 kind=NOTE_KIND_BLOCKED)
+        save_stamp_with_queued_notes(stamp_path, stamp)
         return
 
     # 3c. Pushed: never moved. Told once per update of main.
@@ -1063,22 +1628,27 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
         stamp["last_told"] = told
         advice = {"unknown": UNKNOWN_ADVICE,
                   "pushed-history": PUSHED_HISTORY_ADVICE}.get(state_key, LEAVE_IT_ADVICE)
-        tell(f"{heading}{changed_on_main_clause}{note}\n{advice}")
-    write_stamp(stamp_path, stamp)
+        tell(f"{heading}{changed_on_main_clause}{note}\n{advice}", kind=NOTE_KIND_PUSHED)
+    save_stamp_with_queued_notes(stamp_path, stamp)
 
 
 def reference_checkout_of(checkout: Path):
-    """The main worktree of the same repository — the machine's reference copy."""
-    listing = run_git(["worktree", "list", "--porcelain", "-z"], checkout, timeout=15)
-    if listing.returncode != 0:
-        return None
+    """The main worktree of the same repository — the machine's reference copy.
+    Raises GitCommandFailed when git cannot list the worktrees."""
+    listing = run_git_or_raise(["worktree", "list", "--porcelain", "-z"], checkout, timeout=15)
     records = git_output.worktree_records(listing.stdout)
     return Path(records[0].path) if records else None
 
 
 def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
-                                    operator_facing: bool = True) -> None:
+                                    operator_facing: bool = True) -> bool:
     """ff-only pull of a checkout parked on main; never a real merge.
+
+    Returns True when the checkout ends 0 behind origin/main and the fetch
+    behind that count worked, whether it moved or was already there; False
+    otherwise, a fast-forward to an origin/main whose fetch failed included,
+    since the real main may be further on. --reference-pull exits on this
+    value; the hook callers ignore it.
 
     Safe by construction only when the reference carries nothing of its own:
     any local commit, any tracked change, any in-progress operation, and it
@@ -1110,7 +1680,10 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
     """
     git_dir = git_directory(reference)
     if git_dir is None:
-        return
+        if operator_facing:
+            report(f"catch-up: reference checkout {reference} is not a git checkout, so it "
+                   f"was not brought to origin/main")
+        return False
     stamp_path = git_dir / STAMP_FILE_NAME
     stamp = fetch_if_stale(reference, stamp_path, interval_seconds)
     fetch_note = fetch_failure_note(stamp, "this count")
@@ -1122,18 +1695,37 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
             report(line)
         stamp["last_reference_blockers"] = reasons
 
-    counts = counts_against_main(reference)
+    counts, error = counts_against_main(reference)
     if counts is None:
         # Unknowable is not "still whatever it was" — same silent-safety rule
         # the seat's own path applies. Leaving the previous numbers in place
         # renders a stale count as knowledge.
         stamp["behind"] = stamp["ahead"] = None
+        stamp["last_action"] = f"reference count failed: {error}"
+        report_reason([f"count failed: {error}"],
+                      f"catch-up: reference checkout {reference} was not compared with "
+                      f"origin/main, because git could not count how far behind it is: "
+                      f"{error}{fetch_note}")
         write_stamp(stamp_path, stamp)
-        return
+        return False
     behind, ahead = counts
     stamp["behind"], stamp["ahead"] = behind, ahead
 
     if behind == 0:
+        branch = current_branch(reference)
+        stamp["branch"] = branch
+        not_at_main = []
+        if branch != "main":
+            not_at_main.append(f"on {branch or 'no branch'}, not main")
+        if ahead:
+            not_at_main.append(f"{ahead} local commit(s) main does not have")
+        if not_at_main:
+            stamp["last_action"] = f"reference not at origin/main: {'; '.join(not_at_main)}"
+            report_reason(not_at_main + (["fetch failed"] if fetch_note else []),
+                          f"catch-up: reference checkout {reference} is 0 behind origin/main "
+                          f"but does not end at it — {'; '.join(not_at_main)}{fetch_note}")
+            write_stamp(stamp_path, stamp)
+            return False
         if fetch_note:
             stamp["last_action"] = "reference fetch failed"
             report_reason(["fetch failed"],
@@ -1142,7 +1734,7 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
         else:
             stamp.pop("last_reference_blockers", None)
         write_stamp(stamp_path, stamp)
-        return
+        return not fetch_note
 
     blockers, branch = merge_blockers(reference, git_dir)
     stamp["branch"] = branch
@@ -1159,9 +1751,9 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
                       f"catch-up: reference checkout {reference} is {behind} behind and was "
                       f"left alone — {'; '.join(real_blockers)}{fetch_note}")
         write_stamp(stamp_path, stamp)
-        return
+        return False
 
-    pulled = run_git(["merge", "--ff-only", "origin/main"], reference, timeout=120)
+    pulled = run_git(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"], reference, timeout=120)
     if pulled.returncode != 0:
         detail = pulled.stderr.strip() or "no detail"
         stamp["last_action"] = "reference ff-only refused"
@@ -1169,13 +1761,19 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
                       f"catch-up: reference checkout {reference} could not fast-forward: "
                       f"{detail}")
         write_stamp(stamp_path, stamp)
-        return
+        return False
     stamp["behind"], stamp["last_action"] = 0, f"reference fast-forwarded {behind}"
     stamp.pop("last_reference_blockers", None)
     write_stamp(stamp_path, stamp)
+    # Git exits 0 whatever the post-merge hook returns, and puts the hook's
+    # output on its own stderr, so a hook's failure is seen only here.
+    if "FAILED" in pulled.stderr:
+        report(f"catch-up: reference checkout {reference} fast-forwarded {behind} commit(s), "
+               f"and its post-merge hook reported a failure:\n{pulled.stderr.strip()}")
     if operator_facing:
         report(f"catch-up: reference checkout {reference} fast-forwarded {behind} commit(s) "
-               f"to origin/main")
+               f"to origin/main{fetch_note}")
+    return not fetch_note
 
 
 def report_line(checkout: Path, interval_seconds: int) -> str:
@@ -1184,14 +1782,14 @@ def report_line(checkout: Path, interval_seconds: int) -> str:
         return f"freshness: {checkout} is not a git checkout"
     stamp_path = git_dir / STAMP_FILE_NAME
     stamp = fetch_if_stale(checkout, stamp_path, interval_seconds)
-    counts = counts_against_main(checkout)
+    counts, error = counts_against_main(checkout)
     if counts is None:
         # Same rule again: the line about to be printed says the comparison
         # could not be made, so the stamp behind it must not keep claiming a
         # number.
         stamp["behind"] = stamp["ahead"] = None
         write_stamp(stamp_path, stamp)
-        return f"freshness: {checkout} has no origin/main to compare against"
+        return f"freshness: {checkout} could not be compared with origin/main: {error}"
     behind, ahead = counts
     stamp["behind"], stamp["ahead"] = behind, ahead
     write_stamp(stamp_path, stamp)
@@ -1207,6 +1805,9 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--cwd", default=None,
                         help="operate as hook mode on this directory instead of reading stdin")
+    parser.add_argument("--deliver-pending-agent-notes", action="store_true",
+                        help="UserPromptSubmit-hook mode: hand the agent the notes queued for "
+                             "it and clear the queue")
     parser.add_argument("--report", action="store_true",
                         help="print a one-line freshness summary and exit")
     parser.add_argument("--reference-pull", action="store_true",
@@ -1218,48 +1819,87 @@ def main(argv=None) -> int:
     arguments = parser.parse_args(argv)
 
     if arguments.report:
-        print(report_line(Path(arguments.repo).resolve(), arguments.interval_seconds))
+        repository = Path(arguments.repo).resolve()
+        try:
+            print(report_line(repository, arguments.interval_seconds))
+        except git_output.GitCommandFailed as error:
+            print(git_failed_text("freshness", f"{repository} was not compared with "
+                                  "origin/main", error, GIT_FAILED_RERUN_NEXT_STEP_LINES,
+                                  rerun=f"`python3 {Path(__file__).resolve()} --report "
+                                        f"--repo {repository}`"))
         return 0
 
     if arguments.reference_pull:
-        root = checkout_root(Path(arguments.repo).resolve())
-        if root is not None:
-            reference = reference_checkout_of(root)
-            if reference is not None:
-                fast_forward_reference_checkout(reference, arguments.interval_seconds)
+        repository = Path(arguments.repo).resolve()
+        reached_origin_main = False
+        try:
+            root = checkout_root(repository)
+            reference = reference_checkout_of(root) if root is not None else None
+            if root is None:
+                report(f"catch-up: {repository} is not in a git checkout, so no reference "
+                       f"checkout was found or brought to origin/main")
+            elif reference is None:
+                report(f"catch-up: git listed no worktrees for {root}, so no reference "
+                       f"checkout was found or brought to origin/main")
+            else:
+                reached_origin_main = fast_forward_reference_checkout(
+                    reference, arguments.interval_seconds)
+        except git_output.GitCommandFailed as error:
+            report(git_failed_text("catch-up", f"the reference checkout of {repository} "
+                                   "was not updated", error, GIT_FAILED_RERUN_NEXT_STEP_LINES,
+                                   rerun=f"`python3 {Path(__file__).resolve()} "
+                                         f"--reference-pull --repo {repository}`"))
         flush_report()
-        return 0
+        return 0 if reached_origin_main else 1
 
-    # Stop-hook mode: the session's own checkout, then the machine's reference
-    # copy. --cwd means "no stdin": an ad-hoc run on a terminal would otherwise
-    # block forever waiting for a payload nobody is going to type.
+    # Either hook mode reads the payload from stdin. --cwd means "no stdin": an
+    # ad-hoc run on a terminal would otherwise block forever waiting for a
+    # payload nobody is going to type.
     payload = {}
     if arguments.cwd is None:
         try:
             payload = json.loads(sys.stdin.read() or "{}")
         except (json.JSONDecodeError, UnicodeDecodeError):
             payload = {}
+        if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
+            return 0
     session_cwd = (Path(arguments.cwd) if arguments.cwd is not None
                    else Path(payload.get("cwd") or "."))
 
+    if arguments.deliver_pending_agent_notes:
+        try:
+            root = checkout_root(session_cwd)
+            text = deliver_pending_agent_notes(root) if root is not None else ""
+        except git_output.GitCommandFailed as error:
+            text = git_failed_text("checkout-freshness", "the notes queued for you in "
+                                   f"{session_cwd} were not delivered", error,
+                                   GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES)
+        if text:
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+                                                     "additionalContext": text}},
+                             ensure_ascii=False))
+        return 0
+
     # One exit, one flush: an early return here would be a silent hook, which
     # is the failure mode this queue introduces if it is not funnelled.
-    root = checkout_root(session_cwd)
-    if root is not None:
-        branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], root,
-                         timeout=15).stdout.strip()
-        if branch == "main":
-            # A session seated in the reference copy itself: ff-only, never
-            # merge, and no telling — it has no branch of its own to be told
-            # about, and this path keeps it current.
-            fast_forward_reference_checkout(root, arguments.interval_seconds,
-                                            operator_facing=False)
-        else:
-            catch_up_session_checkout(root, arguments.interval_seconds)
-            reference = reference_checkout_of(root)
-            if reference is not None and reference != root:
-                fast_forward_reference_checkout(reference, arguments.interval_seconds,
+    try:
+        root = checkout_root(session_cwd)
+        if root is not None:
+            if current_branch(root) == "main":
+                # A session seated in the reference copy itself: ff-only, never
+                # merge, and no telling — it has no branch of its own to be told
+                # about, and this path keeps it current.
+                fast_forward_reference_checkout(root, arguments.interval_seconds,
                                                 operator_facing=False)
+            else:
+                catch_up_session_checkout(root, arguments.interval_seconds)
+                reference = reference_checkout_of(root)
+                if reference is not None and reference != root:
+                    fast_forward_reference_checkout(reference, arguments.interval_seconds,
+                                                    operator_facing=False)
+    except git_output.GitCommandFailed as error:
+        report(git_failed_text("checkout-freshness", f"the freshness check of {session_cwd} "
+                               "stopped", error, GIT_FAILED_STOP_HOOK_USER_NEXT_STEP_LINES))
     flush_hook_output()
     return 0
 

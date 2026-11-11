@@ -27,8 +27,11 @@ import io
 import importlib.util
 import json
 import os
+import shlex
 import pathlib
+import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -48,6 +51,14 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 PROGRAM = SCRIPTS_DIR / "run-all-test-suites.py"
 RAN_FILE_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_RAN_FILE"
+
+# Every fixture run behaves as it does inside a full run, whose signal sandbox sets this:
+# its suites run unconfined, sharing the scratch directory's ran.txt, under the run.lock
+# this file reads. Run on its own on Linux, a fixture run would otherwise give each fixture
+# suite an nc-test-sandbox, whose private writes ran.txt never sees. The nc-test-sandbox itself is
+# tested in run-all-test-suites-signal-sandbox-test.py and
+# run-all-test-suites-machine-wide-test-suite-admission-test.py.
+os.environ["RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX"] = "1"
 RENDEZVOUS_WAIT_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_RENDEZVOUS_SECONDS"
 
 failures = []
@@ -62,6 +73,18 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
         if detail:
             print(f"      {detail!r}"[:1200])
+
+
+def linux_only_cases_run_here(cases):
+    """True on Linux; elsewhere prints why the cases are skipped and returns False.
+
+    Every case that builds or inspects an nc-test-sandbox, runs bwrap or reads /proc goes
+    through this, since only Linux has them.
+    """
+    if sys.platform.startswith("linux"):
+        return True
+    print(f"SKIP  {cases}: nc-test-sandboxes, bwrap and /proc exist only on Linux")
+    return False
 
 
 # Each fixture suite records its own path, relative to the checkout, then
@@ -196,21 +219,24 @@ def make_repo(root, tracked, untracked=None, commit=True):
 
 
 def run(root, *arguments, checkout=None, lock_file=None, rendezvous_seconds="20",
-        environment_extra=None):
+        environment_extra=None, driver=None):
     """The program run against root/repo with its own lock and log directory.
 
     environment_extra goes into the environment the PROGRAM is launched with,
     which is how a case gives the program's own process an ambient variable
-    and then asks what its suites saw."""
+    and then asks what its suites saw. driver, Python source given the program's
+    path and arguments, runs the program in its place, as TIME_LIMITS_SHORTENED_DRIVER
+    does."""
     environment = dict(os.environ)
     environment[RAN_FILE_VARIABLE] = str(root / "ran.txt")
     environment[RENDEZVOUS_WAIT_VARIABLE] = rendezvous_seconds
     environment.update(environment_extra or {})
-    command = [sys.executable, str(PROGRAM),
+    command = [sys.executable, *(("-c", driver) if driver else ()), str(PROGRAM),
                "--checkout", str(checkout if checkout is not None else root / "repo"),
                "--log-dir", str(root / "logs"),
                "--lock-file", str(lock_file if lock_file is not None else root / "run.lock"),
                "--recorded-inputs-directory", str(root / "recordings"),
+               "--suite-files-only-strace-saw-lists-directory", str(root / "recordings"),
                *arguments]
     return subprocess.run(command, capture_output=True, text=True, env=environment,
                           stdin=subprocess.DEVNULL, check=False)
@@ -293,8 +319,8 @@ with tempfile.TemporaryDirectory() as scratch:
           out[0].startswith(f"run-all-test-suites: {repo.resolve()} at ")
           and "(tracked files match that commit); 6 suites listed by git;" in out[0],
           out[:1])
-    check("the whole report is also written to report.txt in the log directory",
-          (root / "logs" / "report.txt").read_text() == result.stdout)
+    check("the whole report is also written to test-run-report.txt in the log directory",
+          (root / "logs" / "test-run-report.txt").read_text() == result.stdout)
     nested_log = root / "logs" / "nested__deeper__b-test.py.log"
     check("each suite's log is named by its whole path, so no two can collide",
           nested_log.exists() and nested_log.read_text() == "ok\n",
@@ -424,9 +450,11 @@ with tempfile.TemporaryDirectory() as scratch:
         result = run(root, lock_file=lock_file)
         check("a run while another holds the lock exits 3", result.returncode == 3,
               (result.returncode, result.stdout, result.stderr))
-        check("the refusal names the holder, and says to run again after it finishes",
+        check("the refusal quotes the lock file's description, and says to wait with "
+              "--wait-for-lock-seconds rather than retry",
               "pid 424242, checkout /elsewhere" in result.stderr
-              and "Run this again after that run has finished." in result.stderr,
+              and "run this again with --wait-for-lock-seconds 3600" in result.stderr
+              and "instead of retrying in a loop" in result.stderr,
               result.stderr)
         check("a refused run runs no suite and prints nothing on stdout",
               ran(root) == [] and result.stdout == "", (ran(root), result.stdout))
@@ -435,6 +463,154 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and ran(root) == ["a-test.py"],
           (result.returncode, result.stderr))
 
+# --- Waiting for the lock: in the kernel's queue, with a deadline ------------
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": PASSES})
+    lock_file = root / "waited.lock"
+    flock_program = shutil.which("flock")
+    if flock_program is None:
+        print("SKIP the case of a flock -w waiter beside a waiting run: flock is not installed")
+    else:
+        order_file = root / "order.txt"
+        with open(lock_file, "a+") as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # The flock -w waiter queues first, as the waiters that starved
+            # retrying runs did, then the run queues behind it.
+            blocked_waiter = subprocess.Popen(
+                [flock_program, "-w", "60", str(lock_file), "sh", "-c",
+                 f"echo flock >> {shlex.quote(str(order_file))}; sleep 1"])
+            time.sleep(0.5)
+            waiting_run = subprocess.Popen(
+                [sys.executable, str(PROGRAM), "--checkout", str(root / "repo"),
+                 "--log-dir", str(root / "logs"), "--lock-file", str(lock_file),
+                 "--recorded-inputs-directory", str(root / "recordings"),
+                 "--wait-for-lock-seconds", "60"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                stdin=subprocess.DEVNULL,
+                env={**os.environ, RAN_FILE_VARIABLE: str(root / "ran.txt"),
+                     RENDEZVOUS_WAIT_VARIABLE: "0"})
+            time.sleep(1.5)
+            check("while the lock is held, both the flock -w waiter and the run wait",
+                  blocked_waiter.poll() is None and waiting_run.poll() is None
+                  and ran(root) == [],
+                  (blocked_waiter.poll(), waiting_run.poll(), ran(root)))
+        try:
+            waiter_code = blocked_waiter.wait(timeout=60)
+            run_stdout, run_stderr = waiting_run.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            blocked_waiter.kill()
+            waiting_run.kill()
+            waiter_code, run_stdout, run_stderr = None, "", "timed out"
+        check("once the lock is released, each gets it in turn: the flock -w waiter "
+              "runs its command, and the run runs its suite",
+              waiter_code == 0 and order_file.read_text() == "flock\n"
+              and waiting_run.returncode == 0 and ran(root) == ["a-test.py"],
+              (waiter_code, waiting_run.returncode, run_stderr))
+        check("a run that waited for the lock says how long, on a line of its own",
+              any(line.startswith("seconds waiting for the machine's lock: ")
+                  for line in lines(run_stdout)), run_stdout)
+
+    with open(lock_file, "a+") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held.truncate(0)
+        held.write(f"pid {os.getpid()}, checkout /elsewhere, started 2026-09-21T00:00:00Z\n")
+        held.flush()
+        started = time.monotonic()
+        result = run(root, "--wait-for-lock-seconds", "1", lock_file=lock_file)
+        waited = time.monotonic() - started
+    check("a run whose wait reaches its deadline exits 3, having waited at least that long "
+          "and not much longer",
+          result.returncode == 3 and 1 <= waited < 30, (result.returncode, waited))
+    check("its refusal says it waited, names the live holder, and says what to do",
+          f"waited 1 s for {lock_file}" in result.stderr
+          and f"pid {os.getpid()}, checkout /elsewhere" in result.stderr
+          and "earlier run" not in result.stderr
+          and "run this program without flock" in result.stderr
+          and "tell the user which process holds the lock" in result.stderr,
+          result.stderr)
+    check("a refused run runs no suite and prints nothing on stdout",
+          result.stdout == "", result.stdout)
+
+# --- A run that waited: its timer is cancelled, and it reads the checkout under the lock
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": "time.sleep(2)\nprint('ok')\n"})
+    result = run(root, "--wait-for-lock-seconds", "1", lock_file=root / "free.lock")
+    check("a run that takes a free lock at once with a 1 s wait is not stopped by that "
+          "deadline later: its 2 s suite passes and the run exits 0",
+          result.returncode == 0 and ran(root) == ["a-test.py"],
+          (result.returncode, result.stdout[-500:], result.stderr))
+    check("a run given a wait says on stderr that it is waiting for the lock, before "
+          "anything else",
+          result.stderr.startswith(f"run-all-test-suites: waiting up to 1 s for "
+                                   f"{root / 'free.lock'}\n"), result.stderr)
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": PASSES})
+    lock_file = root / "inventory.lock"
+    with open(lock_file, "a+") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        waiting_run = subprocess.Popen(
+            [sys.executable, str(PROGRAM), "--checkout", str(root / "repo"),
+             "--log-dir", str(root / "logs"), "--lock-file", str(lock_file),
+             "--recorded-inputs-directory", str(root / "recordings"),
+             "--wait-for-lock-seconds", "60"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            stdin=subprocess.DEVNULL,
+            env={**os.environ, RAN_FILE_VARIABLE: str(root / "ran.txt"),
+                 RENDEZVOUS_WAIT_VARIABLE: "0"})
+        # The run prints its waiting line after it has made its first reading of the
+        # checkout and just before it blocks on the lock, so a suite committed after that
+        # line is one a run that listed its suites before the wait would miss.
+        waiting_line = waiting_run.stderr.readline()
+        # A suite committed while the run waits, as a seat working in the checkout would.
+        (root / "repo" / "b-test.py").write_text(SUITE_PREAMBLE + PASSES)
+        git(root / "repo", "add", "--", "b-test.py")
+        git(root / "repo", "commit", "-q", "-m", "a suite added while the run waits")
+    try:
+        run_stdout, run_stderr = waiting_run.communicate(timeout=120)
+    except subprocess.TimeoutExpired:
+        waiting_run.kill()
+        run_stdout, run_stderr = waiting_run.communicate()
+    check("a suite committed while the run waits for the lock is run: the run lists the "
+          "suites after it takes the lock",
+          waiting_line.startswith("run-all-test-suites: waiting up to 60 s for ")
+          and waiting_run.returncode == 0 and ran(root) == ["a-test.py", "b-test.py"],
+          (waiting_line, waiting_run.returncode, ran(root), run_stderr))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": PASSES})
+    lock_file = root / "emptied.lock"
+    with open(lock_file, "a+") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        waiting_run = subprocess.Popen(
+            [sys.executable, str(PROGRAM), "--checkout", str(root / "repo"),
+             "--log-dir", str(root / "logs"), "--lock-file", str(lock_file),
+             "--recorded-inputs-directory", str(root / "recordings"),
+             "--wait-for-lock-seconds", "60"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            stdin=subprocess.DEVNULL,
+            env={**os.environ, RAN_FILE_VARIABLE: str(root / "ran.txt"),
+                 RENDEZVOUS_WAIT_VARIABLE: "0"})
+        waiting_line = waiting_run.stderr.readline()
+        # The checkout's last suite removed while the run waits.
+        git(root / "repo", "rm", "-q", "--", "a-test.py")
+        git(root / "repo", "commit", "-q", "-m", "the last suite removed while the run waits")
+    try:
+        run_stdout, run_stderr = waiting_run.communicate(timeout=120)
+    except subprocess.TimeoutExpired:
+        waiting_run.kill()
+        run_stdout, run_stderr = waiting_run.communicate()
+    check("a checkout whose suites are all removed while the run waits is refused once the "
+          "run holds the lock: exit 2, nothing run, and the refusal on stderr",
+          waiting_line.startswith("run-all-test-suites: waiting up to 60 s for ")
+          and waiting_run.returncode == 2 and ran(root) == []
+          and "git lists no" in run_stderr and run_stdout == "",
+          (waiting_line, waiting_run.returncode, ran(root), run_stderr))
+
 # --- Refusals before anything runs: exit 2 -----------------------------------
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
@@ -442,7 +618,7 @@ with tempfile.TemporaryDirectory() as scratch:
     result = run(root, checkout=repo / "sub")
     check("a subdirectory of a checkout is refused, exit 2, naming the top directory",
           result.returncode == 2
-          and f"Pass --checkout {repo.resolve()}" in result.stderr and ran(root) == [],
+          and f"and its value with: --checkout {shlex.quote(str(repo.resolve()))}\n" in result.stderr and ran(root) == [],
           (result.returncode, result.stderr))
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
@@ -562,6 +738,10 @@ with tempfile.TemporaryDirectory() as scratch:
 # deciding against them was a measured decision and widening the list later
 # should trip a case.
 module = load_program_module()
+check("the variable this file sets, so its fixture runs run as in a full run, is the one the "
+      "program's signal sandbox sets",
+      module.SIGNAL_SANDBOX_INSIDE_VARIABLE == "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX",
+      module.SIGNAL_SANDBOX_INSIDE_VARIABLE)
 every_variable = {
     "GIT_DIR": "/elsewhere/.git", "GIT_WORK_TREE": "/elsewhere",
     "GIT_INDEX_FILE": "/elsewhere/.git/index",
@@ -774,10 +954,15 @@ with tempfile.TemporaryDirectory() as scratch:
           and "SELECTED reads-nothing-else-test.py: no recording of its inputs on this "
               "machine yet" in lines(result.stdout), (ran(root), result.stdout))
 
-    for changed in ("scripts/run-all-test-suites.py", ".claude/hooks/a-hook.py",
+    # The runner reads its suite sandbox lists from the checkout's copy, so that copy assigns them.
+    runner_copy_lists = "".join(f"{name} = {{}}\n"
+                                for name in module.SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST)
+    for changed in ("scripts/run-all-test-suites.py", ".claude/guard-hooks/a-guard.py",
                     ".claude/settings.json"):
         base = git(repo, "rev-parse", "HEAD").stdout.strip()
-        commit_files(repo, {changed: f"# {changed}\n"}, f"change {changed}")
+        commit_files(repo, {changed: f"# {changed}\n"
+                            + (runner_copy_lists if changed.endswith("run-all-test-suites.py")
+                               else "")}, f"change {changed}")
         result = selective_run(root, base)
         check(f"a change to {changed} runs every suite, saying why",
               ran(root) == sorted(RECORDING_SUITES)
@@ -817,6 +1002,101 @@ def select_since(root, since, environment_extra=None):
 def head(repo):
     return git(repo, "rev-parse", "HEAD").stdout.strip()
 
+
+# git failing is told apart from git's answer: no commit, detached HEAD, untracked files.
+def stand_in_git_failing_on(root, words):
+    """A PATH whose git fails, exit 128, when its arguments, joined by spaces, include words."""
+    bin_dir = root / "bin-git-failing-on"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "git").write_text(
+        "#!/bin/sh\n"
+        f"case \"$*\" in *{shlex.quote(words)}*)\n"
+        "    echo \"fatal: injected git failure\" >&2\n"
+        "    exit 128 ;;\n"
+        "esac\n"
+        f"exec {shlex.quote(shutil.which('git'))} \"$@\"\n")
+    (bin_dir / "git").chmod(0o755)
+    return {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"a-test.py": PASSES})
+    result = run(root, environment_extra=stand_in_git_failing_on(root, "rev-list --max-parents=0"))
+    check("when git cannot list HEAD's root commits, the run exits 2 before any suite runs, "
+          "rather than filing recordings under no-commit",
+          result.returncode == 2 and ran(root) == []
+          and "git could not list the root commits of HEAD" in result.stderr
+          and result.stderr.endswith(
+              "\n" + module.git_failure_next_step_lines("run-all-test-suites.py") + "\n")
+          and "fatal: injected git failure" in result.stderr
+          and not (root / "recordings" / "no-commit").exists(),
+          (result.returncode, ran(root), result.stderr))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"a-test.py": PASSES})
+    since = head(repo)
+    (repo / "untracked-test.py").write_text(SUITE_PREAMBLE + PASSES)
+    result = select_since(root, since, stand_in_git_failing_on(
+        root, "ls-files --others --exclude-standard -z"))
+    check("when git cannot list untracked files, a selective run exits 2 before any suite "
+          "runs, rather than selecting without them",
+          result.returncode == 2 and ran(root) == []
+          and "git ls-files --others failed" in result.stderr
+          and result.stderr.endswith(
+              "\n" + module.git_failure_next_step_lines("run-all-test-suites.py") + "\n")
+          and "fatal: injected git failure" in result.stderr,
+          (result.returncode, ran(root), result.stderr))
+
+
+def git_answering(answers):
+    """A stand-in for the program's git(): the first answer whose words are all in the call."""
+    def stand_in(checkout, *arguments):
+        for words, status, output, error in answers:
+            if all(word in arguments for word in words):
+                return subprocess.CompletedProcess(arguments, status, output, error)
+        raise AssertionError(f"unexpected git call {arguments}")
+    return stand_in
+
+
+real_program_git = module.git
+try:
+    for label, answers, expected in [
+            ("HEAD resolves", [(("rev-parse",), 0, "abc123\n", ""), (("status",), 0, "", "")],
+             "abc123"),
+            ("the branch has no commit yet", [(("rev-parse",), 1, "", ""),
+                                              (("status",), 0, "", "")], "no commit"),
+            ("git rev-parse fails", [(("rev-parse",), 128, "", "fatal: injected\n"),
+                                     (("status",), 0, "", "")],
+             "commit unknown (git rev-parse HEAD exited 128: fatal: injected)")]:
+        module.git = git_answering(answers)
+        commit, _ = module.commit_and_state(pathlib.Path("/nowhere"))
+        check(f"commit_and_state records the commit when {label}: {expected}",
+              commit == expected, commit)
+    for label, answers, expected in [
+            ("on a branch", [(("symbolic-ref",), 0, "topic\n", "")], "topic"),
+            ("detached", [(("symbolic-ref",), 1, "", "")], "HEAD"),
+            ("git symbolic-ref fails", [(("symbolic-ref",), 128, "", "fatal: injected\n")],
+             "branch unknown (git symbolic-ref HEAD exited 128: fatal: injected)")]:
+        module.git = git_answering(answers)
+        branch = module.branch_of_checkout(pathlib.Path("/nowhere"))
+        check(f"branch_of_checkout records the branch when {label}: {expected}",
+              branch == expected, branch)
+    module.git = git_answering([(("rev-parse",), 1, "", "")])
+    check("recordings_directory_for files a checkout with no commit yet under no-commit",
+          module.recordings_directory_for("/store", pathlib.Path("/nowhere"))
+          == pathlib.Path("/store/no-commit"))
+    module.git = git_answering([(("rev-parse",), 128, "", "fatal: injected\n")])
+    try:
+        module.recordings_directory_for("/store", pathlib.Path("/nowhere"))
+        refused = None
+    except module.CouldNotRun as refusal:
+        refused = str(refusal)
+    check("recordings_directory_for refuses when git cannot resolve HEAD",
+          refused is not None and "fatal: injected" in refused, refused)
+finally:
+    module.git = real_program_git
 
 # A recording made on another branch. The store is shared by every worktree
 # and clone on a machine, so the recording selection reads may have been
@@ -1009,6 +1289,223 @@ with tempfile.TemporaryDirectory() as scratch:
           ran(root) == ["runs-git-show-test.py"] and result.returncode == 1,
           (ran(root), result.stdout))
 
+# --- strace only where asked, and the files only it saw kept for later runs --
+# A stand-in strace runs each suite, and writes one trace line saying STRACE_ONLY_SUITE opened
+# data.txt, as a git command or a shell script would, unseen by the audit hook. Real strace
+# cannot attach inside the daily full run, which traces this suite, so it is not used here.
+FAKE_STRACE_SOURCE = r'''import os, subprocess, sys
+arguments = sys.argv[1:]
+trace = arguments[arguments.index("-o") + 1]
+command = arguments[arguments.index("-o") + 2:]
+with open(os.environ["FAKE_STRACE_CALLED_FILE"], "a") as called:
+    called.write("called\n")
+code = subprocess.call(command)
+seen = os.environ["FAKE_STRACE_SAW"]
+suite_traced = any(argument.endswith(os.environ["FAKE_STRACE_SUITE"]) for argument in command)
+# A suite that fails before reaching data.txt, as when the daily run times out.
+stops_early = suite_traced and os.environ.get("FAKE_STRACE_SUITE_FAILS_BEFORE_READING")
+# A suite that skips, without the mark, the case that reads data.txt, and still passes.
+skips_reading = suite_traced and os.environ.get("FAKE_STRACE_SUITE_SKIPS_THE_CASE_THAT_READS")
+if skips_reading:
+    print("SKIP the case that reads data.txt", flush=True)
+with open(trace + ".1", "w") as written:
+    if suite_traced and not stops_early and not skips_reading:
+        written.write(f'openat(AT_FDCWD</>, "{seen}", O_RDONLY) = 3<{seen}>\n')
+sys.exit(1 if stops_early else code)
+'''
+FAKE_STRACE_DRIVER = r'''
+import importlib.util, os, sys
+program_path, *arguments = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("run_all_test_suites", program_path)
+program = importlib.util.module_from_spec(spec)
+sys.argv = [program_path, *arguments]
+spec.loader.exec_module(program)
+program.strace_usable = lambda: os.environ["FAKE_STRACE_PROGRAM"]
+sys.exit(program.main(arguments))
+'''
+STRACE_ONLY_SUITE = "reads-data-through-git-test.py"
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {STRACE_ONLY_SUITE: PASSES, "reads-nothing-else-test.py": PASSES})
+    base = commit_files(repo, {"data.txt": "a\n"}, "data")
+    fake_strace = root / "fake-strace.py"
+    fake_strace.write_text(f"#!{sys.executable}\n" + FAKE_STRACE_SOURCE)
+    fake_strace.chmod(0o755)
+    called = root / "fake-strace-called.txt"
+    fake = {"FAKE_STRACE_PROGRAM": str(fake_strace), "FAKE_STRACE_CALLED_FILE": str(called),
+            "FAKE_STRACE_SAW": os.path.realpath(repo / "data.txt"),
+            "FAKE_STRACE_SUITE": STRACE_ONLY_SUITE}
+
+    def kept_list(store):
+        found = list(store.glob(f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json"))
+        return json.loads(found[0].read_text()) if found else None
+
+    hook_alone = run(root, environment_extra=fake, driver=FAKE_STRACE_DRIVER)
+    check("a run not given --record-inputs-with-strace records with the audit hook alone, "
+          "where strace is usable too",
+          hook_alone.returncode == 0 and not called.exists()
+          and recording(root, STRACE_ONLY_SUITE).get("recorded_by") == ["python-audit-hook"]
+          and kept_list(root / "recordings") is None
+          and any(line.startswith("inputs recorded by python-audit-hook, kept in")
+                  for line in lines(hook_alone.stdout)), hook_alone.stdout)
+
+    traced = run(root, "--record-inputs-with-strace", environment_extra=fake,
+                 driver=FAKE_STRACE_DRIVER)
+    kept = kept_list(root / "recordings")
+    check("a run given --record-inputs-with-strace records with strace too, and keeps the "
+          "files only strace saw, without those the audit hook saw",
+          traced.returncode == 0 and called.exists()
+          and recording(root, STRACE_ONLY_SUITE).get("recorded_by")
+          == ["python-audit-hook", "strace"]
+          and kept is not None and kept["files_only_strace_saw"] == ["data.txt"]
+          and kept["suite"] == STRACE_ONLY_SUITE
+          and f"and strace ({fake_strace})" in traced.stdout, (traced.stdout, kept))
+
+    run(root, environment_extra=fake, driver=FAKE_STRACE_DRIVER)
+    check("a later run with the audit hook alone replaces the recording and leaves the list "
+          "of files only strace saw as it was",
+          recording(root, STRACE_ONLY_SUITE).get("recorded_by") == ["python-audit-hook"]
+          and kept_list(root / "recordings") == kept, kept_list(root / "recordings"))
+
+    # Recorded where no list was kept yet, so only the list read at selection names data.txt.
+    other_store = root / "another-store"
+    run(root, "--recorded-inputs-directory", str(other_store),
+        "--suite-files-only-strace-saw-lists-directory", str(root / "no-lists-here"))
+    commit_files(repo, {"data.txt": "b\n"}, "change data")
+    (root / "ran.txt").unlink(missing_ok=True)
+    selected = run(root, CHANGED_SINCE, base)
+    check("a change to a file only strace saw selects the suite through a recording made with "
+          "the audit hook alone, which holds that file from the list",
+          ran(root) == [STRACE_ONLY_SUITE]
+          and f"SELECTED {STRACE_ONLY_SUITE}: it reads data.txt, which differs"
+          in lines(selected.stdout), (ran(root), selected.stdout))
+    (root / "ran.txt").unlink(missing_ok=True)
+    unlisted = run(root, CHANGED_SINCE, base, "--recorded-inputs-directory", str(other_store),
+                   "--suite-files-only-strace-saw-lists-directory",
+                   str(root / "no-lists-here"))
+    check("without that list, the same change does not select the suite",
+          ran(root) == [], (ran(root), unlisted.stdout))
+    (root / "ran.txt").unlink(missing_ok=True)
+    selected = run(root, CHANGED_SINCE, base, "--recorded-inputs-directory", str(other_store))
+    check("a change to a file only strace saw selects the suite, with its list read from "
+          "another directory than the run's recordings, for a recording made without the list",
+          ran(root) == [STRACE_ONLY_SUITE]
+          and f"SELECTED {STRACE_ONLY_SUITE}: it reads data.txt, which differs, as only the "
+              f"strace run of {kept['recorded_at']} saw" in lines(selected.stdout),
+          (ran(root), selected.stdout))
+    check("a selective run says, on Linux only, that suites have no list of files only strace "
+          "saw",
+          any(line.startswith("run-all-test-suites: 2 of 2 suites have no list of the files "
+                              "only strace saw them read from the last 36 hours")
+              for line in lines(unlisted.stdout)) == sys.platform.startswith("linux"),
+          unlisted.stdout)
+
+    a_file = root / "a-file-not-a-directory"
+    a_file.write_text("")
+    unsaved = run(root, "--record-inputs-with-strace",
+                  "--suite-files-only-strace-saw-lists-directory",
+                  str(a_file), environment_extra=fake, driver=FAKE_STRACE_DRIVER)
+    check("a list of files only strace saw that cannot be saved is reported, and the "
+          "suite's recording is removed, so the next selective run selects the suite",
+          f"inputs of {STRACE_ONLY_SUITE} not recorded:" in unsaved.stdout
+          and recording(root, STRACE_ONLY_SUITE) == {}, unsaved.stdout)
+
+# A recording made with the audit hook alone in one checkout, used in another that holds
+# another copy of a file only strace saw; and a traced run that stopped before reaching it.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {STRACE_ONLY_SUITE: PASSES})
+    base = commit_files(repo, {"data.txt": "a\n"}, "data")
+    fake_strace = root / "fake-strace.py"
+    fake_strace.write_text(f"#!{sys.executable}\n" + FAKE_STRACE_SOURCE)
+    fake_strace.chmod(0o755)
+    fake = {"FAKE_STRACE_PROGRAM": str(fake_strace),
+            "FAKE_STRACE_CALLED_FILE": str(root / "fake-strace-called.txt"),
+            "FAKE_STRACE_SAW": os.path.realpath(repo / "data.txt"),
+            "FAKE_STRACE_SUITE": STRACE_ONLY_SUITE}
+    store = root / "recordings"
+    run(root, "--record-inputs-with-strace", environment_extra=fake, driver=FAKE_STRACE_DRIVER)
+    complete_list = json.loads(next(store.glob(
+        f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
+
+    stopped = run(root, "--record-inputs-with-strace",
+                  environment_extra={**fake, "FAKE_STRACE_SUITE_FAILS_BEFORE_READING": "1"},
+                  driver=FAKE_STRACE_DRIVER)
+    check("a traced run in which the suite failed keeps the last complete list of files only "
+          "strace saw, since it saw only what the suite reached before it stopped",
+          stopped.returncode == 1
+          and json.loads(next(store.glob(
+              f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
+          == complete_list, stopped.stdout)
+
+    skipped = run(root, "--record-inputs-with-strace",
+                  environment_extra={**fake, "FAKE_STRACE_SUITE_SKIPS_THE_CASE_THAT_READS": "1"},
+                  driver=FAKE_STRACE_DRIVER)
+    check("a traced run that passed but skipped a case without the mark that says this machine "
+          "cannot run it keeps the last complete list of files only strace saw",
+          skipped.returncode == 0
+          and recording(root, STRACE_ONLY_SUITE).get("skipped_cases") == 1
+          and json.loads(next(store.glob(
+              f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
+          == complete_list, (skipped.stdout, recording(root, STRACE_ONLY_SUITE)))
+
+    git(repo, "checkout", "-q", "-b", "holds-another-data")
+    commit_files(repo, {"data.txt": "b\n"}, "another data")
+    run(root)
+    check("a recording made with the audit hook alone holds the blob hash of each file on the "
+          "suite's list of files only strace saw",
+          "data.txt" in recording(root, STRACE_ONLY_SUITE).get("reads", {}),
+          recording(root, STRACE_ONLY_SUITE))
+    git(repo, "checkout", "-q", base)
+    (root / "ran.txt").unlink(missing_ok=True)
+    selected = run(root, CHANGED_SINCE, base)
+    check("that recording, used in a checkout holding another copy of the file, selects the "
+          "suite though the file does not differ from the commit given",
+          ran(root) == [STRACE_ONLY_SUITE]
+          and f"SELECTED {STRACE_ONLY_SUITE}: its recording read another copy of data.txt than "
+              f"the checkout holds, so what it reads here is unknown" in lines(selected.stdout),
+          (ran(root), selected.stdout))
+
+# Only the daily full run records these lists, once a day; a list older than the limit, or
+# none, means a daily run was missed, and the run says so.
+NOW = datetime.datetime(2026, 11, 4, 12, 0, tzinfo=datetime.timezone.utc)
+
+
+def kept_hours_before_now(hours):
+    return {"recorded_at": (NOW - datetime.timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "files_only_strace_saw": []}
+
+
+notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+    ["a-test.py", "b-test.py", "c-test.sh"],
+    {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(35)},
+    pathlib.Path("/store"), NOW)
+check("no notice when every recorded suite's list is younger than the limit, a shell suite, "
+      "which is never recorded, aside", notice is None, notice)
+notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+    ["a-test.py", "b-test.py"],
+    {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(37)},
+    pathlib.Path("/store"), NOW)
+check("a list older than the limit is named, with the time it was recorded",
+      notice is not None and notice.startswith("run-all-test-suites: 1 of 2 suites")
+      and "has not recorded every suite since 2026-11-02T23:00:00Z" in notice
+      and "If you have not yet told the user in this agent-session that the daily full test "
+          "run's lists are stale: tell him" in notice,
+      notice)
+notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+    ["a-test.py"], {}, pathlib.Path("/store"), NOW)
+check("a missing list is named, with the directory it was looked for in",
+      notice is not None and notice.startswith("run-all-test-suites: 1 of 1 suites")
+      and "36 hours in /store," in notice
+      and "has not recorded every suite at all," in notice, notice)
+with tempfile.TemporaryDirectory() as scratch:
+    store = pathlib.Path(scratch)
+    for name, body in (("not-json", "{"), ("no-list", '{"recorded_at": "2026-11-04T00:00:00Z"}'),
+                       ("no-time", '{"files_only_strace_saw": []}')):
+        (store / f"{name}-test.py.files-only-strace-saw.json").write_text(body)
+        check(f"a list that is {name.replace('-', ' ')} is not used",
+              module.load_files_only_strace_saw(store, f"{name}-test.py") is None, name)
+
 # --- Saving recordings while runs in other checkouts save them too -----------
 # A sitecustomize.py on the program's PYTHONPATH holds each run at a barrier
 # after its recording is written and before it is published: at the suite's
@@ -1114,6 +1611,14 @@ def start_writer(root, checkout, name, store, shadow, markers, shared_temporary=
                "--recorded-inputs-directory", str(store)]
     return subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=environment, stdin=subprocess.DEVNULL)
+
+
+def release_barrier(markers, name, word):
+    """Release the run held as `name` with `word`, "go" or "fail"."""
+    # Renamed into place, since the barrier reads the word as soon as the file exists.
+    temporary = markers / f".go-{name}.tmp"
+    temporary.write_text(word)
+    os.replace(temporary, markers / f"go-{name}")
 
 
 def wait_for(path, seconds=60):
@@ -1222,10 +1727,10 @@ def overlap_publishing_in_turn(shared_temporary, prefill):
         # Released only once the reader is polling, and the reader polls once more after
         # the stop, so its reads span both publications however slowly it started.
         seen["reader polling before release"] = wait_for(reader_polling, 60)
-        (markers / "go-first").write_text("go")
+        release_barrier(markers, "first", "go")
         wait_for(markers / "renamed-first", 30)
         seen["after first"] = published(store)
-        (markers / "go-second").write_text("go")
+        release_barrier(markers, "second", "go")
         wait_for(markers / "renamed-second", 30)
         seen["after second"] = published(store)
         seen["exits"] = {name: writer.wait(timeout=120) for name, writer in writers.items()}
@@ -1257,9 +1762,9 @@ def overlap_second_fails_after_first_publishes(prefill):
         writers = {name: start_writer(root, checkout, name, store, shadow, markers)
                    for name, checkout in (("first", repo), ("second", other))}
         held = all(wait_for(markers / f"written-{name}") for name in writers)
-        (markers / "go-first").write_text("go")
+        release_barrier(markers, "first", "go")
         wait_for(markers / "renamed-first", 30)
-        (markers / "go-second").write_text("fail")
+        release_barrier(markers, "second", "fail")
         failed_at = time.monotonic()
         exits = {name: writer.wait(timeout=120) for name, writer in writers.items()}
         after_failure = time.monotonic() - failed_at
@@ -1289,9 +1794,9 @@ def overlap_first_publishes_while_second_checks():
                                       hold_check=(name == "second"))
                    for name, checkout in (("first", repo), ("second", other))}
         held = all(wait_for(markers / f"written-{name}") for name in writers)
-        (markers / "go-second").write_text("fail")
+        release_barrier(markers, "second", "fail")
         checking = wait_for(markers / "checking-second", 30)
-        (markers / "go-first").write_text("go")
+        release_barrier(markers, "first", "go")
         published_during_check = wait_for(markers / "renamed-first", 3)
         (markers / "go-check-second").touch()
         exits = {name: writer.wait(timeout=120) for name, writer in writers.items()}
@@ -1373,7 +1878,7 @@ with tempfile.TemporaryDirectory() as scratch:
     run(root)
     stored = next((root / "recordings").glob("*/a-test.py.json"))
     shadow, markers = publication_barrier(root)
-    (markers / "go-alone").write_text("fail")
+    release_barrier(markers, "alone", "fail")
     started = time.monotonic()
     result = run(root, environment_extra={
         "PYTHONPATH": str(shadow), BARRIER_VARIABLE: str(markers),
@@ -1398,7 +1903,7 @@ with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
     repo = make_repo(root, {"a-test.py": PASSES})
     shadow, markers = publication_barrier(root)
-    (markers / "go-alone").write_text("fail")
+    release_barrier(markers, "alone", "fail")
     started = time.monotonic()
     result = run(root, environment_extra={
         "PYTHONPATH": str(shadow), BARRIER_VARIABLE: str(markers),
@@ -1413,23 +1918,62 @@ with tempfile.TemporaryDirectory() as scratch:
               for line in lines(result.stdout))
           and not list((root / "recordings").glob("*/a-test.py.json")), result.stdout)
 
-# A recorded run that skipped cases recorded nothing for them.
+# A recorded run that skipped cases recorded nothing for them, unless the machine itself
+# is what each skip names.
+MARKER = module.SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
-    repo = make_repo(root, {"skips-one-test.py": "print('SKIP  a case this fixture skips')\n",
-                            "passes-test.py": PASSES})
+    repo = make_repo(root, {
+        "skips-one-test.py": "print('SKIP  a case this fixture skips')\n",
+        "marked-only-test.py": f"print('SKIP  {MARKER} a macOS case: macOS only')\n"
+                               f"print('SKIP {MARKER} an rg case: rg is not on PATH')\n",
+        "both-test.py": f"print('SKIP  {MARKER} a macOS case: macOS only')\n"
+                        "print('SKIP  a tmux case: the tmux server did not start')\n",
+        "marker-later-test.py": f"print('SKIP  a case: {MARKER}')\n",
+        "passes-test.py": PASSES})
     base = head(repo)
-    run(root)
+    first = run(root)
+    check("a marked skip is still counted beside its suite and printed with the skipped cases",
+          any(line.startswith("PASS marked-only-test.py (") and line.endswith(", 2 skipped)")
+              for line in lines(first.stdout))
+          and f"marked-only-test.py: SKIP  {MARKER} a macOS case: macOS only" in lines(first.stdout)
+          and f"both-test.py: SKIP  {MARKER} a macOS case: macOS only" in lines(first.stdout)
+          and "both-test.py: SKIP  a tmux case: the tmux server did not start"
+              in lines(first.stdout), first.stdout)
     result = select_since(root, base)
-    check("a suite whose recorded run skipped cases is selected again, and says why",
-          ran(root) == ["skips-one-test.py"]
-          and "SELECTED skips-one-test.py: its last recorded run skipped 1 case(s), so it "
-              "recorded only what the cases that ran read" in lines(result.stdout),
+    check("a suite whose recorded run skipped only marked cases is not selected again; one "
+          "with an unmarked skip is, beside marked ones too, and the mark counts only right "
+          "after SKIP",
+          ran(root) == ["both-test.py", "marker-later-test.py", "skips-one-test.py"],
           (ran(root), result.stdout))
-    stored = next((root / "recordings").glob("*/skips-one-test.py.json"))
-    recorded = json.loads(stored.read_text())
-    recorded.pop("skipped_cases")
-    stored.write_text(json.dumps(recorded))
+    check("a suite whose recorded run skipped cases is selected again, and says why",
+          "SELECTED skips-one-test.py: its last recorded run skipped 1 case(s) without the mark "
+          f"{MARKER}, so it recorded only what the cases that ran read" in lines(result.stdout)
+          and "SELECTED both-test.py: its last recorded run skipped 1 case(s) without the mark "
+          f"{MARKER}, so it recorded only what the cases that ran read" in lines(result.stdout),
+          result.stdout)
+
+    def recording_of(suite):
+        return next((root / "recordings").glob(f"*/{suite}.json"))
+
+    def rewrite_recording(suite, change):
+        stored = recording_of(suite)
+        recorded = json.loads(stored.read_text())
+        change(recorded)
+        stored.write_text(json.dumps(recorded))
+
+    rewrite_recording("marked-only-test.py",
+                      lambda recorded: recorded.pop("skipped_cases_this_machine_cannot_run"))
+    rewrite_recording("skips-one-test.py",
+                      lambda recorded: recorded.update(skipped_cases_this_machine_cannot_run=True))
+    result = select_since(root, base)
+    check("a recording that does not say how many of its skips were marked counts none as marked",
+          "SELECTED marked-only-test.py: its last recorded run skipped 2 case(s) without the mark "
+          f"{MARKER}, so it recorded only what the cases that ran read" in lines(result.stdout)
+          and "SELECTED skips-one-test.py: its last recorded run skipped 1 case(s) without the "
+          f"mark {MARKER}, so it recorded only what the cases that ran read" in lines(result.stdout),
+          result.stdout)
+    rewrite_recording("skips-one-test.py", lambda recorded: recorded.pop("skipped_cases"))
     result = select_since(root, base)
     check("and so is one whose recording does not say how many cases it skipped",
           "SELECTED skips-one-test.py: its last recorded run skipped an unrecorded number "
@@ -1471,7 +2015,7 @@ def killed_run_logs(root):
     return killed_logs, left, hook_log
 
 
-if sys.platform.startswith("linux"):
+if linux_only_cases_run_here("the removal of what a killed run left, decided from /proc"):
     with tempfile.TemporaryDirectory() as scratch:
         root = pathlib.Path(scratch)
         make_repo(root, {"a-test.py": PASSES})
@@ -1829,6 +2373,465 @@ with tempfile.TemporaryDirectory() as scratch:
               "c-test.py", "b-test.py", "d-test.py", "a-sleeps-test.py"],
           ran_in_starting_order(root))
 
+# --- Per-suite timeout ---------------------------------------------------------
+# The limits are shortened to seconds, so a suite that sleeps past its limit is killed
+# within the case: the floor 1 s, the multiple 2, and 3 s with no passing recording.
+TIME_LIMITS_SHORTENED_DRIVER = r'''
+import importlib.util, sys
+program_path, *arguments = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("run_all_test_suites", program_path)
+program = importlib.util.module_from_spec(spec)
+sys.argv = [program_path, *arguments]
+spec.loader.exec_module(program)
+program.TEST_SUITE_TIMEOUT_FLOOR_SECONDS = 1
+program.TEST_SUITE_TIMEOUT_MULTIPLE_OF_RECORDED_SECONDS = 2
+program.TEST_SUITE_TIMEOUT_WITHOUT_PASSING_RECORDING_SECONDS = 3
+sys.exit(program.main(arguments))
+'''
+# Starts a child that would outlive it, writes the child's process id down, then sleeps
+# past its limit. strace -f, when the recorder uses it, waits for the child too, so a run
+# whose kill does not work ends only when the child's 60 s sleep does.
+HANGS_WITH_A_CHILD = (
+    "import subprocess\n"
+    "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+    "(pathlib.Path(os.environ['" + RAN_FILE_VARIABLE + "']).parent / 'child.pid')"
+    ".write_text(str(child.pid))\n"
+    "time.sleep(20)\n")
+
+
+def process_gone_within(pid, seconds):
+    """True once pid has ended (a zombie counts as ended), polling up to seconds."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        try:
+            if pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "Z":
+                return True
+        except (OSError, IndexError):
+            pass
+        time.sleep(0.1)
+    return False
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"hangs-test.py": HANGS_WITH_A_CHILD, "quick-test.py": PASSES})
+    first_started = time.monotonic()
+    first = run(root, "-j", "1", driver=TIME_LIMITS_SHORTENED_DRIVER)
+    check("a suite past its limit, with no passing recording, is reported FAIL with TIMEOUT "
+          "and the limit for no passing recording, and the run exits 1",
+          first.returncode == 1 and any(
+              re.match(r"FAIL hangs-test\.py TIMEOUT after \d+s \(limit 3s from no "
+                       r"passing recording\)", line) for line in lines(first.stdout)),
+          (first.returncode, first.stdout, first.stderr))
+    child_pid = int((root / "child.pid").read_text())
+    gone = process_gone_within(child_pid, 10)
+    check("the child process a timed-out suite started is killed with it, before its own "
+          "60 s sleep ends",
+          gone and time.monotonic() - first_started < 45,
+          (child_pid, gone, time.monotonic() - first_started))
+    check("the suite after a timed-out one still runs, under its own limit, and passes",
+          ran_in_starting_order(root) == ["hangs-test.py", "quick-test.py"]
+          and any(line.startswith("PASS quick-test.py") for line in lines(first.stdout)),
+          (ran_in_starting_order(root), first.stdout))
+
+    stored = next((root / "recordings").glob("*/hangs-test.py.json"))
+    recorded = json.loads(stored.read_text())
+    recorded.update(exit=0, seconds=2.0)
+    stored.write_text(json.dumps(recorded))
+    second = run(root, "-j", "1", driver=TIME_LIMITS_SHORTENED_DRIVER)
+    timeout_lines = [line for line in lines(second.stdout)
+                     if re.match(r"FAIL hangs-test\.py TIMEOUT after \d+s \(limit 4s, 2 times "
+                                 r"recorded 2s\)", line)]
+    check("a suite's limit is the multiple of its last passing recording's seconds, and both "
+          "its line and the list of failed suites say so",
+          second.returncode == 1 and len(timeout_lines) == 2
+          and any(" — log " in line for line in timeout_lines),
+          (second.returncode, second.stdout))
+
+# --- Only the suites named, records left unchanged, stop at the first failure ----------
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": PASSES, "b-test.py": PASSES, "c-test.py": PASSES})
+    named = run(root, "--only-suites-named", "c-test.py", "b-test.py")
+    check("--only-suites-named runs only the suites named, and the first line says how many "
+          "git lists and how many were named",
+          named.returncode == 0 and ran(root) == ["b-test.py", "c-test.py"]
+          and "3 suites listed by git; 2 named by --only-suites-named" in named.stdout,
+          (named.returncode, ran(root), named.stdout, named.stderr))
+    (root / "ran.txt").unlink()
+    unknown = run(root, "--only-suites-named", "b-test.py", "missing-test.py")
+    check("--only-suites-named naming a suite git does not list exits 2, names it, and runs "
+          "no suite",
+          unknown.returncode == 2
+          and "--only-suites-named names missing-test.py, which git does not list"
+              in unknown.stderr
+          and ran(root) == [],
+          (unknown.returncode, unknown.stderr, ran(root)))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"hangs-test.py": "time.sleep(20)\n", "quick-test.py": PASSES})
+    run(root, "--only-suites-named", "hangs-test.py", "-j", "1",
+        driver=TIME_LIMITS_SHORTENED_DRIVER)
+    stored = next((root / "recordings").glob("*/hangs-test.py.json"))
+    recorded = json.loads(stored.read_text())
+    recorded.update(exit=0, seconds=2.0)
+    stored.write_text(json.dumps(recorded))
+    before = stored.read_text()
+    shutil.rmtree(root / "logs")
+    unrecorded = run(root, "--leave-recorded-inputs-and-failure-history-unchanged", "-j", "1",
+                     driver=TIME_LIMITS_SHORTENED_DRIVER)
+    check("with --leave-recorded-inputs-and-failure-history-unchanged, a suite's limit still "
+          "comes from its recording",
+          unrecorded.returncode == 1 and any(
+              re.match(r"FAIL hangs-test\.py TIMEOUT after \d+s \(limit 4s, 2 times "
+                       r"recorded 2s\)", line) for line in lines(unrecorded.stdout)),
+          (unrecorded.returncode, unrecorded.stdout, unrecorded.stderr))
+    check("with --leave-recorded-inputs-and-failure-history-unchanged, no recording is saved "
+          "or replaced, no input recorder runs, and the run says so",
+          stored.read_text() == before
+          and not list((root / "recordings").glob("*/quick-test.py.json"))
+          and not (root / "logs" / "recorded-inputs").exists()
+          and "inputs not recorded" in unrecorded.stdout,
+          (sorted(path.name for path in (root / "recordings").rglob("*")), unrecorded.stdout))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-fails-test.py": "sys.exit(1)\n", "b-passes-test.py": PASSES})
+    first_failure_alone = run(root, "--stop-at-first-failing-suite", "-j", "1")
+    check("with --stop-at-first-failing-suite, a suite not yet started when the first suite "
+          "fails is not started, the run says so, and exits 1",
+          first_failure_alone.returncode == 1 and ran(root) == ["a-fails-test.py"]
+          and "stopped at the first failing suite, a-fails-test.py: 0 suites killed while "
+              "they ran, 1 not started" in first_failure_alone.stdout
+          and "SUMMARY: 0 passed, 1 failed, 0 stopped, 1 total" in first_failure_alone.stdout,
+          (first_failure_alone.returncode, ran(root), first_failure_alone.stdout))
+    (root / "ran.txt").unlink()
+    without_the_option = run(root, "-j", "1")
+    check("without --stop-at-first-failing-suite, the suites after a failing one still run",
+          without_the_option.returncode == 1
+          and ran(root) == ["a-fails-test.py", "b-passes-test.py"],
+          (without_the_option.returncode, ran(root), without_the_option.stdout))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    # The sleeper starts first, so it is running when the other suite fails.
+    make_repo(root, {"a-sleeps-test.py": "time.sleep(60)\n",
+                     "b-fails-test.py": "time.sleep(1)\nsys.exit(1)\n"})
+    started = time.monotonic()
+    beside = run(root, "--stop-at-first-failing-suite", "-j", "2")
+    check("with --stop-at-first-failing-suite, the suite running beside the first failing "
+          "suite is killed and reported as stopped by it, not as failed, and the run exits 1",
+          beside.returncode == 1 and time.monotonic() - started < 40
+          and "FAIL a-sleeps-test.py killed when the run was stopped by the first failing "
+              "suite, b-fails-test.py" in beside.stdout
+          and "1 failed:" in beside.stdout
+          and "SUMMARY: 0 passed, 1 failed, 1 stopped, 2 total" in beside.stdout,
+          (beside.returncode, time.monotonic() - started, beside.stdout))
+
+# --- A stopped run kills its suites -------------------------------------------
+# Each suite runs in a session of its own, so a signal to the runner's process group no
+# longer reaches it; the runner itself must kill it.
+SLEEPS_WITH_A_CHILD = (
+    "import subprocess\n"
+    "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+    "(pathlib.Path(os.environ['" + RAN_FILE_VARIABLE + "']).parent / 'pids.txt')"
+    ".write_text(f'{os.getpid()} {child.pid}')\n"
+    "time.sleep(60)\n")
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"sleeps-test.py": SLEEPS_WITH_A_CHILD})
+    environment = dict(os.environ, **{RAN_FILE_VARIABLE: str(root / "ran.txt")})
+    runner_process = subprocess.Popen(
+        [sys.executable, str(PROGRAM), "--checkout", str(root / "repo"),
+         "--log-dir", str(root / "logs"), "--lock-file", str(root / "run.lock"),
+         "--recorded-inputs-directory", str(root / "recordings")],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=environment,
+        stdin=subprocess.DEVNULL)
+    pids_file = root / "pids.txt"
+    deadline = time.monotonic() + 60
+    while not (pids_file.exists() and len(pids_file.read_text().split()) == 2) \
+            and time.monotonic() < deadline:
+        time.sleep(0.1)
+    stub_pids = [int(pid) for pid in pids_file.read_text().split()] if pids_file.exists() else []
+    runner_process.send_signal(signal.SIGTERM)
+    try:
+        stopped_output, _ = runner_process.communicate(timeout=30)
+    except subprocess.TimeoutExpired:
+        runner_process.kill()
+        stopped_output, _ = runner_process.communicate()
+    gone = [process_gone_within(pid, 10) for pid in stub_pids]
+    for pid, ended in zip(stub_pids, gone):
+        if not ended:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+    check("a runner sent SIGTERM kills its running suite and the suite's child, says what "
+          "stopped it, and exits 2",
+          len(stub_pids) == 2 and all(gone) and runner_process.returncode == 2
+          and "stopped by SIGTERM" in stopped_output
+          and "FAIL sleeps-test.py killed when the run was stopped by SIGTERM" in stopped_output,
+          (stub_pids, gone, runner_process.returncode, stopped_output))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    # The failing suite ends at once; the sleeper names its process only after that.
+    make_repo(root, {"a-fails-test.py": "sys.exit(1)\n",
+                     "b-sleeps-test.py": "time.sleep(3)\n" + SLEEPS_WITH_A_CHILD})
+    environment = dict(os.environ, **{RAN_FILE_VARIABLE: str(root / "ran.txt")})
+    runner_process = subprocess.Popen(
+        [sys.executable, str(PROGRAM), "--checkout", str(root / "repo"), "-j", "2",
+         "--log-dir", str(root / "logs"), "--lock-file", str(root / "run.lock"),
+         "--recorded-inputs-directory", str(root / "recordings")],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=environment,
+        stdin=subprocess.DEVNULL)
+    pids_file = root / "pids.txt"
+    deadline = time.monotonic() + 60
+    while not (pids_file.exists() and len(pids_file.read_text().split()) == 2) \
+            and time.monotonic() < deadline:
+        time.sleep(0.1)
+    stub_pids = [int(pid) for pid in pids_file.read_text().split()] if pids_file.exists() else []
+    time.sleep(1)
+    runner_process.send_signal(signal.SIGTERM)
+    try:
+        stopped_output, _ = runner_process.communicate(timeout=30)
+    except subprocess.TimeoutExpired:
+        runner_process.kill()
+        stopped_output, _ = runner_process.communicate()
+    for pid in stub_pids:
+        if not process_gone_within(pid, 10):
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+    check("a runner sent SIGTERM after a suite failed says what stopped it and exits 1, "
+          "not 2, so no caller reads the failure as a run without a verdict",
+          len(stub_pids) == 2 and runner_process.returncode == 1
+          and "FAIL a-fails-test.py" in stopped_output
+          and "not run to the end — stopped by SIGTERM" in stopped_output,
+          (stub_pids, runner_process.returncode, stopped_output))
+
+# A suite outside an nc-test-sandbox whose grandchild starts a session of its own, which the
+# suite's process group does not hold. The grandchild writes outlived-its-tmpdir when it sees
+# the suite's TMPDIR removed while it still runs; it ends then, once this test no longer runs,
+# or after 60 s, so a kill that misses it leaves nothing running.
+TEST_PID_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_PID"
+TEST_START_TICKS_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_START_TICKS"
+GRANDCHILD_IN_A_SESSION_OF_ITS_OWN = r"""
+import pathlib, sys, time
+temporary_directory, record, test_pid, test_start_ticks = sys.argv[1:]
+
+
+def test_runs():
+    try:
+        stat = pathlib.Path(f"/proc/{test_pid}/stat").read_text()
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+    fields = stat.rsplit(")", 1)[1].split()
+    return fields[0] != "Z" and fields[19] == test_start_ticks
+
+
+deadline = time.monotonic() + 60
+while time.monotonic() < deadline and test_runs():
+    if not pathlib.Path(temporary_directory).exists():
+        pathlib.Path(record).write_text("outlived its TMPDIR")
+        break
+    time.sleep(0.01)
+"""
+STARTS_A_GRANDCHILD_IN_A_SESSION_OF_ITS_OWN = (
+    "import subprocess\n"
+    "here = pathlib.Path(os.environ['" + RAN_FILE_VARIABLE + "']).parent\n"
+    "grandchild = subprocess.Popen(\n"
+    "    [sys.executable, '-c', " + repr(GRANDCHILD_IN_A_SESSION_OF_ITS_OWN) + ",\n"
+    "     os.environ['TMPDIR'], str(here / 'outlived-its-tmpdir'),\n"
+    "     os.environ['" + TEST_PID_VARIABLE + "'], os.environ['" + TEST_START_TICKS_VARIABLE
+    + "']],\n"
+    "    start_new_session=True)\n"
+    "(here / 'grandchild.pid').write_text(str(grandchild.pid))\n"
+    "time.sleep(60)\n")
+FAILS_ONCE_THE_GRANDCHILD_STARTED = (
+    "here = pathlib.Path(os.environ['" + RAN_FILE_VARIABLE + "']).parent\n"
+    "deadline = time.monotonic() + 60\n"
+    "while not (here / 'grandchild.pid').exists() and time.monotonic() < deadline:\n"
+    "    time.sleep(0.05)\n"
+    "sys.exit(1)\n")
+
+
+def grandchild_killed_before_its_tmpdir_was_removed(root):
+    """(whether it was, what the case saw); a grandchild still running is killed here."""
+    pid_file = root / "grandchild.pid"
+    pid = int(pid_file.read_text()) if pid_file.exists() and pid_file.read_text() else None
+    gone = pid is not None and process_gone_within(pid, 10)
+    if pid is not None and not gone:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+    outlived = (root / "outlived-its-tmpdir").exists()
+    return pid is not None and gone and not outlived, (pid, gone, outlived)
+
+
+if linux_only_cases_run_here("a kill that reaches a suite's grandchild in a session of its own"):
+    test_identity = {TEST_PID_VARIABLE: str(os.getpid()),
+                     TEST_START_TICKS_VARIABLE: str(module.process_start_ticks(os.getpid()))}
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        make_repo(root, {"grandchild-test.py": STARTS_A_GRANDCHILD_IN_A_SESSION_OF_ITS_OWN})
+        timed_out = run(root, "-j", "1", driver=TIME_LIMITS_SHORTENED_DRIVER,
+                        environment_extra=test_identity)
+        killed_first, seen = grandchild_killed_before_its_tmpdir_was_removed(root)
+        check("a suite past its limit has its grandchild in a session of its own killed, and "
+              "ended, before the suite's TMPDIR is removed",
+              killed_first and "FAIL grandchild-test.py TIMEOUT" in timed_out.stdout,
+              (seen, timed_out.stdout))
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        make_repo(root, {"a-grandchild-test.py": STARTS_A_GRANDCHILD_IN_A_SESSION_OF_ITS_OWN,
+                         "b-fails-test.py": FAILS_ONCE_THE_GRANDCHILD_STARTED})
+        stopped = run(root, "--stop-at-first-failing-suite", "-j", "2",
+                      environment_extra=test_identity)
+        killed_first, seen = grandchild_killed_before_its_tmpdir_was_removed(root)
+        check("a suite stopped by --stop-at-first-failing-suite has its grandchild in a session "
+              "of its own killed, and ended, before the suite's TMPDIR is removed",
+              killed_first and "FAIL a-grandchild-test.py killed when the run was stopped by "
+                               "the first failing suite" in stopped.stdout,
+              (seen, stopped.stdout))
+
+# A command put in the background in a subshell starts with SIGINT ignored, and an
+# ignored signal passes on to every process it starts; a suite that interrupts itself
+# must still be interrupted.
+STOP_SIGNALS_IGNORED_DRIVER = r'''
+import os, signal, sys
+for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+    signal.signal(number, signal.SIG_IGN)
+os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+'''
+SEES_DEFAULT_STOP_SIGNAL_ACTIONS = (
+    "defaults = [signal.getsignal(signal.SIGINT) is signal.default_int_handler,\n"
+    "            signal.getsignal(signal.SIGTERM) == signal.SIG_DFL,\n"
+    "            signal.getsignal(signal.SIGHUP) == signal.SIG_DFL]\n"
+    "print('SIGINT, SIGTERM and SIGHUP at their default actions:', defaults)\n"
+    "try:\n"
+    "    os.kill(os.getpid(), signal.SIGINT)\n"
+    "    time.sleep(5)\n"
+    "    print('SIGINT did not interrupt this suite')\n"
+    "    sys.exit(1)\n"
+    "except KeyboardInterrupt:\n"
+    "    pass\n"
+    "sys.exit(0 if all(defaults) else 1)\n")
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"default-actions-test.py": SEES_DEFAULT_STOP_SIGNAL_ACTIONS})
+    started_ignoring = run(root, driver=STOP_SIGNALS_IGNORED_DRIVER)
+    suite_log = next((root / "logs").glob("*default-actions-test.py.log"), None)
+    check("a runner started with SIGINT, SIGTERM and SIGHUP ignored starts its suites with "
+          "each at its default action, so a suite that sends itself SIGINT is interrupted",
+          started_ignoring.returncode == 0
+          and any(line.startswith("PASS default-actions-test.py")
+                  for line in lines(started_ignoring.stdout)),
+          (started_ignoring.returncode, started_ignoring.stdout,
+           suite_log.read_text() if suite_log else "no suite log"))
+
+# Under nohup the runner starts with SIGHUP ignored; a hangup must then stop nothing.
+SIGHUP_IGNORED_DRIVER = r'''
+import os, signal, sys
+signal.signal(signal.SIGHUP, signal.SIG_IGN)
+os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+'''
+SLEEPS_AFTER_SAYING_IT_STARTED = (
+    "(pathlib.Path(os.environ['" + RAN_FILE_VARIABLE + "']).parent / 'started').touch()\n"
+    "time.sleep(3)\n"
+    "print('ok')\n")
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"sleeps-test.py": SLEEPS_AFTER_SAYING_IT_STARTED})
+    environment = dict(os.environ, **{RAN_FILE_VARIABLE: str(root / "ran.txt")})
+    runner_process = subprocess.Popen(
+        [sys.executable, "-c", SIGHUP_IGNORED_DRIVER, str(PROGRAM),
+         "--checkout", str(root / "repo"), "--log-dir", str(root / "logs"),
+         "--lock-file", str(root / "run.lock"),
+         "--recorded-inputs-directory", str(root / "recordings")],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=environment,
+        stdin=subprocess.DEVNULL)
+    deadline = time.monotonic() + 60
+    while not (root / "started").exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    suite_started = (root / "started").exists()
+    runner_process.send_signal(signal.SIGHUP)
+    try:
+        hangup_output, _ = runner_process.communicate(timeout=60)
+    except subprocess.TimeoutExpired:
+        runner_process.kill()
+        hangup_output, _ = runner_process.communicate()
+    check("a runner started with SIGHUP ignored, as under nohup, is not stopped by a "
+          "hangup: its suite finishes and passes, and the run exits 0",
+          suite_started and runner_process.returncode == 0
+          and "PASS sleeps-test.py" in hangup_output and "stopped by" not in hangup_output,
+          (suite_started, runner_process.returncode, hangup_output))
+
+# The stop is sent as the run puts its handlers back, after its last suite ended.
+STOP_AFTER_LAST_SUITE_DRIVER = r'''
+import importlib.util, os, signal, sys
+program_path, *arguments = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("run_all_test_suites", program_path)
+program = importlib.util.module_from_spec(spec)
+sys.argv = [program_path, *arguments]
+spec.loader.exec_module(program)
+restore_signal_handlers = program.restore_signal_handlers
+
+
+def stop_then_restore(replaced):
+    if replaced:
+        os.kill(os.getpid(), signal.SIGTERM)
+    restore_signal_handlers(replaced)
+
+
+program.restore_signal_handlers = stop_then_restore
+sys.exit(program.main(arguments))
+'''
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"quick-test.py": PASSES})
+    stopped_late = run(root, driver=STOP_AFTER_LAST_SUITE_DRIVER)
+    check("a stop signal that comes after the last suite ended stops nothing: the run "
+          "prints its SUMMARY and exits 0",
+          stopped_late.returncode == 0 and "SUMMARY:" in stopped_late.stdout
+          and "stopped by" not in stopped_late.stdout,
+          (stopped_late.returncode, stopped_late.stdout, stopped_late.stderr))
+
+for recording_given, expected, case in (
+        (None, (module.TEST_SUITE_TIMEOUT_WITHOUT_PASSING_RECORDING_SECONDS, None),
+         "a suite with no recording gets the limit for no passing recording"),
+        ({"exit": 1, "seconds": 500.0},
+         (module.TEST_SUITE_TIMEOUT_WITHOUT_PASSING_RECORDING_SECONDS, None),
+         "a suite whose recorded run failed gets the limit for no passing recording"),
+        ({"exit": 0, "seconds": 10.0}, (module.TEST_SUITE_TIMEOUT_FLOOR_SECONDS, 10.0),
+         "a fast suite gets the floor"),
+        ({"exit": 0, "seconds": 190.0},
+         (module.TEST_SUITE_TIMEOUT_MULTIPLE_OF_RECORDED_SECONDS * 190.0, 190.0),
+         "a long suite gets the multiple of its recorded seconds")):
+    answer = module.suite_timeout_and_the_recorded_seconds_it_came_from(recording_given)
+    check(case, answer == expected, (recording_given, answer))
+
+for limit_and_recorded, expected, case in (
+        ((1800, None), "TIMEOUT after 1801s (limit 1800s from no passing recording)",
+         "the TIMEOUT line of a suite with no passing recording says so"),
+        ((800.0, 200.0),
+         f"TIMEOUT after 1801s (limit 800s, "
+         f"{module.TEST_SUITE_TIMEOUT_MULTIPLE_OF_RECORDED_SECONDS} times recorded 200s)",
+         "the TIMEOUT line of a suite limited by the multiple names the multiple"),
+        ((module.TEST_SUITE_TIMEOUT_FLOOR_SECONDS, 12.0),
+         f"TIMEOUT after 1801s (limit {module.TEST_SUITE_TIMEOUT_FLOOR_SECONDS}s, the floor, "
+         f"more than {module.TEST_SUITE_TIMEOUT_MULTIPLE_OF_RECORDED_SECONDS} times recorded 12s)",
+         "the TIMEOUT line of a suite limited by the floor says the limit is the floor")):
+    answer = module.why_suite_failed({
+        "exit": -9, "seconds": 1801.0,
+        "timeout": {"limit": limit_and_recorded[0], "recorded": limit_and_recorded[1]}})
+    check(case, answer == expected, answer)
+
 # --- The recorder runs the sitecustomize.py it shadows ------------------------
 # Both machines' Pythons ship one (Homebrew's on the Mac sets sys.executable),
 # and the recorder is put in front of it on PYTHONPATH. Here a PYTHONPATH the
@@ -1998,13 +3001,13 @@ with tempfile.TemporaryDirectory() as scratch:
     other = temp / "another-program-old"
     for directory in (old, recent, named, other):
         directory.mkdir(parents=True)
-        (directory / "report.txt").write_text("report\n")
+        (directory / "test-run-report.txt").write_text("report\n")
     (runs / "9-9.json").write_text(json.dumps({"log_dir": str(named)}))
     now = time.time() + module.FINISHED_RUN_LOG_RETENTION_SECONDS + 60
     for directory in (old, named, other):
-        for path in (directory, directory / "report.txt"):
+        for path in (directory, directory / "test-run-report.txt"):
             os.utime(path, (time.time(), time.time()))
-    for path in (recent, recent / "report.txt"):
+    for path in (recent, recent / "test-run-report.txt"):
         os.utime(path, (now, now))
     explicit = temp / "run-all-test-suites-explicit"
     deep = temp / "run-all-test-suites-deep"
@@ -2029,6 +3032,142 @@ with tempfile.TemporaryDirectory() as scratch:
           explicit.exists())
     check("nor one with a trace deep inside it that changed recently",
           deep.exists())
+    # Root reads a directory whatever its mode, so the failure cannot be made.
+    if os.geteuid() != 0:
+        unreadable_log_dir = temp / "run-all-test-suites-unreadable"
+        (unreadable_log_dir / "closed").mkdir(parents=True)
+        (unreadable_log_dir / "closed").chmod(0o000)
+        try:
+            removed, removal_failures = (
+                module.remove_old_temporary_log_directories_without_run_records(
+                    runs, now=now, temp_dir=temp))
+        finally:
+            (unreadable_log_dir / "closed").chmod(0o700)
+        check("a log directory whose tree cannot be read is kept and reported with the reason",
+              unreadable_log_dir.exists() and removed == []
+              and [directory for directory, _ in removal_failures] == [unreadable_log_dir]
+              and "could not read it" in removal_failures[0][1], (removed, removal_failures))
+
+with tempfile.TemporaryDirectory() as scratch:
+    temp = pathlib.Path(scratch)
+    prefix = module.SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX
+    left_by_killed_runner = temp / f"{prefix}ab_cd123"
+    still_in_use = temp / f"{prefix}xy_z9876"
+    not_mkdtemp_shaped = temp / f"{prefix}another-program"
+    for directory in (left_by_killed_runner, still_in_use, not_mkdtemp_shaped):
+        (directory / "made-by-the-suite").mkdir(parents=True)
+        (directory / "made-by-the-suite" / "file").write_text("x")
+    now = time.time() + module.FINISHED_RUN_LOG_RETENTION_SECONDS + 60
+    os.utime(still_in_use / "made-by-the-suite" / "file", (now, now))
+    # Only root can give a directory another owner, so the sweep is told it runs as another account.
+    real_getuid = module.os.getuid
+    module.os.getuid = lambda: real_getuid() + 1
+    try:
+        removed, removal_failures = (
+            module.remove_old_suite_temporary_directories_left_by_killed_runners(
+                now=now, temp_dir=temp))
+    finally:
+        module.os.getuid = real_getuid
+    check("a per-suite TMPDIR another account owns is never touched",
+          removed == [] and removal_failures == [] and left_by_killed_runner.exists(),
+          (removed, removal_failures))
+    removed, removal_failures = module.remove_old_suite_temporary_directories_left_by_killed_runners(
+        now=now, temp_dir=temp)
+    check("a per-suite TMPDIR a killed runner left is removed once unchanged for two days",
+          removed == [left_by_killed_runner] and not left_by_killed_runner.exists()
+          and removal_failures == [], (removed, removal_failures))
+    check("but not one a suite changed recently, nor one whose name mkdtemp did not make",
+          still_in_use.exists() and not_mkdtemp_shaped.exists())
+    # Root reads and removes a directory whatever its mode, so neither failure can be made.
+    if os.geteuid() != 0:
+        unreadable = temp / f"{prefix}unread01"
+        unremovable = temp / f"{prefix}unremov1"
+        (unreadable / "closed").mkdir(parents=True)
+        (unremovable / "locked").mkdir(parents=True)
+        (unremovable / "locked" / "file").write_text("x")
+        (unremovable / "locked").chmod(0o500)
+        (unreadable / "closed").chmod(0o000)
+        try:
+            removed, removal_failures = (
+                module.remove_old_suite_temporary_directories_left_by_killed_runners(
+                    now=now, temp_dir=temp))
+        finally:
+            (unreadable / "closed").chmod(0o700)
+            (unremovable / "locked").chmod(0o700)
+        reasons = dict(removal_failures)
+        check("a per-suite TMPDIR whose tree cannot be read is kept and reported with the reason",
+              unreadable.exists() and unreadable not in removed
+              and "could not read it" in reasons.get(unreadable, "")
+              and "Permission denied" in reasons.get(unreadable, ""),
+              (removed, removal_failures))
+        check("a per-suite TMPDIR that cannot be removed is reported with the reason",
+              sorted(reasons) == sorted([unreadable, unremovable])
+              and reasons[unremovable] and "could not read it" not in reasons[unremovable],
+              removal_failures)
+    vanished = temp / f"{prefix}gone0001"
+    old_after_vanished = temp / f"{prefix}zz_old01"
+    vanished.mkdir()
+    old_after_vanished.mkdir()
+    real_newest = module.newest_modification_time_in_tree
+
+    def removed_by_another_run(directory):
+        if directory.name.endswith(("gone0001", "-aa-vanished")):
+            raise FileNotFoundError(2, "No such file or directory", str(directory))
+        return real_newest(directory)
+    module.newest_modification_time_in_tree = removed_by_another_run
+    try:
+        removed, removal_failures = (
+            module.remove_old_suite_temporary_directories_left_by_killed_runners(
+                now=now, temp_dir=temp))
+    finally:
+        module.newest_modification_time_in_tree = real_newest
+    check("a per-suite TMPDIR that vanished while it was read is skipped without a report, "
+          "and the sweep goes on to the next one",
+          vanished not in removed
+          and vanished not in [directory for directory, _ in removal_failures]
+          and old_after_vanished in removed and not old_after_vanished.exists(),
+          (removed, removal_failures))
+
+with tempfile.TemporaryDirectory() as scratch:
+    temp = pathlib.Path(scratch)
+    runs = temp / "runs"
+    runs.mkdir()
+    vanished = temp / "run-all-test-suites-aa-vanished"
+    old_after_vanished = temp / "run-all-test-suites-zz-old"
+    vanished.mkdir()
+    old_after_vanished.mkdir()
+    now = time.time() + module.FINISHED_RUN_LOG_RETENTION_SECONDS + 60
+    real_newest = module.newest_modification_time_in_tree
+
+    def removed_by_another_run(directory):
+        if directory.name.endswith(("gone0001", "-aa-vanished")):
+            raise FileNotFoundError(2, "No such file or directory", str(directory))
+        return real_newest(directory)
+    module.newest_modification_time_in_tree = removed_by_another_run
+    try:
+        removed, removal_failures = module.remove_old_temporary_log_directories_without_run_records(
+            runs, now=now, temp_dir=temp)
+    finally:
+        module.newest_modification_time_in_tree = real_newest
+    check("a log directory that vanished while it was read is skipped without a report, "
+          "and the sweep goes on to the next one",
+          removed == [old_after_vanished] and removal_failures == [],
+          (removed, removal_failures))
+
+swept = []
+real_sweep = module.remove_old_suite_temporary_directories_left_by_killed_runners
+module.remove_old_suite_temporary_directories_left_by_killed_runners = (
+    lambda: swept.append("swept") or ([pathlib.Path("/tmp/rts-ab_cd123")], []))
+with tempfile.TemporaryDirectory() as scratch:
+    lines = module.clean_up_after_earlier_runs(module.DEFAULT_LOCK_FILE, "", platform="darwin")
+    check("a run with the default lock file sweeps killed runners' per-suite TMPDIRs on macOS too, "
+          "and names each one it removed",
+          swept == ["swept"] and any("/tmp/rts-ab_cd123" in line for line in lines), lines)
+    swept.clear()
+    module.clean_up_after_earlier_runs(pathlib.Path(scratch) / "own.lock", "", platform="darwin")
+    check("a run with a lock file of its own leaves the shared temp directory alone",
+          swept == [], swept)
+module.remove_old_suite_temporary_directories_left_by_killed_runners = real_sweep
 
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
@@ -2077,6 +3216,37 @@ with tempfile.TemporaryDirectory() as scratch:
           code == 0 and lock.read_text().startswith("pid ")
           and not module.run_records_directory_for_lock_file(lock).exists(), (code, lock.read_text()))
 
+# --- The lock file's holder, when its process has ended ------------------------
+ended = subprocess.Popen([sys.executable, "-c", "pass"])
+ended.wait()
+dead_description = f"pid {ended.pid}, checkout /elsewhere, started 2026-09-21T00:00:00Z"
+check("a description naming a process that has ended is not given as the holder",
+      module.lock_holder_described(dead_description)
+      == "a process that wrote no description of itself; the lock file still holds "
+         f"\"{dead_description}\", from an earlier run whose process has ended",
+      module.lock_holder_described(dead_description))
+live_description = f"pid {os.getpid()}, checkout /here, started 2026-09-21T00:00:00Z"
+check("a description naming a running process is the holder",
+      module.lock_holder_described(live_description) == live_description,
+      module.lock_holder_described(live_description))
+check("an empty lock file names no holder",
+      module.lock_holder_described("") == "a process that wrote no description of itself",
+      module.lock_holder_described(""))
+saved_kill = module.os.kill
+
+
+def kill_refused(pid, signal_number):
+    raise PermissionError(1, "Operation not permitted")
+
+
+module.os.kill = kill_refused
+try:
+    refused_counts_as_running = module.process_running(4242)
+finally:
+    module.os.kill = saved_kill
+check("a process this user may not signal still counts as running",
+      refused_counts_as_running is True)
+
 # --- The defaults -------------------------------------------------------------
 defaults = module.parse_arguments([])
 check("--checkout defaults to the checkout this program is in",
@@ -2094,9 +3264,146 @@ for jobs_given, suites_to_run, cores, expected, case in (
         (5, 2, 16, 5, "-j N is used as given, even above the number of suites")):
     answer = module.suites_run_at_once(jobs_given, suites_to_run, cores)
     check(case, answer == expected, (jobs_given, suites_to_run, cores, answer))
+check("--wait-for-lock-seconds defaults to 0, so a plain run refuses at once",
+      defaults.wait_for_lock_seconds == 0, defaults.wait_for_lock_seconds)
+with contextlib.redirect_stderr(io.StringIO()) as refused_negative:
+    try:
+        module.parse_arguments(["--wait-for-lock-seconds", "-1"])
+        negative_exit = None
+    except SystemExit as stopped:
+        negative_exit = stopped.code
+check("a negative --wait-for-lock-seconds is a bad invocation, exit 2",
+      negative_exit == 2 and "at least 0" in refused_negative.getvalue(),
+      (negative_exit, refused_negative.getvalue()))
 check("--lock-file defaults to one file per machine under ~/.claude",
       pathlib.Path(defaults.lock_file) == pathlib.Path.home() / ".claude"
       / ".run-all-test-suites.lock", defaults.lock_file)
+
+# --- The kill reaches what the suite started in a session of its own -------------------
+def fake_proc(root, processes):
+    """A /proc holding only, for each pid, its stat and the children file of each of its
+    threads; processes maps pid -> (start ticks, {thread id: [child pids]})."""
+    for pid, (start_ticks, threads) in processes.items():
+        write_fake_stat(root, pid, start_ticks)
+        for thread, children in threads.items():
+            (root / str(pid) / "task" / str(thread)).mkdir(parents=True, exist_ok=True)
+            (root / str(pid) / "task" / str(thread) / "children").write_text(
+                " ".join(map(str, children)) + (" " if children else ""))
+    return root
+
+
+def write_fake_stat(root, pid, start_ticks, state="S"):
+    (root / str(pid)).mkdir(parents=True, exist_ok=True)
+    (root / str(pid) / "stat").write_text(
+        f"{pid} (a (fake) suite) {state} " + "1 " * 18 + f"{start_ticks} 0\n")
+
+
+class ProcWhereOneThreadEndsAsItsChildrenAreRead(type(pathlib.Path())):
+    """The kernel answers ESRCH to a read of the children of a thread that has just ended."""
+
+    def read_text(self, *arguments, **keywords):
+        if self.name == "children" and self.parent.name == "120":
+            raise ProcessLookupError(3, "No such process")
+        return super().read_text(*arguments, **keywords)
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    proc = fake_proc(pathlib.Path(scratch), {
+        100: (10, {100: [101, 102], 120: [106], 150: [105]}),
+        101: (11, {101: [103]}),
+        103: (13, {103: []}),
+        105: (15, {105: []}),
+        106: (16, {106: []}),
+    })
+    # 102 has ended since it was listed, and 104's thread has no children file left to read.
+    (proc / "104" / "task" / "104").mkdir(parents=True)
+    (proc / "104" / "task" / "104" / "children").symlink_to(proc / "104" / "gone")
+    write_fake_stat(proc, 104, 14)
+    (proc / "101" / "task" / "101" / "children").write_text("103 104 ")
+    found = sorted(module.descendant_processes_with_start_ticks(
+        100, ProcWhereOneThreadEndsAsItsChildrenAreRead(proc)))
+    check("the descendants read from /proc are every process below the suite, through every "
+          "thread, each with its start ticks, leaving out one that ended while the tree was "
+          "read and a thread that ended as its children were read",
+          found == [(101, 11), (103, 13), (104, 14), (105, 15)], found)
+    check("there is no descendant to read where there is no /proc",
+          module.descendant_processes_with_start_ticks(100, pathlib.Path(scratch) / "none") == [])
+
+
+class FakeSuiteProcess:
+    pid = 200
+
+
+def kill_with_fake_proc(proc, signalled, end_on_kill=True, kill_refused=(), sleeps=None,
+                        killpg_refused=False):
+    """Run the kill on the fake /proc; signalled records each signal sent, in order."""
+    now = [0.0]
+
+    def killpg(pid, number):
+        signalled.append(("killpg", pid, number))
+        # The kernel reparents a killed process's children away from it.
+        (proc / "200" / "task" / "200" / "children").write_text("")
+        # Another process took the pid of the one whose start ticks no longer match.
+        write_fake_stat(proc, 203, 99)
+        if killpg_refused:
+            raise ProcessLookupError(3, "No such process")
+
+    def kill(pid, number):
+        signalled.append(("kill", pid, number))
+        if pid in kill_refused:
+            raise ProcessLookupError(3, "No such process")
+        if end_on_kill:
+            write_fake_stat(proc, pid, 0, state="Z")
+
+    def sleep(seconds):
+        now[0] += seconds
+        if sleeps is not None:
+            sleeps.append(seconds)
+            if len(sleeps) == 2 and not end_on_kill:
+                for pid in (201, 202):
+                    write_fake_stat(proc, pid, 0, state="Z")
+
+    return module.kill_test_suite_process_group_and_descendants(
+        FakeSuiteProcess, proc=proc, kill=kill, killpg=killpg, clock=lambda: now[0], sleep=sleep)
+
+
+def suite_tree(root):
+    return fake_proc(root, {200: (20, {200: [201, 203]}), 201: (21, {201: [202]}),
+                            202: (22, {202: []}), 203: (23, {203: []})})
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled = []
+    still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled)
+    check("the kill reads the tree below the suite before it kills the suite's process group, "
+          "then sends SIGKILL to each process it read, except one whose pid another process "
+          "has taken since, and returns none still running once they have ended",
+          signalled == [("killpg", 200, signal.SIGKILL), ("kill", 201, signal.SIGKILL),
+                        ("kill", 202, signal.SIGKILL)] and still_running == [],
+          (signalled, still_running))
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled = []
+    still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled,
+                                        kill_refused=(201,), killpg_refused=True)
+    check("a process group or a process that has ended before its SIGKILL does not stop the "
+          "kill of the others",
+          [entry[1] for entry in signalled] == [200, 201, 202], signalled)
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled, sleeps = [], []
+    still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled,
+                                        end_on_kill=False, sleeps=sleeps)
+    check("the kill waits for the processes it killed to end before it returns",
+          still_running == [] and len(sleeps) == 2, (still_running, sleeps))
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled = []
+    still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled,
+                                        end_on_kill=False)
+    check("a killed process still running after TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS "
+          "is returned, and the kill does not wait longer",
+          still_running == [(201, 21), (202, 22)], still_running)
 
 print()
 # The count is printed so a short run is visible on sight: a run that ends

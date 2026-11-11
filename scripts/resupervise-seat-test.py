@@ -18,6 +18,7 @@ Run: python3 scripts/resupervise-seat-test.py
 """
 
 import fcntl
+import importlib.util
 import json
 import os
 import re
@@ -35,6 +36,22 @@ SUPERVISOR_SCRIPT = (RESUPERVISE_SCRIPT.resolve().parent.parent
                      / "nc-systems" / "handoff" / "handoff-supervisor.py")
 
 failures = []
+_tmux_error_pattern_spec = importlib.util.spec_from_file_location(
+    "tmux_target_or_server_does_not_exist_error_pattern_common",
+    RESUPERVISE_SCRIPT.resolve().parent.parent / "nc-systems" / "general-tools"
+    / "tmux-target-or-server-does-not-exist-error-pattern-common.py")
+tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
+_tmux_error_pattern_spec.loader.exec_module(tmux_error_pattern)
+# What the unknown-kill check's answers mean; the answers come from the shared tmux pattern,
+# whose own suite pins them.
+UNKNOWN_KILL_CHECK_ANSWER_LINES = (
+    "If the check exits 0, the session still exists: start no agent, and report to the user. "
+    "If it prints " + " or ".join(
+        f'"{wording}"' for wording, _ in tmux_error_pattern.TMUX_TARGET_OR_SERVER_DOES_NOT_EXIST_ERROR_WORDINGS)
+    + ", the session is gone: run "
+    "again, for this agent-seat only, the command that printed this message. Any other output, or a "
+    "check that does not return within 30 seconds, leaves the "
+    "outcome unknown: start no agent, and report the output to the user.\n")
 
 # Variables Claude Code sets for an agent-session's commands, and one supervisor variable naming
 # the calling agent-seat. TMUX is left out: the script reads it to find the session it runs in.
@@ -45,6 +62,8 @@ CALLING_AGENT_SESSION_TEST_VARIABLES = {
     "CLAUDE_CODE_MESSAGING_SOCKET": "/run/user/1000/cc-socks/calling.sock",
     "CLAUDE_CODE_MESSAGING_TOKEN": "calling-token",
     "CLAUDE_CODE_SESSION_ATTENDED": "0",
+    "IS_DEMO": "1",
+    "GH_TOKEN": "decoy-inherited-token",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "calling-seat",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "/calling/seat/directory",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": "calling-supervisor-session",
@@ -127,15 +146,15 @@ def run_resupervise(workspace: Path, name: str, *flags):
     )
 
 
-def write_handoff(workspace: Path, name: str, counter: int, dont_restart: bool = False):
+def write_handoff(workspace: Path, name: str, counter: int, ask_user_before_restart: bool = False):
     lines = [
         f"# handoff for {name}",
         "written-at: 2026-08-19T00:00:00+00:00",
-        f"restart-counter: {counter}",
+        f"session-handoff-sequence-number: {counter}",
         "next-step: Continue the walk.",
     ]
-    if dont_restart:
-        lines.append("dont-restart: the user asked to be consulted")
+    if ask_user_before_restart:
+        lines.append("ask-user-before-restart: the user asked to be consulted")
     (workspace / f"{name}-handoff.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -158,13 +177,13 @@ def run_no_handoff_cases(workspace: Path):
           "hand off first" in result.stderr, result.stderr)
 
     (workspace / "prose-handoff.md").write_text(
-        "# handoff for prose\nthis file has no restart-counter line at all\n", encoding="utf-8"
+        "# handoff for prose\nthis file has no session-handoff-sequence-number line at all\n", encoding="utf-8"
     )
     result = run_resupervise(workspace, "prose", "--dry-run")
-    check("a handoff with no restart-counter refuses",
+    check("a handoff with no session-handoff-sequence-number refuses",
           result.returncode == 1, result.stdout + result.stderr)
-    check("the unreadable-handoff refusal says the supervisor would not ignite",
-          "not ignite" in result.stderr, result.stderr)
+    check("the unreadable-handoff refusal says the supervisor would not start a fresh agent-session from it",
+          "not start a fresh agent-session from it" in result.stderr, result.stderr)
 
 
 def run_already_consumed_case(workspace: Path):
@@ -180,7 +199,7 @@ def run_already_consumed_case(workspace: Path):
     check("an already-consumed handoff refuses",
           result.returncode == 1, result.stdout + result.stderr)
     check("the consumed refusal names both counters",
-          "restart-counter 4" in result.stderr and "recorded 4" in result.stderr,
+          "session-handoff-sequence-number 4" in result.stderr and "recorded 4" in result.stderr,
           result.stderr)
 
     # Strictly newer is the boundary the supervisor's own boot-ignition uses.
@@ -219,8 +238,8 @@ def run_live_supervisor_case(workspace: Path):
               result.returncode == 1, result.stdout + result.stderr)
         check("the live-supervisor refusal says there is nothing to recover",
               "Nothing to recover" in result.stderr, result.stderr)
-        # Conditional for the same reason as handoff-write-and-check-supervisor:
-        # alive can be yes-by-assumption when ps cannot be asked, and promising
+        # Conditional because supervisor_liveness reads an unidentified live lock
+        # holder as alive when ps cannot be asked, and promising
         # a reincarnation nothing keeps is how a seat stays down while its
         # operator believes it is being watched (#328 follow-up round).
         check("and states the reincarnation conditionally, since alive can be an assumption",
@@ -269,18 +288,18 @@ def run_stale_heartbeat_case(workspace: Path):
           "DRY RUN" in result.stdout, result.stdout)
 
 
-def run_dont_restart_case(workspace: Path):
-    """dont-restart is the agent asking to be consulted, not a refusal.
+def run_ask_user_before_restart_case(workspace: Path):
+    """ask-user-before-restart is the agent asking to be consulted, not a refusal.
 
     The supervisor honors it on its own terminal, so this script proceeds and
     warns rather than deciding on the agent's behalf.
     """
-    write_handoff(workspace, "consult", counter=1, dont_restart=True)
+    write_handoff(workspace, "consult", counter=1, ask_user_before_restart=True)
     result = run_resupervise(workspace, "consult", "--dry-run")
-    check("a dont-restart handoff still proceeds",
+    check("an ask-user-before-restart handoff still proceeds",
           result.returncode == 0, result.stdout + result.stderr)
-    check("the dont-restart note reaches the operator",
-          "dont-restart" in result.stdout, result.stdout)
+    check("the ask-user-before-restart note reaches the operator",
+          "ask-user-before-restart" in result.stdout, result.stdout)
 
 
 def run_missing_launcher_case(workspace: Path):
@@ -298,27 +317,44 @@ def run_missing_launcher_case(workspace: Path):
     # which transcript is worth resuming from scripts/ (issue 242 change 5).
     # Both are resolved from the repository root, so the isolated copy needs
     # the repository's SHAPE around it rather than two files beside it.
-    # The modules the supervisor loads from scripts/ are read from its own
-    # source, so a new import there needs no change here.
+    # The files the supervisor names under scripts/ are read from its own
+    # source, so a new import there needs no change here, whether it loads the
+    # file directly or through a path constant.
     supervisor_home = workspace / "nc-systems" / "handoff"
     supervisor_home.mkdir(parents=True)
-    for supervisor_file in ("handoff-supervisor.py", "daily-memory-review-mark.py",
-                            "daily-overview-refresh-reminder-mark.py",
-                            "uncommitted-work-snapshots.py"):
+    for supervisor_file in ("handoff-supervisor.py", "session-handoff-field-names-common.py",
+                            "handoff-user-review-of-agent-memory-stores-mark.py",
+                            "handoff-architecture-overview-refresh-user-shown-mark.py",
+                            "uncommitted-work-snapshots.py",
+                            "handoff-reference-checkout-fetch-and-fast-forward-to-origin-main-check-common.py",
+                            "handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py",
+                            "agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py"):
         (supervisor_home / supervisor_file).write_text(
             SUPERVISOR_SCRIPT.with_name(supervisor_file).read_text(encoding="utf-8"),
             encoding="utf-8")
-    # uncommitted-work-snapshots.py reads git's output with the shared module.
+    # uncommitted-work-snapshots.py reads git's output with the shared module,
+    # and the supervisor strips the variables that redirect git with another.
     general_tools_home = workspace / "nc-systems" / "general-tools"
     general_tools_home.mkdir(parents=True)
-    git_output_module = "git-machine-readable-output-runner-and-parser-common.py"
-    (general_tools_home / git_output_module).write_text(
-        (SUPERVISOR_SCRIPT.parents[1] / "general-tools" / git_output_module)
-        .read_text(encoding="utf-8"), encoding="utf-8")
+    # resupervise-seat.py reads tmux's absent-session answers with the shared
+    # pattern module; the Stop hooks the supervisor loads from scripts/ load
+    # from here the shared rule that Stop hooks stay silent while the agent
+    # answers a Stop hook.
+    for general_tools_module in (
+            "git-machine-readable-output-runner-and-parser-common.py",
+            "git-redirecting-environment-variables-removal-common.py",
+            "tmux-target-or-server-does-not-exist-error-pattern-common.py",
+            "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py",
+            "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py",
+            "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py",
+            "pull-request-conflict-with-main-rebase-or-replace-answer-common.py"):
+        (general_tools_home / general_tools_module).write_text(
+            (SUPERVISOR_SCRIPT.parents[1] / "general-tools" / general_tools_module)
+            .read_text(encoding="utf-8"), encoding="utf-8")
     scripts_home = workspace / "scripts"
     scripts_home.mkdir(parents=True, exist_ok=True)
     for supervisor_import in re.findall(
-            r'SCRIPTS_DIRECTORY / "([\w-]+\.py)"\)',
+            r'SCRIPTS_DIRECTORY / "([\w-]+\.py)"',
             SUPERVISOR_SCRIPT.read_text(encoding="utf-8")):
         (scripts_home / supervisor_import).write_text(
             RESUPERVISE_SCRIPT.with_name(supervisor_import)
@@ -520,7 +556,7 @@ def run_per_seat_server_end_to_end_case(workspace: Path):
         check("a seat on its own tmux server is cleared there",
               still_there.returncode != 0, result.stdout + result.stderr)
         check("the kill record names the per-seat server socket",
-              f"(server socket {session})" in result.stdout, result.stdout)
+              f"(tmux socket name {session})" in result.stdout, result.stdout)
     finally:
         subprocess.run(["tmux", "-L", session, "kill-server"],
                        capture_output=True, check=False)
@@ -550,6 +586,251 @@ def run_missing_tmux_case(workspace: Path):
           "Traceback" not in result.stderr, result.stderr)
     check("a machine without tmux still exits cleanly",
           result.returncode in (0, 1), f"exit {result.returncode}")
+
+
+def load_resupervise():
+    """Load resupervise-seat.py as a module, so its tmux calls can be stubbed."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("resupervise_seat_under_test", RESUPERVISE_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def run_tmux_probe_failure_cases(workspace: Path):
+    """Only tmux's own absent answers mean no session; any other failure refuses.
+
+    Retiring kills the seat's session so the launcher's `tmux new-session -A`
+    starts a supervisor instead of attaching to it. A probe that failed for
+    another reason, such as a timeout or a refused socket, says nothing about
+    whether the session is there, so reading it as "absent" would kill nothing
+    and let the launcher attach to the old session.
+    """
+    resupervise = load_resupervise()
+    calls = []
+
+    def stub_answers(answers):
+        def fake_run_tmux(*arguments_after_tmux, socket_name=None):
+            calls.append((arguments_after_tmux[0], socket_name))
+            answer = answers.get((arguments_after_tmux[0], socket_name))
+            if answer is None:
+                return None
+            returncode, stderr = answer
+            return subprocess.CompletedProcess(["tmux"], returncode, "", stderr)
+        resupervise.run_tmux = fake_run_tmux
+
+    real_which = shutil.which
+    try:
+        check_tmux_probe_failure_cases(resupervise, calls, stub_answers)
+        check_dry_run_probe_failure_case(workspace, resupervise, stub_answers)
+        check_own_session_guard_failure_cases(workspace, resupervise, stub_answers)
+    finally:
+        shutil.which = real_which  # the module's shutil is this process's shutil
+
+
+def check_own_session_guard_failure_cases(workspace: Path, resupervise, stub_answers):
+    """Inside tmux, a failed question "which session is this?" refuses before any kill."""
+    resupervise.shutil.which = lambda program: "/usr/bin/tmux"
+    seat_arguments = ["guardseat", "--handoff-dir", str(workspace),
+                      "--agents-root", str(workspace / "agents"), "--prepare-only"]
+    write_handoff(workspace, "guardseat", counter=1)
+    os.environ["TMUX"] = "/tmp/tmux-test/default,1,0"
+    try:
+        stub_answers({("display-message", None): (1, "no current client\n"),
+                      ("has-session", "guardseat"): (0, ""),
+                      ("kill-session", "guardseat"): (0, "")})
+        code, output, errors = run_main_capturing(resupervise, seat_arguments)
+        check("inside tmux, a display-message that fails refuses with its exit and error, and "
+              "kills nothing",
+              code == 1 and errors == (
+                  "resupervise-seat: $TMUX is set, so this may be running inside the guardseat "
+                  "tmux session, which clearing would kill, and asking tmux which session this "
+                  "is failed: `tmux display-message -p '#{session_name}'` exited 1: no current "
+                  "client. Nothing was killed or started. Run it from another window, or from "
+                  "outside tmux.\n"),
+              f"exit {code}; stdout {output!r}; stderr {errors!r}")
+        stub_answers({})
+        code, output, errors = run_main_capturing(resupervise, seat_arguments)
+        check("inside tmux, a display-message that gets no answer refuses with words true for "
+              "a timeout",
+              code == 1 and "asking tmux which session this is failed: tmux could not be run, "
+                            "or did not answer within 30 seconds. Nothing was killed" in errors,
+              f"exit {code}; stdout {output!r}; stderr {errors!r}")
+    finally:
+        os.environ.pop("TMUX", None)
+
+
+def run_main_capturing(resupervise, arguments):
+    """Return (exit code, stdout, stderr) of resupervise.main(arguments)."""
+    import contextlib
+    import io
+    errors = io.StringIO()
+    with contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(errors):
+        code = resupervise.main(arguments)
+    return code, output.getvalue(), errors.getvalue()
+
+
+def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers):
+    """A probe that got no answer refuses, rather than promising or making a clean launch."""
+    resupervise.shutil.which = lambda program: "/usr/bin/tmux"
+    resupervise.this_machine_host_name = lambda: "testhost"
+    seat_arguments = ["dryprobe", "--handoff-dir", str(workspace),
+                      "--agents-root", str(workspace / "agents"), "--prepare-only"]
+    no_answer_refusal = ("resupervise-seat: could not tell whether the tmux session dryprobe "
+                         "is still there (tmux socket name dryprobe): tmux could not be run, "
+                         "or did not answer within 30 seconds")
+
+    stub_answers({})  # every tmux call gets no answer, as when tmux times out
+    write_handoff(workspace, "dryprobe", counter=1)
+    code, output, errors = run_main_capturing(resupervise, [*seat_arguments, "--dry-run"])
+    check("a dry run whose tmux probe got no answer refuses with words true for a timeout",
+          code == 1 and errors == (f"{no_answer_refusal}. This was a dry run: "
+                                   "nothing was killed or started\n")
+          and "DRY RUN" not in output,
+          f"exit {code}; stdout {output!r}; stderr {errors!r}")
+
+    stub_answers({})
+    code, output, errors = run_main_capturing(resupervise, seat_arguments)
+    check("a run whose tmux probe got no answer refuses, saying nothing was killed or started",
+          code == 1 and errors == (f"{no_answer_refusal}; no tmux session was killed. "
+                                   "No agent was started\n"),
+          f"exit {code}; stdout {output!r}; stderr {errors!r}")
+
+    stub_answers({("has-session", "dryprobe"): (0, ""),
+                  ("has-session", "default"): (1, "can't find session: dryprobe\n")})
+    code, output, errors = run_main_capturing(resupervise, seat_arguments)
+    check("a kill-session that got no answer says the kill's outcome is unknown and how to check",
+          code == 1 and errors == ("resupervise-seat: it is unknown whether the stale tmux "
+                                   "session dryprobe (tmux socket name dryprobe) was killed: "
+                                   "tmux could not be run, or did not answer within 30 seconds. "
+                                   "No agent was started. " + UNKNOWN_KILL_CHECK_ANSWER_LINES +
+                                   "To check, run the command on the next line on testhost:\n"
+                                   "tmux -L dryprobe has-session -t '=dryprobe'\n"),
+          f"exit {code}; stdout {output!r}; stderr {errors!r}")
+    lines = errors.splitlines()
+    pointer = [index for index, line in enumerate(lines) if "run the command on the next line" in line]
+    check("the line after the one that says \"run the command on the next line\" is the command itself",
+          len(pointer) == 1 and lines[pointer[0] + 1:] == ["tmux -L dryprobe has-session -t '=dryprobe'"],
+          lines)
+
+    stub_answers({("has-session", "dryprobe"): (0, ""),
+                  ("kill-session", "dryprobe"): (1, "permission denied\n"),
+                  ("has-session", "default"): (1, "can't find session: dryprobe\n")})
+    code, output, errors = run_main_capturing(resupervise, seat_arguments)
+    check("a kill-session tmux answered with a failure says no tmux session was killed",
+          code == 1 and errors == ("resupervise-seat: could not kill the stale tmux session "
+                                   "dryprobe (tmux socket name dryprobe): permission denied; "
+                                   "no tmux session was killed. No agent was started\n"),
+          f"exit {code}; stdout {output!r}; stderr {errors!r}")
+
+    stub_answers({("has-session", "dryprobe"): (0, ""),
+                  ("kill-session", "dryprobe"): (0, ""),
+                  ("has-session", "default"): (0, "")})
+    code, output, errors = run_main_capturing(resupervise, seat_arguments)
+    check("a second kill-session that got no answer names the session already killed, "
+          "and does not say none was",
+          code == 1 and errors == ("resupervise-seat: it is unknown whether the stale tmux "
+                                   "session dryprobe (tmux socket name default) was killed: "
+                                   "tmux could not be run, or did not answer within 30 seconds; "
+                                   "before that, the tmux session dryprobe was killed on tmux "
+                                   "socket name dryprobe. No agent was started. "
+                                   + UNKNOWN_KILL_CHECK_ANSWER_LINES +
+                                   "To check, run the command on the next line on testhost:\n"
+                                   "tmux -L default has-session -t '=dryprobe'\n"),
+          f"exit {code}; stdout {output!r}; stderr {errors!r}")
+
+    stub_answers({("has-session", "dryprobe"): (0, ""),
+                  ("has-session", "default"): (1, "can't find session: dryprobe\n")})
+    code, output, errors = run_main_capturing(
+        resupervise, [*seat_arguments, "--agent-box", "testbox"])
+    check("with --prepare-only reached through --agent-box, as the box half of --machine "
+          "ubuntu is, the unknown-kill check runs through ssh from the caller's machine, "
+          "which never held the session",
+          code == 1 and errors == ("resupervise-seat: it is unknown whether the stale tmux "
+                                   "session dryprobe (tmux socket name dryprobe) was killed: "
+                                   "tmux could not be run, or did not answer within 30 seconds. "
+                                   "No agent was started. " + UNKNOWN_KILL_CHECK_ANSWER_LINES +
+                                   "To check, run the command on the next line from the machine "
+                                   "you ran resupervise-seat on:\n"
+                                   "ssh testbox \"tmux -L dryprobe has-session -t '=dryprobe'\"\n"),
+          f"exit {code}; stdout {output!r}; stderr {errors!r}")
+
+    stub_answers({("has-session", "dryprobe"): (0, ""),
+                  ("has-session", "default"): (1, "can't find session: dryprobe\n")})
+    local_arguments = [argument for argument in seat_arguments if argument != "--prepare-only"]
+    code, output, errors = run_main_capturing(
+        resupervise, [*local_arguments, "--agent-box", "testbox"])
+    check("without --prepare-only the kill ran here, so an explicit --agent-box still gives "
+          "the check as a command for this machine, not through ssh",
+          code == 1 and errors.endswith(UNKNOWN_KILL_CHECK_ANSWER_LINES
+                                        + "To check, run the command on the next line on testhost:\n"
+                                        "tmux -L dryprobe has-session -t '=dryprobe'\n"),
+          f"exit {code}; stdout {output!r}; stderr {errors!r}")
+
+
+    stub_answers({("has-session", "dryprobe"): (0, ""),
+                  ("kill-session", "dryprobe"): (0, ""),
+                  ("has-session", "default"): (0, ""),
+                  ("kill-session", "default"): (1, "permission denied\n")})
+    code, output, errors = run_main_capturing(resupervise, seat_arguments)
+    check("a second kill-session tmux answered with a failure names the session already "
+          "killed, and does not say none was",
+          code == 1 and errors == ("resupervise-seat: could not kill the stale tmux session "
+                                   "dryprobe (tmux socket name default): permission denied; "
+                                   "before that, the tmux session dryprobe was killed on tmux "
+                                   "socket name dryprobe. No agent was started\n"),
+          f"exit {code}; stdout {output!r}; stderr {errors!r}")
+
+def check_tmux_probe_failure_cases(resupervise, calls, stub_answers):
+    resupervise.shutil.which = lambda program: "/usr/bin/tmux"
+    absent_on_both = {("has-session", "probeseat"): (1, "no server running on /tmp/x\n"),
+                      ("has-session", "default"): (1, "can't find session: probeseat\n")}
+
+    calls.clear()
+    stub_answers(absent_on_both)
+    killed, failure, _ = resupervise.retire_seat_tmux_session("probeseat")
+    check("tmux's absent answers on both servers retire nothing and report no failure",
+          killed == [] and failure is None, f"killed={killed} failure={failure}")
+
+    calls.clear()
+    stub_answers({("has-session", "probeseat"): (1, "no server running on /tmp/x\n")})
+    killed, failure, _ = resupervise.retire_seat_tmux_session("probeseat")
+    check("a has-session that does not answer refuses instead of reading as no session",
+          failure is not None and "tmux could not be run, or did not answer within 30 seconds"
+          in failure and killed == [],
+          f"killed={killed} failure={failure}")
+    check("nothing is killed after a probe that did not answer",
+          not any(command == "kill-session" for command, _ in calls), str(calls))
+
+    calls.clear()
+    stub_answers({("has-session", "probeseat"): (1, "error connecting to /tmp/x (Permission denied)\n"),
+                  ("has-session", "default"): (1, "can't find session: probeseat\n")})
+    killed, failure, _ = resupervise.retire_seat_tmux_session("probeseat")
+    check("a has-session error that is not an absent answer refuses, quoting tmux",
+          failure is not None and "Permission denied" in failure and killed == [],
+          f"killed={killed} failure={failure}")
+
+    calls.clear()
+    stub_answers({("has-session", "probeseat"): (0, ""),
+                  ("kill-session", "probeseat"): (0, ""),
+                  ("has-session", "default"): (1, "can't find session: probeseat\n")})
+    killed, failure, _ = resupervise.retire_seat_tmux_session("probeseat")
+    check("a session on the seat's own server is killed when the default server says absent",
+          killed == ["probeseat"] and failure is None, f"killed={killed} failure={failure}")
+
+    held, detail = resupervise.tmux_has_session(
+        "probeseat", "default",
+        run=lambda *arguments, socket_name=None: subprocess.CompletedProcess(
+            ["tmux"], 1, "can't find session: probeseat\n", ""))
+    check("an absent answer tmux printed on stdout, with stderr empty, still reads as absent",
+          held is False and "can't find session" in detail, repr((held, detail)))
+
+    resupervise.shutil.which = lambda program: None
+    calls.clear()
+    killed, failure, _ = resupervise.retire_seat_tmux_session("probeseat")
+    check("a machine without tmux holds no tmux session to retire",
+          killed == [] and failure is None and calls == [],
+          f"killed={killed} failure={failure} calls={calls}")
 
 
 def run_agent_box_case(workspace: Path):
@@ -664,6 +945,10 @@ def run_box_forwarding_case(workspace: Path):
     check("the box-side checks are given the handoff override, verbatim",
           "/box/handoffs" in remote_tokens and "--handoff-dir" in remote_tokens,
           remote_command)
+    check("the box-side checks are told the alias the Mac reached the box through",
+          remote_tokens[remote_tokens.index("--agent-box") + 1] == "testbox"
+          if "--agent-box" in remote_tokens else False,
+          remote_command)
     _, _, environment = execve_calls[0]
     check("the ubuntu launch carries the handoff override in its environment",
           shlex.split(environment.get("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", ""))
@@ -751,6 +1036,61 @@ def run_box_forwarding_case(workspace: Path):
           module.default_agents_root())
 
 
+def run_box_script_probe_cases():
+    """When the box-side checks fail, only test's exit 1 says the box script is missing.
+
+    ssh's 255 means the box was not reached, and any other exit means the probe
+    could not tell; neither may send the operator to pull a checkout that is there.
+    """
+    import argparse
+    import io
+    from contextlib import redirect_stderr
+    module = load_resupervise()
+
+    class FakeSubprocess:
+        def __init__(self, probe_exit_code, probe_error):
+            self.answers = [subprocess.CompletedProcess([], 1, "", ""),
+                            subprocess.CompletedProcess([], probe_exit_code, "", probe_error)]
+
+        def run(self, argv, **keywords):
+            return self.answers.pop(0)
+
+    arguments = argparse.Namespace(
+        name="box-probe", machine="ubuntu", dry_run=False, prepare_only=False,
+        agent_box="testbox", handoff_dir="", agents_root="")
+    script = module.BOX_SCRIPT_PATH
+    expected = {
+        1: f"resupervise-seat: {script} is not on testbox. The box checkout is pulled by hand "
+           "(nedschorus#45) -- pull it there, then re-run. Nothing was changed.\n",
+        255: "resupervise-seat: the box-side checks exited 1, and ssh could not reach testbox "
+             "to ask why (exit 255: ssh: connect to host testbox port 22: Connection refused); "
+             "nothing was launched. Check that `ssh testbox true` succeeds from this machine, "
+             "then re-run.\n",
+        2: f"resupervise-seat: the box-side checks exited 1, and `ssh testbox 'test -f {script}'` "
+           "exited 2 (bash: test: too many arguments), so whether the script is on the box is "
+           "unknown; nothing was launched. Run that command, read what it prints, and re-run "
+           "after that cause is removed.\n",
+        0: "resupervise-seat: the box-side checks refused (exit 1); nothing was launched. Their "
+           "reason is printed above.\n",
+    }
+    probe_errors = {1: "", 255: "ssh: connect to host testbox port 22: Connection refused\n",
+                    2: "bash: test: too many arguments\n", 0: ""}
+    for probe_exit_code, refusal in expected.items():
+        module.subprocess = FakeSubprocess(probe_exit_code, probe_errors[probe_exit_code])
+        errors = io.StringIO()
+        with redirect_stderr(errors):
+            status = module.resupervise_box_seat(arguments)
+        check(f"the box-side checks failing, with the script probe exiting {probe_exit_code}, "
+              "refuses with the refusal for that exit",
+              status == 1 and errors.getvalue() == refusal, (status, errors.getvalue()))
+        if probe_exit_code == 2:
+            printed_command = errors.getvalue().split("`")[1]
+            check("the probe command the refusal gives keeps $HOME inside single quotes, so it "
+                  "expands on the box, not on the machine it is typed on",
+                  shlex.split(printed_command) == ["ssh", "testbox", f"test -f {script}"]
+                  and script.startswith("$HOME/"), printed_command)
+
+
 def run_apostrophe_propagation_case(workspace: Path):
     """PR #134 review finding 1, end to end on the mac path: an operator's
     --handoff-dir containing an apostrophe broke the hand-quoted hook value
@@ -761,7 +1101,7 @@ def run_apostrophe_propagation_case(workspace: Path):
     apostrophe_handoffs = workspace / "agent's handoffs"
     apostrophe_handoffs.mkdir(exist_ok=True)
     (apostrophe_handoffs / "quoted-seat-handoff.md").write_text(
-        "# handoff for quoted-seat\nrestart-counter: 2\nnext-step: go\n",
+        "# handoff for quoted-seat\nsession-handoff-sequence-number: 2\nnext-step: go\n",
         encoding="utf-8")
     isolated = workspace / "isolated"
     record = workspace / "launcher-environment-apostrophe.txt"
@@ -813,16 +1153,18 @@ def run_all_cases() -> int:
         run_already_consumed_case(workspace)
         run_live_supervisor_case(workspace)
         run_stale_heartbeat_case(workspace)
-        run_dont_restart_case(workspace)
+        run_ask_user_before_restart_case(workspace)
         run_missing_launcher_case(workspace)
         run_prepare_only_case(workspace)
         run_end_to_end_case(workspace)
         run_per_seat_server_end_to_end_case(workspace)
         run_missing_tmux_case(workspace)
+        run_tmux_probe_failure_cases(workspace)
         run_agent_box_case(workspace)
         run_override_propagation_case(workspace)
         run_apostrophe_propagation_case(workspace)
         run_box_forwarding_case(workspace)
+        run_box_script_probe_cases()
         run_ubuntu_launcher_hook_case()
 
     print()

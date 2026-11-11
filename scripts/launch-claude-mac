@@ -22,12 +22,11 @@
 # handing off. On an ATTACHED launch the pane then drops into an interactive
 # shell in the agent's directory (surviving a Ctrl-C aimed at the supervisor),
 # so the seat can be resumed in place with `claude --continue` and no hunting
-# for the right cd (user-ruled 2026-08-17) — the tmux session closes when that
+# for the right cd — the tmux session closes when that
 # shell exits. That shell offers the SUPERVISED relaunch first and states what
 # `claude --continue` costs: it resumes the dialog with no supervisor, so the
-# seat can never reincarnate. The old ordering advertised --continue first, and on
-# 2026-08-18 two seats ran unsupervised for about 25 hours because it was the
-# only listed option that worked (nedschorus#45). A seat born with --no-attach keeps the old close-on-exit
+# seat can never reincarnate, and an operator picks the first listed option
+# that works. A seat born with --no-attach keeps the close-on-exit
 # behavior instead, even if attached later: its pane command is fixed at
 # creation. A second launch of a running name attaches instead of
 # duplicating, and the supervisor holds a per-agent lock that refuses a
@@ -39,10 +38,9 @@
 #
 # Every seat runs on its OWN tmux server (`tmux -L <name>`, one socket per
 # seat under /tmp/tmux-<uid>/), so one server crash cannot take the whole
-# per-machine fleet down: on 2026-08-21 the Mac's single default tmux server
-# died and killed all three Mac seats at once. Seats launched before that
-# change still live on the default server; the socket selection below reaches
-# them there instead of starting a duplicate.
+# per-machine fleet down. Seats launched before per-seat servers may still
+# live on the default server; the socket selection below reaches them there
+# instead of starting a duplicate.
 #
 # --no-attach creates the session without attaching this terminal (for scripts
 # and checks); attach later by running the plain form.
@@ -68,25 +66,26 @@ fi
 
 AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}"
 # A literal-tilde value (a quoted export sends one) is resolved or refused,
-# never half-worked (PR #137 review P3 on the twin, user-ruled 2026-08-22:
-# overrides either work or are blocked): ~/ becomes $HOME as the operator's
+# never half-worked, because an override either works or is blocked: ~/
+# becomes $HOME as the operator's
 # shell would have made it, and every fleet Python tool already
 # expanduser()s the same value; a ~user/ form is refused, because this
 # script would mkdir a literal ~user directory while those tools resolve
 # that user's real home — one seat, silently split across two directories.
+# A relative root is resolved here, against the caller's directory, because
+# the launcher later changes directory to $HOME before it starts tmux.
 case "$AGENTS_ROOT" in
     ("~"[!/]*)
         echo "launch-claude-mac: ~user agents roots are not supported — the shell and the fleet's Python tools resolve them to different directories, splitting the seat. Use an absolute path." >&2
         exit 2 ;;
     ("~") AGENTS_ROOT="$HOME" ;;
     ("~/"*) AGENTS_ROOT="$HOME${AGENTS_ROOT#?}" ;;
+    ([!/]*) AGENTS_ROOT="$PWD/$AGENTS_ROOT" ;;
 esac
 
 # The supervisor lives in its own system directory one level up, so the
 # checkout location is never configured and never wrong — wherever this
-# script was run from IS the checkout it belongs to. It stopped being this
-# script's sibling when the handoff system moved into nc-systems/handoff/
-# on 2026-09-20.
+# script was run from IS the checkout it belongs to.
 SCRIPT_DIRECTORY=$(cd "$(dirname "$0")" && pwd)
 REPOSITORY_ROOT=$(cd "$SCRIPT_DIRECTORY/.." && pwd)
 SUPERVISOR="$REPOSITORY_ROOT/nc-systems/handoff/handoff-supervisor.py"
@@ -108,13 +107,13 @@ usage() {
     echo >&2
     # Per-seat tmux servers: one list-sessions cannot see every seat, so walk
     # every socket in tmux's socket directory — per-seat servers and the
-    # default server (where pre-2026-08-21 seats still live) alike. A dead
+    # default server (where seats from before per-seat servers may live) alike. A dead
     # socket's listing fails and is skipped.
     running=$(
         for seat_socket_path in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/*; do
             [ -S "$seat_socket_path" ] || continue
             # name@socket, not the bare name: one name on TWO sockets is the
-            # decoy class resupervise-seat.py kills (PR #122 review P3-5),
+            # decoy class resupervise-seat.py kills,
             # and a deduplicated listing would hide exactly that.
             tmux -S "$seat_socket_path" list-sessions -F "#{session_name}@$(basename "$seat_socket_path")" 2>/dev/null || true
         done | sort -u | tr '\n' ' ')
@@ -158,59 +157,23 @@ case "$AGENT_NAME" in
     (*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*|"") echo "launch-claude-mac: agent names are letters, digits, - and _" >&2; exit 2 ;;
 esac
 
-# Which GitHub account this seat acts as. The default is the HOST's account,
-# which is the shape credential ruling C4 states — "each agent host holds a
-# fine-grained token for this repository only ... never a classic
-# all-repository token, and never the `workflow` scope"
-# (nc-systems/main-gatekeeper/main-gatekeeper-design.md). The override exists
-# for the seat whose job needs a different identity: the merge-lane seat must
-# be `ned-review-merge`, which is one of the two accounts main's protection
-# lets push (the other is the user's own), and which exists as a separate
-# identity at all because GitHub refuses an approving review from a pull
-# request's author — so the account that approves cannot be the one that
-# opened it
-# (docs/nedschorus-wiki/nedschorus-github-identities-and-token-policy.md).
-#
-# Measured on this Mac 2026-09-22, and the defect this exists to close: `gh
-# auth status` reports the login as `nedlern` — the USER — holding a CLASSIC
-# token whose scopes include admin:enterprise, admin:org, admin:org_hook,
-# repo, workflow and user. Every Mac seat therefore runs today with the
-# owner's organization-admin credential, and every server-side record of a
-# seat's writes names the user rather than the seat.
-#
-# The charset check is the AGENT_NAME rule above applied to the same kind of
-# value for the same two reasons: the account name is spliced into the
-# composed pane command, and a value validated to letters, digits, - and _
-# needs no escaping at any parse it crosses; and an override either works or
-# is blocked, never a third state (user-ruled 2026-08-22, the ruling this
-# script already cites for NEDSCHORUS_AGENTS_ROOT). Refused here, before
-# `claude update`, before any mkdir. The :- form rather than -, so an
-# exported-but-empty override is the default rather than a refusal.
-SEAT_GITHUB_ACCOUNT="${NEDSCHORUS_SEAT_GITHUB_ACCOUNT:-mac-claude}"
-case "$SEAT_GITHUB_ACCOUNT" in
-    (*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*|"") echo "launch-claude-mac: NEDSCHORUS_SEAT_GITHUB_ACCOUNT is a GitHub account name — letters, digits, - and _" >&2; exit 2 ;;
-esac
-
-# The override is CONSUMED here and unset before the tmux server starts, so
-# the seat's process tree never inherits it — the same rule, for the same
-# measured reason, as LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS below. That
-# variable leaked on 2026-09-03: a recovered seat ran `launch-claude-mac
-# <other-seat>` from its Bash tool, the launcher found the inherited value,
-# and the other seat came up wrong. This one leaks worse. The merge-lane
-# seat is launched with the override set to `ned-review-merge`, an account
-# on main's push allow-list; without this unset, any seat merge-lane
-# launched from its own Bash tool would come up on that account too — a
-# second merge lane, which is the one thing a seat may not be.
-unset NEDSCHORUS_SEAT_GITHUB_ACCOUNT
+# Which GitHub account a seat acts as is decided by the handoff-supervisor,
+# which sets GH_TOKEN for every agent-session it starts
+# (agent_seat_github_account_lookup_and_token_file_read in
+# nc-systems/handoff/handoff-supervisor.py), so this launcher takes no account.
+if [ -n "${NEDSCHORUS_SEAT_GITHUB_ACCOUNT:-}" ]; then
+    echo "launch-claude-mac: refused, because NEDSCHORUS_SEAT_GITHUB_ACCOUNT is set, but this launcher does not choose the GitHub account an agent-seat acts as: the handoff-supervisor does, from AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT in nc-systems/handoff/handoff-supervisor.py." >&2
+    echo "launch-claude-mac: unset NEDSCHORUS_SEAT_GITHUB_ACCOUNT and launch again; if this agent-seat must act as an account other than mac-claude, add an entry for it, agent-seat name to account, to that table in a pull request, and put that account's token in ~/.config/nedschorus/<account>.token on the machine the agent-seat runs on." >&2
+    exit 2
+fi
 
 # Resolve Claude Code the way the SEAT will resolve it, and do it before
 # anything checks for it or updates it. The supervisor command further down
 # exports this same directory, so without it here the launcher can check and
-# update one copy while the seat it starts runs another. Measured 2026-08-31:
-# this Mac's update step reached a Homebrew-installed claude while its seats
-# ran the native build at ~/.local/bin, and the machine sat a week behind with
-# every launch looking normal. The box twin already exports it around its own
-# update step; this is the Mac catching up.
+# update one copy while the seat it starts runs another: an update step that
+# reaches a Homebrew-installed claude while the seats run the native build at
+# ~/.local/bin leaves the machine behind with every launch looking normal. The
+# box twin exports it around its own update step too.
 export PATH="$HOME/.local/bin:$PATH"
 
 # Every prerequisite is checked before anything is created, and each failure
@@ -230,14 +193,13 @@ command -v claude >/dev/null 2>&1 || {
 }
 
 # Update Claude Code before starting the seat, so a fresh agent starts
-# current. Launch is no longer the fleet's ONLY update moment: since
-# 2026-09-22 handoff-supervisor.py updates before every session it launches,
+# current. Launch is not the fleet's ONLY update moment:
+# handoff-supervisor.py updates before every session it launches,
 # which covers the handoff restart, crash recovery and the login restart
 # (see update_agent_binary there). This step stays because a launcher starts
 # a seat the supervisor has not reached yet. Background auto-update
 # is off via DISABLE_AUTOUPDATER in the checked-in .claude/settings.json
-# (user-ruled 2026-08-22: with launch-time updates, the mid-session update
-# banner is clutter); that switch leaves this explicit `claude update`
+# (with launch-time updates, the mid-session update banner is clutter); that switch leaves this explicit `claude update`
 # working. Running sessions are unaffected by an update (user-established
 # across many updates: installed versions are retained on disk). A failed
 # or slow update proceeds anyway, because an update problem must never
@@ -248,17 +210,15 @@ command -v claude >/dev/null 2>&1 || {
 # The helper must own the timeout so killing an update cannot release its
 # lock before the update stops.
 #
-# The launcher writes no warning of its own. The one removed here claimed
-# to report a failed update but could not see the failure that actually
-# happened: on 2026-08-31 this Mac was found frozen at 2.1.241 for a week
-# because `claude update` refuses to overwrite a Homebrew-managed copy. It
-# printed the reason and exited 0, so the `||` branch never ran and every
-# launch looked normal. `claude update` prints its own diagnosis whenever it
-# runs to completion, so a launcher paraphrase adds nothing and can mislead.
-# The install was repaired instead, to the native build at ~/.local/bin that
-# both launchers already assume (user-ruled 2026-08-31).
+# The launcher writes no warning of its own. A warning on the `||` branch
+# cannot see the failure that matters: `claude update` refuses to overwrite a
+# Homebrew-managed copy, prints the reason and exits 0, so the `||` branch
+# never runs and every launch looks normal. `claude update` prints its own
+# diagnosis whenever it runs to completion, so a launcher paraphrase adds
+# nothing and can mislead. Both launchers assume the native build at
+# ~/.local/bin.
 #
-# 120 seconds, raised from 45 (user-ruled 2026-08-31): a slow but WORKING
+# 120 seconds: a slow but WORKING
 # update killed at the limit leaves the machine silently on its old version,
 # which is the same outcome as the refused update above and just as quiet.
 # The limit exists to bound a hung update, not to race a real download, so it
@@ -272,95 +232,67 @@ python3 "$SCRIPT_DIRECTORY/agent-binary-update-under-lock.py" \
 AGENT_DIRECTORY="$AGENTS_ROOT/$AGENT_NAME"
 mkdir -p "$AGENT_DIRECTORY"
 
-# Pre-trust the agent directory: a fresh directory otherwise stops at Claude's
-# one-time folder-trust dialog, which a detached launch can never answer and an
-# attached one should not have to.
-#
-# The flag is written through a temporary sibling that REPLACES the file, and
-# never by truncating ~/.claude.json itself (as this step did until
-# 2026-09-08). That file is the harness's own live state file: running
-# sessions write it too — its mtime was observed changing mid-session on this
-# Mac — so a truncate-and-stream here is a file the harness can read torn,
-# and a fresh session reading torn JSON can stop at the very trust dialog
-# this step exists to skip. os.replace is atomic on macOS and Linux alike, so
-# a concurrent reader sees the whole old file or the whole new one, never a
-# partial one. The precedent is write_atomically in
-# nc-systems/main-gatekeeper/main-gatekeeper.py (ruled 2026-08-12), and this follows it with two
-# measured differences:
-#   - the temporary name is mkstemp-unique rather than that function's fixed
-#     `.<name>.writing` sibling, because two launches can overlap here where
-#     the gatekeeper's single worker could not, and a shared temporary name
-#     lets one launcher rename the other's half-written file into place;
-#   - the bytes go out through Path.write_text, not open(path, "w").write().
-#     Measured 2026-09-08: with the plain-open form, a write that fails
-#     (RLIMIT_FSIZE, and a full disk the same way) leaves the buffered flush
-#     error to deallocation, where CPython IGNORES it — os.replace then
-#     published an EMPTY .claude.json and the launcher exited 0. write_text
-#     raises instead, so the failure stops before the replace and the
-#     original file is left untouched.
-# os.replace takes the temporary file's mode, not the target's, so the
-# original mode is carried across explicitly: this file may hold
-# credentials, and the harness's own copy was measured at 0600 on this Mac.
-# A file created fresh here is 0600 for the same reason, rather than the
-# umask-derived 0644 the old truncating open produced.
-#
-# What this deliberately does NOT fix: the read-modify-write itself. A
-# harness write landing between the read and the replace is still lost, and
-# so is one seat's flag when two launches overlap. No lock is taken, because
-# the harness holds no lock of ours and so a lock cannot close the case that
-# actually happens; a lock for the launcher-against-launcher case would mean
-# a permanent extra file in HOME for a collision the fleet has not seen
-# (recover-crashed-seats.py works through its seats one at a time,
-# resupervise-seat.py launches one), and a lock ON the target is useless
-# under rename — the second writer would hold it on the freed inode. What
-# remains after this change costs one trust flag, and so at worst one
-# re-shown dialog; what it removes is a corrupted state file.
-# The twin does the same on the box, at scripts/launch-claude-ubuntu.
-python3 -c 'import json, os, pathlib, sys, tempfile
-path = os.path.expanduser("~/.claude.json")
-settings = json.load(open(path)) if os.path.exists(path) else {}
-target = os.path.abspath(os.path.expanduser(sys.argv[1]))
-settings.setdefault("projects", {}).setdefault(target, {})["hasTrustDialogAccepted"] = True
-mode = os.stat(path).st_mode & 0o777 if os.path.exists(path) else 0o600
-handle, temporary = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".claude.json.", suffix=".launch-claude-writing")
-os.close(handle)
-pathlib.Path(temporary).write_text(json.dumps(settings, indent=2), encoding="utf-8")
-os.chmod(temporary, mode)
-os.replace(temporary, path)' "$AGENT_DIRECTORY"
+# Pre-answer the screens that would stop the session at start: Claude's
+# one-time folder-trust dialog for the agent directory, and its onboarding
+# screens. A detached launch can never answer them, and an attached one should
+# not have to. The script writes ~/.claude.json only when a preset is missing,
+# replacing the file atomically, and exits nonzero without touching a file it
+# cannot parse. The twin does the same on the box, at scripts/launch-claude-ubuntu.
+python3 "$SCRIPT_DIRECTORY/claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py" "$AGENT_DIRECTORY"
 
 # The agent's home must be a CHECKOUT before the session starts, not after:
 # project settings — status line, the reincarnation Stop hook, the instruction-file
 # guard — are read from .claude/ inside the working directory at session
 # start, so an agent booted into a bare directory runs with none of them, and
 # fixing its own home later cannot retrofit the session it is already in.
-# Skipped when the home is already a checkout; an existing branch is reused,
-# since git allows a branch in only one worktree at a time.
+# Skipped when the home is already a checkout. An agent-home holds no work, so
+# it is made on a detached HEAD at origin/main, on no branch, and marked with
+# the file agent-home-marker in its own git directory, which makes
+# scripts/git-client-side-hooks/pre-commit refuse commits there. GIT_AUTHOR_NAME
+# names the new agent-seat, so the post-checkout hook sees the agent-seat's own
+# agent-home and writes it no owner file, whichever agent-seat runs this launcher.
 REPOSITORY=$(cd "$SCRIPT_DIRECTORY/.." && pwd)
 if ! git -C "$AGENT_DIRECTORY" rev-parse --show-toplevel >/dev/null 2>&1; then
     git -C "$REPOSITORY" fetch --quiet origin || true
-    git -C "$REPOSITORY" worktree add "$AGENT_DIRECTORY" -b "$AGENT_NAME" origin/main 2>/dev/null \
-        || git -C "$REPOSITORY" worktree add "$AGENT_DIRECTORY" "$AGENT_NAME" \
-        || echo "launch-claude-mac: could not make $AGENT_DIRECTORY a checkout; the agent will start without project settings" >&2
+    if GIT_AUTHOR_NAME="$AGENT_NAME" git -C "$REPOSITORY" worktree add --detach "$AGENT_DIRECTORY" origin/main; then
+        AGENT_HOME_GIT_DIRECTORY=$(git -C "$AGENT_DIRECTORY" rev-parse --absolute-git-dir) \
+            && touch "$AGENT_HOME_GIT_DIRECTORY/agent-home-marker" \
+            || echo "launch-claude-mac: could not write agent-home-marker into the git directory of $AGENT_DIRECTORY, so git does not refuse commits made there; git's or touch's error is just above this line. Tell the user this line." >&2
+    else
+        echo "launch-claude-mac: could not make $AGENT_DIRECTORY a checkout; the agent will start without project settings" >&2
+    fi
 fi
 
-# Boot-time worktree report: finished session worktrees pile up invisibly,
+# $1 names the step and its command, $2 says why the launch goes on, $3 is
+# the step's short name, $4 its exit code.
+report_launch_step_failure() {
+    echo "launch-claude-mac: the launch-time $1 failed with exit $4, $2" >&2
+    echo "launch-claude-mac: any error the $3 printed is above these lines; if none is there, the $3 ended without printing one, for example because it was killed." >&2
+    echo "launch-claude-mac: if you are an agent that ran this launch, tell the user these lines and any error above them, change nothing in $REPOSITORY yourself, and go on with your work." >&2
+    echo "launch-claude-mac: if you are the user, run the command in the first of these lines on this Mac: if it succeeds, nothing more is needed; if it fails and prints an error, fix the cause that error names; if it fails and prints nothing, ask an agent to find out why the $3 fails on this Mac without printing an error, and give it that command and its exit code." >&2
+}
+
+# Launch-time worktree report: finished session worktrees pile up invisibly,
 # so each launch names any that are done (landed and vacant) and the
 # command that removes them. Report only — removal stays a deliberate,
 # separate call — and a report problem never blocks a launch.
-python3 "$SCRIPT_DIRECTORY/clean-worktrees.py" --only-done || true
+python3 "$SCRIPT_DIRECTORY/clean-worktrees.py" --only-done \
+    || report_launch_step_failure "worktree report (python3 $SCRIPT_DIRECTORY/clean-worktrees.py --only-done), which lists the finished worktrees," \
+        "and the launch goes on, because the agent-seat does not need the report." report "$?"
 
-# Boot-time freshness: fast-forward the machine's reference checkout to
+# Launch-time freshness: fast-forward the machine's reference checkout to
 # origin/main (ff-only, never a merge — it carries no work of its own by
 # construction). The mid-session half runs as a Stop hook
 # (scripts/checkout-freshness-catch-up.py); this covers machines between
 # sessions, and never blocks a launch.
-python3 "$SCRIPT_DIRECTORY/checkout-freshness-catch-up.py" --reference-pull --repo "$REPOSITORY" 2>/dev/null || true
+python3 "$SCRIPT_DIRECTORY/checkout-freshness-catch-up.py" --reference-pull --repo "$REPOSITORY" \
+    || report_launch_step_failure "fast-forward of the reference checkout $REPOSITORY to origin/main (python3 $SCRIPT_DIRECTORY/checkout-freshness-catch-up.py --reference-pull --repo $REPOSITORY)" \
+        "so that checkout may be behind origin/main, and the launch goes on with it as it is." fast-forward "$?"
 
-# Per-seat tmux servers (2026-08-21): every seat runs on its OWN tmux server,
-# socket `-L <name>`, because the Mac's single default server died that day
-# and took all three Mac seats down at once — one server crash must not kill
-# the whole per-machine fleet. Transition rule: seats launched before this
-# change still live on the DEFAULT server, so when the seat's own server does
+# Per-seat tmux servers: every seat runs on its OWN tmux server, socket
+# `-L <name>`, because one server crash must not kill the whole per-machine
+# fleet. Transition rule: seats launched before per-seat servers may still
+# live on the DEFAULT server, so when the seat's own server does
 # not hold its session but the default one does, this launch reaches it there
 # — otherwise attach-or-create would start a duplicate seat beside the
 # running one. `-L default` names the default socket, so one variable serves
@@ -374,10 +306,9 @@ fi
 # Values spliced between single quotes in the shell-parsed commands below
 # must have their own single quotes escaped, or an apostrophe in the value
 # ends the quote early and the composed command fails to parse — after the
-# caller was already told the launch succeeded (PR #134 review round 2: an
-# apostrophe --handoff-dir lands in the recovery prompt-file path, and an
-# apostrophe agents root reaches AGENT_DIRECTORY through
-# NEDSCHORUS_AGENTS_ROOT). AGENT_NAME needs no escaping — validated above
+# caller was already told the launch succeeded: an apostrophe --handoff-dir
+# lands in the recovery prompt-file path, and an apostrophe agents root
+# reaches AGENT_DIRECTORY through NEDSCHORUS_AGENTS_ROOT. AGENT_NAME needs no escaping — validated above
 # to letters, digits, - and _ — and the supervisor path is the checkout's
 # own location, not reachable through any override.
 escape_single_quotes() {
@@ -391,9 +322,8 @@ QUOTED_AGENT_DIRECTORY=$(escape_single_quotes "$AGENT_DIRECTORY")
 # time the supervisor reincarnates it. Binding the id to the seat's NAME makes
 # every generation of that seat open the same list — the same store, not a
 # copy of it, so nothing has to be migrated at a handoff. Ported from the
-# legacy system, which has run it since nedlern#1257
-# (~/Projects/nedlern/tasks/sessions/.agent-wrapper.sh:341); the two warnings
-# below are what that system learned from running it.
+# legacy system (~/Projects/nedlern/tasks/sessions/.agent-wrapper.sh:341);
+# the two warnings below are what that system learned from running it.
 #
 # Warning 1 — the store is ONE copy on ONE disk, outside the repository:
 # $HOME/.claude/tasks/nedschorus-<name>-tasks/ on this Mac. It is not committed, not
@@ -404,7 +334,7 @@ QUOTED_AGENT_DIRECTORY=$(escape_single_quotes "$AGENT_DIRECTORY")
 # the unprefixed "<name>-tasks" id into the same $HOME/.claude/tasks/, so a
 # nedschorus seat and a nedlern agent of the same name would have shared ONE
 # list rather than colliding visibly. The project prefix closes that, and it
-# is also why the prefix exists at all (user-ruled 2026-08-29): the day
+# is also why the prefix exists at all: the day
 # nedschorus agents serve several projects, every seat name recurs per
 # project, and an id composed from the seat name alone cannot tell them
 # apart. Nobody hand-writes a store id — a human names the SEAT, and this
@@ -426,12 +356,12 @@ QUOTED_AGENT_DIRECTORY=$(escape_single_quotes "$AGENT_DIRECTORY")
 # The task tools themselves are opt-in on current models: Claude Code 2.1.233
 # withdrew TaskCreate/Get/Update/List and TodoWrite from Opus 4.8, Sonnet 5,
 # Fable 5, Mythos 5 and newer, and CLAUDE_CODE_ENABLE_TODO_TOOLS=1 restores
-# them. Measured on this Mac 2026-08-22 (Claude Code 2.1.238, model
+# them. Measured on this Mac (Claude Code 2.1.238, model
 # claude-sonnet-5): with the enable variable unset, the pin alone does
 # nothing — TaskCreate is not among the visible tools and no store directory
 # is ever created. Enable exposes the task tools; the pin makes every
 # generation open the same agent-seat's list.
-# One-time migration (user-ruled 2026-08-29): a store filled under the old
+# One-time migration: a store filled under the old
 # unprefixed '<name>-tasks' id is renamed to the prefixed id at launch, so a
 # relaunched seat keeps its list and the stale name dies loudly (no
 # directory) instead of lingering as a plausible fork. Never when the
@@ -442,80 +372,14 @@ if [ -d "$UNPREFIXED_TASK_STORE" ] && [ ! -e "$PREFIXED_TASK_STORE" ]; then
     mv "$UNPREFIXED_TASK_STORE" "$PREFIXED_TASK_STORE"
 fi
 
-# The seat's own GitHub credential. The token is never read HERE and never
-# put in the composed string: the string is handed to tmux, so a token
-# spliced into it would stand in every `ps` listing on the machine for as
-# long as the seat lives. What is composed is the READ — `IFS= read -r`
-# against the file — which the seat's own pane shell performs, so the value
-# exists only inside that process tree. `$(cat ...)` would do the same job
-# on this Mac, where the pane command is parsed once; it is not used,
-# because the box twin's pane command crosses a second parse where the box's
-# login shell would run the substitution and splice the token into the
-# string tmux receives (measured 2026-09-22 against
-# scripts/launch-claude-ubuntu-test.py's tmux-argv capture). The two twins
-# carry the same shape so neither drifts into that.
-#
-# `IFS= read -r` rather than a bare `read`: IFS= keeps a leading or trailing
-# space in the file out of the split, and -r keeps a backslash literal. It
-# stops at the first newline, which is what strips the trailing one a text
-# editor adds. Its status is discarded — a file with no trailing newline
-# makes `read` return non-zero AFTER setting the variable — because `export`
-# follows it inside the same `if`.
-#
-# The leading `unset GH_TOKEN` is what makes the warning below true rather
-# than nearly true: without it, a seat launched from a shell that already
-# carried a GH_TOKEN — the merge-lane seat exports one by hand today —
-# would silently keep that credential when its own token file is missing,
-# and the launcher would be announcing a fallback to the keyring that did
-# not happen. The seat's account is decided here, never inherited.
-#
-# The `if` is what keeps GH_TOKEN UNSET rather than empty when the file is
-# missing: `gh` falls back to its keyring login on an unset variable and
-# fails outright on an empty one, so the two are not interchangeable. It
-# re-checks what the warning below already checked, a few milliseconds
-# apart on the same filesystem; the check that decides is this one, in the
-# seat's own shell at the moment the seat starts.
-#
-# The after-exit shell inherits this export, as it inherits the task-list
-# pin below and for the same reason: the `claude --continue` that shell
-# offers is the same seat, and a `gh` typed there is the seat acting, not
-# the user. Nothing is re-exported for it — it is the same pane shell.
-#
-# SEAT_GITHUB_ACCOUNT needs no escaping — validated above to letters,
-# digits, - and _ — so the composed path is always a plain file name.
-SEAT_GITHUB_TOKEN_FILE_UNDER_HOME=".config/nedschorus/$SEAT_GITHUB_ACCOUNT.token"
-SEAT_GITHUB_TOKEN_FILE="$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME"
-
-# A missing token file WARNS and launches anyway, rather than refusing
-# (user-ruled 2026-09-22): the box holds no `ubuntu-claude.token` today, and
-# a launcher that refused would take every seat on both machines down at
-# once over a credential that is an improvement, not a prerequisite. The
-# warning is loud because the fallback is the defect this change exists to
-# close — the seat runs as whatever `gh`'s keyring holds, which on this Mac
-# is the user's own organization-admin credential.
-if [ ! -s "$SEAT_GITHUB_TOKEN_FILE" ]; then
-    echo "launch-claude-mac: ============================================================" >&2
-    echo "launch-claude-mac: NO SEAT TOKEN — $AGENT_NAME will NOT act as $SEAT_GITHUB_ACCOUNT" >&2
-    echo "launch-claude-mac:   account wanted: $SEAT_GITHUB_ACCOUNT" >&2
-    echo "launch-claude-mac:   file looked in: $SEAT_GITHUB_TOKEN_FILE" >&2
-    echo "launch-claude-mac:   GH_TOKEN stays unset, so gh and git act as gh's keyring login on this Mac, the user's own account" >&2
-    echo "launch-claude-mac:   write that account's fine-grained token to that file, mode 600, then relaunch this seat" >&2
-    echo "launch-claude-mac:   or export NEDSCHORUS_SEAT_GITHUB_ACCOUNT naming an account whose token file is there" >&2
-    echo "launch-claude-mac: ============================================================" >&2
-fi
-
-# The seat's own git identity (user-approved 2026-09-22, the walk
-# ghi-write-session-open-rulings-and-concerns item 7; his naming words: "I'd
-# probably use the name of the agent, or if namelss, the model and effort
-# ofthe agent"). Author and committer, name and email, are all set per
-# process, so the seat commits as itself whatever the shared .git/config
-# holds. That config is one file behind every worktree of the clone, and
-# any agent's `git config user.name` rewrote it for every seat at once:
-# measured 2026-09-22, one seat's commits went out that day as
-# identity-probe, as reviewer, and once as identity-probe <junk@lerner1.com>,
-# the user's own address, on a public pull request. The environment outranks
-# the config at commit time, and rewriting the config between two commits
-# does not move it (measured before the design was approved).
+# The seat's own git identity, named after the seat. Author and committer,
+# name and email, are all set per process, so the seat commits as itself
+# whatever the shared .git/config holds. That config is one file behind every
+# worktree of the clone, and any agent's `git config user.name` rewrites it
+# for every seat at once, which can put another seat's name, or the user's
+# own address, on a seat's commit on a public pull request. The environment
+# outranks the config at commit time, and rewriting the config between two
+# commits does not move it (measured).
 #
 # The email is <seat>@nedschorus.invalid: RFC 2606 reserves .invalid, so the
 # address can never be anyone's real one. AGENT_NAME needs no escaping here
@@ -526,14 +390,14 @@ fi
 # user's agreement; the Claude-Session trailer already tells sessions apart.
 #
 # The after-exit shell inherits this export too: a `git commit` typed there
-# is the seat acting, as a `gh` typed there is.
+# is the seat acting. A `gh` typed there is not: the pane sets no GH_TOKEN,
+# because the supervisor sets it only for the agent-sessions it starts.
 #
 # scripts/git-client-side-hooks/pre-commit refuses a commit made inside a
 # Claude session that is authored or committed by the user's own address or
 # by the unconfigured-agent tripwire; it is what catches a session started
 # without this launcher once the tripwire is in the shared config.
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
-unset GH_TOKEN; if [ -s \"\$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME\" ]; then IFS= read -r GH_TOKEN < \"\$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME\"; export GH_TOKEN; fi; \
 export CLAUDE_CODE_TASK_LIST_ID='nedschorus-$AGENT_NAME-tasks'; \
 export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; \
 export GIT_AUTHOR_NAME='$AGENT_NAME' GIT_AUTHOR_EMAIL='$AGENT_NAME@nedschorus.invalid' GIT_COMMITTER_NAME='$AGENT_NAME' GIT_COMMITTER_EMAIL='$AGENT_NAME@nedschorus.invalid'; \
@@ -550,38 +414,42 @@ if [ -n "$FIRST_PROMPT_FILE" ]; then
 fi
 
 # Extra supervisor arguments from the environment — the hook crash recovery
-# rides (recover-crashed-seats.py sets --resume-session-id through it,
-# nedschorus#120). An environment variable rather than a flag because the
+# rides (recover-crashed-seats.py sets --resume-session-id through it). An
+# environment variable rather than a flag because the
 # launcher's argument surface is operator-facing and stable, while this is
 # machinery-to-machinery; callers own the quoting of what they pass.
 # The variable is fully consumed here and is unset before the tmux server
-# starts, so the seat's process tree never inherits it. Measured 2026-09-03:
-# a seat recovered with --resume-session-id ran `launch-claude-mac
-# <other-seat>` from its Bash tool, the launcher found the inherited value,
-# and the other seat came up as `claude --resume <the recovering session's
-# id>` in the wrong directory, appending 71+ wrong-cwd records to the first
-# seat's transcript before it was killed by hand.
+# starts, so the seat's process tree never inherits it. Otherwise a seat
+# recovered with --resume-session-id that runs `launch-claude-mac
+# <other-seat>` from its Bash tool hands the inherited value on, and the
+# other seat comes up as `claude --resume <the recovering session's id>` in
+# the wrong directory, appending wrong-cwd records to the first seat's
+# transcript.
 if [ -n "${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS:-}" ]; then
     SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND $LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"
 fi
 unset LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS
+# The caller's GH_TOKEN would stay in the tmux server's environment, and so in the
+# after-exit shell and every window later opened on the server, where a `gh` would act
+# as the caller's account; the supervisor sets the seat's own for its agent-sessions.
+unset GH_TOKEN
 
 # When the supervisor exits, the pane becomes an interactive shell in the
-# agent's directory rather than closing (user-ruled 2026-08-17): a stopped
+# agent's directory rather than closing: a stopped
 # seat is relaunched in place, with no hunt for the right cd. The options are
 # printed supervised-first, because `claude --continue` starts no supervisor
-# and its seat can never reincarnate (nedschorus#45). The tmux session — and so the window — now outlives the
+# and its seat can never reincarnate. The tmux session — and so the window — outlives the
 # supervisor and closes when this shell exits. Re-running the launcher on
 # such a session ATTACHES to that shell (new-session -A ignores the command
 # for an existing name); the printed options cover it. The leading trap lets
 # the wrapper survive a Ctrl-C aimed at the supervisor — the tty signals the
-# whole foreground group, and an untrapped wrapper died before reaching the
-# shell (review finding, 2026-08-17); a handled trap, unlike an ignore, is
+# whole foreground group, and an untrapped wrapper dies before reaching the
+# shell; a handled trap, unlike an ignore, is
 # not inherited, so the supervisor's own Ctrl-C handling is untouched.
-# Attached launches only: a --no-attach seat keeps the old close-on-exit
+# Attached launches only: a --no-attach seat keeps the close-on-exit
 # behavior, because a shell nobody is watching in a detached session would
 # leak, and would turn the "already running" refusal below into a lie
-# automation acts on (review finding, 2026-08-17).
+# automation acts on.
 AFTER_EXIT_COMMAND="echo; \
 echo \"launch-claude-mac: the $AGENT_NAME supervisor exited; this shell is in the seat's directory\"; \
 echo \"  fresh supervised seat:  exit, then launch-claude-mac $AGENT_NAME\"; \
@@ -611,6 +479,11 @@ SEAT_WINDOW_TITLE_FORMAT='[mac] #S'
 # today; a seat that should look different gets its own value chosen here.
 SEAT_ITERM2_BACKGROUND_COLOUR=FFE6EE
 
+# A tmux server keeps the working directory it starts in (-c sets only the
+# pane's), and recover-crashed-seats.py counts a server rooted in an
+# agent-home as that seat's live process; so tmux starts from $HOME.
+cd "$HOME"
+
 if [ "$ATTACH" = yes ]; then
     # iTerm2's proprietary SetColors sequence, written before tmux starts
     # because tmux does not pass it through to the terminal. Only on a
@@ -627,7 +500,18 @@ if [ "$ATTACH" = yes ]; then
         set-option -g set-titles on \; set-option -g set-titles-string "$SEAT_WINDOW_TITLE_FORMAT" \; \
         set-option -g mouse on \; set-option -s copy-command pbcopy
 fi
-tmux -L "$SEAT_TMUX_SOCKET" new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND" \; \
+# A detached pane closes when the supervisor exits, so a refusal it prints
+# there is never seen and the launch would still exit 0. The supervisor's own
+# GitHub token check runs first, outside the pane, so a missing or unreadable
+# token file stops this launch with the supervisor's refusal and its exit 5.
+# A seat already running is left to the "already exists" line below.
+if ! tmux -L "$SEAT_TMUX_SOCKET" has-session -t "=$AGENT_NAME" 2>/dev/null; then
+    python3 "$SUPERVISOR" --agent "$AGENT_NAME" --agent-seat-github-token-file-readable-check-only
+fi
+# The trailing `exit $?` stops the pane's shell from exec'ing into the
+# supervisor: with tmux as its direct parent, tmux wakes it at once after a
+# `kill -STOP`. The pane still closes with the supervisor's exit status.
+tmux -L "$SEAT_TMUX_SOCKET" new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND; exit \$?" \; \
         set-option -g set-titles on \; set-option -g set-titles-string "$SEAT_WINDOW_TITLE_FORMAT" \; \
         set-option -g mouse on \; set-option -s copy-command pbcopy 2>/dev/null \
     || echo "launch-claude-mac: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-mac $AGENT_NAME)"

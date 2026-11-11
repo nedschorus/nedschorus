@@ -4,7 +4,7 @@
 
 The *substance* of the standing decisions below was approved by the user in an approval-walk held on 2026-09-03 and 2026-09-04. That approval-walk's record is its minutes, which are kept in the log-store rather than on main (user-ruled 2026-09-08) at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/2026-09-03-ai-native-architecture-overview-decisions-minutes.md`, and which are named for the day it opened and carries both days' rulings, quoting his words where the wording was his and summarising where it was not.
 
-The *wording* of this file is pending approval. Nobody has yet read it as a stranger would, and the user has not read it whole. It sits in `docs/nedschorus-wiki/queue/` for that reason, and is promoted to `docs/nedschorus-wiki/` when both are done. So: treat a standing decision's substance as settled, and treat any sentence here, including the decisions' own phrasing, as text that may still be wrong.
+The *wording* of this file is pending approval. Nobody has yet read it as a stranger would, and the user has not read it whole. So: treat a standing decision's substance as settled, and treat any sentence here, including the decisions' own phrasing, as text that may still be wrong.
 
 **What this document is.** The project's objective, not its plan. It is not maintained to match reality; reality is measured against it, and a gap between them is a fact about the project rather than a defect in this file. The detail behind each subject lives in [the notes](../cross-project/nedschorus-ai-native-software-development-notes.md), which are explanatory, possibly wrong, and not prescriptive. Every subject here appears there in the same order, where there is detail to carry.
 
@@ -42,7 +42,7 @@ If you are an agent reading this to learn what the project is doing: the standin
 
 Two things about how work lands, because getting them backwards wastes a day. Every change reaches `main` by one route, but that route today is the PR process described in `CLAUDE.md`, not the main-gatekeeper: the gate is built and dormant, and standing decision 14 says the PR process stands until it is active. And every design and test plan is prose the user reads before it lands, so a design that has not been through him is not finished.
 
-If something here seems wrong, stale, or at odds with what the repository actually does, report it rather than working around it. An agent the user is directing raises it in its own session. An agent he is not directing reaches him through the liaison, or by filing a GitHub issue labelled `draft`, which is his review queue in the issue world.
+If something here seems wrong, stale, or at odds with what the repository actually does, report it rather than working around it. An agent the user is directing raises it in its own session. An agent he is not directing reaches him through the liaison, or by filing a GitHub issue labelled `queue-drain-candidate`, which is his review queue in the issue world.
 
 ---
 
@@ -123,7 +123,7 @@ These are the present architectural decisions established by the human direction
 15. **Durable outputs are written for an independent reader.** A reader with the repository, applicable project instructions, and the output should not need the conversation that created it.
 16. **The old `nedlern` system is legacy reference, not an inherited specification.** When work deliberately reuses it, touched features are classified as `preserve-feature`, `update-feature`, `remove-feature`, or `consider-feature`; unexamined behavior is not preserved by default.
 17. **Public sources are judged by usefulness and reliability.** Unofficial material may inform a decision but never becomes a runtime contract merely by being quoted.
-18. **An agent the user is not directing reaches him through the liaison, or by filing a GitHub issue labelled `draft`.** Issues labelled `draft` are his review queue in the issue world.
+18. **An agent the user is not directing reaches him through the liaison, or by filing a GitHub issue labelled `queue-drain-candidate`.** Issues labelled `queue-drain-candidate` are his review queue in the issue world.
 19. **The human reviews all final prose, after its cold read and before it lands.** He is a node in that path, not an approver at its end. In the pipeline that includes the designs, the contracts and the test plans; outside it, the documents that govern the project. He does not review code changes or traffic between nodes.
 20. **The human is a node unlike the others because he is often not available.** The arbitrator shares his broad context across passes, but not his scarcity. So he is a gate on the prose path: his review is a state the machine waits in, not a step it can reroute around, and the restart cap caps how often the machine spends his attention. Instructions and states are designed to keep his wait short: one decision at a time, plainly stated, independent work continuing meanwhile, and never a question another node could settle.
 21. **Validation is inside the producing node, not a node of its own.** Every node first checks whether its instructions are sufficient to complete its task, and every output is verified by a reviewer, because a producer will always call its own output good. Splitting the input check off would double the token cost of every pass without a demonstrated gain; a could-not exit names what was missing, so the learning loop survives.
@@ -135,29 +135,23 @@ These are the present architectural decisions established by the human direction
 
 ## Project organization
 
-The existing Nedschorus placement rule remains useful: GitHub Issues carry walkable state, Markdown carries substantive reasoning, and queues hold material whose disposition is undecided. The workflow store adds machine execution state; it does not replace those human-readable canonical locations.
+The existing Nedschorus placement rule remains useful: GitHub Issues carry walkable state, Markdown carries substantive reasoning, and queues hold material whose disposition is undecided.
 
 | Place | Holds |
 | --- | --- |
 | `docs/nedschorus-wiki/` | Current standing knowledge that is difficult to reconstruct from code alone |
 | `docs/issues/<n>-<slug>.md` | Substantive working material paired with a GitHub Issue, including its design, which is written here and refined in place until its code lands, then pinned to what landed; design-to-main adds the design-contract beside it, and both move into the component's directory when code starts |
 | `docs/cross-project/` | Designs written while the project was bootstrapped; no new design goes here, and the directory is to be retired |
-| `handoff/` and uncommitted transcripts on each machine | Session continuity and complete conversation evidence |
 | `nc-queue/` | Human-requested notes awaiting their initial review |
 | `docs/nedschorus-wiki/queue/` and `docs/issues/queue/` | Material with a known destination awaiting review |
-| `legacy-feature-queue/` | Legacy behavior whose disposition is not yet decidable |
 | GitHub Issues and pull requests | Work state, decisions, reviews, and check-in path |
 | Git | Code, current Markdown, history, hashes, and ordinary provenance |
-| Workflow store | Leases, attempts, dependency edges, policy manifests, pending questions, idempotency keys, and materialized execution state |
-| Evidence store | Large logs, traces, test evidence, screenshots, and deployment evidence referenced by stable identifiers |
 
 Every output is either current at its canonical location or in a named queue with a queue-drain. A queue item is reviewed by the human and then promoted, edited in place, demoted to supporting evidence, or dropped with a recorded reason.
 
 A substantial work item uses a GHI-MD: the issue carries current state and the Markdown file carries the detail needed by an independent reader. Clarifications edit the current body rather than stacking corrective comments; comments record genuinely new events. When an issue closes, its working document follows the repository's established archive, promotion, or deletion rule.
 
 Logical output versions are immutable even when their repository file is revised in place. Git commit and content hash identify the accepted version; an edit creates a new logical version and `supersedes` edge. Reviews and descendants remain tied to the old hash until reconciliation accepts them against the new one.
-
-The obsolete boot-up founding plan is intentionally removed rather than retained beside this document. Its historical content remains available at `git show 615a230:docs/cross-project/nedschorus-founding-plan.md`. Current documents should cite this objective for live rules and use the Git-history pointer only when discussing a founding event.
 
 ## Accepted residuals
 

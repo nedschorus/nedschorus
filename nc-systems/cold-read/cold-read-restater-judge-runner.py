@@ -7,7 +7,7 @@ the scrubbed defect lists, launches the two ruled judge runs in parallel
 through nc-systems/cold-read/cold-read-restater-judge-cell.py, and writes their two reports
 and one combined result into a cold-read-record of this restater's own --
 its own, and no earlier judging's: the default directory name takes a -2, -3
-suffix when the day's name is taken, the way nc-systems/cold-read/cold-read-grid.py's
+suffix when the day's name is taken in this checkout or in the log-store, the way nc-systems/cold-read/cold-read-grid.py's
 `make_record_dir` does, because the shared module clears a report path before
 every run and a second judging on one name would delete the first's reports.
 
@@ -71,7 +71,8 @@ the reading of them. One run failing does not throw the other away: the
 combined result is written from the run that landed, with a marker line at
 the top naming what is missing, and this program exits 1. Both failing leaves
 no combined result at all, because there is nothing to read. A run whose
-report cannot be parsed -- no `## CASE` heading in it naming one of the cases
+cell exited nonzero is a failed run even when a report is at its path. A run
+whose report cannot be parsed -- no `## CASE` heading in it naming one of the cases
 this run was given -- is a failed run, not a restater that caught nothing:
 zero and unreadable are different answers and this program never prints one
 as the other.
@@ -110,13 +111,17 @@ import subprocess
 import sys
 import time
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 _record_names_spec = importlib.util.spec_from_file_location(
     "cold_read_record_names",
-    pathlib.Path(__file__).with_name("cold-read-record-names.py"))
+    pathlib.Path(__file__).with_name("cold-read-record-names-common.py"))
 record_names = importlib.util.module_from_spec(_record_names_spec)
 _record_names_spec.loader.exec_module(record_names)
 RECORDS_DIR = record_names.RECORDS_DIR
+# Loaded for a record name free in the log-store, which --all ships these records to.
+_record_shipper_spec = importlib.util.spec_from_file_location(
+    "cold_read_record_ship", pathlib.Path(__file__).with_name("cold-read-record-ship.py"))
+record_shipper = importlib.util.module_from_spec(_record_shipper_spec)
+_record_shipper_spec.loader.exec_module(record_shipper)
 JUDGE_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-restater-judge-cell.py")
 
 _judge_cell_spec = importlib.util.spec_from_file_location(
@@ -157,17 +162,17 @@ def build_runner_argument_parser():
     parser.add_argument(
         "--restater", required=True, metavar="CLASS",
         help="the restater class under judgment, named as the roster names "
-             "its models (gemini-3.8-flash-low, gpt-6-sol, claude-opus-5)")
+             "its models (gemini-3.8-flash-low, gpt-6.1-sol, claude-opus-5)")
     parser.add_argument(
         "--case", required=True, action="append", nargs=4,
         metavar=("DRAFT", "PERFECT", "DEFECT_LIST", "RESTATEMENT"),
         help="one document's four files, in that order, each relative to the "
-             "repository root or absolute. Repeat once per document; the "
+             "current directory or absolute. Repeat once per document; the "
              "ruled campaign passes three")
     parser.add_argument(
         "--prompt-file", required=True, metavar="PATH",
         help="the file holding the judge's instructions, passed to both runs "
-             "unchanged; relative to the repository root unless absolute. "
+             "unchanged; relative to the current directory unless absolute. "
              "Required, because neither this program nor the judge cell "
              "carries that text -- see the module docstring")
     parser.add_argument(
@@ -177,7 +182,7 @@ def build_runner_argument_parser():
              "owns what is already in it. By default "
              "cold-read-records/<date>-restater-judge-<class>/ under the "
              "repository root, which is gitignored, with -2, -3 appended when "
-             "that name is taken so a second judging of one restater on one "
+             "that name is taken here or in the log-store so a second judging of one restater on one "
              "day cannot land on the first")
     return parser
 
@@ -185,9 +190,11 @@ def build_runner_argument_parser():
 def make_record_directory_for(restater_class: str, today: str) -> pathlib.Path:
     """Create a fresh record directory for the restater."""
     # Reserve the name with mkdir: reusing a directory would let report pre-clearing erase earlier results.
-    record_dir = record_names.fresh_record_directory(
-        RECORDS_DIR / f"{today}-restater-judge-{restater_class}")
-    record_dir.mkdir(parents=True)
+    record_dir, store_unclaimed = record_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_claimed_in_log_store_and_log_store_claim_failure_reason_or_none(
+        RECORDS_DIR / f"{today}-restater-judge-{restater_class}", *record_shipper.destination_for_this_machine())
+    if store_unclaimed is not None:
+        print(record_shipper.log_store_claim_failed_so_record_name_may_collide_warning_line(
+            "cold-read-restater-judge-runner", record_dir, store_unclaimed), file=sys.stderr)
     return record_dir
 
 
@@ -228,9 +235,11 @@ def launch_judge_runs(
         for case_argument in case_arguments:
             command += ["--case", *case_argument]
         err = open(stderr_path, "w", encoding="utf-8")  # pylint: disable=consider-using-with
+        # Each judge cell holds the record's being-written lock too, so an interrupted runner whose
+        # judges keep writing leaves the record unshipped until they exit.
         process = subprocess.Popen(  # pylint: disable=consider-using-with
             command, stdout=err, stderr=err, stdin=subprocess.DEVNULL,
-            cwd=REPO_ROOT,
+            pass_fds=record_names.record_directory_being_written_lock_pass_fds_for_child_writers(record_dir),
         )
         err.close()
         running[run_number] = (process, report_path, stderr_path)
@@ -390,6 +399,14 @@ def read_run(report_path: pathlib.Path, exit_code: int, case_count: int) -> dict
     }
     report_text = (
         report_path.read_text(encoding="utf-8") if report_path.is_file() else "")
+    if exit_code != 0 and report_text.strip():
+        # The cell removes its report on a failure it handles, so a report
+        # beside a nonzero exit is a killed cell's unstamped text or an
+        # earlier judging's, left in a reused --record-dir.
+        run["why_unusable"] = (
+            f"the cell exited {exit_code}, so the report at {report_path} "
+            "is not this run's finished judgment")
+        return run
     if not report_text.strip():
         run["why_unusable"] = (
             f"no report at {report_path} (the cell exited {exit_code}); a run "
@@ -647,13 +664,13 @@ def main() -> int:
         return EXIT_BAD_INVOCATION
 
     if args.record_dir:
-        record_dir = pathlib.Path(args.record_dir)
-        if not record_dir.is_absolute():
-            record_dir = REPO_ROOT / record_dir
+        record_dir = pathlib.Path(args.record_dir).resolve()
         record_dir.mkdir(parents=True, exist_ok=True)
     else:
         record_dir = make_record_directory_for(
             args.restater, datetime.date.today().strftime("%Y-%m-%d"))
+    # Held until this program exits: it ships nothing itself.
+    record_shipper.record_directory_being_written_lock_take(record_dir)
 
     print(f"{PROGRAM}: judging restater {args.restater} on {len(cases)} case(s), "
           f"{JUDGE_RUNS} runs, into {record_dir}", file=sys.stderr)

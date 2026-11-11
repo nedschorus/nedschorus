@@ -7,7 +7,8 @@ with the log file and the once-per-session marker directory pointed into a
 directory this suite made, so no case writes the live log-store or
 ~/.local/state/claude. The exit code is asserted on every case: a Stop hook
 that exits 2 blocks the turn from ending, so the hook exits 0, or 1 with one
-stderr line on a fault, and never 2.
+stderr line on a fault, and never 2; a log that cannot be written is told in
+a systemMessage.
 
 The precision case reads the labelled replies the trigger was measured on,
 which stay in the log-store because they are transcript text and this
@@ -28,7 +29,7 @@ HOOK_SCRIPT = Path(__file__).with_name("absence-claim-locator-reminder-hook.py")
 LABELLED_REPLIES = Path(
     "/home/nedlern/nedschorus-logs/seats/ned-box-helper/"
     "absence-claim-trigger-phrases-2026-10-05/out/precision/labels.csv")
-EXPECTED_PRECISION_LINE = "fires 107: correct 88, incorrect 19, unclear 0; precision 0.8224"
+EXPECTED_PRECISION_LINE = "fires 103: correct 88, incorrect 15, unclear 0; precision 0.8544"
 B01_CLAIM = "The transcripts it points to are gone."
 REMINDER_FOR_B01 = (
     "absence-claim reminder: your reply says a file or record is gone, missing "
@@ -37,12 +38,33 @@ REMINDER_FOR_B01 = (
     "log-store, a transcript or a backup.\n"
     "Before you tell anyone it does not exist, run: python3 "
     "scripts/locate-file-copies-across-machines.py <the file's name>\n"
+    "For a ruling, an approval or a past discussion, use the skill find-info "
+    "instead.\n"
     "If the locator finds it, tell whoever read your reply that it is not "
     "missing, and where it is.\n"
     "If the locator finds nothing, say where you looked, not that the file "
     "does not exist.\n"
     "If your reply was not about a stored file or record, carry on; this "
     "reminder comes once per session."
+)
+SUBAGENT_REMINDER_FOR_B01 = (
+    "absence-claim reminder: your reply says a file or record is gone, missing "
+    "or cannot be found (\"are gone\"), and you have not run the locator this "
+    "turn. Files agents call missing are often in another checkout, the "
+    "log-store, a transcript or a backup.\n"
+    "Before you tell anyone it does not exist, run: python3 "
+    "scripts/locate-file-copies-across-machines.py <the file's name>\n"
+    "For a ruling, an approval or a past discussion, use the skill find-info "
+    "instead.\n"
+    "The agent that dispatched you receives only your last message, so what "
+    "you write now replaces your report unless it contains the report.\n"
+    "If the locator finds it, end with your whole report again, with that "
+    "claim corrected to say where the file is.\n"
+    "If the locator finds nothing, end with your whole report again, with "
+    "that claim saying where you looked, not that the file does not exist.\n"
+    "If your reply was not about a stored file or record, say so in one line, "
+    "then end with your whole report again, unchanged; this reminder comes "
+    "once per subagent."
 )
 
 failures = []
@@ -217,8 +239,19 @@ for case_name, text in [
     ("B03's claim fires", 'I did not locate your "y" to item 5 itself or to item 2, and the review says so.'),
     ("no reply in between fires", "There was no reply from you in between those two messages."),
     ("a ruling never given fires", "That item rests on a ruling you never gave."),
+    ("a backquoted home path fires", "`~/.local/state/claude/fires.jsonl` is gone."),
+    ("a backquoted file name fires", "`fires.jsonl` is gone."),
 ]:
     check(f"trigger: {case_name}", bool(hook.absence_claim_matches(text)), text)
+
+# Pattern 2 fires only after a word naming a stored artifact in its clause, so a sentence
+# whose only such word comes from a backquoted path tests the FILE substitution.
+for case_name, text in [
+    ("a backquoted home path", "`~/.local/state/claude/fires.jsonl` is gone."),
+    ("a backquoted file name", "`fires.jsonl` is gone."),
+]:
+    check(f"strip_noise: {case_name} becomes the word FILE",
+          hook.strip_noise(text).split() == ["FILE", "is", "gone."], hook.strip_noise(text))
 
 for case_name, text in [
     ("processes gone are not files", "The child processes are gone now, so the file lock is free."),
@@ -241,6 +274,123 @@ for case_name, text in [
     ("before saying it is gone", "I ran the locator before saying the transcript is gone."),
     ("a glossary entry", "The glossary file is missing an entry for that term."),
     ("nothing is lost", "Nothing in the record is lost by the rename."),
+    ("a backquoted lone tilde", "- **Lost `~` mark:** the mark on `~` words is lost when the reader runs in a separate process."),
+]:
+    check(f"trigger: silent on {case_name}", not hook.absence_claim_matches(text),
+          hook.absence_claim_matches(text))
+
+# Each case below names the guard it tests; most sentences are from labelled replies.
+for case_name, text in [
+    ("pattern 13: no longer exists, with a place", "The file no longer exists on main, so the edit has nowhere to land."),
+    ("pattern 13: does not exist, an artifact in its clause",
+     "The search program the skill depends on, `scripts/find.py`, does not exist in the checkout."),
+    ("pattern 2: a pronoun subject reaches back past the clause break",
+     "I looked for the approval file; it is gone."),
+    ("pattern 6: not in git history", "The commit is not in git history."),
+    ("pattern 4: an adverb between the negation and the verb", "I still can't reliably find the transcript."),
+    # A guard written for one pattern must not silence another.
+    ("pattern 2: an edited-element word before the artifact", "The guard's log file is gone."),
+    ("pattern 2: who, after a colon", "The transcript is gone: who deleted it?"),
+    ("pattern 4: or before the match", "I checked the log-store or the mirror and couldn't find the transcript."),
+    ("pattern 4: no before the match", "With no backup I cannot find the transcript."),
+    ("pattern 6: an edited-element word heads the clause", "That change is not in the branch."),
+    ("pattern 6: any ... that before the match",
+     "I looked for any copy that might exist, but the file is not in the mirror."),
+    ("pattern 2: an edited-element word after a preposition is the artifact's object", "The transcript for that step is gone."),
+    ("pattern 2: an edited-element word ending the clause after a preposition", "The log of that command is gone."),
+    ("pattern 2: an edited-element word in a relative clause", "The file the link points to is gone."),
+    ("pattern 2: no after a preposition", "The file with no backup is gone."),
+    ("pattern 6: that means draws a conclusion", "That means the transcript is not in the repository."),
+    ("pattern 4: the search, with a first-person subject", "I cannot find the transcript after the search failed."),
+    ("pattern 4: a pronoun subject with a first-person clause", "I checked, and it can't find the transcript."),
+    ("pattern 2: an artifact word heads the subject, an edited-element word is its object",
+     "The transcript for the log parser is gone."),
+    ("pattern 2: an edited-element word in a relative clause after the artifact",
+     "The file that the link points to is gone."),
+    ("pattern 6: means with no colon after it", "This failure means the transcript is not in the repository."),
+    ("pattern 6: uses in an earlier clause", "The hook uses a cache, but the transcript is not in the repository."),
+    ("pattern 6: uses after the colon", "Result: the hook uses a cache, but the transcript is not in the repository."),
+    ("pattern 4: a search tool named before the claim's own subject", "I asked the locator, and I cannot find the transcript."),
+    ("pattern 4: a search tool in a phrase before a first-person subject", "Even with the search I cannot find the transcript."),
+    ("pattern 2: a second clause joined by and, with no comma", "The scan finished and the file is missing."),
+    ("pattern 4: a search tool in a first clause joined by and, with no comma",
+     "I asked the locator and I cannot find the transcript."),
+    ("pattern 6: a colon after the following announces, not defines",
+     "This means the following: the transcript is not in the repository."),
+    ("pattern 2: a participle after the artifact word ends the subject's head", "The logs showing parser failures are missing."),
+    ("pattern 2: an edited-element word as the object in a relative clause after the artifact",
+     "The file that contains the parser is gone."),
+    ("pattern 2: an artifact word and an edited-element word joined by and", "The transcript and the parser are gone."),
+    ("pattern 2: an artifact word with a prepositional phrase, joined by and",
+     "The logs for the scan and the parser are missing."),
+    ("pattern 2: a participle after a plural artifact word, before an edited-element word",
+     "The files containing code are missing."),
+    ("pattern 2: that is the match's subject, the sentence's own verb follows",
+     "The transcript that is gone is the only copy."),
+]:
+    check(f"trigger: {case_name}", bool(hook.absence_claim_matches(text)), text)
+
+for case_name, text in [
+    ("the 2026-10-18 trigger case, a definition",
+     'The second says "original", but step 4 of the skill uses "original" for another file: '
+     "the old version kept beside a revised text that is not in the repository."),
+    ("pattern 13 with no artifact in its clause and no place after it", "That old behaviour no longer exists."),
+    ("pattern 13 after an indefinite noun and a relative clause", "- a path to a file that no longer exists;"),
+    ("pattern 13 after where",
+     "The check can't start on a machine where the folder `~/.gemini/x` doesn't exist yet."),
+    ("pattern 2 with its artifact before a clause break",
+     "Hitting a missing issue tells you the permission: 403 means the permission is missing."),
+    ("pattern 2 after an artifact word joined by a hyphen", "The per-file cache is gone."),
+    ("pattern 2 in a whose clause", "Before the new agent-session starts, `x.py` looks for work-snapshots whose program is gone."),
+    ("talk about a claim", "It doesn't claim any file is missing."),
+    ("what someone says", "It adds the reminder for agents who wrongly say a file is missing."),
+    ("pattern 4 after say", "Correction: NFC exists, and I was wrong to say I couldn't find it."),
+    ("a negated subject", "I started from main's copy so nobody's lines are lost."),
+    ("what a test checks", "New tests check that the program's temporary directory is gone after a normal run."),
+    ("pattern 2 on an edited element", "- Test gap: the `a.py` versus `b.py` gap is gone with the code it was about."),
+    ("pattern 2 in a case analysis",
+     "The agent has to copy each outcome into its own records, or it's lost."),
+    ("pattern 4 on what a program can find", "Its one complaint was that it couldn't find TaskGet."),
+    ("pattern 4 on an argument, not an artifact", "I can't find a strong case for N."),
+    ("pattern 4 with words that are not adverbs before the verb", "I didn't say where to find the file."),
+    ("pattern 4 before a colon and who", "**What I can't recover:** who set the first template."),
+    ("pattern 6 on a file said to live elsewhere",
+     "The reviewer briefs are not in the repository; they live in gitignored seat-local files under `x/`."),
+    ("pattern 6 on not in git", "It is not in git, so there is no commit."),
+    ("pattern 12 in a relative clause", "- rulings an agent asked for that you never gave;"),
+    ("missing as a verb", "Two in one day, in unrelated tools, suggest the record is missing a field."),
+    ("a future moment", "The moment the move lands on main, that path is gone."),
+    ("a kind named by a relative clause", "- One message covers two cases: a folder that is missing and a folder that is empty."),
+    ("any that are missing", "It checks `x.md` for a fast read of each exact text, and runs the fast read for any that are missing."),
+    ("advice that is gone",
+     "- The advice to give the backup search a path for the Mac's local snapshots is gone."),
+    ("checks on an artifact", "- TR1's checks on `scripts/x.py` are gone;"),
+    ("a removed code element heads the clause", "The file's format is gone."),
+    ("a removed code element heads the subject, a modifier follows", "The log format used here is gone."),
+    ("a removed code element heads the subject, a prepositional phrase follows", "The file lock from the old implementation is gone."),
+    ("a removed code element heads the subject, its artifact possessive", "The report's checks for this step are gone."),
+    ("a removed code element before a relative clause", "- In `x-test.py`, the case that refused resume plus adoption is gone."),
+    ("a search tool as the subject after a first-person clause", "As I said, the locator cannot find branch names."),
+    ("a search tool as the subject after a first-person verb", "We know grep and glob don't find branch names."),
+    ("a search tool as the subject of a why clause", "My notes explain why keyword search cannot find files by modification time."),
+    ("pattern 13 on an edited element, read as pattern 2", "The file parser does not exist."),
+    ("pattern 13 in a sentence that says where the agent looked",
+     "The report says only where I looked, not that it does not exist."),
+    ("what a search tool can find", "Naming: grep and glob don't find branch names."),
+    ("where records belong", "Records like these belong in the log-store on ned-box, not in the repository."),
+    ("a kind of commit", "Its one weakness, a commit on no branch, is guarded three ways."),
+    ("an edited-element word ending in -ing heads the subject", "The tmux waker, transcript parsing and reset-time arithmetic are gone."),
+    ("pattern 2 inside a clause the sentence's own verb follows",
+     "The log that confirms the parser is gone is still on disk."),
+    ("pattern 2 inside a clause the sentence's own verb, has, follows",
+     "The log that confirms the parser is gone has been kept."),
+    ("an artifact word as a verb's object before and, a pronoun subject", "I edited the file and the guard is gone."),
+    ("an artifact word as a verb's object before and, a second determiner",
+     "The commit touched the log and the fallback is gone."),
+    ("an edited-element word heads the subject, its relative clause names an artifact", "The parser that reads the log is gone."),
+    ("an -ing word in a compound noun before an edited-element word", "The file naming rules are gone."),
+    ("an -ing word in a compound noun before code", "The log formatting code is gone."),
+    ("a search tool as the subject, an adverb before the match", "We know the locator still cannot find branch names."),
 ]:
     check(f"trigger: silent on {case_name}", not hook.absence_claim_matches(text),
           hook.absence_claim_matches(text))
@@ -278,12 +428,30 @@ check("locator ran this turn: logged as locator_ran",
       [line.get("outcome") for line in case.log_lines()] == ["locator_ran"], case.log_lines())
 
 case = (Case().user("Where are the transcripts?")
-        .tool_use("Skill", {"skill": "locate-before-saying-a-file-is-missing"})
-        .skill_loaded("locate-before-saying-a-file-is-missing")
+        .tool_use("Skill", {"skill": "find-missing-file"})
+        .skill_loaded("find-missing-file")
         .assistant_text(B01_CLAIM).write())
 result = case.run()
 check("the skill invoked this turn, its loaded text in the transcript: silent",
       result.stdout == "", result.stdout)
+
+case = (Case().user("Did I approve that change?")
+        .tool_use("Skill", {"skill": "find-info"})
+        .skill_loaded("find-info")
+        .assistant_text(B01_CLAIM).write())
+result = case.run()
+check("the skill find-info invoked this turn: silent",
+      result.returncode == 0 and result.stdout == "", (result.returncode, result.stdout))
+
+for program in ("log-store-past-discussions-regex-search-newest-first.py",
+                "locate-user-approval-by-question-subject.py"):
+    case = (Case().user("Did I approve that change?")
+            .tool_use("Bash", {"command": f"python3 scripts/{program} 'cold read'"})
+            .assistant_text(B01_CLAIM).write())
+    result = case.run()
+    check(f"{program} ran this turn: silent, logged as locator_ran",
+          result.stdout == "" and [line.get("outcome") for line in case.log_lines()] == ["locator_ran"],
+          (result.stdout, case.log_lines()))
 
 case = (Case().user("Where are the transcripts?")
         .tool_use("Bash", {"command": "python3 scripts/locate-file-copies-across-machines.py 21dc3d71.jsonl"})
@@ -371,14 +539,14 @@ subagent_payload = {"hook_event_name": "SubagentStop", "agent_id": "agent-one",
                     "transcript_path": "/nonexistent-parent.jsonl",
                     "agent_transcript_path": str(case.transcript)}
 result = case.run(subagent_payload)
-check("a subagent's claim: reminded, read from agent_transcript_path",
-      result.returncode == 0 and blocked_reason(result) == REMINDER_FOR_B01, result.stdout)
+check("a subagent's claim: reminded, read from agent_transcript_path, told to resend its report",
+      result.returncode == 0 and blocked_reason(result) == SUBAGENT_REMINDER_FOR_B01, result.stdout)
 check("a subagent's claim: logged with its event and agent",
       [(line.get("event"), line.get("agent_id")) for line in case.log_lines()]
       == [("SubagentStop", "agent-one")], case.log_lines())
 result = case.run(dict(subagent_payload, agent_id="agent-two"))
 check("another subagent in the same session is reminded on its own",
-      blocked_reason(result) == REMINDER_FOR_B01, result.stdout)
+      blocked_reason(result) == SUBAGENT_REMINDER_FOR_B01, result.stdout)
 result = case.run({"hook_event_name": "SubagentStop", "agent_id": "agent-three",
                    "transcript_path": str(case.transcript)})
 check("a SubagentStop without agent_transcript_path: silent", result.stdout == "", result.stdout)
@@ -390,19 +558,49 @@ check("a SubagentStop whose agent_transcript_path does not exist: exit 0, silent
       result.returncode == 0 and result.stdout == "" and result.stderr == ""
       and case.log_lines() == [], (result.returncode, result.stdout, result.stderr, case.log_lines()))
 
-# --- faults: exit 1, one stderr line, nothing on stdout, the error logged -----------
-
 case = Case()
 result = case.run({"transcript_path": str(case.root / "no-such-transcript.jsonl")})
-check("a missing transcript: reported on stderr, exit 1, nothing on stdout",
-      reported(result, "FileNotFoundError"), (result.returncode, result.stdout, result.stderr))
-check("a missing transcript: the error is logged",
-      [line.get("outcome") for line in case.log_lines()] == ["error"]
-      and "FileNotFoundError" in case.log_lines()[0].get("error", ""), case.log_lines())
+check("a Stop whose transcript_path does not exist: exit 0, silent, nothing logged",
+      result.returncode == 0 and result.stdout == "" and result.stderr == ""
+      and case.log_lines() == [], (result.returncode, result.stdout, result.stderr, case.log_lines()))
+
+# --- faults: exit 1, one stderr line, nothing on stdout, the error logged -----------
+
+
+def run_with_unsearchable_transcript(case, payload_key="transcript_path", **payload):
+    """Run the hook on a transcript inside a directory without search permission."""
+    locked_directory = case.root / "locked"
+    locked_directory.mkdir()
+    (locked_directory / "transcript.jsonl").write_text(case.transcript.read_text())
+    locked_directory.chmod(0)
+    try:
+        return case.run(dict(payload, **{payload_key: str(locked_directory / "transcript.jsonl")}))
+    finally:
+        locked_directory.chmod(0o700)
+
+
+if os.geteuid() == 0:
+    print("SKIP  a transcript that cannot be read: root reads through a directory without "
+          "search permission")
+else:
+    case = Case().user("Where are the transcripts?").assistant_text(B01_CLAIM).write()
+    result = run_with_unsearchable_transcript(case)
+    check("a transcript that cannot be read: reported on stderr, exit 1, nothing on stdout",
+          reported(result, "PermissionError"), (result.returncode, result.stdout, result.stderr))
+    check("a transcript that cannot be read: the error is logged",
+          [line.get("outcome") for line in case.log_lines()] == ["error"]
+          and "PermissionError" in case.log_lines()[0].get("error", ""), case.log_lines())
+
+    case = Case().user("Where are the transcripts?").assistant_text(B01_CLAIM).write()
+    result = run_with_unsearchable_transcript(
+        case, payload_key="agent_transcript_path", hook_event_name="SubagentStop",
+        agent_id="agent-five")
+    check("a subagent transcript that cannot be read: reported on stderr, exit 1",
+          reported(result, "PermissionError"), (result.returncode, result.stdout, result.stderr))
 
 for case_name, stdin_text, fault_words in (
         ("stdin that is not JSON", "not json", "JSONDecodeError"),
-        ("stdin that is a JSON list", "[1, 2]", "a JSON list, not an object"),
+        ("stdin that is a JSON list", "[1, 2]", "JSON, but not an object"),
         ("empty stdin", "", "JSONDecodeError")):
     case = Case()
     result = case.run(stdin_text=stdin_text)
@@ -413,16 +611,46 @@ for case_name, stdin_text, fault_words in (
 
 case = Case()
 case.log.mkdir()
-result = case.run({"transcript_path": str(case.root / "no-such-transcript.jsonl")})
-check("a fault whose error cannot be logged: still reported on stderr, exit 1",
-      reported(result, "FileNotFoundError"), (result.returncode, result.stdout, result.stderr))
+result = case.run(stdin_text="not json")
+check("a fault whose error cannot be logged: still reported on stderr, exit 1, "
+      "and stderr says the fault was not logged",
+      reported(result, "JSONDecodeError")
+      and "the failure was not logged either: IsADirectoryError" in result.stderr,
+      (result.returncode, result.stdout, result.stderr))
+check("a fault's stderr line names the error before it says the turn ends as usual",
+      result.stderr.find("JSONDecodeError") < result.stderr.find("the turn ends as usual")
+      and "no reminder reached the agent" in result.stderr,
+      result.stderr)
+
+
+def system_message(result):
+    try:
+        return json.loads(result.stdout).get("systemMessage")
+    except ValueError:
+        return None
+
 
 case = Case().user("Where are the transcripts?").assistant_text(B01_CLAIM).write()
 case.log.mkdir()
 result = case.run()
-check("a log path that cannot be written: still reminds, exit 0",
-      result.returncode == 0 and blocked_reason(result) == REMINDER_FOR_B01,
-      (result.returncode, result.stdout))
+check("a log path that cannot be written: still reminds, exit 0, and the systemMessage, not "
+      "stderr, says the outcome was not logged and that the reminder was sent",
+      result.returncode == 0 and blocked_reason(result) == REMINDER_FOR_B01
+      and result.stderr == ""
+      and "'reminded'" in (system_message(result) or "")
+      and "IsADirectoryError" in (system_message(result) or "")
+      and "was still sent to the agent" in (system_message(result) or ""),
+      (result.returncode, result.stdout, result.stderr))
+
+case = Case().user("Where are the transcripts?").assistant_text(B01_CLAIM).write()
+case.log.mkdir()
+result = case.run(CLAUDE_CODE_SESSION_ATTENDED="0")
+check("a log path that cannot be written, with no reminder due: exit 0, no decision, and a "
+      "systemMessage saying the outcome was not logged and no reminder was sent",
+      result.returncode == 0 and blocked_reason(result) is None and result.stderr == ""
+      and "'headless'" in (system_message(result) or "")
+      and "none was sent to the agent" in (system_message(result) or ""),
+      (result.returncode, result.stdout, result.stderr))
 
 shutil.rmtree(SUITE_ROOT, ignore_errors=True)
 print()

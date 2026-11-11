@@ -10,16 +10,17 @@ Usage:
                 or launchd plist. Reads nothing on the machine, changes nothing.
   --check       compare what this machine has installed with the table; exit 1
                 when any job differs, or when this machine runs a job the
-                table does not name. Changes nothing.
+                table does not name; exit 2 when a job or a crontab line is
+                NOT CHECKED. Changes nothing.
   --install     make this machine's crontab and launchd jobs what the table
                 says. A job already installed as the table says is left alone.
   --start-once  with --install: after installing, ask launchd to run each
                 selected launchd job once, now.
-  --remove      take the named jobs off this machine. Needs --job: nothing
-                removes every job at once.
+  --remove      take the named jobs off this machine. Needs --job, so a bare
+                --remove cannot take off every job.
   --remove-not-in-table
                 take off this machine every job --check reports NOT IN THE
-                TABLE. Takes no --job.
+                TABLE. Takes no --job. Exits 1 when it leaves a line KEPT.
   --job NAME    limit the run to this job of the table; repeat for several.
                 Without it --print, --check and --install take every job the
                 table places on this machine.
@@ -126,8 +127,12 @@ through an interpreter, and is no cron job's line of the table — not a
 comment, not a line that sets a variable, and not a line that only reads or
 writes a file in the clone; and a plist carrying
 PLIST_WRITTEN_BY_THIS_PROGRAM whose label is no launchd job's of the table.
-A plist written before that line existed is not found.
---remove-not-in-table takes exactly those off, except a cron line that also
+A plist written before that line existed is not found. A cron line whose
+programs this program cannot tell, because it gives an interpreter or env an
+option, defines a function, or names no program after its interpreter or env,
+is reported NOT CHECKED instead, with which of these it does, and
+--remove-not-in-table leaves it in place.
+--remove-not-in-table takes exactly the NOT IN THE TABLE jobs off, except a cron line that also
 runs a job that is not a program of the clone: it reports that line as KEPT
 and leaves it for a person to edit, since removing it would stop the other
 job too. A later pipeline stage, such as the logger of `job | logger`, only
@@ -141,9 +146,11 @@ only in its output file.
 
 Exit codes: 0 done, or for --check every job matches; 1 a step failed after
 this program began changing the machine, or for --check a job differs or is
-not in the table; 2 not run — a bad invocation, a table this program cannot
+not in the table, or for --remove-not-in-table a crontab line was KEPT; 2 not run — a bad invocation, a table this program cannot
 use, a machine the table does not name, a job's program missing, a crontab
-that could not be read, or a shell parser that could not be installed.
+that could not be read, or a shell parser that could not be installed; or for
+--check, a job not checked because `launchctl print` could not report it, or
+a crontab line it could not read.
 
 Every option of main() beyond argv is a seam for
 tests/install-scheduled-jobs-on-this-machine-test.py, which installs nothing
@@ -170,6 +177,12 @@ _shell_reader_spec = importlib.util.spec_from_file_location(
     Path(__file__).resolve().with_name("shell-command-tree-sitter-bash-reader-common.py"))
 shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
 _shell_reader_spec.loader.exec_module(shell_reader)
+
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().with_name("failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py"))
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
 
 PROGRAM = "install-scheduled-jobs-on-this-machine"
 TABLE_FILE_NAME = "scheduled-jobs-on-each-machine.json"
@@ -455,9 +468,56 @@ def report_failed_crontab_write(failure) -> None:
 
 
 
+# launchctl print exits 113 when the domain has no such service.
+LAUNCHCTL_PRINT_SERVICE_NOT_FOUND = 113
+
+
+class LaunchctlPrintFailed(Exception):
+    """`launchctl print` exited with neither 0 nor service-not-found, so whether the job is loaded is unknown."""
+
+    def __init__(self, target: str, exit_code: int, error_text: str):
+        self.cause = (f"`launchctl print {target}` exited {exit_code}, which is neither 0 "
+                      f"(loaded) nor {LAUNCHCTL_PRINT_SERVICE_NOT_FOUND} (no such job loaded)"
+                      + (f", with the error: {error_text}" if error_text
+                         else ", and printed no error"))
+        self.error_text = error_text
+        super().__init__(self.cause)
+
+    def next_steps(self, rerun: str, failure_line: str, drift_line: str = None) -> str:
+        """Return the lines that tell the reader what to do.
+
+        With launchctl's error, they end in rerun; without it, in when to stop and
+        tell the user. failure_line is the start of the line this failure printed,
+        which the rerun prints again if it fails the same way; drift_line, when
+        given, names an output line that is not this failure.
+        """
+        if self.error_text:
+            return f"Fix what launchctl's error names.\nThen run `{rerun}` on this machine."
+        return "\n".join(
+            [f"Run `{rerun}` once more, on this machine; it tries this job alone."]
+            + ([f"A {drift_line} line is not this failure: it is drift the check found, and "
+                f"does not count as the rerun failing."] if drift_line else [])
+            + [next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                failure_line)])
+
+
+def rerun_command(mode: str, job_name: str, start_once: bool = False) -> str:
+    """Return the command that reruns mode for one job, for a failure message to quote."""
+    return shlex.join([str(Path(__file__).resolve()), mode, "--job", job_name]
+                      + (["--start-once"] if start_once else []))
+
+
 def launchd_job_is_loaded(placement: dict, run) -> bool:
-    return run(["launchctl", "print", launchd_target(placement)],
-               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    """Return whether launchd has the job loaded; raise LaunchctlPrintFailed when it cannot tell."""
+    target = launchd_target(placement)
+    printed = run(["launchctl", "print", target],
+                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    if printed.returncode == 0:
+        return True
+    if printed.returncode == LAUNCHCTL_PRINT_SERVICE_NOT_FOUND:
+        return False
+    raise LaunchctlPrintFailed(target, printed.returncode,
+                               " ".join((printed.stderr or b"").decode(errors="replace").split()))
 
 
 def installed_plist_says_what_the_table_says(plist_path: Path, machine: dict, job: dict,
@@ -481,10 +541,6 @@ def installed_plist_matches(plist_path: Path, machine: dict, job: dict, placemen
         and installed_plist_carries_the_written_by_line(plist_path)
 
 
-# launchctl print exits 113 when the domain has no such service.
-LAUNCHCTL_PRINT_SERVICE_NOT_FOUND = 113
-
-
 def booted_out_or_reported(target: str, plist_path: Path, run) -> bool:
     """Return whether launchd confirms the job is unloaded; report failure otherwise."""
     # Keep the plist on uncertainty: deleting it could leave a loaded job invisible to --check.
@@ -502,12 +558,21 @@ def booted_out_or_reported(target: str, plist_path: Path, run) -> bool:
     return False
 
 
-def install_launchd_job(machine, job, placement, launch_agents_directory: Path, run) -> bool:
+def install_launchd_job(machine, job, placement, launch_agents_directory: Path, run,
+                        start_once: bool = False) -> bool:
     """Return whether the installed job matches the table."""
     name, label = job["name"], placement["label"]
     plist_path = launch_agents_directory / f"{label}.plist"
-    if installed_plist_matches(plist_path, machine, job, placement) \
-            and launchd_job_is_loaded(placement, run):
+    try:
+        already_installed = installed_plist_matches(plist_path, machine, job, placement) \
+            and launchd_job_is_loaded(placement, run)
+    except LaunchctlPrintFailed as failure:
+        print(f"FAILED: {name} — {failure.cause}; so whether {label} is loaded is unknown, "
+              f"and the job was not installed.", file=sys.stderr)
+        print(failure.next_steps(rerun_command('--install', name, start_once), f"FAILED: {name}"),
+              file=sys.stderr)
+        return False
+    if already_installed:
         print(f"unchanged: {name} — {plist_path} says what the table says, and launchd has "
               f"{label} loaded.")
         return True
@@ -533,7 +598,15 @@ def install_launchd_job(machine, job, placement, launch_agents_directory: Path, 
         print("Otherwise read what launchctl printed above, and run this again after that "
               "cause is removed.", file=sys.stderr)
         return False
-    if not launchd_job_is_loaded(placement, run):
+    try:
+        loaded = launchd_job_is_loaded(placement, run)
+    except LaunchctlPrintFailed as failure:
+        print(f"FAILED: {name} — bootstrap exited 0, and then {failure.cause}; so whether "
+              f"{label} is loaded is unknown.", file=sys.stderr)
+        print(failure.next_steps(rerun_command('--install', name, start_once), f"FAILED: {name}"),
+              file=sys.stderr)
+        return False
+    if not loaded:
         print(f"FAILED: {name} — bootstrap exited 0, and `launchctl print "
               f"{launchd_target(placement)}` does not find the job.", file=sys.stderr)
         print(f"Run `launchctl print {launchd_target(placement)}`, read what it prints, and "
@@ -604,6 +677,14 @@ def _defines_a_function(command_text: str) -> bool:
     return False
 
 
+def _cron_line_command_text(line: str):
+    special_schedule = line.lstrip().startswith("@")
+    fields = line.split(None, 1 if special_schedule else 5)
+    if len(fields) < (2 if special_schedule else 6):
+        return None
+    return fields[-1]
+
+
 def programs_a_cron_line_runs(line: str) -> list:
     """Return (program, reads_output) for each command a cron line runs, or [] for none.
 
@@ -612,31 +693,38 @@ def programs_a_cron_line_runs(line: str) -> list:
     words. reads_output is true for a later stage of a pipeline, such as the
     logger of `job | logger`, which only reads the job's output.
     """
+    return [(program, reads_output)
+            for program, reads_output, _ in _cron_line_programs_and_causes(line)]
+
+
+def _cron_line_programs_and_causes(line: str) -> list:
+    # Each entry adds the cause program is None, or None where program is resolved.
     # Interpreter and env options may consume arguments; guessing could remove an unrelated job.
     if not line.strip() or line.lstrip().startswith("#") or CRON_ENVIRONMENT_ASSIGNMENT.match(line):
         return []
-    special_schedule = line.lstrip().startswith("@")
-    fields = line.split(None, 1 if special_schedule else 5)
-    if len(fields) < (2 if special_schedule else 6):
+    command_text = _cron_line_command_text(line)
+    if command_text is None:
         return []
     try:
-        commands = shell_reader.simple_commands(fields[-1])
-        defines_a_function = _defines_a_function(fields[-1])
+        commands = shell_reader.simple_commands(command_text)
+        defines_a_function = _defines_a_function(command_text)
     except shell_reader.ShellParserUnavailable as error:
         raise shell_parser_refusal(error, line)
     # A function's body may never run.
     if defines_a_function:
-        return [(None, False)]
+        return [(None, False, _FUNCTION_DEFINITION_CAUSE)]
     commands = [command for command in commands if not command.inside_substitution()]
     stage_sizes = {}
     for command in commands:
         for shell in command.child_shell:
             stage_sizes[shell] = stage_sizes.get(shell, 0) + 1
-    # Only a later stage that is one command and nothing more reads the output; a stage such
-    # as `(cat; /usr/bin/other-job)` runs other jobs of its own.
-    return [(_program_of_a_cron_job(command),
-             _only_command_of_a_later_pipeline_stage(command, stage_sizes))
-            for command in commands]
+    found = []
+    for command in commands:
+        program, cause = _program_of_a_cron_job(command)
+        # Only a later stage that is one command and nothing more reads the output; a stage such
+        # as `(cat; /usr/bin/other-job)` runs other jobs of its own.
+        found.append((program, _only_command_of_a_later_pipeline_stage(command, stage_sizes), cause))
+    return found
 
 
 def _only_command_of_a_later_pipeline_stage(command, stage_sizes):
@@ -649,18 +737,49 @@ def _only_command_of_a_later_pipeline_stage(command, stage_sizes):
             and stage_sizes[shells[-1]] == 1)
 
 
+_INTERPRETER_OPTION_CAUSE = "it gives an interpreter or env an option, which may take the next word"
+_FUNCTION_DEFINITION_CAUSE = "it defines a function, whose body may never run"
+_NO_PROGRAM_AFTER_INTERPRETER_CAUSE = "it names no program after its interpreter or env"
+_NO_PROGRAM_CAUSE = "it names no program"
+
+
 def _program_of_a_cron_job(words):
+    """Return (program, None), or (None, cause) where the program is unresolved."""
     after_interpreter = False
     for word in words:
         if CRON_ENVIRONMENT_ASSIGNMENT.match(word):
             continue
         if after_interpreter and word.startswith("-"):
-            return None
+            return None, _INTERPRETER_OPTION_CAUSE
         if INTERPRETER_PROGRAM_NAME.fullmatch(Path(word).name):
             after_interpreter = True
             continue
-        return word
-    return None
+        return word, None
+    return None, (_NO_PROGRAM_AFTER_INTERPRETER_CAUSE if after_interpreter else _NO_PROGRAM_CAUSE)
+
+
+def _cron_lines_of_placed_jobs(placed: list, lines: list) -> set:
+    # A retired line sharing a current job's filename belongs to that job for check and install.
+    owned = set()
+    for job, placement in placed:
+        if placement["scheduler"] == "cron":
+            owned.update(lines_of_job(lines, job))
+    return owned
+
+
+def _cron_lines_not_read(placed: list, lines: list) -> list:
+    """Return (line, cause) for each cron line no table job owns whose programs are unresolved."""
+    owned = _cron_lines_of_placed_jobs(placed, lines)
+    found = []
+    for index, line in enumerate(lines):
+        # A line a table job owns is never read: it needs no shell parser.
+        if index in owned:
+            continue
+        causes = [cause for program, _, cause in _cron_line_programs_and_causes(line)
+                  if program is None]
+        if causes:
+            found.append((line, causes[0]))
+    return found
 
 
 def cron_lines_not_in_table(machine: dict, placed: list, lines: list) -> list:
@@ -671,11 +790,7 @@ def cron_lines_not_in_table(machine: dict, placed: list, lines: list) -> list:
     pipeline stage that only reads a clone program's output; such a line is
     reported and never removed.
     """
-    # A retired line sharing a current job's filename belongs to that job for check and install.
-    owned = set()
-    for job, placement in placed:
-        if placement["scheduler"] == "cron":
-            owned.update(lines_of_job(lines, job))
+    owned = _cron_lines_of_placed_jobs(placed, lines)
     from_the_clone = f"{machine['clone']}/"
     found = []
     for index, line in enumerate(lines):
@@ -771,7 +886,8 @@ def install_mode(machine, placed, launch_agents_directory: Path, start_once: boo
                     for old_line in old_lines:
                         print(f"  the line removed: {old_line}")
     for job, placement in launchd_jobs:
-        installed = install_launchd_job(machine, job, placement, launch_agents_directory, run)
+        installed = install_launchd_job(machine, job, placement, launch_agents_directory, run,
+                                        start_once)
         every_step_worked = every_step_worked and installed
         if installed and start_once:
             every_step_worked = start_launchd_job_once(machine, job, placement, run) \
@@ -832,8 +948,8 @@ def remove_not_in_table_mode(machine, placed, launch_agents_directory: Path,
         print(f"KEPT: not in the table — the crontab line {lines[index]} also runs a job that is "
               f"not a program of the clone, so this program left the line in place.")
     if left_in_place:
-        print("To take the retired job off a KEPT line, edit the line by hand with `crontab -e` on "
-              "this machine, and keep the job that is not the clone's.")
+        print("To take the retired job off a KEPT line, ask the user to edit the line by hand in "
+              "this machine's crontab, and keep the job that is not the clone's.")
     plists = plists_not_in_table(machine, placed, launch_agents_directory)
     every_step_worked = True
     for plist_path, label in plists:
@@ -852,10 +968,12 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
                every_job_selected: bool) -> int:
     differences = 0
     differences_only_the_marker = 0
+    not_checked = []
     installed_text = None
     for job, placement in placed:
         name, differs = job["name"], []
         marker_differences_of_this_job = 0
+        loaded_state_unknown = False
         if not Path(program_path_of(machine, job)).is_file():
             differs.append(f"its program {program_path_of(machine, job)} is not a file on "
                            f"this machine")
@@ -883,18 +1001,23 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
                                f"marking it as written by this installer; --install adds that "
                                f"line")
                 marker_differences_of_this_job = 1
-            if not launchd_job_is_loaded(placement, run):
-                differs.append(f"launchd has no job {placement['label']} loaded in "
-                               f"{launchd_domain()}")
+            try:
+                if not launchd_job_is_loaded(placement, run):
+                    differs.append(f"launchd has no job {placement['label']} loaded in "
+                                   f"{launchd_domain()}")
+            except LaunchctlPrintFailed as failure:
+                not_checked.append((name, placement, failure))
+                loaded_state_unknown = True
         if differs:
             differences += 1
             if len(differs) == marker_differences_of_this_job:
                 differences_only_the_marker += 1
             for difference in differs:
                 print(f"DIFFERS: {name} — {difference}.")
-        else:
+        elif not loaded_state_unknown:
             print(f"matches: {name} — {placement['scheduler']}.")
     not_in_table = shares_a_line = 0
+    lines_not_read = []
     if every_job_selected:
         if installed_text is None:
             installed_text = read_crontab(run)
@@ -906,6 +1029,7 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
                   f"names it for this machine."
                   + (" The line also runs a job that is not a program of the clone, so "
                      "--remove-not-in-table leaves the line in place." if also_runs_others else ""))
+        lines_not_read = _cron_lines_not_read(placed, lines)
         for plist_path, label in plists_not_in_table(machine, placed, launch_agents_directory):
             not_in_table += 1
             print(f"NOT IN THE TABLE: {plist_path}, label {label} — no job of the table "
@@ -927,10 +1051,26 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
               f"through a pull request.")
         if shares_a_line:
             print("When a retired job shares its crontab line with a job that is not the clone's, "
-                  "take the retired job off that line by hand with `crontab -e` on this machine, "
-                  "and keep the other job.")
+                  "ask the user to take the retired job off that line by hand in this machine's "
+                  "crontab, and keep the other job.")
         print(f"To learn whether a job was retired on purpose, run "
               f"`git log -p -- {table_path}` in the clone.")
+    for name, placement, failure in not_checked:
+        print(f"NOT CHECKED: {name} — {failure.cause}; so whether launchd has "
+              f"{placement['label']} loaded is unknown.", file=sys.stderr)
+        print(failure.next_steps(rerun_command('--check', name), f"NOT CHECKED: {name}",
+                                 drift_line="DIFFERS"), file=sys.stderr)
+    for line, cause in lines_not_read:
+        print(f"NOT CHECKED: the crontab line {line} — {cause}, so whether it runs a program of "
+              f"the clone that no job of the table names is unknown.", file=sys.stderr)
+    if lines_not_read:
+        print(f"When such a line runs a program of the clone, add its job to {table_path} through "
+              f"a pull request, or ask the user to take the line off this machine's crontab "
+              f"by hand.", file=sys.stderr)
+        print("When it runs no program of the clone, tell the user, quoting the line: --check "
+              "exits 2 for as long as the line is in the crontab.", file=sys.stderr)
+    if not_checked or lines_not_read:
+        return 2
     return 1 if differences or not_in_table else 0
 
 

@@ -33,9 +33,18 @@ Define GHI-MDs and designs together, first: whether a design lives inside its GH
 ## Relations
 
 - GHI [overview-write skill: how an overview of a system is written and checked before it lands](https://github.com/nedschorus/nedschorus/issues/168): the overview definition this method comes from.
-- GHI [refresh-design: when a system's code lands, bring its design, build-slice plan and overview into line — removing, never revising](https://github.com/nedschorus/nedschorus/issues/670): what happens to a design once its code lands; the designs definition replaces its rule that a refresh of a design "removes and never revises".
+- GHI [refresh-design: when a system's code lands, bring its design, build-slice plan and overview into line — removing, never revising](https://github.com/nedschorus/nedschorus/issues/670): what happens to a design once its code lands. Its rule that a refresh of a design "removes and never revises" is changed only at its source, GHI 670, through an approval-walk of its own (user-ruled 2026-10-04, `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/overview-definition-draft-1-2026-10-04-2-minutes.md`, item 3). Until then the designs definition follows that rule: a refresh only removes, and the change request that revises a baseline is the redesign GHI 670 names, a full design-to-main run.
 - GHI [Candidate skill: design-change — read-only evidence-grounded design with one recommendation and honest exits](https://github.com/nedschorus/nedschorus/issues/17): its name "design-change" means writing a design before code, not a change request.
 - GHI [update-glossary skill: the editor rules for the nedschorus glossary, taken off the page (user-asked 2026-09-06)](https://github.com/nedschorus/nedschorus/issues/262): where the glossary-entry definition lands.
 - GHI [wiki-write skill, and the detect-set-aside-ask hook that enforces it — checking the file, not the tool call](https://github.com/nedschorus/nedschorus/issues/343): where the wiki-page definitions land.
 - GHI [Genre-suffix naming for non-reviewable documents (-log, -report, -capture), and mechanical exclusion from the review instruments](https://github.com/nedschorus/nedschorus/issues/152): file-name suffixes for other kinds of document.
 - GHI [One documentation tree in place of the wiki and the rest of docs, with Obsidian opened on it](https://github.com/nedschorus/nedschorus/issues/1066): may move where wiki pages live.
+
+## Provisional additions (not yet vetted by the user)
+
+- The agent-seat cold-read-improvement holds a task for the GHI-MD definition: best-practice trawl, draft, full cold read, approval-walk; not started (2026-10-14).
+- The agent-seat cold-read-improvement holds a task for the designs definition: best-practice trawl, draft, full cold read, approval-walk; not started (2026-10-14).
+- The agent-seat cold-read-improvement holds a task for the project glossary entry definition: best-practice trawl, draft, full cold read, approval-walk; not started (2026-10-14).
+- The agent-seat cold-read-improvement holds a task for the seat-brief definition: best-practice trawl, draft, full cold read, approval-walk; not started (2026-10-14).
+- The agent-seat cold-read-improvement holds a task for the handoff next-step file definition: best-practice trawl, draft, full cold read, approval-walk; not started (2026-10-14).
+- The agent-seat cold-read-improvement holds a task for the definition of wiki pages other than overviews: best-practice trawl, draft, full cold read, approval-walk; not started (2026-10-14).

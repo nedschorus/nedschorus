@@ -11,6 +11,7 @@ solo run: the same PASS names, no FAIL, no SKIP.
 Run: python3 scripts/resupervise-seat-test-two-copies-at-once-test.py
 """
 
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -19,8 +20,12 @@ import tempfile
 from pathlib import Path
 
 SUITE = Path(__file__).with_name("resupervise-seat-test.py")
-GIT_REDIRECTING_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-                             "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR")
+_git_redirecting_removal_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_variables_removal_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-redirecting-environment-variables-removal-common.py")
+git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
+_git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
 BARRIER_POINTS = ("default-server-session-held", "per-seat-server-session-held")
 COPY_TIMEOUT_SECONDS = 300
 COLLECTOR_STAND_IN_DEADLINE_SECONDS = 10
@@ -39,7 +44,7 @@ def check(case_name, condition, detail=""):
 
 
 def copy_environment(**extra):
-    environment = {k: v for k, v in os.environ.items() if k not in GIT_REDIRECTING_VARIABLES}
+    environment = git_redirecting_removal.environment_without_git_redirecting_variables()
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     environment.update(extra)
     return environment

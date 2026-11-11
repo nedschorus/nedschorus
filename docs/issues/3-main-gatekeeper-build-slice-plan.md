@@ -1,5 +1,6 @@
 ---
 issue: "[main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)"
+kind: design
 ---
 
 # main-gatekeeper build — slice plan
@@ -49,7 +50,7 @@ the instruction-file class
 (issue [Review-system design requirements learned from the legacy gate — dormant until a class of work first requires review](https://github.com/nedschorus/nedschorus/issues/31), guard
 1). It needs an approval-evidence format that does not exist yet, and the
 in-session tamper guard
-([`.claude/hooks/instruction-file-guard.py`](../../.claude/hooks/instruction-file-guard.py))
+([`.claude/guard-hooks/instruction-file-guard.py`](../../.claude/guard-hooks/instruction-file-guard.py))
 covers the same surface today. It became slice 6 when that format was
 designed — and slice 6 is **NOT BUILT and will not be**, user-ruled
 2026-08-17.
@@ -548,7 +549,7 @@ remains in git history at `4cadb46`.
   integration absorbs it — it is not tolerable here, because in `status`
   and `cancel` the fetch decides whether the answer is true.
 - APPLIED 2026-08-12 (`71d492e`, `6d356d2`) — **The two exemptions from
-  the one-JSON-object contract are written down, and agent-facing text
+  the one-JSON-object contract are written down, and tool-message-to-agent text
   stops citing `--help`.** The reply contract states that every invocation
   prints exactly one JSON object on stdout, and reserves exit 2 for a
   program defect; two invocations broke it. `worker` was a real,
@@ -1065,7 +1066,7 @@ shape (the branch's older copy against main's landed version).
 
 **The interim, accepted deliberately.** Until the gate is live, nothing
 enforces this. The session-start half exists — the ignition prompt carries
-the branch-sync result and, per pull request
+the launch-time-git-sync result and, per pull request
 PR [ignition: catch up with main before the first substantive action, and verify it](https://github.com/nedschorus/nedschorus/pull/220), tells the
 successor to catch up with main before its first substantive action — and
 the harness already refuses an edit to a file that changed on disk since
@@ -1128,7 +1129,7 @@ not redone:
    means the test plan above is hand-written, as it currently is.
 3. **Does this build own the check battery?** Two documents disagree, and
    the disagreement is why nobody noticed the work was skipped.
-   [nc-python-toolchain-plan.md](../cross-project/nc-python-toolchain-plan.md)
+   [nc-python-toolchain-plan.md](https://github.com/nedschorus/nedschorus/blob/295c9f35/docs/cross-project/nc-python-toolchain-plan.md)
    § Phase 1 is headed "First pass (built with the gatekeeper, step 7)" and
    specifies `nc-checkin-quality-gate` — gitleaks plus `ruff check`,
    `ruff format --check`, `mypy` and `pytest`, run full-repo on every

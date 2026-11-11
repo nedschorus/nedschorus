@@ -1,0 +1,684 @@
+#!/usr/bin/env python3
+"""Find the open approval-walk and its waiting items: the walk-minutes' last
+`#next_to_present` line, and the units of the walk-document that hold the
+items it names. The walk-me-through Stop hook, the short-answer
+UserPromptSubmit hook and the check program load this module by path, so all
+three read the walk files the same way.
+
+THE OPEN APPROVAL-WALK. The walk-me-through skill keeps a `#next_to_present`
+line in each walk's docs/walk/<name>-minutes.md. The marker is found anywhere
+outside code, the last one in a minutes file counts, and one inside a code
+span is a quotation; a value inside a code span is read without its
+backticks, and a colon after the hashtag is read as the old form's colon was.
+A program that writes text it was given into the minutes, such as the user's
+reply, writes it with text_wrapped_as_markdown_code_span, so that a marker
+inside that text is a quotation too.
+The old marker `Next to present:` is read too, so that a caller can migrate
+it. A value is `none` or `closed` for a closed walk, or opens with a running
+count, `item N`, `item 4.1`, `items 5 and 6`, `items 10 to 12`, with or
+without `of M`. An agent-seat keeps at most one approval-walk unclosed, open or
+paused, so the unclosed approval-walk is the one minutes file in docs/walk/
+whose value is not closed. When more than one is, the_one_unclosed_approval_walk_including_paused
+and open_walk raise MoreThanOneUnclosedApprovalWalk naming every such minutes
+file, and no walk is guessed: the answer program refuses, the Stop hooks stay
+silent, and the short-answer hook says it could not read the approval-walk
+state, naming each file. Every minutes file is read, so a minutes file that
+cannot be read is a fault even when another walk is open.
+
+A PAUSED APPROVAL-WALK. A `#approval_walk_paused <reason>` line, found as the
+marker is, pauses the walk when it comes after the minutes' last marker; a
+later `#next_to_present` line resumes it. A paused walk is still unclosed, so
+it counts toward the one, but open_walk returns None for it, so the hooks
+treat it as no open walk. the_one_unclosed_approval_walk_including_paused
+returns it with its pause, so the check program can say how to resume it.
+
+ITEMS IN THE WALK-DOCUMENT. An item starts at its running count, `Item N of
+M`, `Items 5 and 6 of M`, `Items 10 to 12 of M` or `Items 12 to 12.3 of M`,
+on a top-level heading or paragraph opening with `**`, outside any list or
+quotation, as markdown-it-py reads the document, and runs to the next running
+count or unnumbered item. An unnumbered item is a waiting item that has only
+a title: a top-level `## <title>` heading, ATX-style, after the first running
+count, that holds no running count, does not open with `Withdrawn`, and does
+not open with an item label such as `Item 3:`, which in older walks groups
+the sub-steps under it. A walk-document whose whole-number running counts,
+those with no dot, sit on any heading other than `##`, as in `## Part 2`
+headings over `### Item 2 of 3` items, has no unnumbered items: its `##`
+headings are parts or sections. A dotted count, as in a `### Item 1.1 of 3`
+sub-step, does not decide this. The answer program's close step numbers an
+unnumbered item when it is shown. M is display only: approval_walk_item_total_shown_and_waiting_counted_from_walk_document counts it from the
+walk-document, the whole numbers its item headings hold, a dotted number
+counting as the item before its first dot, plus its unnumbered items, so an
+item added changes no other heading. The close step writes it into the
+`#next_to_present` line, and the hooks show the M that line gives; no M is
+compared, and an `of M` a heading or the minutes give is read only to choose
+between two headings that name the same item. A
+dot in a number marks a sub-step of an item too big for one item, as in 6.1.
+A heading that names several
+items is one unit, and so are the top-level paragraphs under it that open
+with the count of one of its items. Within the unit, an item's lines start at
+its opening, where N is one of the unit's items, read whole, and M, when
+given, is the heading's M. An opening is one of three shapes:
+- on the first line of a top-level paragraph or of an item of a top-level
+  list, a bold label: `**` or `__`, then `Item N` or `Item N of M`, then `:`,
+  `.` or `,`, or the bold's end followed by one of those, a dash or the line's
+  end, as in `**Item 5: the label.**`, `**Item 5.** Old: ...`,
+  `- **Item 5, step 1.**` or `**Item 5 of 9**`;
+- on the first line of a top-level paragraph, a plain label: `Item N` then
+  `:` or `.` and a space or the line's end, as in `Item 5: the label`;
+- on the first line of a top-level paragraph, the full count `Item N of M`
+  after any emphasis, as in `Item 5 of 9. Recommendation: ...`.
+Any other line is not an opening: a mention such as `Item 6 depends on item
+5`, `Item 5.2 shows the rewrite` or `**Item 5.2** shows the rewrite`, whose
+number is read whole and so is not item 5's, a label whose bold ends before `of`, as in
+`**Item 6** of 8`, a number followed by more words, as in
+`**Item 5 of the plan**` or `Item 60 of the previous walk`, a plain list item,
+or a line inside a quotation, a nested list or an HTML block. When an item of the unit
+has no opening, its items are not told apart, and the UserPromptSubmit hook
+says it cannot read their recommendations. A heading that says `revised` right after its
+`of M` replaces the earlier units it names; the note `(deferred: moved to the end of
+the walk)`, which the answer program's close step puts right after a deferred item's
+count, is read as absent, here and by every program that loads this module. A
+running count that names no item still ends the unit before it. A top-level heading that opens with
+`Withdrawn`, as in `#### Withdrawn version 1 of item 4.1`, ends the unit it
+falls in; in a unit that names several items it ends only the item it falls
+in, and the unit's next opening starts the next item, so a version the walk-document keeps after replacing it is never
+read for the item's recommendation, its `#new` lines or its parts. Every search of a walk file for its
+structure, here and in the programs that load this module, reads the lines
+prose_lines returns, in which fenced and indented code is empty and HTML comments
+are cut out, or the parser's own tokens, as item starts are, so a line in code or
+in a comment is never an item's start, a marker, a recommendation or a recorded
+answer.
+
+ITEM PAGES. The walk-me-through skill publishes each item as a page before
+any message shows it, and records the page's link in the walk-minutes as a
+line `#item_page item N of M <link>`, or, when the publish failed, as
+`#item_page item N of M publish failed: <reason>`.
+newest_item_page_link_per_item_from_walk_minutes reads both forms, each on one
+line and at the line's start, outside code and HTML comments; a publish-failed
+line with no reason is not read. The newest line for an item number counts,
+whatever its `of M`, because a re-planned walk keeps an item's page while its
+total changes.
+
+CLOSING LINES. approval_walk_closing_line_read is the one reader of the line
+the walk-me-through skill ends every message of an open walk with, so the
+Stop hooks agree on what is one. The line, without its outer spaces and as the
+Markdown parser reads it, is one link that opens the line, to any target,
+whose text is a running count in plain text, `Item 4 of 9` or `Items 10 and
+11 of 12`, then nothing or `, ` and a point, followed by ` · ` and the answer
+letters and nothing more; or, for an item whose publish failed, the same line
+with only the link's text, `Item 4 of 9, <the point> · A approve · ...`. A
+count in emphasis or a code span, or one that names no item, such as a range
+that runs backwards, makes no closing line.
+approval_walk_sub_step_no_decision_closing_line_page_link_or_none reads the
+line a sub-step that asks for no decision ends with, `[No decision here; type
+N or next to continue.](<page link>)`, alone on its line, or, for a sub-step
+whose publish failed, the same line without its link.
+
+Tool-messages-to-agent follow
+docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
+"""
+import importlib.util
+import os
+import re
+from pathlib import Path
+
+HTML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.S)
+RECOMMENDATION = re.compile(r"Recommendation:(.*)$", re.I | re.M)
+
+REPOSITORY_TOP = Path(__file__).resolve().parents[3]
+SUITE_RUNNER_FILE = REPOSITORY_TOP / "scripts" / "run-all-test-suites.py"
+GIT_MODULE_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
+                   / "git-machine-readable-output-runner-and-parser-common.py")
+MARKDOWN_PARSER_MODULE_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
+                               / "markdown-commonmark-parser-with-tables-common.py")
+CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
+WALK_DIRECTORY = Path("docs") / "walk"
+MINUTES_SUFFIX = "-minutes.md"
+# Group 1 is set only for the hashtag; the old form is read so that open walks it marks are migrated.
+# The value runs to the line's end, the next marker or a pause hashtag, so two markers on a line are read as two
+# and a pause on the marker's line is not read as part of the value.
+NEXT_MARKER = re.compile(
+    r"(?:(#next_to_present)\b|Next to present:)[*_`\s:]*"
+    r"((?:(?!#next_to_present\b|Next to present:|#approval_walk_paused\b)[^\n])*)",
+    re.I)
+PAUSE_MARKER = re.compile(r"#approval_walk_paused\b", re.I)
+CLOSED_VALUE = re.compile(r"^(?:none|closed)\b", re.I)
+NUMBER = r"\d+(?:\.\d+)*"
+NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
+# A running count: `item 2`, `item 4.1`, `items 5 and 6`, `items 5, 6 and 7`, `items 10 to 12`, `items 10-12`.
+NUMBER_LIST = rf"{NUMBER}(?:{NUMBER_JOINER}{NUMBER})*(?![\d.]\d)"
+VALUE_COUNT = re.compile(rf"^items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b)?", re.I)
+HEADING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
+WITHDRAWN_HEADING_ITEMS = re.compile(rf"\bitems?\s+({NUMBER_LIST})", re.I)
+# Atomic, so a label's number is never shortened to fit what follows it: `**Item 6.2** shows` cannot be read as
+# `**Item 6` followed by `.`. Every label reads its number through this one piece.
+WHOLE_NUMBER = rf"(?>{NUMBER})"
+# Within a heading shared by several items, an item's opening may leave out `of M`, the heading giving it, when
+# it is a label: the number, read whole, ends the label, so a mention such as `**Item 6** of 8`, `Item 6 depends`
+# or `Item 60 of the` is not one. In bold the label ends at `:`, `.` or `,`, or at the bold's end followed by one
+# of those, a dash or the line's end; plain, at `:` or `.` followed by a space or the line's end.
+ITEM_LABEL = re.compile(
+    rf"^(?:(?P<bold>\*\*|__)item\s+(?P<bold_number>{WHOLE_NUMBER})(?:\s+of\s+(?P<total>\d+))?"
+    rf"(?=\s*[:.,]|(?P=bold)\s*(?:[:.,\-–—]|$))"
+    rf"|item\s+(?P<plain_number>{WHOLE_NUMBER})[:.](?=\s|$))", re.I)
+SUB_STEP_NO_DECISION_CLOSING_LINE = re.compile(
+    r"^\s*(?:\[No decision here; type N or next to continue\.\]\((\S+)\)|No decision here; type N or next to continue\.)\s*$")
+CLOSING_LINE_LABEL = re.compile(rf"Items?\s+({NUMBER_LIST})\s+of\s+(\d+)(?:,\s.*)?", re.S)
+# Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
+REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
+WITHDRAWN_HEADING = re.compile(r"^[*_\s(]*withdrawn\b", re.I)
+# A `##` heading that opens with an item label but no `of M`, as in `## Item 3: corrections` over `### Item 3.1 of
+# 16`, groups items and is not an item itself.
+ITEM_LABEL_WITHOUT_COUNT = re.compile(r"^[*_\s]*items?\s+\d", re.I)
+UNNUMBERED_ITEM_HEADING_MARKUP = "##"
+# The close step of the answer program puts this right after a deferred item's running count. It holds a colon, so
+# every pattern that reads a heading past its count reads approval_walk_item_heading_with_deferred_note_removed's line.
+APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT = "(deferred: moved to just before the summary item)"
+NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
+# A link is one run of non-space characters, so `publish failed: <reason>` can never be read as a link. Spaces
+# only, never a newline, so a line that ends short is not completed by the line below it.
+ITEM_PAGE_LINE_PATTERN = re.compile(
+    rf"^#item_page[ \t]+item[ \t]+({NUMBER})[ \t]+of[ \t]+\d+[ \t]+(?:(publish failed:[ \t]*\S.*?)|(\S+))[ \t]*$",
+    re.I | re.M)
+# A link has no space in it, so no link can equal this value.
+ITEM_PAGE_PUBLISH_FAILED = "publish failed"
+NOT_A_FORM_PROBLEM = (
+    "does not open with an item in one of the forms `item N of M`, `item N.K of M`, "
+    "`items N and P of M` or `items N to P of M`")
+
+
+class MoreThanOneUnclosedApprovalWalk(Exception):
+    """More than one approval-walk of the checkout is open or paused; minutes_paths holds the minutes file of
+    each, in file-name order."""
+
+    def __init__(self, minutes_paths):
+        self.minutes_paths = minutes_paths
+        super().__init__("more than one approval-walk is open or paused, so none is taken for the waiting item: "
+                         + ", ".join(str(path) for path in minutes_paths))
+
+
+class UnusableRange(ValueError):
+    """A running count names no item, or the walk-document does not hold the items one names; its
+    argument says why."""
+
+
+def load_module(name, path):
+    specification = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def checkout_top(directory):
+    """Return the top of directory's checkout, or None outside one."""
+    runner = load_module("run_all_test_suites", SUITE_RUNNER_FILE)
+    git = load_module("git_machine_readable_output_runner_and_parser_common", GIT_MODULE_FILE)
+    environment = {name: value for name, value in os.environ.items()
+                   if name not in runner.GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
+    output = git.run_git_unless_outside_a_repository(
+        directory, ["rev-parse", "--show-toplevel"], environment=environment)
+    if output is None:
+        return None
+    return Path(os.fsdecode(output).rstrip("\n"))
+
+
+def approval_walk_item_heading_with_deferred_note_removed(line):
+    """The heading line with its first APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT, and the spaces
+    before it, taken out."""
+    return re.sub(r"\s*" + re.escape(APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT), "", line, count=1)
+
+
+def markdown_parser():
+    return load_module("markdown_commonmark_parser_with_tables_common",
+                       MARKDOWN_PARSER_MODULE_FILE).markdown_parser()
+
+
+def approval_walk_item_last_recommendation_text_from_item_lines(lines):
+    """The last recommendation in an item's prose_lines, the text after `Recommendation:` as written, without
+    emphasis or one trailing period; or None when there is none, or the last one has no text after it."""
+    found = [match[1].strip(" *_") for match in RECOMMENDATION.finditer("\n".join(lines))]
+    found = [text[:-1].rstrip(" *_") if text.endswith(".") else text for text in found]
+    return found[-1] if found and found[-1] else None
+
+
+def without_html_comments(lines):
+    """Return lines with each HTML comment in them, `<!--` to `-->` or to the end, cut out, keeping the count of
+    lines, so that text after a comment's `-->` stays."""
+    cut = HTML_COMMENT.sub(lambda comment: "\n" * comment[0].count("\n"), "\n".join(lines))
+    return cut.split("\n")
+
+
+def prose_lines(text, parser, tokens=None):
+    """Return text's lines with every line of fenced or indented code made empty and every HTML comment cut
+    out, keeping each line's index; tokens are parser.parse(text) when the caller has them already.
+
+    Every search of a walk file for its structure, such as a marker, a `#new` line, a recommendation, an
+    answer line or an outcome tag, runs over these lines, so that an example in code, or a note in a
+    comment the reader never sees, is never read as structure. A comment is cut from every HTML block, also
+    one that opens with another tag, as in `<div><!-- Recommendation: x --></div>`. Text that shows stays: the
+    rest of an HTML block, and text after a comment's `-->`, as in `<!-- note --> Recommendation: x`. In a
+    paragraph that holds a comment, a code span with comment text in it, such as `<!-- x -->` in backquotes, is
+    cut too. A comment in an HTML block that a blank line ends is cut only to the block's end, so its lines after
+    the blank line stay."""
+    lines = text.split("\n")
+    for token in parser.parse(text) if tokens is None else tokens:
+        if token.map is None:
+            continue
+        first, end = token.map
+        if token.type in ("fence", "code_block"):
+            lines[first:end] = [""] * (end - first)
+        elif (token.type == "html_block"
+              or token.type == "inline" and any(child.type == "html_inline" and child.content.startswith("<!--")
+                                                for child in token.children or [])):
+            lines[first:end] = without_html_comments(lines[first:end])
+    return lines
+
+
+def item_opening_lines(text, parser, tokens=None):
+    """Return {line: (item numbers, M or None)} for each opening the module docstring lists: on the first line
+    of a top-level paragraph, a label ITEM_LABEL reads or a running count `Item N of M` after any emphasis; on
+    the first line of an item of a top-level list, a label in bold. M is None when the label gives no `of M`.
+    A top-level heading WITHDRAWN_HEADING reads is an opening that names no item, ([], None): it ends the item
+    it falls in. A label or count after it, before the next running count that starts a unit as
+    item_unit_spans reads them, is the Withdrawn version's own, and no opening, when it names only items a
+    Withdrawn heading since that start names; after a Withdrawn heading that names no item, every label and
+    count stays an opening. A heading or paragraph that starts no unit, such as `## Notes`, keeps them."""
+    openings = {}
+    tokens = parser.parse(text) if tokens is None else tokens
+    unit_starts = {start[0] for start in item_unit_starts(tokens, text.split("\n"))}
+    # The items the Withdrawn headings since the last unit start name.
+    withdrawn_items = set()
+    for index, token in enumerate(tokens):
+        if index in unit_starts:
+            withdrawn_items = set()
+        if token.type == "heading_open" and token.map is not None and token.level == 0:
+            if index + 1 < len(tokens) and WITHDRAWN_HEADING.match(tokens[index + 1].content):
+                openings[token.map[0]] = ([], None)
+                withdrawn_items |= withdrawn_heading_items(tokens[index + 1].content)
+                continue
+        if token.type != "paragraph_open" or token.map is None:
+            continue
+        # A paragraph at level 2 straight after an item's start is that item's first paragraph; an item of a
+        # list nested in another list, or in a quotation, puts its paragraph deeper.
+        top_level_list_item = token.level == 2 and tokens[index - 1].type == "list_item_open"
+        if token.level != 0 and not top_level_list_item:
+            continue
+        first_line = tokens[index + 1].content.split("\n")[0]
+        label = ITEM_LABEL.match(first_line)
+        # In a list only in bold, since a plain list item such as `- Item 7: which follows` mentions an item.
+        if label and (label["bold"] or not top_level_list_item):
+            found = ([label["bold_number"] or label["plain_number"]], label["total"])
+        else:
+            count = None if top_level_list_item else HEADING_COUNT.match(first_line)
+            if not count:
+                continue
+            try:
+                found = (expand_numbers(count[1]), count[2])
+            except UnusableRange:
+                continue
+        if not (withdrawn_items and set(found[0]) <= withdrawn_items):
+            openings[token.map[0]] = found
+    return openings
+
+
+def withdrawn_heading_items(heading):
+    """Return the set of item numbers a Withdrawn heading names after `item` or `items`, as in `Withdrawn version 1
+    of item 6`, or an empty set when it names none that expand_numbers can read."""
+    named = WITHDRAWN_HEADING_ITEMS.search(heading)
+    if not named:
+        return set()
+    try:
+        return set(expand_numbers(named[1]))
+    except UnusableRange:
+        return set()
+
+
+def next_to_present(minutes_text, parser):
+    """Return (value, whether the marker is the old form, whether a pause line follows it) for the minutes'
+    last marker outside code, or None when they hold no marker."""
+    # Most minutes hold no marker at all, and parsing is most of the walk hooks' run time.
+    if not NEXT_MARKER.search(minutes_text):
+        return None
+    markers = []
+    for line in prose_lines(minutes_text, parser):
+        spans = [span.span() for span in CODE_SPAN.finditer(line)]
+        found = [(marker.start(), (marker[1], marker[2].replace("`", "").strip()))
+                 for marker in NEXT_MARKER.finditer(line)]
+        found += [(pause.start(), None) for pause in PAUSE_MARKER.finditer(line)]
+        markers += [marker for position, marker in sorted(found, key=lambda each: each[0])
+                    if not any(start <= position < end for start, end in spans)]
+    last = max((index for index, marker in enumerate(markers) if marker is not None), default=None)
+    if last is None:
+        return None
+    hashtag, value = markers[last]
+    return value, not hashtag, last < len(markers) - 1
+
+
+def text_wrapped_as_markdown_code_span(text):
+    """Return text as a code span CODE_SPAN reads whole, on one line, its whitespace runs squeezed to single spaces.
+
+    CODE_SPAN matches line by line, so a line break left in the text would put what follows it outside the span,
+    where a `#next_to_present` is read as the walk's marker. The delimiter is one backtick longer than the longest
+    backtick run inside the text, and a text that opens or ends with a backtick gets a space on each side, so that
+    the text's own backticks neither end the span early nor join its delimiter."""
+    text = " ".join(text.split())
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    delimiter = "`" * (longest + 1)
+    padding = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{delimiter}{padding}{text}{padding}{delimiter}"
+
+
+def newest_item_page_link_per_item_from_walk_minutes(minutes_text, parser):
+    """Return {item number: the link of its newest `#item_page` line, or ITEM_PAGE_PUBLISH_FAILED when that line
+    records a failed publish}."""
+    return {number: ITEM_PAGE_PUBLISH_FAILED if failed else link
+            for number, failed, link in ITEM_PAGE_LINE_PATTERN.findall("\n".join(prose_lines(minutes_text, parser)))}
+
+
+def approval_walk_closing_line_read(line, parser, answer_letters):
+    """Return (item numbers, M, link or None) when line is a closing line, with or without its link, as the module
+    docstring's CLOSING LINES says, answer_letters being the answer hook's ANSWER_LETTERS_TEXT; otherwise None.
+    parser must accept every link target, since walks link items to `file:` pages, which markdown-it refuses by
+    default and reads as text."""
+    line = line.strip()
+    tokens = parser.parseInline(line)[0].children
+    after_label = f" · {answer_letters}"
+    link = None
+    if tokens and tokens[0].type == "link_open":
+        close = next((index for index, token in enumerate(tokens) if token.type == "link_close"), None)
+        if close is None or [token.type for token in tokens[close + 1:]] != ["text"] \
+                or tokens[close + 1].content != after_label:
+            return None
+        label = "".join(token.content for token in tokens[1:close])
+        link = tokens[0].attrs.get("href")
+    elif any(token.type == "link_open" for token in tokens) or not line.endswith(after_label):
+        return None
+    else:
+        label = line[:-len(after_label)]
+    count = CLOSING_LINE_LABEL.fullmatch(label)
+    if not count:
+        return None
+    # Emphasis or a code span in the count is a token of its own, so the first token holds the whole count only
+    # when the count is plain text.
+    if link is not None and not (tokens[1].type == "text" and tokens[1].content.startswith(label[:count.end(2)])):
+        return None
+    try:
+        return expand_numbers(count[1]), count[2], link
+    except UnusableRange:
+        return None
+
+
+def approval_walk_sub_step_no_decision_closing_line_page_link_or_none(line):
+    """Return the link of line when it is a sub-step's no-decision line, as the module docstring's CLOSING LINES
+    says, ITEM_PAGE_PUBLISH_FAILED when it is that line without its link, or None when it is neither."""
+    match = SUB_STEP_NO_DECISION_CLOSING_LINE.match(line)
+    if match is None:
+        return None
+    return match[1] or ITEM_PAGE_PUBLISH_FAILED
+
+
+def is_closed(value):
+    return bool(CLOSED_VALUE.match(value))
+
+
+def expand_numbers(number_list):
+    """Return the item numbers a list such as `5, 6 and 7` or `10 to 12` names.
+
+    Raise UnusableRange, saying what is wrong, for a range that runs backwards, one whose
+    ends belong to different items, or a joiner such as `to` with no range around it.
+    """
+    pieces = NUMBER_OR_JOINER.findall(number_list)
+    numbers, index = [], 0
+    while index < len(pieces):
+        if index + 2 < len(pieces) and pieces[index + 1].lower() in ("to", "-", "\u2013"):
+            first, last = pieces[index], pieces[index + 2]
+            first_head, _, first_tail = first.rpartition(".")
+            last_head, _, last_tail = last.rpartition(".")
+            if not first_head and last_head == first:
+                # `12 to 12.3`: item 12 and its parts up to 12.3.
+                numbers += [first] + [f"{first}.{n}" for n in range(1, int(last_tail) + 1)]
+                index += 3
+                continue
+            if first_head != last_head:
+                raise UnusableRange(
+                    f"its range `{first} to {last}` runs between parts of different items; "
+                    f"a range runs within one item's parts, such as `items 12.1 to 12.3`, "
+                    f"between whole items, such as `items 10 to 12`, or from an item to "
+                    f"one of its parts, such as `items 12 to 12.3`")
+            if int(first_tail) > int(last_tail):
+                raise UnusableRange(
+                    f"its range `{first} to {last}` runs backwards; a range runs from the "
+                    f"lower number to the higher, such as `items {last} to {first}`")
+            prefix = first_head + "." if first_head else ""
+            numbers += [prefix + str(n) for n in range(int(first_tail), int(last_tail) + 1)]
+            index += 3
+        elif pieces[index].lower() in ("to", "-", "\u2013"):
+            raise UnusableRange(NOT_A_FORM_PROBLEM)
+        else:
+            numbers.append(pieces[index])
+            index += 1
+    return numbers
+
+
+def parse_items(value):
+    """Return (item numbers, M or None) from a value such as `items 10 to 12 of 54.`.
+
+    Raise UnusableRange, saying what is wrong, when the value names no item that way.
+    """
+    match = VALUE_COUNT.match(value)
+    if not match:
+        raise UnusableRange(NOT_A_FORM_PROBLEM)
+    return expand_numbers(match[1]), match[2]
+
+
+def unclosed_approval_walks_including_paused(walk_directory, parser):
+    """Return [(minutes path, value, whether the marker is the old form, whether the walk is paused)] for every
+    minutes file whose value is not closed, in file-name order."""
+    walks = []
+    for minutes in sorted(walk_directory.glob("*" + MINUTES_SUFFIX)):
+        marker = next_to_present(minutes.read_text(encoding="utf-8"), parser)
+        if marker is not None and not is_closed(marker[0]):
+            walks.append((minutes, *marker))
+    return walks
+
+
+def the_one_unclosed_approval_walk_including_paused(walk_directory, parser):
+    """Return (minutes path, value, whether the marker is the old form, whether the walk is paused) for the one
+    unclosed approval-walk, or None when there is none. Raise MoreThanOneUnclosedApprovalWalk when there are
+    more."""
+    walks = unclosed_approval_walks_including_paused(walk_directory, parser)
+    if len(walks) > 1:
+        raise MoreThanOneUnclosedApprovalWalk([walk[0] for walk in walks])
+    return walks[0] if walks else None
+
+
+def open_walk(walk_directory, parser):
+    """Return (minutes path, value, whether the marker is the old form) for the open approval-walk, or None
+    when none is open or the open one is paused. Raise MoreThanOneUnclosedApprovalWalk as
+    the_one_unclosed_approval_walk_including_paused does."""
+    walk = the_one_unclosed_approval_walk_including_paused(walk_directory, parser)
+    if walk is None or walk[3]:
+        return None
+    return walk[:3]
+
+
+def item_unit_spans(document_text, parser):
+    """Return [(item numbers, M, problem, first line, end line)] for each running count that starts an item.
+
+    The lines are 0-based; a unit runs from its first line up to, not including, its end
+    line, which is where the next running count starts, or the document's line count, or, in a unit that
+    names at most one item, the next heading WITHDRAWN_HEADING reads, if sooner. In a unit that names several
+    items, such a heading ends only the item it falls in, as
+    approval_walk_item_line_range_within_heading_shared_by_several_items reads it.
+
+    A count starts an item on a top-level heading, or on a top-level paragraph opening with `**`, outside
+    any list or quotation, except a
+    paragraph whose items the count heading above it already names, with no other count
+    between them, which stays in that heading's unit. A count that names no item still
+    ends the unit before it; its unit has no numbers, and problem names the heading and
+    says why. An unnumbered item, as the module docstring says, starts a unit with no numbers, M None and
+    problem None; approval_walk_unit_is_unnumbered_item tells it apart. problem is None for every other
+    unit. A unit is left out when a later heading that says `revised` right after its `of M` names all of its
+    items, whatever M either heading gives.
+    """
+    lines = document_text.split("\n")
+    tokens = parser.parse(document_text)
+    withdrawn = [token.map[0] for index, token in enumerate(tokens)
+                 if token.type == "heading_open" and token.map is not None and token.level == 0
+                 and index + 1 < len(tokens) and WITHDRAWN_HEADING.match(tokens[index + 1].content)]
+    starts = [start[1:] for start in item_unit_starts(tokens, lines)]
+    ends = [min([start[4] for start in starts[position + 1:position + 2]] + [len(lines)]
+                + [line for line in withdrawn if line > first and len(numbers) <= 1])
+            for position, (numbers, _, _, _, first) in enumerate(starts)]
+    return [(numbers, total, problem, first, ends[index])
+            for index, (numbers, total, problem, _, first) in enumerate(starts)
+            if not (numbers and any(revised and set(numbers) <= set(later_numbers)
+                                    for later_numbers, _, _, revised, _ in starts[index + 1:]))]
+
+
+def item_unit_starts(tokens, lines):
+    """Return [(token index, item numbers, M, problem, revised, first line)] for each running count that
+    starts a unit, as item_unit_spans' docstring says, before it leaves out the units a later revised heading
+    replaces; a Withdrawn heading starts none. item_opening_lines reads the same starts, so a Withdrawn
+    version's labels stop being dropped exactly where a unit starts."""
+    starts = []
+    group = None
+    # A walk-document with `##` part or section headings over `###` items: its `##` headings are not items.
+    # Only whole-number counts decide, so `### Item 1.1 of 3` sub-steps under `##` items change nothing.
+    count_heading_markups = set()
+    for index, token in enumerate(tokens):
+        if (token.type == "heading_open" and token.map is not None and token.level == 0
+                and index + 1 < len(tokens)):
+            count = HEADING_COUNT.match(approval_walk_item_heading_with_deferred_note_removed(
+                tokens[index + 1].content.split("\n")[0]))
+            if count and "." not in count[1]:
+                count_heading_markups.add(token.markup)
+    unnumbered_items_possible = count_heading_markups <= {UNNUMBERED_ITEM_HEADING_MARKUP}
+    for index, token in enumerate(tokens):
+        if token.map is None or token.level != 0 or token.type not in ("heading_open", "paragraph_open"):
+            continue
+        if (token.type == "heading_open" and index + 1 < len(tokens)
+                and WITHDRAWN_HEADING.match(tokens[index + 1].content)):
+            continue
+        if token.type == "paragraph_open" and not lines[token.map[0]].lstrip().startswith("**"):
+            continue
+        content = tokens[index + 1].content.split("\n")[0] if index + 1 < len(tokens) else ""
+        content = approval_walk_item_heading_with_deferred_note_removed(content)
+        match = HEADING_COUNT.match(content)
+        if not match:
+            # Before the first item, a `##` heading is the walk-document's own, such as its introduction's.
+            if (starts and unnumbered_items_possible and token.type == "heading_open"
+                    and token.markup == UNNUMBERED_ITEM_HEADING_MARKUP
+                    and not ITEM_LABEL_WITHOUT_COUNT.match(content)):
+                group = None
+                starts.append((index, [], None, None, False, token.map[0]))
+            continue
+        try:
+            numbers, problem = expand_numbers(match[1]), None
+        except UnusableRange as error:
+            numbers, problem = [], f"its walk-document's heading `{content.strip()}` names no item: {error}"
+        if token.type == "heading_open":
+            group = (set(numbers), match[2])
+        elif group and numbers and set(numbers) <= group[0] and match[2] == group[1]:
+            continue
+        else:
+            group = None
+        revised = bool(REVISED.match(content[match.end():]))
+        starts.append((index, numbers, match[2], problem, revised, token.map[0]))
+    return starts
+
+
+def approval_walk_item_line_range_within_heading_shared_by_several_items(openings, first, end, number, numbers, total):
+    """Return (first, end) of the lines, of the unit from line first up to end that names several items, that
+    belong to item number: from the first of item_opening_lines' openings that names that item alone, with
+    the unit's total or none, up to the next that names another of the unit's items alone or the next
+    Withdrawn heading, an opening that names no item; or, when none names it, from the unit's first line up to
+    its first Withdrawn heading or its end."""
+    starts = {}
+    withdrawn = [line for line in openings if first <= line < end and not openings[line][0]]
+    for line in sorted(openings):
+        named, opening_total = openings[line]
+        if first <= line < end and opening_total in (total, None) and len(named) == 1 and named[0] in numbers:
+            starts.setdefault(named[0], line)
+    if number not in starts:
+        return first, min(withdrawn + [end])
+    later = [line for line in withdrawn + list(starts.values()) if line > starts[number]]
+    return starts[number], min(later + [end])
+
+
+def approval_walk_unit_is_unnumbered_item(unit):
+    """Whether unit, one of item_unit_spans' units, is an unnumbered item: a waiting item the close step numbers
+    when it is shown."""
+    numbers, _, problem, _, _ = unit
+    return not numbers and problem is None
+
+
+def approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units):
+    """M, as a string: the whole numbers the numbered items of units hold, a dotted number such as 6.1 counting
+    as its item 6, plus the unnumbered items; so it counts the items shown and the items waiting."""
+    whole = {number.split(".")[0] for unit in units for number in unit[0]}
+    return str(len(whole) + sum(map(approval_walk_unit_is_unnumbered_item, units)))
+
+
+def approval_walk_next_unnumbered_item_number(units):
+    """The number the close step gives the next unnumbered item it shows: one more than the highest whole number
+    any item heading of units holds, so no number is used twice even where waiting items carry numbers."""
+    return str(max((int(number.split(".")[0]) for unit in units for number in unit[0]), default=0) + 1)
+
+
+def waiting_item_units(document, value, numbers, total, parser, all_units=None):
+    """Return (M to show, the units of item_unit_spans that hold the waiting items) for the item numbers and
+    total that parse_items read from the `#next_to_present` value, total None when it gives none. M to show is
+    total, which the close step writes as approval_walk_item_total_shown_and_waiting_counted_from_walk_document counted it, or, when the value gives none,
+    approval_walk_item_total_shown_and_waiting_counted_from_walk_document's.
+
+    Each waiting item's unit is the one heading that names it, whatever M the heading gives; total is read only
+    to choose between two headings that name the same item and are not revisions, as in a walk-document
+    renumbered before numbers were never reused. Raise UnusableRange, saying what is wrong, when the
+    walk-document does not exist, when a waiting item has no heading, or when it has more than one and total
+    does not pick exactly one of them. all_units are item_unit_spans of the walk-document when the caller has
+    them already."""
+    if all_units is None:
+        if not document.is_file():
+            raise UnusableRange(f"its walk-document {document} does not exist.")
+        all_units = item_unit_spans(document.read_text(encoding="utf-8"), parser)
+    if not any(unit[0] for unit in all_units):
+        raise UnusableRange(
+            f"its walk-document {document} has no heading with a running count, such "
+            f"as `## Item 3 of 9: <the point>`, so the hook cannot find the item the "
+            f"minutes name: add the count to the heading of the item that the minutes' last "
+            f"`#next_to_present` line names: for `#next_to_present item 3 of 9`, write "
+            f"`## Item 3 of 9: <the point>`.")
+    chosen, missing, repeated = [], [], []
+    for number in numbers:
+        naming = [unit for unit in all_units if number in unit[0]]
+        picked = [unit for unit in naming if unit[1] == total]
+        if len(naming) > 1 and len(picked) == 1:
+            naming = picked
+        if not naming:
+            missing.append(number)
+        elif len(naming) > 1:
+            repeated.append(number)
+        else:
+            chosen.append(naming[0])
+    if missing:
+        named = ", ".join(f"`Item {number}`" for number in missing)
+        unreadable = [unit[2] for unit in all_units if unit[2]]
+        raise UnusableRange(
+            f"its walk-document has no heading {named}, which the minutes name"
+            + "".join(f"; {each}" for each in unreadable) + ".")
+    if repeated:
+        named = ", ".join(f"`Item {number}`" for number in repeated)
+        raise UnusableRange(
+            f"its walk-document has more than one heading for {named}, so the hook cannot tell "
+            f"which one the minutes name: if no other of those headings gives the same total as the heading you mean, "
+            f"as `of 10` beside two `of 9` headings, add the line `#next_to_present item N of M` as the new last line of "
+            f"the minutes, below the earlier `#next_to_present` lines, which stay as they are, N and M copied from the "
+            f"heading you mean, as in `#next_to_present item 4 of 10` for `## Item 4 of 10: <the point>`; otherwise, in "
+            f"the walk-document, put `Withdrawn: ` just before `Item` in each heading you do not mean, as in "
+            f"`## Withdrawn: Item 4 of 9: <the point>`, or, only when the heading you mean comes after every other "
+            f"heading for that item, write `revised` right after its `of M` instead of marking any heading `Withdrawn: `, "
+            f"with the colon after or before `revised`, as in `## Item 4 of 9 revised: <the point>` or "
+            f"`## Item 4 of 9: revised <the point>`.")
+    shown_total = total if total is not None else approval_walk_item_total_shown_and_waiting_counted_from_walk_document(all_units)
+    return shown_total, [unit for unit in all_units if unit in chosen]

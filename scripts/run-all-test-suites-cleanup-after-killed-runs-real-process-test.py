@@ -8,7 +8,7 @@ process the killed run recorded has ended. These cases kill a real runner and
 look at what the next run removes.
 
 This suite runs outside the signal sandbox (it is listed in
-SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX): it starts the runner, which starts
+SUITES_RUN_WITHOUT_ANY_SANDBOX): it starts the runner, which starts
 bwrap, and bwrap cannot start inside bwrap. Outside the sandbox a signal sent
 to the wrong process can reach every process of this account, every agent
 included. So every signal this suite sends goes through
@@ -46,6 +46,11 @@ SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 PROGRAM = SCRIPTS_DIR / "run-all-test-suites.py"
 STARTED_FILE_VARIABLE = "RUN_ALL_TEST_SUITES_KILLED_RUN_TEST_STARTED_FILE"
 STOP_FILE_VARIABLE = "RUN_ALL_TEST_SUITES_KILLED_RUN_TEST_STOP_FILE"
+WATCHED_PID_VARIABLE = "RUN_ALL_TEST_SUITES_KILLED_RUN_TEST_SUITE_ENDS_WITH_PROCESS_PID"
+WATCHED_START_TICKS_VARIABLE = "RUN_ALL_TEST_SUITES_KILLED_RUN_TEST_SUITE_ENDS_WITH_PROCESS_START_TICKS"
+# A runner this test starts is killed when the thread that started it ends, so a test killed
+# with SIGKILL, whose finally does not run, leaves no runner, and so no suite in bwrap, behind.
+DIES_WITH_ITS_STARTER = ("setpriv", "--pdeathsig", "KILL")
 PR_SET_CHILD_SUBREAPER = 36
 WAIT_SECONDS = 60
 
@@ -120,10 +125,30 @@ def git(repo, *arguments):
                    check=True, capture_output=True)
 
 
-# A suite that says it started, then runs until the test creates its stop file.
+# A suite that says it started, then runs until the test creates its stop file, or, when
+# given a watched process, until that process no longer runs: a test killed with SIGKILL
+# never creates the stop file. It says it started in its output too, which the runner copies
+# to the suite's log as it runs: a sandboxed suite's write in the checkout does not reach the
+# checkout outside. A sandboxed suite is given no watched process, since its PID namespace
+# shows none outside it; it ends with its namespace when its runner ends.
 WAITS_FOR_THE_STOP_FILE = f'''import os, pathlib, time
 pathlib.Path(os.environ["{STARTED_FILE_VARIABLE}"]).write_text(str(os.getpid()))
-while not pathlib.Path(os.environ["{STOP_FILE_VARIABLE}"]).exists():
+print("started", flush=True)
+watched = os.environ.get("{WATCHED_PID_VARIABLE}")
+
+
+def watched_process_runs():
+    if watched is None:
+        return True
+    try:
+        stat = pathlib.Path(f"/proc/{{watched}}/stat").read_text()
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+    fields = stat.rsplit(")", 1)[1].split()
+    return fields[0] != "Z" and fields[19] == os.environ["{WATCHED_START_TICKS_VARIABLE}"]
+
+
+while watched_process_runs() and not pathlib.Path(os.environ["{STOP_FILE_VARIABLE}"]).exists():
     time.sleep(0.05)
 '''
 
@@ -138,20 +163,89 @@ def make_repo(root, suite_path, body=WAITS_FOR_THE_STOP_FILE, name="repo"):
     return repo
 
 
-def start_run(root, repo, name):
-    """Start the runner on repo with its own log directory; return (process, log dir)."""
+# Runs the runner with admission's CPU and memory thresholds opened wide, so a case does
+# not wait on how busy the machine is; the admission directory is this test's own.
+ADMISSION_OPENED_DRIVER = r'''
+import importlib.util, sys
+program_path, *arguments = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("run_all_test_suites", program_path)
+program = importlib.util.module_from_spec(spec)
+sys.argv = [program_path, *arguments]
+spec.loader.exec_module(program)
+program.TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 101
+program.TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE = -1
+sys.exit(program.main(arguments))
+'''
+
+
+def run_command_and_environment(root, repo, name, suite_watches_this_test):
+    """The runner's command on repo with its own log directory, and its environment."""
     environment = dict(os.environ)
     environment.pop(module.SIGNAL_SANDBOX_INSIDE_VARIABLE, None)
-    environment[STARTED_FILE_VARIABLE] = str(root / f"{name}.started")
-    environment[STOP_FILE_VARIABLE] = str(root / "stop")
-    log_dir = root / f"logs-{name}"
-    process = subprocess.Popen(
-        [sys.executable, str(PROGRAM), "--checkout", str(repo), "--log-dir", str(log_dir),
-         "--lock-file", str(root / "run.lock"),
-         "--recorded-inputs-directory", str(root / "recordings")],
-        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, env=environment)
-    return process, log_dir
+    # In the checkout, which a suite run without any sandbox and this test share; inside
+    # an nc-test-sandbox the checkout is a copy-on-write overlay, so a sandboxed suite reports
+    # its start in its output instead.
+    environment[STARTED_FILE_VARIABLE] = str(repo / f"{name}.started")
+    environment[STOP_FILE_VARIABLE] = str(repo / "stop")
+    if suite_watches_this_test:
+        environment[WATCHED_PID_VARIABLE] = str(os.getpid())
+        environment[WATCHED_START_TICKS_VARIABLE] = str(module.process_start_ticks(os.getpid()))
+    command = [*DIES_WITH_ITS_STARTER, sys.executable, "-c", ADMISSION_OPENED_DRIVER, str(PROGRAM),
+               "--checkout", str(repo), "--log-dir", str(root / f"logs-{name}"),
+               "--lock-file", str(root / "run.lock"),
+               "--recorded-inputs-directory", str(root / "recordings")]
+    return command, environment
+
+
+def start_run(root, repo, name, suite_watches_this_test):
+    """Start the runner on repo with its own log directory; return (process, log dir)."""
+    command, environment = run_command_and_environment(root, repo, name, suite_watches_this_test)
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, text=True, env=environment)
+    return process, root / f"logs-{name}"
+
+
+# Starts the command it is given, first adding its own pid and start ticks to the command's
+# environment under the two variable names when it is given them, writes the started
+# process's pid down, then waits for the case to kill it.
+STARTS_A_COMMAND_THEN_WAITS = r'''
+import json, os, pathlib, subprocess, sys, time
+command, environment, pid_file, own_pid_and_start_ticks_variables = json.loads(sys.argv[1])
+if own_pid_and_start_ticks_variables:
+    pid_variable, start_ticks_variable = own_pid_and_start_ticks_variables
+    environment[pid_variable] = str(os.getpid())
+    environment[start_ticks_variable] = (
+        pathlib.Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19])
+started = subprocess.Popen(command, env=environment, stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+pathlib.Path(pid_file).write_text(str(started.pid))
+time.sleep(60)
+'''
+
+
+def start_helper(command, environment, pid_file, own_pid_and_start_ticks_variables=None):
+    return subprocess.Popen(
+        [sys.executable, "-c", STARTS_A_COMMAND_THEN_WAITS,
+         json.dumps([command, environment, str(pid_file), own_pid_and_start_ticks_variables])],
+        stdin=subprocess.DEVNULL)
+
+
+def pid_written_in(path):
+    """The pid in path once it is there, or None when it is not written within WAIT_SECONDS."""
+    if not wait_until(lambda: path.exists() and path.read_text().strip()):
+        return None
+    return int(path.read_text())
+
+
+def reap_ended_children():
+    """Reap the zombies of processes this test inherited as their child subreaper."""
+    while True:
+        try:
+            reaped_pid, _ = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            return
+        if reaped_pid == 0:
+            return
 
 
 def run_records(root):
@@ -165,7 +259,7 @@ def finish_run(root, repo, name):
     environment[STARTED_FILE_VARIABLE] = str(root / f"{name}.started")
     environment[STOP_FILE_VARIABLE] = str(root / "stop")
     return subprocess.run(
-        [sys.executable, str(PROGRAM), "--checkout", str(repo),
+        [sys.executable, "-c", ADMISSION_OPENED_DRIVER, str(PROGRAM), "--checkout", str(repo),
          "--log-dir", str(root / f"logs-{name}"), "--lock-file", str(root / "run.lock"),
          "--recorded-inputs-directory", str(root / "recordings")],
         stdin=subprocess.DEVNULL, capture_output=True, text=True, env=environment,
@@ -246,6 +340,28 @@ else:
         refused = False
     check("the signal helper refuses a child that has ended", refused and not sent, sent)
 
+    # A test killed with SIGKILL runs no finally, so it never creates the stop file.
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        environment = dict(os.environ, **{STARTED_FILE_VARIABLE: str(root / "started"),
+                                          STOP_FILE_VARIABLE: str(root / "stop")})
+        helper = start_helper([sys.executable, "-c", WAITS_FOR_THE_STOP_FILE], environment,
+                              root / "suite.pid",
+                              [WATCHED_PID_VARIABLE, WATCHED_START_TICKS_VARIABLE])
+        try:
+            suite_pid = pid_written_in(root / "started")
+            suite_ticks = None if suite_pid is None else module.process_start_ticks(suite_pid)
+            signal_own_descendant(helper.pid, module.process_start_ticks(helper.pid),
+                                  signal.SIGKILL)
+            helper.wait(timeout=30)
+            check("the fixture suite given a process to end with ends when that process is "
+                  "killed with SIGKILL",
+                  suite_ticks is not None and wait_until(
+                      lambda: not module.process_alive(suite_pid, suite_ticks)),
+                  (suite_pid, suite_ticks))
+        finally:
+            (root / "stop").write_text("stop\n")
+
 # --- A killed run's suite that still runs keeps its traces ---------------------
 not_runnable = not_linux or sandbox_starts()
 if not_runnable:
@@ -258,15 +374,15 @@ else:
     else:
         # A suite the runner starts outside the sandbox outlives a killed runner: that
         # is the case where a later run could delete traces still being written.
-        unconfined_suite = next(iter(module.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX))
+        unconfined_suite = next(iter(module.SUITES_RUN_WITHOUT_ANY_SANDBOX))
         with tempfile.TemporaryDirectory() as scratch:
             root = pathlib.Path(scratch)
             repo = make_repo(root, unconfined_suite)
             # The later runs run a suite that ends at once, so they need no stop file.
             quick_repo = make_repo(root, "quick-test.py", "print('ok')\n", "quick-repo")
-            run_b, logs_b = start_run(root, repo, "b")
+            run_b, logs_b = start_run(root, repo, "b", suite_watches_this_test=True)
             try:
-                started = wait_until(lambda: (root / "b.started").exists())
+                started = wait_until(lambda: (repo / "b.started").exists())
                 check("the killed run's suite starts", started, run_b.poll())
                 records = run_records(root)
                 suite_processes = records[0]["suite_processes"] if records else []
@@ -280,12 +396,12 @@ else:
                 signal_own_descendant(run_b.pid, runner_ticks, signal.SIGKILL)
                 run_b.wait(timeout=30)
                 run_b.stdout.close()
-                suite_pid = int((root / "b.started").read_text())
+                suite_pid = int((repo / "b.started").read_text())
                 check("the suite outlives its killed runner",
                       module.process_start_ticks(suite_pid) is not None)
                 result_c = finish_run(root, quick_repo, "c-with-the-suite-still-running")
             finally:
-                (root / "stop").write_text("stop\n")
+                (repo / "stop").write_text("stop\n")
             check("the next run keeps the traces of a killed run whose suite still runs",
                   trace.exists(), result_c.stdout)
             check("and says why",
@@ -293,15 +409,7 @@ else:
                   in result_c.stdout, result_c.stdout)
             check("the orphaned suite ends once told to",
                   wait_until(lambda: module.process_start_ticks(suite_pid) is None))
-            reaped = []
-            while True:
-                try:
-                    reaped_pid, _ = os.waitpid(-1, os.WNOHANG)
-                except ChildProcessError:
-                    break
-                if reaped_pid == 0:
-                    break
-                reaped.append(reaped_pid)
+            reap_ended_children()
             result_d = finish_run(root, quick_repo, "d-after-the-suite-ended")
             check("a run after the suite ended removes the killed run's traces",
                   not trace.exists(), result_d.stdout)
@@ -312,9 +420,11 @@ else:
             root = pathlib.Path(scratch)
             repo = make_repo(root, sandboxed_suite)
             quick_repo = make_repo(root, "quick-test.py", "print('ok')\n", "quick-repo")
-            run_e, logs_e = start_run(root, repo, "e")
+            run_e, logs_e = start_run(root, repo, "e", suite_watches_this_test=False)
             try:
-                started = wait_until(lambda: (root / "e.started").exists())
+                suite_log = module.log_path_for(logs_e, sandboxed_suite)
+                started = wait_until(lambda: suite_log.exists()
+                                     and "started" in suite_log.read_text(errors="replace"))
                 records = run_records(root)
                 suite_processes = records[0]["suite_processes"] if records else []
                 init = suite_processes[0] if suite_processes else {}
@@ -334,12 +444,48 @@ else:
                       init_pid is not None and wait_until(
                           lambda: module.process_start_ticks(init_pid) is None, seconds=10))
             finally:
-                (root / "stop").write_text("stop\n")
+                (repo / "stop").write_text("stop\n")
             trace = logs_e / "recorded-inputs" / "left.strace"
             trace.mkdir(parents=True, exist_ok=True)
             result_f = finish_run(root, quick_repo, "f")
             check("the next run removes what the killed sandboxed run left",
                   not trace.exists(), result_f.stdout)
+
+        # The process that started a runner of this test killed with SIGKILL, as this test
+        # can be, takes the runner and its sandboxed suite with it.
+        with tempfile.TemporaryDirectory() as scratch:
+            root = pathlib.Path(scratch)
+            repo = make_repo(root, sandboxed_suite)
+            command, environment = run_command_and_environment(
+                root, repo, "g", suite_watches_this_test=False)
+            helper = start_helper(command, environment, root / "runner.pid")
+            runner_pid = runner_ticks = None
+            try:
+                suite_log = module.log_path_for(root / "logs-g", sandboxed_suite)
+                started = wait_until(lambda: suite_log.exists()
+                                     and "started" in suite_log.read_text(errors="replace"))
+                runner_pid = pid_written_in(root / "runner.pid")
+                runner_ticks = None if runner_pid is None else module.process_start_ticks(runner_pid)
+                records = run_records(root)
+                init = records[0]["suite_processes"][0] if records and records[0][
+                    "suite_processes"] else {}
+                signal_own_descendant(helper.pid, module.process_start_ticks(helper.pid),
+                                      signal.SIGKILL)
+                helper.wait(timeout=30)
+                check("a runner this test starts ends when the process that started it is "
+                      "killed with SIGKILL, and its sandboxed suite ends with it",
+                      started and runner_ticks is not None and init.get("pid") is not None
+                      and wait_until(lambda: not module.process_alive(runner_pid, runner_ticks))
+                      and wait_until(lambda: not module.process_alive(
+                          init["pid"], init["start_ticks"]), seconds=10),
+                      (started, runner_pid, runner_ticks, records))
+            finally:
+                (repo / "stop").write_text("stop\n")
+                # The stop file may not reach the sandboxed suite through its overlay, and a
+                # runner that outlived its starter would wait on that suite for ever.
+                if runner_ticks is not None and module.process_alive(runner_pid, runner_ticks):
+                    signal_own_descendant(runner_pid, runner_ticks, signal.SIGKILL)
+                reap_ended_children()
 
 print()
 print(f"{cases_run} cases run")

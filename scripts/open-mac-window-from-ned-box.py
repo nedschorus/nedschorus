@@ -13,14 +13,14 @@ which reconnects to the seat when the connection drops.
 
 The request goes over ssh with the key ~/.ssh/id_ed25519_mac_side_action. The
 Mac admits that key for one forced command only,
-scripts/mac-window-opened-for-ned-box-forced-command.py, which checks the
+scripts/mac-request-from-ned-box-forced-command.py, which checks the
 request word by word before anything runs. This program checks the words with
 that same function first, so a request the Mac would refuse is refused here,
 with the same reason, before any connection is made.
 
 NEDSCHORUS_MAC_SSH_DESTINATION overrides the Mac's address; NEDSCHORUS_SSH_PROGRAM
 overrides the ssh program and NEDSCHORUS_MAC_SSH_TIMEOUT_SECONDS the time limit,
-the seams the test suite uses.
+the seams the nc-test-suite uses.
 """
 
 import importlib.util
@@ -30,11 +30,12 @@ import sys
 from pathlib import Path
 
 PROGRAM = "open-mac-window-from-ned-box"
-DEFAULT_MAC_SSH_DESTINATION = "el@10.0.1.23"
+# By mDNS name: the router assigns the Mac its address by DHCP, and the address changes.
+DEFAULT_MAC_SSH_DESTINATION = "el@edwards-macbook-air.local"
 MAC_SIDE_ACTION_KEY = Path.home() / ".ssh" / "id_ed25519_mac_side_action"
 SSH_EXIT_CONNECTION_FAILED = 255
 SSH_TIMEOUT_SECONDS = 60
-FORCED_COMMAND_PATH = Path(__file__).with_name("mac-window-opened-for-ned-box-forced-command.py")
+FORCED_COMMAND_PATH = Path(__file__).with_name("mac-request-from-ned-box-forced-command.py")
 
 EXIT_OPENED = 0
 EXIT_USAGE_OR_REFUSED = 2
@@ -69,8 +70,9 @@ def explain_connection_failure(stderr, destination, program=PROGRAM, not_done="n
         return [f"{program}: the Mac refused the key {MAC_SIDE_ACTION_KEY}, so {not_done}.",
                 "The Mac's ~/.ssh/authorized_keys does not admit this key yet: tell the user, who adds the line the helper's pull request gives."]
     if "Host key verification failed" in stderr:
+        # Not ssh-keyscan: it cannot resolve the Mac's mDNS .local name on ned-box, where ssh can.
         return [f"{program}: this machine does not know the Mac's host key, so ssh stopped before connecting and {not_done}.",
-                f"Tell the user; the one-time fix, run on ned-box, is: ssh-keyscan -t ed25519 {destination.split('@')[-1]} >> ~/.ssh/known_hosts"]
+                f"Tell the user; the one-time fix, run on ned-box, is: ssh -o StrictHostKeyChecking=accept-new {destination} true — it records the Mac's host key, and the Mac then refuses the command true, which is expected."]
     return [f"{program}: could not reach the Mac at {destination}, so {not_done}: {stderr.strip() or 'ssh exited 255'}.",
             f"Tell the user what this says, and {fallback}."]
 

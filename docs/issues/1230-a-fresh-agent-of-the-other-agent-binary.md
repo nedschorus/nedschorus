@@ -1,5 +1,6 @@
 ---
 issue: "[A fresh agent of the other agent-binary tries to break each proposal that changes how a program or an agent works, before the user decides on it](https://github.com/nedschorus/nedschorus/issues/1230)"
+kind: design
 ---
 
 # A fresh agent of the other agent-binary tries to break each proposal that changes how a program or an agent works, before the user decides on it
@@ -38,7 +39,7 @@ Later checks do not reliably catch such errors. A cold-read-full-run's cold-read
 
 **Who reviews.** One fresh-agent of the other agent-binary. The review program picks it from the environment it runs in: Codex when it runs under Claude Code, Claude when it runs under Codex. A flag overrides the choice. The reviewer reads the proposal and the files it names, and writes only inside a scratch directory in the review's record directory, under the checkout's gitignored `cold-read-records/`, where it may build throwaway git repositories. A Codex cell cannot write under `/tmp`, whose sandbox profile is read-only, but can write in the checkout; the Codex sanity-check-cells of this plan's /sanity-check built git repositories in their scratch directories that way, such as `scratch/cut-codex/git-experiment-ytdxe7nm` in its record.
 
-**What it is asked.** For each item: which ordinary actions of this project's agents, and of the user, the proposal would get wrong (a false positive, a false negative, or a workflow it breaks), and what could be simpler, smaller or dropped. Each finding carries a `ran:` line saying what the reviewer ran to check it; the review program marks a finding with nothing on its `ran:` line as untested. It proposes no hardening against a deliberate attacker, by `CLAUDE.md`'s reviewer rule. The reviewer writes one report for the whole file, with one section per item.
+**What it is asked.** For each item: which ordinary actions of this project's agents, and of the user, the proposal would get wrong (a false positive, a false negative, or a workflow it breaks), and what could be simpler, smaller or dropped. Each finding carries a `ran:` line saying what the reviewer ran to check it; the review program marks a finding with nothing on its `ran:` line as untested. It proposes no hardening against a deliberate attacker, by `CLAUDE.md`'s rule on guards. The reviewer writes one report for the whole file, with one section per item.
 
 **The revision, and its one second review.** The agent revises the items from the findings. When it changes an item, the revised file gets one second review, started the same way with `--proposal`; the second reviewer reads the whole file, is told which items changed, and reports on those. The second review's findings go to the user beside the item, with no further revision before he decides, so the reviews end after two rounds. A fix made in answer to a review can itself be wrong, as case 2 shows; one second review catches that without a loop that never ends.
 
@@ -57,7 +58,7 @@ Later checks do not reliably catch such errors. A cold-read-full-run's cold-read
 4. the sentence in the /walk-me-through skill that has the agent show the first item only after the review's report is in;
 5. the sentence in the /cold-read skill that tells the agent to add `--proposal` for a proposal held outside an approval-walk.
 
-A test fails when the directory is gone and any of the five remains, in the pattern of `scripts/pr-reviewer-instructions-copies-test.py`. This agent-seat keeps a task with `waits_on: [{"issue_closed": <number>}]`, naming the GHI that makes design-to-main mandatory. No GHI does that alone today: requirement 12 of the design-to-main GHI above is being amended to make design-to-main mandatory once deployed, so the task waits on that GHI until a GHI of its own is filed. `scripts/agent-seat-due-task-raise-hook.py` raises the task when that GHI closes, and the agent then removes the directory and the five references. The prompt file goes to design-to-main's build as source material for the questions its agent check asks, which the design-to-main design leaves to its build. Nothing goes into `CLAUDE.md`.
+A test fails when the directory is gone and any of the five remains, in the pattern of `scripts/pr-reviewer-instructions-copies-test.py`. This agent-seat keeps a task with `prerequisites: [{"issue_closed": <number>}]`, naming the GHI that makes design-to-main mandatory. No GHI does that alone today: requirement 12 of the design-to-main GHI above is being amended to make design-to-main mandatory once deployed, so the task waits on that GHI until a GHI of its own is filed. `scripts/agent-seat-due-task-raise-hook.py` raises the task when that GHI closes, and the agent then removes the directory and the five references. The prompt file goes to design-to-main's build as source material for the questions its agent check asks, which the design-to-main design leaves to its build. Nothing goes into `CLAUDE.md`.
 
 ## What this does not cover
 

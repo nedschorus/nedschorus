@@ -722,7 +722,7 @@ if not RUNNING_AS_ROOT:
               and f"walk-minutes in {s.walk} (in part)" in result.stdout
               and "b-2026-10-02-minutes.md" in result.stdout, result.stdout)
 else:
-    print("SKIP: unreadable-file cases: running as root, which reads a mode-000 file")
+    print("SKIP  unreadable-file cases: running as root, which reads a mode-000 file")
 
 # A transcript grep listed that the program then cannot open.
 with scratch() as base:
@@ -802,14 +802,15 @@ finally:
     _program.socket.gethostname = _real_gethostname
 check("on ned-box the walk-minutes are read locally and the Mac's transcript copy is searched",
       ned_box_plan["walk_minutes"]["ssh_target"] is None
-      and _program.MAC_TRANSCRIPTS_COPY_ON_NED_BOX in ned_box_plan["transcript_directories"],
+      and "/home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/projects"
+      in ned_box_plan["transcript_directories"],
       ned_box_plan)
 mac_transcript_directories = [entry["directory"] if isinstance(entry, dict) else entry
                               for entry in mac_plan["transcript_directories"]]
 mac_remote_entries = [entry for entry in mac_plan["transcript_directories"] if isinstance(entry, dict)]
 check("on the Mac the walk-minutes and ned-box's transcripts are read over ssh, never through the mount",
       mac_plan["walk_minutes"]["ssh_target"] == "nedlern@ned-box"
-      and _program.MAC_TRANSCRIPTS_COPY_ON_NED_BOX not in mac_transcript_directories
+      and _program.mac_transcripts_copy_path_on_ned_box() not in mac_transcript_directories
       and not any("/Volumes/" in directory for directory in mac_transcript_directories)
       and len(mac_remote_entries) == 1
       and mac_remote_entries[0]["directory"] == "/home/nedlern/.claude/projects"

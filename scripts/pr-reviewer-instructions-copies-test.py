@@ -4,10 +4,11 @@ them identical.
 
 `docs/agents/pr-reviewer-instructions.md` is the rule's home: its text is
 pasted whole into every Claude reviewer's prompt. CLAUDE.md carries the
-rule's "Review scope" section a second time, because the Codex reviewer
-(scripts/code-review-codex-cell.py, Codex's built-in review) takes no custom
-prompt and reads the repository's rules through AGENTS.md -> CLAUDE.md, so
-CLAUDE.md is the only channel by which it receives the rule (user-ruled
+rule's "Review scope" section a second time. The Codex reviewer
+(scripts/code-review-codex-cell.py, Codex's built-in review) now receives
+main's file as developer_instructions, but it still reads the checkout's
+rules through AGENTS.md -> CLAUDE.md too, so the two copies must agree until
+CLAUDE.md's copy is removed. CLAUDE.md was once its only channel (user-ruled
 2026-09-19, walk on nedschorus#210). Two copies drift: by 2026-09-18 the
 CLAUDE.md paragraph and the file no longer said the same thing, and nothing
 noticed for weeks. This test is what notices.
@@ -36,22 +37,29 @@ collapsed before comparing, because the file wraps its lines and CLAUDE.md
 keeps one bullet per line; nothing else is normalized.
 """
 
+import importlib.util
 import re
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+_rule_failure_lines_spec = importlib.util.spec_from_file_location(
+    "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
+RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
+_rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
 INSTRUCTIONS_FILE = REPO_ROOT / "docs" / "agents" / "pr-reviewer-instructions.md"
 CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
-SECTION_HEADING = ("## Review scope: code findings block the merge; prose gets "
-                   "none, apart from the exceptions below")
+SECTION_HEADING = ("## Review scope: must-fix-now code findings block the merge; "
+                   "prose gets none, apart from the exceptions below")
 
 # CLAUDE.md's bullet restates the heading inline before the copied intro, and
 # names the file and this test after it. Both are CLAUDE.md's own framing, not
 # part of the copy, so they bound the intro rather than being compared to it.
-CLAUDE_MD_PREFIX = ("Reviewing a pull request — **review scope: code findings "
-                    "block the merge; prose gets none, apart from the exceptions "
-                    "below.** ")
+CLAUDE_MD_PREFIX = ("Reviewing a pull request — **review scope: must-fix-now code "
+                    "findings block the merge; prose gets none, apart from the "
+                    "exceptions below.** ")
 CLAUDE_MD_SUFFIX_OPENING = "This bullet is the"
 
 failures = []
@@ -162,19 +170,49 @@ def differences(instructions: str, claude_md: str) -> list:
     return problems
 
 
+def copies_differ_failure_detail(found):
+    return ("\n  " + "\n  ".join(found) + "\n  The file is the rule's home; make "
+            "CLAUDE.md's bullet its section again.\n"
+            + RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal("CLAUDE.md") + "\n"
+            + RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE)
+
+
+def names_the_file_and_this_test(claude_md_text):
+    return ("docs/agents/pr-reviewer-instructions.md" in collapse(claude_md_text)
+            and "scripts/pr-reviewer-instructions-copies-test.py" in collapse(claude_md_text))
+
+
+NAMES_THE_FILE_AND_THIS_TEST_FAILURE_DETAIL = "\n".join([
+    "CLAUDE.md's review-scope bullet must name docs/agents/pr-reviewer-instructions.md, where "
+    "the rule lives, and scripts/pr-reviewer-instructions-copies-test.py, which keeps the two "
+    "copies identical.",
+    "If your change removed either name from that bullet, put it back.",
+    RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal("CLAUDE.md"),
+    RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
+
+
+COPIES_SAY_THE_SAME_CASE = "the two copies say the same thing"
+NAMES_THE_FILE_AND_THIS_TEST_CASE = "CLAUDE.md names the file and this test beside its copy"
+
+
+def copies_cases(instructions_text, claude_md_text):
+    """Both cases on a pair of texts, as (case name, passed, detail) triples,
+    so a planted pair prints the messages the real files would."""
+    found = differences(instructions_text, claude_md_text)
+    return [(COPIES_SAY_THE_SAME_CASE, not found, copies_differ_failure_detail(found)),
+            (NAMES_THE_FILE_AND_THIS_TEST_CASE, names_the_file_and_this_test(claude_md_text),
+             NAMES_THE_FILE_AND_THIS_TEST_FAILURE_DETAIL)]
+
+
+def case_outcome(cases, case_name):
+    return next((passed, detail) for name, passed, detail in cases if name == case_name)
+
+
 instructions = INSTRUCTIONS_FILE.read_text(encoding="utf-8")
 claude_md = CLAUDE_MD.read_text(encoding="utf-8")
 
-found = differences(instructions, claude_md)
-check("the two copies say the same thing",
-      not found,
-      "\n  " + "\n  ".join(found) + "\n  The file is the rule's home; make "
-      "CLAUDE.md's bullet its section again.")
-
-check("CLAUDE.md names the file and this test beside its copy",
-      "docs/agents/pr-reviewer-instructions.md" in collapse(claude_md)
-      and "scripts/pr-reviewer-instructions-copies-test.py" in collapse(claude_md),
-      "the copy must say where the rule lives and what keeps the two identical")
+for case_name, passed, detail in copies_cases(instructions, claude_md):
+    check(case_name, passed, detail)
 
 # --- The two one-sided edits containment used to pass --------------------
 # Both run differences() over a pair of synthetic copies built here, never
@@ -184,7 +222,7 @@ check("CLAUDE.md names the file and this test beside its copy",
 
 FIXTURE_INSTRUCTIONS = """# Reviewer instructions
 
-## Review scope: code findings block the merge; prose gets none, apart from the exceptions below
+## Review scope: must-fix-now code findings block the merge; prose gets none, apart from the exceptions below
 
 Intro sentence one. Intro sentence two.
 
@@ -198,8 +236,8 @@ Not part of the copy.
 
 FIXTURE_CLAUDE_MD = """# Project
 
-- Reviewing a pull request — **review scope: code findings block the merge; \
-prose gets none, apart from the exceptions below.** \
+- Reviewing a pull request — **review scope: must-fix-now code findings block \
+the merge; prose gets none, apart from the exceptions below.** \
 Intro sentence one. Intro sentence two. This bullet is the section, kept \
 identical by a test.
   - **A.** Alpha one. Alpha two.
@@ -226,6 +264,32 @@ check("a sentence appended to CLAUDE.md's bullet alone is caught",
       differences(FIXTURE_INSTRUCTIONS, lengthened_claude_md) != [],
       "the file's bullet is still contained in the longer one; the comparison "
       "has gone back to containment")
+
+planted_difference = differences(shortened_file, FIXTURE_CLAUDE_MD)
+planted_cases = copies_cases(shortened_file, FIXTURE_CLAUDE_MD)
+copies_passed, copies_detail = case_outcome(planted_cases, COPIES_SAY_THE_SAME_CASE)
+check("the copies' failure lists the differences, names the rule's home, then gives the "
+      "guarded-file line and the line for a rule main broke",
+      not copies_passed and copies_detail.split("\n") == (
+          [""] + ("  " + "\n  ".join(planted_difference)).split("\n")
+          + ["  The file is the rule's home; make CLAUDE.md's bullet its section again.",
+             RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal("CLAUDE.md"),
+             RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE]),
+      copies_detail)
+
+naming_passed, naming_detail = case_outcome(planted_cases, NAMES_THE_FILE_AND_THIS_TEST_CASE)
+check("a CLAUDE.md that no longer names the file and this test fails the naming case",
+      not naming_passed, FIXTURE_CLAUDE_MD)
+check("the naming case's failure says which names the bullet must carry, the fix, the "
+      "guarded-file line and the line for a rule main broke",
+      naming_detail.split("\n") == [
+          "CLAUDE.md's review-scope bullet must name docs/agents/pr-reviewer-instructions.md, "
+          "where the rule lives, and scripts/pr-reviewer-instructions-copies-test.py, which keeps "
+          "the two copies identical.",
+          "If your change removed either name from that bullet, put it back.",
+          RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal("CLAUDE.md"),
+          RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
+      naming_detail)
 
 check("an edit to the framing around the copied intro is caught",
       differences(FIXTURE_INSTRUCTIONS,

@@ -1,11 +1,18 @@
 """What the merge-lane pull request helpers share: their directory options, path resolution and the merge account's token.
 
-Loaded by path by the five merge-lane-pull-request-* and
+Loaded by path by the eight merge-lane-pull-request-* and
 merge-lane-code-review-* scripts beside it; not run on its own.
 
 Every path option is made absolute when the arguments are parsed, before any
 script changes directory or hands a path to git -C, so a relative path means
 the same directory everywhere a script uses it.
+
+The review worktrees, pr<n>-head, pr<n>-merged and the review tools worktree
+at main, live in one directory, --merge-lane-review-worktrees-directory,
+outside the log-store: ned-box's Timeshift backup copies the log-store and
+leaves ~/.cache out. Its default is read from HOME when the arguments are
+parsed. The outputs, such as briefs and reviewer records, stay in
+--merge-lane-worktrees-and-outputs-directory.
 
 The merge account's token is read from the one file merge-gate.sh reads, so
 the gate, the retargets, the merge and every other gh call use one token.
@@ -17,6 +24,10 @@ from pathlib import Path
 REPOSITORY = "nedschorus/nedschorus"
 DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY = Path(
     "/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers")
+REVIEW_WORKTREES_DIRECTORY_UNDER_HOME = Path(".cache") / "merge-lane-review-worktrees"
+# A clone or worktree of this repository, from which a missing review tools
+# worktree can be made.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 _runner_spec = importlib.util.spec_from_file_location(
     "run_all_test_suites", Path(__file__).resolve().with_name("run-all-test-suites.py"))
@@ -49,14 +60,41 @@ def read_merge_account_token():
 
 
 def add_directory_options(parser, holds):
+    """Add the three directory options; holds names what the outputs directory holds."""
     parser.add_argument("--merge-lane-worktrees-and-outputs-directory", type=Path,
                         default=DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY,
                         help=f"holds {holds} "
                              f"(default: {DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY})")
+    parser.add_argument("--merge-lane-review-worktrees-directory", type=Path,
+                        help="holds the review worktrees pr<n>-head, pr<n>-merged and main "
+                             f"(default: ~/{REVIEW_WORKTREES_DIRECTORY_UNDER_HOME})")
     parser.add_argument("--review-tools-worktree-at-main", type=Path,
                         help="the checkout at main whose scripts run, never the pull "
                              "request's own (default: "
-                             "<merge-lane-worktrees-and-outputs-directory>/wt/main)")
+                             "<merge-lane-review-worktrees-directory>/main)")
+
+
+def directory_options_argv(arguments):
+    """Return the three directory options as arguments, for a program this one runs."""
+    return ["--merge-lane-worktrees-and-outputs-directory",
+            str(arguments.merge_lane_worktrees_and_outputs_directory),
+            "--merge-lane-review-worktrees-directory",
+            str(arguments.merge_lane_review_worktrees_directory),
+            "--review-tools-worktree-at-main", str(arguments.review_tools_worktree_at_main)]
+
+
+def pull_request_head_worktree(arguments, number):
+    return arguments.merge_lane_review_worktrees_directory / f"pr{number}-head"
+
+
+def pull_request_merged_worktree(arguments, number):
+    return arguments.merge_lane_review_worktrees_directory / f"pr{number}-merged"
+
+
+def pull_request_head_test_run_log_store_root_directory(arguments, number):
+    """The --log-store-root the head test run of pull request number is given."""
+    return (arguments.merge_lane_worktrees_and_outputs_directory / "hr" / f"pr{number}"
+            / "log-store")
 
 
 def review_tool_missing_message(arguments, relative_path):
@@ -67,21 +105,32 @@ def review_tool_missing_message(arguments, relative_path):
         return None
     # Without this check a missing tool surfaces as the interpreter's own exit
     # code, which the callers' exit codes do not document.
-    return (f"{tool} is missing, so --review-tools-worktree-at-main, {worktree}, is not a "
-            f"checkout of main.\n"
-            f"If {worktree} exists, move it to main: git -C {worktree} fetch origin && "
-            f"git -C {worktree} checkout --detach origin/main\n"
-            f"If {worktree} does not exist, make it from any clone of this repository: "
-            f"git -C <clone> worktree add --detach {worktree} origin/main\n"
-            f"Then run this again.")
+    if worktree.is_dir():
+        return (f"{tool} is missing, so --review-tools-worktree-at-main, {worktree}, is "
+                f"probably not at main.\n"
+                f"Move it to main: git -C {worktree} fetch origin && "
+                f"git -C {worktree} checkout --detach origin/main\n"
+                f"Then run this again.\n"
+                f"If this message comes back after that, main itself lacks {relative_path}: "
+                f"tell the user this message.")
+    return (f"{tool} is missing, because --review-tools-worktree-at-main, {worktree}, does "
+            f"not exist.\n"
+            f"Make it at main: git -C {REPOSITORY_ROOT} fetch origin && "
+            f"git -C {REPOSITORY_ROOT} worktree add --detach {worktree} origin/main\n"
+            f"Then run this again.\n"
+            f"If this message comes back after that, main itself lacks {relative_path}: "
+                f"tell the user this message.")
 
 
 def resolve_path_options(arguments):
-    """Make every Path argument absolute, then default the review tools worktree."""
+    """Default the review worktrees directory, make every Path argument absolute, then default the review tools worktree."""
+    if arguments.merge_lane_review_worktrees_directory is None:
+        arguments.merge_lane_review_worktrees_directory = (
+            Path.home() / REVIEW_WORKTREES_DIRECTORY_UNDER_HOME)
     for name, value in vars(arguments).items():
         if isinstance(value, Path):
             setattr(arguments, name, value.resolve())
     if arguments.review_tools_worktree_at_main is None:
         arguments.review_tools_worktree_at_main = (
-            arguments.merge_lane_worktrees_and_outputs_directory / "wt" / "main")
+            arguments.merge_lane_review_worktrees_directory / "main")
     return arguments

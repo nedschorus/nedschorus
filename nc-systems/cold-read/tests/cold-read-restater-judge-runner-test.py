@@ -234,8 +234,24 @@ if "dump_prompt" in step:
 if "report" in step:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(step["report"], encoding="utf-8")
+if "dump_record_directory_descriptor_count" in step:
+    # How many of the stub's descriptors are open on the record directory: one when the runner's
+    # being-written lock reached it through the judge cell, none when either closed it.
+    record_directory = os.stat(report_path.parent)
+    count = 0
+    for name in os.listdir("/dev/fd"):
+        try:
+            opened = os.fstat(int(name))
+        except OSError:
+            continue
+        count += (opened.st_dev, opened.st_ino) == (record_directory.st_dev, record_directory.st_ino)
+    pathlib.Path(step["dump_record_directory_descriptor_count"] + run_token).write_text(
+        str(count), encoding="utf-8")
 if "stdout" in step:
     sys.stdout.write(step["stdout"])
+if step.get("kill_cell"):
+    import signal
+    os.kill(os.getppid(), signal.SIGKILL)
 sys.exit(step.get("exit", 0))
 """
 
@@ -277,7 +293,8 @@ def write_stub_prompt_file(repository, text=STUB_JUDGE_PROMPT):
 
 
 def run_runner(repository, stub_directory, plan, *arguments,
-               cases=THREE_CASES, restater=RESTATER_CLASS, prompt_file=None):
+               cases=THREE_CASES, restater=RESTATER_CLASS, prompt_file=None,
+               current_directory=None, log_store=None):
     stub_directory.mkdir(parents=True, exist_ok=True)
     stub = stub_directory / "claude"
     stub.write_text(STUB_CLAUDE, encoding="utf-8")
@@ -285,6 +302,9 @@ def run_runner(repository, stub_directory, plan, *arguments,
     environment = dict(os.environ)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment["COLD_READ_RESTATER_JUDGE_RUNNER_TEST_STUB_PLAN"] = json.dumps(plan)
+    # The record name is chosen free in the log-store too; never the real one.
+    environment["COLD_READ_RECORD_SHIP_DESTINATION"] = str(
+        log_store or repository / "scratch-log-store")
     if prompt_file is None:
         prompt_file = write_stub_prompt_file(repository)
     command = [
@@ -296,7 +316,8 @@ def run_runner(repository, stub_directory, plan, *arguments,
         command += ["--case", *case]
     command += list(arguments)
     return subprocess.run(
-        command, capture_output=True, text=True, check=False, env=environment)
+        command, capture_output=True, text=True, check=False, env=environment,
+        cwd=current_directory or repository)
 
 
 def expected_record_directory(repository, restater=RESTATER_CLASS):
@@ -364,6 +385,27 @@ with tempfile.TemporaryDirectory() as scratch:
           and "the sentence about queues" in combined, repr(combined))
     check("the composite's rule is stated beside the numbers",
           "composite = 0.8 × caught − 0.2 × stupid" in combined, repr(combined[:4000]))
+
+    # --- The runner's being-written lock reaches every judge -----------------
+    # Each judge cell, and the reviewer program it runs, holds the record's lock too, so an
+    # interrupted runner whose judges keep writing leaves the record unshipped until they exit.
+    repository = build_scratch_repository(scratch)
+    descriptor_count_prefix = str(scratch / "judge-record-directory-descriptor-count-")
+    result = run_runner(
+        repository, stubs,
+        {"run1": {"*": {"report": RUN_REPORT_BASE,
+                        "dump_record_directory_descriptor_count": descriptor_count_prefix}},
+         "run2": {"*": {"report": RUN_REPORT_AGREEING,
+                        "dump_record_directory_descriptor_count": descriptor_count_prefix}}},
+    )
+    judge_descriptor_counts = [
+        Path(descriptor_count_prefix + run_token).read_text(encoding="utf-8")
+        if Path(descriptor_count_prefix + run_token).exists() else "not written"
+        for run_token in ("run1", "run2")]
+    check("the reviewer program of each judge run holds the runner's being-written lock",
+          judge_descriptor_counts == ["1", "1"],
+          f"descriptors on the record directory: {judge_descriptor_counts}; exit {result.returncode}; "
+          f"stderr={result.stderr[-2000:]!r}")
 
     # --- Two runs that disagree: both shown, and the difference named -----
     repository = build_scratch_repository(scratch)
@@ -438,6 +480,25 @@ with tempfile.TemporaryDirectory() as scratch:
     check("with one run there is nothing to compare, and it says so",
           "Only one run was scored, so there is nothing to compare." in combined,
           repr(combined))
+
+    # --- A report beside a nonzero cell exit is not scored -----------------
+    # The judge writes its report and the cell is killed before it can check
+    # and stamp it: the text is there, but the run did not finish.
+    repository = build_scratch_repository(scratch)
+    result = run_runner(
+        repository, stubs,
+        {"run1": {"*": {"report": RUN_REPORT_BASE, "kill_cell": True}},
+         "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
+    )
+    record_dir = expected_record_directory(repository)
+    combined = (record_dir / f"{record_dir.name}--restater-judge-combined.md"
+                ).read_text(encoding="utf-8")
+    check("a run whose cell was killed after its report landed is not scored, and the pair exits 1",
+          result.returncode == 1
+          and combined.startswith("<!-- PARTIAL RESULT: run 1 was not scored — the cell exited -9")
+          and "| 1 | 1 | 3 | 2 | 2.00 |" not in combined
+          and "| 1 | 2 | 3 | 2 | 2.00 |" in combined,
+          f"exit {result.returncode}; combined={combined[:600]!r}")
 
     # --- A report with no case heading is a failed run, not a zero ---------
     repository = build_scratch_repository(scratch)
@@ -564,6 +625,37 @@ with tempfile.TemporaryDirectory() as scratch:
           {path.name: path.read_bytes() for path in sorted(first_dir.glob("*.md"))}
           == first_files,
           f"{sorted(path.name for path in first_dir.glob('*.md'))}")
+    third_log_store = scratch / "restater-log-store"
+    (third_log_store / (first_dir.name + "-3")).mkdir(parents=True)
+    third = run_runner(
+        repository, stubs,
+        {"run1": {"*": {"report": RUN_REPORT_AGREEING}},
+         "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
+        log_store=third_log_store,
+    )
+    check("a name another checkout's judging holds in the log-store is passed over too",
+          third.returncode == 0
+          and Path(third.stdout.strip()).parent.name == first_dir.name + "-4",
+          f"exit {third.returncode}: {third.stdout}{third.stderr}")
+    if os.geteuid() != 0:
+        third_log_store.chmod(0)
+        try:
+            unlisted = run_runner(
+                repository, stubs,
+                {"run1": {"*": {"report": RUN_REPORT_AGREEING}},
+                 "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
+                log_store=third_log_store,
+            )
+        finally:
+            third_log_store.chmod(0o755)
+        check("when the log-store cannot be listed, the name free in this checkout is "
+              "used, and stderr says it was not checked against the log-store",
+              unlisted.returncode == 0
+              and Path(unlisted.stdout.strip()).parent.name == first_dir.name + "-3"
+              and f"cold-read-restater-judge-runner: the record name {first_dir.name}-3 "
+                  f"is free in this checkout" in unlisted.stderr
+              and str(third_log_store) in unlisted.stderr,
+              f"exit {unlisted.returncode}: {unlisted.stdout}{unlisted.stderr}")
     check("the second judging's reports carry the suffixed name, so the shared "
           "module's near-miss recovery cannot confuse the two judgings",
           (second_dir / f"{second_dir.name}--claude-restater-judge-run1.md").is_file()
@@ -640,6 +732,41 @@ with tempfile.TemporaryDirectory() as scratch:
                                   "of the caller's own.")
                   for text in prompts),
           f"exit {result.returncode}; prompts={[text[:80] for text in prompts]!r}")
+
+    # --- Relative paths mean files under the current directory, for both runs --
+    # Run from a directory other than the runner's checkout, holding its own
+    # case files and prompt at the same relative paths: the record directory
+    # is made there, and both judge cells are pointed at that directory's files.
+    repository = build_scratch_repository(scratch)
+    other_directory = scratch / "another-current-directory"
+    for relative_path, text in CASE_FILE_CONTENTS.items():
+        path = other_directory / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    write_stub_prompt_file(other_directory)
+    run1_prompt = scratch / "relative-paths-run1-prompt.txt"
+    run2_prompt = scratch / "relative-paths-run2-prompt.txt"
+    result = run_runner(
+        repository, stubs,
+        {"run1": {"*": {"report": RUN_REPORT_BASE, "dump_prompt": str(run1_prompt)}},
+         "run2": {"*": {"report": RUN_REPORT_AGREEING, "dump_prompt": str(run2_prompt)}}},
+        "--record-dir", "a-record-directory-named-relatively",
+        prompt_file="test-cases/judge-prompt.md", current_directory=other_directory,
+    )
+    check("a relative --record-dir is made under the current directory, not the "
+          "runner's checkout",
+          (other_directory / "a-record-directory-named-relatively").is_dir()
+          and not (repository / "a-record-directory-named-relatively").exists(),
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr[-400:]!r}")
+    prompts = [path.read_text(encoding="utf-8") if path.is_file() else ""
+               for path in (run1_prompt, run2_prompt)]
+    check("both judge cells read the relative --case files the runner checked, "
+          "under the current directory",
+          result.returncode == 0
+          and all(str(other_directory / "test-cases/draft-one.md") in text
+                  and str(repository / "test-cases") not in text for text in prompts),
+          f"exit {result.returncode}; stderr={result.stderr[-400:]!r}; "
+          f"prompts={[text[:200] for text in prompts]!r}")
 
 print()
 if failures:

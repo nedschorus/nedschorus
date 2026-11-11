@@ -9,9 +9,12 @@ contract, the write-detection rule, and why the reviewer writes a file rather
 than answering in chat.
 
 Usage:
-  nc-systems/cold-read/cold-read-codex-cell.py --cell restate --tier second \\
+  nc-systems/cold-read/cold-read-codex-cell.py --cell defect-hunt --tier second-strongest-model \\
       --target docs/cross-project/foo.md \\
-      --report cold-read-records/foo-2026-01-01/codex-restate-second.md
+      --report cold-read-records/foo-2026-01-01/codex-defect-hunt-second-strongest-model.md
+
+The cold-read-tier `second-strongest-model` asks for the agent-binary's
+second-strongest model.
 
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.
@@ -65,19 +68,24 @@ CREDENTIAL_DIRECTORIES in nc-systems/cold-read/cold-read-cell-common.py).
 `--sandbox workspace-write` lets a reviewer read anything, so the cell runs
 under a named permission profile instead: it extends Codex's `:workspace`
 profile, which writes where workspace-write did, and denies the credential
-directories and file names. Those writable roots are the checkout and the
-temporary directories, so a report outside the checkout, such as a walk draft's
-suggestions in another checkout, would be refused with "Operation not permitted".
-The reviewer writes such a report into a fresh, empty temporary directory, added
-with `--add-dir`, and the shared module moves it to its destination after the
-run; the documents beside the destination never become writable. Codex refuses the two together, so `--sandbox`
+directories and file names. Those writable roots are the checkout and, on
+macOS only, the temporary directories (on Linux they are read-only, below), so a
+report outside the checkout, such as a walk draft's suggestions in another
+checkout, would be refused with "Operation not permitted". The reviewer writes
+such a report into a fresh, empty temporary directory, added with `--add-dir`,
+and the shared module moves it to its destination after the run; the documents
+beside the destination never become writable. A directory added with `--add-dir`
+is writable even inside the read-only /tmp on Linux (measured on ned-box with
+codex-cli 0.159.3: the profile plus `--add-dir` of a fresh mkdtemp() directory,
+and a write there succeeded). Codex refuses the two together, so `--sandbox`
 is gone. Measured 2026-09-28 with canary files, on both machines: under
 workspace-write the reviewer read all three canaries; under the profile it
 read none, still read README.md, and wrote its report. Codex expands a deny
 pattern with ripgrep before it starts on Linux, and aborts when any
 directory under the pattern's prefix is unreadable (ned-box's home holds
-one), so on Linux the profile lists the files credential_files_found_now()
-finds; on macOS it takes the patterns. Only credential directories that
+one), so on Linux the profile denies only the credential directories and
+login files, and a file named like a credential outside them is not covered;
+on macOS it takes the patterns too. Only credential directories that
 exist are listed: Codex on Linux turns a missing one into an empty file on
 the real disk. The reviewer programs' login files that exist are denied
 too, Codex's own `~/.codex/auth.json` included: the Codex CLI reads its login
@@ -150,13 +158,13 @@ PROGRAM = "cold-read-codex-cell"
 # Use version-prefixed model IDs; gpt-6.1-sol requires codex-cli 0.159.1 or later.
 TIER_TO_CODEX_MODEL_CHAIN = {
     "deep": ("gpt-6.1-sol",),
-    "second": ("gpt-6-luna",),
+    "second-strongest-model": ("gpt-6-luna",),
 }
 
 # Pin effort so machine-local Codex defaults cannot change review behavior.
 TIER_TO_REASONING_EFFORT = {
     "deep": "xhigh",
-    "second": "xhigh",
+    "second-strongest-model": "xhigh",
 }
 
 

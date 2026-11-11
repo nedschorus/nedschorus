@@ -10,17 +10,17 @@ How this project keeps its git checkouts current with main, and what an agent ma
 
 - `CLAUDE.md` holds the rules on topic branches, atomic pull requests, frozen heads, commits on top and hand-merges.
 - `scripts/checkout-freshness-catch-up.py`, a Stop hook, rebases a never-pushed branch, moves a detached checkout with no work of its own forward, fast-forwards the machine's reference checkout (the clone's main worktree, kept on the main branch, such as `/Users/el/Projects/nedschorus` on the Mac), and tells the agent what changed; its rules live in its docstring.
-- `sync_working_branch_with_main` in `nc-systems/handoff/handoff-supervisor.py` fast-forwards a seat's checkout at launch; no document describes it.
-- The git hooks, `scripts/branch-conflict-check.py`, `scripts/force-push-with-open-pull-request-guard-hook.py`, `scripts/obsolete-file-edit-warning-hook.py`, `.claude/hooks/session-location-write-guard.py`, `scripts/clean-worktrees.py` and `scripts/merge-gate.sh` each enforce one piece.
+- `launch_time_git_sync` in `nc-systems/handoff/handoff-supervisor.py`, formerly `sync_working_branch_with_main`, fast-forwards a seat's checkout at launch; no document describes it.
+- The git hooks, `scripts/branch-conflict-check.py`, `.claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py`, `scripts/obsolete-file-edit-warning-hook.py`, `.claude/guard-hooks/session-location-write-guard.py`, `scripts/clean-worktrees.py` and `scripts/merge-gate.sh` each enforce one piece.
 - Closed GHIs record past rulings: [checkout-freshness catch-up merges main into a branch whose head is frozen under review](https://github.com/nedschorus/nedschorus/issues/324) and [The checkout-freshness hook treats a new branch cut at a pull request's pushed head as never pushed, and rebases it](https://github.com/nedschorus/nedschorus/issues/913).
 
 Because nothing states the whole, the pieces disagree, and agents act on the disagreement. On 2026-10-08 the Mac's MD-skills seat checkout sat 86 commits behind main on a detached HEAD, a shape `docs/agents/seat-first-prompt.md` says should never occur, and the agent ran a skill whose text predated a rule the user had approved. A reading of every place on 2026-10-09 found sixteen further disagreements, which the design lists in full; among them:
 
 - the documents place every agent-home on its own seat-branch, while live seat checkouts sit detached and nothing creates or describes that shape;
 - `CLAUDE.md` says merge-lane-2 tests a pull request's head commit merged onto main, while merge-lane-2 tests the head as it stands;
-- the first prompt the supervisor builds for a seat (`BRANCH_STATE_INSTRUCTION` in `nc-systems/handoff/handoff-supervisor.py`) tells an agent to rebase a never-pushed branch, which the Stop hook already does;
-- "frozen" means "has an open pull request" to `scripts/force-push-with-open-pull-request-guard-hook.py` and "pushed" to the freshness hook;
-- worktrees under agent-homes and in scratchpads are never removed, while `docs/nedschorus-wiki/nedschorus-fleet-git-worktree-working-model.md` (R21) and `docs/nedschorus-wiki/nedschorus-fleet-machine-paths-and-checkouts.md` describe every session worktree as removed once merged;
+- the first prompt the supervisor builds for a seat (`BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION` in `nc-systems/handoff/handoff-supervisor.py`, which, with `BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION`, replaced `BRANCH_STATE_INSTRUCTION` and is given only when the branch has never been pushed) tells an agent to rebase a never-pushed branch, which the Stop hook already does;
+- "frozen" means "has an open pull request" to `.claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py` and "pushed" to the freshness hook;
+- worktrees under agent-homes and in scratchpads are never removed, while `docs/nedschorus-wiki/nedschorus-fleet-git-worktree-working-model.md` (R21) and `docs/nedschorus-wiki/nedschorus-mac-and-ned-box-machine-setup.md` describe every session worktree as removed once merged;
 - a subagent's worktree gets no freshness check, because no hook runs when a subagent stops;
 - several documents describe behaviour the code no longer has.
 
@@ -46,3 +46,15 @@ The design gets a fast read and a full cold read, then an approval-walk with the
 ## Next action
 
 The design's first draft, written from the 2026-10-09 reading of every place these rules live, has had its fast read. Next: add it beside this GHI-MD, give it a full cold read, and walk its questions with the user.
+
+## Provisional additions (not yet vetted by the user)
+
+- MD-skills, 2026-10-14: Launch-time catch-up: the agent itself brings its agent-home up to date with main using judgment, while `sync_working_branch_with_main`, now `launch_time_git_sync`, stays fast-forward-only (MD-skills task #27).
+- MD-skills, 2026-10-14: Build: the checkout-freshness hook changes the design decides (MD-skills task #166).
+- MD-skills, 2026-10-14: Build: the worktree cleaner's 30-day rule (MD-skills task #167).
+- MD-skills, 2026-10-14: Build: agent-homes detached at main, seat-branches retired (MD-skills task #168).
+- MD-skills, 2026-10-14: Build: merge-lane-2's merged-onto-main test script moved into the repository (MD-skills task #169).
+- MD-skills, 2026-10-14: Edit the other GitHub issues the design's approval-walks changed, one edit-GHI each (MD-skills task #170).
+- MD-skills, 2026-10-14: Write the git and GitHub architecture overview for the wiki (MD-skills task #171).
+- MD-skills, 2026-10-14: Build: a hook that refuses a topic worktree made outside `~/Projects/nedschorus/.claude/worktrees/` (MD-skills task #173).
+- reboot-test, 2026-10-14: on the Mac, macOS's daily `/usr/libexec/tmp_cleaner` (from `/System/Library/LaunchDaemons/com.apple.tmp_cleaner.plist`) deletes files under `/tmp` untouched for 3 days, and Claude Code's scratchpad is under `/private/tmp`, so a worktree an agent makes in its scratchpad loses its `.git` link and its gitignored cold-read-records. This happened to three worktrees on 2026-10-08 and 2026-10-09, and lost a GHI 3 cold-read-record. The design should say where worktrees are created, outside `/tmp`, and what enforces it.

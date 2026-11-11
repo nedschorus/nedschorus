@@ -3,7 +3,8 @@
 
 A fake `gh` first on PATH logs its arguments and the GH_TOKEN it saw and
 prints a description, or fails when the case says so. A scratch --review-tools-worktree-at-main
-holds a fake scripts/code-review-codex-cell.py that logs its arguments and
+holds docs/agents/pr-reviewer-instructions.md and a fake
+scripts/code-review-codex-cell.py that logs its arguments and
 whether GIT_DIR or GH_TOKEN reached it, writes a report, and exits with the
 case's code. The program runs with GIT_DIR set.
 
@@ -49,6 +50,10 @@ sys.exit(int(os.environ.get("MERGE_LANE_CODEX_TEST_CELL_EXIT", "0")))
 failures = []
 
 
+def review_worktrees_directory(helpers):
+    return helpers.parent / f"{helpers.name}-review-worktrees"
+
+
 def check(name, condition, detail=""):
     print(("PASS  " if condition else "FAIL  ") + name)
     if not condition:
@@ -66,6 +71,7 @@ def run_program(scratch, helpers, extra_environment=None, home=None):
         (scratch / log).unlink(missing_ok=True)
     completed = subprocess.run(
         [sys.executable, str(PROGRAM), "7", BASE, "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+         "--merge-lane-review-worktrees-directory", str(review_worktrees_directory(helpers)),
          "--review-tools-worktree-at-main", str(scratch / "main-checkout")],
         capture_output=True, text=True,
         env={**os.environ,
@@ -89,6 +95,9 @@ def main():
         (scratch / "main-checkout" / "scripts").mkdir(parents=True)
         (scratch / "main-checkout" / "scripts" / "code-review-codex-cell.py").write_text(
             FAKE_CODEX_CELL)
+        instructions = scratch / "main-checkout" / "docs" / "agents" / "pr-reviewer-instructions.md"
+        instructions.parent.mkdir(parents=True)
+        instructions.write_text("# PR reviewer instructions\n")
         token_directory = scratch / "home" / ".config" / "nedschorus"
         token_directory.mkdir(parents=True)
         (token_directory / "ned-review-merge.token").write_text(TOKEN + "\n")
@@ -102,22 +111,24 @@ def main():
                                      "--json", "body", "--jq", ".body"], "gh_token": TOKEN}],
               json.dumps(gh_calls))
         check("the description is saved under cx/pr<n>-<base>",
-              (outputs / "description.md").read_text() == DESCRIPTION, detail)
-        check("main's review runs on wt/pr<n>-head from the base commit",
+              (outputs / "pull-request-description.md").read_text() == DESCRIPTION, detail)
+        check("main's review runs on pr<n>-head from the base commit, with main's "
+              "PR reviewer instructions",
               cell_calls and cell_calls[0]["argv"] == [
-                  "--base", BASE, "--repo", str(helpers / "wt" / "pr7-head"),
-                  "--pull-request-description-file", str(outputs / "description.md"),
-                  "--output", str(outputs / "report.md")], json.dumps(cell_calls))
+                  "--base", BASE, "--repo", str(review_worktrees_directory(helpers) / "pr7-head"),
+                  "--instructions-file", str(instructions),
+                  "--pull-request-description-file", str(outputs / "pull-request-description.md"),
+                  "--output", str(outputs / "codex-code-review-report.md")], json.dumps(cell_calls))
         check("neither GIT_DIR nor the token reaches the review",
               cell_calls and cell_calls[0]["git_dir"] is None
               and cell_calls[0]["gh_token"] is None, json.dumps(cell_calls))
         check("the review's stdout, stderr and report are kept under cx/pr<n>-<base>",
               (outputs / "stdout").read_text() == "cell stdout\n"
               and (outputs / "stderr").read_text() == "cell stderr\n"
-              and (outputs / "report.md").read_text() == "the report\n", detail)
+              and (outputs / "codex-code-review-report.md").read_text() == "the report\n", detail)
         check("one line names the exit code and the report, and the program exits 0",
               completed.returncode == 0 and completed.stdout ==
-              f"PR 7 codex cell (base 01234567) exit 0; report {outputs / 'report.md'}\n",
+              f"PR 7 codex cell (base 01234567) exit 0; report {outputs / 'codex-code-review-report.md'}\n",
               detail)
 
         completed, _, _ = run_program(scratch, helpers, {"MERGE_LANE_CODEX_TEST_CELL_EXIT": "3"})
@@ -154,6 +165,15 @@ def main():
         check("a review tools worktree without code-review-codex-cell.py exits 2 before gh runs",
               completed.returncode == 2 and gh_calls == [] and cell_calls == []
               and "code-review-codex-cell.py is missing" in completed.stdout,
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+
+        instructions.rename(instructions.with_suffix(".away"))
+        completed, gh_calls, cell_calls = run_program(scratch, helpers)
+        instructions.with_suffix(".away").rename(instructions)
+        check("a review tools worktree without pr-reviewer-instructions.md exits 2 before gh "
+              "or the review runs",
+              completed.returncode == 2 and gh_calls == [] and cell_calls == []
+              and "pr-reviewer-instructions.md is missing" in completed.stdout,
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

@@ -51,7 +51,7 @@ def check(name, condition, detail=""):
 def parse(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument("--some-file", type=Path)
-    common.add_directory_options(parser, "wt/")
+    common.add_directory_options(parser, "briefs/")
     return common.resolve_path_options(parser.parse_args(argv))
 
 
@@ -98,15 +98,30 @@ def main():
     try:
         os.chdir(scratch)
         arguments = parse(["--merge-lane-worktrees-and-outputs-directory", "helpers",
+                           "--merge-lane-review-worktrees-directory", "worktrees",
                            "--some-file", "specs/brief.json"])
         check("a relative outputs directory is made absolute against the working directory",
               arguments.merge_lane_worktrees_and_outputs_directory == scratch / "helpers",
               str(arguments.merge_lane_worktrees_and_outputs_directory))
         check("every other Path option is made absolute too",
               arguments.some_file == scratch / "specs" / "brief.json", str(arguments.some_file))
-        check("the review tools worktree defaults to the absolute outputs directory's wt/main",
-              arguments.review_tools_worktree_at_main == scratch / "helpers" / "wt" / "main",
+        check("a relative review worktrees directory is made absolute against the working "
+              "directory",
+              arguments.merge_lane_review_worktrees_directory == scratch / "worktrees",
+              str(arguments.merge_lane_review_worktrees_directory))
+        check("the review tools worktree defaults to the absolute review worktrees directory's "
+              "main",
+              arguments.review_tools_worktree_at_main == scratch / "worktrees" / "main",
               str(arguments.review_tools_worktree_at_main))
+        check("the pull request's review worktrees are pr<n>-head and pr<n>-merged in the "
+              "review worktrees directory",
+              common.pull_request_head_worktree(arguments, 7) == scratch / "worktrees" / "pr7-head"
+              and common.pull_request_merged_worktree(arguments, 7)
+              == scratch / "worktrees" / "pr7-merged")
+        check("the directory options pass on as the same three absolute options",
+              parse(common.directory_options_argv(arguments)).__dict__
+              == {**arguments.__dict__, "some_file": None},
+              repr(common.directory_options_argv(arguments)))
 
         arguments = parse(["--merge-lane-worktrees-and-outputs-directory", "helpers",
                            "--review-tools-worktree-at-main", "../elsewhere/main"])
@@ -124,6 +139,15 @@ def main():
 
         home = scratch / "home"
         os.environ["HOME"] = str(home)
+        arguments = parse([])
+        check("with no options the review worktrees directory is ~/.cache/"
+              "merge-lane-review-worktrees, under HOME when the arguments are parsed",
+              arguments.merge_lane_review_worktrees_directory
+              == home / ".cache" / "merge-lane-review-worktrees"
+              and arguments.review_tools_worktree_at_main
+              == home / ".cache" / "merge-lane-review-worktrees" / "main",
+              f"{arguments.merge_lane_review_worktrees_directory} "
+              f"{arguments.review_tools_worktree_at_main}")
         check("the token file is the one merge-gate.sh reads, under HOME at call time",
               common.merge_account_token_file()
               == home / ".config" / "nedschorus" / "ned-review-merge.token",
@@ -152,7 +176,7 @@ def main():
         git("worktree", "add", "-q", "--detach", str(stale), before, cwd=clone)
         message = common.review_tool_missing_message(
             argparse.Namespace(review_tools_worktree_at_main=stale), "scripts/tool.py")
-        command = printed_command_after(message or "", "move it to main:")
+        command = printed_command_after(message or "", "Move it to main:")
         completed = run_printed(command) if command else None
         check("the printed command for an existing worktree, run as printed, moves it to main "
               "so the tool is there",
@@ -160,16 +184,39 @@ def main():
               and (stale / "scripts" / "tool.py").is_file(),
               f"{message}\n" + ("" if completed is None else completed.stderr))
 
+        check("the printed command for an existing worktree does not tell the reader to "
+              "make it", "worktree add" not in (message or ""), message or "")
+        check("the message for an existing worktree ends by saying what to do when main "
+              "itself lacks the tool",
+              (message or "").endswith("main itself lacks scripts/tool.py: tell the "
+                                       "user this message."), message or "")
+
+        check("the checkout the module names for making a missing worktree is the one "
+              "holding the module",
+              common.REPOSITORY_ROOT == MODULE.resolve().parents[1]
+              and (common.REPOSITORY_ROOT / ".git").exists(),
+              str(common.REPOSITORY_ROOT))
         absent = scratch / "absent-review-tools"
-        message = common.review_tool_missing_message(
-            argparse.Namespace(review_tools_worktree_at_main=absent), "scripts/tool.py")
-        command = printed_command_after(message or "", "from any clone of this repository:")
-        completed = (run_printed(command.replace("<clone>", str(clone)))
-                     if command and "<clone>" in command else None)
-        check("the printed command for a missing worktree, run as printed from a clone, makes "
-              "it at main so the tool is there",
+        # origin/main as last fetched lacks the tool, so the printed command works
+        # only if it fetches first.
+        git("update-ref", "refs/remotes/origin/main", before, cwd=clone)
+        # The scratch clone takes the place of the checkout holding the module, so
+        # running the printed command registers no worktree in the real repository.
+        real_checkout, common.REPOSITORY_ROOT = common.REPOSITORY_ROOT, clone
+        try:
+            message = common.review_tool_missing_message(
+                argparse.Namespace(review_tools_worktree_at_main=absent), "scripts/tool.py")
+        finally:
+            common.REPOSITORY_ROOT = real_checkout
+        command = printed_command_after(message or "", "Make it at main:")
+        completed = run_printed(command) if command else None
+        check("the printed command for a missing worktree, run as printed, makes it at main "
+              "from the checkout holding the module, so the tool is there",
               completed is not None and completed.returncode == 0
-              and (absent / "scripts" / "tool.py").is_file(),
+              and (absent / "scripts" / "tool.py").is_file()
+              and "<" not in command and "move it to main" not in message.lower()
+              and message.endswith("main itself lacks scripts/tool.py: tell the "
+                                   "user this message."),
               f"{message}\n" + ("" if completed is None else completed.stderr))
     finally:
         os.chdir(saved_directory)

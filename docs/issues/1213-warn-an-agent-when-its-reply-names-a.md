@@ -1,5 +1,6 @@
 ---
 issue: "[Warn an agent when its reply names a document for the user without a link the user can open on his Mac](https://github.com/nedschorus/nedschorus/issues/1213)"
+kind: design
 ---
 
 # Warn an agent when its reply names a document for the user without a link the user can open on his Mac
@@ -16,7 +17,7 @@ The rule was in front of the agent twice: `~/.claude/CLAUDE.md` says "files link
 
 - **`scripts/bare-number-citation-in-markdown-and-agent-reply-warning-hook.py`**, registered on UserPromptSubmit in `.claude/settings.json`: when the user sends a message, it reads the agent's previous reply from the transcript and hands the agent a note listing each pull request, GitHub issue or task the reply cited by a bare number. It never blocks the prompt. It skips fenced code, inline code spans and whole Markdown links. It replaced a `CLAUDE.md` bullet, which was removed when the hook landed (commit 1fd931a2, approved as item 6 of an approval-walk whose minutes are `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/nedschorus-where-agent-rules-live-decision-guide-draft-2026-10-05-minutes.md`).
 - **`scripts/cold-read-fast-read-due-for-linked-document-reminder-hook.py`**, a Stop hook: its function `find_markdown_file_paths_linked_or_named_in_agent_reply` finds the `.md` paths in the agent's last reply that name existing files: `file://` links, absolute paths under `/home/` or `/Volumes/`, and paths starting `docs/`, `nc-systems/` or `.claude/`, with no part of the reply skipped, code included. It maps `/Volumes/nedhome/<path>` to `/home/nedlern/<path>` when that file exists, and returns resolved paths, so it does not report which form the reply wrote. On 2026-10-12 it found the objective page's bare path above.
-- **`scripts/open-file-in-typora-on-mac-from-ned-box.py`** opens a ned-box file in Typora on the Mac through the Mac's mount of ned-box's home, `/Volumes/nedhome`, which `scripts/mac-window-opened-for-ned-box-forced-command.py` checks is mounted.
+- **`scripts/open-file-in-typora-on-mac-from-ned-box-nbd.py`** opens a ned-box file in Typora on the Mac through the Mac's mount of ned-box's home, `/Volumes/nedhome`, which `scripts/mac-request-from-ned-box-forced-command.py` checks is mounted.
 
 ## How a link to a ned-box file opens on the Mac
 
@@ -45,7 +46,7 @@ A note, never a refusal, handed to the agent with the user's next message, listi
 - GHI [Cite files by name, not by path](https://github.com/nedschorus/nedschorus/issues/610): how a file is cited in committed text so a search finds every reference. A reply's link is for the user to click; the two do not conflict.
 - GHI [cold-read-record-ship.py prints a citation without its host when it runs on ned-box, where the seats run](https://github.com/nedschorus/nedschorus/issues/299), closed: an earlier case of a citation that did not resolve from where the reader sat, fixed in one program.
 
-## What is not decided
+## Deferred-decisions
 
 1. **Sessions on the Mac.** A Mac agent-session can cite a document in its own clone or a ned-box document through the mount; the hook as proposed checks ned-box paths only and says nothing in a session on the Mac.
 2. **Documents that do not exist yet**, such as a report a reply says it will write: the finder skips them, so the hook says nothing.
@@ -54,3 +55,7 @@ A note, never a refusal, handed to the agent with the user's next message, listi
 ## Next action
 
 Ask the user which place the 2026-10-12 test was in; he clicks one `file:///Volumes/nedhome/...` link to a ned-box document in the other place, and says whether it opened. Then put the three undecided points to him, and build the hook with tests that feed it transcripts: a last reply naming a document by a bare repository path, for which the note gives that document's `file:///Volumes/nedhome/...` link; a reply naming the same document both bare and as a `/Volumes/nedhome` link, and a reply holding the path only in a fenced command, for both of which the hook prints nothing.
+
+## Provisional additions (not yet vetted by the user)
+
+- cold-read-research, 2026-10-14: PR [ned-box path reply warning hook: note /home/nedlern/ paths the user cannot open on the Mac, with the /Volumes/nedhome link to write](https://github.com/nedschorus/nedschorus/pull/1358) merged as 7bb5aead, covering ned-box paths in replies. Its review left five non-blocking points for a follow-up pull request: (1) a bare file URL whose name holds `(`, `)` or `*` is cut at that character; (2) the same for an angle autolink such as `<file:///home/nedlern/report(1).md>`; (3) a link destination holding paired backticks yields NUL characters in the suggestion, so the destination should be read from the original text; (4) `previous_reply_note` and `note_record_path_for` should move into a `-common.py` module that both reply hooks import, instead of the new hook reaching into the bare-number hook's private functions; (5) a file URL inside underscore emphasis is not noted.

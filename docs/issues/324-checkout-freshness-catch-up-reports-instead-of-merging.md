@@ -1,3 +1,8 @@
+---
+issue: "[checkout-freshness catch-up merges main into a branch whose head is frozen under review](https://github.com/nedschorus/nedschorus/issues/324)"
+kind: design
+---
+
 # checkout-freshness catch-up reports instead of merging
 
 Pair document for issue [checkout-freshness catch-up merges main into a branch whose head is frozen under review](https://github.com/nedschorus/nedschorus/issues/324).
@@ -219,9 +224,9 @@ act.
 Not built: it is a separate topic and needs a `.claude/settings.json` edit,
 which the instruction-file guard protects.
 
-## The ghi-info checkout: answered (b), built 2026-09-15
+## The ghi-guide-agent checkout: answered (b), built 2026-09-15
 
-The ghi-info checkout on ned-box sits on a branch named `ghi-info` with zero
+The ghi-guide-agent checkout on ned-box sits on a branch named `ghi-guide-agent` with zero
 commits of its own, and this hook's merge was the only thing keeping it
 current (issue [checkout-freshness catch-up's block decision overwrites the answer of a claude -p subprocess whose output a program reads](https://github.com/nedschorus/nedschorus/issues/334): it sat 225 commits behind before 2026-09-11). Under the ruling
 as built it is reported and left where it is. Two candidates were put to the
@@ -230,14 +235,14 @@ user:
 - (a) the hook fast-forwards a branch whose own-commit count is zero — no
   merge commit, nothing authored, but it does move the working branch, which
   the ruling's words forbid;
-- (b) `scripts/ghi-info-ask.py` refreshes that checkout itself with
+- (b) `scripts/ghi-guide-agent-ask.py` refreshes that checkout itself with
   `git merge --ff-only origin/main` before each ask, keeping the hook's rule
   absolute and putting the refresh in the one caller that knows the answer is
   program-consumed.
 
 **The user ruled (b) on 2026-09-15**, the recommendation. What it buys: the
 hook's "never move a working branch" stays absolute with no exception carved
-into it, and the refresh happens where the need actually is — ghi-info cites
+into it, and the refresh happens where the need actually is — ghi-guide-agent cites
 the pair documents and wiki pages, and reads them off that disk, so a stale
 checkout is stale answers about the designs the issues point at.
 
@@ -247,7 +252,7 @@ of the ask, before the mirror refresh or any `claude` turn:
 - **Only under the lock.** A contended ask publishes into a throwaway mirror
   precisely so it cannot disturb the holder; swapping the checkout's files
   beneath the holder's running `claude` would undo that.
-- **Never merges.** `--ff-only`. ghi-info commits its own document-side link
+- **Never merges.** `--ff-only`. ghi-guide-agent commits its own document-side link
   repairs, so a checkout carrying a commit main does not have is a real state:
   it is reported and left alone, exactly as the hook now does.
 - **Never fails an ask.** A dirty tree, an unreachable origin, a refused
@@ -282,3 +287,7 @@ The merges the old behaviour made onto frozen or finished heads, from the
 | 2026-09-15 | the same | after PR [restart-live-seats-at-login restarts whatever was live at the stop, however long the machine sat off (user-ruled 2026-09-15)](https://github.com/nedschorus/nedschorus/pull/370) merged |
 
 None was pushed. Nine in five days on one seat is the rate.
+
+## Outcome
+
+Closed as completed on 2026-09-15. Three pull requests carried the work: [checkout-freshness catch-up reports instead of merging into the working branch (#324)](https://github.com/nedschorus/nedschorus/pull/372) and [ghi-info-ask fast-forwards its own checkout before each ask (#324's open question, answered)](https://github.com/nedschorus/nedschorus/pull/375), both merged on 2026-09-15, and [The hook rebases a never-pushed branch onto main and tells the agent what moved](https://github.com/nedschorus/nedschorus/pull/388), merged the same day, which built the walk's ruling. One leftover went to GHI [checkout-freshness catch-up: pin the two git rebase --abort shapes healthy git cannot produce](https://github.com/nedschorus/nedschorus/issues/389), filed just before this issue closed. The section "Next, proposed and not built: warn on the obsolete FILE, not the branch" was not built when this issue closed.

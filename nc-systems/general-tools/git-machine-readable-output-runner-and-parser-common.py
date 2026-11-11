@@ -12,7 +12,10 @@ The parsers take the stdout of a -z command, as bytes or str, and return
 values; they run nothing, so a program keeps its own way of running git (its
 timeout, its environment, how it reports a failure). run_git_unless_outside_a_repository
 runs git itself, because telling "not a repository" from other failures needs
-git's message read in one fixed locale.
+git's message read in one fixed locale; a program that runs git its own way
+reads that message with git_stderr_says_outside_a_repository and
+git_stderr_says_worktree_git_directory_unusable, the one place that knows
+git's words.
 
 Load it by path, under the snake_case form of its file name:
 
@@ -26,6 +29,8 @@ from __future__ import annotations
 import codecs
 import os
 import subprocess
+import sys
+import types
 from typing import NamedTuple
 
 GIT_TIMEOUT_SECONDS = 60
@@ -47,6 +52,21 @@ class GitCommandFailed(Exception):
         else:
             outcome = f"exit {returncode}: {stderr.strip() or 'no error text'}"
         super().__init__(f"git {' '.join(self.arguments)} in {self.directory} failed ({outcome})")
+
+
+# Programs load this file by path, each copy a module object of its own, and
+# one program can reach two copies through the modules it loads. Each copy
+# would define its own GitCommandFailed, and an except naming one copy's class
+# misses an error raised through another. The first copy in a process registers
+# its class here, and every later copy uses that class.
+_FIRST_LOADED_COPY_CLASSES_MODULE_NAME = (
+    "git_machine_readable_output_runner_and_parser_common_first_loaded_copy_classes")
+_first_loaded_copy_classes = sys.modules.get(_FIRST_LOADED_COPY_CLASSES_MODULE_NAME)
+if _first_loaded_copy_classes is None:
+    _first_loaded_copy_classes = types.ModuleType(_FIRST_LOADED_COPY_CLASSES_MODULE_NAME)
+    _first_loaded_copy_classes.GitCommandFailed = GitCommandFailed
+    sys.modules[_FIRST_LOADED_COPY_CLASSES_MODULE_NAME] = _first_loaded_copy_classes
+GitCommandFailed = _first_loaded_copy_classes.GitCommandFailed
 
 
 class GitStatusEntry(NamedTuple):
@@ -277,8 +297,9 @@ def patch_header_path(text):
 
 
 def run_git(directory, arguments, *, accepted_exit_codes=(0,),
-            timeout_seconds=GIT_TIMEOUT_SECONDS, environment=None):
-    """Run `git -C <directory> <arguments>` and return its stdout as bytes."""
+            timeout_seconds=GIT_TIMEOUT_SECONDS, environment=None, return_stderr=False):
+    """Run `git -C <directory> <arguments>` and return its stdout as bytes, or with
+    return_stderr, (stdout bytes, stderr text)."""
     arguments = list(arguments)
     try:
         result = subprocess.run(["git", "-C", str(directory), *arguments],
@@ -293,23 +314,45 @@ def run_git(directory, arguments, *, accepted_exit_codes=(0,),
     if result.returncode not in accepted_exit_codes:
         raise GitCommandFailed(arguments, directory, result.returncode,
                                os.fsdecode(result.stderr))
+    if return_stderr:
+        return result.stdout, os.fsdecode(result.stderr)
     return result.stdout
+
+
+# git exits 128 both for "not a repository" and for other fatal errors, and
+# its message, read with LC_ALL=C, is the one way to tell them apart. A
+# worktree whose .git file names a git directory that is missing or is not a
+# git directory: git 2.53 writes the first words, git 2.56 the second. The
+# first begins like the no-repository words, so it is checked first.
+OUTSIDE_A_REPOSITORY_MESSAGE = "not a git repository"
+WORKTREE_GIT_DIRECTORY_UNUSABLE_MESSAGES = (
+    "not a git repository: ", "gitfile does not point to a valid repository")
+
+
+def git_stderr_says_worktree_git_directory_unusable(stderr):
+    """True when git's LC_ALL=C stderr says the directory is in a worktree
+    whose .git file names a git directory git cannot use."""
+    return any(message in stderr for message in WORKTREE_GIT_DIRECTORY_UNUSABLE_MESSAGES)
+
+
+def git_stderr_says_outside_a_repository(stderr):
+    """True when git's LC_ALL=C stderr says the directory is in no repository."""
+    return (OUTSIDE_A_REPOSITORY_MESSAGE in stderr
+            and not git_stderr_says_worktree_git_directory_unusable(stderr))
 
 
 def run_git_unless_outside_a_repository(directory, arguments, **run_options):
     """Run `git -C <directory> <arguments>` and return its stdout as bytes, or
     None when directory is in no git repository.
 
-    Raises GitCommandFailed for any other failure.
+    Raises GitCommandFailed for any other failure, including a worktree whose
+    git directory git cannot use.
     """
-    # git exits 128 both for "not a repository" and for other fatal errors, and
-    # the message is the one way to tell them apart. LC_ALL=C keeps the message
-    # untranslated, and this is the one place in the project that reads it.
     environment = dict(run_options.pop("environment", None) or os.environ)
     environment["LC_ALL"] = "C"
     try:
         return run_git(directory, arguments, environment=environment, **run_options)
     except GitCommandFailed as failure:
-        if failure.returncode is not None and "not a git repository" in failure.stderr:
+        if failure.returncode is not None and git_stderr_says_outside_a_repository(failure.stderr):
             return None
         raise

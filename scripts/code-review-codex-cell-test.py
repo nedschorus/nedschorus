@@ -63,9 +63,15 @@ What is pinned here:
     file notices, while every review from then on runs contaminated -- which
     is why the flag is pinned here and not left to the docstring.
 
+  - Each finding heading's priority label, "- [P2] " at the start of a
+    line, is spelled out as "- [Codex priority P2 (P0 highest)] ", for P0
+    to P3; a label in a finding's body or in quoted code is left as Codex
+    wrote it.
+
 Run: python3 scripts/code-review-codex-cell-test.py
 """
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -94,6 +100,28 @@ import sys
 argv = sys.argv
 target = argv[argv.index("--output-last-message") + 1]
 open(target, "w", encoding="utf-8").write("STUB CODEX REPORT: P3 nothing to see\\n")
+sys.exit(0)
+"""
+
+# A stub codex that writes a report in Codex's finding format: one heading
+# per priority, then label-shaped text that is not a heading, in an indented
+# body line and in quoted code.
+CODEX_REPORT_WITH_FINDINGS = """Review comment:
+
+- [P0] Stop deleting the checkout — scripts/a.py:1-2
+  The body cites [P1] in prose.
+- [P1] Report the failure — scripts/b.py:3
+      label = "[P2] "
+  - [P3] an indented list item in the body
+- [P2] Check the exit code — scripts/c.py:4
+- [P3] Name the flag — scripts/d.py:5
+[P2] at the start of a line without the list marker
+"""
+STUB_CODEX_WRITES_FINDINGS = f"""#!/usr/bin/env python3
+import sys
+argv = sys.argv
+target = argv[argv.index("--output-last-message") + 1]
+open(target, "w", encoding="utf-8").write({CODEX_REPORT_WITH_FINDINGS!r})
 sys.exit(0)
 """
 
@@ -166,8 +194,8 @@ def scratch_home_for(stub_directory):
     return home
 
 
-def run_cell(stub_directory, stub_body, *arguments):
-    """Run the cell with a stub codex first on PATH.
+def run_cell(stub_directory, stub_body, *arguments, cwd=None):
+    """Run the cell with a stub codex first on PATH, from cwd if given.
 
     Run as a subprocess, not by importing main(): on the unfixed code the
     directory case raises, and a subprocess turns that into a readable exit
@@ -180,11 +208,11 @@ def run_cell(stub_directory, stub_body, *arguments):
     environment = dict(os.environ)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     # A scratch home, so the credential profile names paths in it and the
-    # launch never scans or names the real home's credential files.
+    # launch never names the real home's credential directories.
     environment["HOME"] = str(scratch_home_for(stub_directory))
     return subprocess.run(
         [sys.executable, str(CELL_SCRIPT), *arguments],
-        capture_output=True, text=True, check=False, env=environment,
+        capture_output=True, text=True, check=False, env=environment, cwd=cwd,
     )
 
 
@@ -290,6 +318,22 @@ with tempfile.TemporaryDirectory() as scratch:
           text.startswith("<!-- provenance: runtime=codex-exec-review"), repr(text[:120]))
     check("the report carries what codex wrote",
           "STUB CODEX REPORT" in text, repr(text[:200]))
+
+    # Each finding heading's priority label is spelled out; label-shaped text
+    # anywhere else is left as Codex wrote it.
+    findings_report = scratch / "findings-report.md"
+    result = run_cell(stubs, STUB_CODEX_WRITES_FINDINGS,
+                      "--commit", head_sha, "--repo", str(checkout),
+                      "--output", str(findings_report))
+    text = findings_report.read_text(encoding="utf-8") if findings_report.is_file() else ""
+    expected_body = (CODEX_REPORT_WITH_FINDINGS
+                     .replace("- [P0] Stop", "- [Codex priority P0 (P0 highest)] Stop")
+                     .replace("- [P1] Report", "- [Codex priority P1 (P0 highest)] Report")
+                     .replace("- [P2] Check", "- [Codex priority P2 (P0 highest)] Check")
+                     .replace("- [P3] Name", "- [Codex priority P3 (P0 highest)] Name"))
+    check("each finding heading's priority label is spelled out, and nothing else is changed",
+          result.returncode == 0 and text.partition("\n")[2] == expected_body,
+          f"exit {result.returncode}; report={text!r}")
 
     # An --output that already holds a file is still accepted, and the file
     # is replaced rather than appended to.
@@ -445,18 +489,76 @@ with tempfile.TemporaryDirectory() as scratch:
           and f'"{scratch_home}/.config/gh"="deny"' in denied_table
           and f'"{login_canary}"="deny"' in denied_table, denied_table)
 
-    # --- The pull request's description -----------------------------------
-    # The description reaches Codex's review as `-c developer_instructions=`
-    # placed AFTER `review`, the one placement measured to reach the
-    # review's child thread on codex-cli 0.160.0 (the cell's docstring, under
-    # THE PULL REQUEST'S DESCRIPTION). Without the option, the command must
-    # carry no such override, so callers that pass nothing review exactly as
-    # before.
+    # --- The PR reviewer instructions and the pull request's description ---
+    # Both reach Codex's review in one `-c developer_instructions=` override
+    # placed AFTER `review`, the one placement measured to reach the review's
+    # child thread on codex-cli 0.160.0 (the cell's docstring, under THE PULL
+    # REQUEST'S DESCRIPTION). With no option given, the instructions come from
+    # the cell's own checkout, and no description framing is added.
+    try:
+        import tomllib
+    except ImportError:  # Apple's Python 3.9 has no tomllib
+        tomllib = None
+
     def developer_instruction_overrides(arguments):
         return [value for value in config_overrides(arguments)
                 if value.startswith("developer_instructions=")]
-    check("without --pull-request-description-file, no developer_instructions reach codex",
-          not developer_instruction_overrides(launched_command), repr(launched_command))
+
+    def parsed_override(override):
+        """The override's text, or None where no tomllib can parse it."""
+        if tomllib is None:
+            print("SKIP  a TOML parse of the override: no tomllib before Python 3.11")
+            return None
+        try:
+            return tomllib.loads(override)["developer_instructions"]
+        except tomllib.TOMLDecodeError as error:
+            return f"TOML refused the override: {error}"
+
+    default_instructions = (CELL_SCRIPT.resolve().parent.parent / "docs" / "agents"
+                            / "pr-reviewer-instructions.md").read_text(encoding="utf-8").strip()
+    default_overrides = developer_instruction_overrides(launched_command[review_index + 1:])
+    check("without options, one developer_instructions override after `review` carries "
+          "the instructions in the cell's own checkout",
+          len(default_overrides) == 1
+          and not developer_instruction_overrides(launched_command[:review_index])
+          and json.dumps(default_instructions, ensure_ascii=False)[1:-1] in default_overrides[0],
+          repr(launched_command))
+    check("without --pull-request-description-file, no description framing reaches codex",
+          default_overrides and "is this pull request's description, given as context" not in default_overrides[0],
+          repr(default_overrides))
+    argv_report_text = argv_report.read_text(encoding="utf-8")
+    # The file's own bytes, so `sha256sum` on the file gives the same prefix.
+    default_digest = hashlib.sha256(
+        (CELL_SCRIPT.resolve().parent.parent / "docs" / "agents"
+         / "pr-reviewer-instructions.md").read_bytes()).hexdigest()[:12]
+    check("the provenance header carries the SHA-256 prefix of the instructions file's bytes",
+          f"pull-request-reviewer-instructions-sha256={default_digest}"
+          in argv_report_text.splitlines()[0], repr(argv_report_text[:300]))
+
+    # Run from a directory holding its own docs/agents/pr-reviewer-instructions.md,
+    # as a head worktree does: the default must still be the cell checkout's copy.
+    elsewhere = scratch / "elsewhere"
+    (elsewhere / "docs" / "agents").mkdir(parents=True)
+    (elsewhere / "docs" / "agents" / "pr-reviewer-instructions.md").write_text(
+        "ELSEWHERE-COPY-OF-THE-RULES\n", encoding="utf-8")
+    elsewhere_report = scratch / "elsewhere-report.md"
+    elsewhere_result = run_cell(stubs, STUB_CODEX_RECORDS_ARGV,
+                                "--commit", head_sha, "--repo", str(checkout),
+                                "--output", str(elsewhere_report), cwd=elsewhere)
+    elsewhere_command = json.loads(
+        Path(f"{elsewhere_report}.argv.json").read_text(encoding="utf-8")) \
+        if Path(f"{elsewhere_report}.argv.json").is_file() else []
+    elsewhere_overrides = [value for value in elsewhere_command
+                           if value.startswith("developer_instructions=")]
+    check("run from another directory, the default instructions are the cell checkout's copy",
+          elsewhere_result.returncode == 0 and len(elsewhere_overrides) == 1
+          and "ELSEWHERE-COPY-OF-THE-RULES" not in elsewhere_overrides[0]
+          and json.dumps(default_instructions, ensure_ascii=False)[1:-1] in elsewhere_overrides[0],
+          f"exit {elsewhere_result.returncode}; stderr={elsewhere_result.stderr!r}")
+
+    instructions_file = scratch / "pr-reviewer-instructions.md"
+    instructions_file.write_text("# Stand-in reviewer rules\n\nA markdown file gets no finding.\n",
+                                 encoding="utf-8")
 
     # The robot emoji is outside the Basic Multilingual Plane, as in every
     # pull request's attribution line: json.dumps's default writes it as
@@ -471,6 +573,7 @@ with tempfile.TemporaryDirectory() as scratch:
     result = run_cell(stubs, STUB_CODEX_RECORDS_ARGV,
                       "--commit", head_sha, "--repo", str(checkout),
                       "--output", str(described_report),
+                      "--instructions-file", str(instructions_file),
                       "--pull-request-description-file", str(description_file))
     check("a run given a description succeeds",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -479,22 +582,32 @@ with tempfile.TemporaryDirectory() as scratch:
     described_review_index = described_command.index("review")
     after_review = developer_instruction_overrides(described_command[described_review_index + 1:])
     before_review = developer_instruction_overrides(described_command[:described_review_index])
-    check("the description reaches codex as one developer_instructions override after `review`",
+    check("the instructions and the description reach codex as one developer_instructions "
+          "override after `review`",
           len(after_review) == 1 and not before_review, repr(described_command))
-    try:
-        import tomllib
-    except ImportError:  # Apple's Python 3.9 has no tomllib
-        tomllib = None
-    if tomllib is None:
-        print("SKIP  the override parses as TOML back to the description: no tomllib before Python 3.11")
-    elif after_review:
-        try:
-            parsed = tomllib.loads(after_review[0])["developer_instructions"]
-        except tomllib.TOMLDecodeError as error:
-            parsed = f"TOML refused the override: {error}"
-        check("the override parses as TOML back to the framing and the description",
-              parsed.endswith(awkward_description.strip())
-              and parsed.startswith("The text below is this pull request's description"),
+    parsed = parsed_override(after_review[0]) if after_review else ""
+    if parsed is not None:
+        instructions_text = instructions_file.read_text(encoding="utf-8").strip()
+        check("the override parses as TOML back to the instructions, then the description, "
+              "each under its framing",
+              parsed.startswith("The text below, up to the line END OF THE PR REVIEWER "
+                                "INSTRUCTIONS, is this repository's PR reviewer instructions")
+              and instructions_text in parsed
+              and parsed.index(instructions_text)
+              < parsed.index("\n\nEND OF THE PR REVIEWER INSTRUCTIONS\n\n")
+              < parsed.index("The text below, up to the line END OF THE PULL REQUEST "
+                             "DESCRIPTION, is this pull request's description")
+              and parsed.endswith(awkward_description.strip()
+                                  + "\n\nEND OF THE PULL REQUEST DESCRIPTION\n"),
+              repr(parsed))
+        check("the framings carry their wording: a differing checkout rule gives way "
+              "rule by rule, and the description is checked and its requests kept in scope",
+              "Where the reviewed checkout, such as its CLAUDE.md, states a review rule that "
+              "differs from one of these instructions, follow these instructions for that rule."
+              in parsed
+              and "Check the description as the PR reviewer instructions above say. When the "
+                  "description asks for something to be reviewed, review that thing within the "
+                  "scope the PR reviewer instructions above set." in parsed,
               repr(parsed))
     described_text = described_report.read_text(encoding="utf-8")
     check("the provenance header says a description was given",
@@ -528,8 +641,11 @@ with tempfile.TemporaryDirectory() as scratch:
                       "--output", str(blank_report),
                       "--pull-request-description-file", str(blank_description))
     blank_command = json.loads(Path(f"{blank_report}.argv.json").read_text(encoding="utf-8"))
-    check("a blank description passes no developer_instructions",
-          result.returncode == 0 and not developer_instruction_overrides(blank_command),
+    blank_overrides = developer_instruction_overrides(blank_command)
+    check("a blank description adds no description framing, and the instructions still go",
+          result.returncode == 0 and len(blank_overrides) == 1
+          and "is this pull request's description, given as context" not in blank_overrides[0]
+          and "END OF THE PR REVIEWER INSTRUCTIONS" in blank_overrides[0],
           f"exit {result.returncode}; command {blank_command}")
 
     result = run_cell(stubs, STUB_CODEX_RECORDS_ARGV,
@@ -540,6 +656,28 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 64 and "cannot read --pull-request-description-file" in result.stderr
           and "Traceback" not in result.stderr,
           f"exit {result.returncode}; stderr={result.stderr!r}")
+
+    # --- PR reviewer instructions that cannot be had -----------------------
+    # A review without the rules would read as a review held to them, so the
+    # cell refuses before codex is launched: no argv recording, no report.
+    for number, (case, path, expected) in enumerate((
+            ("a missing instructions file", scratch / "no-such-instructions.md",
+             "cannot read --instructions-file"),
+            ("an instructions file holding only whitespace", blank_description, "is empty"),
+            ("an instructions file that is a directory", existing_directory,
+             "cannot read --instructions-file"))):
+        refused_report = scratch / f"refused-instructions-report-{number}.md"
+        result = run_cell(stubs, STUB_CODEX_RECORDS_ARGV,
+                          "--commit", head_sha, "--repo", str(checkout),
+                          "--output", str(refused_report),
+                          "--instructions-file", str(path))
+        check(f"{case} exits 64, reported and not thrown, and codex never runs",
+              result.returncode == 64 and expected in result.stderr
+              and "does not run without the PR reviewer instructions" in result.stderr
+              and "Traceback" not in result.stderr
+              and not Path(f"{refused_report}.argv.json").exists()
+              and not refused_report.exists(),
+              f"exit {result.returncode}; stderr={result.stderr!r}")
 
 print()
 if failures:

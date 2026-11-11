@@ -1,7 +1,9 @@
 # Experiment design — what enabling `dismiss_stale_reviews` on main would do
 
 Issue: issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3) ·
-Program: `scripts/protection-experiment-dismiss-stale-reviews.py`
+Program: `scripts/protection-experiment-dismiss-stale-reviews.py`, deleted unrun
+
+**Status: dropped.** The experiment never ran except as a trial run, and its program is deleted. merge-lane-2 merges only the exact commit that was reviewed, so a commit pushed after the approval cannot merge under it, which is the problem `dismiss_stale_reviews` was to solve. The program can be read in git history at the commit pinned at the end of this page.
 
 ## The question this answers
 

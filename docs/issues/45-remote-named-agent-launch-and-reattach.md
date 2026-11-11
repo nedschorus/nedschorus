@@ -1,5 +1,6 @@
 ---
 issue: "[Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedschorus/nedschorus/issues/45)"
+kind: design
 ---
 
 # Running named agents on the Ubuntu box, reachable from iTerm2 by name
@@ -16,7 +17,7 @@ The launcher shipped, and the work grew from "reach an agent by name" into how t
 - **`docs/nedschorus-wiki/nedschorus-agent-seat-model.md`** — how work is divided among named seats, and why: grouped by shared context rather than workload, two or three running at a time, seats retired and resumed by name. Ruled 2026-08-14: **group tasks by shared context, not by workload.** Two tasks belong to one seat when doing the first makes the agent smarter about the second. Idle seats are free; confused seats are expensive.
 - **`docs/agents/<name>-instructions.md`** — notes on six possible agent types (`gatekeeper`, `sanity-checker`, `skill-builder`, `ghi`, `fleet`, `doctrine`), written 2026-08-13; no running seat uses them.
 - **`docs/agents/seat-first-prompt.md`** — the launcher's `--first-prompt-file`: what a fresh agent reads to discover which seat it is and where to start.
-- **`docs/nedschorus-wiki/nedschorus-fleet-machine-paths-and-checkouts.md`** — full path map for both machines, the three checkout kinds, and what does and does not cross between them.
+- **`docs/nedschorus-wiki/nedschorus-mac-and-ned-box-machine-setup.md`** — full path map for both machines, the three checkout kinds, and what does and does not cross between them.
 - **`nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-research/45-session-seat-and-isolation-riders-retired-from-issues-queue-2026-10-02.md`** — five ideas raised and deliberately not built, each with its reasoning: the one-live-session-per-directory guard (whose obvious `/proc` detection was tried and proved unreliable: an attached session's process reports the directory the attach command was typed in, so detection must be solved before that guard is built), a `--directory` flag for the launchers, a branch-per-session CLAUDE.md rule, a cold read of the paths reference, and the deferred `choirmaster` rename.
 - **`nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-research/45-ubuntu-fleet-open-work-inventory-retired-from-issues-queue-2026-10-02.md`** — a 2026-08-13 snapshot of every open thread on the box, its context file, and the proposed seat split. Operational, so its PR and issue rows go stale; the thread map and context paths do not.
 

@@ -8,32 +8,45 @@ Wired as a Stop and a SubagentStop hook in .claude/settings.json.
 THE TRIGGER is the agent's last reply of the turn, read from the transcript:
 the text blocks of the last assistant message that has text, since the last
 message the user (or, for a subagent, its parent) sent. absence_claim_matches()
-decides whether that reply claims a stored artifact is absent. It is four
-phrase patterns, numbered 2, 4, 6 and 12 after the larger detector they were
-chosen from, with the guards measured alongside them; on 278 hand-labelled
-replies, about four fires in five were correct. Matches inside code, quoted
-text and block quotes do not count.
+decides whether that reply claims a stored artifact is absent. It is five
+phrase patterns, 2, 4, 6 and 12, numbered after the larger detector they were
+chosen from, and 13, for "does not exist" and "no longer exists", with the
+guards measured alongside them. Pattern 2 counts only when one of the
+artifact words that ARTIFACT lists, such as file, transcript or log, stands
+in the match's own clause, or, after a pronoun subject such as "it is gone",
+in the 100 characters before the match. Pattern 13 counts when an ARTIFACT
+word, or "branch", stands in its clause, or when "on", "in" or "anywhere"
+follows it, with or without "yet" between, as in "does not exist on main".
+On 278 hand-labelled
+replies, about six fires in seven were correct. Matches inside
+code, quoted text and block quotes do not count.
 
 THE HOOK STAYS SILENT when any of these holds:
-  - stop_hook_active is set: the agent is already continuing because of a
-    Stop hook, and blocking again could loop;
-  - the agent ran the locator this turn (a Bash command naming
-    locate-file-copies-across-machines.py) or invoked the skill
-    locate-before-saying-a-file-is-missing;
+  - this Stop ends the agent's answer to a Stop hook's output (the shared
+    rule of nc-systems/general-tools/claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py);
+  - the agent searched this turn: it invoked the skill find-missing-file or
+    find-info, or ran a Bash command naming one of find-info's search
+    programs, SEARCH_PROGRAM_NAMES;
   - this agent-session (for a subagent, this subagent) was already reminded:
     agents remember the reminder for a while, so it comes once;
-  - the agent-session is a headless `claude -p` child, told apart as the
-    due-task hook does: NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER set,
-    or CLAUDE_CODE_SESSION_ATTENDED == "0". The reminder would otherwise
+  - no user attends the agent-session, as
+    nc-systems/general-tools/agent-session-unattended-by-user-check-common.py
+    decides, such as a headless `claude -p` child. The reminder would otherwise
     become the child's last words, which its caller reads as the answer;
   - a SubagentStop payload names no agent_transcript_path: the main
     transcript holds the parent's reply, not the subagent's;
-  - a SubagentStop payload names an agent_transcript_path that does not
-    exist: Claude Code sends that for most subagent stops, so it is the
-    ordinary case, not a fault, and nothing is logged for it.
+  - the transcript the payload names does not exist (reading it raises
+    FileNotFoundError): Claude Code sends that for most subagent stops, and
+    rarely for a Stop, so it is the ordinary case, not a fault, and nothing
+    is logged for it. Any other error reading it, such as a permission
+    error, is a fault.
 
 OUTPUT when it reminds: {"decision": "block", "reason": <reminder>}, which
-keeps the agent going with the reminder as its next instruction.
+keeps the agent going with the reminder as its next instruction. At
+SubagentStop the reminder also tells the subagent to end with its whole
+report again, because Claude Code hands the dispatching agent only the
+subagent's last message, and a reply to the reminder alone would replace the
+report.
 
 THE LOG gets one JSON line per triggering reply, whatever the outcome
 (reminded, locator_ran, already_reminded, headless), and one per internal
@@ -52,7 +65,9 @@ is seen. Claude Code records a Stop or SubagentStop hook's exit 1 as a
 non-blocking error and still ends the turn. Exit 2 would continue the
 conversation, and a fault that recurs at every stop would then never let the
 agent stop. A log line that cannot be written is not a fault: the log is for
-rechecking precision, and the reminder still goes out.
+rechecking precision, and the reminder still goes out. The hook then exits 0
+and puts the failure in its JSON output's systemMessage, which Claude Code
+shows the user; stderr at exit 0 is shown to no one.
 
 --measure-precision LABELS_CSV runs absence_claim_matches() over a labelled
 reply file (columns reply_id, label, reply_text; label CORRECT, INCORRECT or
@@ -60,6 +75,7 @@ UNCLEAR) and prints the fire counts by label and the precision.
 """
 import argparse
 import csv
+import importlib.util
 import json
 import os
 import re
@@ -68,8 +84,36 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-SKILL_NAME = "locate-before-saying-a-file-is-missing"
-LOCATOR_PROGRAM_NAME = "locate-file-copies-across-machines.py"
+# Every Stop hook obeys this rule first: see the module's docstring.
+_stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
+    "claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
+_stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
+
+_agent_session_unattended_by_user_check_common_specification = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "agent-session-unattended-by-user-check-common.py")
+agent_session_unattended_by_user_check_common = importlib.util.module_from_spec(
+    _agent_session_unattended_by_user_check_common_specification)
+_agent_session_unattended_by_user_check_common_specification.loader.exec_module(
+    agent_session_unattended_by_user_check_common)
+
+_claude_code_session_transcript_records_read_backward_common_specification = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_records_read_backward_common",
+    Path(__file__).resolve().with_name("claude-code-session-transcript-records-read-backward-common.py"))
+claude_code_session_transcript_records_read_backward_common = importlib.util.module_from_spec(_claude_code_session_transcript_records_read_backward_common_specification)
+_claude_code_session_transcript_records_read_backward_common_specification.loader.exec_module(claude_code_session_transcript_records_read_backward_common)
+
+SKILL_NAMES = ("find-missing-file", "find-info")
+# find-info's programs for a file, a past discussion and an approval.
+SEARCH_PROGRAM_NAMES = (
+    "locate-file-copies-across-machines.py",
+    "log-store-past-discussions-regex-search-newest-first.py",
+    "locate-user-approval-by-question-subject.py",
+)
 # A person ("human"), another session or a subagent handing back ("peer"), and
 # a parent session writing to its subagent ("coordinator"): the agent answers each.
 TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator")
@@ -84,13 +128,17 @@ LOG_ENVIRONMENT_VARIABLE = "NEDSCHORUS_ABSENCE_CLAIM_REMINDER_LOG"
 STATE_ENVIRONMENT_VARIABLE = "NEDSCHORUS_ABSENCE_CLAIM_REMINDER_STATE_DIRECTORY"
 REPLY_TEXT_LOGGED_CHARACTERS = 4000
 
-REMINDER_TEMPLATE = (
+REMINDER_HEAD = (
     "absence-claim reminder: your reply says a file or record is gone, missing "
     "or cannot be found ({matched}), and you have not run the locator this "
     "turn. Files agents call missing are often in another checkout, the "
     "log-store, a transcript or a backup.\n"
     "Before you tell anyone it does not exist, run: python3 "
     "scripts/locate-file-copies-across-machines.py <the file's name>\n"
+    "For a ruling, an approval or a past discussion, use the skill find-info "
+    "instead.\n"
+)
+REMINDER_TEMPLATE = REMINDER_HEAD + (
     "If the locator finds it, tell whoever read your reply that it is not "
     "missing, and where it is.\n"
     "If the locator finds nothing, say where you looked, not that the file "
@@ -98,26 +146,53 @@ REMINDER_TEMPLATE = (
     "If your reply was not about a stored file or record, carry on; this "
     "reminder comes once per session."
 )
+SUBAGENT_REMINDER_TEMPLATE = REMINDER_HEAD + (
+    "The agent that dispatched you receives only your last message, so what "
+    "you write now replaces your report unless it contains the report.\n"
+    "If the locator finds it, end with your whole report again, with that "
+    "claim corrected to say where the file is.\n"
+    "If the locator finds nothing, end with your whole report again, with "
+    "that claim saying where you looked, not that the file does not exist.\n"
+    "If your reply was not about a stored file or record, say so in one line, "
+    "then end with your whole report again, unchanged; this reminder comes "
+    "once per subagent."
+)
 
 # The pattern numbers are kept from the detector these were measured in, so
 # the guards below read the same as in the measurement.
 PATTERNS = {
     2: r"\b(?:is|are|was|were|it's|they're)\s+(?:(?:now|all|still)\s+)?(?:gone|missing|lost|absent|unrecoverable)\b",
-    4: r"\b(?:can not|cannot|can't|could not|couldn't|did not|didn't|do not|don't|unable to|failed to)\s+(?:\w+\s+){0,3}(?:find|locate|recover)\b",
-    6: r"\b(?:not|isn't|aren't|wasn't|weren't)\s+(?:present\s+)?(?:on disk|in (?:the |this |any |our |my )?(?:mirror|log[- ]store|repo(?:sitory)?|checkout|git|branch|transcript|backup))\b|\bon no branch\b",
+    # Only adverbs may stand between the negation and the verb: "can't reliably find", not "didn't say where to find".
+    4: r"\b(?:can not|cannot|can't|could not|couldn't|did not|didn't|do not|don't|unable to|failed to)\s+(?:(?:yet|still|ever|even|actually|really|reliably|directly|quickly|immediately|always)\s+){0,3}(?:find|locate|recover)\b",
+    6: r"\b(?:not|isn't|aren't|wasn't|weren't)\s+(?:present\s+)?(?:on disk|in (?:the |this |any |our |my )?(?:mirror|log[- ]store|repo(?:sitory)?|checkout|git history|branch|transcript|backup))\b|\bon no branch\b",
+    13: r"\b(?:does not|doesn't|did not|didn't|no longer)\s+exists?\b|\bnever existed\b",
     12: r"\bno\s+(?:user turn|reply|response)(?:\s+from you)?\s+(?:in between|between)\b|\b(?:you never (?:gave|said yes)|ruling you never gave)\b",
 }
 COMPILED = {number: re.compile(pattern, re.I) for number, pattern in PATTERNS.items()}
-# Pattern 2's words also describe processes, settings and findings, so it
-# fires only when a stored artifact is named just before the match.
-ARTIFACT = re.compile(r"\b(?:FILE|files?|documents?|drafts?|transcripts?|records?|copies|copy|backups?|paths?|directories|directory|folders?|artifacts?|overviews?|reports?|logs?|history|traces?|phrases?|mirrors?|checkouts?|repos?|issues?|comments?|edits?|citations?|rulings?|approvals?|prompts?|notes?|data|results?)\b", re.I)
+
+# Pattern 2 fires only when a stored artifact is named in its own clause, or within 100 characters before a pronoun
+# subject. A hyphen
+# next to the word ("per-path", "file-by-file") makes it a modifier, not the artifact.
+ARTIFACT = re.compile(r"(?<![\w-])(?:FILE|files?|documents?|drafts?|transcripts?|records?|copies|copy|backups?|paths?|directories|directory|folders?|artifacts?|overviews?|reports?|logs?|history|traces?|mirrors?|checkouts?|repos?|issues?|citations?|rulings?|approvals?|prompts?|minutes|data|results?)(?![\w-])", re.I)
+CLAUSE_BREAK = re.compile(r"[;:(—–]|\s-\s")
+# Code and text elements an edit removes; "the fallback is gone" reports a change, not a missing artifact.
+EDITED_ELEMENT = re.compile(r"(?<![\w-])(?:parsing|parser|lookup|comparison|rules?|guards?|comments?|fallback|scan|tail|property|words?|phrases?|names?|commands?|gap|rows?|arithmetic|waker|advice|alignment|minimum|mod|change|premise|reason|cases?|binary|style|options?|flags?|code|helper|function|stand-ins|owner|lock|refusal|checks?|format|steps?|fork|clog|mark|link|distinction)(?![\w-])", re.I)
+# Words that open a clause inside a sentence; the claim's subject stands after the last one before the match.
+# "and" opens one only when a subject follows it: "the scan finished and the file", not "grep and glob".
+CLAUSE_OPENER = re.compile(r"[,;:(—–]|\s-\s|\b(?:that|which|who|whether|why|how|what|because|since|while|but|so|although|though)\b|\band(?=\s+(?:I|we|you|they|it|he|she|the|a|an|this|these|those|its|their|my|our)\b)", re.I)
+# After the subject's first noun, a preposition, a pronoun or a determiner starts what modifies it: "the transcript
+# for that step", "the folders it checks", "the file the link points to".
+# A participle does too: "the logs showing parser failures".
+POST_MODIFIER = re.compile(r"\b(?:of|for|to|from|on|in|at|by|with|about|it|they|we|I|you|he|she|the|a|an|this|these|those|its|their|\w+ing)\b", re.I)
+FIRST_PERSON = re.compile(r"\b(?:I|[Ww]e|[Mm]y|[Oo]ur|me|us)\b")
 SCORING_REPLY = re.compile(r"\b(?:match file|match to|report covers|answer-key entries)\b", re.I)
 
 
 def strip_noise(text):
     """Remove what an agent quotes rather than asserts: fenced and indented
     code, block quotes, inline code, link targets, emphasis and double-quoted
-    text. An inline code span that looks like a path becomes the word FILE."""
+    text. An inline code span that looks like a path, one with no space that
+    holds a slash or a file extension, becomes the word FILE."""
     text = text.replace("’", "'").replace("‘", "'").replace(" ", " ")
     lines = []
     fence = None
@@ -140,7 +215,9 @@ def strip_noise(text):
 
     def inline(code_match):
         body = code_match[2]
-        if re.search(r"(?:[/~]|\.[a-zA-Z0-9]{1,8}\b)", body) and not re.search(r"\s", body):
+        # A slash or a file extension marks a path; a tilde alone does not,
+        # since agents backquote a lone ~ as a character, and ~/x has a slash.
+        if re.search(r"(?:/|\.[a-zA-Z0-9]{1,8}\b)", body) and not re.search(r"\s", body):
             return " FILE "
         return " "
     text = re.sub(r"(`+)([^`\n]*?)\1", inline, text)
@@ -151,41 +228,176 @@ def strip_noise(text):
     return text
 
 
+def clause_before(before):
+    """The text after the last clause break before the match: the match's own subject, roughly."""
+    return CLAUSE_BREAK.split(before)[-1][-80:]
+
+
+def claim_subject(before):
+    """The match's subject: the text before the match after the last clause break or clause-opening word."""
+    return CLAUSE_OPENER.split(before)[-1]
+
+
+def edited_element_heads_subject(before):
+    """True when the head noun of the match's subject is an edited code or text element: of the artifact and
+    element words before the subject's first modifier, the last is an element word, as in "the log format for
+    each step". "The transcript for the log parser" is headed by an artifact word. A subject of nouns joined by
+    "and" is an element's only when an element heads every one: "the transcript and the parser" is not."""
+    # After a preposition, "that" is a determiner: "the transcript for that step".
+    before = re.sub(r"\b(of|for|to|from|on|in|at|by|with|about)\s+that\b", r"\1 the", before, flags=re.I)
+    parts = re.split(f"({CLAUSE_OPENER.pattern})", before, flags=re.I)
+    index = len(parts) - 1
+    # Right after a noun, "that" opens a relative clause, which modifies that noun: "the file that contains the parser".
+    while (index >= 2 and parts[index - 1].lower() in ("that", "which", "who")
+           and re.search(f"(?:{ARTIFACT.pattern}|{EDITED_ELEMENT.pattern})\\s*$", parts[index - 2], re.I)):
+        index -= 2
+    # "And" right after a noun joins two nouns of one subject, "the transcript and the parser", where after a verb it
+    # opened a new clause, "the scan finished and the file". An element heads the subject only when it heads every part.
+    # A part with a pronoun subject, or with a second determiner not opening a prepositional phrase, holds a verb, so
+    # its last noun is that verb's object: "I edited the file and the guard", "the commit touched the log and the
+    # fallback", but not "the logs for the scan and the parser".
+    last = index
+    while (index >= 2 and parts[index - 1].lower() == "and"
+           and re.search(f"(?:{ARTIFACT.pattern}|{EDITED_ELEMENT.pattern})\\s*$", parts[index - 2], re.I)
+           and not re.match(r"\s*(?:I|we|you|they|he|she|it)\b", parts[index - 2], re.I)
+           and len(re.findall(r"(?<!\bof )(?<!\bfor )(?<!\bto )(?<!\bfrom )(?<!\bon )(?<!\bin )(?<!\bat )(?<!\bby )"
+                              r"(?<!\bwith )(?<!\babout )\b(?:the|a|an|this|these|those|its|their|my|our)\b",
+                              parts[index - 2], re.I)) <= 1):
+        index -= 2
+    heads = [element_heads_noun_phrase(part) for part in parts[index:last + 1:2]]
+    heads = [head for head in heads if head is not None]
+    return bool(heads) and all(heads)
+
+
+def element_heads_noun_phrase(subject):
+    """True when the head noun of subject is an edited element, False when it is an artifact word, None when it
+    names neither."""
+    nouns = [(word.start(), word.end(), bool(ARTIFACT.fullmatch(word[0])))
+             for word in re.finditer(ARTIFACT.pattern + "|" + EDITED_ELEMENT.pattern, subject, re.I)]
+    if not nouns:
+        return None
+    # "parsing" in "the transcript parsing" is the head noun, not a participle; "naming" in "the file naming rules"
+    # is part of a compound noun, since it stands right before the subject's last noun. A noun in a compound's first
+    # place is singular, so after a plural it is a participle: "the files containing code".
+    modifier = next((word for word in POST_MODIFIER.finditer(subject, nouns[0][1])
+                     if not EDITED_ELEMENT.fullmatch(word[0])
+                     and not (word[0].lower().endswith("ing") and re.fullmatch(r"\s+\w+\s*", subject[word.end():])
+                              and not re.search(r"(?<!s)s\s+$", subject[:word.start()]))),
+                    None)
+    head = [noun for noun in nouns if not modifier or noun[0] < modifier.start()][-1]
+    return not head[2]
+
+
 def match_is_excluded(number, sentence, before, after):
     """True when the sentence around a match shows it is not an absence claim."""
-    if number == 2 and not ARTIFACT.search(before[-100:]):
-        return True
-    if number == 2 and re.match(r"\s+from (?:the |a )?(?:glossary|list|table|set|definition)\b", after, re.I):
-        return True
+    clause = clause_before(before)
+    is_pattern_13 = number == 13
+    if is_pattern_13:
+        # Pattern 13 needs a stored artifact in its clause or a place after it ("does not exist on main"),
+        # and is read like pattern 2 by every other guard.
+        if not re.search(ARTIFACT.pattern + r"|\bbranch(?:es)?\b", clause, re.I) and not re.match(r"\s+(?:yet\s+)?(?:on|in|anywhere)\b", after, re.I):
+            return True
+        # "a file that doesn't exist", "something that doesn't exist": an indefinite noun with a relative clause names a kind.
+        if re.search(r"\b(?:an?|any|every|something)\s+(?:[\w'-]+\s+){0,4}(?:that|which)\s+$", before, re.I):
+            return True
+        # "on a machine where the directory doesn't exist yet": a general case.
+        if re.search(r"\bwhere\b", before, re.I):
+            return True
+        number = 2
+    if number == 2 and not is_pattern_13:
+        # A pronoun subject ("it is gone", "they're lost") points back past the clause break.
+        pronoun = re.search(r"\b(?:it|they|this|these|those)\s+$", before, re.I) or re.match(r"(?:it's|they're)\b", sentence[len(before):], re.I)
+        if not ARTIFACT.search(before[-100:] if pronoun else clause):
+            return True
     if number == 4 and re.search(r"\b(?:commands?|services?|hosts?|programs?|readers?)\b", sentence, re.I) and not ARTIFACT.search(sentence):
         return True
-    if re.search(r"\b(?:not|rather than|without)\s+(?:\w+\s+){0,3}(?:claiming|concluded|concluding|saying|say)\b", before, re.I):
-        return True
-    if re.search(r"\b(?:before (?:saying|telling)|tells every agent|claimed|counts? how often|counts? how many)\b", before, re.I):
-        return True
     if re.search(r"\b(?:if|unless|when|whenever|would|should|will)\b", before, re.I):
-        return True
-    if re.search(r"\bglossary\b", sentence, re.I):
         return True
     if number == 2 and re.search(r"\b(?:none|nothing|no (?:work|edits?|files?))\b", before, re.I):
         return True
     if number == 2 and re.search(r"\b(?:setting|option|field|flag|heading|section|sentence|clause|line|entry|entries|pid|process|supervisor|thread|cause|exception)\b[^,;:]{0,35}$", before, re.I):
         return True
-    if number == 2 and re.search(r"\bprocesses\b[^,;:]{0,35}$", before, re.I):
-        return True
-    if number == 4 and re.match(r"\s+(?:out\s+)?(?:which run|who wrote|how|why)\b", after, re.I):
+    # A fact, not an artifact: "I did not find out which run wrote it", "What I can't recover: who set the template".
+    if number == 4 and re.match(r"\s*[:\u2014-]?\s*(?:out\s+)?(?:which run|who|how|why)\b", after, re.I):
         return True
     if number == 4 and re.match(r"\s+this shape\b", after, re.I):
         return True
     if re.search(r"\beither\b", before, re.I) and re.search(r"\bor\b", after, re.I):
-        return True
-    if number == 2 and re.search(r"\bno\s+(?:report|file|record)\s*$", before, re.I):
         return True
     if re.search(r"\b(?:does not|doesn't|never)\s+say\b", before[-100:], re.I):
         return True
     if re.search(r"\buntil\b|(?<!at )\bonce\b", before, re.I):
         return True
     if re.search(r"\bcould\b", before, re.I):
+        return True
+    # A relative clause with "whose" names a kind of thing: "a worktree whose git directory is missing".
+    if number == 2 and re.search(r"\bwhose\b[^,;:.]{0,40}$", before, re.I):
+        return True
+    # Talk about claims in the match's own clause, or what someone says just before the match, is not a claim.
+    if re.search(r"\bclaim(?:s|ing|ed)?\b|\b(?:not|isn't) true\b", clause, re.I):
+        return True
+    if re.search(r"\b(?:say|says|said|saying)\s+(?:[\w'-]+\s+){0,5}$", before, re.I):
+        return True
+    # "no test case on main is lost", "nobody's lines are lost".
+    # "The file with no backup is gone": after a preposition, the "no" phrase is not the subject.
+    if number == 2 and re.search(r"(?<!\bwith )(?<!\bwithout )(?<!\bof )(?<!\bfor )\b(?:no|nobody's|neither)\s+(?:[\w'-]+\s+){0,4}$", before, re.I):
+        return True
+    # What a test or check verifies: "the tests check that the temporary folder is gone".
+    if re.search(r"\b(?:tests?|checks?)\s+(?:\w+\s+){0,2}(?:that|whether)\b", before, re.I):
+        return True
+    # A match followed by the sentence's own verb sits inside a clause about something else: "the log that confirms
+    # the parser is gone is still on disk".
+    # When "that" or "which" is the match's own subject, the clause is about the noun before it: "the transcript that
+    # is gone is the only copy".
+    if (number == 2 and re.match(r"\s+(?:is|are|was|were|has|have|had|remains?|stays?|seems?)\b", after, re.I)
+            and not re.search(ARTIFACT.pattern + r"\s+(?:that|which)\s+$", before, re.I)):
+        return True
+    # Pattern 2 on an edited code or text element: "the untested guards are gone", "the log format is gone".
+    if number == 2 and edited_element_heads_subject(before):
+        return True
+    # Alternatives in a case analysis: "its file is gone", "is missing or stale".
+    if number == 2 and (re.match(r"\s+or\b", after, re.I) or re.search(r"\bor\s+(?:[\w'-]+\s+){0,3}$", before, re.I)):
+        return True
+    # Pattern 4 whose subject is a program, a search or agents in general: "the locator ... so it can't find an approval",
+    # "Keyword search cannot find reviewers", "agents can't find your answer" describe what something can do.
+    if number == 4 and not FIRST_PERSON.search(clause) and re.search(r"\b(?:it|they|agents?|search|test|hook|locator|guard|program|script|reader|checker)\s+$", before, re.I):
+        return True
+    # "couldn't find a stronger case for N", "a term for": an argument or a word, not an artifact.
+    if number == 4 and re.match(r"\s+(?:a|any)\s+(?:[\w-]+\s+){0,2}(?:case|argument|reason|term|word|replacement)s?\b", after, re.I):
+        return True
+    # Pattern 6 on a file said to live elsewhere: it exists, and the sentence says where.
+    if number == 6 and re.search(r"\b(?:lives?|sits?)\s+in\b|\bexists? only\b|\b(?:machine|seat)-local\b|\bgit-?ignored\b", sentence, re.I):
+        return True
+    # A relative clause describes a kind: "rulings an agent asked for that you never gave".
+    if number == 12 and re.search(r"\b(?:that|which)\s+(?:(?:is|are|was|were)\s+)?$", before, re.I):
+        return True
+    # A definition: "step 4 uses the word for another file: the old version kept beside a revised text that is not in the repository".
+    # The defining verb stands before the colon that opens the definition, and the match sits in a relative clause of
+    # the defining phrase; "This means the following: the transcript is not in the repository" makes a claim.
+    if (number == 6 and ":" in before and re.search(r"\b(?:uses?|means|refers? to|stands? for)\b", before.rsplit(":", 1)[0], re.I)
+            and re.search(r"\b(?:that|which)\s+(?:(?:is|are|was|were)\s+)?$", before, re.I)):
+        return True
+    # "missing" as a verb: "the record is missing a field".
+    if number == 2 and re.match(r"\s+(?:a|an|something)\b", after, re.I) and "missing" in sentence[len(before):].lower():
+        return True
+    # A future moment, a test case or every run: "the moment the move lands, that path is gone".
+    if number == 2 and re.search(r"\b(?:checks? on|case where|the moment|on any run)\b", before, re.I):
+        return True
+    # A kind named by a relative clause: "a folder that is missing", "any reports whose file is gone".
+    if number == 2 and re.search(r"\b(?:a|an|any)\s+(?:\w+\s+){0,3}(?:worktree|checkout|folder|file|report)\s+(?:that|whose)\b", before, re.I):
+        return True
+    if number == 2 and re.search(r"\b(?:those|any)\b.*\b(?:whose|that)\b", before, re.I):
+        return True
+    if number == 2 and re.search(r"\b(?:advice|conditional)\b", before, re.I):
+        return True
+    # What a search tool can do: "grep and glob don't find branch names".
+    if number == 4 and re.search(r"\b(?:the locator|keyword search|grep and glob|the pre-push hook|the search)(?:\s+(?:still|also|just|simply|often|never|even|really|actually))*\s*$", claim_subject(before), re.I) and re.search(r"\b(?:cannot|can't|don't)\b", sentence, re.I):
+        return True
+    # "Records like these belong in the log-store, not in the repository": where things should go.
+    if number == 6 and re.search(r"\bbelongs?\b", re.split(r"[;:]", before)[-1], re.I):
+        return True
+    # "a commit on no branch": a kind of commit.
+    if number == 6 and re.search(r"\b(?:a|an|any)\s+commit\s*$", before, re.I):
         return True
     return False
 
@@ -230,15 +442,7 @@ def is_human_or_parent_message(record):
 
 def read_turn(transcript_path):
     """Return (last reply text, locator ran this turn) for the transcript's last turn."""
-    records = []
-    with open(transcript_path, encoding="utf-8") as transcript:
-        for line in transcript:
-            try:
-                record = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(record, dict):
-                records.append(record)
+    records = claude_code_session_transcript_records_read_backward_common.records_from_newest_boundary_to_end(transcript_path, is_human_or_parent_message)
     start = 0
     for index in range(len(records) - 1, -1, -1):
         if is_human_or_parent_message(records[index]):
@@ -258,10 +462,11 @@ def read_turn(transcript_path):
                 continue
             if block.get("type") == "tool_use":
                 tool_input = block.get("input") or {}
+                command = str(tool_input.get("command", ""))
                 if (block.get("name") == "Bash"
-                        and LOCATOR_PROGRAM_NAME in str(tool_input.get("command", ""))):
+                        and any(name in command for name in SEARCH_PROGRAM_NAMES)):
                     locator_ran = True
-                if block.get("name") == "Skill" and tool_input.get("skill") == SKILL_NAME:
+                if block.get("name") == "Skill" and tool_input.get("skill") in SKILL_NAMES:
                     locator_ran = True
             elif block.get("type") == "text":
                 message_id = message.get("id") or id(record)
@@ -286,12 +491,14 @@ def state_directory(environment, home):
 
 
 def append_log_line(path, entry):
+    """Append entry to the log at path; return None, or why it could not be written."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as log:
             log.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except OSError:
-        pass
+    except OSError as error:
+        return f"{type(error).__name__}: {error}"
+    return None
 
 
 def claim_once_per_session(directory, key):
@@ -310,9 +517,9 @@ def run(stdin_text, environment, home, now):
     """Return the text to print, or None; append what it decided to the log."""
     payload = json.loads(stdin_text)
     if not isinstance(payload, dict):
-        raise ValueError(f"the input on the hook's stdin is a JSON {type(payload).__name__}, not an object")
+        raise ValueError("the input on the hook's stdin is JSON, but not an object")
     event = payload.get("hook_event_name") or "Stop"
-    if payload.get("stop_hook_active"):
+    if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
     if event == "SubagentStop":
         transcript_path = payload.get("agent_transcript_path")
@@ -320,17 +527,17 @@ def run(stdin_text, environment, home, now):
         transcript_path = payload.get("transcript_path")
     if not transcript_path:
         return None
-    if event == "SubagentStop" and not Path(transcript_path).expanduser().exists():
+    try:
+        reply, locator_ran = read_turn(Path(transcript_path).expanduser())
+    except FileNotFoundError:
         return None
-    reply, locator_ran = read_turn(Path(transcript_path).expanduser())
     matches = absence_claim_matches(reply)
     if not matches:
         return None
     session_key = str(payload.get("session_id") or "unknown-session")
     if event == "SubagentStop":
         session_key += "-" + str(payload.get("agent_id") or "unknown-agent")
-    headless = bool(environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
-                    or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0")
+    headless = agent_session_unattended_by_user_check_common.agent_session_unattended_by_user(environment)
     if headless:
         outcome = "headless"
     elif locator_ran:
@@ -339,7 +546,8 @@ def run(stdin_text, environment, home, now):
         outcome = "reminded"
     else:
         outcome = "already_reminded"
-    append_log_line(log_path(environment, home), {
+    path = log_path(environment, home)
+    log_failure = append_log_line(path, {
         "time": now.isoformat(),
         "event": event,
         "session_id": payload.get("session_id"),
@@ -349,12 +557,20 @@ def run(stdin_text, environment, home, now):
         "matches": [{"pattern": number, "phrase": phrase} for number, phrase in matches],
         "reply": reply[:REPLY_TEXT_LOGGED_CHARACTERS],
     })
-    if outcome != "reminded":
-        return None
-    matched = ", ".join(f'"{phrase}"' for _, phrase in matches[:3])
-    return json.dumps({"decision": "block",
-                       "reason": REMINDER_TEMPLATE.format(matched=matched)},
-                      ensure_ascii=False)
+    output = {}
+    if outcome == "reminded":
+        matched = ", ".join(f'"{phrase}"' for _, phrase in matches[:3])
+        template = SUBAGENT_REMINDER_TEMPLATE if event == "SubagentStop" else REMINDER_TEMPLATE
+        output.update({"decision": "block", "reason": template.format(matched=matched)})
+    if log_failure:
+        reached = ("The reminder to run the locator was still sent to the agent."
+                   if outcome == "reminded" else "No reminder was due, so none was sent to the agent.")
+        output["systemMessage"] = (
+            f"absence-claim-locator-reminder-hook: the outcome {outcome!r} of checking the last "
+            f"reply was not logged to {path}: {log_failure}. {reached} A recheck of the hook's "
+            f"precision will miss this reply; make {path} a file that can be written, or set "
+            f"{LOG_ENVIRONMENT_VARIABLE} to one.")
+    return json.dumps(output, ensure_ascii=False) if output else None
 
 
 def measure_precision(labels_path):
@@ -383,16 +599,20 @@ def main(argv=None):
             print(output)
     except Exception as error:
         try:
-            append_log_line(log_path(os.environ, Path.home()), {
+            log_failure = append_log_line(log_path(os.environ, Path.home()), {
                 "time": datetime.now(timezone.utc).isoformat(),
                 "outcome": "error",
                 "error": f"{type(error).__name__}: {error}",
             })
-        except Exception:
-            pass  # the stderr line below reports the fault whether or not it was logged
-        print(f"absence-claim-locator-reminder-hook: the last reply was not checked for a "
-              f"claim that a file is missing, because the hook failed; the turn ends as "
-              f"usual: {type(error).__name__}: {error}", file=sys.stderr)
+        except Exception as log_error:
+            log_failure = f"{type(log_error).__name__}: {log_error}"
+        not_logged = f"; the failure was not logged either: {log_failure}" if log_failure else ""
+        print(f"absence-claim-locator-reminder-hook: the hook failed with "
+              f"{type(error).__name__}: {error}{not_logged}. So the last reply was not checked "
+              f"for a claim that a file is missing, no reminder reached the agent, and the turn "
+              f"ends as usual. If this recurs, run python3 "
+              f"scripts/absence-claim-locator-reminder-hook-test.py and tell the user what it "
+              f"reports.", file=sys.stderr)
         return 1
     return 0
 

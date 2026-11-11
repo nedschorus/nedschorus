@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run every test suite on main once a day on this machine, and record the result in the log-store.
+"""Run every nc-test-suite on main once a day on this machine, and record the result in the log-store.
 
 Usage:
   scripts/daily-full-test-run-of-main.py [--clone DIR] [--log-store-root DIR]
@@ -21,8 +21,10 @@ Usage:
                 worktree, the run's logs, the record's local copies and this
                 program's lock; default, the system temp directory
   --recorded-inputs-directory
-                passed through to the runner; default, not passed, so the
-                runner uses the machine's own recordings store
+                passed through to the runner, as its --recorded-inputs-directory
+                and its --suite-files-only-strace-saw-lists-directory; default,
+                not passed, so the runner uses the machine's own recordings
+                store
 
 Every option is a seam for scripts/daily-full-test-run-of-main-test.py, and
 for a run made by hand that must not write to the real log-store or the real
@@ -50,11 +52,14 @@ WHAT ONE RUN DOES, in order.
      fetch can move. A worktree a killed run left at the same path is removed
      first.
   3. Runs `<the Python running this program>
-     <worktree>/scripts/run-all-test-suites.py --log-dir <logs>` from the
+     <worktree>/scripts/run-all-test-suites.py --log-dir <logs>
+     --record-inputs-with-strace --wait-for-lock-seconds 3600` from the
      worktree, with no selection option and no -j, so the runner chooses how
-     many suites run at once. While the runner exits 3, another run holding
-     the machine's lock, this program waits 2 seconds and runs it again, for
-     up to an hour; after that the record says the lock was never released.
+     many suites run at once. --record-inputs-with-strace makes this the one
+     run on ned-box whose recordings strace adds to, because strace costs
+     too much CPU to run on every test run there. The
+     runner waits up to an hour for the machine's lock itself; when it exits
+     3 after that hour, the record says the lock was not released within it.
      The verdict is the runner's exit code and its `SUMMARY:` line, read from
      the runner's own captured output and never from a pipeline.
   4. Removes the worktree, whatever step 3 did. When `git worktree remove
@@ -69,14 +74,15 @@ THE RECORD is one text file per machine and day in the log-store:
 
   nedlern@ned-box:/home/nedlern/nedschorus-logs/daily-full-test-runs/<machine>/<YYYY-MM-DD>.txt
 
-<machine> is `ned-box` or `mac`, the spellings the log-store's transcripts/
+<machine> is `ned-box` or `mac`, the spellings the log-store's agent-session-files-by-machine/
 directory uses. The date is the date in America/Los_Angeles when the run
 started, never the machine's own zone. The record holds: this program's
 name, the machine, the date and the UTC time the run started; origin/main's
 commit; the runner's first line (checkout, commit, suite count, Python);
-every line the runner printed that opens `FAIL`; every line for a skipped
+every line the runner printed that opens `FAIL` or `NOT RUN`; every line for a skipped
 case, which the runner prints as `<suite>: SKIP ...`; the `SUMMARY:` line; the
-runner's exit code; the seconds spent waiting for the machine's lock; the
+runner's exit code; the seconds spent waiting for the machine's lock; on
+Linux, the runner's line on the seconds its suites waited for admission; the
 wall-clock seconds from the fetch to the worktree's removal; and the
 directory holding the run's logs. A step that failed is a line of the record
 too: a failed fetch, a worktree that could not be made or removed, a lock
@@ -107,7 +113,7 @@ therefore remove the worktree the first is testing. So a run holds an
 exclusive lock on daily-full-test-run-of-main.lock in its directory, and a
 second run exits 6 having done nothing.
 
-WHAT IS REUSED. nc-systems/handoff/daily-memory-review-mark.py is loaded by
+WHAT IS REUSED. nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py is loaded by
 path, the way nc-systems/handoff/handoff-supervisor.py loads it, for the
 Pacific date (pacific_time_of), the test that this machine is ned-box
 (this_machine_is_ned_box), ned-box's ssh target, and
@@ -117,8 +123,9 @@ write_daily_memory_review_mark is not reused: it builds its target from the
 marks' directory, so this program hands run_on_ned_box_or_here the same
 `mkdir -p ... && cat > ...` command over its own directory.
 scripts/run-all-test-suites.py is loaded the same way for the runner's name,
-its exit code for a held lock, and the environment its own git calls run in,
-which drops the variables that send git into another repository.
+its exit code for a held lock, the prefixes of the output lines this program
+picks out, and the environment its own git calls run in, which drops the
+variables that send git into another repository.
 
 SCHEDULE. Installed on each machine by
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py, from the
@@ -129,13 +136,13 @@ a machine has installed with the table.
   ned-box: one cron line, run from the reference clone with the system's
   Python. ned-box's clock is America/Los_Angeles.
 
-    30 3 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/daily-full-test-run-of-main.py >> /home/nedlern/.claude/daily-full-test-run-of-main.log 2>&1
+    0 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/daily-full-test-run-of-main.py >> /home/nedlern/.claude/daily-full-test-run-of-main.log 2>&1
 
   Both streams are appended to that file because ned-box has no mail
   transfer agent, so cron discards what a job prints: a refusal that writes
   no record, exit 5 or exit 6, is read there.
 
-  the Mac: a launchd job at 03:30 Pacific, the same time as ned-box. A run
+  the Mac: a launchd job at 03:30 Pacific. A run
   missed while the Mac sleeps starts at the next wake (user-ruled, his "y" at
   2026-10-01T04:38:17Z in Mac session 8db2e753, item 11 of the walk
   open-questions-concerns-and-recommendations-2026-09-30).
@@ -146,11 +153,13 @@ to the user (user-ruled, his "y" at 2026-10-01T04:43:20Z in the same Mac
 session, item 12 of the same walk).
 
 Exit codes: the runner's own when it ran and every step of this program
-worked — 0 every suite passed, 1 a suite failed, 2 the runner could not
-start; 2 also for a bad invocation of this program; 4 a step of this program
-failed, which the record names, the runner was killed by a signal, or it
-exited 0 or 1 without a `SUMMARY:` line, which is no verdict; 5 the record
-was not written; 6 another daily run holds this program's lock.
+worked — 0 every suite passed, 1 a suite failed, 2 no suite failed but
+the runner gave no full verdict, such as a suite whose test sandbox did not
+start or a run that could not start; 2 also for a bad invocation of this
+program; 4 a step of this program failed, which the record names, the
+runner was killed by a signal, or it exited 0 or 1 without a `SUMMARY:`
+line, which is no verdict; 5 the record was not written; 6 another daily
+run holds this program's lock.
 """
 # A machine-local failure may have no code diff, so selected suites cannot cover it.
 
@@ -165,6 +174,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -181,9 +191,9 @@ def module_loaded_by_path(module_name: str, path: Path):
     return module
 
 
-daily_memory_review_mark = module_loaded_by_path(
-    "daily_memory_review_mark",
-    REPOSITORY_ROOT / "nc-systems" / "handoff" / "daily-memory-review-mark.py")
+handoff_user_review_of_agent_memory_stores_mark = module_loaded_by_path(
+    "handoff_user_review_of_agent_memory_stores_mark",
+    REPOSITORY_ROOT / "nc-systems" / "handoff" / "handoff-user-review-of-agent-memory-stores-mark.py")
 run_all_test_suites = module_loaded_by_path(
     "run_all_test_suites", Path(__file__).resolve().with_name("run-all-test-suites.py"))
 
@@ -201,15 +211,12 @@ DAILY_FULL_TEST_RUN_LOCK_FILE_NAME = "daily-full-test-run-of-main.lock"
 
 DAILY_FULL_TEST_RUN_RUNNER_PATH_IN_WORKTREE = Path("scripts") / "run-all-test-suites.py"
 
-# Read wait bounds at runtime so tests can shorten them.
-DAILY_FULL_TEST_RUN_LOCK_WAIT_SECONDS = 2
+# Read at runtime so tests can shorten it.
 DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = 3600
 
 DAILY_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS = 30
 
 RUNNER_SKIPPED_CASE_LINE = re.compile(r"^(?:\S+: )?SKIP\s")
-RUNNER_FAILED_SUITE_LINE_PREFIX = "FAIL "
-RUNNER_SUMMARY_LINE_PREFIX = "SUMMARY:"
 
 EXIT_STEP_OF_THIS_PROGRAM_FAILED = 4
 EXIT_RECORD_NOT_WRITTEN = 5
@@ -281,30 +288,129 @@ def remove_worktree_of_main(clone: Path, worktree: Path):
     return None
 
 
-def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, wait,
-                                                       monotonic):
-    """Return (process result, seconds waiting, whether the lock timed out)."""
-    waiting_started = monotonic()
-    while True:
-        attempt_started = monotonic()
+class RunnerOutputCopyFailed(Exception):
+    """Writing a runner's line to stream_to failed; the runner still ran to its end.
+
+    completed holds everything the runner printed and its exit code, as subprocess.run
+    would."""
+
+    def __init__(self, reason: str, completed: subprocess.CompletedProcess):
+        super().__init__(reason)
+        self.reason = reason
+        self.completed = completed
+
+
+def subprocess_run_copying_each_output_line_as_it_arrives(arguments, worktree: Path,
+                                                          environment, stream_to):
+    """subprocess.run with captured text output, each line also written to stream_to.
+
+    When a write to stream_to fails, copying stops but reading goes on, so the runner
+    is never blocked on a full pipe and every line is kept; RunnerOutputCopyFailed is
+    raised once the runner has exited."""
+    process = subprocess.Popen(
+        arguments, cwd=str(worktree), env=environment, stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
+    captured = {"stdout": [], "stderr": []}
+    copy_failures = []
+    stream_lock = threading.Lock()
+
+    def copy(pipe, kept):
+        for line in pipe:
+            kept.append(line)
+            with stream_lock:
+                if copy_failures:
+                    continue
+                try:
+                    stream_to.write(line)
+                    stream_to.flush()
+                except (OSError, ValueError) as error:
+                    copy_failures.append(f"{type(error).__name__}: {error}")
+
+    copiers = [threading.Thread(target=copy, args=(process.stdout, captured["stdout"])),
+               threading.Thread(target=copy, args=(process.stderr, captured["stderr"]))]
+    try:
+        # The starts are inside the try: the first copier can copy a line, and an
+        # interrupt can arrive, before the second copier is started.
+        for copier in copiers:
+            copier.start()
+        for copier in copiers:
+            copier.join()
+    except BaseException:
+        # An interrupt must not leave the runner running with nothing reading its pipes.
+        process.kill()
+        process.wait()
+        for copier in copiers:
+            if copier.ident is not None:
+                copier.join()
+        raise
+    completed = subprocess.CompletedProcess(arguments, process.wait(),
+                                            stdout="".join(captured["stdout"]),
+                                            stderr="".join(captured["stderr"]))
+    if copy_failures:
+        raise RunnerOutputCopyFailed(copy_failures[0], completed)
+    return completed
+
+
+def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, monotonic,
+                                                       stream_to=None):
+    """Return (process result, seconds waiting for the lock, whether the lock was never taken).
+
+    The runner waits for the lock itself, in the kernel's queue; retrying the runner
+    instead loses the lock to every process blocked on it. With stream_to, a text file
+    such as sys.stderr, every line the runner prints, on stdout or stderr, is also written
+    there as it arrives, so a run killed before the runner exits has shown how far it got."""
+    started = monotonic()
+    arguments = [*command, "--wait-for-lock-seconds",
+                 f"{DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS:g}"]
+    environment = run_all_test_suites.environment_without_git_redirecting_variables()
+    if stream_to is None:
         completed = subprocess.run(
-            command, cwd=str(worktree),
-            env=run_all_test_suites.environment_without_git_redirecting_variables(),
+            arguments, cwd=str(worktree), env=environment,
             stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
             check=False)
-        waited = attempt_started - waiting_started
-        if completed.returncode != run_all_test_suites.EXIT_LOCKED:
-            return completed, waited, False
-        if waited >= DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS:
-            return completed, waited, True
-        wait(DAILY_FULL_TEST_RUN_LOCK_WAIT_SECONDS)
+    else:
+        completed = subprocess_run_copying_each_output_line_as_it_arrives(
+            arguments, worktree, environment, stream_to)
+    if completed.returncode == run_all_test_suites.EXIT_LOCKED:
+        return completed, monotonic() - started, True
+    waited = [line[len(run_all_test_suites.MACHINE_LOCK_WAITED_LINE_PREFIX):]
+              for line in completed.stdout.splitlines()
+              if line.startswith(run_all_test_suites.MACHINE_LOCK_WAITED_LINE_PREFIX)]
+    seconds = float(waited[0].split()[0]) if waited else 0.0
+    return completed, seconds, False
+
+
+def runner_refusal_line(stderr):
+    """The runner's "not run" line; the runner prints that it is waiting before it."""
+    refusal = [line for line in stderr.splitlines()
+               if line.startswith(f"{run_all_test_suites.PROGRAM}: not run")]
+    return refusal[0] if refusal else first_stderr_line_or_no_detail(stderr)
+
+
+def lock_never_taken_step_failed(completed, seconds_waiting_for_lock):
+    """The failed step recorded when the runner waited for the machine's lock in vain."""
+    return (f"not run — the machine's lock was not released within "
+            f"{DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS:g} s: "
+            f"{run_all_test_suites.PROGRAM} waited {seconds_waiting_for_lock:.0f} s for it and "
+            f"exited {run_all_test_suites.EXIT_LOCKED}; its refusal: "
+            f"{runner_refusal_line(completed.stderr)}",
+            "Run this again after the run holding that lock has finished.")
 
 
 def runner_summary_line(completed):
     """Return the last SUMMARY: line, or None."""
     summary = [line for line in completed.stdout.splitlines()
-               if line.startswith(RUNNER_SUMMARY_LINE_PREFIX)]
+               if line.startswith(run_all_test_suites.SUMMARY_LINE_PREFIX)]
     return summary[-1] if summary else None
+
+
+def runner_output_line_on_seconds_suites_waited_for_admission(completed):
+    """The runner's line on how long its suites waited for admission, or None without one."""
+    if completed is None:
+        return None
+    found = [line for line in completed.stdout.splitlines()
+             if line.startswith(run_all_test_suites.ADMISSION_WAITED_LINE_PREFIX)]
+    return found[-1] if found else None
 
 
 def runner_output_lines_for_the_record(completed):
@@ -313,13 +419,15 @@ def runner_output_lines_for_the_record(completed):
     if printed and printed[0].startswith(f"{run_all_test_suites.PROGRAM}: "):
         kept.append(printed[0])
     kept.extend(line for line in printed
-                if line.startswith(RUNNER_FAILED_SUITE_LINE_PREFIX)
+                if line.startswith((run_all_test_suites.FAILED_SUITE_LINE_PREFIX,
+                                    run_all_test_suites.NOT_RUN_SUITE_LINE_PREFIX))
                 or RUNNER_SKIPPED_CASE_LINE.match(line))
     summary = runner_summary_line(completed)
     if summary is not None:
         kept.append(summary)
     else:
-        kept.append(f"the runner printed no {RUNNER_SUMMARY_LINE_PREFIX} line; its stderr:")
+        kept.append(f"the runner printed no {run_all_test_suites.SUMMARY_LINE_PREFIX} line; "
+                    f"its stderr:")
         kept.extend(f"  {line}" for line in completed.stderr.strip().splitlines())
     return kept
 
@@ -333,7 +441,7 @@ def write_record_command(log_store_root: str, machine: str, file_name: str) -> s
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         prog=PROGRAM,
-        description="Run every test suite on main on this machine and record the result "
+        description="Run every nc-test-suite on main on this machine and record the result "
                     "in the log-store.")
     parser.add_argument("--clone", default=str(REPOSITORY_ROOT))
     parser.add_argument("--log-store-root", default=DAILY_FULL_TEST_RUN_DEFAULT_LOG_STORE_ROOT)
@@ -343,10 +451,10 @@ def parse_arguments(argv):
     return parser.parse_args(argv)
 
 
-def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
+def main(argv=None, now=None, monotonic=time.monotonic) -> int:
     arguments = parse_arguments(argv)
     now = now or datetime.now(timezone.utc)
-    mark = daily_memory_review_mark
+    mark = handoff_user_review_of_agent_memory_stores_mark
     on_ned_box = mark.this_machine_is_ned_box()
     machine = (DAILY_FULL_TEST_RUN_MACHINE_NAME_ON_NED_BOX if on_ned_box
                else DAILY_FULL_TEST_RUN_MACHINE_NAME_ELSEWHERE)
@@ -363,15 +471,15 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
         return EXIT_ANOTHER_DAILY_RUN_HOLDS_THE_LOCK
     try:
         return daily_full_test_run_under_lock(
-            arguments, now, wait, monotonic, on_ned_box, machine, pacific_date, clone,
+            arguments, now, monotonic, on_ned_box, machine, pacific_date, clone,
             directory)
     finally:
         lock_handle.close()
 
 
-def daily_full_test_run_under_lock(arguments, now, wait, monotonic, on_ned_box, machine,
+def daily_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, machine,
                                    pacific_date, clone, directory) -> int:
-    mark = daily_memory_review_mark
+    mark = handoff_user_review_of_agent_memory_stores_mark
     worktree = directory / DAILY_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME
     logs = directory / DAILY_FULL_TEST_RUN_LOGS_DIRECTORY_NAME
     run_started = monotonic()
@@ -410,21 +518,18 @@ def daily_full_test_run_under_lock(arguments, now, wait, monotonic, on_ned_box, 
                     sys.executable,
                     arguments.test_suite_runner_program
                     or str(worktree / DAILY_FULL_TEST_RUN_RUNNER_PATH_IN_WORKTREE),
-                    "--log-dir", str(logs)]
+                    "--log-dir", str(logs), "--record-inputs-with-strace"]
                 if arguments.recorded_inputs_directory:
                     command += ["--recorded-inputs-directory",
+                                arguments.recorded_inputs_directory,
+                                "--suite-files-only-strace-saw-lists-directory",
                                 arguments.recorded_inputs_directory]
                 completed, seconds_waiting_for_lock, lock_never_released = (
                     run_test_suite_runner_waiting_for_the_machine_lock(
-                        command, worktree, wait, monotonic))
+                        command, worktree, monotonic))
                 if lock_never_released:
-                    steps_failed.append((
-                        f"not run — the lock was never released: "
-                        f"{run_all_test_suites.PROGRAM} exited "
-                        f"{run_all_test_suites.EXIT_LOCKED} on every attempt for "
-                        f"{seconds_waiting_for_lock:.0f} s; its last refusal: "
-                        f"{first_stderr_line_or_no_detail(completed.stderr)}",
-                        "Run this again after the run holding that lock has finished."))
+                    steps_failed.append(
+                        lock_never_taken_step_failed(completed, seconds_waiting_for_lock))
                 elif completed.returncode < 0:
                     steps_failed.append((
                         f"{run_all_test_suites.PROGRAM} was "
@@ -435,8 +540,8 @@ def daily_full_test_run_under_lock(arguments, now, wait, monotonic, on_ned_box, 
                       and runner_summary_line(completed) is None):
                     steps_failed.append((
                         f"{run_all_test_suites.PROGRAM} exited {completed.returncode} "
-                        f"and printed no {RUNNER_SUMMARY_LINE_PREFIX} line, which is no "
-                        f"verdict",
+                        f"and printed no {run_all_test_suites.SUMMARY_LINE_PREFIX} line, "
+                        f"which is no verdict",
                         "Read the runner's stderr in the record, then run this again."))
             finally:
                 not_removed = remove_worktree_of_main(clone, worktree)
@@ -460,6 +565,9 @@ def daily_full_test_run_under_lock(arguments, now, wait, monotonic, on_ned_box, 
         record_lines.append(f"runner exit code: {completed.returncode}")
     record_lines.append(
         f"seconds waiting for the machine's lock: {seconds_waiting_for_lock:.0f}")
+    admission_wait = runner_output_line_on_seconds_suites_waited_for_admission(completed)
+    if admission_wait is not None:
+        record_lines.append(admission_wait)
     record_lines.append(f"wall-clock seconds: {monotonic() - run_started:.0f}")
     record_lines.append(f"logs: {logs} on {machine}")
     record = "\n".join(record_lines)
