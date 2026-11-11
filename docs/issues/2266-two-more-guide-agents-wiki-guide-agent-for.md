@@ -62,7 +62,7 @@ Each guide-agent has its own:
 
 ## Memory on ned-box
 
-On 2026-10-30, two `claude -p` invocations on ned-box held 260 MB and 264 MB of resident memory; each of the six interactive agent-seats then running held 507 MB to 846 MB (`ps -eo rss`), and `free` showed 46 GB available. ned-box has 59.6 GB of RAM and no swap. The kills GHI 1834 traced came from the Bash-guards replay check, from timeshift's hourly snapshot, and from the 21 GB held in the `/tmp` tmpfs.
+On 2026-10-30, two `claude -p` invocations on ned-box held 260 MB and 264 MB of resident memory; each of the six interactive agent-seats then running held 507 MB to 846 MB (`ps -eo rss`), and `free` showed 46 GB available. ned-box has 59.6 GB of RAM and no swap. The kills GHI 1834 traced came from `nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py`, from timeshift's hourly snapshot, and from the 21 GB held in the `/tmp` tmpfs.
 
 The two guide-agents add no process between questions. An ask runs up to three `claude -p` invocations one after another, the cold start, the question and the correction turn, so it adds about 260 MB while it runs. Asks from different agent-sessions, or from one agent-session's parallel tool calls and subagents, run at the same time with nothing to stop them, as ghi-guide-agent's do today: ten at once would add about 2.6 GB. The shared `run_claude` sets `CLAUDE_CODE_TMPDIR`, so their temporary files go to `/home/nedlern/.cache/claude-code-tmp/` on disk, not to the `/tmp` tmpfs, even for an ask that arrives over ssh from the Mac.
 

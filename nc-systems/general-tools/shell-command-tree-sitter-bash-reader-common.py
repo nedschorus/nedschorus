@@ -1663,8 +1663,8 @@ _new_process_runner = subprocess.run
 def _use_a_new_process(runner=subprocess.run):
     """Read every later command in a new process, started and answered through runner.
 
-    runner is called as subprocess.run is; the Bash guards replay passes one that answers from a
-    process it keeps running, started with
+    runner is called as subprocess.run is; nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py passes
+    one that answers from a process it keeps running, started with
     NEW_PROCESS_READ_ONE_REQUEST_PER_LINE_UNTIL_INPUT_CLOSES_FLAG.
     """
     global _read_in_a_new_process, _new_process_runner

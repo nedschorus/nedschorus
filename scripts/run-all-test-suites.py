@@ -881,7 +881,7 @@ SUITES_RUN_WITHOUT_ANY_SANDBOX = {
 # `git worktree add`. Their git directory is a copy-on-write overlay instead of read-only,
 # so the writes work inside the suite and vanish when it ends.
 SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY = {
-    "nc-systems/general-tools/tests/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check-test.py":
+    "nc-systems/general-tools/tests/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check-test.py":
         "it replays at two refs, each in a worktree it adds to this repository",
 }
 

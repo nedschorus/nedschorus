@@ -22,7 +22,7 @@ The change to design: keep several recordings per suite, each a file of its own,
 
 When a suite runs a git command on the checkout that reads file contents, such as `git status`, `git diff` or `git clone` of the checkout, the runner selects it whenever any file differs, because git reads committed content from the object store, where neither recorder sees a working file (`selection_reason`, the reason "it runs git … on the checkout, which reads files no recorder here saw").
 
-Measured: 749 suite-runs and 75,745 suite-seconds, 15% of head-run seconds, over the same three days. Most came from seven suites, among them `nc-systems/general-tools/tests/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check-test.py`, whose median run is 430 seconds; it ran in all 230 head test runs and used 17.5% of all suite CPU.
+Measured: 749 suite-runs and 75,745 suite-seconds, 15% of head-run seconds, over the same three days. Most came from seven suites, among them `nc-systems/general-tools/tests/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check-test.py`, whose median run is 430 seconds; it ran in all 230 head test runs and used 17.5% of all suite CPU.
 
 The options to weigh in the design, which can be combined:
 1. Each such suite runs git on a fixture repository it builds, instead of on the checkout, so it no longer runs git on the checkout and the runner selects it by its recorded files alone. This helps only the suites rewritten, and only where the fixture still holds what the test checks; a suite that needs the real checkout stays selected by every change.
@@ -44,7 +44,7 @@ This section proposes a design for the two reasons above. The user has not ruled
 
 Reason 1, measured again: in the latest test run of each of the 21 pull requests merge-lane-2 test-ran from 2026-11-05 to 2026-11-06T07:01Z, leaving out the test runs that ran every nc-test-suite, the reason selected 37% of the run-seconds, against 24% from 2026-11-01 to 2026-11-04.
 
-Reason 2: `nc-systems/general-tools/tests/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check-test.py` now runs its git commands on a test fixture repository it builds from the checkout's files (`make_test_repository` in that file), and merge-lane-2's test runs of pull requests 2686 and 2687 on 2026-11-06 did not select it. In the same 21 test runs, the reason selected 4.3% of the run-seconds, in the four nc-test-suites of the table under Part 2.
+Reason 2: `nc-systems/general-tools/tests/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check-test.py` now runs its git commands on a test fixture repository it builds from the checkout's files (`make_test_repository` in that file), and merge-lane-2's test runs of pull requests 2686 and 2687 on 2026-11-06 did not select it. In the same 21 test runs, the reason selected 4.3% of the run-seconds, in the four nc-test-suites of the table under Part 2.
 
 Measured from the PASS and FAIL lines of nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/hr/pr*/stderr, the latest test run of each pull request, leaving out test runs where a file under `EVERY_SUITE_RUNS_WHEN_THESE_CHANGE` differed. Pull request 2544 was replaced by [pull request 2684](https://github.com/nedschorus/nedschorus/pull/2684), which merged on 2026-11-06 as a4cf4060b; it changed `selective_test_run_selection_without_no_sandbox_suites`, which runs after `suites_selected_since` and is untouched by this proposal.
 

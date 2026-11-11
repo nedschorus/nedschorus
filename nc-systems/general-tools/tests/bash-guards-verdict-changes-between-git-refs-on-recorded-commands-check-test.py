@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Tests for nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py.
+"""Tests for nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py.
 
 Replays a small fixture of commands, never the real transcripts, in a repository of the test's own whose
 HEAD holds this checkout's copy of every file a replay reads, and at commits made for the test from that
 HEAD with one guard changed: a changed verdict exits 1, a changed
 message alone exits 0, and every way the replay can fail to get a verdict exits 2.
 
-Run: python3 nc-systems/general-tools/tests/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check-test.py
+Run: python3 nc-systems/general-tools/tests/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -34,7 +34,7 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py"
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py"
 TMUX_KILL_GUARD = ".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py"
 ISSUE_WRITE_GUARD = ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py"
 SEARCH_FILE_GUARD = ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py"
@@ -1453,7 +1453,7 @@ try:
         "HEAD", scratch, "--log-store-runs-directory", str(Path(scratch) / "no-such-log-store" / "runs"))
     check("a run log directory that cannot be made: exit 2, the message says where to run the replay, and no "
           "scratch directory is made",
-          status == 2 and "this Bash guards replay made no run log directory" in err
+          status == 2 and "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check made no run log directory" in err
           and "run the replay again with --log-store-runs-directory <an existing directory>" in err and not left
           and not (Path(scratch) / "no-such-log-store").exists(), f"status {status}; left {left}\n{out}\n{err}")
 
@@ -1467,7 +1467,7 @@ try:
             removal_failures_as_written)
     check("a scratch directory that cannot be removed: exit 2, though no verdict changed, and the path is named "
           "with the command that removes it",
-          status == 2 and "NO VERDICT CHANGED" in out and "could not be removed, so this Bash guards replay exits 2" in out
+          status == 2 and "NO VERDICT CHANGED" in out and "could not be removed, so bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check exits 2" in out
           and "Remove each listed path with rm -rf <path>" in out and "a path: could not be removed in the test" in out,
           f"status {status}\n{out}\n{err}")
 
