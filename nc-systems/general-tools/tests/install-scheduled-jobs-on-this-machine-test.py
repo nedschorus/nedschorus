@@ -490,7 +490,7 @@ check("--help ends with the docstring's exit-codes paragraph and prints nothing 
       and " ".join(help_text.split()).endswith(
           "Exit codes: 0 done, or for --check every job matches; 1 a step failed after this "
           "program began changing the machine, or for --check a job differs or is not in the "
-          "table; 2 not run — a bad "
+          "table, or for --remove-not-in-table a crontab line was KEPT; 2 not run — a bad "
           "invocation, a table this program cannot use, a machine the table does not name, a "
           "job's program missing, a crontab that could not be read, or a shell parser that "
           "could not be installed; or for --check, a job not checked because `launchctl print` "
