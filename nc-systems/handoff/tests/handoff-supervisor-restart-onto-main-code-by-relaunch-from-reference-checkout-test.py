@@ -243,6 +243,12 @@ def quick_sleep(seconds):
     time.sleep(min(seconds, 0.2))
 
 
+def settle_until_stopped(process_id):
+    """A sleep for foreground() that waits until ps shows process_id stopped, instead of
+    freeze()'s fixed settle, which under heavy load can end before the stop shows."""
+    return lambda seconds: ps_state_once_it_is(process_id, stopped=True)
+
+
 @contextlib.contextmanager
 def replaced(owner, name, value):
     saved = getattr(owner, name)
@@ -436,7 +442,8 @@ def foreground_cases():
 
     def failing_start(path):
         raise OSError("no room to start")
-    status, _, errors = run_foreground(start_second_half=failing_start, sleep=quick_sleep)
+    status, _, errors = run_foreground(start_second_half=failing_start,
+                                       sleep=settle_until_stopped(supervisor_id))
     time.sleep(0.2)
     check("foreground: a second half that cannot start leaves the handoff-supervisor unfrozen",
           status == 1 and "no room to start" in errors and "unfrozen with SIGCONT" in errors
@@ -451,7 +458,7 @@ def foreground_cases():
 
     started = []
     status, output, errors = run_foreground(start_second_half=lambda path: started.append(path) or 4242,
-                                            sleep=quick_sleep)
+                                            sleep=settle_until_stopped(supervisor_id))
     state = json.loads(started[0].read_text()) if started else {}
     check("foreground: the handoff-supervisor is frozen and the agent-seat told to write its session-handoff",
           status == 0 and program.process_is_stopped(supervisor_id)
