@@ -334,6 +334,24 @@ def machine_name(host):
     return host if host else "this machine"
 
 
+def dash_names_a_word_expanded_to(command, word, machines, unchecked):
+    """Return the names beginning with - that the first path component of word matches in
+    the directory command ran in; or None, with one line in unchecked, when that directory
+    could not be listed."""
+    try:
+        entries = machines.directory_entries(command.host, command.directory)
+    except MachineStateQueryGotNoAnswer as error:
+        line = (f"whether `{plain(word)}` expanded, in "
+                f"{command.directory}, the directory the command ran in, "
+                f"to a name beginning with -: {error}")
+        if line not in unchecked:
+            unchecked.append(line)
+        return None
+    pattern = fnmatch_pattern(word.split("/", 1)[0])
+    return sorted(name for name in entries
+                  if name.startswith("-") and fnmatch.fnmatchcase(name, pattern))
+
+
 def glob_dash_name_causes(placed, machines, unchecked):
     causes = []
     for command in placed:
@@ -345,16 +363,9 @@ def glob_dash_name_causes(placed, machines, unchecked):
             first_component = word.split("/", 1)[0]
             if plain(first_component) == first_component or word.startswith(("/", "~")):
                 continue
-            try:
-                entries = machines.directory_entries(command.host, command.directory)
-            except MachineStateQueryGotNoAnswer as error:
-                unchecked.append(f"whether `{plain(word)}` expanded, in "
-                                 f"{command.directory}, the directory the command ran in, "
-                                 f"to a name beginning with -: {error}")
+            dashed = dash_names_a_word_expanded_to(command, word, machines, unchecked)
+            if dashed is None:
                 break
-            pattern = fnmatch_pattern(first_component)
-            dashed = sorted(name for name in entries
-                            if name.startswith("-") and fnmatch.fnmatchcase(name, pattern))
             if dashed:
                 causes.append(Cause(GLOB_DASH_NAME, (
                     f"`{plain(word)}` expanded, in {command.directory} on "
@@ -369,9 +380,10 @@ def glob_dash_name_causes(placed, machines, unchecked):
     return causes
 
 
-def agents_grep_options_and_patterns_without_file_names(command):
+def agents_grep_options_and_patterns_without_file_names(command, machines, unchecked):
     """Return the options and patterns of a grep that Claude Code's grep function hands to
-    ugrep, its file names left out; or None for any other command."""
+    ugrep, its file names left out; or None for any other command. A word whose expansion
+    could not be checked stays in, with one line in unchecked."""
     # Only a bare grep run by this machine's shell reaches the function; a wrapper such as
     # xargs or timeout runs the system grep.
     if command.host is not None or command.program_index is None \
@@ -384,10 +396,14 @@ def agents_grep_options_and_patterns_without_file_names(command):
     if any(fnmatch.fnmatchcase(argument, rule) for argument in arguments
            for rule in AGENTS_GREP_PASSES_TO_SYSTEM_GREP):
         return None
-    # An unquoted glob names files even when it begins with -; ugrep would read it as an
-    # option and reject it, and glob_dash_name_causes judges what it expanded to.
+    # A word that begins with - and holds an unquoted glob character names files only when
+    # the shell expanded it, and glob_dash_name_causes judges those names; one that matched
+    # nothing reached grep as written, as an option or an option's value such as
+    # --include=*.md.
     arguments = [argument for word, argument in zip(words, arguments)
-                 if not (argument.startswith("-") and plain(word) != word)]
+                 if not (argument.startswith("-") and plain(word) != word
+                         and command.directory is not None
+                         and dash_names_a_word_expanded_to(command, word, machines, unchecked))]
     kept = []
     pattern_given = False
     index = 0
@@ -426,7 +442,8 @@ def agents_grep_options_and_patterns_without_file_names(command):
 def pattern_too_complex_causes(placed, machines, unchecked):
     causes = []
     for command in placed:
-        arguments = agents_grep_options_and_patterns_without_file_names(command)
+        arguments = agents_grep_options_and_patterns_without_file_names(
+            command, machines, unchecked)
         if not arguments:
             continue
         try:

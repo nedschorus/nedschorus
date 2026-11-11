@@ -57,7 +57,9 @@ DASH_NAMED_ENTRIES = ["-Users-el-agents-merge-lane", "-Users-el-agents-reboot-te
 PLAIN_ENTRIES = ["README.md", "docs", "scripts", "a.jsonl"]
 
 REFUSED_IN_THESE_TESTS = [["-oE", ".{0,180}(a|b).{0,180}"], ["-oE", "--", ".{0,180}(a|b).{0,180}"],
-                          ["-o", "-e", ".{0,180}(a|b).{0,180}", "-E"]]
+                          ["-o", "-e", ".{0,180}(a|b).{0,180}", "-E"],
+                          ["-oE", "--regexp=.{0,180}(a|b).{0,180}.*"],
+                          ["-oE", "-e.{0,180}(a|b).{0,180}.*"]]
 firings = json.loads(FIXTURE.read_text(encoding="utf-8"))["firings"]
 REFUSALS_FILE = SCRATCH / "arguments-the-agents-grep-refuses.json"
 REFUSALS_FILE.write_text(json.dumps(
@@ -206,15 +208,63 @@ for near_miss in ("grep -oE '.{0,80}link-type' notes.md",
 check("S2 leaves the file names out of the probe",
       check_module.agents_grep_options_and_patterns_without_file_names(check_module.Placed(
           None, "/work", ["grep", "-rn", "--include", "*.md", "-A", "2", "needle", "docs",
-                          "notes.md"], 0))
+                          "notes.md"], 0), MachinesOfTheDay(), [])
       == ["-rn", "--include", "*.md", "-A", "2", "needle"])
+
+
+def probes_of(command, cwd="/work", machines=None, unchecked=None):
+    return [check_module.agents_grep_options_and_patterns_without_file_names(
+                placed, machines or MachinesOfTheDay(), [] if unchecked is None else unchecked)
+            for placed in check_module.split_into_simple_commands_with_the_machine_and_directory_each_runs_in(
+                command, cwd)
+            if placed.program == "grep"]
+
+
 dash_glob_grep = f"cd {PROJECTS} && grep -l needle -r -Users-el-agents-*/ 2>/dev/null"
-check("S2 leaves an unquoted glob that begins with - out of the probe, and keeps a quoted one",
-      [check_module.agents_grep_options_and_patterns_without_file_names(command)
-       for command in check_module.split_into_simple_commands_with_the_machine_and_directory_each_runs_in(
-           dash_glob_grep + " '-x*'", "/work")
-       if command.program == "grep"]
-      == [["-l", "needle", "-r", "-x*"]])
+check("S2 leaves an unquoted glob that expanded to names beginning with - out of the probe, "
+      "and keeps a quoted one",
+      probes_of(dash_glob_grep + " '-x*'") == [["-l", "needle", "-r", "-x*"]],
+      probes_of(dash_glob_grep + " '-x*'"))
+check("S2 keeps in the probe a dash-led unquoted glob that matched no name, which grep read "
+      "as an option",
+      probes_of("grep -l needle -r -Users-el-agents-*/") == [["-l", "needle", "-r", "-Users-el-agents-*/"]],
+      probes_of("grep -l needle -r -Users-el-agents-*/"))
+check("S2 keeps in the probe an option, or an option's value, that holds an unquoted glob "
+      "character",
+      probes_of("grep -rn --include=*.md --include -foo* --regexp=foo.*bar -efoo.*bar docs")
+      == [["-rn", "--include=*.md", "--include", "-foo*", "--regexp=foo.*bar", "-efoo.*bar"]],
+      probes_of("grep -rn --include=*.md --include -foo* --regexp=foo.*bar -efoo.*bar docs"))
+check("S2 keeps in the probe an unquoted pattern that does not begin with -",
+      probes_of("grep -c foo.*bar notes.md") == [["-c", "foo.*bar"]],
+      probes_of("grep -c foo.*bar notes.md"))
+for partly_unquoted in ("grep -oE --regexp='.{0,180}(a|b).{0,180}'.* notes.md",
+                        "grep -oE -e'.{0,180}(a|b).{0,180}'.* notes.md"):
+    check(f"S2 fires with the refused pattern given partly unquoted through an option: "
+          f"{partly_unquoted}",
+          judge(partly_unquoted).signals == [PATTERN_TOO_COMPLEX], judge(partly_unquoted).signals)
+
+
+class MachinesWhoseDirectoryCannotBeListed(MachinesOfTheDay):
+    def directory_entries(self, host, directory):
+        self.asked.append(("entries", host, directory))
+        raise check_module.MachineStateQueryGotNoAnswer(f"listing {directory} failed")
+
+
+unlisted = judge("grep -oE --regexp='.{0,180}(a|b).{0,180}'.* notes.md",
+                 machines=MachinesWhoseDirectoryCannotBeListed())
+check("a directory that cannot be listed keeps the dash-led word in the probe, and is "
+      "reported once",
+      unlisted.signals == [PATTERN_TOO_COMPLEX] and len(unlisted.unchecked) == 1
+      and "listing /work failed" in unlisted.unchecked[0],
+      f"signals {unlisted.signals} unchecked {unlisted.unchecked}")
+unlisted_unchecked = []
+unlisted_probes = probes_of("grep -c -x* /tmp/n*.md foo.*bar",
+                            machines=MachinesWhoseDirectoryCannotBeListed(),
+                            unchecked=unlisted_unchecked)
+check("the probe asks whether a word expanded only for a word that begins with -",
+      unlisted_probes == [["-c", "-x*", "/tmp/n*.md"]] and len(unlisted_unchecked) == 1
+      and "`-x*`" in unlisted_unchecked[0],
+      f"{unlisted_probes} unchecked {unlisted_unchecked}")
 
 
 class MachinesWhoseGrepRejectsUnknownOptions(MachinesOfTheDay):
@@ -541,10 +591,12 @@ else:
             return None
 
     for firing in firings:
+        # The directories are the day's, as recorded; only the grep is this machine's.
         answers = [(arguments, real_agents_grep_answer(arguments))
                    for command in check_module.split_into_simple_commands_with_the_machine_and_directory_each_runs_in(
                        firing["command"], firing["cwd"])
-                   if (arguments := check_module.agents_grep_options_and_patterns_without_file_names(command))]
+                   if (arguments := check_module.agents_grep_options_and_patterns_without_file_names(
+                       command, MachinesOfTheDay(firing["machine"], firing["timestamp"]), []))]
         refused = [arguments for arguments, answer in answers if answer]
         unanswered = [arguments for arguments, answer in answers if answer is None]
         check(f"{firing['id']}: the real agent's grep answers every probe and refuses what the "
