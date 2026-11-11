@@ -1409,8 +1409,7 @@ with tempfile.TemporaryDirectory() as scratch:
         check(f"a failed worktree listing{' under ' + flags[0] if flags else ''} gives the "
               "shared next steps, naming the command that was run",
               stderr_lines[1:] == load_clean_worktrees_module().next_step_lines.git_failure_next_step_lines(
-                  rerun, text_the_failure_line_contains="clean-worktrees: stopped, because",
-                  include_the_misspelt_branch_commit_or_path_line=False).splitlines(),
+                  rerun, text_the_failure_line_contains="clean-worktrees: stopped, because").splitlines(),
               failed_listing.stderr)
 
     module = load_clean_worktrees_module()

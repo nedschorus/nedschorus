@@ -1095,8 +1095,7 @@ with tempfile.TemporaryDirectory() as workspace:
         return (code == 2 and INJECTED_GIT_ERROR in err and "a git command failed" in err
                 and "finding(s)" not in err
                 and next_step_lines.git_failure_next_step_lines(
-                    rerun, "dangling-path-citation-check", text_the_failure_line_contains="could not check, because a git command failed",
-                    include_the_misspelt_branch_commit_or_path_line=True) in err)
+                    rerun, "dangling-path-citation-check", text_the_failure_line_contains="could not check, because a git command failed") in err)
 
     for failing_arguments, what in (
             ("ls-tree -z HEAD --name-only -d", "listing the root directories"),
