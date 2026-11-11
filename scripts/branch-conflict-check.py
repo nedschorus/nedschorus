@@ -22,7 +22,14 @@ merged into it when the remote has it. A branch missing from the remote whose
 commits a remote branch already holds, such as one cut at a pull request's
 pushed head, is never rebased: when a --fetch-remote branch holding its newest
 pushed commit has an open pull request, it gets that pull request's answer;
-otherwise the base is merged into it. When no branch can be asked about, or
+otherwise the base is merged into it. Every merge and rebase step acts on
+HEAD, so when the checked commit is not HEAD, as for a branch pushed while
+another is checked out, the steps first say where to stand: the worktree that
+has the commit's local branch checked out, the pushed branch preferred, else
+git switch to that branch, else git switch --detach to the commit, and the
+push names HEAD:<branch>, or HEAD:refs/heads/<branch> when the remote lacks
+the branch.
+When no branch can be asked about, or
 gh, git or the remote cannot answer, the report gives no answer and says how
 to rerun for one."""
 
@@ -623,6 +630,48 @@ def replace_lines(answer_line, pull_request, base, understand, caveat=()):
     ]
 
 
+def checked_commit_not_head_worktree_or_git_switch_instruction_lines(
+        head_hash, branch=None, runner=run):
+    """Return [] when HEAD is the checked commit, else the one line that tells
+    the agent where to stand so that the steps after it, which act on HEAD,
+    act on the checked commit. Of several local branches at the commit, the
+    pushed branch, named by branch, is the one named; another only when the
+    pushed branch is not among them.
+
+    The pre-push hook checks every pushed branch, and a branch pushed while
+    another is checked out would otherwise get the checked-out branch merged,
+    rebased and pushed in its place."""
+    if resolve_commit("HEAD", runner) == head_hash:
+        return []
+    short = head_hash[:12]
+    exit_status, out = runner(["git", "for-each-ref", "--format=%(refname:short)",
+                               "--points-at", head_hash, "refs/heads"])
+    if exit_status != 0:
+        return ["The checked commit %s is not the one checked out here, and git "
+                "could not list the local branches at it; run every step below "
+                "where HEAD is %s, such as after git switch --detach %s."
+                % (short, short, short)]
+    local_branches = out.split()
+    if not local_branches:
+        return ["No local branch is at the checked commit %s, and it is not the "
+                "one checked out here: first run git switch --detach %s, because "
+                "every step below acts on HEAD." % (short, short)]
+    local_branch = branch if branch in local_branches else local_branches[0]
+    exit_status, out = runner(["git", "worktree", "list", "--porcelain"])
+    if exit_status == 0:
+        worktree_path = None
+        for line in out.splitlines():
+            if line.startswith("worktree "):
+                worktree_path = line[len("worktree "):]
+            elif line == "branch refs/heads/" + local_branch and worktree_path:
+                return ["The checked commit %s is branch %s, checked out in %s, "
+                        "not here: run every step below in %s, because each acts "
+                        "on HEAD." % (short, local_branch, worktree_path, worktree_path)]
+    return ["The checked commit %s is branch %s, not the one checked out here: "
+            "first run git switch %s, because every step below acts on HEAD."
+            % (short, local_branch, local_branch)]
+
+
 def clearing_lines(pull_request, branch, head, base, remote, head_hash, base_hash,
                    runner=run):
     """Return the lines that say how this conflict is cleared."""
@@ -707,6 +756,8 @@ def clearing_lines(pull_request, branch, head, base, remote, head_hash, base_has
                         "close or replace that pull request; ask its author with "
                         "SendMessage how to clear the conflict."
                         % (branch, holder_pull_request)])
+    start = checked_commit_not_head_worktree_or_git_switch_instruction_lines(
+        head_hash, branch, runner)
     give_up = [
         "If you cannot make both changes work, run git %s --abort, which puts the "
         "branch back as it was, and ask the agent-seat the MAIN'S SIDE line names, "
@@ -722,10 +773,12 @@ def clearing_lines(pull_request, branch, head, base, remote, head_hash, base_has
             "ANSWER: merge -- branch %s has no open pull request and %s already has "
             "it, so %s is merged into it, because GitHub refuses every force-push "
             "to this repository." % (branch, remote, base),
-        ] + understand + [
+        ] + start + understand + [
             "Run git merge %s, resolving each conflict so that both changes work."
             % base,
         ] + give_up + [
+            ("Push it with git push -u %s HEAD:%s, without --force, then carry on "
+             "with what you were doing." % (remote, branch)) if start else
             "Push it with git push, without --force, then carry on with what you "
             "were doing.",
         ]
@@ -740,17 +793,17 @@ def clearing_lines(pull_request, branch, head, base, remote, head_hash, base_has
             "holding them has an open pull request, so %s is merged into it rather "
             "than rebased, which would rewrite commits already pushed."
             % (branch, remote, named, remote, base),
-        ] + understand + [
+        ] + start + understand + [
             "Run git merge %s, resolving each conflict so that both changes work."
             % base,
         ] + give_up + [
-            "Push it with git push -u %s HEAD:%s, without --force, then carry on "
-            "with what you were doing." % (remote, branch),
+            "Push it with git push -u %s HEAD:refs/heads/%s, without --force, then "
+            "carry on with what you were doing." % (remote, branch),
         ]
     return [
         "ANSWER: rebase -- branch %s has no open pull request and %s does not have "
         "it yet, so it is rebased onto %s." % (branch, remote, base),
-    ] + understand + [
+    ] + start + understand + [
         "Run git rebase %s, resolving each conflict so that both changes work."
         % base,
         "If the branch was cut from another branch whose commits %s does not hold "
@@ -758,6 +811,8 @@ def clearing_lines(pull_request, branch, head, base, remote, head_hash, base_has
         "commit that is the other branch's work rather than this branch's, and run "
         "git rebase --onto %s <that commit's hash>." % (base, base, base),
     ] + give_up + [
+        ("Push it with git push -u %s HEAD:refs/heads/%s, then carry on with what "
+         "you were doing." % (remote, branch)) if start else
         "Then carry on with what you were doing; if that was a push, push again.",
     ]
 
