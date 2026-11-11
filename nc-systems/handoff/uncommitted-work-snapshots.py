@@ -32,7 +32,9 @@ Usage:
       under <clone>/.claude/worktrees/, made from the work-snapshot's parent
       and given an owner file naming the agent-seat GIT_AUTHOR_NAME names;
       opens a task naming the branch on the task list
-      ~/.claude/tasks/<CLAUDE_CODE_TASK_LIST_ID>; deletes the ref
+      ~/.claude/tasks/<CLAUDE_CODE_TASK_LIST_ID>, holding the branch and the
+      worktree in the `branches` field of its metadata, so the first prompt's
+      list of leftover worktrees and branches leaves them out; deletes the ref
   uncommitted-work-snapshots.py discard REF [--repo PATH]
       deletes the ref and prints its list entry
   Both refuse, changing nothing, when the ref does not exist; restore also
@@ -88,6 +90,10 @@ RESTORE_COMMIT_MESSAGE_TEMPLATE = "Restore work from {ref}"
 # scripts/clean-worktrees.py finds the tasks restore opens by these two.
 RESTORED_BRANCH_TASK_SUBJECT_PREFIX = "Restored branch "
 RESTORED_BRANCH_TASK_DESCRIPTION_RESTORE_COMMIT_LINE_PREFIX = "Restore commit: "
+# The key the first prompt's list reads, TASK_HELD_BRANCHES_METADATA_KEY of
+# agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py; that program loads
+# scripts/clean-worktrees.py, which loads this module, so the key cannot be imported from it.
+TASK_HELD_BRANCHES_METADATA_KEY = "branches"
 TASK_LIST_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
 TASK_FILE_NAME_PATTERN = re.compile(r"[1-9][0-9]*\.json")
 TASK_HIGH_WATER_MARK_FILE_NAME = ".highwatermark"
@@ -751,8 +757,9 @@ def restored_branch_task_description(snapshot, kept, worktree, restore_commit):
     ])
 
 
-def agent_seat_task_list_new_pending_task_write(list_directory, subject, description):
-    """Write a new pending task into the Claude Code task list; return its id. Raises OSError.
+def agent_seat_task_list_new_pending_task_write(list_directory, subject, description, metadata=None):
+    """Write a new pending task into the Claude Code task list, with metadata when given; return
+    its id. Raises OSError.
 
     The id is one more than the highest of the list's task ids and its .highwatermark, as
     Claude Code numbers a new task; the file is linked into place only where no file of that
@@ -777,9 +784,11 @@ def agent_seat_task_list_new_pending_task_write(list_directory, subject, descrip
         partial_path = Path(partial.name)
     try:
         while True:
-            partial_path.write_text(json.dumps({
-                "id": str(task_id), "subject": subject, "description": description,
-                "status": "pending", "blocks": [], "blockedBy": []}, indent=2), encoding="utf-8")
+            task = {"id": str(task_id), "subject": subject, "description": description,
+                    "status": "pending", "blocks": [], "blockedBy": []}
+            if metadata is not None:
+                task["metadata"] = metadata
+            partial_path.write_text(json.dumps(task, indent=2), encoding="utf-8")
             try:
                 os.link(partial_path, list_directory / f"{task_id}.json")
                 break
@@ -936,17 +945,20 @@ def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
     exit_code = EXIT_DONE
     subject = restored_branch_task_subject(branch)
     description = restored_branch_task_description(snapshot, keep, worktree, restore_commit)
+    metadata = {TASK_HELD_BRANCHES_METADATA_KEY: [branch, str(worktree)]}
     task_list = Path.home() / ".claude" / "tasks" / environment[TASK_LIST_ENVIRONMENT_VARIABLE]
     try:
-        task_id = agent_seat_task_list_new_pending_task_write(task_list, subject, description)
+        task_id = agent_seat_task_list_new_pending_task_write(task_list, subject, description,
+                                                              metadata)
     except OSError as error:
         task_id = None
         exit_code = EXIT_STEP_FAILED
         out(f"FAILED: the task could not be opened in {task_list} ({type(error).__name__}: {error}). "
             f"The branch and the worktree hold the work, so the ref is still deleted.\n"
             f"Create the task with Claude Code's TaskCreate tool, with exactly this subject and "
-            f"description, so that scripts/clean-worktrees.py closes it:\n"
-            f"subject: {subject}\ndescription:\n{description}")
+            f"description, so that scripts/clean-worktrees.py closes it, and with this metadata, "
+            f"so that the first prompt's list leaves the branch and the worktree out:\n"
+            f"subject: {subject}\ndescription:\n{description}\nmetadata: {json.dumps(metadata)}")
     deleted = run_git(repo, "update-ref", "-d", ref, snapshot["commit"])
     if deleted.returncode:
         exit_code = EXIT_STEP_FAILED
