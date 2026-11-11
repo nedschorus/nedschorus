@@ -509,6 +509,21 @@ def run_recorded_mutant_killed_check_cases():
                   completed.returncode == 0 and killed_line in "\n" + completed.stdout,
                   f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
+    # The variable's name sorts before PYTHONPYCACHEPREFIX, as PATH and HOME do.
+    environment_test = ("import os, sys\n"
+                        "sys.exit(0 if os.environ.get('MUTANT_SUITE_SEES_THIS') == '1' else 1)\n")
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, _, _, _ = run_recorded_mutant_killed_check(
+            scratch_name, {**HEAD_FILES, "scripts/thing-test.py": environment_test},
+            SURVIVOR_DIFF, extra_environment={
+                "PYTHONPYCACHEPREFIX": str(Path(scratch_name) / "bytecode"),
+                "MUTANT_SUITE_SEES_THIS": "1"})
+        check("the recorded mutant killed check drops only PYTHONPYCACHEPREFIX from the "
+              "environment it gives the suites: a suite that needs another variable passes "
+              "without the mutant, and survives it",
+              completed.returncode == 1 and survived_line in "\n" + completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
     # double(2) is 4 under x + x and x * x alike, and 0 under x - x.
     surviving_test_files = {**HEAD_FILES, "scripts/thing-test.py":
                             killing_test.replace("double(3) == 6", "double(2) == 4")}
@@ -1585,7 +1600,83 @@ def run_parallel_mutants_and_kept_sessions_cases():
               f"rc={completed.returncode} err={completed.stderr}")
 
 
+def run_hunk_shared_context_line_counts_and_replaced_lines_cases():
+    survivors = load_script_module()
+
+    def lines_of(letters):
+        # Built at run time, so equal lines are not the same object, as a diff's lines are not.
+        return [f"{letter} line" for letter in letters]
+
+    # (old, new, lines shared at the start and at the end, the letters of the replaced lines).
+    # The first case comes first because a mutant that negates the end loop's condition
+    # returns at once on it but loops forever on most other cases.
+    cases = [
+        ("ac", "bc", (0, 1), "a"),
+        ("", "", (0, 0), ""),
+        ("a", "b", (0, 0), "a"),
+        ("a", "ba", (0, 1), ""),
+        ("aa", "abaa", (1, 1), ""),
+        ("a", "a", (1, 0), ""),
+        ("aaa", "aaba", (2, 1), ""),
+        ("aa", "ba", (0, 1), "a"),
+        ("aaba", "ba", (0, 2), "aa"),
+        ("ab", "bb", (0, 1), "a"),
+        ("ab", "b", (0, 1), "a"),
+        ("a", "bab", (0, 0), "a"),
+        ("aa", "baba", (0, 1), "a"),
+        ("a", "", (0, 0), "a"),
+        # Past 256, where CPython stops sharing one object for each small int.
+        ("a" * 300 + "b", "a" * 300, (300, 0), "b"),
+        ("aa" + "b" * 300, "a" + "b" * 300, (1, 300), "a"),
+    ]
+    for old_letters, new_letters, counts, replaced_letters in cases:
+        old, new = lines_of(old_letters), lines_of(new_letters)
+        got = (survivors.hunk_shared_context_line_counts(old, new),
+               survivors.hunk_replaced_lines(old, new))
+        if got != (counts, lines_of(replaced_letters)):
+            check(f"a hunk's shared context line counts and replaced lines, old "
+                  f"{old_letters[:12]!r} ({len(old)} lines), new {new_letters[:12]!r} "
+                  f"({len(new)} lines)", False,
+                  f"want {(counts, replaced_letters)} got {got}")
+            # A mutant of these functions can loop forever in a later case.
+            sys.exit(1)
+    check("a hunk's shared context line counts and replaced lines are right for each case: "
+          "lines shared at the start, at the end, overlapping both, none, and over 256",
+          True)
+
+
+def run_recorded_mutant_lines_on_main_search_cases():
+    survivors = load_script_module()
+    # Each file is on origin/main without a last newline, so its last line ends the file.
+    # Hunk "dup" appears twice in each, so no mutant applies and the search for each hunk's
+    # replaced lines decides; hunk "b" appears once, so neither is gone.
+    files = {
+        "replaced-lines-are-the-whole-file.py": "dup\ndup",
+        "replaced-line-at-an-odd-place-and-the-end.py": "dup\ndup\nx\nb",
+        "replaced-line-at-place-one.py": "dup\nb\ndup",
+        "two-replaced-lines-at-the-end.py": "dup\ndup\nx\nb1\nb2",
+    }
+    replaced_lines = {
+        "replaced-lines-are-the-whole-file.py": ["dup", "dup"],
+        "replaced-line-at-an-odd-place-and-the-end.py": ["b"],
+        "replaced-line-at-place-one.py": ["b"],
+        "two-replaced-lines-at-the-end.py": ["b1", "b2"],
+    }
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, _, head = scratch_repository(scratch_name, files)
+        git(repository, "update-ref", "refs/remotes/origin/main", head)
+        for path, replaced in replaced_lines.items():
+            # Line 100 is past each file's end, so neither hunk is found at its own line.
+            hunks = [(100, replaced, ["changed"]), (100, ["dup"], ["changed"])]
+            on_main = survivors.recorded_mutant_lines_on_main(repository, path, hunks, None)
+            check(f"a recorded mutant whose replaced lines origin/main has once and twice is not "
+                  f"gone, and whether it applies cannot be told: {path}",
+                  on_main is None, on_main)
+
+
 def run_cases():
+    run_hunk_shared_context_line_counts_and_replaced_lines_cases()
+    run_recorded_mutant_lines_on_main_search_cases()
     # ------------------------------------------------------------------
     # The config written, the worktree used, and survivors parsed.
     # ------------------------------------------------------------------
