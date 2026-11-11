@@ -863,6 +863,27 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a TaskStop result cut off mid-write is skipped and leaves its task in flight",
           flight.background_task_ids == ["b27dndn4c"], str(flight.background_task_ids))
 
+    # A TaskStop and a resume of the same subagent: whichever comes later in the transcript decides.
+    stopped_then_resumed = transcript_of(workspace, "subagent-stopped-then-resumed.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(RESUMED_SUBAGENT_ID),
+        task_stop_record(RESUMED_SUBAGENT_ID, "local_agent"),
+        subagent_resume_record(),
+    ])
+    flight = hook.work_in_flight(str(stopped_then_resumed), float("inf"), now=grid_at_13_minutes)
+    check("a subagent TaskStop stopped and then resumed is in flight again",
+          flight.subagent_ids == [RESUMED_SUBAGENT_ID], str(flight.subagent_ids))
+    resumed_then_stopped = transcript_of(workspace, "subagent-resumed-then-stopped.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(RESUMED_SUBAGENT_ID),
+        *notification_records(RESUMED_SUBAGENT_FINAL_NOTIFICATION, "2026-10-13T19:35:01.611Z"),
+        subagent_resume_record(),
+        task_stop_record(RESUMED_SUBAGENT_ID, "local_agent"),
+    ])
+    flight = hook.work_in_flight(str(resumed_then_stopped), float("inf"), now=grid_at_13_minutes)
+    check("a resumed subagent that TaskStop then stopped is not in flight",
+          flight.subagent_ids == [], str(flight.subagent_ids))
+
     # --- "Could not tell" is not "nothing is running" ----------------------
     # A spawn record caught mid-append is not observed in practice — 841
     # transcripts, none ending mid-line, and 3,800 concurrent-append probes

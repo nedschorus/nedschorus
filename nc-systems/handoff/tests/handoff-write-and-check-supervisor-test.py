@@ -1022,6 +1022,18 @@ def run_spawned_subagent_roster_cases(workspace: Path):
           and stopped_roster[0]["last_event"] == "stopped"
           and stopped_roster[0]["last_event_at"] == "2026-10-27T21:50:00Z",
           str(stopped_roster))
+    stopped_then_resumed_path = workspace / "roster-task-stop-then-resume.jsonl"
+    stopped_then_resumed_path.write_text(
+        stopped_path.read_text(encoding="utf-8")
+        + json.dumps(resume_record(incident_agent, "2026-10-27T21:55:00.000Z")) + "\n",
+        encoding="utf-8")
+    stopped_then_resumed_roster = writer.spawned_subagent_roster(stopped_then_resumed_path)
+    check("a subagent resumed after a TaskStop stopped it counts as still working",
+          [entry["agent_id"]
+           for entry in writer.still_working_subagent_entries(stopped_then_resumed_roster)]
+          == [incident_agent]
+          and stopped_then_resumed_roster[0]["last_event"] == "resumed",
+          str(stopped_then_resumed_roster))
 
     # An empty transcript is not an error: a session may spawn nothing.
     empty_path = workspace / "roster-empty.jsonl"
