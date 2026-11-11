@@ -103,6 +103,12 @@ class NeededFileOrListingUnreadable(Exception):
     """A file or listing this run needs could not be read as it must be."""
 
 
+def repeated_slashes_and_dot_parts_dropped(path: str) -> str:
+    """Return the path without empty or "." parts, keeping every ".." part where it is."""
+    parts = [part for part in path.split("/") if part not in ("", ".")]
+    return ("/" if path.startswith("/") else "") + "/".join(parts)
+
+
 def paths_processes_use(proc: Path) -> list:
     """Return every working directory, root, executable, open file and memory-mapped file of the
     readable processes, and every path a unix socket is bound to."""
@@ -112,15 +118,18 @@ def paths_processes_use(proc: Path) -> list:
         raise NeededFileOrListingUnreadable(f"the process table {proc} could not be listed: {error.strerror}")
     try:
         # An open socket's fd link reads socket:[inode], so a bound socket's path is only here:
-        # the eighth field of a line, when there is one. It is the path as given to bind(), so both
-        # it and its normalized form are kept: normalizing drops "//" and "/./", but turns a
-        # "link/.." that the kernel followed through a symbolic link into a different path.
+        # the eighth field of a line, when there is one. It is the path as given to bind(), which
+        # may hold "//", "/./" and a "link/.." the kernel followed through a symbolic link.
+        # normpath would turn that "link/.." into a different path, so a second form drops only
+        # the repeated slashes and the "." parts, and keeps "..", for the folder to be its prefix.
+        # The full normpath form is kept as well, for a ".." that steps out of no link.
         # realpath is not used because it resolves links as they are now, not as bind() saw them.
         # normpath keeps exactly two leading slashes, as POSIX allows, so those are collapsed too.
         bound = [fields[7] for fields in (line.split(maxsplit=7)
                                           for line in (proc / "net" / "unix").read_text().splitlines()[1:])
                  if len(fields) == 8]
-        used = bound + [re.sub(r"^/+", "/", os.path.normpath(path)) for path in bound]
+        used = (bound + [re.sub(r"^/+", "/", os.path.normpath(path)) for path in bound]
+                + [repeated_slashes_and_dot_parts_dropped(path) for path in bound])
     except OSError as error:
         raise NeededFileOrListingUnreadable(f"the unix socket table {proc / 'net' / 'unix'} could not be "
                                             f"read: {error.strerror}")
