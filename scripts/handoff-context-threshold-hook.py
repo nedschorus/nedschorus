@@ -434,6 +434,8 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
     # The last notification, TaskStop or resume for a task-id decides: an interim notification
     # leaves its subagent running, and a resume clears the entry so the subagent counts again.
     last_notification_is_interim = {}
+    # Task-ids a TaskStop ended and no resume has restarted since.
+    stopped_ids = set()
     try:
         decoding_errors = "strict" if should_raise_on_undecodable_bytes else "replace"
         with path.open("r", encoding="utf-8", errors=decoding_errors) as handle:
@@ -465,6 +467,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                     if is_resume_candidate and \
                             tool_result.get(RESUMED_SUBAGENT_KEY) in spawned_ids:
                         last_notification_is_interim.pop(tool_result[RESUMED_SUBAGENT_KEY], None)
+                        stopped_ids.discard(tool_result[RESUMED_SUBAGENT_KEY])
                     if is_launch_candidate:
                         task_id = tool_result.get(BACKGROUND_TASK_LAUNCH_KEY)
                         if task_id and task_id not in launched_task_age:
@@ -474,10 +477,14 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                     stopped_id = tool_result.get("task_id")
                     if TASK_STOP_RESULT_KEY in tool_result and isinstance(stopped_id, str):
                         last_notification_is_interim[stopped_id] = False
+                        stopped_ids.add(stopped_id)
                 if "<task-id>" in line:
                     for notification in TASK_NOTIFICATION_PATTERN.findall(line):
                         interim = interim_recognizer.task_notification_is_interim(notification)
                         for task_id in TASK_NOTIFICATION_TASK_ID_PATTERN.findall(notification):
+                            # An interim notice queued before a TaskStop can arrive after it.
+                            if interim and task_id in stopped_ids:
+                                continue
                             last_notification_is_interim[task_id] = interim
     except (OSError, UnicodeDecodeError) as problem:
         raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
