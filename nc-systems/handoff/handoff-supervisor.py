@@ -122,6 +122,13 @@ every agent-session it starts, to the token of the GitHub account the agent-seat
 (agent_seat_github_account_lookup_and_token_file_read), replacing any GH_TOKEN it inherited. Every way
 an agent-seat is started runs this program, so this is the one place that decides the
 account.
+
+Terminal capture: at every start, a restart onto main's code at a session-handoff included,
+once it holds its lock, the supervisor runs `tmux pipe-pane` on its own tmux pane, so the pane's
+output from then on is appended to a new file in the agent-seat terminal captures directory
+(agent-seat-terminal-captures-common.py beside this file says where, and how the file is named),
+and prints one line saying where, or why the terminal is not captured. A failed start of the
+terminal capture never stops the agent-seat.
 """
 
 import argparse
@@ -251,6 +258,12 @@ agent_seat_worktrees_and_branches_list = importlib.util.module_from_spec(
     _agent_seat_worktrees_and_branches_list_spec)
 _agent_seat_worktrees_and_branches_list_spec.loader.exec_module(
     agent_seat_worktrees_and_branches_list)
+
+_agent_seat_terminal_captures_spec = importlib.util.spec_from_file_location(
+    "agent_seat_terminal_captures_common",
+    Path(__file__).resolve().with_name("agent-seat-terminal-captures-common.py"))
+agent_seat_terminal_captures = importlib.util.module_from_spec(_agent_seat_terminal_captures_spec)
+_agent_seat_terminal_captures_spec.loader.exec_module(agent_seat_terminal_captures)
 
 # One loaded copy, so the GitCommandFailed checkout_freshness_catch_up raises is the class caught here.
 git_machine_readable_output = checkout_freshness_catch_up.git_output
@@ -2845,6 +2858,9 @@ def main(argv=None) -> int:
         print(f"handoff-supervisor: startup stopped: {error}", file=sys.stderr)
         return 4
 
+    print(f"handoff-supervisor: "
+          f"{agent_seat_terminal_captures.agent_seat_terminal_capture_start_in_this_tmux_pane(settings.agent)}",
+          flush=True)
     try:
         return supervise_sessions(settings)
     finally:
