@@ -212,9 +212,13 @@ _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
     Path(__file__).resolve().with_name("git-redirecting-environment-variables-removal-common.py"))
 _git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
 _git_redirecting_removal_spec.loader.exec_module(_git_redirecting_removal)
-ENVIRONMENT_VARIABLES_REMOVED = _git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES + (
-    "CLAUDE_CODE_SESSION_ATTENDED", "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
-)
+_attendance_check_spec = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().with_name("agent-session-unattended-by-user-check-common.py"))
+_attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
+_attendance_check_spec.loader.exec_module(_attendance_check)
+ENVIRONMENT_VARIABLES_REMOVED = (_git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
+                                 + _attendance_check.AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES)
 
 
 class ReplayFailed(Exception):
