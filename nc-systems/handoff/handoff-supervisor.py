@@ -1648,10 +1648,12 @@ def uncommitted_work_snapshot_text(agent: str, working_directory: Path,
 
 NEXT_STEP_HEADING = "\n\nThen take the next step:\n"
 LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE = (
-    "Before you take the next step, keep, delete or hand on each leftover listed below, which "
-    "an earlier agent-session of this agent-seat left, as its list says; you may instead hand "
-    "that work to a background subagent and take the next step while it runs. Each leftover's "
-    "entry opens with how many first prompts have listed it, this one included.")
+    "Give the leftovers listed below, which an earlier agent-session of this agent-seat left, "
+    "to a background subagent. It deletes each leftover that no open task or pull request of "
+    "this agent-seat needs, and reports the rest to you. Take the next step while it runs. "
+    "Then, for each leftover it reports, carry it on yourself, or name in your session-handoff "
+    "the agent-seat that will. Each leftover's entry opens with how many first prompts have "
+    "listed it, this one included.")
 LEFTOVER_PROMPT_LISTING_COUNTS_FILE_SUFFIX = "-leftovers-prompt-listing-counts.json"
 # The entries whose count is kept: a branch, a worktree or a work-snapshot, by what opens the entry.
 LEFTOVER_ENTRY_PREFIXES = ("- branch ", "- worktree ", "- refs/work-snapshots/")
