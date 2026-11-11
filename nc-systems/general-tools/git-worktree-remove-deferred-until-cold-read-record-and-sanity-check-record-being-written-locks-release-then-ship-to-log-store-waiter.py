@@ -350,7 +350,7 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep, runner=subprocess.ru
         failure, records_text, output = failed.failure, failed.records_text or records_text, failed.output
     except Exception as error:
         output = traceback.format_exc()
-        print(output, end="", flush=True)
+        print(output, end="")
         failure = UNEXPECTED_FAILURE_TEMPLATE.format(error=f"{type(error).__name__}: {error}")
     log(f"FAILED, worktree left in place: {failure}")
     list_directory = agent_seat_task_list_of_removing_agent_session(

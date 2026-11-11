@@ -1292,6 +1292,39 @@ for list_id in ("no-such-task-list", "", ".", "..", "nested/list"):
               SCRATCH_HOME / waiter.TASK_LISTS_DIRECTORY_UNDER_HOME / "no-such-task-list").exists()
           and (sorted(named.glob("*.json")) if named.is_dir() else []) == json_files_before, (log_text, alerts))
 
+unreadable_first_tasks = scratch_task_list("waiter-task-unreadable-first-tasks")
+(unreadable_first_tasks / "1.json").write_text("{ not json")
+(unreadable_first_tasks / "2.json").write_text(json.dumps({
+    "id": "2", "subject": "this worktree's task", "status": "pending", "blocks": [], "blockedBy": [],
+    "description": f"Worktree: {failing_worktree}"}))
+code, log_text, alerts = waiter_run(failing_worktree, runner=shipper_failing_runner,
+                                    task_list_id=unreadable_first_tasks.name)
+check("a task file that is not JSON does not hide a later pending task naming the worktree",
+      f"agent-seat task already pending for this worktree: 2 in {unreadable_first_tasks}\n" in log_text, log_text)
+
+
+def git_refusing_runner(stdout, stderr):
+    def runner(argv, **keywords):
+        if argv[0] == "git":
+            return subprocess.CompletedProcess(argv, 1, stdout, stderr)
+        return subprocess.run(argv, **keywords)
+    return runner
+
+
+for stdout, stderr, failure_end, output_section in (
+        ("git's stdout line\n", "warning: first line\nfatal: last line\n", "exited 1: fatal: last line",
+         "Git's output, or the error's traceback:\ngit's stdout line\nwarning: first line\nfatal: last line\n"),
+        ("", "", "exited 1: it printed nothing", None)):
+    git_output_tasks = scratch_task_list(f"waiter-task-git-output-{bool(stderr)}-tasks")
+    waiter_run(failing_worktree, "--force", runner=git_refusing_runner(stdout, stderr),
+               task_list_id=git_output_tasks.name)
+    task = (tasks_in(git_output_tasks) or [{}])[0]
+    description = task.get("description", "")
+    check(f"git refusing with stderr {stderr!r}: the subject ends with git's last stderr line, and the task holds "
+          f"git's whole output when git printed any",
+          task.get("subject", "").endswith(failure_end) and (
+              output_section in description if output_section else "Git's output" not in description), task)
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
