@@ -406,8 +406,12 @@ runner also reads the tree of processes below the suite from /proc just before
 the kill and sends SIGKILL to each, so outside an nc-test-sandbox such a process
 is reached too. On Linux a suite outside an nc-test-sandbox is started through
 ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH, a child subreaper, so a process
-whose parent ended before the kill is reparented to it and stays in the tree; a
-process that started after the tree was read is not reached. The runner then
+whose parent ends is reparented to it and stays in the tree. The runner stops
+the group with SIGSTOP and sends SIGKILL to each process it reads in the tree
+outside the group, leaving the stopped subreaper alive, until a read finds
+nothing new after every killed process has ended; only then does it kill the
+group and with it the subreaper, so a process whose parent ends during the kill
+is reparented to the subreaper before that last read. The runner then
 waits up to TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS, 10, for each of them
 to end. Elsewhere, as on macOS, there is neither a subreaper nor /proc, so only
 the process group is killed.
@@ -1660,6 +1664,15 @@ def process_start_ticks(pid, proc=Path("/proc")):
     if fields[0] == "Z":
         return None
     return int(fields[19])
+
+
+def process_group_id(pid, proc=Path("/proc")):
+    """The process's process group id, or None when it is gone."""
+    try:
+        stat = (proc / str(pid) / "stat").read_text()
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    return int(stat.rsplit(")", 1)[1].split()[2])
 
 
 def process_alive(pid, start_ticks, proc=Path("/proc")):
@@ -3332,7 +3345,19 @@ def descendant_processes_with_start_ticks(pid, proc=Path("/proc")):
 
     A process that ends while the tree is read is left out. Where there is no /proc, as on
     macOS, the list is empty."""
+    return descendant_processes_and_ended_children(pid, proc)[0]
+
+
+def descendant_processes_and_ended_children(pid, proc=Path("/proc")):
+    """The running descendants of pid, as descendant_processes_with_start_ticks() gives them,
+    and the set of pids listed as a child that had ended, or become a zombie, by the time its
+    start ticks were read.
+
+    An ended child's own children are reparented as it ends, possibly to a process whose
+    children this read has already passed, so a read that meets an ended child it has not
+    met before may have missed them."""
     found = []
+    ended = set()
     parents = [pid]
     while parents:
         parent = parents.pop()
@@ -3343,10 +3368,12 @@ def descendant_processes_with_start_ticks(pid, proc=Path("/proc")):
                 continue
             for child in map(int, children):
                 start_ticks = process_start_ticks(child, proc)
-                if start_ticks is not None:
+                if start_ticks is None:
+                    ended.add(child)
+                else:
                     found.append((child, start_ticks))
                     parents.append(child)
-    return found
+    return found, ended
 
 
 def kill_test_suite_process_group_and_descendants(process, proc=Path("/proc"), kill=os.kill,
@@ -3357,24 +3384,57 @@ def kill_test_suite_process_group_and_descendants(process, proc=Path("/proc"), k
     (pid, start ticks) of each still running.
 
     Every process the suite started stays in its group unless it starts a session or
-    process group of its own; such a process is reached through the tree of processes,
-    read before the kill. In an nc-test-sandbox the group also holds the init of the
-    suite's PID namespace, since bwrap is not given --new-session, and the init's end ends
-    every process in the namespace. Outside one on Linux, the suite runs under
-    ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH, a child subreaper, so a process whose
-    parent ended before the kill still stands below the suite; a process in a session or
-    process group of its own that starts after the tree is read is not reached. Where there
+    process group of its own; such a process is reached through the tree of processes.
+    The group is first stopped with SIGSTOP, so no process in it can fork or end. Then the
+    tree is read, and each process found in it outside the suite's group is sent SIGKILL;
+    a process in the group stays stopped until the group is killed. The tree is read again
+    and again, and a read counts as the last only when it finds no process not already
+    found, every process sent SIGKILL has ended, and it meets no ended child that an earlier
+    read had not met; only then is the group killed. Outside an nc-test-sandbox on Linux,
+    the suite runs under ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH, a child subreaper in the
+    suite's group, either as the suite's process or below it when the suite runs in a cgroup
+    scope. Stopped and never sent SIGKILL on its own, it lives until the group is killed, so
+    a process whose parent ends, before the kill or during it, is reparented to it, and the
+    last read finds it, because a process is reparented as it ends and the last read waits
+    for every killed process to have ended. In an nc-test-sandbox the group also holds the
+    init of the suite's PID namespace, since bwrap is not given --new-session, and the
+    init's end ends every process in the namespace. The reads stop at
+    TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS, which also bounds the wait. Where there
     is no /proc, as on macOS, only the process group is killed. Called before the suite's
     first process is reaped, so its process group id is still its own."""
-    descendants = descendant_processes_with_start_ticks(process.pid, proc)
+    deadline = clock() + TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS
+    descendants = []
+    sent_sigkill = []
+    ended_children_met = set()
+    # Stopped, the subreaper can neither reap the suite's command nor end with it, so it is
+    # still there to adopt an orphan whose parent ends while the tree is read.
+    with contextlib.suppress(ProcessLookupError):
+        killpg(process.pid, signal.SIGSTOP)
+    while clock() < deadline:
+        found, ended_children = descendant_processes_and_ended_children(process.pid, proc)
+        new = [entry for entry in found if entry not in descendants]
+        descendants += new
+        for pid, start_ticks in new:
+            # A process in the suite's group is stopped and ends with the group; killing it
+            # on its own would kill the subreaper while orphans may still be reparented to it.
+            if process_group_id(pid, proc) == process.pid:
+                continue
+            # The start time, so a pid another process took since the tree was read is not hit.
+            if process_alive(pid, start_ticks, proc):
+                with contextlib.suppress(ProcessLookupError):
+                    kill(pid, signal.SIGKILL)
+                sent_sigkill.append((pid, start_ticks))
+        if new:
+            continue
+        if any(process_alive(pid, start_ticks, proc) for pid, start_ticks in sent_sigkill):
+            sleep(0.05)
+            continue
+        if not ended_children <= ended_children_met:
+            ended_children_met |= ended_children
+            continue
+        break
     with contextlib.suppress(ProcessLookupError):
         killpg(process.pid, signal.SIGKILL)
-    for pid, start_ticks in descendants:
-        # The start time, so a pid another process took since the tree was read is not hit.
-        if process_alive(pid, start_ticks, proc):
-            with contextlib.suppress(ProcessLookupError):
-                kill(pid, signal.SIGKILL)
-    deadline = clock() + TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS
     while True:
         running = [(pid, start_ticks) for pid, start_ticks in descendants
                    if process_alive(pid, start_ticks, proc)]

@@ -49,6 +49,8 @@ OWNER_FILE_MODULE_RELATIVE = Path("scripts/worktree-owner-file-read-and-write.py
 CLEANER_RELATIVE = Path("scripts/clean-worktrees.py")
 GIT_OUTPUT_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
+TASK_WRITE_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/agent-seat-task-list-new-pending-task-write-common.py")
 NEXT_STEP_LINES_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 LOG_STORE_WRITER_MODULE_RELATIVE = Path(
@@ -153,7 +155,8 @@ def new_clone():
     main = base / "main"
     git(SCRATCH, "clone", "-q", str(origin), str(main))
     for relative in (MODULE_RELATIVE, HOOK_RELATIVE, CLEANER_RELATIVE, OWNER_FILE_MODULE_RELATIVE,
-                     GIT_OUTPUT_MODULE_RELATIVE, NEXT_STEP_LINES_MODULE_RELATIVE,
+                     GIT_OUTPUT_MODULE_RELATIVE, TASK_WRITE_MODULE_RELATIVE,
+                     NEXT_STEP_LINES_MODULE_RELATIVE,
                      LOG_STORE_WRITER_MODULE_RELATIVE, NED_BOX_HOME_CONSTANTS_MODULE_RELATIVE,
                      MERGE_LANE_COMMON_MODULE_RELATIVE, TEST_RUNNER_RELATIVE,
                      GIT_REDIRECTING_REMOVAL_MODULE_RELATIVE, ATTENDANCE_CHECK_MODULE_RELATIVE):
@@ -1083,35 +1086,6 @@ def unchanged_after_refusal(main, ref, code, lines, name, text):
     check(code == snapshots.EXIT_REFUSED and lines[:1] and lines[0].startswith("REFUSED: ")
           and any(text in line for line in lines),
           f"restore refuses {name}", lines)
-
-
-def test_task_written_beside_one_claude_code_writes_at_the_same_moment():
-    list_directory = SCRATCH / "task-list-race"
-    list_directory.mkdir()
-    (list_directory / "1.json").write_text("{}")
-    real_link = snapshots.os.link
-    links_tried = []
-
-    def link_racing_claude_code(source, target):
-        links_tried.append(target)
-        if len(links_tried) > 5:
-            raise RuntimeError("the task writer kept retrying one id")
-        if Path(target).name == "2.json" and not Path(target).exists():
-            Path(target).write_text('{"id": "2", "by": "claude code"}')
-        return real_link(source, target)
-
-    snapshots.os.link = link_racing_claude_code
-    try:
-        task_id = snapshots.agent_seat_task_list_new_pending_task_write(list_directory, "subject",
-                                                                         "description")
-    finally:
-        snapshots.os.link = real_link
-    check(task_id == 3 and json.loads((list_directory / "2.json").read_text())["by"] == "claude code"
-          and json.loads((list_directory / "3.json").read_text())["subject"] == "subject"
-          and (list_directory / ".highwatermark").read_text() == "3"
-          and not list(list_directory.glob("*.partial")),
-          "a task id Claude Code takes at the same moment is skipped and its file kept",
-          sorted(path.name for path in list_directory.iterdir()))
 
 
 def test_restore_refusals_change_nothing():
@@ -2272,7 +2246,6 @@ def main():
                      test_live_and_dead_owners_listed, test_list_caps_and_failure,
                      test_supervisor_appends_the_list, test_restore_a_subset,
                      test_restore_reads_a_kept_name_as_a_literal_path,
-                     test_task_written_beside_one_claude_code_writes_at_the_same_moment,
                      test_restore_refusals_change_nothing, test_restore_step_failures,
                      test_restore_accepts_the_owner_file_git_worktree_add_wrote_naming_its_agent_seat,
                      test_restore_task_and_ref_deletion_failures, test_discard,

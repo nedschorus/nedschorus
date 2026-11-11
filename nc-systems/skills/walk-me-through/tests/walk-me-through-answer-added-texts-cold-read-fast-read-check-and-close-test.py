@@ -510,6 +510,12 @@ UNREADABLE_MARK_CASES = (
      '#new "Use\n`#new` to mark proposed text."\n',
      ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
       'its text joined onto it: #new "Use `#new` to mark proposed text."']),
+    ("a mark whose code span holds comment text, in a paragraph with a real HTML comment",
+     '#new "Keep `<!-- note -->` as it is."\n#new "Row two." <!-- a drafter\'s note -->\n',
+     ["- line 5: the line of `#new` holds `<!--`, so this program cuts text from it as an HTML comment, even inside "
+      "a code span, and would not read the line as written.",
+      "- line 6: the line of `#new` holds `<!--`, so this program cuts text from it as an HTML comment, even inside "
+      "a code span, and would not read the line as written."]),
     ("a mark whose text runs onto a line that opens with a hashtag this program does not read",
      '#new "The rule asks for\n#root_cause lines in each description."\n',
      ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
@@ -3217,6 +3223,40 @@ def test_moving_on_reads_the_recommendation_the_user_sees_outside_html_comments_
             check(f"check --moved-on-no-decision records the move on when {why}: {line!r}",
                   checked.returncode == 0 and "moved on, no decision" in case.minutes.read_text(),
                   described(checked) + case.minutes.read_text())
+
+
+def test_moving_on_is_refused_when_a_comment_opening_inside_a_tag_hides_a_recommendation():
+    plain = SUB_STEPS_DOCUMENT.replace("Recommendation: change the sentence.\n", "{line}\n")
+    for line, why in (
+            ('<div title="<!--">\nRecommendation: change the sentence.\n</div>', "no `-->` follows"),
+            ('<div title="<!--">\nRecommendation: change the sentence.\n<!-- a note -->\n</div>',
+             "a real comment's `-->` follows")):
+        case = Case(next_to_present="item 1.2 of 2", document=plain.format(line=line))
+        case.minutes.write_text("# Minutes\n\n#next_to_present item 1.2 of 2\n")
+        before = case.minutes.read_text()
+        checked = case.run("check", "--moved-on-no-decision", reply="next")
+        check(f"check --moved-on-no-decision is refused, writing nothing, when `<!--` in an attribute hides the "
+              f"recommendation and {why}: {line!r}",
+              checked.returncode == 1 and case.minutes.read_text() == before
+              and 'but recommends "change the sentence" once a `<!--` inside an HTML tag opens no comment'
+              in checked.stderr
+              and "check --moved-on-no-decision --user-reply-as-typed next` again." in checked.stderr,
+              described(checked))
+
+
+def test_moving_on_is_not_refused_when_a_stray_less_than_sign_comes_before_a_hidden_note_in_a_real_comment():
+    plain = SUB_STEPS_DOCUMENT.replace("Recommendation: change the sentence.\n", "{line}\n")
+    for line in ("Keep x<y in mind.\n<!-- Recommendation: a hidden note. -->",
+                 "Keep `List<T` in mind.\n<!-- Recommendation: a hidden note. -->",
+                 "Keep x<y in mind.\n\n<!-- Recommendation: a hidden note. -->",
+                 "Keep `<script>` in mind.\n<!-- Recommendation: a hidden note. -->",
+                 "<!-- Recommendation: a hidden note, in a comment never closed."):
+        case = Case(next_to_present="item 1.2 of 2", document=plain.format(line=line))
+        case.minutes.write_text("# Minutes\n\n#next_to_present item 1.2 of 2\n")
+        checked = case.run("check", "--moved-on-no-decision", reply="next")
+        check(f"check --moved-on-no-decision is not refused when the item's only recommendation is in a real HTML "
+              f"comment: {line!r}",
+              checked.returncode == 0 and "a hidden note" not in checked.stderr, described(checked))
 
 
 def test_moving_on_from_a_sub_step_that_asks_no_decision_is_not_refused_for_a_later_sub_steps_recommendation():

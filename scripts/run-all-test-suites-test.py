@@ -3292,10 +3292,11 @@ def fake_proc(root, processes):
     return root
 
 
-def write_fake_stat(root, pid, start_ticks, state="S"):
+def write_fake_stat(root, pid, start_ticks, state="S", process_group=1):
     (root / str(pid)).mkdir(parents=True, exist_ok=True)
     (root / str(pid) / "stat").write_text(
-        f"{pid} (a (fake) suite) {state} " + "1 " * 18 + f"{start_ticks} 0\n")
+        f"{pid} (a (fake) suite) {state} 1 {process_group} " + "1 " * 16
+        + f"{start_ticks} 0\n")
 
 
 class ProcWhereOneThreadEndsAsItsChildrenAreRead(type(pathlib.Path())):
@@ -3330,26 +3331,51 @@ with tempfile.TemporaryDirectory() as scratch:
           module.descendant_processes_with_start_ticks(100, pathlib.Path(scratch) / "none") == [])
 
 
+class ProcWhereEveryStatReadFindsTheProcessEnding(type(pathlib.Path())):
+    """The kernel answers ESRCH to a read of the stat of a process that is ending."""
+
+    def read_text(self, *arguments, **keywords):
+        if self.name == "stat":
+            raise ProcessLookupError(3, "No such process")
+        return super().read_text(*arguments, **keywords)
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    proc = pathlib.Path(scratch)
+    write_fake_stat(proc, 300, 30, process_group=200)
+    check("a process's group id is read from its stat, and is None for a process that is "
+          "gone or ending as its stat is read",
+          (module.process_group_id(300, proc), module.process_group_id(301, proc),
+           module.process_group_id(300, ProcWhereEveryStatReadFindsTheProcessEnding(proc)))
+          == (200, None, None))
+
+
 class FakeSuiteProcess:
     pid = 200
 
 
 def kill_with_fake_proc(proc, signalled, end_on_kill=True, kill_refused=(), sleeps=None,
-                        killpg_refused=False):
-    """Run the kill on the fake /proc; signalled records each signal sent, in order."""
+                        killpg_refused=False, pid_taken_after_read=None):
+    """Run the kill on the fake /proc; signalled records each signal sent, in order.
+
+    pid_taken_after_read: a pid whose process another process replaces as soon as the
+    first SIGKILL is sent, after the tree was read."""
     now = [0.0]
 
     def killpg(pid, number):
         signalled.append(("killpg", pid, number))
-        # The kernel reparents a killed process's children away from it.
-        (proc / "200" / "task" / "200" / "children").write_text("")
-        # Another process took the pid of the one whose start ticks no longer match.
-        write_fake_stat(proc, 203, 99)
+        if number == signal.SIGKILL:
+            # The kernel reparents a killed process's children away from it.
+            (proc / "200" / "task" / "200" / "children").write_text("")
         if killpg_refused:
             raise ProcessLookupError(3, "No such process")
 
     def kill(pid, number):
         signalled.append(("kill", pid, number))
+        if pid_taken_after_read is not None:
+            write_fake_stat(proc, pid_taken_after_read, 99)
+            # The process now at that pid is no child of the suite's.
+            (proc / "200" / "task" / "200" / "children").write_text("201 ")
         if pid in kill_refused:
             raise ProcessLookupError(3, "No such process")
         if end_on_kill:
@@ -3360,11 +3386,29 @@ def kill_with_fake_proc(proc, signalled, end_on_kill=True, kill_refused=(), slee
         if sleeps is not None:
             sleeps.append(seconds)
             if len(sleeps) == 2 and not end_on_kill:
-                for pid in (201, 202):
+                for pid in (201, 202, 203):
                     write_fake_stat(proc, pid, 0, state="Z")
 
     return module.kill_test_suite_process_group_and_descendants(
         FakeSuiteProcess, proc=proc, kill=kill, killpg=killpg, clock=lambda: now[0], sleep=sleep)
+
+
+class ProcWhereAChildEndsAsItsChildrenAreRead(type(pathlib.Path())):
+    """The first read of 201's children finds 201 ended, and its child 205 already reparented
+    to the suite's process, whose children the read has passed."""
+
+    reads_of_201 = 0
+
+    def read_text(self, *arguments, **keywords):
+        if self.name == "children" and self.parent.name == "201":
+            type(self).reads_of_201 += 1
+            if type(self).reads_of_201 == 1:
+                root = self.parents[3]
+                write_fake_stat(root, 201, 0, state="Z")
+                (root / "200" / "task" / "200" / "children").write_text("201 205 ")
+                fake_proc(root, {205: (25, {205: []})})
+                raise ProcessLookupError(3, "No such process")
+        return super().read_text(*arguments, **keywords)
 
 
 def suite_tree(root):
@@ -3375,12 +3419,33 @@ def suite_tree(root):
 with tempfile.TemporaryDirectory() as scratch:
     signalled = []
     still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled)
-    check("the kill reads the tree below the suite before it kills the suite's process group, "
-          "then sends SIGKILL to each process it read, except one whose pid another process "
-          "has taken since, and returns none still running once they have ended",
-          signalled == [("killpg", 200, signal.SIGKILL), ("kill", 201, signal.SIGKILL),
-                        ("kill", 202, signal.SIGKILL)] and still_running == [],
+    check("the kill stops the suite's process group, sends SIGKILL to each process it reads "
+          "below the suite, reads the tree again until it finds none new, then kills the "
+          "group, and returns none still running once they have ended",
+          signalled == [("killpg", 200, signal.SIGSTOP), ("kill", 201, signal.SIGKILL),
+                        ("kill", 203, signal.SIGKILL), ("kill", 202, signal.SIGKILL),
+                        ("killpg", 200, signal.SIGKILL)] and still_running == [],
           (signalled, still_running))
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled = []
+    still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled,
+                                        pid_taken_after_read=203)
+    check("a process whose pid another process took after the tree was read is not sent "
+          "SIGKILL",
+          ("kill", 203, signal.SIGKILL) not in signalled
+          and ("kill", 202, signal.SIGKILL) in signalled, signalled)
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled = []
+    proc = fake_proc(pathlib.Path(scratch), {200: (20, {200: [201]}), 201: (21, {201: [205]})})
+    still_running = kill_with_fake_proc(ProcWhereAChildEndsAsItsChildrenAreRead(proc),
+                                        signalled)
+    check("a process reparented to the suite's process after the read passed it, because its "
+          "parent ended while the tree was read, is found by the next read and killed before "
+          "the group is",
+          signalled[-2:] == [("kill", 205, signal.SIGKILL), ("killpg", 200, signal.SIGKILL)]
+          and still_running == [], (signalled, still_running))
 
 with tempfile.TemporaryDirectory() as scratch:
     signalled = []
@@ -3388,7 +3453,7 @@ with tempfile.TemporaryDirectory() as scratch:
                                         kill_refused=(201,), killpg_refused=True)
     check("a process group or a process that has ended before its SIGKILL does not stop the "
           "kill of the others",
-          [entry[1] for entry in signalled] == [200, 201, 202], signalled)
+          [entry[1] for entry in signalled] == [200, 201, 203, 202, 200], signalled)
 
 with tempfile.TemporaryDirectory() as scratch:
     signalled, sleeps = [], []
@@ -3403,7 +3468,125 @@ with tempfile.TemporaryDirectory() as scratch:
                                         end_on_kill=False)
     check("a killed process still running after TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS "
           "is returned, and the kill does not wait longer",
-          still_running == [(201, 21), (202, 22)], still_running)
+          still_running == [(201, 21), (203, 23), (202, 22)], still_running)
+
+class ProcWhereAnOrphanIsReparentedToTheSubreaperAfterItsChildrenWereRead(
+        type(pathlib.Path())):
+    """The cgroup-scope shape: 200 is the statistics wrapper, 201 the subreaper and 202 the
+    suite's command, all in group 200; 203 started a session of its own, and as its children
+    are first read it ends and its child 204 is reparented to 201, whose children the read
+    has passed."""
+
+    reads_of_203 = 0
+
+    def read_text(self, *arguments, **keywords):
+        if self.name == "children" and self.parent.name == "203":
+            type(self).reads_of_203 += 1
+            if type(self).reads_of_203 == 1:
+                root = self.parents[3]
+                write_fake_stat(root, 203, 0, state="Z", process_group=203)
+                (root / "201" / "task" / "201" / "children").write_text("202 204 ")
+                write_fake_stat(root, 204, 24, process_group=203)
+                (root / "204" / "task" / "204").mkdir(parents=True, exist_ok=True)
+                (root / "204" / "task" / "204" / "children").write_text("")
+                raise ProcessLookupError(3, "No such process")
+        return super().read_text(*arguments, **keywords)
+
+
+def kill_with_hooks(proc, signalled, on_kill=lambda pid: None, on_sleep=lambda: None,
+                    on_group_kill=lambda: None):
+    now = [0.0]
+
+    def killpg(pid, number):
+        signalled.append(("killpg", pid, number))
+        if number == signal.SIGKILL:
+            on_group_kill()
+
+    def kill(pid, number):
+        signalled.append(("kill", pid, number))
+        on_kill(pid)
+
+    def sleep(seconds):
+        now[0] += seconds
+        on_sleep()
+
+    return module.kill_test_suite_process_group_and_descendants(
+        FakeSuiteProcess, proc=proc, kill=kill, killpg=killpg, clock=lambda: now[0], sleep=sleep)
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    fake_proc(root, {200: (20, {200: [201]}), 201: (21, {201: [202]}), 202: (22, {202: [203]}),
+                     203: (23, {203: [204]})})
+    for pid, ticks in ((200, 20), (201, 21), (202, 22)):
+        write_fake_stat(root, pid, ticks, process_group=200)
+    write_fake_stat(root, 203, 23, process_group=203)
+    signalled = []
+    still_running = kill_with_hooks(
+        ProcWhereAnOrphanIsReparentedToTheSubreaperAfterItsChildrenWereRead(root), signalled,
+        on_kill=lambda pid: write_fake_stat(root, pid, 0, state="Z"),
+        on_group_kill=lambda: [write_fake_stat(root, pid, 0, state="Z") for pid in (201, 202)])
+    check("when the subreaper runs below the suite's process, in a cgroup scope, the kill "
+          "sends no SIGKILL of its own to a process in the suite's stopped group, so the "
+          "subreaper lives to adopt an orphan whose parent ended while the tree was read, and "
+          "the next read finds and kills it before the group is killed",
+          not any(entry[0] == "kill" and entry[1] in (201, 202) for entry in signalled)
+          and signalled[-2:] == [("kill", 204, signal.SIGKILL), ("killpg", 200, signal.SIGKILL)]
+          and still_running == [], (signalled, still_running))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    fake_proc(root, {200: (20, {200: [201]}), 201: (21, {201: []})})
+    sleeps = []
+
+    def end_201_after_its_late_fork():
+        # 201 forked 206 after its children were last read; as 201 finishes ending, 206 is
+        # reparented to the suite's process.
+        sleeps.append(1)
+        if len(sleeps) == 1:
+            write_fake_stat(root, 201, 0, state="Z")
+            fake_proc(root, {206: (26, {206: []})})
+            (root / "200" / "task" / "200" / "children").write_text("201 206 ")
+
+    signalled = []
+    still_running = kill_with_hooks(root, signalled, on_sleep=end_201_after_its_late_fork)
+    check("a read that finds nothing new is not the last while a process sent SIGKILL is "
+          "still ending, so a child it forked after its children were read, reparented as it "
+          "ends, is found and killed before the group is",
+          ("kill", 206, signal.SIGKILL) in signalled
+          and signalled.index(("kill", 206, signal.SIGKILL))
+          < signalled.index(("killpg", 200, signal.SIGKILL)), (signalled, still_running))
+
+
+class ProcWhereAChildHasEndedBeforeItsStartTicksAreRead(type(pathlib.Path())):
+    """The first read of the suite's children lists 201, which ends before its start ticks
+    are read; its child 205 is reparented to the suite's process after that list was read."""
+
+    reads_of_200 = 0
+
+    def read_text(self, *arguments, **keywords):
+        text = super().read_text(*arguments, **keywords)
+        if self.name == "children" and self.parent.name == "200":
+            type(self).reads_of_200 += 1
+            if type(self).reads_of_200 == 1:
+                root = self.parents[3]
+                write_fake_stat(root, 201, 0, state="Z")
+                fake_proc(root, {205: (25, {205: []})})
+                (root / "200" / "task" / "200" / "children").write_text("201 205 ")
+        return text
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = fake_proc(pathlib.Path(scratch), {200: (20, {200: [201]}), 201: (21, {201: [205]})})
+    signalled = []
+    still_running = kill_with_hooks(
+        ProcWhereAChildHasEndedBeforeItsStartTicksAreRead(root), signalled,
+        on_kill=lambda pid: write_fake_stat(root, pid, 0, state="Z"))
+    check("a read that meets a child that ended before its start ticks were read is not the "
+          "last, so the ended child's own child, reparented after the read passed, is found "
+          "and killed before the group is",
+          signalled[-2:] == [("kill", 205, signal.SIGKILL), ("killpg", 200, signal.SIGKILL)]
+          and still_running == [], (signalled, still_running))
 
 print()
 # The count is printed so a short run is visible on sight: a run that ends
