@@ -78,8 +78,12 @@ with tempfile.TemporaryDirectory() as scratch:
     (raced / ".highwatermark").write_text("not a number", encoding="utf-8")
     (raced / "2.json").write_text("{}", encoding="utf-8")
     real_link = task_list.os.link
+    links_tried = []
 
     def link_racing_claude_code(source, target):
+        links_tried.append(target)
+        if len(links_tried) > 5:
+            raise RuntimeError("the task writer kept retrying one id")
         if Path(target).name == "3.json" and not Path(target).exists():
             Path(target).write_text('{"id": "3", "by": "claude code"}', encoding="utf-8")
         return real_link(source, target)
@@ -87,6 +91,8 @@ with tempfile.TemporaryDirectory() as scratch:
     task_list.os.link = link_racing_claude_code
     try:
         task_id = write(raced, "subject", "description")
+    except RuntimeError as error:
+        task_id = str(error)
     finally:
         task_list.os.link = real_link
     check("an id Claude Code takes at the same moment is skipped and its file kept, and a "
