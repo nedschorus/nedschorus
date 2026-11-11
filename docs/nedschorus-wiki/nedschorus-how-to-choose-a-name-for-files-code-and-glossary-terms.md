@@ -24,7 +24,7 @@ A fresh-reader here has the name, the glossaries, and what the glossaries refere
 
 ### Who judges whether a name meets the criterion
 
-You cannot judge your own name, because you already know what it means. So for a name that will be used beyond the place it is defined, such as a file name, a script name, a function or class used from other files, or a branch name, ask a fresh subagent what it thinks the name means, giving it the name and nothing else. If its answer is wrong, or vague where your meaning is specific, add the words its answer lacked and ask again. A name used only inside one file needs no such check.
+You cannot judge your own name, because you already know what it means. So for a name that will be used beyond the place it is defined and will last longer than a month, such as a file name, a script name, a function or class used from other files, or a glossary term, ask a fresh subagent what it thinks the name means, giving it the name and nothing else. A branch name or a scratch file's name needs no check and is not changed once chosen. If its answer is wrong, or vague where your meaning is specific, add the words its answer lacked and ask again. A name used only inside one file needs no such check.
 
 For a new project-term or system-term, the user rules on the name, as Step 5 says.
 
