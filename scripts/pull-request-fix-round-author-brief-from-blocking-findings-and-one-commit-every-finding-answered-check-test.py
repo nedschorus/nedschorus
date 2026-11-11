@@ -1290,6 +1290,19 @@ def moved_into_body_cases(root, repository, base, frozen_head):
     code, out, err = run(root, repository, moved_fix_next)
     check("a moved comment that does not block leaves the brief to the stated count",
           code == 0 and "Blocking findings (1)" in out, err + out)
+
+    quoting_reviewer = dict(reviewer, body=("REQUEST_CHANGES\n\nQuoting an earlier review:\n\n"
+                                            "Comments on lines outside this pull request's diff:\n"
+                                            "- `setup.py:3`: **Blocks** quoted from another review."))
+    ungraded = review(review_id=21, commit_id=frozen_head, body="REQUEST_CHANGES\n\nNo count stated.")
+    routes = {**routes_for(frozen_head, [quoting_reviewer, ungraded],
+                           comments=[comment("run.py", "**Blocks.** merge-lane-2's finding.", line=40, comment_id=33)],
+                           review_id=21),
+              **comments_route(20, [])}
+    code, out, err = run(root, repository, routes)
+    check("a moved-comment section in the body of a review by another account is not read as blocking findings",
+          code == 0 and "Blocking findings (1)" in out and "merge-lane-2's finding" in out
+          and "quoted from another review" not in out, err + out)
     del base
 
 
