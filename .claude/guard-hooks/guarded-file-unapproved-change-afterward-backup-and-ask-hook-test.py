@@ -1042,6 +1042,10 @@ def cases(scratch):
     message = world.run()
     check("a file listed again unchanged after git stopped listing it is not asked about",
           message == "", message)
+    state = json.loads(state_file_of_checkout(world).read_text())
+    check("and its first-run version stays deferred: still recorded, and nothing in the store",
+          state.get("first_run_versions") == {str(claude): world.key(claude)}
+          and world.versions(claude) == [], (state, world.versions(claude)))
     claude.write_text("project v2\n")
     edited = world.key(claude)
     message = world.run()
@@ -1050,7 +1054,36 @@ def cases(scratch):
           result.returncode == 0 and claude.is_file() and claude.read_text() == "project v1\n",
           (message, result.stderr, claude.is_file() and claude.read_text()))
 
-    # -- the first run's commit pruned after a rebase does not stop later runs
+    # -- a file git lists again changed, its id sorting below or above the first run's version,
+    # gets that version approved first and is asked about, also when a file listed before it
+    # has no first-run version
+    for direction, wanted in [("below", lambda committed: lambda key: key < committed),
+                              ("above", lambda committed: lambda key: key > committed)]:
+        world = fresh(scratch, f"unlisted-then-relisted-changed-{direction}-after-unstored-first-run")
+        claude = world.repo / "CLAUDE.md"
+        committed = world.key(claude)
+        exclude = world.repo / ".git" / "info" / "exclude"
+        exclude.parent.mkdir(exist_ok=True)
+        exclude.write_text("/CLAUDE.md\n")
+        world.git("rm", "-q", "--cached", "CLAUDE.md")
+        world.run()
+        claude.write_bytes(text_whose_blob_id("project, changed while unlisted", wanted(committed)))
+        # Listed before CLAUDE.md, and new since the first run, so it has no first-run version.
+        skill = world.repo / ".claude" / "skills" / "a.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("a skill\n")
+        exclude.write_text("")
+        world.git("reset", "-q", "--", "CLAUDE.md")
+        message = world.run()
+        state = json.loads(state_file_of_checkout(world).read_text())
+        check(f"a file listed again changed, its id {direction} the first run's version, is "
+              "asked about",
+              f"{claude}, version {world.key(claude)}" in message, message)
+        check(f"and, its id {direction} the first run's version, that version is approved first "
+              "and its entry dropped",
+              world.store_file(claude, "approved").split()[:1] == [committed]
+              and state.get("first_run_versions") == {},
+              (world.store_file(claude, "approved"), state))
     world = World(Path(scratch) / "first-run-commit-pruned")
     claude = world.repo / "CLAUDE.md"
     committed = world.key(claude)
@@ -1126,6 +1159,36 @@ def cases(scratch):
               "did not run" in message and first_run_commit in message
               and state.get("base_commit") == first_run_commit
               and "first_run_versions" not in state, (message, state))
+    # A state written when the checkout had no commit names none, and nothing is looked up.
+    world = fresh(scratch, "old-state-with-no-first-run-commit")
+    state_file = old_state(world, None)
+    message = world.run()
+    state = json.loads(state_file.read_text())
+    check("an old state that names no first-run commit is carried over to no first-run versions",
+          message == "" and "base_commit" not in state
+          and state.get("first_run_versions") == {}, (message, state))
+    # A file whose recorded version is no longer the commit's, with an id below or above it,
+    # no longer holds the first run's version.
+    world = World(Path(scratch) / "old-state-files-changed-since-first-run-commit")
+    skill = world.repo / ".claude" / "skills" / "a.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("a skill\n")
+    world.git("add", ".")
+    world.git("commit", "-qm", "a skill")
+    world.run()
+    first_run_commit = world.git("rev-parse", "HEAD").stdout.strip()
+    claude = world.repo / "CLAUDE.md"
+    claude.write_bytes(text_whose_blob_id("project, changed since the first run",
+                                          lambda key, committed=world.key(claude): key < committed))
+    skill.write_bytes(text_whose_blob_id("a skill, changed since the first run",
+                                         lambda key, committed=world.key(skill): key > committed))
+    world.run()
+    state_file = old_state(world, first_run_commit)
+    world.run()
+    state = json.loads(state_file.read_text())
+    check("an old state's files whose recorded versions, with ids below and above, differ from "
+          "the first-run commit's carry over to no first-run versions",
+          "base_commit" not in state and state.get("first_run_versions") == {}, state)
 
     # -- a first-run version git has since pruned is reported and kept, not dropped
     world = World(Path(scratch) / "first-run-version-pruned")
@@ -1760,10 +1823,24 @@ def cases(scratch):
     world.run()
     state = next((world.repo / ".git").glob("*-state.json"))
     before = (state.stat().st_ino, state.stat().st_mtime_ns)
+    outside = next((world.scratch / "cache").glob("*-state.json"))
+    outside_before = (outside.stat().st_ino, outside.stat().st_mtime_ns)
     message = world.run()
     check("a run with nothing to do does not rewrite the checkout's state file",
           message == "" and (state.stat().st_ino, state.stat().st_mtime_ns) == before,
           (message, before, state.stat()))
+    check("nor the outside state file",
+          (outside.stat().st_ino, outside.stat().st_mtime_ns) == outside_before,
+          (outside_before, outside.stat()))
+    # Decisions dropped, as a change to the instruction-file guard drops them, are decided again
+    # and saved, though nothing else is to do.
+    checkout_state = json.loads(state.read_text())
+    checkout_state["guarded"].pop("")
+    state.write_text(json.dumps(checkout_state))
+    message = world.run()
+    check("a run with nothing to do but decisions to make again saves them",
+          message == "" and "" in json.loads(state.read_text())["guarded"],
+          (message, state.read_text()))
 
     # -- git's own work after a first run made while a merge was stopped, in a checkout with no
     # guarded file yet, is not asked about
