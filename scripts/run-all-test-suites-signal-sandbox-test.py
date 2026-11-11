@@ -724,9 +724,10 @@ with tempfile.TemporaryDirectory() as scratch_name:
           in_sandbox["log"].read_text().strip() == str(os.environ.get("TMPDIR")),
           in_sandbox["log"].read_text())
 
-for suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX:
-    check(f"the suite listed to run outside the sandbox exists: {suite}",
-          (SCRIPTS_DIR.parent / suite).is_file())
+for list_name in runner.SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST:
+    for suite in getattr(runner, list_name):
+        check(f"the suite listed in {list_name} exists: {suite}",
+              (SCRIPTS_DIR.parent / suite).is_file())
 
 # Each of these starts the real bwrap, which cannot start inside bwrap.
 for suite in ("nc-systems/cold-read/tests/cold-read-agy-cell-real-sandbox-test.py",
