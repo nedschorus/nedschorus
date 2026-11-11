@@ -11,7 +11,7 @@ The user-level instruction file on the box (`/home/nedlern/.claude/CLAUDE.md`) c
 
 ## The two machines
 
-The user works at a **Mac**. Agent sessions run on **`ned-box`**, an Ubuntu machine on the same LAN, reached as `ssh nedlern@ned-box`. Each machine has its own clone of nedschorus, its own Claude credentials, and its own agent state. Git branches cross between them only when pushed, and the Mac mounts ned-box's home directory — worktrees, handoff files, locks, and credentials are per-machine and never travel.
+The user works at a **Mac**. Agent sessions run on **`ned-box`**, an Ubuntu machine on the same LAN, reached as `ssh nedlern@ned-box`. Each machine has its own clone of nedschorus, its own Claude credentials, and its own agent state. Git branches cross between them only when pushed, and the Mac mounts ned-box's home directory — beyond that mount, worktrees, handoff files, locks, and credentials are per-machine and never travel.
 
 The box is the default machine for agent work: more memory, CPU and bandwidth, and it does not compete with the machine the user is sitting at. The Mac runs agents only when the work needs to be where the user is — its browser session, its keychain, its GUI, or files that exist only there. Merges to `main` happen on ned-box, at the agent-seat merge-lane-2, which merges as `ned-review-merge`; branch protection lets only `ned-review-merge` and `nedlern` push to `main`.
 
