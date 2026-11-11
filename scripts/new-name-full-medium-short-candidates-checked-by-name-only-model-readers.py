@@ -51,10 +51,10 @@ print a line opening FAILED with the error and exit 1, so the gap is seen.
 When ssh timed out or its connection dropped, the remote append may still have
 happened, and the FAILED line says so. The run file records whether the
 readers' lines are known to have reached the log-store; when they are not,
-`verdicts` first reads the log-store for this run's reader lines, adds them
-only if none are there, and reports what it found. Rerunning `verdicts`
-appends the judgements again, and says so when the log-store already holds
-judgements for the run; a later summary counts only the newest ones.
+`verdicts` adds them with its judgements. Rerunning `verdicts` appends the
+judgements again. A line may thus be in the log-store twice, so
+`per-model-summary` counts one reader line and one judgement per run and
+reader, the newest.
 `per-model-summary` reads a missing log as empty, and fails on any other
 read error.
 
@@ -287,8 +287,8 @@ def command_read(arguments, reader=run_reader, log_path=None, ssh_host=None) -> 
     if error:
         if may_have_appended:
             print(f"FAILED: adding the readers' results to the log-store may or may not have worked: {error}. "
-                  f"They are kept in {run_file}. The `verdicts` command above first looks for them in the "
-                  "log-store and adds them only if they are not there, so run it as usual.")
+                  f"They are kept in {run_file}, and the `verdicts` command above adds them with your judgements; "
+                  "per-model-summary counts a line found twice once, so run it as usual.")
         else:
             print(f"FAILED: the readers' results were not added to the log-store: {error}. "
                   f"They are kept in {run_file}, and the `verdicts` command above adds them to the log-store "
@@ -365,19 +365,6 @@ def command_verdicts(arguments, log_path=None, ssh_host=None) -> int:
     run["verdicts"] = verdicts
     run["outcome"] = lines[-1]
     readers_logged = run.get("readers_logged", True)
-    try:
-        logged = [line for line in read_log_lines(log_path, ssh_host) if line.get("run_id") == run["run_id"]]
-    except (OSError, ValueError) as check_error:
-        logged = None
-        print(f"Could not look in the log-store for this run's lines: {check_error}.")
-    if logged is not None:
-        logged_readers = sum(line["kind"] == "reader" for line in logged)
-        if not readers_logged and logged_readers:
-            print(f"The log-store already holds {logged_readers} reader lines of this run, so they are not added again.")
-            readers_logged = True
-        if any(line["kind"] == "verdict" for line in logged):
-            print("The log-store already holds judgements of this run; these are added after them, "
-                  "and per-model-summary counts only the newest.")
     if not readers_logged:
         lines = reader_log_lines(run) + lines
     error, may_have_appended = append_to_log_store(lines, log_path, ssh_host)
@@ -398,8 +385,8 @@ def command_verdicts(arguments, log_path=None, ssh_host=None) -> int:
     if error:
         added = "may or may not have been added" if may_have_appended else "were not added"
         print(f"FAILED: the judgements {added} to the log-store: {error}. The outcome above stands. "
-              "Run this same command again once ned-box answers; it reports what the log-store already holds "
-              "of this run, and until then the per-model data may lack this run.")
+              "Run this same command again once ned-box answers; until then the per-model data may lack this run, "
+              "and per-model-summary counts a line found twice once.")
         return 1
     return 0 if chosen else 1
 
@@ -419,15 +406,15 @@ def read_log_lines(log_path=None, ssh_host=None) -> list:
 
 
 def per_model_summary(lines: list) -> dict:
-    """Per model: answered, matched, only misses, failed, mean seconds; latest verdict per run and reader."""
-    verdicts = {}
+    """Per model: answered, matched, only misses, failed, mean seconds; the newest reader line and verdict per run and reader."""
+    verdicts, readers = {}, {}
     for line in lines:
         if line["kind"] == "verdict":
             verdicts[(line["run_id"], line["reader_id"])] = line
+        elif line["kind"] == "reader":
+            readers[(line["run_id"], line["reader_id"])] = line
     summary = {}
-    for line in lines:
-        if line["kind"] != "reader":
-            continue
+    for line in readers.values():
         row = summary.setdefault(line["model"], {"answered": 0, "matched": 0, "only_miss": 0, "failed": 0, "seconds": []})
         if line["error"]:
             row["failed"] += 1

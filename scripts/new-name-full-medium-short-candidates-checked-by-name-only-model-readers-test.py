@@ -316,7 +316,7 @@ def test_read_says_an_append_whose_connection_dropped_may_have_happened():
                "read says an append whose connection dropped may have happened")
 
 
-def test_verdicts_finds_reader_lines_an_uncertain_append_left_and_does_not_add_them_again():
+def test_verdicts_adds_reader_lines_again_after_an_uncertain_append_and_the_summary_counts_each_once():
     with tempfile.TemporaryDirectory() as folder:
         folder = pathlib.Path(folder)
         log = folder / "log.jsonl"
@@ -324,38 +324,51 @@ def test_verdicts_finds_reader_lines_an_uncertain_append_left_and_does_not_add_t
         run = json.loads((folder / "run.json").read_text())
         run["readers_logged"] = False
         (folder / "run.json").write_text(json.dumps(run))
-        code, out, _ = quiet(check.command_verdicts, verdict_arguments(folder / "run.json", all_verdicts(run)),
-                             log_path=str(log))
+        code, _, _ = quiet(check.command_verdicts, verdict_arguments(folder / "run.json", all_verdicts(run)),
+                           log_path=str(log))
+        code_again, _, _ = quiet(check.command_verdicts, verdict_arguments(folder / "run.json", all_verdicts(run)),
+                                 log_path=str(log))
         kinds = [json.loads(line)["kind"] for line in log.read_text().splitlines()]
-        expect(code == 0 and kinds.count("reader") == 18 and "already holds 18 reader lines" in out,
-               "verdicts reports reader lines already in the log-store and does not add them again")
-        code, out, _ = quiet(check.command_verdicts, verdict_arguments(folder / "run.json", all_verdicts(run)),
-                             log_path=str(log))
-        kinds = [json.loads(line)["kind"] for line in log.read_text().splitlines()]
-        expect(code == 0 and kinds.count("reader") == 18 and "already holds judgements of this run" in out,
-               "a rerun of verdicts reports the judgements already there and adds no reader lines")
+        expect(code == 0 and code_again == 0 and kinds.count("reader") == 36,
+               "verdicts adds the reader lines when they are not known to be logged, even if some are there")
         summary = check.per_model_summary([json.loads(line) for line in log.read_text().splitlines()])
-        expect(all(row["answered"] == 3 for row in summary.values()), "the summary counts each reader once")
+        expect(all(row["answered"] == 3 and row["matched"] == 3 for row in summary.values()),
+               "the summary counts each reader and each judgement once")
 
 
-def test_verdicts_reports_a_log_store_it_could_not_look_in_and_still_appends():
+def test_verdicts_adds_every_reader_line_when_the_log_store_holds_only_some():
     with tempfile.TemporaryDirectory() as folder:
         folder = pathlib.Path(folder)
         log = folder / "log.jsonl"
         quiet(check.command_read, read_arguments(folder), reader=stub_reader(), log_path=str(log))
+        log.write_text("".join(log.read_text().splitlines(keepends=True)[:5]))
         run = json.loads((folder / "run.json").read_text())
-        with open(log, "a") as broken:
-            broken.write("not json\n")
-        code, out, _ = quiet(check.command_verdicts, verdict_arguments(folder / "run.json", all_verdicts(run)),
-                             log_path=str(log))
-        expect(code == 0 and "Could not look in the log-store" in out and log.read_text().count('"verdict"') >= 18,
-               "a log-store line that is not JSON is reported, and the judgements are still appended")
+        run["readers_logged"] = False
+        (folder / "run.json").write_text(json.dumps(run))
+        code, _, _ = quiet(check.command_verdicts, verdict_arguments(folder / "run.json", all_verdicts(run)),
+                           log_path=str(log))
+        summary = check.per_model_summary([json.loads(line) for line in log.read_text().splitlines()])
+        expect(code == 0 and sum(row["answered"] for row in summary.values()) == 18,
+               "a log-store holding only some reader lines ends with every reader counted once")
+
+
+def test_verdicts_failed_line_says_whether_the_judgements_may_have_been_added():
+    with tempfile.TemporaryDirectory() as folder:
+        folder = pathlib.Path(folder)
+        quiet(check.command_read, read_arguments(folder), reader=stub_reader(), log_path=str(folder / "log.jsonl"))
+        run = json.loads((folder / "run.json").read_text())
         directory = folder / "a-directory"
         directory.mkdir()
         code, out, _ = quiet(check.command_verdicts, verdict_arguments(folder / "run.json", all_verdicts(run)),
                              log_path=str(directory))
-        expect(code == 1 and "Could not look in the log-store" in out and "FAILED" in out,
-               "a log-store path that cannot be read is reported before the append fails")
+        expect(code == 1 and "were not added" in out and "may or may not" not in out,
+               "a local append that failed says the judgements were not added")
+        dropped = "#!/bin/sh\ncat > /dev/null\necho 'Connection reset' >&2\nexit 255\n"
+        code, out, _ = with_stub_on_path("ssh", dropped, lambda: quiet(
+            check.command_verdicts, verdict_arguments(folder / "run.json", all_verdicts(run)),
+            log_path="/x/log.jsonl", ssh_host="h"))
+        expect(code == 1 and "may or may not have been added" in out and "were not added" not in out,
+               "an append whose connection dropped says the judgements may or may not have been added")
 
 
 def test_verdicts_refuses_missing_or_extra():
