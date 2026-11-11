@@ -326,11 +326,13 @@ def next_to_present(minutes_text, parser):
 
 
 def text_wrapped_as_markdown_code_span(text):
-    """Return one line of text as a code span CODE_SPAN reads whole, its text unchanged.
+    """Return text as a code span CODE_SPAN reads whole, on one line, its whitespace runs squeezed to single spaces.
 
-    The delimiter is one backtick longer than the longest backtick run inside the text, and a text that opens or
-    ends with a backtick gets a space on each side, so that the text's own backticks neither end the span early
-    nor join its delimiter."""
+    CODE_SPAN matches line by line, so a line break left in the text would put what follows it outside the span,
+    where a `#next_to_present` is read as the walk's marker. The delimiter is one backtick longer than the longest
+    backtick run inside the text, and a text that opens or ends with a backtick gets a space on each side, so that
+    the text's own backticks neither end the span early nor join its delimiter."""
+    text = " ".join(text.split())
     longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
     delimiter = "`" * (longest + 1)
     padding = " " if text.startswith("`") or text.endswith("`") else ""

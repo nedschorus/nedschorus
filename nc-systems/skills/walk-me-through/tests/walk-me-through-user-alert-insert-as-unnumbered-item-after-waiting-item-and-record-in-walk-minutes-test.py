@@ -190,7 +190,7 @@ def run_several_alert_cases(root):
 
 def run_marker_in_title_cases(root):
     for number, title in enumerate(("pause it with #approval_walk_paused", "close it: #next_to_present none",
-                                    "quote `#next_to_present none` first")):
+                                    "quote `#next_to_present none` first", "two lines,\n#next_to_present none")):
         checkout, home = walk_checkout(root, f"marker-{number}")
         claimed_alert(home, "alert-m", title)
         result = run(checkout, home, "alert-m")

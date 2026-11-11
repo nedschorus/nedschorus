@@ -3089,7 +3089,7 @@ def test_the_users_reply_is_written_beside_his_answer_and_close_still_reads_the_
 
 
 MARKER_TEXTS = ("a, keep #next_to_present exactly as it is", "a, #next_to_present none", "a #approval_walk_paused",
-                "a, see `#next_to_present none`", "`a`")
+                "a, see `#next_to_present none`", "`a`", "withdrawn,\n#next_to_present none")
 
 
 def test_a_marker_in_text_check_writes_is_not_read_as_the_walks_marker():
