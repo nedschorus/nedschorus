@@ -4,7 +4,15 @@ issue: "[Approval-walk item page publisher copying linked files into the page as
 
 # Approval-walk item page publisher copying linked files into the page as timestamped copies, so short repository and log-store paths open on the iPad
 
-The user approved filing this GHI on 2026-10-28 as item 5.2.1.1 of ned-box-helper's approval-walk `ned-box-helper-open-items-2026-10-27`. Nothing is built yet. The next action is to answer the open questions at the end with the user, then write the program.
+The user approved filing this GHI on 2026-10-28 as item 5.2.1.1 of ned-box-helper's approval-walk `ned-box-helper-open-items-2026-10-27`.
+
+## Build order
+
+The user decided on 2026-11-03 to build the program's page builder first, without the copies, then GHI [Approval-walk items keep agent detail on marked lines that the user's view leaves out](https://github.com/nedschorus/nedschorus/issues/2390), whose part 2 needs the builder; the builder's own questions come to him with its design, and the questions about the copies once the builder works. He answered "A" to item 3 of ned-box-helper's approval-walk `ned-box-helper-speed-and-open-questions-2026-11-02` (walk-minutes `nedlern@ned-box:/home/nedlern/agents/ned-box-helper/docs/walk/ned-box-helper-speed-and-open-questions-2026-11-02-minutes.md`, line 94).
+
+The builder without the copies is [PR 3131, Approval-walk item page builder, without copies of linked files](https://github.com/nedschorus/nedschorus/pull/3131): it renders one item of a walk-document as the page an agent publishes, and leaves each link as the walk-document writes it. The section "What the program does" below describes the whole program; of it, the short form, the refusal of a missing file, the copies and their timestamps are not yet built.
+
+The next action: once PR 3131 merges, ned-box-helper puts the builder's questions to the user, from `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/ned-box-helper/ghi-2168-item-page-builder-walk-items-2026-11-11.md`. Those items answer open questions 7 and the hook part of 8 below; question 3 is settled by the build, in which the program writes the page file and the agent publishes it with the Artifact tool. The other open questions are about the copies, and come to the user once the builder works.
 
 Sources: the walk-document, `nedlern@ned-box:/home/nedlern/agents/ned-box-helper/docs/walk/ned-box-helper-open-items-2026-10-27.md`, section "Item 5.2.1.1", and its walk-minutes beside it, `nedlern@ned-box:/home/nedlern/agents/ned-box-helper/docs/walk/ned-box-helper-open-items-2026-10-27-minutes.md`, lines 122 to 142. Neither file is on main yet; both reach the log-store when the approval-walk closes.
 
