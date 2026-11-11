@@ -108,6 +108,17 @@ def is_handoff_instruction(stderr):
     return HANDOFF_INSTRUCTION_PATTERN.fullmatch(stderr.strip()) is not None
 
 
+COMPACTED_HANDOFF_INSTRUCTION_PATTERN = re.compile(
+    r"This session has used \d+% \(\d+% counting the tokens its compactions dropped\) "
+    r"of its context window, which has reached the reincarnation threshold\. "
+    r"Run the /handoff skill now\.")
+
+
+def is_compacted_handoff_instruction(stderr):
+    """The handoff instruction for a compacted session, both shares filled in."""
+    return COMPACTED_HANDOFF_INSTRUCTION_PATTERN.fullmatch(stderr.strip()) is not None
+
+
 def with_background_tasks_list(stdin_payload, background_tasks_list_is_missing):
     """Claude Code sends the list at every Stop; a payload without one gets an empty list,
     unless the case is about a payload that lacks it."""
@@ -219,6 +230,18 @@ def transcript_with_usage(directory, name, input_tokens, cache_read=0, cache_cre
         encoding="utf-8",
     )
     return path
+
+
+def compaction_record(cumulative_dropped_tokens, pre_tokens=448_678, post_tokens=24_858):
+    """A compaction record as Claude Code writes it, trimmed to the fields beside the one the hook reads."""
+    return {
+        "type": "system", "subtype": "compact_boundary",
+        "content": "Conversation compacted", "level": "info",
+        "timestamp": "2026-10-21T05:54:37.110Z",
+        "compactMetadata": {"trigger": "auto", "preTokens": pre_tokens,
+                            "postTokens": post_tokens,
+                            "cumulativeDroppedTokens": cumulative_dropped_tokens},
+    }
 
 
 def transcript_of(directory, name, records):
@@ -588,6 +611,43 @@ with tempfile.TemporaryDirectory() as workspace:
                        encoding="utf-8")
     check("tail read skips a partially-written final record",
           abs(hook.context_used_percentage_from_transcript(str(partial)) - 40.0) < 0.01)
+
+    # --- The tokens compactions dropped ----------------------------------
+    no_compaction = transcript_of(workspace, "no-compaction.jsonl", [usage_record(200_000)])
+    check("a transcript with no compaction record drops no tokens",
+          hook.compaction_dropped_tokens_from_transcript(str(no_compaction)) == 0,
+          str(hook.compaction_dropped_tokens_from_transcript(str(no_compaction))))
+    two_compactions = transcript_of(workspace, "two-compactions.jsonl", [
+        compaction_record(100_000), usage_record(300_000),
+        compaction_record(250_000), usage_record(200_000)])
+    check("the newest compaction record's running total is the one read",
+          hook.compaction_dropped_tokens_from_transcript(str(two_compactions)) == 250_000,
+          str(hook.compaction_dropped_tokens_from_transcript(str(two_compactions))))
+    check("the count the hook measures is the context used plus the tokens compactions dropped",
+          abs(hook.context_used_plus_compaction_dropped_percentage_from_transcript(
+              str(two_compactions)) - 45.0) < 0.01,
+          str(hook.context_used_plus_compaction_dropped_percentage_from_transcript(
+              str(two_compactions))))
+    check("that count is None for a transcript with no usage",
+          hook.context_used_plus_compaction_dropped_percentage_from_transcript(
+              str(Path(workspace) / "not-there.jsonl")) is None)
+    # Quoting a compaction record, in a message or a hook's output, writes its subtype into another record.
+    quoted = transcript_of(workspace, "compaction-quoted.jsonl", [
+        compaction_record(100_000), usage_record(300_000),
+        {"type": "user", "message": {"content": json.dumps(compaction_record(900_000))}},
+        {"type": "system", "subtype": "stop_hook_summary",
+         "content": json.dumps(compaction_record(800_000))},
+        usage_record(200_000)])
+    check("a quoted compaction record is not read as one",
+          hook.compaction_dropped_tokens_from_transcript(str(quoted)) == 100_000,
+          str(hook.compaction_dropped_tokens_from_transcript(str(quoted))))
+    buried_compaction = Path(workspace) / "buried-compaction.jsonl"
+    buried_compaction.write_text("\n".join(
+        [json.dumps(compaction_record(250_000))] + [filler] * 6
+        + [json.dumps(usage_record(200_000))]) + "\n", encoding="utf-8")
+    check("a compaction record behind many large later records is still found",
+          hook.compaction_dropped_tokens_from_transcript(str(buried_compaction)) == 250_000,
+          str(hook.compaction_dropped_tokens_from_transcript(str(buried_compaction))))
 
     # --- Which subagents are still in flight -------------------------------
     # A reincarnation kills the session's in-process subagents with it (2026-08-27),
@@ -1096,6 +1156,27 @@ with tempfile.TemporaryDirectory() as workspace:
               result.returncode == 2 and is_handoff_instruction(result.stderr),
               f"code {result.returncode}, stderr {result.stderr[:120]}")
 
+        # --- The context used plus the tokens compactions dropped ------------
+        # A compaction cuts a long session back to a few tens of thousands of tokens, so the
+        # context used alone could stay under the threshold for ever.
+        compacted_under = transcript_of(workspace, "compacted-under.jsonl", [
+            compaction_record(120_000), usage_record(200_000)])  # 20% + 12% = 32%
+        compacted_at = transcript_of(workspace, "compacted-at.jsonl", [
+            compaction_record(130_000), usage_record(200_000)])  # 20% + 13% = 33%
+        marker_file.unlink(missing_ok=True)
+        result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(compacted_under)})
+        check("a compacted session stays silent at 32% counting the dropped tokens",
+              result.returncode == 0 and not result.stderr.strip() and not marker_file.exists(),
+              f"code {result.returncode}, stderr {result.stderr[:160]}")
+        result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(compacted_at)})
+        check("a compacted session at 20% fires at 33% counting the dropped tokens",
+              result.returncode == 2 and is_compacted_handoff_instruction(result.stderr)
+              and marker_file.exists(),
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+        check("the compacted handoff gives both shares",
+              "used 20% (33% counting the tokens its compactions dropped)" in result.stderr,
+              result.stderr[:200])
+
         # --- A session its caller reincarnates is left alone ---------------
         # 2026-09-16: ghi-guide-agent, run by scripts/ghi-guide-agent-ask.py as `claude -p`
         # turns, crossed the threshold mid-answer, and the handoff notice came
@@ -1138,6 +1219,41 @@ with tempfile.TemporaryDirectory() as workspace:
         # Claude Code's list at the "running" moment: the list shows the monitor as a shell task.
         subagent_listed = [list_entry("a2573a7737ae643dc", "subagent")]
         subagent_and_monitor_listed = [*subagent_listed, list_entry("b45e25tz2", "shell")]
+
+        # The ceiling measures the same count as the threshold: 20% used plus 50% dropped is 70%.
+        DROPPED_CEILING_PROBE_SESSION_ID = "handoff-threshold-hook-test-dropped-ceiling-session"
+        dropped_ceiling_markers = (
+            hook.handoff_asked_marker_path(DROPPED_CEILING_PROBE_SESSION_ID),
+            hook.HANDOFF_DIRECTORY / f"{DROPPED_CEILING_PROBE_SESSION_ID}-handoff-deferred")
+        compacted_below_ceiling = transcript_of(workspace, "compacted-below-ceiling.jsonl", [
+            compaction_record(400_000), usage_record(200_000),  # 20% + 40% = 60%
+            subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool")])
+        compacted_past_ceiling = transcript_of(workspace, "compacted-past-ceiling.jsonl", [
+            compaction_record(500_000), usage_record(200_000),  # 20% + 50% = 70%
+            subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool")])
+        try:
+            result = run_hook({"session_id": DROPPED_CEILING_PROBE_SESSION_ID,
+                               "transcript_path": str(compacted_below_ceiling),
+                               "background_tasks": subagent_listed})
+            check("a compacted session below the ceiling counting the dropped tokens defers, "
+                  "giving both shares",
+                  result.returncode == 2 and "handoff deferred" in result.stderr
+                  and "Context at 20% (60% counting the tokens its compactions dropped)"
+                  in result.stderr and not dropped_ceiling_markers[0].exists(),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+            for marker in dropped_ceiling_markers:
+                marker.unlink(missing_ok=True)
+            result = run_hook({"session_id": DROPPED_CEILING_PROBE_SESSION_ID,
+                               "transcript_path": str(compacted_past_ceiling),
+                               "background_tasks": subagent_listed})
+            check("a compacted session at 20% used fires past the ceiling counting the dropped "
+                  "tokens, though a subagent runs",
+                  result.returncode == 2 and is_compacted_handoff_instruction(result.stderr)
+                  and dropped_ceiling_markers[0].exists(),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+        finally:
+            for marker in dropped_ceiling_markers:
+                marker.unlink(missing_ok=True)
 
         result = run_hook({"session_id": DEFERRAL_PROBE_SESSION_ID,
                            "transcript_path": str(running),

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Request a handoff before context runs out.
 
-It asks for the /handoff skill once the context used reaches --threshold-used-percentage.
-Below --ceiling-used-percentage it defers instead, saving the work it waits for in
+It counts the context used plus the tokens the session's compactions dropped, and asks for the
+/handoff skill once that count reaches --threshold-used-percentage of the context window.
+Below --ceiling-used-percentage, by the same count, it defers instead, saving the work it waits for in
 <session>-handoff-deferred in ~/.claude/handoffs/, while Claude Code's background_tasks list
 shows a running subagent, workflow or background shell task within its wait, or while a
 transcript it reads launch records from cannot be read, since it then cannot tell what runs.
@@ -96,6 +97,12 @@ FIRST_TAIL_READ_BYTES = 256 * 1024
 
 # Messages below follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 # Keep the procedure in the skill so hook instructions cannot drift from it.
+# The count can pass 100% of the window, so a compacted session's message gives both shares.
+SHARE_WITH_COMPACTION_DROPPED = (
+    "{used_percentage:.0f}% ({used_plus_dropped_percentage:.0f}% counting the "
+    "tokens its compactions dropped)"
+)
+
 HANDOFF_INSTRUCTION = (
     "This session has used {share} of its context window, which has "
     "reached the reincarnation threshold. Run the /handoff skill now."
@@ -337,6 +344,28 @@ def context_used_percentage_from_transcript(transcript_path: str):
         return None
     used_tokens, window, _model = reading
     return 100.0 * used_tokens / window
+
+
+COMPACTION_RECORD_SUBTYPE = "compact_boundary"
+
+
+def compaction_dropped_tokens_from_transcript(transcript_path: str) -> int:
+    """Return the tokens all of the session's compactions dropped; 0 when it has none."""
+    # Claude Code keeps the running total on each compaction record, so the newest one suffices.
+    for record in transcript_records.records_newest_first(Path(transcript_path).expanduser()):
+        if record.get("subtype") == COMPACTION_RECORD_SUBTYPE:
+            return record["compactMetadata"]["cumulativeDroppedTokens"]
+    return 0
+
+
+def context_used_plus_compaction_dropped_percentage_from_transcript(transcript_path: str):
+    """Return the context used plus the tokens compactions dropped, as a percentage of the context
+    window: the count the threshold and the ceiling are measured by. None when unavailable."""
+    reading = context_used_tokens_window_and_model_from_transcript(transcript_path)
+    if reading is None:
+        return None
+    used_tokens, window, _model = reading
+    return 100.0 * (used_tokens + compaction_dropped_tokens_from_transcript(transcript_path)) / window
 
 
 USED_TOKEN_FIELDS = ("input_tokens", "cache_read_input_tokens",
@@ -775,12 +804,13 @@ def main(argv=None) -> int:
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--threshold-used-percentage", type=float,
                         default=DEFAULT_THRESHOLD_USED_PERCENTAGE,
-                        help="the share of the context window, in percent, at which the hook "
-                             "asks for the /handoff skill: the reincarnation threshold")
+                        help="the share of the context window, in percent, that the context used "
+                             "plus the tokens compactions dropped must reach for the hook to ask "
+                             "for the /handoff skill: the reincarnation threshold")
     parser.add_argument(
         "--ceiling-used-percentage", type=float, default=65.0,
-        help="the share of the context window, in percent, at or above which the handoff fires "
-             "even with work in flight",
+        help="the share of the context window, in percent, at or above which the context used "
+             "plus the tokens compactions dropped fires the handoff even with work in flight",
     )
     parser.add_argument(
         "--background-task-wait-minutes", type=float,
@@ -807,8 +837,11 @@ def main(argv=None) -> int:
     if reading is None:
         return 0
     used_tokens, window, model = reading
-    used = 100.0 * used_tokens / window
-    share = f"{used:.0f}%"
+    dropped_tokens = compaction_dropped_tokens_from_transcript(transcript_path)
+    used = 100.0 * (used_tokens + dropped_tokens) / window
+    share = (SHARE_WITH_COMPACTION_DROPPED.format(
+                 used_percentage=100.0 * used_tokens / window, used_plus_dropped_percentage=used)
+             if dropped_tokens else f"{used:.0f}%")
     # A compaction can drop the share below the threshold after a deferral; the deferred marker
     # records that the threshold was passed, so the handoff its notice promised still comes.
     if used < arguments.threshold_used_percentage and not deferred_marker_path(session_id).exists():

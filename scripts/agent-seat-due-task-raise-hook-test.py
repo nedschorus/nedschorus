@@ -911,6 +911,15 @@ check("next-action: context used below the reincarnation threshold still gets th
       (context_of(seat.stop()) or "").startswith(NEXT_ACTION_FIRST_LINE))
 
 seat = IdleSeat()
+seat.append({"type": "system", "subtype": "compact_boundary",
+             "compactMetadata": {"cumulativeDroppedTokens": 10_000}})
+seat.append(usage_record(60_000))
+result = seat.stop()
+check("next-action: silent once the context used plus the tokens compactions dropped reaches the "
+      "reincarnation threshold, as the handoff hook counts it",
+      silent(result) and not seat.state_path.exists(), result)
+
+seat = IdleSeat()
 shutil.rmtree(seat.task_directory)
 result = seat.stop()
 check("next-action: a task list whose directory does not exist yet still gets the prompt, "

@@ -97,9 +97,10 @@ holds; otherwise it says nothing about it:
   - no walk-minutes there has an unclosed `#next_to_present` line, paused
     or not, as the walk-me-through finder module reads it;
   - neither the handoff hook's asked marker nor its deferred marker exists
-    for the session, and the share of the context window the transcript
-    records is below the reincarnation threshold, read with the handoff
-    hook's own reader and its DEFAULT_THRESHOLD_USED_PERCENTAGE: Claude Code
+    for the session, and the context used plus the tokens compactions
+    dropped, as a share of the context window, is below the reincarnation
+    threshold, read with the handoff hook's own reader and its
+    DEFAULT_THRESHOLD_USED_PERCENTAGE: Claude Code
     runs the hooks of one Stop group in parallel, so at the stop that first
     reaches the threshold the asked marker may not be written yet;
   - the payload's background_tasks list, read with the handoff hook's
@@ -713,7 +714,8 @@ def next_action_prompt_lines(payload: dict, tasks: dict, directory: Path, state:
     if (handoff.handoff_asked_marker_path(session_id).exists()
             or handoff.deferred_marker_path(session_id).exists()):
         return None
-    used_percentage = handoff.context_used_percentage_from_transcript(str(transcript))
+    used_percentage = handoff.context_used_plus_compaction_dropped_percentage_from_transcript(
+        str(transcript))
     if used_percentage is not None and used_percentage >= handoff.DEFAULT_THRESHOLD_USED_PERCENTAGE:
         return None
     background_tasks = payload.get(handoff.BACKGROUND_TASKS_PAYLOAD_KEY)
