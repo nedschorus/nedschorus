@@ -712,6 +712,77 @@ with tempfile.TemporaryDirectory() as scratch_name:
           "its memory ceiling, and none when the counters say none or nothing",
           (killed("usage_usec 1\nmemory.peak 2\noom_kill 3\n"),
            killed("usage_usec 1\noom_kill 0\n"), killed("")) == (3, 0, 0))
+    malformed_count_error = None
+    try:
+        killed("usage_usec 1\noom_kill many\n")
+    except ValueError as error:
+        malformed_count_error = error
+    check("an oom_kill line whose count is not a number raises, rather than counting no kill",
+          malformed_count_error is not None, malformed_count_error)
+
+    # The counting shell, run on fake cgroup files, so these cases need no real cgroup and
+    # run in an nc-test-sandbox too.
+    def counting_shell_run_on_fake_cgroup_files(scratch_directory, cgroup_files, unreadable=()):
+        """(the counters the shell wrote, its exit) for a suite that exits 7."""
+        fake_proc_self_cgroup = scratch_directory / "proc-self-cgroup"
+        fake_proc_self_cgroup.write_text("0::/suite.scope\n")
+        fake_cgroup_root = scratch_directory / "sys-fs-cgroup"
+        (fake_cgroup_root / "suite.scope").mkdir(parents=True)
+        for name, text in cgroup_files.items():
+            (fake_cgroup_root / "suite.scope" / name).write_text(text)
+        for name in unreadable:
+            (fake_cgroup_root / "suite.scope" / name).chmod(0)
+        wrapper = runner.TEST_SUITE_CGROUP_STATISTICS_WRAPPER
+        on_fake_files = (wrapper.replace("/proc/self/cgroup", str(fake_proc_self_cgroup))
+                         .replace("/sys/fs/cgroup", str(fake_cgroup_root)))
+        if wrapper.count("/proc/self/cgroup") != 1 or wrapper.count("/sys/fs/cgroup") != 3:
+            raise AssertionError("the counting shell no longer names the cgroup files this "
+                                 f"test replaces with fake ones: {wrapper!r}")
+        with tempfile.TemporaryFile() as counters:
+            ran = subprocess.run(["bash", "-c", on_fake_files, str(counters.fileno()),
+                                  "sh", "-c", "exit 7"], pass_fds=(counters.fileno(),))
+            counters.seek(0)
+            return counters.read().decode("utf-8", "replace"), ran.returncode
+
+    cpu_stat = "usage_usec 2500000\nuser_usec 2000000\nsystem_usec 500000\n"
+    with tempfile.TemporaryDirectory() as directory:
+        counters, exit_code = counting_shell_run_on_fake_cgroup_files(pathlib.Path(directory), {
+            "cpu.stat": cpu_stat, "memory.peak": "123456789\n",
+            "memory.events": "low 0\nhigh 0\nmax 9\noom 2\noom_kill 3\noom_group_kill 1\n"})
+    check("the counting shell copies only the oom_kill line of the scope's memory.events, "
+          "beside its CPU and peak memory counters, and exits as the suite did",
+          killed(counters) == 3 and exit_code == 7
+          and [line for line in counters.splitlines() if line.startswith("oom")]
+          == ["oom_kill 3"]
+          and runner.cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(counters)
+          == (2.5, 123456789, None), (counters, exit_code))
+    with tempfile.TemporaryDirectory() as directory:
+        counters, exit_code = counting_shell_run_on_fake_cgroup_files(pathlib.Path(directory), {
+            "cpu.stat": cpu_stat, "memory.peak": "123456789\n"})
+    check("when the scope has no memory.events, the counting shell writes sed's error into "
+          "the counters, counts no kill, keeps the CPU and peak memory counters, and exits "
+          "as the suite did",
+          "memory.events" in counters and killed(counters) == 0 and exit_code == 7
+          and runner.cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(counters)
+          == (2.5, 123456789, None), (counters, exit_code))
+    # root reads a file whatever its mode.
+    if os.geteuid() != 0:
+        with tempfile.TemporaryDirectory() as directory:
+            counters, exit_code = counting_shell_run_on_fake_cgroup_files(
+                pathlib.Path(directory), {"cpu.stat": cpu_stat, "memory.peak": "123456789\n",
+                                          "memory.events": "oom_kill 3\n"},
+                unreadable=("memory.events",))
+        check("when the scope's memory.events cannot be read, the counting shell writes sed's "
+              "error into the counters, counts no kill, and exits as the suite did",
+              "memory.events" in counters and killed(counters) == 0 and exit_code == 7,
+              (counters, exit_code))
+    with tempfile.TemporaryDirectory() as directory:
+        counters, exit_code = counting_shell_run_on_fake_cgroup_files(pathlib.Path(directory), {
+            "cpu.stat": cpu_stat, "memory.peak": "123456789\n",
+            "memory.events": "oom_kill many\n"})
+    check("the counting shell copies a malformed oom_kill line as it is, so its count is "
+          "not read as no kill", "oom_kill many" in counters and exit_code == 7,
+          (counters, exit_code))
     scope = runner.test_suite_cgroup_scope_command(123456789)
     check("the suite's cgroup scope holds it to the memory ceiling given, with no swap, and "
           "keeps the scope, its counting shell included, after a kill there",
