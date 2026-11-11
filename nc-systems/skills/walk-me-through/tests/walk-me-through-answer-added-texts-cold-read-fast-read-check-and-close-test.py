@@ -3542,14 +3542,23 @@ ITEM_3_HEADING = "## Item 3 of 5: three\n"
 
 def test_a_fix_that_touches_no_fact_is_not_read_again():
     case, result = after_fixes_case(ITEM_3_HEADING, ITEM_3_HEADING + "\nThis item, e.g. this one, asks little.\n")
-    check(f"{AFTER_FIXES} after a wording fix runs no read and says to present the item",
+    check(f"{AFTER_FIXES} after a wording fix runs no read and says to present the item, or to settle it as now "
+          "over later",
           result.returncode == 0
           and result.stdout.startswith("item 3 of 5: no new cold-read-fast-read: your changes since its last one (")
-          and result.stdout.rstrip("\n").split("\n")[-1] == "Present item 3 of 5."
+          and result.stdout.rstrip("\n").split("\n")[-1] == (
+              "Present item 3 of 5, unless its only choice is whether to build something now or later and it "
+              f"recommends now: then run `python3 {PROGRAM} check --now-over-later-already-decided --cwd "
+              f"{shlex.quote(str(case.checkout))}`, then the close command it prints.")
           and times_read(case, ITEM_3_HEADING) == 1, described(result))
     second = case.run(WAITING_ITEM_READ, AFTER_FIXES)
     check(f"a second {AFTER_FIXES} compares with the text last read, not the text it let pass",
           second.returncode == 0 and "no new cold-read-fast-read" in second.stdout, described(second))
+    settled = case.run("check", NOW_OVER_LATER)
+    check(f"the check --now-over-later-already-decided that {AFTER_FIXES} names after a wording fix settles the item",
+          settled.returncode == 0
+          and "\nitem 3 of 5: settled without asking the user, already decided by " in case.minutes.read_text(),
+          described(settled) + case.minutes.read_text())
 
 
 def test_a_fix_is_compared_with_the_items_own_read_not_a_newer_read_of_another_item():
