@@ -158,6 +158,7 @@ SHORT_CHAT_REMARK = "I have written the report to the path you gave me.\n"
 # "ignore_sigterm" makes the stub and its child ignore SIGTERM as agy does,
 # "late_report" is report text written half a second after stdout and stderr,
 # "child_before_output" starts the hang's child before anything is printed,
+# "killed_by_sigkill" ends the stub with SIGKILL once its output is written,
 # "pipe_holder_outside_group_seconds" starts a child in a session of its own,
 # outside the stub's process group, that holds the stub's stdout and stderr
 # open for that many seconds,
@@ -224,6 +225,11 @@ if "stdout_file" in step:
     sys.stdout.write(pathlib.Path(step["stdout_file"]).read_text(encoding="utf-8"))
 if "stderr" in step:
     sys.stderr.write(step["stderr"])
+if step.get("killed_by_sigkill"):
+    import signal
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.kill(os.getpid(), signal.SIGKILL)
 if "late_report" in step:
     import time
     sys.stdout.flush()
@@ -607,11 +613,12 @@ with tempfile.TemporaryDirectory() as scratch:
         check(f"--tier {other_tier} never launches agy",
               not report.exists(), "the stub agy ran and wrote the report")
 
-    # --- Chat instead of file: a long stdout is the review ---------------
+    # --- Chat instead of file: a long result response is the review ------
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "chat-review")
     result = run_agy_cell(
-        repository, stubs, {"*": {"stdout": LONG_CHAT_REVIEW}}, report,
+        repository, stubs, {"*": {"stdout": agy_result_line("SUCCESS", LONG_CHAT_REVIEW)}},
+        report,
     )
     check("a model that answered a review-length text in chat, writing no file, exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -625,11 +632,12 @@ with tempfile.TemporaryDirectory() as scratch:
               for line in result.stderr.splitlines()),
           repr(result.stderr))
 
-    # --- A short stdout is a remark, not a review -------------------------
+    # --- A short result response is a remark, not a review ---------------
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "chat-remark")
     result = run_agy_cell(
-        repository, stubs, {"*": {"stdout": SHORT_CHAT_REMARK}}, report,
+        repository, stubs, {"*": {"stdout": agy_result_line("SUCCESS", SHORT_CHAT_REMARK)}},
+        report,
     )
     check("a model that wrote no file and only remarked in chat fails the cell",
           result.returncode == 1 and not report.exists(),
@@ -819,6 +827,38 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and "written after the result line" in report_text,
           f"exit {result.returncode}; stderr={result.stderr!r}")
     kill_left_over_processes(pids_written_to(pid_file))
+
+    # agy exits 0 with neither a result line nor a report: its raw events,
+    # over 120 words, must not be recovered as the report.
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "no-result-line-no-report")
+    events_without_result_line = scratch / "real-agy-stream-json-without-result-line.jsonl"
+    events_without_result_line.write_text("".join(
+        REAL_AGY_STREAM_JSON_OUTPUT.read_text(encoding="utf-8")
+        .splitlines(keepends=True)[:-1]), encoding="utf-8")
+    result = run_agy_cell(repository, stubs,
+                          {"*": {"stdout_file": str(events_without_result_line)}}, report)
+    check("agy exiting 0 with no result line and no report fails the cell, "
+          "and its stream events are not taken as the report",
+          result.returncode == 1 and not report.is_file()
+          and STDOUT_RECOVERY_PHRASE not in result.stderr
+          and cell_common.AGENT_BINARY_EXITED_WITHOUT_FINAL_RESULT_LINE_PHRASE in result.stderr
+          and "cause: no-report" in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+
+    # A signal ends agy before any result line: what it printed is passed on
+    # as a failed run's own account, and no exit 0 is claimed.
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "killed-before-result-line")
+    result = run_agy_cell(repository, stubs,
+                          {"*": {"stdout": "stub agy: words before the kill\n",
+                                 "killed_by_sigkill": True}}, report)
+    check("agy killed by a signal before its result line fails the cell, with what it printed "
+          "on stderr and no claim that it exited 0",
+          result.returncode == 1 and not report.is_file()
+          and "stub agy: words before the kill" in result.stderr
+          and cell_common.AGENT_BINARY_EXITED_WITHOUT_FINAL_RESULT_LINE_PHRASE not in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr!r}")
 
     # The result's response is the chat text the stdout recovery reads.
     repository = build_scratch_repository(scratch)

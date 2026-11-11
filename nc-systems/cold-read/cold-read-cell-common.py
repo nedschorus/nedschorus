@@ -706,6 +706,7 @@ class ReviewerRunEndedByResultLine(subprocess.CompletedProcess):
 
 REPORT_WAIT_POLL_SECONDS = 0.1
 AGENT_BINARY_KILLED_AFTER_FINAL_RESULT_LINE_PHRASE = "printed its result line but had not exited"
+AGENT_BINARY_EXITED_WITHOUT_FINAL_RESULT_LINE_PHRASE = "exited 0 without printing its result line"
 
 
 def report_is_written(report) -> bool:
@@ -829,6 +830,15 @@ def run_reviewer_program_until_its_result_line(
     except subprocess.TimeoutExpired:
         stop_process_tree(process, REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS)
         return completed(subprocess.CompletedProcess, None, "".join(stdout_lines))
+    if process.returncode == 0:
+        # stdout holds raw stream events, not the reviewer's answer, so
+        # report recovery must not see it: a long event stream would pass
+        # for a review.
+        stderr_parts.append(
+            f"The reviewer program {AGENT_BINARY_EXITED_WITHOUT_FINAL_RESULT_LINE_PHRASE}, "
+            "so the cell has no answer of its own to recover a report from; "
+            f"its stdout was:\n{''.join(stdout_lines)}\n")
+        return completed(subprocess.CompletedProcess, 0, "")
     return completed(subprocess.CompletedProcess, process.returncode, "".join(stdout_lines))
 
 
