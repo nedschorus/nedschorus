@@ -139,9 +139,10 @@ NEVER_PUSHED_ADVICE = (
 # whether it is rebased or its pull request replaced.
 PUSHED_ADVICE = (
     "This branch is pushed, so its review may be running: do not rebase or amend "
-    "it. A fix for this topic is a new commit on top. If the branch conflicts with "
-    "main, as python3 scripts/branch-conflict-check.py run in its checkout reports, "
-    "do what that report says. Your next topic starts with "
+    "it. A fix for this topic is a new commit on top. To learn whether the branch "
+    "conflicts with main, run python3 scripts/branch-conflict-check.py in this "
+    "checkout, and if it reports a conflict, do what its report says. Your next "
+    "topic starts with "
     "`git checkout -b <name> origin/main`."
 )
 # `git pull --rebase` moves only the commits origin/<branch> lacks, which are
