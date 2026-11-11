@@ -1,8 +1,8 @@
 ---
-issue: "[ned-box runs out of reclaimable memory, so systemd-oomd kills agent-seats and Bash-guard replay readings time out](https://github.com/nedschorus/nedschorus/issues/1834)"
+issue: "[ned-box runs out of reclaimable memory, so systemd-oomd kills agent-seats and readings by `nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py` time out](https://github.com/nedschorus/nedschorus/issues/1834)"
 ---
 
-# ned-box runs out of reclaimable memory, so systemd-oomd kills agent-seats and Bash-guard replay readings time out
+# ned-box runs out of reclaimable memory, so systemd-oomd kills agent-seats and readings by `nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py` time out
 
 ## What is wrong
 
