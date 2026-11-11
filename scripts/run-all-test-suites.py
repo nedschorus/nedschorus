@@ -12,6 +12,7 @@ Usage:
                                  [--leave-recorded-inputs-and-failure-history-unchanged]
                                  [--stop-at-first-failing-suite]
                                  [--only-suites-named SUITE [SUITE ...]]
+                                 [--run-time-limit-seconds-not-counting-admission-waits SECONDS]
 
   --checkout    the top directory of the checkout to test; default, the
                 checkout this file is in
@@ -69,6 +70,13 @@ Usage:
                 run only these suites, each named by its path from the
                 checkout's top directory, as git lists it; a name git does
                 not list stops the run with exit 2
+  --run-time-limit-seconds-not-counting-admission-waits SECONDS
+                once the run has lasted SECONDS, not counting the time in
+                which a suite of the run waited for ADMISSION, kill the
+                suites running, as a stop signal does, start no other, and
+                print a line opening with RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX;
+                the run exits 1 when a suite had failed, otherwise 2. Each
+                suite killed is reported as stopped, not as failed
 
 WHY THIS EXISTS (user-ruled 2026-09-21, walk "redesigning how pull requests
 are processed", items 3 and 6). Until this program, every full run of the
@@ -321,10 +329,15 @@ psutil; at most 4 suites start per second and at most 64 run at once on the
 machine, each holding an flock on one of 64 slot files, so the kernel frees
 the slot of a killed run. A suite run without any sandbox first takes the
 lock those suites share, then a slot, so it never holds a slot while it waits.
-A suite that cannot start waits with no time limit, and once a minute the run
-reports what its suites wait for. A failure to decide, such as a machine
-reading that fails or a slot file that cannot be opened, stops the run with
-exit 2. Every suite runs at nice 10, in a cgroup scope of its own
+A suite that cannot start waits, and once a minute the run reports what its
+suites wait for. A suite that has waited TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS,
+eight hours, stops the run as a failure to decide does, below, its line opening
+with TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX: no test slot came. The
+ceiling counts from when the suite began to wait, which is the run's start for
+every suite where all of the run's suites start at once, the default here. A
+failure to decide, such as a machine reading that fails or a slot file that
+cannot be opened, stops the run with exit 2. Every suite runs at nice 10, in a
+cgroup scope of its own
 (`systemd-run --user --scope`), whose counters give the suite's CPU seconds
 and peak memory, every process it starts included. systemd-run reaches the
 user's systemd through $XDG_RUNTIME_DIR/bus; when the run is started without
@@ -916,6 +929,9 @@ TEST_SUITE_ADMISSION_STARTS_PER_SECOND = 4
 TEST_SUITE_ADMISSION_SUITES_RUNNING_AT_ONCE_CEILING = 64
 TEST_SUITE_ADMISSION_WAIT_REPORT_INTERVAL_SECONDS = 60
 TEST_SUITE_ADMISSION_RETRY_SECONDS = 0.25
+# Above the longest admission wait of one suite yet seen on ned-box, 17,299 s, so only a
+# machine busy for longer than ever seen stops a run here.
+TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS = 8 * 3600
 # Beside the lock file, so a test that passes its own lock file also gets its own admission.
 TEST_SUITE_ADMISSION_DIRECTORY_SUFFIX = ".test-suite-admission"
 TEST_SUITE_ADMISSION_START_TIMES_FILE_NAME = "start-times"
@@ -1927,6 +1943,10 @@ class MachineWideTestSuiteAdmissionCancelled(Exception):
     """The run stopped admitting suites, so a suite still waiting does not start."""
 
 
+class MachineWideTestSuiteAdmissionWaitedPastCeiling(Exception):
+    """A suite waited TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS and was not admitted."""
+
+
 class TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler:
     """The machine's CPU use, available memory and load, read every second by a thread.
 
@@ -2022,8 +2042,9 @@ class MachineWideTestSuiteAdmission:
     and only then a slot, so it never holds a slot while it waits for that lock;
     when no slot is free, it lets the lock go before it waits, so it never holds
     the lock while it waits for room.
-    A suite that cannot start waits, with no time limit; once a minute the run
-    reports what the suites wait for."""
+    A suite that cannot start waits; once a minute the run reports what the suites
+    wait for. One that has waited TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS raises
+    MachineWideTestSuiteAdmissionWaitedPastCeiling."""
 
     def __init__(self, directory, readings, say, clock=time.monotonic, sleep=time.sleep,
                  machine_clock=time.monotonic):
@@ -2038,6 +2059,10 @@ class MachineWideTestSuiteAdmission:
         self.lock = threading.Lock()
         self.waiting = {}
         self.last_report = None
+        # Counted apart from self.waiting, which holds only suites a reason has held back.
+        self.suites_waiting = 0
+        self.some_suite_waiting_since = None
+        self.seconds_a_suite_waited_before = 0.0
         self.cancelled = threading.Event()
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
@@ -2135,6 +2160,22 @@ class MachineWideTestSuiteAdmission:
                  f"{'wait' if count != 1 else 'waits'} to start: " + "; ".join(reasons)
                  + ". Each suite starts by itself once the reason it waits for clears.")
 
+    def suite_starts_or_stops_waiting(self, change):
+        with self.lock:
+            now = self.clock()
+            if self.suites_waiting == 0:
+                self.some_suite_waiting_since = now
+            self.suites_waiting += change
+            if self.suites_waiting == 0:
+                self.seconds_a_suite_waited_before += now - self.some_suite_waiting_since
+
+    def seconds_while_any_suite_of_this_run_waited_for_admission(self):
+        """The seconds so far in which at least one suite of this run waited to be admitted."""
+        with self.lock:
+            if self.suites_waiting == 0:
+                return self.seconds_a_suite_waited_before
+            return self.seconds_a_suite_waited_before + self.clock() - self.some_suite_waiting_since
+
     def cancel(self):
         """Stop admitting: every suite still waiting raises MachineWideTestSuiteAdmissionCancelled."""
         self.cancelled.set()
@@ -2149,13 +2190,26 @@ class MachineWideTestSuiteAdmission:
         """Hold a slot, and for a suite run without any sandbox that lock first, while the suite runs.
 
         Yields the seconds the suite waited. Raises MachineWideTestSuiteAdmissionCancelled
-        once cancel() is called while the suite waits."""
+        once cancel() is called while the suite waits, and
+        MachineWideTestSuiteAdmissionWaitedPastCeiling once it has waited
+        TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS."""
         started = self.clock()
         held = []
+        self.suite_starts_or_stops_waiting(1)
+        waiting = True
         try:
             # Polled rather than a blocking flock, so a cancel reaches a suite waiting here.
             while True:
                 self.raise_if_cancelled(suite)
+                waited = self.clock() - started
+                if waited >= TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS:
+                    with self.lock:
+                        why = self.waiting.get(suite, "no reason was recorded")
+                    raise MachineWideTestSuiteAdmissionWaitedPastCeiling(
+                        f"{suite} waited {waited:.0f} s, past "
+                        f"TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS, "
+                        f"{TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS} s; it last waited because "
+                        f"{why}")
                 outside_lock = None
                 if without_any_sandbox:
                     outside_lock = self.open_locked(
@@ -2174,6 +2228,8 @@ class MachineWideTestSuiteAdmission:
                     raise
                 if slot is not None:
                     held.extend(handle for handle in (outside_lock, slot) if handle is not None)
+                    self.suite_starts_or_stops_waiting(-1)
+                    waiting = False
                     break
                 # Held through a wait for room, the lock would keep every other run's
                 # suites run without any sandbox waiting while this one runs nothing.
@@ -2185,6 +2241,8 @@ class MachineWideTestSuiteAdmission:
                 self.waiting.pop(suite, None)
             yield self.clock() - started
         finally:
+            if waiting:
+                self.suite_starts_or_stops_waiting(-1)
             with self.lock:
                 self.waiting.pop(suite, None)
             for handle in reversed(held):
@@ -3969,6 +4027,9 @@ SUITE_FAILED_LINE = re.compile(
     r"^FAIL (?P<suite>\S.*?) (?:exit \d+|killed by (?:signal \d+|\S+))"
     r"(?:, OUT OF MEMORY: [^(]*?)?(?: \(| — log )")
 NOT_RUN_TO_THE_END_LINE_PREFIX = f"{PROGRAM}: not run to the end"
+RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX = f"{NOT_RUN_TO_THE_END_LINE_PREFIX} — the run passed its run time limit"
+TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX = (
+    f"{NOT_RUN_TO_THE_END_LINE_PREFIX} — a suite could not get a test slot")
 
 
 def run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(text):
@@ -4072,11 +4133,16 @@ def parse_arguments(argv):
                         dest="leave_records_unchanged", action="store_true")
     parser.add_argument("--stop-at-first-failing-suite", action="store_true")
     parser.add_argument("--only-suites-named", nargs="+", metavar="SUITE")
+    parser.add_argument("--run-time-limit-seconds-not-counting-admission-waits",
+                        dest="run_time_limit_seconds", type=float, metavar="SECONDS")
     arguments = parser.parse_args(argv)
     if arguments.jobs is not None and arguments.jobs < 1:
         parser.error("-j takes a whole number of at least 1")
     if arguments.wait_for_lock_seconds < 0:
         parser.error("--wait-for-lock-seconds takes a number of seconds of at least 0")
+    if arguments.run_time_limit_seconds is not None and arguments.run_time_limit_seconds <= 0:
+        parser.error("--run-time-limit-seconds-not-counting-admission-waits takes a number of "
+                     "seconds above 0")
     return arguments
 
 
@@ -4295,9 +4361,10 @@ def main(argv=None, platform=None):
                             f"--only-suites-named {suite}")
 
         run_stop_signals = []
-        # What stopped the run: a stop signal's name, or, with --stop-at-first-failing-suite,
-        # the first failing suite. Each suite's thread acts on its first entry.
+        # What stopped the run: a stop signal's name, with --stop-at-first-failing-suite the
+        # first failing suite, or the run time limit. Each suite's thread acts on its first entry.
         run_stops = []
+        run_time_limit_passed = False
 
         def run_admitted(suite, **options):
             if run_stops:
@@ -4399,10 +4466,18 @@ def main(argv=None, platform=None):
                        for suite in chosen]
             pending = set(running)
             stop_acted_on = False
+            run_started = time.monotonic()
             while pending:
                 done, pending = concurrent.futures.wait(
                     pending, timeout=RUN_STOP_SIGNAL_CHECK_SECONDS,
                     return_when=concurrent.futures.FIRST_COMPLETED)
+                if arguments.run_time_limit_seconds is not None and not run_stops and \
+                        time.monotonic() - run_started - (
+                            admission.seconds_while_any_suite_of_this_run_waited_for_admission()
+                            if admission is not None else 0.0) \
+                        > arguments.run_time_limit_seconds:
+                    run_time_limit_passed = True
+                    run_stops.append(f"the run time limit of {arguments.run_time_limit_seconds:g} s")
                 if run_stops and not stop_acted_on:
                     stop_acted_on = True
                     for waiting in running:
@@ -4419,13 +4494,23 @@ def main(argv=None, platform=None):
                         if run_stops:
                             continue
                         raise
-                    except (MachineWideTestSuiteAdmissionCouldNotDecide, SignalSandboxCouldNotStart,
+                    except (MachineWideTestSuiteAdmissionCouldNotDecide,
+                            MachineWideTestSuiteAdmissionWaitedPastCeiling, SignalSandboxCouldNotStart,
                             OSError) as error:
                         for waiting in running:
                             waiting.cancel()
                         # A suite already waiting for admission is running as far as its future knows.
                         if admission is not None:
                             admission.cancel()
+                        if isinstance(error, MachineWideTestSuiteAdmissionWaitedPastCeiling):
+                            report.line(f"{TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX}: "
+                                        f"{error}")
+                            report.line("The machine stayed too busy to start it. Run this again "
+                                        "once the machine is quieter. The suites already running "
+                                        "finish first.")
+                            report.close()
+                            return (EXIT_SOME_FAILED if any(map(suite_failed, results))
+                                    else EXIT_COULD_NOT_RUN)
                         what = ("admission failed" if isinstance(error, MachineWideTestSuiteAdmissionCouldNotDecide)
                                 else "a suite's nc-test-sandbox could not be built"
                                 if isinstance(error, SignalSandboxCouldNotStart)
@@ -4459,7 +4544,8 @@ def main(argv=None, platform=None):
             return EXIT_SOME_FAILED if any(map(suite_failed, results)) else EXIT_COULD_NOT_RUN
 
         results.sort(key=lambda result: result["suite"])
-        # Here only --stop-at-first-failing-suite stops a suite: a stop signal returned above.
+        # Here only --stop-at-first-failing-suite or the run time limit stops a suite: a stop
+        # signal returned above.
         stopped = [result for result in results if result.get("stopped by")]
         not_run = [result for result in results if result.get("test sandbox did not start")]
         failed = [result for result in results if suite_failed(result)]
@@ -4477,7 +4563,14 @@ def main(argv=None, platform=None):
             for result in not_run:
                 report.line(f"{NOT_RUN_SUITE_LINE_PREFIX}{result['suite']} {why_suite_failed(result)}"
                             f"{SUITE_LINE_LOG_MARK}{result['log']}")
-        if run_stops:
+        if run_time_limit_passed:
+            report.line("")
+            report.line(f"{RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX} of "
+                        f"{arguments.run_time_limit_seconds:g} s, not counting the time in which "
+                        f"a suite waited for admission: {len(stopped)} suites killed while they "
+                        f"ran, {len(chosen) - len(results)} not started "
+                        f"(--run-time-limit-seconds-not-counting-admission-waits)")
+        elif run_stops:
             report.line("")
             report.line(f"stopped at {run_stops[0]}: {len(stopped)} suites killed while they "
                         f"ran, {len(chosen) - len(results)} not started "
@@ -4541,7 +4634,8 @@ def main(argv=None, platform=None):
         # reads exit 2 as "no verdict" would otherwise let a failure through.
         if failed:
             return EXIT_SOME_FAILED
-        return EXIT_COULD_NOT_RUN if not_run or records_failed else EXIT_ALL_PASSED
+        return (EXIT_COULD_NOT_RUN if not_run or records_failed or run_time_limit_passed
+                else EXIT_ALL_PASSED)
     finally:
         restore_signal_handlers(signal_handlers_replaced)
         if readings is not None:
