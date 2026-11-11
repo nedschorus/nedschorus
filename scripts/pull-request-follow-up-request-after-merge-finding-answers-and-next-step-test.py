@@ -1113,6 +1113,11 @@ def test_clean_up_goes_on_past_each_worktree_and_branch():
 
 
 def test_clean_up_claude_code_lock_whose_claude_process_has_ended():
+    # Linux only: the lock's start is a Linux clock-tick count read from /proc, which macOS lacks.
+    if not sys.platform.startswith("linux"):
+        print("SKIP  [this machine cannot run it] a Claude Code lock whose claude process has ended "
+              "is unlocked: the case reads its process's start from /proc")
+        return
     case = Case()
     try:
         worktree = started(case)
