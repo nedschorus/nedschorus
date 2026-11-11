@@ -15,8 +15,9 @@ Subcommands, each on one file:
                   since its last user-ruling line, and its last verdict.
   try             adds one "Try <n> — <by>, <time>: <found>" line under each
                   entry named, the same line under each for related entries.
-                  Refused for a settled entry, and for an entry that already
-                  has MAXIMUM_TRIES tries since its last user-ruling line.
+                  Refused for an entry that already has MAXIMUM_TRIES tries
+                  since its last user-ruling line; says so when a try
+                  brings an entry to that number.
   second-agent-input
                   prints what the handler gives the second agent:
                   SECOND_AGENT_PROMPT, the entry's text without its State,
@@ -43,16 +44,19 @@ Lines are recognised by how they open, as handlers have written them:
 which rule 4 counts tries again. An entry runs from its "## E<n>" heading to
 the next heading of level one or two. New lines go after the entry's last line that is not blank.
 
+Every subcommand but show and second-agent-input is refused on an entry whose
+State line is not "State: open": a settled entry is never changed, and an
+entry that needs the user waits until his decision is recorded and the
+entry is set open again.
+
 The file is named by its path on this machine, or in the form
 nedlern@ned-box:<path> that scripts/ghi-issue-write.py prints for a file in
 the log-store; that form is read as a local path on ned-box and refused
-elsewhere with the ssh command to run instead.
+elsewhere with the ssh command to run instead, its arguments quoted.
 
 Does not handle: two handlers changing one file at the same time (GHI 1132's
 open question 2): the file is read, changed and replaced whole, so the later
-writer's replacement drops the earlier writer's lines. A file beside an
-architecture overview is changed in the checkout named, and the handler
-commits it.
+writer's replacement drops the earlier writer's lines.
 
 Failures: a refused change, a missing file or entry, or a file that cannot be
 read or written is printed to stderr with what to do, and the program exits 1
@@ -63,6 +67,7 @@ import argparse
 import datetime
 import os
 import re
+import shlex
 import socket
 import sys
 import tempfile
@@ -80,7 +85,7 @@ TRY_LINE_PATTERN = re.compile(r"^Try[ :]")
 SECOND_AGENT_LINE_OPENING = "Second agent:"
 SECOND_AGENT_AGREES_OPENING = "Second agent: agrees"
 USER_RULING_LINE_OPENING = "User-ruling"
-SETTLED_STATE_OPENING = "State: settled"
+OPEN_STATE_OPENING = "State: open"
 
 LOG_STORE_HOST = "nedlern@ned-box"
 LOG_STORE_HOSTNAME = "ned-box"
@@ -106,13 +111,15 @@ def now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
 
 
-def local_path(named: str) -> Path:
+def local_path(named: str, argv) -> Path:
     if named.startswith(LOG_STORE_HOST + ":"):
         if socket.gethostname().split(".")[0] != LOG_STORE_HOSTNAME:
+            remote = shlex.join(["cd", "/home/nedlern/Projects/nedschorus"]) + " && " + shlex.join(
+                ["python3", "scripts/proposed-improvements-or-changes-file-entry-state-try-and-second-agent-verdict-lines-write.py", *argv])
             raise Refused(
                 f"{named} is in the log-store on ned-box, and this machine is not ned-box, so nothing was changed.\n"
-                "Run the same command on ned-box, from ned-box's clone:\n"
-                f"ssh {LOG_STORE_HOST} 'cd ~/Projects/nedschorus && python3 scripts/proposed-improvements-or-changes-file-entry-state-try-and-second-agent-verdict-lines-write.py <the same arguments>'")
+                "Run the same command on ned-box, exactly as printed here, quoting included:\n"
+                f"ssh {LOG_STORE_HOST} {shlex.quote(remote)}")
         return Path(named[len(LOG_STORE_HOST) + 1:])
     return Path(named)
 
@@ -190,17 +197,19 @@ def replace_state(lines, spans, entry, new_state):
     lines.insert(insertion_index(lines, spans, entry), new_state)
 
 
-def refuse_settled(block, entry):
+def refuse_unless_open(block, entry):
     state = state_line(block)
-    if state is not None and state.startswith(SETTLED_STATE_OPENING):
-        raise Refused(f"Entry {entry} is already settled ({state}), so nothing was changed.")
+    if state is not None and not state.startswith(OPEN_STATE_OPENING):
+        raise Refused(
+            f"Entry {entry} is not open ({state}), so nothing was changed.\n"
+            "A settled entry is never changed. An entry that needs the user waits until the agent-seat that brought it to him records his decision under it and sets its State line back to open.")
 
 
 def add_try(lines, entries, by, found):
     spans = entry_spans(lines)
     for entry in entries:
         block = entry_lines(lines, spans, entry)
-        refuse_settled(block, entry)
+        refuse_unless_open(block, entry)
         if tries_since_user_ruling(block) >= MAXIMUM_TRIES:
             raise Refused(
                 f"Entry {entry} already has {MAXIMUM_TRIES} tries since the user last decided on it, so no try was recorded under any entry named.\n"
@@ -228,7 +237,7 @@ def second_agent_input(lines, entry, sources) -> str:
 def add_verdict(lines, entry, agrees, who):
     spans = entry_spans(lines)
     block = entry_lines(lines, spans, entry)
-    refuse_settled(block, entry)
+    refuse_unless_open(block, entry)
     attempt = last_index(block, lambda line: bool(TRY_LINE_PATTERN.match(line)))
     verdict = last_index(block, lambda line: line.startswith(SECOND_AGENT_LINE_OPENING))
     if attempt < 0 or verdict > attempt:
@@ -245,7 +254,7 @@ def add_verdict(lines, entry, agrees, who):
 def settle(lines, entry, kind, by, how):
     spans = entry_spans(lines)
     block = entry_lines(lines, spans, entry)
-    refuse_settled(block, entry)
+    refuse_unless_open(block, entry)
     if kind == "not-worth-doing":
         verdict, answers = last_verdict_answers_last_try(block)
         if verdict is None or not answers or not verdict.startswith(SECOND_AGENT_AGREES_OPENING):
@@ -259,7 +268,7 @@ def settle(lines, entry, kind, by, how):
 def needs_the_user(lines, entry, because, by, why):
     spans = entry_spans(lines)
     block = entry_lines(lines, spans, entry)
-    refuse_settled(block, entry)
+    refuse_unless_open(block, entry)
     if because == "three-tries" and tries_since_user_ruling(block) < MAXIMUM_TRIES:
         raise Refused(
             f"Entry {entry} has {tries_since_user_ruling(block)} tries since the user last decided on it, fewer than {MAXIMUM_TRIES}, so it was not marked.\n"
@@ -330,7 +339,7 @@ def parser():
 def main(argv=None) -> int:
     arguments = parser().parse_args(argv)
     try:
-        path = local_path(arguments.file)
+        path = local_path(arguments.file, sys.argv[1:] if argv is None else argv)
         text = path.read_text(encoding="utf-8")
         ending = "\n" if text.endswith("\n") else ""
         lines = text.splitlines()
@@ -357,6 +366,11 @@ def main(argv=None) -> int:
               "If the path is wrong, run again with the path the file is at.", file=sys.stderr)
         return 1
     print(show(lines))
+    if arguments.command == "try":
+        spans = entry_spans(lines)
+        for entry in arguments.entries:
+            if tries_since_user_ruling(entry_lines(lines, spans, entry)) >= MAXIMUM_TRIES:
+                print(f"Entry {entry} now has {MAXIMUM_TRIES} tries: unless this try settles it, run the needs-the-user subcommand on it with --because three-tries.")
     return 0
 
 

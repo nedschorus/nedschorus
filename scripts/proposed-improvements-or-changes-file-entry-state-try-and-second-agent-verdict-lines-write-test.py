@@ -12,6 +12,7 @@ import contextlib
 import importlib.util
 import io
 import os
+import shlex
 import tempfile
 from pathlib import Path
 from unittest import mock
@@ -95,16 +96,18 @@ case("the second related entry gets try 2", entry(path, "E2")[-1] == "Try 2 — 
 # The fourth try is refused, under every entry named, and the file is unchanged.
 path = fresh()
 for number in range(3):
-    run(path, "try", "E1", "--by", "h", "--found", f"try {number}")
+    _, third_out, _ = run(path, "try", "E1", "--by", "h", "--found", f"try {number}")
+case("a second try says nothing of 3 tries", "now has" not in run(fresh(), "try", "E1", "--by", "h", "--found", "x")[1])
 before = path.read_text(encoding="utf-8")
 code, _, err = run(path, "try", "E2", "E1", "--by", "h", "--found", "fourth")
+case("the third try says the entry has 3 tries", "Entry E1 now has 3 tries" in third_out)
 case("a fourth try exits 1", code == 1)
 case("a fourth try says to mark the entry for the user", "REFUSED:" in err and "--because three-tries" in err)
 case("a refused try changes no entry", path.read_text(encoding="utf-8") == before)
 
 # A user-ruling line starts the count again.
 path = fresh(FILE_TEXT.replace("State: open\n\n## E2",
-                               "State: needs the user\nTry 1 — h, t: a\nTry 2: b\nTry 3 — h, t: c\n"
+                               "State: open\nTry 1 — h, t: a\nTry 2: b\nTry 3 — h, t: c\n"
                                "User-ruling — the user, 2026-11-09: keep it\n\n## E2"))
 code, _, _ = run(path, "try", "E1", "--by", "h", "--found", "after the ruling")
 case("a try after a user-ruling line is allowed", code == 0)
@@ -120,7 +123,12 @@ for command in (["try", "E2", "--by", "h", "--found", "x"],
     path = fresh(settled_text)
     code, _, err = run(path, *command)
     case(f"{command[0]} on a settled entry is refused",
-         code == 1 and "already settled" in err and path.read_text(encoding="utf-8") == settled_text)
+         code == 1 and "is not open" in err and path.read_text(encoding="utf-8") == settled_text)
+    waiting_text = settled_text.replace("State: settled, done — h, t: removed", "State: needs the user — h, t: decide")
+    path = fresh(waiting_text)
+    code, _, err = run(path, *command)
+    case(f"{command[0]} on an entry that needs the user is refused",
+         code == 1 and "is not open" in err and path.read_text(encoding="utf-8") == waiting_text)
 
 # A hashtag line or a lower heading inside an entry does not end it.
 path = fresh(FILE_TEXT.replace("Goes wrong when: a closed GHI's decision changes without the user.\n",
@@ -212,9 +220,13 @@ case("show lists each entry", code == 0 and out.startswith("E1: State: open; tri
 
 # The log-store form of a path.
 with mock.patch.object(PROGRAM.socket, "gethostname", return_value="ned-mac.local"):
-    code, _, err = run("nedlern@ned-box:/home/nedlern/x.md", "show")
+    code, _, err = run("nedlern@ned-box:/home/nedlern/x.md", "try", "E1", "--by", "h", "--found", "the ruling's words")
 case("the log-store form is refused off ned-box, with the ssh command",
-     code == 1 and "ssh nedlern@ned-box '" in err)
+     code == 1 and "ssh nedlern@ned-box " in err)
+command_line = err.strip().splitlines()[-1]
+case("the ssh command carries the arguments, quoted",
+     shlex.split(shlex.split(command_line)[2])[-7:]
+     == ["try", "nedlern@ned-box:/home/nedlern/x.md", "E1", "--by", "h", "--found", "the ruling's words"])
 path = fresh()
 with mock.patch.object(PROGRAM.socket, "gethostname", return_value="ned-box"):
     code, out, _ = run(f"nedlern@ned-box:{path}", "show")
