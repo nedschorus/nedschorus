@@ -441,9 +441,10 @@ def merge_lane_cases(scratch):
         arguments=MERGE_LANE_ARGUMENTS)
     found = fix_round_blocking_findings(fix_round, [moved.posted])
     check("round trip: a must-fix-now comment moved into the body counts in the posted count, "
-          "so the fix-round program refuses the round instead of missing the finding",
-          isinstance(found, str) and "says **Blocking: 2**, and its body lists 1 blocking finding(s)" in found
-          and "scripts/other.py:1" in found,
+          "and the fix-round program briefs it beside the inline one",
+          isinstance(found, list) and moved.posted["body"].startswith("REQUEST_CHANGES\n\n**Blocking: 2**\n\n")
+          and [(item["path"], item["line"], item["body"]) for item in found]
+          == [("scripts/thing.py", 2, "**Blocks** Finding on line 2."), ("scripts/other.py", 1, "**Blocks** Outside.")],
           f"{found}\n{moved.detail}")
 
     marks = [load_posting_program().review_comment_opening_mark_for_finding_category(category)
