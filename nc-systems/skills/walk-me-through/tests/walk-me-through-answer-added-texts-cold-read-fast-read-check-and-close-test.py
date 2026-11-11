@@ -3051,10 +3051,33 @@ def test_moving_on_is_refused_writing_nothing_while_the_item_holds_a_recommendat
         check(f"check --moved-on-no-decision on the reply {reply!r} to an item that ends with a recommendation is "
               "refused, writing nothing, and asks for an answer to it",
               checked.returncode == 1 and case.minutes.read_text() == before and case.calls.read_text() == ""
-              and 'nothing written: item 3 of 3 holds the line "Recommendation: change the sentence.", so it asks '
-                  "for a decision" in checked.stderr
+              and 'nothing written: item 3 of 3 recommends "change the sentence", so it asks for a decision'
+              in checked.stderr
               and "Ask the user to answer item 3 of 3 with A, AO, Aa, D or Z" in checked.stderr,
               described(checked))
+
+
+def test_moving_on_reads_the_recommendation_the_user_sees_outside_html_comments_and_never_an_empty_one():
+    plain = SUB_STEPS_DOCUMENT.replace("Recommendation: change the sentence.\n", "{line}\n")
+    for line, refused, why in (
+            ("Some note <!-- Recommendation: change it. --> the reader sees.", False,
+             "a recommendation inside a comment in a paragraph is never shown"),
+            ("<!-- Recommendation: change it. -->", False, "a comment block is never shown"),
+            ("<!-- a note --> Recommendation: change the sentence.", True,
+             "the text after a comment's --> is shown"),
+            ("Recommendation:", False, "a label with no text after it recommends nothing, as the short-answer hook "
+                                       "reads it")):
+        case = Case(next_to_present="item 1.2 of 2", document=plain.format(line=line))
+        case.minutes.write_text("# Minutes\n\n#next_to_present item 1.2 of 2\n")
+        checked = case.run("check", "--moved-on-no-decision", reply="next")
+        if refused:
+            check(f"check --moved-on-no-decision is refused when {why}: {line!r}",
+                  checked.returncode == 1 and 'recommends "change the sentence"' in checked.stderr,
+                  described(checked))
+        else:
+            check(f"check --moved-on-no-decision records the move on when {why}: {line!r}",
+                  checked.returncode == 0 and "moved on, no decision" in case.minutes.read_text(),
+                  described(checked) + case.minutes.read_text())
 
 
 def test_moving_on_from_a_sub_step_that_asks_no_decision_is_not_refused_for_a_later_sub_steps_recommendation():
