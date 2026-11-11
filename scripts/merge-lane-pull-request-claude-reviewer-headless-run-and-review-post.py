@@ -255,10 +255,11 @@ def claude_code_project_settings_read_from_review_tools_worktree_at_main_with_cl
         settings = json.loads(text)
     except ValueError as error:
         raise Refused(f"main's project settings file {settings_file} is not JSON ({error}), so "
-                      f"the reviewer could not be given main's hooks")
+                      f"the reviewer was not started, since it must run with main's hooks")
     if not isinstance(settings, dict):
         raise Refused(f"main's project settings file {settings_file} is JSON but not a JSON "
-                      f"object, so the reviewer could not be given main's hooks")
+                      f"object, so the reviewer was not started, since it must run with main's "
+                      f"hooks")
 
     def rewritten(value):
         if isinstance(value, dict):
@@ -275,7 +276,7 @@ def claude_code_project_settings_read_from_review_tools_worktree_at_main_with_cl
                       f"CLAUDE_PROJECT_DIR after each $CLAUDE_PROJECT_DIR, ${{CLAUDE_PROJECT_DIR}} "
                       f"and ${{CLAUDE_PROJECT_DIR:-...}} in it was replaced by "
                       f"{review_tools_worktree_at_main}, "
-                      f"so a command would run the head worktree's script.\n"
+                      f"so a command would run the head worktree's script; the reviewer was not started.\n"
                       f"Write each such command with one of those three forms, in "
                       f"{PROJECT_SETTINGS_FILE} on main, or add its form to "
                       f"PROJECT_DIRECTORY_REFERENCE in {Path(__file__).resolve()}")
