@@ -125,13 +125,14 @@ REGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE = (
     "{checkout} already exists, and git lists it as a worktree of {repository}, most likely one an earlier replay "
     "in this --scratch-directory could not remove; so this Bash guards replay adds no worktree there, leaves the "
     "path as it is, and exits 2 before it replays any recorded command.\n"
-    "Remove it with {remove_command}, then run the replay again with "
-    "the same arguments. A replay's worktree holds only the commit it read, so removing it loses no work.")
+    "Remove it with {remove_command}, then run the replay again: {rerun_command}\n"
+    "A replay's worktree holds only the commit it read, so removing it loses no work.")
 UNREGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE = (
     "{checkout} already exists, and git does not list it as a worktree of {repository}, so it is no worktree an "
     "earlier replay left, and it may hold someone's files; this Bash guards replay adds no worktree there, leaves "
-    "the path as it is, and exits 2 before it replays any recorded command.\n"
-    "Run the replay again with the same arguments, except a --scratch-directory that does not exist yet.")
+    "the path as it is, and exits 2 before it replays any recorded command. The path is inside the "
+    "--scratch-directory, {scratch}.\n"
+    "Run the replay again with a --scratch-directory that does not exist yet: {fresh_scratch_rerun_command}")
 CHECKOUTS_NOT_REMOVED_MESSAGE = (
     "REPLAY FAILED: these worktrees could not be removed, so this Bash guards replay exits 2; any verdicts it "
     "printed above stand.\n"
@@ -1115,6 +1116,25 @@ def registered_checkout_paths(worktree_list_porcelain):
             for line in worktree_list_porcelain.splitlines() if line.startswith("worktree ")}
 
 
+def rerun_command(arguments, scratch_directory=None):
+    """The command that runs this replay again with the parsed arguments, from the directory it ran in; with
+    scratch_directory, that --scratch-directory instead."""
+    words = ["python3", os.path.realpath(__file__)]
+    for name, value in vars(arguments).items():
+        value = scratch_directory if name == "scratch_directory" and scratch_directory is not None else value
+        for one in value if isinstance(value, list) else [] if value is None else [value]:
+            words += ["--" + name.replace("_", "-"), str(one)]
+    # The parsed arguments may be relative paths, which name the same files only from the same directory.
+    return f"cd {shlex.quote(os.getcwd())} && {shlex.join(words)}"
+
+
+def path_beside_that_does_not_exist(path):
+    number = 2
+    while os.path.lexists(f"{path}-{number}"):
+        number += 1
+    return f"{path}-{number}"
+
+
 def worktree_remove_command(repository, checkout):
     # Plain --force refuses a locked checkout, and git worktree remove refuses a path git has not registered.
     return f"git -C {shlex.quote(str(repository))} worktree remove --force --force {shlex.quote(str(checkout))}"
@@ -1148,7 +1168,9 @@ def remove_checkouts(repository, checkouts):
                               f"run rm -rf {shlex.quote(str(checkout))}, which prints what stops the deletion")
             continue
         try:
-            completed = subprocess.run(["git", "-C", repository, "worktree", "remove", "--force", str(checkout)],
+            # Twice, so a lock does not stop it: the checkout is this replay's own, and no one else's lock.
+            completed = subprocess.run(["git", "-C", repository, "worktree", "remove", "--force", "--force",
+                                        str(checkout)],
                                        capture_output=True, text=True, env=child_environment(),
                                        timeout=GIT_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
@@ -1246,7 +1268,9 @@ def replay_with_sigterm_handled(arguments):
             raise ReplayFailed("\n".join(
                 (REGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE if os.path.realpath(path) in registered
                  else UNREGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE).format(
-                    checkout=path, repository=repository, remove_command=worktree_remove_command(repository, path))
+                    checkout=path, repository=repository, remove_command=worktree_remove_command(repository, path),
+                    scratch=scratch, rerun_command=rerun_command(arguments),
+                    fresh_scratch_rerun_command=rerun_command(arguments, path_beside_that_does_not_exist(scratch)))
                 for path in existing))
         commits = {}
         for label, ref in (("base", arguments.base_ref), ("head", arguments.head_ref)):
