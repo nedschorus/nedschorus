@@ -73,6 +73,17 @@ def main():
         check("second start appends, no new file", status == 0 and len(files) == 1
               and "evidence added by reboot-test: main is broken" in state.path.read_text(), (files, out))
 
+        later = datetime(2029, 6, 1, 12, 0, 1, tzinfo=timezone.utc)
+        program.now_utc = lambda: later
+        try:
+            status, out = run(folder, "start", "--words", "a later second", agent_seat="md-skills")
+        finally:
+            program.now_utc = _real_now_utc
+        files = sorted(p.name for p in folder.iterdir())
+        check("start in a later second while a stop is in force: appends to it, no new file",
+              status == 0 and out.startswith("added to the emergency stop in force") and len(files) == 1
+              and "words added by md-skills: a later second" in state.path.read_text(), (files, out))
+
         moment = datetime(2030, 1, 1, tzinfo=timezone.utc)
         clash = folder / program.stop_file_name(moment)
         clash.write_text("someone else's file\n")
@@ -93,8 +104,10 @@ def main():
         check("push notification failure recorded",
               status == 0 and "push notification: failed at" in state.path.read_text())
 
-        status, _ = run(folder, "hand-lift", "--agent-seat", "merge-lane-2", "--words", "you may lift it")
-        check("hand-lift does not lift", status == 0 and isinstance(common.read_state(folder), common.InForce))
+        status, out = run(folder, "hand-over-lift", "--agent-seat", "merge-lane-2", "--words", "you may lift it")
+        check("hand-over-lift does not lift", status == 0 and isinstance(common.read_state(folder), common.InForce)
+              and out.startswith("hand-over-lift: written to")
+              and "#emergency_stop_lift_handed_over merge-lane-2 you may lift it" in state.path.read_text(), out)
 
         status, _ = run(folder, "lift", "--words", "all clear")
         lifted = common.read_state(folder)
@@ -119,6 +132,40 @@ def main():
             finally:
                 (blocked / "emergency-stop").chmod(0o755)
 
+        broken_folder = root / "write-fails" / "emergency-stop"
+        broken_folder.parent.mkdir()
+        real_fdopen = program.os.fdopen
+
+        def fdopen_whose_write_fails(descriptor, *arguments, **keywords):
+            handle = real_fdopen(descriptor, *arguments, **keywords)
+            def write(_text):
+                raise OSError(28, "No space left on device")
+            handle.write = write
+            return handle
+
+        program.os.fdopen = fdopen_whose_write_fails
+        try:
+            status, out = run(broken_folder, "start", "--words", "stop")
+        finally:
+            program.os.fdopen = real_fdopen
+        check("a write that fails part-way: FAILED, and no stop file or temporary file is left",
+              status == 1 and out.startswith("FAILED") and "No space left" in out
+              and list(broken_folder.iterdir()) == [], (out, list(broken_folder.iterdir())))
+
+        unreadable_folder = root / "unreadable" / "emergency-stop"
+        unreadable_folder.mkdir(parents=True)
+        (unreadable_folder / "2029-01-01T00-00-00Z.md").write_bytes(b"\xff\xfe not utf-8")
+        status, out = run(unreadable_folder, "start", "--words", "stop")
+        check("start while the newest stop file is unreadable: FAILED, and no new stop file hides it",
+              status == 1 and out.startswith("FAILED: the emergency-stop file") and "only the user" in out
+              and sorted(p.name for p in unreadable_folder.iterdir()) == ["2029-01-01T00-00-00Z.md"], out)
+
+        jobs_without_a_program = root / "jobs-without-a-program.json"
+        jobs_without_a_program.write_text('{"jobs": [{"name": "nightly"}]}')
+        lines = program.scheduled_job_lines(jobs_without_a_program)
+        check("a scheduled job with no program field is named as unreadable, not fatal",
+              len(lines) == 1 and "could not be read" in lines[0] and "'program'" in lines[0], lines)
+
         lines = program.scheduled_job_lines(root / "no-such-jobs.json")
         check("unreadable scheduled-jobs list is named, not fatal",
               len(lines) == 1 and "could not be read" in lines[0], lines)
@@ -135,6 +182,7 @@ def main():
 
 
 _real_read_state = common.read_state
+_real_now_utc = program.now_utc
 
 
 def _umask():

@@ -10,16 +10,20 @@ file's reading rules are in emergency-stop-file-in-force-read-common.py.
 Subcommands:
   start --words TEXT | --evidence TEXT
       Starts a stop, or, when one is in force, appends the new words or
-      evidence to it. The stop file is named by the UTC time and created with
-      exclusive create, so of two agent-sessions starting at once one creates
-      it and the other appends. The new file names the agent-seat running the
-      program as the coordinating agent-seat, the repair brief beside it, a
-      pending push notification, and the scheduled jobs, which keep running.
+      evidence to it. The stop file is named by the UTC time. Its whole text
+      is written to a temporary file in the folder first, which is then
+      hard-linked to the stop file's name, so a failed write leaves no
+      partial stop file, and of two agent-sessions starting in the same second
+      one creates it and the other appends. The new file names the agent-seat
+      running the program as the coordinating agent-seat, the repair brief
+      beside it, a pending push notification, and the scheduled jobs, which
+      keep running. When the newest stop file cannot be read, start prints
+      FAILED: that file counts as a stop in force, and a new file would hide it.
   coordinate --agent-seat NAME --words TEXT
       Names another coordinating agent-seat, on the user's word.
   push-notification sent | failed [--error TEXT]
       Records whether the push notification reached the user.
-  hand-lift --agent-seat NAME --words TEXT
+  hand-over-lift --agent-seat NAME --words TEXT
       Hands the lift to a named agent-seat; this does not lift the stop.
   lift --words TEXT
       Appends the lift line, `#emergency_stop_lifted <words>`, as the last line.
@@ -39,6 +43,7 @@ import importlib.util
 import json
 import os
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -50,7 +55,7 @@ _spec.loader.exec_module(common)
 
 REPOSITORY_ROOT = HERE.parent.parent.parent
 SCHEDULED_JOBS_FILE = REPOSITORY_ROOT / "nc-systems" / "general-tools" / "scheduled-jobs-on-each-machine.json"
-HAND_LIFT_LINE_PREFIX = "#emergency_stop_lift_handed_over "
+HAND_OVER_LIFT_LINE_PREFIX = "#emergency_stop_lift_handed_over "
 
 
 def now_utc():
@@ -68,9 +73,9 @@ def one_line(text):
 def scheduled_job_lines(jobs_file):
     try:
         jobs = json.loads(jobs_file.read_text(encoding="utf-8"))["jobs"]
-    except (OSError, ValueError, KeyError, TypeError) as error:
-        return [f"- the scheduled-jobs list {jobs_file} could not be read: {error}"]
-    return [f"- {job['name']} ({', '.join(sorted(job.get('on', {})))}): {job['program']}" for job in jobs]
+        return [f"- {job['name']} ({', '.join(sorted(job.get('on', {})))}): {job['program']}" for job in jobs]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+        return [f"- the scheduled-jobs list {jobs_file} could not be read: {error!r}"]
 
 
 def new_stop_text(moment, path, agent_seat, kind, words, jobs_file):
@@ -106,10 +111,14 @@ def require_in_force(folder):
     if isinstance(state, common.InForce):
         return state, None
     if isinstance(state, common.Unreadable):
-        return None, f"the stop file {state.path} cannot be read: {state.error}"
+        return None, f"the emergency-stop file {state.path} cannot be read: {state.error}"
     if isinstance(state, common.FolderUnreachable):
         return None, f"the emergency-stop folder {state.folder} cannot be reached: {state.error}"
     return None, f"no emergency stop is in force in {folder}"
+
+
+class StartRefused(Exception):
+    """start cannot act without hiding or losing a stop; the message says why."""
 
 
 def start(folder, agent_seat, kind, words, jobs_file, moment):
@@ -117,18 +126,33 @@ def start(folder, agent_seat, kind, words, jobs_file, moment):
     if isinstance(state, common.InForce):
         append(state.path, f"{moment.isoformat()} {kind} added by {agent_seat}: {one_line(words)}")
         return f"added to the emergency stop in force, {state.path}"
+    if isinstance(state, common.Unreadable):
+        raise StartRefused(f"the emergency-stop file {state.path} cannot be read: {state.error}; it counts as "
+                           "an emergency stop in force, a new stop file would hide it, and only the user "
+                           "repairs or moves it")
     if isinstance(state, common.FolderUnreachable):
         raise OSError(f"the emergency-stop folder {state.folder} cannot be reached: {state.error}")
     folder.mkdir(exist_ok=True)
     path = folder / stop_file_name(moment)
+    text = new_stop_text(moment, path, agent_seat, kind, words, jobs_file)
+    descriptor, temporary = tempfile.mkstemp(dir=folder, prefix=".", suffix=".partial")
     try:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        os.fchmod(descriptor, 0o644 & ~current_umask())
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.link(temporary, path)
     except FileExistsError:
         append(path, f"{moment.isoformat()} {kind} added by {agent_seat}: {one_line(words)}")
         return f"added to the emergency stop started at the same second, {path}"
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(new_stop_text(moment, path, agent_seat, kind, words, jobs_file))
+    finally:
+        os.unlink(temporary)
     return f"started the emergency stop {path}"
+
+
+def current_umask():
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
 
 
 def run(arguments, environment):
@@ -145,7 +169,7 @@ def run(arguments, environment):
     push_parser = commands.add_parser("push-notification")
     push_parser.add_argument("result", choices=("sent", "failed"))
     push_parser.add_argument("--error", default="")
-    hand_parser = commands.add_parser("hand-lift")
+    hand_parser = commands.add_parser("hand-over-lift")
     hand_parser.add_argument("--agent-seat", required=True)
     hand_parser.add_argument("--words", required=True)
     lift_parser = commands.add_parser("lift")
@@ -176,13 +200,15 @@ def run(arguments, environment):
         elif options.command == "push-notification":
             detail = f": {one_line(options.error)}" if options.error else ""
             append(state.path, f"push notification: {options.result} at {moment.isoformat()}{detail}")
-        elif options.command == "hand-lift":
-            append(state.path, f"{HAND_LIFT_LINE_PREFIX}{options.agent_seat} {one_line(options.words)}")
+        elif options.command == "hand-over-lift":
+            append(state.path, f"{HAND_OVER_LIFT_LINE_PREFIX}{options.agent_seat} {one_line(options.words)}")
         elif options.command == "lift":
             append(state.path, f"{moment.isoformat()} lifted by {agent_seat}")
             append(state.path, f"{common.LIFT_LINE_PREFIX}{one_line(options.words)}")
         print(f"{options.command}: written to {state.path}")
         return 0
+    except StartRefused as refusal:
+        return failed(str(refusal))
     except OSError as error:
         return failed(f"the emergency-stop file could not be written: {error}")
 

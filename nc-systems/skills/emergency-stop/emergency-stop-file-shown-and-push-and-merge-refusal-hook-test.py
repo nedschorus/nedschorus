@@ -22,6 +22,7 @@ import uuid
 from pathlib import Path
 
 HOOK = Path(__file__).with_name("emergency-stop-file-shown-and-push-and-merge-refusal-hook.py")
+SKILL = Path(__file__).resolve().parents[3] / ".claude" / "skills" / "emergency-stop" / "SKILL.md"
 _spec = importlib.util.spec_from_file_location("emergency_stop_hook", HOOK)
 hook = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(hook)
@@ -66,12 +67,28 @@ def main_with_failing_read_state(hook_payload):
 
 def main():
     pushes = ["git push", "git -C /x push origin b", "cd x && git push -u origin b", "gh pr merge 12 --squash",
-              "FOO=1 git push", "/usr/bin/git push", "bash -c 'git push origin b'", "sudo git push"]
-    not_pushes = ["git log --grep push", "git status", "echo git push-notes", "gh pr view 12", "git pushd"]
+              "FOO=1 git push", "/usr/bin/git push", "bash -c 'git push origin b'", "sudo git push",
+              "gh -R o/r pr merge 5", "gh --repo o/r pr merge 5", "gh pr -R o/r merge 5", "gh --repo=o/r pr merge 5",
+              "gh -Ro/r pr merge 5", "gh api -X PUT repos/o/r/pulls/5/merge", "gh api --method put /repos/o/r/pulls/5/merge",
+              "gh api repos/o/r/pulls/5/merge -XPUT", "gh api --method=PUT repos/o/r/pulls/5/merge",
+              "gh -R o/r api -X PUT repos/o/r/pulls/5/merge"]
+    not_pushes = ["git log --grep push", "git status", "echo git push-notes", "gh pr view 12", "git pushd",
+                  "gh -R o/r pr view 5", "gh pr -R o/r view 5", "gh api repos/o/r/pulls/5/merge",
+                  "gh api -X PUT repos/o/r/pulls/5/requested_reviewers", "gh api -X GET repos/o/r/pulls/5/merge",
+                  "gh api -X"]
     check("push and merge commands are recognised", all(hook.bash_command_pushes_or_merges(c) for c in pushes),
           [c for c in pushes if not hook.bash_command_pushes_or_merges(c)])
     check("other commands are not", not any(hook.bash_command_pushes_or_merges(c) for c in not_pushes),
           [c for c in not_pushes if hook.bash_command_pushes_or_merges(c)])
+
+    skill_text = SKILL.read_text(encoding="utf-8")
+    section = skill_text.split("## While a stop is in force", 1)[1].split("\n## ", 1)[0]
+    skill_rules = [line[2:].rstrip(".") for line in section.splitlines() if line.startswith("- ")]
+    hook_rule_lines = [line[2:] for line in hook.RULES.splitlines() if line.startswith("- ")]
+    check("the hook's first four rules hold the skill's first four, word for word, in the same order",
+          len(skill_rules) == 5 and len(hook_rule_lines) == 5
+          and all(hook_line.startswith(skill_rule) for skill_rule, hook_line in zip(skill_rules[:4], hook_rule_lines)),
+          (skill_rules, hook_rule_lines))
 
     with tempfile.TemporaryDirectory() as scratch:
         root = Path(scratch)
@@ -94,8 +111,12 @@ def main():
               and "permissionDecision" not in shown, shown)
 
         refused = decoded(hook.output_for(payload("PreToolUse", "git push origin b"), environment))
-        check("in force: push by another agent-seat refused",
-              refused and refused["permissionDecision"] == "deny" and "md-skills" in refused["permissionDecisionReason"],
+        check("in force: push by another agent-seat refused, saying merging resumes too and how to ask the coordinator",
+              refused and refused["permissionDecision"] == "deny" and "md-skills" in refused["permissionDecisionReason"]
+              and "pushing and merging resume" in refused["permissionDecisionReason"]
+              and "SendMessage" in refused["permissionDecisionReason"], refused)
+        refused = decoded(hook.output_for(payload("PreToolUse", "gh pr -R o/r merge 5"), environment))
+        check("in force: gh pr merge with -R inside refused", refused and refused.get("permissionDecision") == "deny",
               refused)
         refused = decoded(hook.output_for(payload("PreToolUse", "git push"), {**environment, "GIT_AUTHOR_NAME": ""}))
         check("no agent-seat known: refused", refused and refused.get("permissionDecision") == "deny", refused)
@@ -124,23 +145,27 @@ def main():
         check("unreadable file: treated as in force, every push refused",
               refused and refused.get("permissionDecision") == "deny", refused)
         shown = decoded(hook.output_for(payload(), environment))
-        check("unreadable file: says why", shown and "cannot be read" in shown["additionalContext"], shown)
+        check("unreadable file: says why, and to tell the user",
+              shown and "cannot be read" in shown["additionalContext"]
+              and "Tell the user its path" in shown["additionalContext"], shown)
 
         stop.write_text("started\n#emergency_stop_lifted all clear\n")
         session = uuid.uuid4().hex
         first = decoded(hook.output_for(payload(session=session), environment))
         second = hook.output_for(payload(session=session), environment)
-        check("lifted: one note per agent-session", first and "was lifted" in first["additionalContext"]
-              and second is None, (first, second))
+        check("lifted: one note per agent-session, saying held-back work resumes",
+              first and "was lifted" in first["additionalContext"]
+              and "resume the work you held back" in first["additionalContext"] and second is None, (first, second))
         check("lifted: push allowed", hook.output_for(payload("PreToolUse", "git push", session), environment) is None)
 
         gone = {**environment, "NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(root / "gone" / "emergency-stop")}
         session = uuid.uuid4().hex
         first = decoded(hook.output_for(payload(session=session), gone))
         second = hook.output_for(payload(session=session), gone)
-        check("log-store unreachable: state unknown once, work continues",
-              first and "emergency-stop state unknown" in first["additionalContext"] and second is None,
-              (first, second))
+        check("log-store unreachable: state unknown once, work continues, and the user is told",
+              first and "emergency-stop state unknown" in first["additionalContext"]
+              and "carry on with your work" in first["additionalContext"]
+              and "tell the user" in first["additionalContext"] and second is None, (first, second))
         check("unsafe session id: note shown each time, nothing written",
               hook.note_record_path("../x") is None and hook.output_for(payload(session="../x"), gone) is not None)
 
@@ -158,12 +183,20 @@ def main():
         broken = {**environment, "NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(folder)}
         status, out = main_with_failing_read_state(payload())
         shown = decoded(out)
-        check("hook failure: says so in context, exit 0",
-              status == 0 and shown and "hook failed" in shown["additionalContext"], out)
+        check("hook failure: says so in context, that the prompt went ahead, exit 0",
+              status == 0 and shown and shown["hookEventName"] == "UserPromptSubmit"
+              and "hook failed" in shown["additionalContext"]
+              and "This prompt went ahead" in shown["additionalContext"], out)
         status, out = main_with_failing_read_state(payload("PreToolUse", "ls"))
         shown = decoded(out)
-        check("hook failure at PreToolUse: the note names that event",
-              status == 0 and shown and shown["hookEventName"] == "PreToolUse", out)
+        check("hook failure at PreToolUse: the note names that event, and says the tool call went ahead",
+              status == 0 and shown and shown["hookEventName"] == "PreToolUse"
+              and "This tool call went ahead" in shown["additionalContext"], out)
+        status, out = main_with_failing_read_state({"hook_event_name": "SessionStart"})
+        shown = decoded(out)
+        check("hook failure at an event it is not wired for: reported as at UserPromptSubmit",
+              status == 0 and shown and shown["hookEventName"] == "UserPromptSubmit"
+              and "This prompt went ahead" in shown["additionalContext"], out)
 
         stop.write_text("# Emergency stop\ncoordinating agent-seat: reboot-test\n")
         result = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload("PreToolUse", "git push")),
