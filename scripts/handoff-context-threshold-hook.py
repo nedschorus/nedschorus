@@ -351,11 +351,20 @@ COMPACTION_RECORD_SUBTYPE = "compact_boundary"
 
 def compaction_dropped_tokens_from_transcript(transcript_path: str) -> int:
     """Return the tokens all of the session's compactions dropped; 0 when it has none."""
-    # Claude Code keeps the running total on each compaction record, so the newest one suffices.
-    for record in transcript_records.records_newest_first(Path(transcript_path).expanduser()):
-        if record.get("subtype") == COMPACTION_RECORD_SUBTYPE:
-            return record["compactMetadata"]["cumulativeDroppedTokens"]
-    return 0
+    dropped_tokens = 0
+    # Bytes that are not UTF-8 are read past: raising on them would stop the hook at every Stop.
+    with Path(transcript_path).expanduser().open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if COMPACTION_RECORD_SUBTYPE not in line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # Claude Code keeps the running total on each compaction record, so the newest one counts.
+            if isinstance(record, dict) and record.get("subtype") == COMPACTION_RECORD_SUBTYPE:
+                dropped_tokens = record["compactMetadata"]["cumulativeDroppedTokens"]
+    return dropped_tokens
 
 
 def context_used_plus_compaction_dropped_percentage_from_transcript(transcript_path: str):

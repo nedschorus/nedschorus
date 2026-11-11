@@ -648,6 +648,22 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a compaction record behind many large later records is still found",
           hook.compaction_dropped_tokens_from_transcript(str(buried_compaction)) == 250_000,
           str(hook.compaction_dropped_tokens_from_transcript(str(buried_compaction))))
+    # The work-in-flight scan reads past such bytes too; raising here would stop the hook at every Stop.
+    undecodable = Path(workspace) / "compaction-undecodable.jsonl"
+    undecodable.write_bytes(
+        (json.dumps(compaction_record(150_000)) + "\n").encode("utf-8")
+        + b'{"type": "user", "note": "\xff\xfe"}\n'
+        + (json.dumps(usage_record(200_000)) + "\n").encode("utf-8"))
+    check("bytes that are not UTF-8 in the transcript are read past",
+          hook.compaction_dropped_tokens_from_transcript(str(undecodable)) == 150_000,
+          str(hook.compaction_dropped_tokens_from_transcript(str(undecodable))))
+    partial_compaction = Path(workspace) / "compaction-partial.jsonl"
+    partial_compaction.write_text(
+        json.dumps(compaction_record(150_000)) + "\n" + json.dumps(usage_record(200_000)) + "\n"
+        + json.dumps(compaction_record(400_000))[:60], encoding="utf-8")
+    check("a compaction record Claude Code is still writing is skipped",
+          hook.compaction_dropped_tokens_from_transcript(str(partial_compaction)) == 150_000,
+          str(hook.compaction_dropped_tokens_from_transcript(str(partial_compaction))))
 
     # --- Which subagents are still in flight -------------------------------
     # A reincarnation kills the session's in-process subagents with it (2026-08-27),
