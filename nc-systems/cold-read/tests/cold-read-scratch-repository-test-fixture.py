@@ -241,7 +241,7 @@ def install_fake_sandbox_programs(directory):
     Returns `directory`. The first line names this Python by its full path,
     so a stand-in started with a PATH that holds no python3 still runs."""
     directory = Path(directory)
-    directory.mkdir(parents=True, exist_ok=True)
+    directory.mkdir(exist_ok=True)
     for name in ("bwrap", "sandbox-exec"):
         (directory / name).write_text(
             f"#!{sys.executable}\n" + FAKE_SANDBOX_PROGRAM_PASSING_THE_COMMAND_THROUGH,
