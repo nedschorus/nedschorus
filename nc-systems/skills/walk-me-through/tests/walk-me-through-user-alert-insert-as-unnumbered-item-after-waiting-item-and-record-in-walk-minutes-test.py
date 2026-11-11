@@ -2,7 +2,8 @@
 """Cases for the program that adds claimed user alerts to the open approval-walk right after its waiting item.
 
 Each case runs the program as a subprocess, with HOME pointed at a scratch directory holding the claimed alerts,
-in a scratch checkout holding one approval-walk. Prints one line per case and exits non-zero if any case fails.
+in a scratch checkout holding one approval-walk, except the heading_title case, which calls that function
+in-process because a title it would prefix differently ends in the same refusal either way. Prints one line per case and exits non-zero if any case fails.
 """
 import importlib.util
 import json
@@ -278,12 +279,30 @@ def run_refusal_cases(root):
           and f"Then run again: python3 {PROGRAM.resolve()} --cwd {checkout} alert-a" in result.stderr
           and after == before, result.stderr)
 
+
+def run_repeated_id_and_title_spanning_two_headings_cases(root):
+    checkout, home = walk_checkout(root, "unreadable-given-twice")
+    claimed_alert(home, "alert-a", "first")
+    result = run(checkout, home, "alert-gone", "alert-a", "alert-gone")
+    check("an unreadable alert id given twice is left out both times from the command to run again",
+          result.returncode == 1
+          and f"leaving out alert-gone: python3 {PROGRAM.resolve()} --cwd {checkout} alert-a\n" in result.stderr,
+          result.stderr)
+
+    program_spec = importlib.util.spec_from_file_location("user_alert_insert", PROGRAM)
+    program = importlib.util.module_from_spec(program_spec)
+    program_spec.loader.exec_module(program)
+    title = program.heading_title("first\n## second", walk_finder, walk_finder.markdown_parser())
+    check("a title whose `##` heading would be two unnumbered items, not one, gets the prefix",
+          title == "User alert: first\n## second", repr(title))
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     scratch = Path(temporary_directory)
     run_one_alert_cases(scratch)
     run_several_alert_cases(scratch)
     run_marker_in_title_cases(scratch)
     run_refusal_cases(scratch)
+    run_repeated_id_and_title_spanning_two_headings_cases(scratch)
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")
