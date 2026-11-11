@@ -23,7 +23,7 @@ ended and the worktree holds no work. nc-systems/general-tools/tests/agent-seat-
 checks both against the installed Claude Code.
 
 How it can fail. Input that is not JSON, or without a `name` and a `cwd` as strings,
-and a creator that exits nonzero or prints no path, each exit 1 with a message on
+and a creator that exits nonzero, each exit 1 with a message on
 stderr; Claude Code then makes no worktree and the subagent, or the agent-session,
 does not start. The creator's own failures leave what its docstring says, at most a
 branch with no worktree, or a worktree with no owner file, which it names.
@@ -60,12 +60,9 @@ def main():
         return fail(f"its stdin JSON has no `name` and `cwd` strings: {hook_input!r}")
     completed = subprocess.run([sys.executable, str(CREATOR), BRANCH_PREFIX + name, "--owned-by-agent-session"], cwd=cwd,
                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True, check=False)
-    path = completed.stdout.strip()
-    if completed.returncode != 0 or not path:
-        return fail(f"{CREATOR.name} exited {completed.returncode}"
-                    + ("" if path else " and printed no worktree path")
-                    + "; its own message is above")
-    print(path)
+    if completed.returncode:
+        return fail(f"{CREATOR.name} exited {completed.returncode}; its own message is above")
+    print(completed.stdout.strip())
     return 0
 
 
