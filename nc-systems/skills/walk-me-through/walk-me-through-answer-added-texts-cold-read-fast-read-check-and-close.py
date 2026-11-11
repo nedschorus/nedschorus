@@ -35,6 +35,10 @@ item that asks for no decision, such as a summary item: it needs no
 decision>`. It is refused, writing nothing, for an item that has a recommendation as
 the short-answer hook reads it: text after its last "Recommendation:", outside
 fenced or indented code and HTML comments, because that item asks for a decision.
+It is refused too, writing nothing, when the item has no such recommendation but
+does have one once HTML comments are cut only where Python's HTML parser finds
+them, as when a `<!--` inside a tag's attribute, such as `<div title="<!--">`,
+hides the recommendation from the short-answer hook's reading.
 
 Every answer but --not-asked, --already-decided and --moved-on, which record an
 item the user is not shown, needs --user-reply-as-typed, the user's reply
@@ -142,7 +146,8 @@ the text is the rest of the line, without one pair of surrounding quotation
 marks. Before it reads them, CHECK refuses, writing nothing, for every answer but
 --deferred, --moved-on-no-decision and --moved-on, which add no text, when
 any `#new` or `#new_if_d` line of the item has no text after its mark,
-is inside fenced or indented code, or opens a paragraph that runs onto the
+is inside fenced or indented code, has text cut from its own line as an HTML
+comment, even one inside a code span, or opens a paragraph that runs onto the
 lines right below it, since those texts would miss their fast read; the
 refusal lists each such mark by its line number, gives the text joined into
 one line where it can find it, from the run-on lines, from the rest of the
@@ -368,6 +373,7 @@ import datetime
 import difflib
 import fnmatch
 import hashlib
+import html.parser
 import importlib.util
 import json
 import os
@@ -723,6 +729,17 @@ MOVED_ON_NO_DECISION_REFUSED = (
     "If it does not, ask him to answer {item}, because the walk-me-through skill lets the walk move on from an "
     "item only once its recommendation is answered.\n"
     "The check command for each answer, with REPLY replaced by his reply as he typed it:\n{commands}")
+MOVED_ON_NO_DECISION_HIDDEN_RECOMMENDATION = (
+    "nothing written: {item} in the walk-document {document} shows no recommendation as this program cuts HTML "
+    "comments, but recommends \"{recommendation}\" once comments are cut only where an HTML parser finds them, as "
+    "when a `<!--` inside a tag's attribute, such as `<div title=\"<!--\">`, hides the text after it. So check "
+    "cannot tell whether {item} asks for a decision.\n"
+    "If the user is meant to see that recommendation: rewrite each `<!--` in {item} that opens no comment, such as "
+    "one in an attribute, as `&lt;!--`, then ask him to answer {item}, because the walk-me-through skill lets "
+    "the walk move on from an item only once its recommendation is answered.\n"
+    "If the recommendation is a hidden note: put it inside a comment that opens with `<!--` outside any tag and "
+    "closes with `-->`, then run `python3 {program} check --moved-on-no-decision --user-reply-as-typed {quoted_words}` "
+    "again.")
 MOVED_ON_NO_DECISION_ANSWER_COMMANDS = (
     ("A", ""), ("AO", " --obvious"), ("Aa", " --after-advisor"), ("D", " --disapproved"), ("Z", " --deferred"))
 MOVED_ON_NO_DECISION_OPTION_LINE = ("O{number}, for an item with an \"Option {number}\" paragraph: python3 {program} check "
@@ -743,6 +760,8 @@ UNREADABLE_NEW_MARKS = (
     "For a mark whose text runs onto the lines below it: write the line its entry gives after \"joined onto it:\" "
     "in place of the mark's line, or the mark followed by the text you meant, and delete the lines its text ran "
     "onto.\n"
+    "For a mark whose line holds `<!--`: move any HTML comment on that line to a line of its own, and if the "
+    "mark's text holds `<!--`, write it there in words, as in `an HTML comment opening`.\n"
     "For a mark with no text after it: if a text was meant, write it after the mark, on the mark's line, and "
     "delete any lines below that held it; if none was meant, delete the mark.\n"
     "Then run `{command}` again.\n"
@@ -751,6 +770,8 @@ UNREADABLE_NEW_MARKS = (
 UNREADABLE_BARE = "- line {line}: `{mark}` has no text after it on its line."
 UNREADABLE_FENCED = "- line {line}: `{mark}` is inside fenced or indented code, where no mark's text is read."
 UNREADABLE_RUN_ON = "- line {line}: the text of `{mark}` runs onto {below} right below it, where it is not read."
+UNREADABLE_COMMENT_CUT = ("- line {line}: the line of `{mark}` holds `<!--`, so this program cuts text from it as an "
+                          "HTML comment, even inside a code span, and would not read the line as written.")
 UNREADABLE_JOINED = " The mark's line with its text joined onto it: {mark} {text}"
 NOT_ASKED_REFUSED = (
     "nothing written: {item} cannot be settled without asking the user as {label}, because:\n{problems}\n"
@@ -992,14 +1013,48 @@ def item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_
     return document, text, tokens, ranges
 
 
+class HtmlCommentSpans(html.parser.HTMLParser):
+    """Collects the (start, end) offsets of each HTML comment Python's HTML parser finds in the text fed to it,
+    which, unlike the walk finder's pattern, skips a `<!--` inside a tag's attribute."""
+
+    def __init__(self, text):
+        super().__init__(convert_charrefs=False)
+        self.text, self.spans = text, []
+        self.line_starts = [0] + [index + 1 for index, character in enumerate(text) if character == "\n"]
+
+    def handle_comment(self, data):
+        line, column = self.getpos()
+        start = self.line_starts[line - 1] + column
+        end = start + len("<!--") + len(data)
+        closing = re.match(r"--!?>", self.text[end:])
+        self.spans.append((start, end + (len(closing[0]) if closing else 0)))
+
+
+def html_parser_comments_cut(lines):
+    """Return lines with each HTML comment Python's HTML parser finds in them cut out, keeping the count of lines."""
+    text = "\n".join(lines)
+    finder = HtmlCommentSpans(text)
+    finder.feed(text)
+    finder.close()
+    for start, end in reversed(finder.spans):
+        text = text[:start] + "\n" * text.count("\n", start, end) + text[end:]
+    return text.split("\n")
+
+
 def item_lines(walk_finder, minutes, value, numbers, total, parser):
     """Return (walk-document path, the lines of the items numbered, outside fenced code, the items' marks as
-    new_marks returns them, the problem line of each mark whose text would not be read whole)."""
+    new_marks returns them, the problem line of each mark whose text would not be read whole, the same lines
+    as the first with HTML comments cut where Python's HTML parser finds them instead)."""
     document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
     lines = walk_finder.prose_lines(text, parser, tokens)
     marks = new_marks(text, tokens, ranges, lines)
+    code_emptied = text.split("\n")
+    for token in tokens:
+        if token.map is not None and token.type in ("fence", "code_block"):
+            code_emptied[token.map[0]:token.map[1]] = [""] * (token.map[1] - token.map[0])
     return (document, [line for first, end in ranges for line in lines[first:end]], marks,
-            unreadable_new_marks(marks))
+            unreadable_new_marks(marks),
+            html_parser_comments_cut([line for first, end in ranges for line in code_emptied[first:end]]))
 
 
 def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None, refused_unless_marks_read=None):
@@ -1074,9 +1129,9 @@ def block_right_below(lines, first, end):
     return []
 
 
-NewMark = collections.namedtuple("NewMark", "mark number in_code text_lines below")
+NewMark = collections.namedtuple("NewMark", "mark number in_code comment_cut text_lines below")
 NewMark.__doc__ = """One `#new` or `#new_if_d` mark: mark, its 0-based line number, whether it is inside fenced or
-indented code, text_lines, the mark's own text as written followed by every line its text runs onto, and below,
+indented code, whether text was cut from its line as an HTML comment, text_lines, the mark's own text as written followed by every line its text runs onto, and below,
 for a mark in code or with no text, the lines it may have meant; lines below the mark's own line lose their
 quotation markers."""
 
@@ -1105,28 +1160,33 @@ def new_marks(text, tokens, ranges, shown):
                 continue
             if number in code:
                 below = lines_until_blank_or_fence(lines, number + 1, min(code[number], end))
-                marks.append(NewMark(match[1], number, True, [match[2]], below))
+                marks.append(NewMark(match[1], number, True, False, [match[2]], below))
                 continue
+            comment_cut = shown[number] != lines[number]
             if not unquoted(match[2]):
-                marks.append(NewMark(match[1], number, False, [match[2]], block_right_below(lines, number + 1, end)))
+                marks.append(NewMark(match[1], number, False, comment_cut, [match[2]],
+                                     block_right_below(lines, number + 1, end)))
                 continue
             paragraph_end = max((paragraph[1] for paragraph in paragraphs if paragraph[0] <= number < paragraph[1]),
                                 default=number + 1)
             text_end = next((below for below in range(number + 1, paragraph_end)
                              if any(marker.match(lines[below]) for marker in MARKER_LINES_READ_ON_THEIR_OWN)),
                             paragraph_end)
-            marks.append(NewMark(match[1], number, False,
+            marks.append(NewMark(match[1], number, False, comment_cut,
                                  [match[2]] + unquoted_lines(lines[number + 1:min(text_end, end)]), []))
     return marks
 
 
 def unreadable_new_marks(marks):
     """Return one problem line for each of new_marks' marks whose text check would not read whole: one with no
-    text on its line, one inside fenced or indented code, and one whose text runs onto the lines right below it."""
+    text on its line, one inside fenced or indented code, one with text cut from its line as an HTML comment, and
+    one whose text runs onto the lines right below it."""
     problems = []
     for found in marks:
         mark, line = found.mark, found.number + 1
-        if found.in_code or not unquoted(found.text_lines[0]):
+        if found.comment_cut:
+            problems.append(UNREADABLE_COMMENT_CUT.format(line=line, mark=mark))
+        elif found.in_code or not unquoted(found.text_lines[0]):
             problem = UNREADABLE_FENCED if found.in_code else UNREADABLE_BARE
             joined = lines_joined(([found.text_lines[0]] if found.in_code else []) + found.below)
             problems.append(problem.format(line=line, mark=mark)
@@ -1581,7 +1641,8 @@ def check(arguments):
                                                      answered=answered_word(arguments, walk_finder),
                                                      program=program, quoted_words=shlex.quote(words)))
     in_his_words = USER_WORDS.format(words=walk_finder.text_wrapped_as_markdown_code_span(words)) if words else ""
-    document, lines, marks, unreadable = item_lines(walk_finder, minutes, value, numbers, total, parser)
+    document, lines, marks, unreadable, html_parser_lines = item_lines(walk_finder, minutes, value, numbers, total,
+                                                                       parser)
     rating = case_against_rating(lines, item, document, arguments)
     rated = CASE_AGAINST_HASHTAG.format(rating=rating.replace(" ", "_")) if rating else ""
     recommendation = walk_finder.approval_walk_item_last_recommendation_text_from_item_lines(lines)
@@ -1589,6 +1650,11 @@ def check(arguments):
         raise Failure(MOVED_ON_NO_DECISION_REFUSED.format(
             item=item, recommendation=recommendation,
             commands=answer_check_commands(program)))
+    hidden = (walk_finder.approval_walk_item_last_recommendation_text_from_item_lines(html_parser_lines)
+              if arguments.moved_on_no_decision and recommendation is None else None)
+    if hidden is not None:
+        raise Failure(MOVED_ON_NO_DECISION_HIDDEN_RECOMMENDATION.format(
+            item=item, document=document, recommendation=hidden, program=program, quoted_words=shlex.quote(words)))
     if arguments.deferred or arguments.moved_on_no_decision or arguments.moved_on is not None:
         now = datetime.datetime.now().astimezone()
         no_change = CHECK_MOVED_ON_MINUTES if arguments.moved_on is not None else CHECK_DEFERRED_MINUTES
