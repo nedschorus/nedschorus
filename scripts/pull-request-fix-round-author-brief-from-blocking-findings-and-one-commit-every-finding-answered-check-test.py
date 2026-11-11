@@ -1290,6 +1290,18 @@ def moved_into_body_cases(root, repository, base, frozen_head):
     code, out, err = run(root, repository, moved_fix_next)
     check("a moved comment that does not block leaves the brief to the stated count",
           code == 0 and "Blocking findings (1)" in out, err + out)
+
+    # An ungraded round briefs every review's inline Blocks, so only the login check keeps another
+    # account's moved-comment section out; logins on both sides of merge-lane-2's catch an ordering comparison.
+    lane_ungraded = review(commit_id=frozen_head, body="REQUEST_CHANGES")
+    for login in ("mac-claude", "zz-reviewer"):
+        other = review(state="COMMENTED", review_id=20, commit_id=frozen_head, login=login,
+                       body="REQUEST_CHANGES\n\nComments on lines outside this pull request's diff:\n"
+                            "- `setup.py:3`: **Blocks** another account's moved finding.")
+        code, out, err = run(root, repository, {**routes_for(frozen_head, [other, lane_ungraded]),
+                                                **comments_route(20, [])})
+        check(f"in an ungraded round, a Block in the moved-comment section of {login}'s review body is not briefed",
+              code == 0 and "Blocking findings (2)" in out and "another account's moved finding" not in out, err + out)
     del base
 
 
@@ -1943,6 +1955,11 @@ def nit_cases(root, repository, base, frozen_head):
           and out.index("2. test.py (") < out.index("Nits to fix in this round too"), err + out)
     check("nits: the brief leaves out a nit-marked comment of another account's review",
           "Not merge-lane-2's" not in out, out)
+    login_after = dict(routes, **{REVIEWS: {"stdout": lines([reviews[0], dict(reviews[1], user={"login": "zz-reviewer"})])}})
+    code, after_out, err = run(root, repository, login_after)
+    check("nits: the brief leaves out a nit-marked comment of an account whose login sorts after merge-lane-2's",
+          code == 0 and "Nits to fix in this round too (1)" in after_out and "Not merge-lane-2's" not in after_out,
+          err + after_out)
     check("nits: step 3 makes the listed nits part of the round",
           "are not part of this round, apart from the nits listed above" in out, out)
     check("nits: step 2 says a nit needs no test",
