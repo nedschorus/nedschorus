@@ -43,7 +43,7 @@ LOG_STORE_AGENT_SESSION_FILES_BY_MACHINE_DIRECTORY = Path(
 AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_UNDER_HOME_ON_A_MACHINE_WITHOUT_THE_LOG_STORE = Path(".claude") / AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_NAME
 AGENT_SEAT_TERMINAL_CAPTURES_KEPT_DAYS = 7
 TMUX_PIPE_PANE_TIMEOUT_SECONDS = 30
-# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 NOT_CAPTURED_OPENING_LINE = "this agent-seat's terminal output is not being captured to a file"
 AGENT_SEAT_TERMINAL_CAPTURE_NOT_STARTED_AGENT_SEAT_RUNS_UNCAPTURED_MESSAGE_LINE = (
     "The agent-seat runs as usual, uncaptured until its handoff-supervisor next starts, as it does "

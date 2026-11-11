@@ -49,7 +49,7 @@ _captures_spec.loader.exec_module(captures)
 
 PROGRAM = "agent-seat-terminal-captures-older-than-seven-days-delete"
 SECONDS_PER_DAY = 86_400
-# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 FAILED_PATH_KEPT_UNTIL_A_RUN_CAN_DELETE_IT_LINE = (
     "The path stays until a run can delete it; the run went on with the other captures. "
     "If the same path fails on the next day's run too, run `ls -ld` on the path and on its "
