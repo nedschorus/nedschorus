@@ -255,11 +255,12 @@ def claude_code_project_settings_read_from_review_tools_worktree_at_main_with_cl
         settings = json.loads(text)
     except ValueError as error:
         raise Refused(f"main's project settings file {settings_file} is not JSON ({error}), so "
-                      f"the reviewer was not started, since it must run with main's hooks")
+                      f"the reviewer was not started, since the reviewer must run with the Claude Code "
+                      f"hooks in main's settings file")
     if not isinstance(settings, dict):
         raise Refused(f"main's project settings file {settings_file} is JSON but not a JSON "
-                      f"object, so the reviewer was not started, since it must run with main's "
-                      f"hooks")
+                      f"object, so the reviewer was not started, since the reviewer must run with the "
+                      f"Claude Code hooks in main's settings file")
 
     def rewritten(value):
         if isinstance(value, dict):
@@ -270,13 +271,28 @@ def claude_code_project_settings_read_from_review_tools_worktree_at_main_with_cl
             return PROJECT_DIRECTORY_REFERENCE.sub(
                 lambda _: str(review_tools_worktree_at_main), value)
         return value
+
+    def strings_still_naming_project_directory(value, path):
+        if isinstance(value, dict):
+            return [found for key, item in value.items()
+                    for found in ([f"  {path}: key {key}"] if "CLAUDE_PROJECT_DIR" in key else [])
+                    + strings_still_naming_project_directory(item, f"{path}.{key}")]
+        if isinstance(value, list):
+            return [found for index, item in enumerate(value)
+                    for found in strings_still_naming_project_directory(item, f"{path}[{index}]")]
+        if isinstance(value, str) and "CLAUDE_PROJECT_DIR" in value:
+            return [f"  {path}: {value}"]
+        return []
     settings = rewritten(settings)
-    if "CLAUDE_PROJECT_DIR" in json.dumps(settings):
+    still_naming = strings_still_naming_project_directory(settings, "$")
+    if still_naming:
         raise Refused(f"main's project settings file {settings_file} still names "
                       f"CLAUDE_PROJECT_DIR after each $CLAUDE_PROJECT_DIR, ${{CLAUDE_PROJECT_DIR}} "
                       f"and ${{CLAUDE_PROJECT_DIR:-...}} in it was replaced by "
                       f"{review_tools_worktree_at_main}, "
                       f"so a command would run the head worktree's script; the reviewer was not started.\n"
+                      f"Each string that still names it, by its JSON path:\n"
+                      + "\n".join(still_naming) + "\n"
                       f"Write each such command with one of those three forms, in "
                       f"{PROJECT_SETTINGS_FILE} on main, or add its form to "
                       f"PROJECT_DIRECTORY_REFERENCE in {Path(__file__).resolve()}")
