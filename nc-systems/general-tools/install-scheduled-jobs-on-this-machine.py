@@ -10,16 +10,17 @@ Usage:
                 or launchd plist. Reads nothing on the machine, changes nothing.
   --check       compare what this machine has installed with the table; exit 1
                 when any job differs, or when this machine runs a job the
-                table does not name. Changes nothing.
+                table does not name; exit 2 when a job or a crontab line is
+                NOT CHECKED. Changes nothing.
   --install     make this machine's crontab and launchd jobs what the table
                 says. A job already installed as the table says is left alone.
   --start-once  with --install: after installing, ask launchd to run each
                 selected launchd job once, now.
-  --remove      take the named jobs off this machine. Needs --job: nothing
-                removes every job at once.
+  --remove      take the named jobs off this machine. Needs --job, so that
+                --remove never takes off every job of the table at once.
   --remove-not-in-table
                 take off this machine every job --check reports NOT IN THE
-                TABLE. Takes no --job.
+                TABLE. Takes no --job. Exits 1 when it leaves a line KEPT.
   --job NAME    limit the run to this job of the table; repeat for several.
                 Without it --print, --check and --install take every job the
                 table places on this machine.
@@ -145,7 +146,7 @@ only in its output file.
 
 Exit codes: 0 done, or for --check every job matches; 1 a step failed after
 this program began changing the machine, or for --check a job differs or is
-not in the table; 2 not run — a bad invocation, a table this program cannot
+not in the table, or for --remove-not-in-table a crontab line was KEPT; 2 not run — a bad invocation, a table this program cannot
 use, a machine the table does not name, a job's program missing, a crontab
 that could not be read, or a shell parser that could not be installed; or for
 --check, a job not checked because `launchctl print` could not report it, or
