@@ -186,11 +186,14 @@ its verdict and naming its diff file: MUTANT KILLED when a suite fails with
 the mutant applied; MUTANT SURVIVED when every suite passes with it; MUTANT
 NO LONGER EXISTS when there is nothing to kill, because the line it changes ends with a
 `# pragma: no mutate` comment at the head, or the diff does not apply at the
-head and origin/main, read without fetching, lacks the lines it replaces; and
+head and origin/main, read without fetching, lacks the lines it replaces, or has
+them only where none of the diff's non-blank context lines stands beside them, as a bare
+`continue` the diff replaces has unrelated copies elsewhere; and
 MUTANT COULD NOT BE JUDGED, with what to do, when the diff file cannot be read or
 names no file, the file has no suite while the mutant still applies at the
 head, the diff does not apply at the head
-while origin/main has those lines or cannot tell, the lines it replaces appear
+while origin/main has those lines or cannot tell, as when they appear there more than
+once and some copy has one of the diff's non-blank context lines beside it, the lines it replaces appear
 more than once at the head when a trailing `# pragma: no mutate` comment is
 read as absent, but only once when lines are compared exactly, or the runner judged no
 suite with the mutant applied, as when a suite ran past its own time limit or
@@ -1176,10 +1179,14 @@ def hunk_replaced_lines(old, new):
 
 def recorded_mutant_lines_on_main(checkout, path, hunks, environment):
     """"applies" when origin/main's file takes the mutant, "gone" when the file is not in
-    origin/main's tree or some hunk's replaced lines are nowhere in it, None when it cannot
-    tell: no origin/main, git fails to read the tree or the file, or a hunk's replaced lines
-    appear in it more than once. Context lines alone never make "gone", since a change beside
-    the mutated lines leaves the survivor live."""
+    origin/main's tree or some hunk's replaced lines are nowhere in it, or are in it only at
+    places where none of the hunk's non-blank context lines stands at its own offset from
+    them; None when it cannot tell: no origin/main, git fails to read the tree or the file, or
+    a hunk's replaced lines appear in it more than once, either with a non-blank context line
+    of the hunk beside some copy or in a hunk with no non-blank context line. A short replaced
+    line, such as a bare `continue`, has unrelated copies all over a file, so only a copy that
+    some context line still stands beside can be the mutant's own; one context line suffices,
+    since a change beside the mutated lines leaves the survivor live."""
     if run(["git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/main^{commit}"],
            checkout, environment).returncode:
         return None
@@ -1197,8 +1204,18 @@ def recorded_mutant_lines_on_main(checkout, path, hunks, environment):
     lines = shown.stdout.split("\n")
     for _, old, new in hunks:
         replaced = hunk_replaced_lines(old, new)
-        if replaced and not any(lines[place:place + len(replaced)] == replaced
-                                for place in range(len(lines) - len(replaced) + 1)):  # pragma: no mutate, a mutant that only lengthens the range adds places whose slices are shorter than replaced, so never equal to it
+        if not replaced:
+            continue
+        start, end = hunk_shared_context_line_counts(old, new)
+        # Padded so a context offset before the file's start or past its end reads no line.
+        padded = [None] * len(old) + lines + [None] * len(old)
+        # A blank line stands beside unrelated copies as often as a bare `continue` does.
+        context = [(offset, line) for offset, line in enumerate(old)
+                   if (offset < start or offset >= len(old) - end) and line.strip()]
+        places = places_of_lines(lines, replaced)
+        if not places or (context and not any(
+                padded[len(old) + place - start + offset] == line
+                for place in places for offset, line in context)):
             return "gone"
     return None
 
@@ -1294,8 +1311,10 @@ def recorded_mutant_not_applied_verdict(checkout, path, hunks, head, why_not_app
     on_main = recorded_mutant_lines_on_main(checkout, path, hunks, environment)
     if on_main == "gone":
         return "no longer exists", (
-            f"the lines it replaces in {path} are gone from origin/main too, so there is "
-            f"nothing to kill; the nightly mutation pass drops it from its task.")
+            f"origin/main has no copy of the lines it replaces in {path} with one of the "
+            f"diff's non-blank context lines beside it, so the mutant's own lines are gone from "
+            f"origin/main too, so there is nothing to kill; the nightly mutation pass drops it "
+            f"from its task.")
     if on_main == "applies":
         return "could not be judged", (
             f"it does not apply to {path} at head {head[:12]}: {why_not_applied}. origin/main "
@@ -1309,7 +1328,7 @@ def recorded_mutant_not_applied_verdict(checkout, path, hunks, head, why_not_app
         f"it does not apply to {path} at head {head[:12]}: {why_not_applied}, and whether "
         f"origin/main still has the lines it replaces cannot be told: there is no local "
         f"origin/main, git could not read {path} there, or the lines appear there more than "
-        f"once.\n"
+        f"once and one of the diff's non-blank context lines stands beside some copy.\n"
         f"If your branch changed those lines on purpose, the mutant is gone from your branch: "
         f"once your branch is merged, the nightly mutation pass drops it from its task.\n"
         f"Otherwise, make sure your branch's head has {path} as origin/main has it, commit your "
