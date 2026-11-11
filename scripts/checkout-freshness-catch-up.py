@@ -1712,6 +1712,20 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
     stamp["behind"], stamp["ahead"] = behind, ahead
 
     if behind == 0:
+        branch = current_branch(reference)
+        stamp["branch"] = branch
+        not_at_main = []
+        if branch != "main":
+            not_at_main.append(f"on {branch or 'no branch'}, not main")
+        if ahead:
+            not_at_main.append(f"{ahead} local commit(s) main does not have")
+        if not_at_main:
+            stamp["last_action"] = f"reference not at origin/main: {'; '.join(not_at_main)}"
+            report_reason(not_at_main + (["fetch failed"] if fetch_note else []),
+                          f"catch-up: reference checkout {reference} is 0 behind origin/main "
+                          f"but does not end at it — {'; '.join(not_at_main)}{fetch_note}")
+            write_stamp(stamp_path, stamp)
+            return False
         if fetch_note:
             stamp["last_action"] = "reference fetch failed"
             report_reason(["fetch failed"],

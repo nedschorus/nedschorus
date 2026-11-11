@@ -3040,6 +3040,22 @@ with tempfile.TemporaryDirectory() as reference_pull_exit_scratch:
           and "fast-forwarded 1 commit(s)" in run.stdout and "fetch failed at" in run.stdout,
           f"rc={run.returncode} {run.stdout} {run.stderr}")
 
+    _, ahead_reference = origin_and_reference("zero-behind-one-ahead")
+    commit_file(ahead_reference, "local.txt", "local\n", "a commit main does not have")
+    run = run_catch_up_once(["--reference-pull", "--repo", str(ahead_reference)])
+    check("--reference-pull exits 1, saying so, when the reference is 0 behind but has "
+          "a commit main does not have",
+          run.returncode == 1 and "1 local commit(s) main does not have" in run.stdout,
+          f"rc={run.returncode} {run.stdout} {run.stderr}")
+
+    _, branch_reference = origin_and_reference("zero-behind-on-another-branch")
+    git(["switch", "-q", "-c", "some-feature"], branch_reference)
+    run = run_catch_up_once(["--reference-pull", "--repo", str(branch_reference)])
+    check("--reference-pull exits 1, saying so, when the reference is 0 behind but on "
+          "a branch other than main",
+          run.returncode == 1 and "on some-feature, not main" in run.stdout,
+          f"rc={run.returncode} {run.stdout} {run.stderr}")
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
