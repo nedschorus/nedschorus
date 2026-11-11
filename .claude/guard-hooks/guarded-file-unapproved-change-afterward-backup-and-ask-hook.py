@@ -465,8 +465,11 @@ class Store:
         self.append(path, APPROVED_FILE_NAME, key)
 
     def copy(self, path: str, copy_hash: str, data: bytes):
-        """Keep one copy of a version, named by its hash. A copy that matches its name is never
-        replaced, even by an identical one; one that does not match counts as missing."""
+        """Keep one copy of a version, named by its copy hash, git's blob id of the version. A
+        copy that matches its name or data's own hash is never replaced, even by an identical
+        one; any other counts as missing and is replaced once. Raises StoreUnreachable when the
+        replacement does not match either."""
+        bytes_hash = blob_hash(data)
         fd = self.path_directory(path, create=True)
         try:
             for attempt in range(2):
@@ -474,8 +477,14 @@ class Store:
                     file_fd = os.open(copy_hash, os.O_WRONLY | os.O_CREAT | os.O_EXCL, COPY_MODE,
                                       dir_fd=fd)
                 except FileExistsError:
-                    if blob_hash(self.read(path, copy_hash)) == copy_hash or attempt:
+                    if blob_hash(self.read(path, copy_hash)) in (copy_hash, bytes_hash):
                         return
+                    if attempt:
+                        # Another run made the copy again after this one removed it, and has
+                        # not finished or died part way; the version is not known to be kept.
+                        raise StoreUnreachable(
+                            f"the copy {copy_hash} of {path} does not match its hash, and another "
+                            "run wrote it again while this run was replacing it")
                     os.unlink(copy_hash, dir_fd=fd)
                     continue
                 try:
@@ -486,14 +495,21 @@ class Store:
         finally:
             os.close(fd)
 
-    def copied_version(self, path: str, copy_hash: str):
+    def copied_version(self, path: str, copy_hash: str, log):
+        """The copy's bytes when they match its name or a hash of its own bytes that a seen line
+        of log records beside the name, as for a file a line-ending filter changes; else None."""
         data = self.read(path, copy_hash)
-        return data if blob_hash(data) == copy_hash else None
+        own_hash = blob_hash(data)
+        if own_hash == copy_hash or any(
+                fields[5] == copy_hash and fields[7] == own_hash
+                for fields in log if fields[0] == "seen" and len(fields) >= 8):
+            return data
+        return None
 
-    def kept_version(self, path: str, copy_hash: str):
+    def kept_version(self, path: str, copy_hash: str, log):
         """The version's bytes from its copy, else from the git repository of path's checkout;
-        None when neither holds it."""
-        data = self.copied_version(path, copy_hash)
+        None when neither holds it. log is the path's log, read with Store.log."""
+        data = self.copied_version(path, copy_hash, log)
         if data is None:
             data = version_from_git(path, copy_hash)
         return data
@@ -645,10 +661,12 @@ def log_line(store, path, kind, *fields):
     store.append(path, LOG_FILE_NAME, "\t".join([kind, str(time.time_ns()), *fields]))
 
 
-def log_seen(store, path, session, owner, key, copy_hash, how=""):
-    """One line per version seen: time, session, the session's process, hash, copy, and how
-    the version entered the approved set, if it did."""
-    log_line(store, path, "seen", session, owner, key, copy_hash, how)
+def log_seen(store, path, session, owner, key, copy_hash, how="", bytes_hash=""):
+    """One line per version seen: time, session, the session's process, hash, copy, how the
+    version entered the approved set, if it did, and, when the run kept a copy whose bytes'
+    own hash is not the copy's name, that hash, which Store.copied_version checks the copy by."""
+    log_line(store, path, "seen", session, owner, key, copy_hash, how,
+             *([bytes_hash] if bytes_hash and bytes_hash != copy_hash else []))
 
 
 def seen_lines(log, key):
@@ -817,7 +835,7 @@ def hashes_in_checkout(checkout: Path, paths):
 
 
 def reflog_entries(git_directory: Path):
-    """[[new commit, time, subject]] of HEAD's reflog, oldest first."""
+    """[[new commit, time, subject, whole line]] of HEAD's reflog, oldest first."""
     try:
         data = (git_directory / "logs" / "HEAD").read_bytes()
     except FileNotFoundError:
@@ -827,18 +845,42 @@ def reflog_entries(git_directory: Path):
         head, _, subject = line.partition("\t")
         fields = head.split()
         if len(fields) >= 4:
-            entries.append([fields[1], fields[-2], subject])
+            entries.append([fields[1], fields[-2], subject, line])
     return entries
 
 
+def reflog_position(entries):
+    """The position stored after a run: [commit, time, index, whole line] of the newest entry.
+    The first two are what an earlier version of this hook stored and reads, so a checkout
+    whose sessions run hooks of both versions keeps working."""
+    if not entries:
+        return None
+    return entries[-1][:2] + [len(entries) - 1, entries[-1][3]]
+
+
 def entries_after(entries, position):
-    """The reflog entries newer than the stored position, found by the entry's commit and
-    time, not by the reflog's length, which expiry can keep constant."""
+    """The reflog entries newer than the stored position, or None when the position matches
+    more than one entry, so the entries since the previous run are not known.
+
+    The position is found by the entry's whole line: old and new commit, time and subject, not
+    by the reflog's length, which expiry can keep constant. A commit and a time alone can repeat
+    within one second, as after a commit, a switch back and a fast-forward merge, and a match on
+    the repeat would leave the agent's own commit out of the window. The stored index tells
+    apart two equal lines; when expiry has moved it, the line must be the only one equal to it.
+    A position an earlier version of this hook stored is [commit, time] alone."""
     if not position:
         return []
-    for index in range(len(entries) - 1, -1, -1):
-        if entries[index][:2] == position[:2]:
+    if len(position) < 4:
+        matches = [index for index, entry in enumerate(entries) if entry[:2] == position[:2]]
+    else:
+        index, line = position[2], position[3]
+        if 0 <= index < len(entries) and entries[index][3] == line:
             return entries[index + 1:]
+        matches = [index for index, entry in enumerate(entries) if entry[3] == line]
+    if len(matches) > 1:
+        return None
+    if matches:
+        return entries[matches[0] + 1:]
     return [entry for entry in entries if int(entry[1]) > int(position[1])]
 
 
@@ -950,8 +992,11 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
         log_line(store, path, "approved", session, owner, key, how)
     asks, reminders, settled = [], [], {}
     for check in checks:
+        bytes_hash = ""
         if check.key != DELETED and not check.in_git:
             store.copy(check.path, check.copy_hash, check.data)
+            # A line-ending or clean filter makes git's blob id differ from the bytes kept.
+            bytes_hash = blob_hash(check.data)
         log = store.log(check.path)
         approved = store.approved(check.path)
         reason = ""
@@ -965,7 +1010,8 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
             store.approve(check.path, check.key)
             approved.add(check.key)
             new_approval = check.how
-        log_seen(store, check.path, session, owner, check.key, check.copy_hash, new_approval)
+        log_seen(store, check.path, session, owner, check.key, check.copy_hash, new_approval,
+                 bytes_hash)
         if check.key in approved:
             settled[check.path] = True
             continue
@@ -1013,7 +1059,7 @@ def ask_entry(store, check, log, reason=""):
     if newest is None:
         before = b""
     else:
-        before = store.kept_version(check.path, newest[1]) or b""
+        before = store.kept_version(check.path, newest[1], log) or b""
     after = b"" if check.key == DELETED else check.data
     return check.path, check.key, diff_text(before, after, check.path), reason
 
@@ -1182,7 +1228,7 @@ def run_hook(payload):
     for kind, state_path, state, files, repository, stocking in groups:
         hash_function = ((lambda paths, checkout=repository[0]: hashes_in_checkout(checkout, paths))
                          if repository else (lambda paths: {}))
-        listed_before = set(state["files"])
+        files_before = {path: list(value) for path, value in state["files"].items()}
         changed, unsettled = scan(files, state["files"], hash_function)
         approvals, quiet, new_position, held = [], False, None, set()
         at_base, base_versions = set(), {}
@@ -1209,10 +1255,11 @@ def run_hook(payload):
                     else:
                         base_versions[path] = blob
             entries = reflog_entries(git_directory)
-            new_position = entries[-1][:2] if entries else None
+            new_position = reflog_position(entries)
             window = [] if stocking else entries_after(entries, state.get("reflog"))
             # Loading the in-progress check costs more than a whole quiet run, so it is asked
-            # only when there is something it could change.
+            # only when there is something it could change. An unknown window (None) approves
+            # nothing as git's own work, so every changed version is asked about.
             if changed or unsettled or window or state.get("stopped"):
                 quiet = git_operation_in_progress(checkout)
             if quiet:
@@ -1228,7 +1275,7 @@ def run_hook(payload):
             on_main = set()
         plans.append([kind, state_path, state, files, changed, unsettled, approvals, quiet,
                       new_position, stocking,
-                      set(state["files"]) != listed_before,  # pragma: no mutate, scan only removes paths, so != acts as <
+                      state["files"] != files_before,
                       held, on_main,
                       repository, at_base, base_versions])
 
@@ -1553,7 +1600,7 @@ def restore(pairs):
             newest = newest_approved(store, path, log, key)
             content = None
             if newest is not None:
-                content = store.kept_version(path, newest[1])
+                content = store.kept_version(path, newest[1], log)
                 if content is None:
                     raise StoreUnreachable(f"the approved version {newest[1]} of {path} is in "
                                            "neither the guarded-file store's copies of that "
