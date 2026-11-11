@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """File a GitHub issue from its GHI-MD, then make the issue's body the links
 to that issue's files; and land an edit to one of those files, after which
-the issue follows it. The `create` and `edit` operations of the GHI write tool.
+the issue follows it; and close an issue once the edit recording its
+outcome has merged. The `create`, `edit` and `close` operations of the GHI
+write tool.
 
 WHAT THIS IS. The user ruled on 2026-09-15 that a GHI's body is the link to
 its GHI-MD and nothing else: one copy of every fact, GitHub
@@ -11,7 +13,7 @@ takes no direct push. This is the program that does it. Designed in
 docs/issues/46-ghi-guide-agent-design.md § The GHI write path; that design is
 the authority and this docstring does not restate it.
 
-WHAT IS AND IS NOT IN THIS SLICE. `create` and `edit`. There is no comment
+WHAT IS AND IS NOT IN THIS SLICE. `create`, `edit` and `close`. There is no comment
 operation and there will be none: what would have been a comment goes into
 the GHI-MD, through `edit` (user-ruled 2026-09-24, item 4 of the meta-walk
 reboot-test-meta-walk-2026-09-23: "But I don't want comments as agents
@@ -309,6 +311,17 @@ Usage:
   ghi-issue-write.py create <path-to-ghi-md> [--repo OWNER/NAME] [--dry-run]
   ghi-issue-write.py edit <path-to-filed-ghi-md> [--repo OWNER/NAME]
                      [--dry-run]
+  ghi-issue-write.py close <path-to-filed-ghi-md>
+                     --reason completed|"not planned"|duplicate <n>
+                     [--repo OWNER/NAME]
+
+CLOSING AN ISSUE IS AN EDIT, THEN A STATE CHANGE. `close` runs `edit` on the
+file, which carries the issue's recorded outcome, and closes the issue with
+`gh issue close` and the reason, never a comment, only once `edit` finds
+main holding that file. The run that opens the edit's pull request reports
+the close pending; a rerun while that pull request is unmerged is refused;
+the rerun after it merges finishes the edit and closes the issue. See
+`close_ghi_after_its_outcome_edit_merges_to_main`.
 
 A rerun after the merge is given the file that still exists: the source
 where filing left it alone, its landed copy under docs/issues/ where filing
@@ -336,6 +349,8 @@ Exit codes:
       path a move takes it from, changed on main since the caller's
       checkout started from it; or an earlier edit of the same file is
       still waiting on an open pull request
+  67  close refused: the pull request carrying the outcome edit, opened by
+      an earlier run, has not merged
   129, 143  stopped by SIGHUP or SIGTERM, 128 plus the signal number,
       after removing the landing's temporary worktree and files
 
@@ -348,7 +363,8 @@ this check is reached — and a line promising otherwise would be false. The
 2026-09-08 ruling this implements gives a conflict no reconsider path
 either. The earlier-edit refusal is the same kind: the change it would
 discard is the author's own, sitting on a pull request nobody has merged,
-and the way past it is to let that merge and fold it in.
+and the way past it is to let that merge and fold it in. The 67 refusal
+has no reconsider line either: the way past it is the merge it waits for.
 """
 
 import argparse
@@ -2917,6 +2933,15 @@ def issue_file_set_for_this_edit(number: int, relative: str, on_main, paths,
 
 def edit(path: Path, repo: str, repository_root: Path, runner, report):
     """The whole edit sequence, and the one function the tests drive."""
+    number, finished, _ = edit_saying_whether_this_run_opened_its_pull_request(
+        path, repo, repository_root, runner, report)
+    return number, finished
+
+
+def edit_saying_whether_this_run_opened_its_pull_request(
+        path: Path, repo: str, repository_root: Path, runner, report):
+    """`edit`, returning also whether this run pushed the edit or opened its
+    pull request: the close operation tells its pending state from its refusal by it."""
     text, title, number, relative = validate_edit(path, repository_root)
     # Read here, before a fetch, a model call, a push or a pull request: the
     # number is the file's NAME, or a landed design's `issue:` line, so one
@@ -3004,7 +3029,7 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
             record_ruling_question(prefix, repo, conflict, title,
                                    pairing_key(text), runner, report,
                                    "edited")
-    waiting, _ = land_edit(
+    waiting, opened = land_edit(
         repo, number, title, relative, staged, on_main, moved_from,
         moved_from_on_main, state, branch, main_commit, repository_root, runner,
         report)
@@ -3020,8 +3045,93 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         number, "edited", ghi_guide_agent_prefixes(Path(relative).name, number),
         runner, report)
     if waiting:
+        return number, False, opened
+    return number, finished, opened
+
+
+CLOSE_GHI_REFUSED_WHILE_OUTCOME_EDIT_PULL_REQUEST_UNMERGED_EXIT_CODE = 67
+CLOSE_REASON_COMPLETED = "completed"
+CLOSE_REASON_NOT_PLANNED = "not planned"
+CLOSE_REASON_DUPLICATE = "duplicate"
+CLOSE_REASON_DUPLICATE_PATTERN = re.compile(r"duplicate (\d+)")
+
+
+def close_reason_gh_arguments(reason_words, number: int):
+    """The `gh issue close` flags for the reason the caller gave, and the
+    reason as the caller retypes it on the rerun. Judged before anything
+    is pushed, so a reason the close step would reject costs no pull
+    request. Words are joined, so `--reason not planned` unquoted is read
+    as `--reason "not planned"`.
+
+    A duplicate is closed with `--duplicate-of`, which sets the close
+    reason to duplicate itself."""
+    reason = " ".join(reason_words).strip()
+    if reason == CLOSE_REASON_COMPLETED:
+        return ["--reason", CLOSE_REASON_COMPLETED], CLOSE_REASON_COMPLETED
+    if reason == CLOSE_REASON_NOT_PLANNED:
+        return (["--reason", CLOSE_REASON_NOT_PLANNED],
+                shlex.quote(CLOSE_REASON_NOT_PLANNED))
+    duplicate = CLOSE_REASON_DUPLICATE_PATTERN.fullmatch(reason)
+    if duplicate and int(duplicate.group(1)) not in (0, number):
+        other = str(int(duplicate.group(1)))
+        return ["--duplicate-of", other], f"{CLOSE_REASON_DUPLICATE} {other}"
+    raise Refused(
+        f"Refused: --reason {reason!r} is not a close reason this "
+        f"operation accepts for issue {number}, so nothing was done.\n\n"
+        "If the issue's work is done: --reason completed\n"
+        "If the issue will not be done, or was filed by mistake and "
+        "duplicates no other issue: --reason \"not planned\"\n"
+        "If this issue covers the same work as another issue: --reason "
+        "duplicate <the other issue's number>, which must not be this "
+        "issue's own number", 64)
+
+
+def close_ghi_after_its_outcome_edit_merges_to_main(
+        path: Path, reason_words, repo: str, repository_root: Path, runner,
+        report):
+    """Record the outcome through `edit`, then close the issue with its
+    reason, once main holds that outcome.
+
+    THE THREE STATES are told apart by what `edit` found, with nothing
+    stored on disk. The edit finished: main holds the file and the body
+    follows it, so the issue is closed. The edit's pull request is waiting
+    and this run opened it or pushed its branch: the close is pending, and
+    the run says to rerun after the merge. The pull request is waiting and
+    an earlier run opened it: refused, since closing now would close the
+    issue on an outcome main does not hold yet.
+
+    Never with `--comment`: the outcome lives in the GHI-MD, which is what
+    the edit put there.
+
+    Whether the file records an outcome is not checked: a file main already
+    holds unchanged closes the issue on the first run, the same state a
+    rerun after the merge is in."""
+    _, _, number, relative = validate_edit(path, repository_root)
+    gh_reason, retyped_reason = close_reason_gh_arguments(reason_words, number)
+    rerun = (f"python3 scripts/ghi-issue-write.py close "
+             f"{shlex.quote(relative)} --reason {retyped_reason}")
+    number, finished, opened = (
+        edit_saying_whether_this_run_opened_its_pull_request(
+            path, repo, repository_root, runner, report))
+    if finished:
+        closed = runner(["gh", "issue", "close", str(number), "--repo", repo,
+                         *gh_reason])
+        report((closed.stdout or "").strip())
+        report(f"issue {number} is closed with --reason {retyped_reason}")
+        return number, True
+    if opened:
+        report(f"close pending: issue {number} stays open until the pull "
+               "request carrying its outcome edit merges.\n"
+               f"After that pull request merges, run: {rerun}")
         return number, False
-    return number, finished
+    raise Refused(
+        f"Refused: issue {number} was not closed, because the pull request "
+        "carrying its outcome edit, named above, has not merged, and "
+        "closing now would close the issue on an outcome main does not "
+        "hold.\n\n"
+        "Wait for that pull request to merge.\n"
+        f"After it merges, run: {rerun}",
+        CLOSE_GHI_REFUSED_WHILE_OUTCOME_EDIT_PULL_REQUEST_UNMERGED_EXIT_CODE)
 
 
 def repository_root_of(path: Path, runner=run) -> Path:
@@ -3043,7 +3153,7 @@ class BadInvocationArgumentParser(argparse.ArgumentParser):
     """argparse's own command-line errors join this program's 64.
 
     argparse exits 2 on a missing or unknown option, and this program has no
-    2: the exit codes it documents are 0, 1, 64 and 65, so a caller reading
+    2: the exit codes it documents do not include 2, so a caller reading
     that list cannot place a 2 at all. 64 already means the caller's input is
     wrong, which a mistyped flag is. Usage text and message are argparse's,
     unchanged; only the exit code moves."""
@@ -3065,7 +3175,8 @@ def main_with_stop_signals_raising_system_exit(argv):
         description="File a GitHub issue from its GHI-MD and make the "
                     "issue's body the links to that issue's files; or land "
                     "an edit to one of those files, after which the issue "
-                    "follows it.")
+                    "follows it; or close the issue once the edit recording "
+                    "its outcome has merged.")
     sub = parser.add_subparsers(dest="operation", required=True)
     creator = sub.add_parser("create", help="file a new issue from a GHI-MD")
     creator.add_argument("path")
@@ -3083,6 +3194,15 @@ def main_with_stop_signals_raising_system_exit(argv):
         "--dry-run", action="store_true",
         help="validate the file and print which issue it would edit, "
              "touching neither GitHub nor git")
+    closer = sub.add_parser(
+        "close", help="record the outcome through edit, then, once that "
+                      "edit has merged, close the issue with its reason")
+    closer.add_argument("path")
+    closer.add_argument(
+        "--reason", nargs="+", required=True,
+        help='completed, "not planned", or duplicate <the other issue\'s '
+             'number>')
+    closer.add_argument("--repo", default=DEFAULT_REPO)
     arguments = parser.parse_args(argv)
 
     path = Path(arguments.path).resolve()
@@ -3128,6 +3248,10 @@ def main_with_stop_signals_raising_system_exit(argv):
         root = repository_root_of(path.parent)
         if arguments.operation == "create":
             create(path, arguments.repo, root, run, report)
+            return 0
+        if arguments.operation == "close":
+            close_ghi_after_its_outcome_edit_merges_to_main(
+                path, arguments.reason, arguments.repo, root, run, report)
             return 0
         if arguments.dry_run:
             text, title, number, relative = validate_edit(path, root)
