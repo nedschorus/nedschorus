@@ -51,7 +51,7 @@ agent-seat's task list, the one CLAUDE_CODE_TASK_LIST_ID names, because Claude
 Code lists every completed task in each task reminder and never removes one
 itself. The writer first copies each completed task it would remove into the
 log-store, and removes it only when the log-store's copy then has the same
-bytes, so nothing is lost; it is kept when an open task links to it
+bytes, so nothing is lost; a completed task is kept when an open task links to it
 in either direction, or when the next step names its id or its subject. The
 high-water mark is raised before anything is removed, so Claude Code never
 gives a removed task's id to a new task, which would overwrite the
@@ -600,12 +600,17 @@ class LogStoreUnreachable(Exception):
     """The log-store's copy of the task list could not be checked at all."""
 
 
-class LogStoreCopyUnreadable(Exception):
-    """ssh reached the log-store, but sha256sum could not read some copies."""
+class LogStoreCopyFailedOnLogStoreSide(Exception):
+    """ssh reached the log-store, but rsync could not write some copies or sha256sum could not read them."""
 
-    def __init__(self, said: str, unreadable_names: list):
+    def __init__(self, said: str, unreadable_names=None):
         super().__init__(said)
+        # None when rsync failed: then no copy has been read yet.
         self.unreadable_names = unreadable_names
+
+
+# rsync exits 3, 11 or 23 only after ssh has connected: a file or folder could not be written or read.
+RSYNC_EXITS_AFTER_CONNECTING = (3, 11, 23)
 
 
 def copy_task_files_to_log_store(host, list_directory: Path, store_list_directory, file_names) -> None:
@@ -618,6 +623,8 @@ def copy_task_files_to_log_store(host, list_directory: Path, store_list_director
     if completed.returncode == 0:
         return
     said = collapse_to_one_line(completed.stderr) or "nothing on stderr"
+    if host and completed.returncode in RSYNC_EXITS_AFTER_CONNECTING:
+        raise LogStoreCopyFailedOnLogStoreSide(f"rsync to {host} exited {completed.returncode}: {said}")
     # An unreachable host makes rsync exit 255 or 12, depending on timing, so its exit cannot tell.
     if host:
         raise LogStoreUnreachable(f"rsync to {host} exited {completed.returncode}: {said}")
@@ -650,7 +657,7 @@ def log_store_copy_sha256_of_each_task_file(host, store_list_directory, file_nam
     unexplained = [line for line in completed.stderr.splitlines()
                    if line.strip() and not line.rstrip().endswith(": No such file or directory")]
     if completed.returncode == 1 and unexplained:
-        raise LogStoreCopyUnreadable(
+        raise LogStoreCopyFailedOnLogStoreSide(
             f"sha256sum on {host} could not read every copy: {collapse_to_one_line(chr(10).join(unexplained))}",
             [name for name in file_names if any(f": {name}:" in line for line in unexplained)])
     hashes = {}
@@ -773,14 +780,20 @@ def prune_completed_tasks_unguarded(next_step_text: str) -> str:
                 f"{store_text} could not be checked ({error}). Check that ned-box is up and that "
                 f"`ssh {host} true` works; the next handoff prunes them. Tell the user this line "
                 "in your last message before you wait.")
-    except LogStoreCopyUnreadable as error:
+    except LogStoreCopyFailedOnLogStoreSide as error:
         # ssh worked, so the ssh remedy would send the reader the wrong way.
-        copies = ", ".join(error.unreadable_names) or "the copies sha256sum named"
+        if error.unreadable_names is not None:
+            copies = ", ".join(error.unreadable_names) or "the copies sha256sum named"
+            failed, remedy = "read", (f"On ned-box, run `ls -l` on {copies} in "
+                                      f"{store_list_directory} and make each a file nedlern can read")
+        else:
+            failed, remedy = "written or read", (
+                "rsync's message names the file that did not transfer. On ned-box, run "
+                f"`ls -ld {store_list_directory}` and `df -h {store_list_directory}` to check that nedlern "
+                "can write there and the disk has room")
         return (f"kept every completed task in {list_name}, because ned-box answered but the "
-                f"log-store copy at {store_text} could not be read ({error}). On ned-box, run "
-                f"`ls -l` on {copies} in {store_list_directory} and make each a file nedlern can "
-                "read; the next handoff prunes them. Tell the user this line in your last message "
-                "before you wait.")
+                f"log-store copy at {store_text} could not be {failed} ({error}). {remedy}; the next "
+                "handoff prunes them. Tell the user this line in your last message before you wait.")
     verified = [task_id for task_id in candidates
                 if store_hashes.get(tasks[task_id][0].name)
                 == hashlib.sha256(tasks[task_id][1]).hexdigest()]

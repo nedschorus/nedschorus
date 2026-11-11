@@ -1839,6 +1839,23 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
     check("over ssh, the remedy names only the copy sha256sum could not read, not a readable copy whose name it contains",
           f"`ls -l` on 11.json in {fixture.store_list_directory}" in line and "1.json," not in line, line)
 
+    # rsync reaches the store over ssh but cannot write there, so it exits 23 after connecting.
+    fixture = PruneFixture(workspace, "remote-store-unwritable")
+    fixture.task("1.json", task_bytes(1, "completed"), stored=False)
+    stubs = stub_ssh_directory(fixture.root / "remote-store-unwritable-stubs", RUN_REMOTE_COMMAND_HERE_SSH_STUB)
+    fixture.store_list_directory.chmod(0o555)
+    try:
+        line = prune_line(fixture.run(
+            "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
+            PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+    finally:
+        fixture.store_list_directory.chmod(0o755)
+    check("over ssh, an rsync that cannot write the store keeps every completed task",
+          fixture.present("1.json") and "kept every completed task" in line and "exited 23" in line, line)
+    check("over ssh, an rsync that cannot write the store gets the log-store remedy, not the ssh remedy",
+          "could not be written or read" in line and f"`ls -ld {fixture.store_list_directory}`" in line
+          and "ssh stubhost true" not in line, line)
+
     stubs = stub_ssh_directory(workspace / "prune-silent-stubs", "sleep 5\n")
     original_path, original_timeout = os.environ.get("PATH", ""), writer.LOG_STORE_TASK_FILE_COPIES_HASH_SSH_TIMEOUT_SECONDS
     os.environ["PATH"] = f"{stubs}{os.pathsep}{original_path}"
