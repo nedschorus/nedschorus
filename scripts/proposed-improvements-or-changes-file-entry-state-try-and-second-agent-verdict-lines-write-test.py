@@ -240,6 +240,12 @@ with mock.patch.object(PROGRAM.socket, "gethostname", return_value="ned-box"):
     code, out, _ = run(f"nedlern@ned-box:{path}", "show")
 case("the log-store form is a local path on ned-box", code == 0 and out.startswith("E1:"))
 
+# A change keeps the file's mode.
+path = fresh()
+os.chmod(path, 0o644)
+run(path, "try", "E1", "--by", "h", "--found", "x")
+case("a change keeps the file's mode", (path.stat().st_mode & 0o777) == 0o644)
+
 # A file that cannot be read, and a write that fails, leave the file as it was.
 code, _, err = run(Path(tempfile.mkdtemp()) / "missing.md", "show")
 case("a missing file exits 1", code == 1 and "FAILED:" in err)

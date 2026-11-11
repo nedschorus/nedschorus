@@ -294,6 +294,8 @@ def write_replacing(path: Path, lines, ending: str):
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as written:
             written.write("\n".join(lines) + ending)
+        # mkstemp makes the file readable by its owner only; keep the mode the file had.
+        os.chmod(temporary, path.stat().st_mode & 0o7777)
         os.replace(temporary, path)
     except BaseException:
         Path(temporary).unlink()

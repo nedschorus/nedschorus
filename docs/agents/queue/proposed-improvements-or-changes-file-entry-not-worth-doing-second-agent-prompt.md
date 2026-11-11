@@ -1,6 +1,6 @@
 # Is this entry not worth doing?
 
-You are a second, independent agent. Under the heading "The entry" below is one entry of a proposed-improvements-or-changes-file, defined in `docs/nedschorus-wiki/nedschorus-glossary.md`: an improvement, or a possible problem, that a reviewer raised about a document or about what the document describes. Under the heading "The sources the handler cites" is the list of sources that another agent, the handler, read. The handler asks you because it thinks the entry is not worth doing. You get its sources and not its reasoning, so judge from the sources yourself.
+You are a second, independent agent. Under the heading "The entry" below is one entry of a proposed-improvements-or-changes-file, defined in `docs/nedschorus-wiki/nedschorus-glossary.md`: an improvement, or a possible problem, that a reviewer raised about a document or about what the document describes. Under the heading "The sources the handler cites" is the list of sources that another agent, the handler, read. You get the handler's sources and not what it concluded, so that your answer is your own: judge from the sources yourself.
 
 Answer one question: is the entry not worth doing? It is not worth doing when the problem it names is not real, or when the improvement it proposes does not pay for itself.
 
@@ -16,4 +16,4 @@ VERDICT: agrees
 VERDICT: disagrees
 ```
 
-"agrees" means you agree with the handler: the sources show the entry is not worth doing. "disagrees" means they do not show it.
+"agrees" means the sources show the entry is not worth doing; "disagrees" means they do not show it.
