@@ -156,6 +156,9 @@ REPOSITORY = "nedschorus/nedschorus"
 POSTING_PROGRAM_FILE_NAME = "merge-lane-pull-request-reviewer-review-post-and-read-back.py"
 REPLACES_READER_FILE_NAME = "pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py"
 FOLLOW_UP_REQUEST_LINE_START = "#follow_up_request"
+FOLLOW_UP_REQUEST_BLOCK_SAVE_HOOK_PATH = ("nc-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-and-"
+                  "forked-subagent-brief-hand-over-user-prompt-submit-hook.py")
+MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR = "the SendMessage message in which merge-lane-2 tells the pull request's author that the pull request merged"
 FOLLOW_UP_REQUEST_LINE_PATTERN = re.compile(r"^#follow_up_request pull request (\d+)[ \t]*$")
 FINDING_LINE_PATTERN = re.compile(r"^(\d+)\.\s+(\S.*)$")
 PULL_REQUEST_LINK_PATTERN = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+")
@@ -919,8 +922,8 @@ def gh_api_pages(path):
     try:
         return [item for page in json.loads(output) for item in page]
     except (ValueError, TypeError) as error:
-        raise StepFailed(f"gh api {path} printed output that is not the JSON list of result pages --paginate --slurp prints: "
-                         f"{error}") from None
+        raise StepFailed(f"gh api {path} exited 0 but printed output that is not the JSON list of result pages "
+                         f"--paginate --slurp prints: {error}") from None
 
 
 def merge_lane_2_reviews_and_their_comments(number, posting, account):
@@ -962,10 +965,11 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
     account = posting.MERGE_LANE_ACCOUNT
     reviews, comments = merge_lane_2_reviews_and_their_comments(number, posting, account)
     if not any(review.get("state") == "APPROVED" for review in reviews):
-        raise Refused(f"{account}, merge-lane-2's GitHub account, has no approving review of pull request {number}, so "
-                      f"merge-lane-2 has not approved it yet: its review is still running or it requested changes. No "
+        raise Refused(f"{account}, merge-lane-2's GitHub account, has no approving review of pull request {number}: "
+                      f"merge-lane-2's review of pull request {number} is still running, or merge-lane-2 requested "
+                      f"changes and has not yet approved the author's fixes. No "
                       f"{FOLLOW_UP_REQUEST_LINE_START} block was printed.\n"
-                      f"Once {account}'s approving review is posted, run: "
+                      f"After {account} posts an approving review of pull request {number}, run: "
                       f"{command(number, 'print-follow-up-request-block-from-merge-lane-2-reviews')}")
     replaced_comments = []
     for replaced in replaced_pull_request_numbers(number):
@@ -980,7 +984,7 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
                 f"{FOLLOW_UP_REQUEST_LINE_START} block was printed; reviews posted before "
                 f"scripts/{POSTING_PROGRAM_FILE_NAME} wrote category marks have none.\n"
                 "If merge-lane-2's reviews of the pull request hold a fix-next, fix-in-maintenance or file-for-later "
-                "finding, write the block by hand at the end of the message that tells the author the pull request merged: "
+                f"finding, write the block by hand at the end of {MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR}: "
                 "the line "
                 f"{FOLLOW_UP_REQUEST_LINE_START} pull request {number}, then one line for each such finding, numbered "
                 "from 1, such as: 1. fix-next: <path>:<line>: <the finding on one line>\n"
@@ -1000,11 +1004,10 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
     except ValueError as error:
         read_back = str(error)
     if read_back != [lines]:
-        raise StepFailed(f"the block built from {account}'s reviews does not read back as itself, so the hook would "
-                         f"save something else: it reads back as {read_back!r}.\n"
-                         "Do not paste the block; write it by hand at the end of the message that tells the author the "
-                         "pull request merged, and report this failure to the owner of "
-                         "scripts/pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py.")
+        raise StepFailed(f"the block built from {account}'s reviews does not read back as itself, so the hook "
+                         f"{FOLLOW_UP_REQUEST_BLOCK_SAVE_HOOK_PATH}, which saves the block from merge-lane-2's message for the author, would "
+                         f"save something else: the block reads back as {read_back!r}.\n"
+                         f"Do not paste the block; write the block by hand at the end of {MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR}.")
     print(block, end="")
 
 
