@@ -2137,7 +2137,7 @@ def run_git_failure_cases(scratch: Path):
             check(case_name,
                   isinstance(outcome, tool.Refused) and outcome.code == 1
                   and expected in str(outcome)
-                  and tool.next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION in str(outcome), repr(outcome))
+                  and tool.next_step_lines.GIT_ERROR_NAMES_A_LOCK_FILE_LINE_OPENING_IF_CONDITION_CLAUSE_WITHOUT_ITS_INSTRUCTION_IN_TOOL_MESSAGE_TO_AGENT in str(outcome), repr(outcome))
         else:
             check(case_name, outcome == expected, repr(outcome))
 
