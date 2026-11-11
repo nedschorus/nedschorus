@@ -282,7 +282,8 @@ class Case:
         return result
 
     def run_only(self, step, *flags, mode, counts_log, fast_read_program, environment, ignored_signal, reply):
-        if step == "check" and reply is not None and not {"--not-asked", "--already-decided", "--moved-on", "--user-reply-as-typed"} & set(flags):
+        if step == "check" and reply is not None and not {"--not-asked", "--already-decided", "--now-over-later-already-decided", "--moved-on",
+                                                       "--user-reply-as-typed"} & set(flags):
             flags = (*flags, "--user-reply-as-typed", reply)
         environment = dict(environment or os.environ, STAND_IN_MODE=mode, STAND_IN_CALLS=str(self.calls),
                            STAND_IN_RECORDS=str(self.records), TMPDIR=str(self.temporary_directory),
@@ -2876,6 +2877,93 @@ def test_an_item_an_earlier_ruling_decides_is_fast_read_recorded_and_not_shown()
           described(closed) + case.minutes.read_text())
 
 
+NOW_OVER_LATER = "--now-over-later-already-decided"
+NOW_OVER_LATER_DOCUMENT = (WALK_DOCUMENT.replace('If the sentence stays, a note follows it:\n\n#new_if_d "A note says '
+                                                 'why the sentence stays."\n\n', "")
+                           .replace("Nothing is proposed. Recommendation: leave it.\n",
+                                    "Part 1. Rename it.\n\nPart 2. Move it.\n\nOption 2: keep both.\n\n"
+                                    "Nothing is proposed. Recommendation: leave it.\n"))
+
+
+def walk_document_line(document, text):
+    """The 1-based line number of the walk-document line that is text."""
+    return document.split("\n").index(text) + 1
+
+
+def test_an_item_whose_only_choice_is_now_or_later_settles_citing_the_users_ruling():
+    case = Case(document=NOW_OVER_LATER_DOCUMENT)
+    program = load_program()
+    ruling = program.NOW_OVER_LATER_USER_RULING_CITATION
+    spanned = program.load_walk_finder().text_wrapped_as_markdown_code_span(ruling)
+    checked = case.run("check", NOW_OVER_LATER)
+    check("check --now-over-later-already-decided fast-reads the `#new` texts and records the item as already "
+          "decided by the user's ruling, which parts and options under another item do not stop",
+          ruling.startswith("the user-ruling at line 361 of nedlern@ned-box:/home/nedlern/agents/cold-read-improvement"
+                            "/docs/walk/walk-me-through-skill-refactor-approval-walk-2026-11-02-minutes.md, given "
+                            "with his answer to item 42 on 2026-11-09: \"If the agents recommend now versus later, "
+                            "I'm always for now.\"")
+          and checked.returncode == 0 and case.calls.read_text() == NEW_TEXTS
+          and f"\nitem 3 of 9: settled without asking the user, already decided by {spanned} #case_against_weak ("
+              in case.minutes.read_text(), described(checked) + case.minutes.read_text())
+    closed = case.run("close")
+    check("close records the item as already decided by the user's ruling and accepted, and tells the agent to "
+          "list it",
+          closed.returncode == 0
+          and f"\nitem 3 of 9: already decided by {spanned}; the walk does not come back to it. <accepted>\n"
+              in case.minutes.read_text()
+          and closed.stdout.startswith("item 3 of 9 is recorded in the minutes as settled without being shown"),
+          described(closed) + case.minutes.read_text())
+
+
+def test_an_item_with_parts_options_or_a_new_if_d_text_is_not_settled_as_now_over_later():
+    document = (NOW_OVER_LATER_DOCUMENT.replace("Recommendation: change the sentence.\n",
+                                                "Part 1. Change it now.\n\nPart 2. Change the page later.\n\n"
+                                                "- **Option 3:** change neither.\n\nRecommendation: change the "
+                                                "sentence.\n", 1)
+                .replace("- #new “Each row", '#new_if_d "Nothing changes."\n\n- #new “Each row', 1))
+    rated_document = rated(document)
+    for name, text, expected in (
+            ("its `#new_if_d` text", WALK_DOCUMENT,
+             [f"- a `#new_if_d` text, what his disapproval would do instead, on line "
+              f"{walk_document_line(WALK_DOCUMENT, '#new_if_d \"A note says why the sentence stays.\"')}"]),
+            ("its parts, its option and its `#new_if_d` text", document,
+             [f"- a `Part N.` paragraph, each part answered on its own, on line "
+              f"{walk_document_line(rated_document, 'Part 1. Change it now.')}, "
+              f"{walk_document_line(rated_document, 'Part 2. Change the page later.')}",
+              f"- a line opening `Option N`, another option he can pick, on line "
+              f"{walk_document_line(rated_document, '- **Option 3:** change neither.')}",
+              f"- a `#new_if_d` text, what his disapproval would do instead, on line "
+              f"{walk_document_line(rated_document, '#new_if_d \"Nothing changes.\"')}"])):
+        case = Case(document=text)
+        before = case.minutes.read_text()
+        refused = case.run("check", NOW_OVER_LATER)
+        lines = refused.stderr.rstrip("\n").split("\n")
+        check(f"check --now-over-later-already-decided refuses an item for {name}, listing each line, and writes "
+              "nothing",
+              refused.returncode == 1 and lines[0].startswith(FAILURE_PREFIX + "check: nothing written: item 3 of 9 in ")
+              and lines[1:-1] == expected
+              and lines[-1] == "Present item 3 of 9 to the user, then run check with the flag for his answer, as "
+                               "`--help` lists it."
+              and case.minutes.read_text() == before and case.calls.read_text() == "", described(refused))
+
+
+def test_now_over_later_takes_no_reply_no_other_answer_and_its_rerun_command_repeats_it():
+    case = Case(document=NOW_OVER_LATER_DOCUMENT)
+    before = case.minutes.read_text()
+    replied = case.run("check", NOW_OVER_LATER, "--user-reply-as-typed", "a")
+    both = case.run("check", NOW_OVER_LATER, "--already-decided", "walk x, item 3")
+    check("check --now-over-later-already-decided refuses a user's reply, naming the flag, and another answer flag "
+          "as usage, writing nothing",
+          replied.returncode == 1 and f"was given with {NOW_OVER_LATER}," in replied.stderr
+          and both.returncode == 2 and "not allowed with argument" in both.stderr
+          and case.minutes.read_text() == before, described(replied) + described(both))
+    unrated = Case(document=NOW_OVER_LATER_DOCUMENT.replace("#case_against weak:", "#case_against:"))
+    rerun = unrated.run("check", NOW_OVER_LATER)
+    check("a refusal's rerun command repeats --now-over-later-already-decided, not the citation it supplies",
+          rerun.returncode == 1 and f"check {NOW_OVER_LATER}` again" in rerun.stderr
+          and "--already-decided" not in rerun.stderr.replace(NOW_OVER_LATER, ""), described(rerun))
+
+
 def test_an_item_the_walk_moves_on_from_is_recorded_without_a_fast_read_and_not_shown():
     case = summary_case(next_to_present="item 1 of 5")
     checked = case.run("check", "--moved-on", "the question went to walk y")
@@ -3161,8 +3249,8 @@ def test_a_check_without_the_users_reply_is_refused_writing_nothing():
               and "check --obvious --user-reply-as-typed <his reply>`" in result.stderr, described(result))
 
 
-# Each answer flag that takes a reply, with the values it is given. --not-asked, --already-decided and --moved-on
-# take no reply, so no refusal that asks for one repeats them.
+# Each answer flag that takes a reply, with the values it is given. --not-asked, --already-decided,
+# --now-over-later-already-decided and --moved-on take no reply, so no refusal that asks for one repeats them.
 ANSWER_FLAGS_TAKING_A_REPLY = {"--obvious": (), "--after-advisor": (), "--disapproved": (), "--deferred": (),
                                "--moved-on-no-decision": (), "--option": ("2",), "--part-answer": ("1=A",)}
 
@@ -3172,7 +3260,8 @@ def test_every_answer_flag_is_covered_by_the_rerun_command_cases():
     group = re.search(r"\[(--obvious[^\]]*)\]", " ".join(usage.stdout.split()))
     flags = set(re.findall(r"--[\w-]+", group[1])) if group else set()
     check("the rerun command cases cover every answer flag of check's --help",
-          usage.returncode == 0 and flags == {*ANSWER_FLAGS_TAKING_A_REPLY, "--not-asked", "--already-decided", "--moved-on"},
+          usage.returncode == 0 and flags == {*ANSWER_FLAGS_TAKING_A_REPLY, "--not-asked", "--already-decided", NOW_OVER_LATER,
+                                                         "--moved-on"},
           f"--help answer flags {sorted(flags)}, {described(usage)}")
 
 
@@ -3256,7 +3345,10 @@ def test_close_reads_the_item_after_the_next_one_ahead_and_the_read_step_uses_it
           first.returncode == 0
           and lines[0].startswith("item 3 of 5: its cold-read-fast-read, of its text as it stands, had to be run now: ")
           and lines[0].endswith("/cold-read-fast-read.md") and times_read(case, "## Item 3 of 5: three") == 1
-          and lines[-1] == "Then present item 3 of 5."
+          and lines[-1] == ("Then present item 3 of 5, unless its only choice is whether to build something now or "
+                            f"later and it recommends now: then run `python3 {PROGRAM} check "
+                            f"--now-over-later-already-decided --cwd {shlex.quote(str(case.checkout))}`, then the "
+                            "close command it prints.")
           and f"{WAITING_ITEM_READ} {AFTER_FIXES} --cwd" in lines[2], described(first))
     answered_and_closed(case)
     ahead = case.run(WAITING_ITEM_READ)
