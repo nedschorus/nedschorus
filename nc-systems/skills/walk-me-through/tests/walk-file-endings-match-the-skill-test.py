@@ -7,7 +7,7 @@ A walk's files are `<name>-draft.md`, `<name>-cold-read-fast-read.md`, `<name>.m
 `<name>-dispositions.md`. `.claude/skills/walk-me-through/SKILL.md` is where
 that list is decided, and two programs carry a copy in code:
 nc-systems/cold-read/cold-read-fast-read.py, which puts a walk draft's report beside it,
-and scripts/walk-files-ship.py, which ships all five to the log-store. The
+and nc-systems/skills/walk-me-through/walk-files-ship.py, which ships all five to the log-store. The
 shipper also ships an earlier walk's report under the ending the skill named
 before, `<name>-suggestions.md`; that one ending is held to the shipper's
 own constant here instead of to the skill.
@@ -19,7 +19,7 @@ governs, and a program whose ending is not in that text fails here (user-ruled
 4). It is deliberately one-directional -- the skill may name an ending no
 program builds yet, but no program may build one the skill does not name.
 
-Run: python3 scripts/walk-file-endings-match-the-skill-test.py
+Run: python3 nc-systems/skills/walk-me-through/tests/walk-file-endings-match-the-skill-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -28,7 +28,7 @@ import re
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[4]
 SKILL_FILE_RELATIVE_PATH = ".claude/skills/walk-me-through/SKILL.md"
 SKILL_FILE = REPO_ROOT / SKILL_FILE_RELATIVE_PATH
 _rule_failure_lines_spec = importlib.util.spec_from_file_location(
@@ -99,7 +99,7 @@ def shipper_role_unnamed_failure_detail(unnamed):
     return "\n".join([
         f"ships {unnamed}, which {SKILL_DECIDES_THE_ENDINGS}",
         "If the new or changed ending was not meant to change the skill, set that role in "
-        "WALK_FILE_ROLES in scripts/walk-files-ship.py back to what it was, or remove a role your "
+        "WALK_FILE_ROLES in nc-systems/skills/walk-me-through/walk-files-ship.py back to what it was, or remove a role your "
         "change added.",
         ASK_THE_USER_TO_CHANGE_THE_SKILL_FIRST,
         RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
@@ -108,10 +108,10 @@ def shipper_role_unnamed_failure_detail(unnamed):
 def suggestions_ending_disagrees_failure_detail(written, roles):
     return "\n".join([
         f"the fast read writes {written!r} but the shipper's roles are {roles}, so "
-        f"scripts/walk-files-ship.py would not ship a walk's cold-read-fast-read report to the log-store.",
+        f"nc-systems/skills/walk-me-through/walk-files-ship.py would not ship a walk's cold-read-fast-read report to the log-store.",
         "Set back whichever of the two your change altered: WALK_SUGGESTIONS_SUFFIX in "
         "nc-systems/cold-read/cold-read-fast-read.py, which ends in .md, or the cold-read-fast-read report role "
-        "in WALK_FILE_ROLES in scripts/walk-files-ship.py, which does not; without its .md, the "
+        "in WALK_FILE_ROLES in nc-systems/skills/walk-me-through/walk-files-ship.py, which does not; without its .md, the "
         "first must equal the second.",
         RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
 
@@ -160,7 +160,7 @@ def case_outcome(cases, case_name):
 
 
 fast_read = load("cold-read-fast-read.py", "nc-systems/cold-read")
-shipper = load("walk-files-ship.py")
+shipper = load("walk-files-ship.py", "nc-systems/skills/walk-me-through")
 for case_name, passed, detail in walk_file_endings_cases(
         SKILL_FILE.read_text(),
         [(constant_name, getattr(fast_read, constant_name))
@@ -173,7 +173,7 @@ shipped_beyond_the_skill = [suffix for suffix, _role in shipper.APPROVAL_WALK_FI
 check("the shipper ships one ending beyond the skill's roles, an earlier walk's -suggestions report",
       shipped_beyond_the_skill == ["-suggestions"]
       == [shipper.APPROVAL_WALK_COLD_READ_FAST_READ_REPORT_FILE_SUFFIX_IN_WALKS_STARTED_BEFORE_ITS_RENAME],
-      f"APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX in scripts/walk-files-ship.py adds {shipped_beyond_the_skill} "
+      f"APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX in nc-systems/skills/walk-me-through/walk-files-ship.py adds {shipped_beyond_the_skill} "
       f"to WALK_FILE_ROLES; only '-suggestions', the ending of an earlier walk's report, may be "
       f"shipped without the skill naming it.\n"
       f"Put any other role in WALK_FILE_ROLES, where the checks above hold it to the skill.\n"
@@ -232,7 +232,7 @@ check("a shipper role the skill does not name fails with one fix per cause",
           "ships ['-notes'], which .claude/skills/walk-me-through/SKILL.md does not name; the "
           "skill decides the endings of an approval-walk's files.",
           "If the new or changed ending was not meant to change the skill, set that role in "
-          "WALK_FILE_ROLES in scripts/walk-files-ship.py back to what it was, or remove a role "
+          "WALK_FILE_ROLES in nc-systems/skills/walk-me-through/walk-files-ship.py back to what it was, or remove a role "
           "your change added.",
           "If the new ending is meant to stay, the skill must name it first: ask the user to "
           "approve that change to .claude/skills/walk-me-through/SKILL.md, which the "
@@ -249,11 +249,11 @@ unshipped_passed, unshipped_detail = case_outcome(
 check("a suggestions ending the shipper does not ship fails saying what is lost and which to set back",
       not unshipped_passed and unshipped_detail.split("\n") == [
           "the fast read writes '-suggestions.md' but the shipper's roles are "
-          "['-draft', '-suggestion', ''], so scripts/walk-files-ship.py would not ship a walk's "
+          "['-draft', '-suggestion', ''], so nc-systems/skills/walk-me-through/walk-files-ship.py would not ship a walk's "
           "cold-read-fast-read report to the log-store.",
           "Set back whichever of the two your change altered: WALK_SUGGESTIONS_SUFFIX in "
           "nc-systems/cold-read/cold-read-fast-read.py, which ends in .md, or the cold-read-fast-read report role "
-          "in WALK_FILE_ROLES in scripts/walk-files-ship.py, which does not; without its .md, the "
+          "in WALK_FILE_ROLES in nc-systems/skills/walk-me-through/walk-files-ship.py, which does not; without its .md, the "
           "first must equal the second.",
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
       unshipped_detail)

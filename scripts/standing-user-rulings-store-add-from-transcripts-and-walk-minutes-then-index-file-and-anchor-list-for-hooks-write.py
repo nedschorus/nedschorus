@@ -31,7 +31,7 @@ WHAT IT READS.
   ned-box's own ~/.claude/projects is not read: the mirror copies it each minute, and one copy keeps one
   link per message.
 - The walk-minutes: <agents-directory>/*/docs/walk/*-minutes.md, then <log-store>/walk/*-minutes.md, the
-  copies scripts/walk-files-ship.py ships; <log-store>/walk/superseded/ is not read. A line is a user-ruling
+  copies nc-systems/skills/walk-me-through/walk-files-ship.py ships; <log-store>/walk/superseded/ is not read. A line is a user-ruling
   when it is the answer line that walk-me-through's check program writes for an approved or disapproved
   answer (ANSWER_LINE_WITH_TIME below; a deferred answer decides nothing), or when it holds the project's
   citation of a decision of his with its date (USER_RULED_CITATION below). The answer line's time is UTC

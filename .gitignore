@@ -17,7 +17,7 @@ walk-ledgers/
 # committed files add-only, verified by sha256, and deleted them here; this
 # line is what stops main re-accumulating them. User-ruled 2026-09-10.
 #
-# scripts/walk-files-ship.py ships a walk's files to the store at the walk's
+# nc-systems/skills/walk-me-through/walk-files-ship.py ships a walk's files to the store at the walk's
 # close (user-ruled 2026-09-18, nedschorus#335); the files here are the local
 # copies, kept. Before it existed every walk file in the store was put there
 # by hand, and a walk written into this ignored directory was preserved by

@@ -91,7 +91,7 @@ with the design:
      differ is overwritten, and the sha256 of the copy it displaced is
      announced on its own stderr line: a triage shipped three times leaves a
      trace of each displaced version rather than one silent overwrite.
-     This is what scripts/walk-files-ship.py already does for a walk's minutes
+     This is what nc-systems/skills/walk-me-through/walk-files-ship.py already does for a walk's minutes
      and dispositions -- same digest announcement, same stderr form -- ruled by
      the user on 2026-09-18 at item 5 of the walk
      skill-sentences-and-shipper-questions-2026-09-18 and landed in PR
@@ -113,7 +113,7 @@ with the design:
      machines on one day rule 2 was written for -- and that read's triage
      belongs beside that read's own reports, under the -2 name the refusal
      asks for. Landing it here would file one read's rulings with another
-     read's reports. scripts/walk-files-ship.py ships a walk's remaining
+     read's reports. nc-systems/skills/walk-me-through/walk-files-ship.py ships a walk's remaining
      files through such a refusal because a reopened walk's second run exists
      to deliver the minutes and there is only ever one walk of that name; a
      record's -2 rename gives the second read a directory of its own, and
@@ -323,7 +323,7 @@ in the nedschorus repository, which this machine also clones:
 - `sanity-check-records/` -- the /sanity-check skill's records, shipped by
   `scripts/sanity-check-record-ship.py`
 - `walk/` -- approval-walk files, named by the walk-me-through skill, shipped
-  by `scripts/walk-files-ship.py`
+  by `nc-systems/skills/walk-me-through/walk-files-ship.py`
 - `agent-session-files-by-machine/` -- each machine's session transcripts, handoffs,
   task lists, seat-briefs and global CLAUDE.md, mirrored by
   `scripts/transcript-mirror-to-log-store.py`
@@ -942,7 +942,7 @@ def link_staged_files_never_over_existing(host, staging_dir: pathlib.PurePosixPa
 
     A link is never made over an existing file: a name already taken is left
     as it is, and placing goes on past it, so the caller judges each file by
-    the digest read back. This is scripts/walk-files-ship.py's add-only
+    the digest read back. This is nc-systems/skills/walk-me-through/walk-files-ship.py's add-only
     placing, which refuses a walk's files one by one while the rest still
     ship; a cold-read-record is placed by place_staged_files instead.
 
@@ -1071,7 +1071,7 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
                               replacements: list):
     """Rename staged files over the store's, for the files a shipper REPLACES
     by design: the walk's minutes and dispositions, a walk text the walk only
-    added to (scripts/walk-files-ship.py) and a seat's own files
+    added to (nc-systems/skills/walk-me-through/walk-files-ship.py) and a seat's own files
     (scripts/seat-shared-file-ship.py). Returns the process and
     {store relative path: StagedReplacement}, or None, as store_inventory
     returns for an unreachable host, when the host is unreachable or a step
@@ -1086,7 +1086,7 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
     which is how the walk text's APPENDED TO rule is held to the stored copy
     it was tested against. A path that must not exist makes it conditional
     too: it runs only while that path is absent, which is how the walk text
-    is held to being the store's latest copy (scripts/walk-files-ship.py's
+    is held to being the store's latest copy (nc-systems/skills/walk-me-through/walk-files-ship.py's
     REVISED COPIES). None for both replaces whatever is there.
 
     WHY A RENAME OF A STAGED COPY, AND NOT rsync STRAIGHT ONTO THE NAME. A

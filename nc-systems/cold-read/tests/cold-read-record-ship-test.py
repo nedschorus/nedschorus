@@ -1278,7 +1278,7 @@ subprocess.Popen([sys.executable, "-c", "import sys; print('cell', flush=True); 
           and not staging.exists(),
           f"{outcome} {held} {replayed.stderr}")
 
-    # The walk shipper's add-only linking script, scripts/walk-files-ship.py's:
+    # The walk shipper's add-only linking script, nc-systems/skills/walk-me-through/walk-files-ship.py's:
     # a name taken by other bytes is left as it was, and placing goes on past it.
     staging = scratch / "placing-go-on" / ".ship-staging-w-0"
     store = scratch / "placing-go-on" / "w"

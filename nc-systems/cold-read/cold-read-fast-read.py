@@ -376,7 +376,7 @@ COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 30 
 PROGRAM = "cold-read-fast-read"
 WALK_DRAFT_SUFFIX = "-draft.md"
 # Both endings are the walk-me-through skill's to name; this program only
-# follows them, and scripts/walk-file-endings-match-the-skill-test.py fails
+# follows them, and nc-systems/skills/walk-me-through/tests/walk-file-endings-match-the-skill-test.py fails
 # if these two drift from what .claude/skills/walk-me-through/SKILL.md says.
 WALK_SUGGESTIONS_SUFFIX = "-cold-read-fast-read.md"
 
