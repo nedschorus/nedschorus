@@ -976,6 +976,62 @@ def run_test_suite_runner_log_directories_cases():
               f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
 
+    # cosmic-ray, stopping a run at its own limit, records only "timeout": no log directory named.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"run_test_command": True, "dump": [
+            [work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+             killed_with_output(survivors.TIMED_OUT_OUTPUT)],
+        ]})
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv))
+        runner_log_directories, parents = log_directories_left_in(control)
+        kept = sorted(parents[0].iterdir()) if len(parents) == 1 else []
+        check("a pass with a mutant cosmic-ray recorded only as \"timeout\", whose output names "
+              "no log directory, keeps every log directory of that file and names where",
+              "1 errored" in completed.stdout and len(kept) == 1
+              and f"are kept in {parents[0]};" in completed.stderr,
+              f"left={runner_log_directories + parents} kept={kept} "
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+def run_recorded_mutant_could_not_be_judged_log_directory_kept_case():
+    survivors = load_script_module()
+    runner = load_test_suite_runner()
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, _, head = scratch_repository(scratch_name, HEAD_FILES)
+        parent = Path(scratch_name) / "log-directories-parent"
+        parent.mkdir()
+        real_run = subprocess.run
+        runs = []
+
+        # The run without a mutant passes; the run with it exits 3 judging no suite failing.
+        def suite_runner_run(command, *args, **kwargs):
+            if "--log-dir" not in command:
+                return real_run(command, *args, **kwargs)
+            log_dir = Path(command[command.index("--log-dir") + 1])
+            (log_dir / "test-run-report.txt").write_text("stopped\n")
+            runs.append(log_dir)
+            return subprocess.CompletedProcess(
+                command, 0 if len(runs) == 1 else 3,
+                stdout="" if len(runs) == 1 else "run-all-test-suites: not run to the end\n")
+        real_verdict = survivors.recorded_mutant_verdict_without_a_suite_run
+        survivors.recorded_mutant_verdict_without_a_suite_run = \
+            lambda checkout, path, hunks, head, source, why, environment: (None, source)
+        subprocess.run = suite_runner_run
+        try:
+            verdicts = survivors.recorded_mutants_judged_in_one_worktree(
+                [("mutant.diff", "scripts/thing.py", [], ["scripts/thing-test.py"])], head,
+                types.SimpleNamespace(python=sys.executable, lock_file=None), repository,
+                dict(os.environ), runner, Path(scratch_name) / "recordings", parent)
+        finally:
+            subprocess.run = real_run
+            survivors.recorded_mutant_verdict_without_a_suite_run = real_verdict
+        check("a recorded mutant that could not be judged keeps its run's log directory, and the "
+              "passing run without a mutant does not keep its own",
+              verdicts.get("mutant.diff", ("",))[0] == "could not be judged"
+              and len(runs) == 2 and not runs[0].exists() and runs[1].exists(),
+              f"verdicts={verdicts} runs={runs} left={sorted(parent.iterdir())}")
+
 def run_log_directories_parent_retention_and_stop_signal_cases():
     survivors = load_script_module()
     prefix = survivors.TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_PREFIX
@@ -1005,8 +1061,14 @@ def run_log_directories_parent_retention_and_stop_signal_cases():
               "it still holds, and nothing is printed",
               not parent.exists() and err.getvalue() == "", err.getvalue())
 
-    for code, stopped in ((128 + signal.SIGTERM, True), (128 + signal.SIGHUP, True), (2, False)):
+    sessions_kept = ["--cosmic-ray-sessions-directory-kept-to-resume", "sessions"]
+    for code, extra, stopped in ((128 + signal.SIGTERM, [], True), (128 + signal.SIGHUP, [], True),
+                                 (2, [], False), (128 + signal.SIGTERM, sessions_kept, False)):
         with tempfile.TemporaryDirectory() as scratch_name:
+            left_by_an_earlier_run = Path(scratch_name) / f"{prefix}earlier"
+            (left_by_an_earlier_run / "a-log-dir").mkdir(parents=True)
+            os.utime(left_by_an_earlier_run, (now - 3 * 24 * 3600, now - 3 * 24 * 3600))
+
             def raising(arguments, checkout, runner, environment, log_directories_parent):
                 (log_directories_parent / "a-mutant-log-dir").mkdir()
                 raise SystemExit(code)
@@ -1020,7 +1082,7 @@ def run_log_directories_parent_retention_and_stop_signal_cases():
             try:
                 with contextlib.redirect_stderr(err):
                     survivors.main_with_stop_signals_raising_system_exit(
-                        ["--quick-mutation-pass", "--head", "HEAD", "--base", "HEAD"])
+                        ["--quick-mutation-pass", "--head", "HEAD", "--base", "HEAD", *extra])
                 raised = None
             except SystemExit as exit_:
                 raised = exit_.code
@@ -1029,11 +1091,14 @@ def run_log_directories_parent_retention_and_stop_signal_cases():
                  survivors.load_test_suite_runner, tempfile.tempdir) = real
             left = list(Path(scratch_name).glob(f"{prefix}*"))
             kept_line = survivors.TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX in err.getvalue()
-            check(f"exit {code} out of the pass: the log directories it holds are "
+            check(f"exit {code} out of the pass{' with kept sessions' if extra else ''}: a log "
+                  f"directories parent an earlier run left three days ago is removed at start, "
+                  f"and the log directories this run holds are "
                   + ("removed, with no line naming them" if stopped
                      else "kept, and one line names where"),
-                  raised == code and (left == [] and not kept_line if stopped
-                                      else len(left) == 1 and kept_line),
+                  raised == code and not left_by_an_earlier_run.exists()
+                  and (left == [] and not kept_line if stopped
+                       else len(left) == 1 and kept_line),
                   f"raised={raised} left={left} err={err.getvalue()}")
 
 
@@ -2536,6 +2601,7 @@ def run_cases():
     run_recorded_mutant_killed_check_cases()
     run_test_suite_runner_log_directories_cases()
     run_log_directories_parent_retention_and_stop_signal_cases()
+    run_recorded_mutant_could_not_be_judged_log_directory_kept_case()
     run_parallel_mutants_and_kept_sessions_cases()
     run_parallel_mutant_workers_cases_with_fake_cosmic_ray_package()
     run_parallel_mutant_workers_case_with_real_cosmic_ray()
