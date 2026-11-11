@@ -3266,14 +3266,17 @@ with tempfile.TemporaryDirectory() as scratch:
     # worktree, so the stub's one write lands after that worktree was judged; this first run
     # removes the idle worktrees the cases above left.
     run_idle_cleanup("--remove")
-    backdated = f"@{int(three_days_ago)}"
+    # os.utime, not touch -d: BSD touch on the Mac rejects -d @<epoch>. A stub that cannot set the
+    # time exits 1, so the case fails instead of passing without the backdating it relies on.
+    backdate = (f"'{sys.executable}' -c 'import os, sys; "
+                f"[os.utime(p, ({three_days_ago}, {three_days_ago})) for p in sys.argv[1:]]'")
     for name, written, stub_line in (
             ("written-ignored-wt", "late-output.log", "echo late > '{wt}/late-output.log'"),
             ("written-untracked-wt", "late-notes.txt", "echo late > '{wt}/late-notes.txt'"),
             # Backdated, file and directory both, so only git status still sees the new file.
             ("backdated-untracked-wt", "backdated-notes.txt",
-             "echo late > '{wt}/backdated-notes.txt' && touch -d " + backdated
-             + " '{wt}/backdated-notes.txt' '{wt}'"),
+             "echo late > '{wt}/backdated-notes.txt' && " + backdate
+             + " '{wt}/backdated-notes.txt' '{wt}' || exit 1"),
             # A commit GitHub lacks, made after rev-list checked HEAD: no file in the worktree
             # changes, so only the HEAD comparison sees it.
             ("committed-late-idle-wt", None,
@@ -3309,6 +3312,20 @@ with tempfile.TemporaryDirectory() as scratch:
         else:
             check("--remove still removes an idle worktree in which nothing was written during "
                   "the run", not worktree.exists(), written_removal.stdout + written_removal.stderr)
+
+    # A HEAD that cannot be resolved reads as "unknown", which rev-list fails on: the idle rule then
+    # leaves the worktree to the other rules, which keep it.
+    unknown_head_worktree = idle_candidate("unknown-head-wt")
+    (idle_git_directory(unknown_head_worktree) / "HEAD").write_text(
+        "ref: refs/heads/no-such-branch-for-this-case\n", encoding="utf-8")
+    age(unknown_head_worktree)
+    unknown_head_removal = run_idle_cleanup("--remove")
+    check("--remove keeps an idle worktree whose HEAD cannot be resolved",
+          unknown_head_worktree.exists()
+          and idle_line(unknown_head_removal.stdout, "unknown-head-wt").startswith(
+              "unknown-head-wt: kept")
+          and "Traceback" not in unknown_head_removal.stderr,
+          unknown_head_removal.stdout + unknown_head_removal.stderr)
 
     # A directory that becomes unreadable after the judgment leaves the re-check unable to tell
     # whether anything in it changed, so the worktree is kept.
