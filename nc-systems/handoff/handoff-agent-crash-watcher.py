@@ -1037,12 +1037,13 @@ def run_once(environment) -> int:
 def report_run_failure(error_text, state_directory: Path, log_directory: Path,
                        task_lists_directory: Path):
     """Log the failure, and hand it to AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME as a task the first time
-    this error is seen.
+    this error reaches an agent-seat or the user.
 
     A task that cannot be written becomes a notice for the user, with its user-alert. A notice the
     Mac misses waits in the state every run reads, so a later run, failing or healthy, shows it
-    once the Mac can be reached; when that state cannot be read or saved, the notice is not
-    retried, and its user-alert alone reaches the user.
+    once the Mac can be reached; when that state cannot be read or saved, its user-alert alone
+    reaches the user. When the task, the user-alert, the Mac window and the saved state all fail,
+    the error is not marked reported, and the next failing run reports it again.
     """
     now = datetime.now(timezone.utc)
     reported_path = state_directory / f"{PROGRAM}-reported-run-failures.txt"

@@ -32,6 +32,8 @@ def agent_seat_task_list_new_pending_task_write(list_directory, subject, descrip
     made no task yet creates the directory first.
     """
     list_directory = Path(list_directory)
+    if not list_directory.is_dir():
+        raise FileNotFoundError(f"the task list directory {list_directory} does not exist")
     highest = 0
     for path in list_directory.iterdir():
         if TASK_FILE_NAME_PATTERN.fullmatch(path.name):
