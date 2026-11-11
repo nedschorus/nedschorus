@@ -1129,6 +1129,25 @@ def run_cases():
               == [1],
               (order, completed.returncode, record, fixture.state_json()))
 
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        first = fixture.commit("scripts/thing.py",
+                               "def double(x):\n    return x + x\nVALUE = 1\n", author="alpha")
+        fixture.run({first: {"json": verdict(survived=[survivor()])}})
+        second = fixture.commit("scripts/other.py", "VALUE = 2\n", author="alpha")
+        completed = fixture.run({second: {"json": verdict(survived=[
+            survivor(), survivor(3, "core/ReplaceBinaryOperator_Add_Div")])}})
+        record = fixture.records()[-1].read_text()
+        check("a line whose survivors were all given tasks before does not stop the next line's "
+              "new survivor from getting a task",
+              completed.returncode == 0 and task_files(alpha_list) == ["1.json", "2.json"]
+              and "already given task #1 on alpha's task list" in record
+              and "SURVIVED scripts/thing.py:3 core/ReplaceBinaryOperator_Add_Div: task #2 "
+                  "opened on alpha's task list" in record,
+              (completed.returncode, task_files(alpha_list), record))
+
     # A mutant whose task file is gone, as after a fold of its task into another and the
     # handoff prune of the completed task, follows the one open task that names its diff file;
     # with two such tasks it is reported lost.
