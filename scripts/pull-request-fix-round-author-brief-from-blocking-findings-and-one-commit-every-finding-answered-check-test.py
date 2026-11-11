@@ -1263,9 +1263,14 @@ def moved_into_body_cases(root, repository, base, frozen_head):
                            review_id=21),
               **comments_route(20, [comment("run.py", "**Blocks.** the reviewer's finding.", line=40, comment_id=31)])}
     code, out, err = run(root, repository, routes)
-    check("a Block merge-lane-2's review moved into its body refuses the brief, naming it, though the other "
-          "reviews' Blocks match the stated count",
-          code == 1 and "setup.py:3" in err and "setup.py:9" not in err and "Blocking findings" not in out, err + out)
+    grading_url = grading["html_url"]
+    check("a Block merge-lane-2's review moved into its body is briefed with its whole text and the review's "
+          "link, and the reviewer's Block it graded fix-next is not",
+          code == 0 and "Blocking findings (1)" in out
+          and f"1. setup.py:3 ({grading_url})\n**Blocks** setup.py drops the exit code.\nSecond line of the finding." in out
+          and "setup.py:9" not in out.split("Blocking findings (1)")[1].split("For the author")[0]
+          and "the reviewer's finding" not in out.split("Blocking findings (1)")[1].split("For the author")[0],
+          err + out)
 
     moved_fix_next = dict(routes, **{REVIEWS: {"stdout": lines([reviewer, dict(grading, body=grading_body.replace(
         "**Blocks** setup.py", "**fix-next** setup.py"))])}})

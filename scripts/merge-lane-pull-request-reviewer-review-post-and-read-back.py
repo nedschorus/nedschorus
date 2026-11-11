@@ -117,7 +117,7 @@ OUTSIDE_THE_DIFF_HEADING = fix_round.OUTSIDE_THE_DIFF_HEADING
 OUTSIDE_THE_DIFF_LINE_FORMAT = "- `{path}:{line}`: {body}"
 OUTSIDE_THE_DIFF_LINE_PATTERN = fix_round.OUTSIDE_THE_DIFF_LINE_PATTERN
 # Two spaces also keep a continuation line inside its list item when GitHub renders the body.
-OUTSIDE_THE_DIFF_CONTINUATION_INDENT = "  "
+OUTSIDE_THE_DIFF_CONTINUATION_INDENT = fix_round.OUTSIDE_THE_DIFF_CONTINUATION_INDENT
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 # The state GitHub gives a review posted with each event.
 EVENT_STATES = {"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED",
@@ -276,22 +276,7 @@ def finding_category_and_text_read_from_review_comment_opening_mark(body):
     return None
 
 
-def outside_the_diff_comments_read_back_from_review_body(body):
-    """The comments with_outside_comments_in_body() moved into a posted body, each a dict of path,
-    line and body. A comment starts at a line in OUTSIDE_THE_DIFF_LINE_FORMAT at the line's start;
-    each indented line after it continues it, with OUTSIDE_THE_DIFF_CONTINUATION_INDENT removed."""
-    lines = body.split("\n")
-    if OUTSIDE_THE_DIFF_HEADING not in lines:
-        return []
-    comments = []
-    for line in lines[lines.index(OUTSIDE_THE_DIFF_HEADING) + 1:]:
-        match = OUTSIDE_THE_DIFF_LINE_PATTERN.match(line)
-        if match:
-            comments.append({"path": match.group("path"), "line": int(match.group("line")),
-                             "body": match.group("body")})
-        elif comments and line.startswith(OUTSIDE_THE_DIFF_CONTINUATION_INDENT):
-            comments[-1]["body"] += "\n" + line[len(OUTSIDE_THE_DIFF_CONTINUATION_INDENT):]
-    return comments
+outside_the_diff_comments_read_back_from_review_body = fix_round.outside_the_diff_comments_read_back_from_review_body
 
 
 def outside_the_diff_line(comment):
