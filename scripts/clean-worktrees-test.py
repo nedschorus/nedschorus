@@ -2879,6 +2879,63 @@ with tempfile.TemporaryDirectory() as scratch:
           and record_of(held) is None,
           held_again.stdout + held_again.stderr)
 
+    unreadable_gitdir_wt, _ = stopped_partway("stopped-partway-gitdir-unreadable-wt")
+    unreadable_gitdir_of = registration_of(unreadable_gitdir_wt)
+    # A gitdir that is a directory stands in for any gitdir file that exists but cannot be read.
+    (unreadable_gitdir_of / "gitdir").unlink()
+    (unreadable_gitdir_of / "gitdir").mkdir()
+    unreadable_gitdir_run = run_clean(checkout, "--remove")
+    check("a finish whose registration's gitdir cannot be read fails, exit 1, and keeps record and "
+          "registration",
+          unreadable_gitdir_run.returncode == 1 and unreadable_gitdir_of.exists()
+          and record_of(unreadable_gitdir_wt) is not None
+          and "stopped-partway-gitdir-unreadable-wt: removal FAILED" in unreadable_gitdir_run.stdout
+          and "stopped-partway-gitdir-unreadable-wt: removed" not in unreadable_gitdir_run.stdout,
+          unreadable_gitdir_run.stdout + unreadable_gitdir_run.stderr)
+    (unreadable_gitdir_of / "gitdir").rmdir()
+
+    rev_parse_failing, _ = stopped_partway("stopped-partway-rev-parse-fails-wt")
+    rev_parse_failing_git = scratch / "rev-parse-failing-git"
+    # Longer than the 120 characters of stderr the FAILED line quotes, so the cut is checked.
+    rev_parse_stand_in_stderr = "fatal: stand-in rev-parse failure " + "".join(
+        str(index % 10) for index in range(200))
+    rev_parse_failing_git.mkdir()
+    (rev_parse_failing_git / "git").write_text(
+        f"#!{sys.executable}\n"
+        "import os, signal, sys\n"
+        "if 'rev-parse' in sys.argv and '--verify' in sys.argv:\n"
+        "    if os.environ.get('REV_PARSE_STAND_IN_KILLED'):\n"
+        "        os.kill(os.getpid(), signal.SIGKILL)\n"
+        f"    sys.stderr.write({rev_parse_stand_in_stderr!r} + '\\n')\n"
+        "    sys.exit(128)\n"
+        f"os.execv({shutil.which('git')!r}, ['git'] + sys.argv[1:])\n", encoding="utf-8")
+    (rev_parse_failing_git / "git").chmod(0o755)
+    rev_parse_environment = dict(os.environ)
+    rev_parse_environment["PATH"] = f"{rev_parse_failing_git}{os.pathsep}{rev_parse_environment['PATH']}"
+    rev_parse_run = subprocess.run(
+        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout),
+         "--remove-worktree-and-force-delete-its-branch", str(rev_parse_failing)],
+        capture_output=True, text=True, check=False, env=rev_parse_environment)
+    check("a finish whose branch lookup fails, rather than finding no branch, fails, exit 1, and "
+          "keeps the record and the branch",
+          rev_parse_run.returncode == 1 and record_of(rev_parse_failing) is not None
+          and git(checkout, "branch", "--list", "stopped-partway-rev-parse-fails-wt-branch").strip() != ""
+          and "stopped-partway-rev-parse-fails-wt: removal FAILED" in rev_parse_run.stdout
+          and f"(exit 128): {rev_parse_stand_in_stderr[:120]}\n" in rev_parse_run.stdout,
+          rev_parse_run.stdout + rev_parse_run.stderr)
+    rev_parse_killed_run = subprocess.run(
+        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout),
+         "--remove-worktree-and-force-delete-its-branch", str(rev_parse_failing)],
+        capture_output=True, text=True, check=False,
+        env=dict(rev_parse_environment, REV_PARSE_STAND_IN_KILLED="1"))
+    check("a finish whose branch lookup is killed by a signal fails, exit 1, and keeps the record "
+          "and the branch",
+          rev_parse_killed_run.returncode == 1 and record_of(rev_parse_failing) is not None
+          and git(checkout, "branch", "--list", "stopped-partway-rev-parse-fails-wt-branch").strip() != ""
+          and "stopped-partway-rev-parse-fails-wt: removal FAILED" in rev_parse_killed_run.stdout
+          and "(exit -9)" in rev_parse_killed_run.stdout,
+          rev_parse_killed_run.stdout + rev_parse_killed_run.stderr)
+
     records_directory = module.unfinished_worktree_removal_records_directory(checkout)
     undeleted, _ = stopped_partway("stopped-partway-record-undeletable-wt")
     records_directory.chmod(0o500)
@@ -2986,9 +3043,13 @@ with tempfile.TemporaryDirectory() as scratch:
           "")
     unreadable_gitdir_registration = scratch / "unreadable-gitdir-registration"
     (unreadable_gitdir_registration / "gitdir").mkdir(parents=True)
-    check("a registration whose gitdir file cannot be read is not the worktree's",
-          not module.registration_points_to_worktree_or_has_no_gitdir_file(unreadable_gitdir_registration, reused),
-          "")
+    try:
+        module.registration_points_to_worktree_or_has_no_gitdir_file(unreadable_gitdir_registration, reused)
+        unreadable_gitdir_raised = False
+    except OSError:
+        unreadable_gitdir_raised = True
+    check("a registration whose gitdir file cannot be read raises, rather than being judged",
+          unreadable_gitdir_raised, "")
     check("a registration whose gitdir file is gone is deleted as the worktree's",
           module.registration_points_to_worktree_or_has_no_gitdir_file(scratch / "no-such-registration", reused), "")
 

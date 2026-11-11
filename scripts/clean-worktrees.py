@@ -1339,23 +1339,35 @@ def finish_recorded_removal(record, repo, one_named):
             f"names", one_named)
         return False
     branch = record.get("branch")
-    if branch and run_git(repo, "rev-parse", "--verify", "--quiet",
-                          f"refs/heads/{branch}").returncode != 0:
-        branch = None
+    if branch:
+        lookup = run_git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}")
+        # --verify --quiet exits 1 only for a missing ref; any other failure says nothing of it.
+        if lookup.returncode == 1:
+            branch = None
+        elif lookup.returncode != 0:
+            print(f"{worktree.name}: removal FAILED — an earlier scripts/clean-worktrees.py "
+                  f"--remove was stopped partway through removing this worktree, and git "
+                  f"rev-parse could not tell whether its branch {branch} is still there (exit "
+                  f"{lookup.returncode}): {lookup.stderr.strip()[:120]}")
+            print_next_remove_run_line(
+                f"{worktree.name}: do nothing now: the next scripts/clean-worktrees.py --remove, "
+                f"daily or at a handoff, tries again to finish the removal from its record "
+                f"{record['file']}; if it fails the same way there, fix the cause the line above "
+                f"names", one_named)
+            return False
     record["branch"] = branch
     return report_removal_and_delete_branch_then_delete_unfinished_worktree_removal_record(record, repo, one_named)
 
 
 def registration_points_to_worktree_or_has_no_gitdir_file(registration, worktree):
     """Whether the registration's gitdir file names the worktree's .git file, or is gone; a
-    registration git has since given to another worktree is not deleted."""
+    registration git has since given to another worktree is not deleted. Raise OSError when the
+    gitdir file is there but cannot be read."""
     try:
         # git writes a relative gitdir, under --relative-paths, relative to the registration.
         named = registration / os.fsdecode((registration / "gitdir").read_bytes().strip())
     except FileNotFoundError:
         return True
-    except OSError:
-        return False
     return named.resolve() == (worktree / ".git").resolve()
 
 
