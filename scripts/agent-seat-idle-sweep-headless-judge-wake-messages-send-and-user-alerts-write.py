@@ -25,7 +25,8 @@ Each invocation, under a lock that keeps two from overlapping:
    decide whether to message it, and write the message. A message starts a wait, unless a wait is
    already open: 15 minutes later, if the agent-seat is idle, code sends the escalation, which
    quotes the message that opened the wait, and 15 minutes after that writes the user a
-   user-alert, once.
+   user-alert, once. The minutes both state are counted from the agent-seat's last token spent,
+   the start of its current idle stretch.
 
 Every message to an agent-seat goes through Sweep.send_wake_message, which ends it with
 DO_NOT_REPLY_SENTENCE: the headless agent-session that sends it has exited by the time the
@@ -40,9 +41,11 @@ the text code wrote. Each is stopped after 5 minutes.
 What it does not handle: it runs only on ned-box and reads only ned-box's agent-seats. One
 invocation runs its headless agent-sessions one after another, so a slow judge delays every other
 agent-seat's step, and the lock makes the next minute's invocation skip, until it ends. A wait
-does not end when the agent-seat answers a message; it ends when the agent-seat has nothing to do
-(rule 4) and no rule 2 message was sent on the wait, stops at a usage limit (rule 1), starts a new
-agent-session, or spends tokens after the user was told.
+does not end when the agent-seat only replies to a message in text; it ends when the agent-seat
+makes a tool call after the nudge that opened the wait, has nothing to do (rule 4) and no rule 2
+message was sent on the wait, stops at a usage limit (rule 1), starts a new agent-session, or
+spends tokens after the user was told. So an agent-seat that answers each message with a tool
+call and goes idle again is nudged again, and never escalated.
 
 How it fails, and what the user sees: a headless agent-session that fails, is stopped, answers
 JSON code cannot use, or sends to the wrong entry or the wrong text; a message missing from the
@@ -677,6 +680,10 @@ class Sweep:
                 self.end_wait(seat, "a usage limit")
             self.usage_limit(seat, verdict)
             return
+        worked_at = verdict.get(fields.LAST_TOOL_CALL_AT)
+        if wait and worked_at and parse_time(worked_at) > parse_time(wait[NUDGE]):
+            self.end_wait(seat, "it made a tool call after the nudge")
+            wait = None
         if wait and TELL_USER in wait and stretch and parse_time(stretch) > parse_time(wait[TELL_USER]):
             self.end_wait(seat, "it spent tokens after the user was told")
             wait = None
@@ -694,7 +701,7 @@ class Sweep:
             self.end_wait(seat, "nothing to do")
             wait = None
         if wait:
-            self.due_step(seat, verdict, wait)
+            self.due_step(seat, verdict, wait, stretch)
         if promise_text:
             # A promise given in answer to a message goes on the open wait, so that repeated
             # promises cannot put off its escalation and the user-alert.
@@ -714,12 +721,12 @@ class Sweep:
                      "session_id": verdict[fields.SESSION_ID], "first_idle_at": stretch,
                      "text": step_text})
 
-    def due_step(self, seat, verdict, wait):
+    def due_step(self, seat, verdict, wait, stretch):
         """The step of an open wait that is due: the escalation 15 minutes after the nudge, then
         the user-alert 15 minutes after the escalation; after that, none."""
         if TELL_USER in wait:
             return
-        minutes = int(seconds_between(wait["first_idle_at"] or wait[NUDGE], self.now) // 60)
+        minutes = int(seconds_between(stretch or wait[NUDGE], self.now) // 60)
         if ESCALATE in wait:
             if seconds_between(wait[ESCALATE], self.now) >= WAIT_STEP_SECONDS:
                 self.record({"event": "wait_step", "agent_seat": seat, "step": TELL_USER})
