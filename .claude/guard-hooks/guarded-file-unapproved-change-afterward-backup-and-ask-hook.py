@@ -1196,7 +1196,7 @@ def run_hook(payload):
             present = False
             if old_base:
                 lookup = subprocess.run(["git", "-C", str(checkout), "cat-file", "-e", old_base],
-                                        capture_output=True, timeout=60, check=False)
+                                        capture_output=True, timeout=60, check=False)  # pragma: no mutate, a limit a second longer or shorter behaves the same
                 # git cat-file -e exits 1, silently, for an object the repository does not hold;
                 # any other failure leaves the state file as it is, since the run stops here.
                 if lookup.returncode != 0 and (lookup.returncode != 1 or lookup.stderr):
@@ -1204,11 +1204,12 @@ def run_hook(payload):
                         f"git cat-file -e {old_base} in {checkout} exited {lookup.returncode}: "
                         f"{lookup.stderr.decode(errors='replace').strip()}; the first run's "
                         f"deferred approvals in {checkout_path} were left unconverted")
-                present = lookup.returncode == 0
+                present = lookup.returncode == 0  # pragma: no mutate, the exit is 0 or 1 here, since any other raised above, so `<=` says the same
             checkout_state[FIRST_RUN_VERSIONS_KEY] = {
                 path: blob for path, blob in (blobs_at_commit(checkout, old_base, list(files_then))
                                               if present else {}).items()
-                if files_then[path][4] == blob}
+                if files_then[path][4]  # pragma: no mutate, a checkout's file has one string as key and copy hash, so [5] reads the same
+                == blob}
         decisions = checkout_state.setdefault("guarded", {})
         decisions_before = dict(decisions)
         groups.append(("checkout", checkout_path, checkout_state, checkout_files(checkout, decisions),
@@ -1246,7 +1247,9 @@ def run_hook(payload):
                     blob = first_run.get(path)
                     if blob is None:
                         continue
-                    if path not in state["files"] and value[2] == value[3] == blob:
+                    if (path not in state["files"]
+                            and value[2] == value[3]  # pragma: no mutate, a checkout's file has one string as key and copy hash, so `is`, `<=`, `>=` and either index for the other say the same
+                            == blob):
                         # Forgotten while git did not list it, and back unchanged.
                         at_base.add(path)
                     else:
@@ -1376,10 +1379,11 @@ def run_hook(payload):
         if plan[13] is not None:
             first_run = state[FIRST_RUN_VERSIONS_KEY]
             # A version git no longer holds stays recorded, so each later change reports it.
-            for path in set(plan[15]) - {path for path, _ in unreadable}:
+            for path in (set(plan[15])
+                         - {path for path, _ in unreadable}):  # pragma: no mutate, every unreadable path is one of plan[15], so `^` gives the same set
                 del first_run[path]
             lost += unreadable
-            first_run.update({path: changed[path][2] for path in skipped})
+            first_run.update({path: changed[path][2] for path in skipped})  # pragma: no mutate, a checkout's file has one string as key and copy hash, so [3] reads the same
         for path, (now, _, key, copy_hash) in changed.items():
             if now is None:
                 state["files"][path] = [0, 0, 0, 0, DELETED, DELETED, settled.get(path, False)]
