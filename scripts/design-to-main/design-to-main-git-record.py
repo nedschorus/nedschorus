@@ -44,8 +44,11 @@ def parse_state_exit_trailer(message):
     return trailer
 
 
+AGENT_HOME_MARKER_FILE_NAME = "agent-home-marker"
+
+
 class TopicBranchCutRefused(Exception):
-    """Git refused the branch name or the required start point is absent."""
+    """Git refused the branch name, the required start point is absent, or the checkout is an agent-home."""
 
 
 class RefusedBeforeTopicBranchCut(Exception):
@@ -91,6 +94,23 @@ class TopicBranchGitRecord:
         commits = self.commits_on_branch(since=commit)
         return commits[-1] if commits else None
 
+
+    def require_checkout_is_not_an_agent_home(self):
+        """Raise TopicBranchCutRefused in an agent-home, GitCommandFailed when git fails."""
+        # The marker is the one scripts/git-client-side-hooks/pre-commit reads: without this check the cut
+        # would put the agent-home on the topic branch, and the hook would then refuse every state-exit commit.
+        git_directory = pathlib.Path(git_output.run_git(
+            self.repository_dir, ["rev-parse", "--absolute-git-dir"]).decode().strip())
+        if (git_directory / AGENT_HOME_MARKER_FILE_NAME).exists():
+            raise TopicBranchCutRefused(
+                "refused to cut the topic branch %r in %s, because that checkout is an agent-home: "
+                "an agent-home holds no topic work and rests on a detached HEAD at origin/main; "
+                "the run does not start and the checkout is as it was.\n"
+                "Make a worktree for the run, detached at origin/main, with: cd %s && python3 "
+                "scripts/agent-seat-worktree-create-with-owner-file.py --detach %s origin/main\n"
+                "Then start the run again with that worktree, the path the command prints, as the checkout; "
+                "the run cuts its topic branch there." % (
+                    self.component, self.repository_dir, self.repository_dir, self.component))
 
     def require_topic_branch_start_point(self):
         """Raise TopicBranchCutRefused when the start point is absent, GitCommandFailed when git fails."""

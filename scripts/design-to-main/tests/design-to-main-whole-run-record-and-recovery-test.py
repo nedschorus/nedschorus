@@ -22,6 +22,7 @@ import pathlib
 import shutil
 import os
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -890,6 +891,52 @@ class TopicBranchRefusedAtRow1(unittest.TestCase):
         finally:
             repository.remove()
 
+    def detached_worktree_at_origin_main(self, repository, name, agent_home):
+        worktree = repository.root / name
+        fixture.git(repository.checkout, "worktree", "add", "-q", "--detach", str(worktree), "origin/main")
+        if agent_home:
+            git_directory = pathlib.Path(
+                fixture.git(worktree, "rev-parse", "--absolute-git-dir").strip())
+            (git_directory / G.AGENT_HOME_MARKER_FILE_NAME).touch()
+        return worktree
+
+    def test_an_agent_home_is_refused_before_anything_runs_and_stays_detached(self):
+        repository = fixture.ThrowawayRepository()
+        try:
+            agent_home = self.detached_worktree_at_origin_main(repository, "agent-home", agent_home=True)
+            head_before = fixture.git(agent_home, "rev-parse", "HEAD")
+            record = G.TopicBranchGitRecord(
+                agent_home, fixture.COMPONENT, fixture.COMPONENT_DIRECTORY, fixture.DESIGN_PATH)
+            machine = M.DesignToMainStateMachineFlow(
+                record, M.ScriptedStateExitLauncher([]), today=lambda: "2026-09-08")
+            with self.assertRaises(M.TopicBranchCutRefused) as refused:
+                machine.start(fixture.COMPONENT)
+            self.assertIn("agent-home", str(refused.exception))
+            self.assertIn("--detach %s origin/main" % fixture.COMPONENT, str(refused.exception))
+            self.assertEqual(machine.launcher.launched, [])
+            self.assertEqual(fixture.git(agent_home, "rev-parse", "--abbrev-ref", "HEAD").strip(), "HEAD")
+            self.assertEqual(fixture.git(agent_home, "rev-parse", "HEAD"), head_before)
+            self.assertEqual(fixture.git(agent_home, "branch", "--list", fixture.COMPONENT), "")
+            self.assertEqual(fixture.git(agent_home, "status", "--porcelain"), "")
+            self.assertFalse(record.absolute(record.record_directory).exists())
+        finally:
+            repository.remove()
+
+    def test_a_detached_worktree_that_is_not_an_agent_home_cuts_the_topic_branch_there(self):
+        # The remedy the agent-home refusal names: a worktree detached at origin/main, with no marker.
+        repository = fixture.ThrowawayRepository()
+        try:
+            worktree = self.detached_worktree_at_origin_main(repository, "run-worktree", agent_home=False)
+            machine, run, _, _ = fixture.make_machine(
+                [(T.INITIATE_DESIGN_TO_MAIN, T.V_INVOKED, {})],
+                types.SimpleNamespace(checkout=worktree))
+            fixture.drive(machine, run)
+            self.assertTrue(run.topic_branch_cut)
+            self.assertEqual(fixture.git(worktree, "rev-parse", "--abbrev-ref", "HEAD").strip(),
+                             fixture.COMPONENT)
+        finally:
+            repository.remove()
+
     def test_a_branch_that_already_exists_is_reported_as_a_refusal_and_the_run_does_not_start(self):
         repository = fixture.ThrowawayRepository()
         try:
@@ -1168,6 +1215,10 @@ class AGitFailureIsRaisedNotReadAsAnAnswer(unittest.TestCase):
         self.assertEqual(failed.exception.returncode, 128)
         self.assertIn(STAND_IN_GIT_ERROR, str(failed.exception))
         return failed.exception
+
+    def test_a_failing_look_for_the_agent_home_marker_is_raised_not_read_as_no_agent_home(self):
+        with self.git_failing("rev-parse"):
+            self.assert_raises_git_failure(self.record.require_checkout_is_not_an_agent_home)
 
     def test_a_failing_rev_parse_of_the_start_point_is_not_a_missing_start_point(self):
         with self.git_failing("rev-parse"):
