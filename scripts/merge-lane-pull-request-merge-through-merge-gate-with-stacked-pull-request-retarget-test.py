@@ -664,15 +664,29 @@ def main():
             scratch, name, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
             origin_files={RECORDED_SUITE: "print('ok')\n", STALE_SUITE: "print('ok')\n"},
             before_the_program_runs=head_test_run_recordings)
-        store = scratch / name / "outputs" / "hr" / "store"
+        outputs = scratch / name / "outputs"
+        store = outputs / "hr" / "store"
+        saved = outputs / "hr" / "pr10" / "recorded-inputs"
         adopted = sorted(path.name for path in store.glob("*/*.json"))
-        check("after the after-merge test run, a recording the head test run saved under "
-              "hr/pr10/recorded-inputs that matches the merge commit is adopted into hr/store, "
-              "and one that read another copy of its suite is not",
+        adopted_line = (f"adopted into {store} 1 recordings from {saved}, where this pull "
+                        f"request's head test runs saved theirs, that passed and match the "
+                        f"merge commit")
+        check("before the after-merge test run starts, a recording the head test run saved "
+              "under hr/pr10/recorded-inputs that matches the merge commit is adopted into "
+              "hr/store, one that read another copy of its suite is not, and "
+              "hr/pr10/recorded-inputs is removed",
               exit_code == 0
               and adopted == [RECORDED_SUITE.replace("/", "__") + ".json"]
-              and f"adopted into {store} 1 recordings that passed and match the merge commit"
-              in output, f"exit {exit_code}\n{output}\n{adopted}")
+              and adopted_line in output
+              and output.index(adopted_line) < output.index("testing main at the merge commit")
+              and not saved.exists(), f"exit {exit_code}\n{output}\n{adopted}")
+        check("after the after-merge test run, recordings are adopted from the runner's "
+              "default recorded-inputs directory too",
+              output.index("testing main at the merge commit") < output.index(
+                  f"adopted into {store} 0 recordings from "
+                  f"{program.common.run_all_test_suites.DEFAULT_RECORDED_INPUTS_DIRECTORY}, "
+                  f"where the after-merge test run saved its own")
+              if "testing main at the merge commit" in output else False, output)
 
         def store_cannot_be_written(directory):
             head_test_run_recordings(directory)
@@ -685,12 +699,37 @@ def main():
             before_the_program_runs=store_cannot_be_written)
         merge_commit_worktree = (scratch / name / "review-worktrees"
                                  / "pr10-merge-commit-on-main-worktree")
-        check("a recording that cannot be saved into hr/store exits 3, says no recording was "
-              "adopted, and still removes the worktree",
+        saved = scratch / name / "outputs" / "hr" / "pr10" / "recorded-inputs"
+        check("a recording that cannot be saved into hr/store exits 3, says the recordings "
+              "were not adopted, keeps hr/pr10/recorded-inputs, still runs the after-merge "
+              "test run and removes the worktree",
               exit_code == 3
-              and "STOP: merged, but no recording that matches the merge commit was adopted "
-                  f"into {scratch / name / 'outputs' / 'hr' / 'store'}" in output
+              and f"STOP: merged, but the recordings in {saved}, where this pull request's "
+                  f"head test runs saved theirs, were not adopted into "
+                  f"{scratch / name / 'outputs' / 'hr' / 'store'}" in output
+              and saved.exists() and len(runner_calls(scratch, name)) == 1
               and not merge_commit_worktree.exists(), f"exit {exit_code}\n{output}")
+
+        def saved_apart_cannot_be_removed(directory):
+            head_test_run_recordings(directory)
+            for held in (directory / "outputs" / "hr" / "pr10" / "recorded-inputs").glob("*"):
+                held.chmod(0o555)
+
+        name = "recordings-saved-apart-not-removed"
+        try:
+            exit_code, output, _, _, _ = run_case(
+                scratch, name, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+                origin_files={RECORDED_SUITE: "print('ok')\n", STALE_SUITE: "print('ok')\n"},
+                before_the_program_runs=saved_apart_cannot_be_removed)
+        finally:
+            for held in (scratch / name / "outputs" / "hr" / "pr10" / "recorded-inputs").glob("*"):
+                held.chmod(0o755)
+        saved = scratch / name / "outputs" / "hr" / "pr10" / "recorded-inputs"
+        check("a hr/pr10/recorded-inputs that cannot be removed after its recordings are "
+              "adopted exits 3, naming it",
+              exit_code == 3
+              and f"STOP: merged, but {saved}, which no run reads any more, was not removed"
+              in output and len(runner_calls(scratch, name)) == 1, f"exit {exit_code}\n{output}")
 
         name = "since-merged-main-not-moved"
         exit_code, output, _, _, _ = run_case(
