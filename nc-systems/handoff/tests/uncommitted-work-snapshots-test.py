@@ -80,6 +80,9 @@ def load(path, name):
 
 
 snapshots = load(REPOSITORY_ROOT / MODULE_RELATIVE, "uncommitted_work_snapshots")
+first_prompt_list = load(
+    SYSTEM_DIRECTORY / "agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py",
+    "agent_seat_worktrees_and_branches_with_no_pull_request_first_prompt_list")
 
 failures = []
 SKIPPED = []
@@ -1028,6 +1031,11 @@ def test_restore_a_subset():
               and f"\nRestore commit: {restore_commit}\n" in task.get("description", "")
               and ref in task.get("description", "") and str(target) in task.get("description", ""),
               f"restore opens the restored branch's task, naming its restore commit, {where}", task)
+        holding = first_prompt_list.tasks_holding("seat-five", restore_task_list())
+        check(holding.holders(branch) and holding.holders(target)
+              and not holding.unreadable,
+              f"the first prompt's list reads the task restore opens as holding its branch and "
+              f"worktree, so it does not list them, {where}", task)
         check((restore_task_list() / ".highwatermark").read_text() == next(iter(new_tasks), ""),
               "restore raises the task list's .highwatermark to the new task's id")
         check(f"branch: {branch}" in lines and f"worktree: {target}" in lines
