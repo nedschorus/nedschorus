@@ -6,7 +6,7 @@ first second, and print its path for Claude Code.
 Claude Code runs this hook in place of its own `git worktree add` whenever it makes a
 worktree: for a subagent started with isolation "worktree", for `claude --worktree`,
 and for the EnterWorktree tool. It reads the hook's JSON from stdin, of which it uses
-`name`, the worktree's name, such as "agent-a48479f668ee15726" for a subagent, and
+`name`, the worktree's name, such as "agent-a" and 16 hex digits for a subagent, and
 `cwd`, the checkout of the agent-session that asked. It runs the creator in `cwd` with
 the branch `worktree-<name>`, which, as when Claude Code makes the worktree itself, is
 cut from origin/main after a `git fetch origin`; the creator puts the worktree at
