@@ -33,8 +33,8 @@ works; every other line goes to stderr.
 
 How it can fail. When writing the owner file fails, it removes the worktree with
 `git worktree remove --force`, leaves a branch it made, and exits 1. When that removal fails
-too, the worktree stays with no owner file, which scripts/clean-worktrees.py never removes,
-and the message names it. A `git worktree add` that fails leaves what git leaves, which can be
+too, the worktree stays with no owner file, which scripts/clean-worktrees.py removes only once
+nothing in it has changed for 2 days and it holds no uncommitted or untracked file, and the message names it. A `git worktree add` that fails leaves what git leaves, which can be
 a new branch with no worktree. Nothing it makes is cleaned up when the program is killed
 between the add and the owner file.
 
@@ -110,8 +110,9 @@ GIT_FAILED_MESSAGE = (
 OWNER_FILE_FAILED_MESSAGE = (
     "agent-seat-worktree-create-with-owner-file: FAILED: the owner file of the new worktree "
     "{path} could not be written: {error}\n"
-    "This program removed that worktree again, because scripts/clean-worktrees.py never "
-    "removes a worktree with no owner file.{branch_kept}\n"
+    "This program removed that worktree again, because scripts/clean-worktrees.py removes a "
+    "worktree with no owner file only once nothing in it has changed for 2 days and it holds no uncommitted or untracked file, not when its work "
+    "is merged.{branch_kept}\n"
     "Fix the cause the FAILED line names, then run the same command again once{rerun_note}.\n"
     "If it fails again, tell the user, or, if you are a subagent, the agent that dispatched "
     "you, quoting both FAILED lines.")
@@ -123,8 +124,8 @@ REMOVAL_FAILED_MESSAGE = (
     "agent-seat-worktree-create-with-owner-file: FAILED: the owner file of the new worktree "
     "{path} could not be written: {error}\n"
     "Removing that worktree failed too: {removal_error}\n"
-    "The worktree is still there with no owner file, and scripts/clean-worktrees.py never "
-    "removes a worktree with no owner file.\n"
+    "The worktree is still there with no owner file, and scripts/clean-worktrees.py removes a "
+    "worktree with no owner file only once nothing in it has changed for 2 days and it holds no uncommitted or untracked file.\n"
     "If it holds nothing of yours, remove it with `git worktree remove --force {path}`.\n"
     "Then tell the user, or, if you are a subagent, the agent that dispatched you, quoting "
     "both FAILED lines.")
