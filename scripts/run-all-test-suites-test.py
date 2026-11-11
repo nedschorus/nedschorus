@@ -1494,10 +1494,13 @@ check("a list older than the limit is named, with the time it was recorded",
       notice)
 notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
     ["a-test.py"], {}, pathlib.Path("/store"), NOW)
-check("a missing list is named, with the directory it was looked for in",
+check("a missing list is named, with the directory it was looked for in and the log-store "
+      "directory of the scheduled run's records",
       notice is not None and notice.startswith("run-all-test-suites: 1 of 1 suites")
       and "36 hours in /store," in notice
-      and "has not recorded every suite at all," in notice, notice)
+      and "has not recorded every suite at all," in notice
+      and "nedlern@ned-box:/home/nedlern/nedschorus-logs/scheduled-full-test-runs-of-main/ned-box/." in notice,
+      notice)
 with tempfile.TemporaryDirectory() as scratch:
     store = pathlib.Path(scratch)
     for name, body in (("not-json", "{"), ("no-list", '{"recorded_at": "2026-11-04T00:00:00Z"}'),

@@ -287,7 +287,8 @@ class Fixture:
         self.log_store = root / "log-store"
         self.temporary = root / "temporary"
         self.temporary.mkdir()
-        self.directory = self.temporary / program.SCHEDULED_FULL_TEST_RUN_DIRECTORY_NAME
+        # Spelled out, not read from the program, so a change to the directory name fails here.
+        self.directory = self.temporary / "nedschorus-scheduled-full-test-run-of-main"
         self.worktree = self.directory / program.SCHEDULED_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME
         self.logs = self.directory / program.SCHEDULED_FULL_TEST_RUN_LOGS_DIRECTORY_NAME
         self.lock_file = self.directory / program.SCHEDULED_FULL_TEST_RUN_LOCK_FILE_NAME
