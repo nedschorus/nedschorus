@@ -869,7 +869,9 @@ def entries_after(entries, position):
     the window. Neither the reflog's length nor a stored index tells two equal lines apart,
     because expiry can drop older entries and move a later equal line to the stored index; and
     when the line is gone, a guess from times can leave out a commit made in its second. A
-    position an earlier version of this hook stored is [commit, time] alone."""
+    position an earlier version of this hook stored is [commit, time] alone; when no entry, or
+    more than one, holds that pair, the window is unknown too, so nothing is approved as git's
+    own work and every changed version is asked about."""
     if not position:
         return []
     if len(position) < 4:
