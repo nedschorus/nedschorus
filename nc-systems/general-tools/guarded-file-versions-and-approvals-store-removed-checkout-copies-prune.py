@@ -328,8 +328,9 @@ def main(arguments=None):
         print(f"{Path(__file__).name}: the prune of the store "
               f"{hook.store_directory(hook.this_machine())} stopped: {error}. Every copy it "
               f"may have deleted is named on stdout on a line that starts with 'deleting', printed "
-              f"before the copy was deleted, after the line '{start_line}'; with no such line "
-              f"there, it deleted nothing.", file=sys.stderr)
+              f"before the copy was deleted, after the line '{start_line}'; with no 'deleting' "
+              f"line after that start line, the run deleted nothing. The scheduled job writes "
+              f"stdout and stderr to ~/.claude/{Path(__file__).stem}.log.", file=sys.stderr)
         return EXIT_FAILED
     verb = "would delete" if options.dry_run else "deleted"
     for checkout, size in sorted(result["checkouts"].items()):
@@ -337,8 +338,8 @@ def main(arguments=None):
     sys.stdout.flush()
     for failure in result["failures"]:
         print(failure, file=sys.stderr)
-    failures = (f"{len(result['failures'])} failures, each named on stderr after the line "
-                f"'{start_line}'"
+    failures = (f"{len(result['failures'])} failures, each named on stderr; in a log that holds both "
+                f"stdout and stderr, they come after the line '{start_line}'"
                 if result["failures"] else "no failures")
     print(f"{verb} {result['held_by_commits']} copies whose version a commit on a branch, a tag "
           f"or a remote-tracking branch holds, whether the file's checkout still exists or not, "
