@@ -26,9 +26,9 @@ ahead, and the tool writes the question as entry E1 of a
 proposed-improvements-or-changes-file in the log-store on ned-box,
 GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY, named
 `<GHI-MD name>-proposed-improvements-or-changes-ghi-guide-agent-<YYYY-MM-DD>.md`.
-The file never reaches main: the subagent that settles the entry, by the
-rules of PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD, settles it
-in that file, and only the change an entry calls for lands, such as an
+The file never reaches main: the subagent that settles the entry, by
+PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE_ENTRIES_SETTLING_SUBAGENT_INSTRUCTIONS,
+settles it in that file, and only the change an entry calls for lands, such as an
 edit of the GHI-MD through `edit`.
 So the run tells the agent to dispatch that subagent at once. The file is
 written before any step that reaches GitHub, and it carries the key of the
@@ -467,9 +467,11 @@ GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY = "/home/nedlern/nedschorus-logs/ghi-guide-a
 GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY_VARIABLE = "GHI_ISSUE_WRITE_GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY"
 GHI_GUIDE_AGENT_LOG_STORE_SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o",
                                   "ConnectTimeout=10"]
-# The design of record for how the entries are settled: the subagent the run
-# tells the agent to dispatch follows its § The design, rules 3 to 7.
+# The design of record for such a file and its entries.
 PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD = "docs/issues/1132-concerns-about-a-ghi-are-handled-by-agents.md"
+# What the subagent the run tells the agent to dispatch follows to settle the
+# entries: that design's rules 3 to 7, as instructions.
+PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE_ENTRIES_SETTLING_SUBAGENT_INSTRUCTIONS = "docs/agents/queue/proposed-improvements-or-changes-file-reviewer-entries-settling-subagent-instructions.md"
 
 RECONSIDER_LINE = (
     "If you believe this refusal is wrong, reconsider once against its stated "
@@ -1267,8 +1269,7 @@ def proposed_improvements_or_changes_file_text(
         f"ghi-guide-agent reviewed the GHI-MD \"{title}\" when "
         f"scripts/ghi-issue-write.py {operation_done} it. The agent that ran "
         "the tool dispatches a forked subagent to settle each entry in this "
-        "file by rules 3 to 7 of § The design in "
-        f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD}. This file "
+        f"file by {PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE_ENTRIES_SETTLING_SUBAGENT_INSTRUCTIONS}. This file "
         "stays in the log-store; only the change an entry calls for goes to "
         "main, such as an edit of the GHI-MD through "
         "`scripts/ghi-issue-write.py edit`.\n\n"
@@ -1447,8 +1448,7 @@ def report_ruling_question(number: int, operation_done: str, recorded,
         f"The question is entry E1 of {ghi_guide_agent_log_store_citation(name)}, "
         "in the log-store, not in the pull request.",
         "Dispatch a forked subagent now to settle the entry in that file by "
-        "rules 3 to 7 of § The design in "
-        f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD}; do not "
+        f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE_ENTRIES_SETTLING_SUBAGENT_INSTRUCTIONS}; do not "
         "wait for the user's answer.",
         "If the subagent marks the entry as needing the user, bring the "
         "entry to him in your agent-seat's next approval-walk."]
@@ -1484,8 +1484,7 @@ def report_open_ruling_questions(number: int, operation_done: str, prefixes,
                 "Read the files named "
                 f"{ghi_guide_agent_log_store_citation(ghi_guide_agent_file_name_head(prefix))}"
                 "* yourself, and dispatch a forked subagent to settle each "
-                "entry whose state is open, by rules 3 to 7 of § The design "
-                f"in {PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD}.")
+                f"entry whose state is open, by {PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE_ENTRIES_SETTLING_SUBAGENT_INSTRUCTIONS}.")
     for name in sorted(found):
         report_ruling_question(number, operation_done, (name, found[name]),
                                report)
@@ -1551,8 +1550,7 @@ def migrate_ghi_guide_agent_files_on_main(relative: str, revision: str,
                 f"{GHI_GUIDE_AGENT_QUESTION_LINE_OPENING}{question}\n"
                 "Dispatch a forked subagent now to copy the file into "
                 f"{ghi_guide_agent_log_store_citation('')} and settle its entry "
-                "there by rules 3 to 7 of § The design in "
-                f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD}; "
+                f"there by {PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE_ENTRIES_SETTLING_SUBAGENT_INSTRUCTIONS}; "
                 "do not wait for the user's answer.")
         else:
             report(
@@ -1595,8 +1593,7 @@ def report_ghi_guide_agent_files_left_at_moved_from(relative: str, moved_from: s
             f"{ghi_guide_agent_log_store_citation('')} under the name "
             f"{ghi_guide_agent_file_name_head(Path(relative).name[:-len('.md')])}"
             "<date>.md, and to settle its entry there if it is open, by "
-            "rules 3 to 7 of § The design in "
-            f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD}.")
+            f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE_ENTRIES_SETTLING_SUBAGENT_INSTRUCTIONS}.")
 
 
 def file_issue(repo: str, title: str, key: str, runner, report) -> int:
