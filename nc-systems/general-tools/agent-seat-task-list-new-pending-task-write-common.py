@@ -22,8 +22,9 @@ TASK_FILE_NAME_PATTERN = re.compile(r"[1-9][0-9]*\.json")
 TASK_HIGH_WATER_MARK_FILE_NAME = ".highwatermark"
 
 
-def agent_seat_task_list_new_pending_task_write(list_directory, subject, description):
-    """Write a new pending task into the list; return its id. Raises OSError.
+def agent_seat_task_list_new_pending_task_write(list_directory, subject, description, metadata=None):
+    """Write a new pending task into the list, with metadata when given; return its id. Raises
+    OSError.
 
     The id is one more than the highest of the list's task ids and its .highwatermark, as
     Claude Code numbers a new task; the file is linked into place only where no file of that
@@ -48,9 +49,11 @@ def agent_seat_task_list_new_pending_task_write(list_directory, subject, descrip
         partial_path = Path(partial.name)
     try:
         while True:
-            partial_path.write_text(json.dumps({
-                "id": str(task_id), "subject": subject, "description": description,
-                "status": "pending", "blocks": [], "blockedBy": []}, indent=2), encoding="utf-8")
+            task = {"id": str(task_id), "subject": subject, "description": description,
+                    "status": "pending", "blocks": [], "blockedBy": []}
+            if metadata is not None:
+                task["metadata"] = metadata
+            partial_path.write_text(json.dumps(task, indent=2), encoding="utf-8")
             try:
                 os.link(partial_path, list_directory / f"{task_id}.json")
                 break

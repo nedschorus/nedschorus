@@ -78,6 +78,8 @@ HOOK_RELATIVE = Path("scripts/uncommitted-work-snapshot-hook.py")
 OWNER_FILE_MODULE_RELATIVE = Path("scripts/worktree-owner-file-read-and-write.py")
 GIT_OUTPUT_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
+TASK_WRITE_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/agent-seat-task-list-new-pending-task-write-common.py")
 LIVE_CHECK_FILE_NAME = "live-check.txt"
 LIVE_CHECK_PROMPT = (f"Run this one shell command and nothing else: "
                      f"echo live > {LIVE_CHECK_FILE_NAME}")
@@ -128,7 +130,7 @@ def default_claude_program():
 def make_scratch_clone(clone):
     git(clone.parent, "init", "-q", str(clone))
     for relative in (MODULE_RELATIVE, HOOK_RELATIVE, GIT_OUTPUT_MODULE_RELATIVE,
-                     OWNER_FILE_MODULE_RELATIVE):
+                     TASK_WRITE_MODULE_RELATIVE, OWNER_FILE_MODULE_RELATIVE):
         (clone / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPOSITORY_ROOT / relative, clone / relative)
     (clone / ".gitignore").write_text("__pycache__/\n")

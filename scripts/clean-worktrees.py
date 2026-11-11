@@ -1749,7 +1749,7 @@ def open_restored_branch_tasks(task_lists_directory, out):
             failures += 1
             continue
         for task_file in task_files:
-            if not work_snapshots.TASK_FILE_NAME_PATTERN.fullmatch(task_file.name):
+            if not work_snapshots.agent_seat_task_list.TASK_FILE_NAME_PATTERN.fullmatch(task_file.name):
                 continue
             try:
                 task = json.loads(task_file.read_text(encoding="utf-8"))
