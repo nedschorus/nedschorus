@@ -1074,7 +1074,7 @@ with scratch() as directory:
           "with that full name, which finds both and exits 0",
           code == 0 and not same_first and full_name in other_first
           and second.startswith(f"{full_name}, so this program runs again with "
-                                f"that full name in place of rerun-probe.")
+                                f"{full_name} in place of rerun-probe.")
           and f"Same name ({full_name})" in second
           and len(entry_lines(same_second)) == 2 and not other_second,
           stdout + stderr)
@@ -1130,6 +1130,70 @@ with scratch() as directory:
           and second.rstrip().splitlines()[-1].startswith(
               "The backup search did not finish (it was stopped by signal 9 "
               "before its summary line)"), (runs, stdout))
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    full_name = "rerun-dir-probe-minutes.md"
+    write(base / "mac" / "agents" / "seat-a" / "notes" / full_name, "x")
+    query_dir = base / "mac" / "agents" / "seat-a" / "docs"
+    code, stdout, stderr = run(base, str(query_dir / "rerun-dir-probe.md"))
+    first, _, second = stdout.partition(RERUN_LINE_OPENING)
+    same_second, other_second, _ = sections(second)
+    check("a path query whose one candidate has another name reruns with that "
+          "name in the query's directory, so a file at another path is still "
+          "only a candidate, and exits 1",
+          code == 1 and second.startswith(
+              f"{full_name}, so this program runs again with "
+              f"{query_dir / full_name} in place of ")
+          and not same_second and full_name in other_second, stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    write(base / "mac" / "agents" / "c" / "found-probe.md", "the file")
+    write(base / "mac" / "agents" / "c" / "found-probe-minutes.md", "other")
+    code, stdout, stderr = run(base, "found-probe.md")
+    check("a search that finds the file does not rerun, even when every "
+          "candidate has one other name",
+          code == 0 and RERUN_LINE_OPENING not in stdout
+          and ssh_runs(base) == 1, stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    write(base / "mac" / "agents" / "c" / "Case-Probe-Notes.md", "one")
+    write(base / "mac" / "agents" / "d" / "case-probe-notes.md", "two")
+    code, stdout, stderr = run(base, "case-probe")
+    check("candidate names that differ only in case count as one name, so the "
+          "search reruns with it",
+          code == 0 and RERUN_LINE_OPENING in stdout, stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    write(base / "mac" / "agents" / "c" / "unreached-probe-minutes.md", "x")
+    code, stdout, stderr = run(base, "unreached-probe", mode="unreachable")
+    first, _, second = stdout.partition(RERUN_LINE_OPENING)
+    check("a rerun does not try again the machine the first search could not "
+          "reach, and still reports it as not searched",
+          RERUN_LINE_OPENING in stdout and ssh_runs(base) == 1
+          and "Tell the user ned-box was not searched: " in second
+          and "No route to host" in second, stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    for number in range(program.MAX_FILE_HITS_PER_MACHINE):
+        write(base / "mac" / "agents" / f"cut-{number:03d}" / "cut-probe-minutes.md",
+              f"candidate {number}", NOW - 10 - number)
+    write(base / "mac" / "agents" / "old" / "cut-probe-other.md", "older",
+          NOW - 100000)
+    code, stdout, stderr = run(base, "cut-probe")
+    check("no rerun when the candidate list was cut, since the cut candidates "
+          "may have other names",
+          code == 1 and RERUN_LINE_OPENING not in stdout
+          and "were considered" in stdout, stdout + stderr)
 
 # --- A query with directories is found only at its own path ---------------------
 # The log-store reuses generic names across records (40 dispositions.md on
