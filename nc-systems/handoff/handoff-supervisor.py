@@ -35,14 +35,11 @@ The cycle, per reincarnation:
      extraction fails, the successor's prompt is a recovery note saying the
      session-dialog could not be extracted and where the retiring session's
      transcript is, or that it was not found, then the instruction to put
-     items needing the user in one approval-walk, then the lines step 6 says
+     items needing the user in one approval-walk, then the lines step 5 says
      the initial agent instructions carry, such as the launch-time-git-sync's
      line and the leftovers, and last the handoff's next step.
   4. Each generation opens the same launcher-pinned task list.
-  5. Print one queue-status line — to the console only. It does not ride
-     the initial agent instructions (user-ruled 2026-08-29: "Also useless is the
-     reminder there are files in the queues. Thats what queues are for.").
-  6. Launch the successor with the initial agent instructions. Beside the
+  5. Launch the successor with the initial agent instructions. Beside the
      launch-time-git-sync's line they carry, for agent-instructions-editor alone, one
      line per system whose code moved on
      main past the commit its overview was checked against, until the user has been shown
@@ -61,7 +58,7 @@ The cycle, per reincarnation:
      first prompt(s))"; the branches the first-prompt list deleted go above
      the leftovers' opening sentence, under a line that opens with their
      heading (launch_prompt_with_leftovers_before_the_next_step).
-  7. Keep the current and previous handoff and conversation-tail; delete older ones.
+  6. Keep the current and previous handoff and conversation-tail; delete older ones.
 
 The handoff file the agent writes (simple `key: value` lines):
   written-at:           UTC timestamp, ISO 8601
@@ -1076,24 +1073,6 @@ def transcript_unreadable_stop_message(agent: str, handoff_directory: Path, sess
             f"be decided, because its transcript could not be read: "
             f"{error.filename}: {error.strerror}.\n"
             + unreadable_path_restart_instruction(agent, handoff_directory, error.filename))
-
-
-def queue_status_line(working_directory: Path) -> str:
-    """Return each queue's depth and oldest item for the console."""
-    reports = []
-    for queue_directory in ("nc-queue", "docs/issues/queue", "docs/nedschorus-wiki/queue", "legacy-feature-queue"):
-        directory = working_directory / queue_directory
-        if not directory.is_dir():
-            continue
-        entries = sorted(
-            item for item in directory.glob("*.md") if item.name.lower() != "readme.md"
-        )
-        if not entries:
-            reports.append(f"{queue_directory}: empty")
-            continue
-        oldest = min(entries, key=lambda item: item.name)
-        reports.append(f"{queue_directory}: {len(entries)}, oldest {oldest.name}")
-    return "queues — " + ("; ".join(reports) if reports else "none found")
 
 
 def extract_dialog(session_id: str, working_directory: Path, output_path: Path) -> bool:
@@ -2221,8 +2200,6 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
     )
     prune_old_generations(settings.handoff_directory, f"{settings.agent}-dialog")
     prune_old_generations(settings.handoff_directory, f"{settings.agent}-handoff")
-
-    print(f"handoff-supervisor: {queue_status_line(settings.working_directory)}")
 
     successor_session_id = str(uuid.uuid4())
     plan = DialogIgnitionPlan(
