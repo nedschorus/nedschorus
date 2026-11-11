@@ -379,6 +379,17 @@ check("gh failing: the next stop within five minutes reports the same failure fr
       "and does not ask gh again",
       reported(result, GH_FAILURE_103) and len(seat.gh_calls()) == 1, (result, seat.gh_calls()))
 
+# At the real 300 seconds, // 59 also gives 5, so only a longer interval tells the two apart.
+saved_interval = hook.CONDITION_RECHECK_INTERVAL_SECONDS
+hook.CONDITION_RECHECK_INTERVAL_SECONDS = 3600
+try:
+    failure_line = hook.gh_failure_line("pr_merged", 103, "gh failed")
+finally:
+    hook.CONDITION_RECHECK_INTERVAL_SECONDS = saved_interval
+check("gh failing: the line gives the recheck interval in whole minutes",
+      "at the first stop at least 60 minutes after the failed call" in failure_line,
+      failure_line)
+
 seat = Seat()
 seat.task("43", metadata={"prerequisites": [{"pr_merged": 103}]})
 seat.task("44", metadata={"prerequisites": [{"pr_merged": 103}]})
