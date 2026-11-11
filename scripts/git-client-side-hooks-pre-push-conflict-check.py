@@ -8,8 +8,11 @@ as a squash by `git reset --soft` onto a newer main does; git merges such a
 branch cleanly, so the conflict check cannot see it. A branch the conflict
 check gives no verdict on is not sent to the revert check, which relies on the
 conflict check's fetch; a line says so and gives the command to run the revert
-check by hand. No per-branch line says what happens to the push: a later branch
-can still refuse it, so the outcome is said once, after every branch."""
+check by hand. No line printed while the branches are checked says what happens
+to the push, since a later branch can still refuse it. Once every branch is
+checked, a push that goes through gets at most one line, naming the branches it
+goes through without a clean verdict for, and a refused push gets one "this push
+is refused" line for each branch that conflicts or sets a file back."""
 # Fail open: a missed conflict is caught in review, but a wrongly blocked push stops work.
 # Keep Git’s environment so the check sees the repository actually being pushed.
 
