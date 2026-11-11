@@ -1733,7 +1733,7 @@ def run_cases():
     # The hand run a job failure task gives holds the job's lock, because it shares the
     # merge's kept sessions with the nightly run.
     if not FLOCK_PROGRAM.exists():
-        # The job runs only on ned-box; the Mac's daily full test run still runs this suite.
+        # The job runs only on ned-box; the Mac's scheduled full test run still runs this suite.
         print(f"SKIP  [this machine cannot run it] the hand-run command's lock case: {FLOCK_PROGRAM} is missing; it exists on Linux only")
     else:
         with tempfile.TemporaryDirectory() as scratch:

@@ -47,13 +47,13 @@ Usage:
                 ~/.cache/nedschorus-test-suite-recorded-inputs
   --record-inputs-with-strace
                 on Linux, record with strace as well as the audit hook; see
-                RECORDED INPUTS below. scripts/daily-full-test-run-of-main.py
+                RECORDED INPUTS below. scripts/scheduled-full-test-run-of-main.py
                 passes it; without it the audit hook records alone
   --suite-files-only-strace-saw-lists-directory
                 where a run given --record-inputs-with-strace keeps, for each
                 suite, the files only strace saw it read, and where every
                 selective run reads them; default
-                ~/.cache/nedschorus-test-suite-recorded-inputs, where the daily
+                ~/.cache/nedschorus-test-suite-recorded-inputs, where the scheduled
                 full run keeps them
   --leave-recorded-inputs-and-failure-history-unchanged
                 record no suite's inputs, save no recording and add nothing
@@ -504,7 +504,7 @@ suite depends on. Two recorders, whose findings are added together:
   -E or -S, or with an environment that drops PYTHONPATH, is not recorded.
 
   strace, on Linux, only in a run given --record-inputs-with-strace, which
-  scripts/daily-full-test-run-of-main.py gives, when strace is installed and
+  scripts/scheduled-full-test-run-of-main.py gives, when strace is installed and
   this program is not itself being traced: `strace -f -ff --seccomp-bpf -z -y -e trace=%file` around
   each suite, which sees every path any process opens, stats or executes,
   git and shells included. --seccomp-bpf stops a traced process only at the
@@ -523,17 +523,17 @@ suite depends on. Two recorders, whose findings are added together:
   files only strace saw it read: those a git command or a shell script
   read. A run that records with the audit hook alone replaces the
   recording, and a run given its own --recorded-inputs-directory, such as
-  merge-lane-2's head runs, never sees the daily run's recordings, so
+  merge-lane-2's head runs, never sees the scheduled run's recordings, so
   selection reads these lists from
   --suite-files-only-strace-saw-lists-directory, whose default is where the
-  daily full run keeps its recordings: a suite also runs when a file on its
+  scheduled full run keeps its recordings: a suite also runs when a file on its
   list differs. A run with the audit hook alone records the files on the
   list among the files read, with their blob hashes in its checkout. A
   strace run in which the suite failed or skipped cases leaves the last list
   as it is. A selective run on Linux names how many suites have no list
   from a strace run in the last
   FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE hours, which a
-  missed daily run causes.
+  missed scheduled run causes.
 
 A recording keeps, per suite: its exit code and seconds; each file read,
 with its git blob hash; each path it opened or checked for, and whether the
@@ -557,7 +557,7 @@ every clone, shares the same paths, so a recording made in one serves them
 all. Every run not given --leave-recorded-inputs-and-failure-history-unchanged
 replaces the recordings of the suites it ran, a failed or
 killed run's included, so the last recording always says how the suite's
-last run ended; the daily full run refreshes them all. Each recording is
+last run ended; the scheduled full run refreshes them all. Each recording is
 written to a temporary file of its own and renamed into place under a short
 lock held per suite, so runs in two checkouts saving one suite at once never
 mix their contents, and a reader sees one whole recording. A run reads each
@@ -685,7 +685,7 @@ lists (strace's view of a directory opened is left out, because the import
 system opens every directory on the path); outside a strace run, what a
 shell script or a git command a suite runs reads, unless the last strace
 run saw it; an ignored file; anything outside the checkout (a
-tool upgrade, leftover machine state). The daily full run covers all of
+tool upgrade, leftover machine state). The scheduled full run covers all of
 these.
 
 EXIT. 0 when every suite exited 0; 1 when any suite failed, even in a run
@@ -998,7 +998,7 @@ TEST_SUITE_MEMORY_CEILING_BYTES = 4 * 10**9
 TEST_SUITE_CGROUP_SLICE = r"nc\x2dtest\x2dsuites.slice"
 TEST_SUITE_CGROUP_SLICE_CPU_WEIGHT = 10
 TEST_SUITE_MEMORY_CEILING_BYTES_OF_SUITES_THAT_NEED_MORE = {
-    "scripts/daily-full-test-run-of-main-test.py": 24 * 10**9,
+    "scripts/scheduled-full-test-run-of-main-test.py": 24 * 10**9,
 }
 
 
@@ -1041,8 +1041,8 @@ PYTHON_INPUT_RECORDER_MARKER_FILE_NAME = "run-all-test-suites-python-input-recor
 PYTHON_INPUT_RECORDER_METHOD = "python-audit-hook"
 STRACE_INPUT_RECORDER_METHOD = "strace"
 FILES_ONLY_STRACE_SAW_FILE_SUFFIX = ".files-only-strace-saw.json"
-# The daily full run records them once a day; the 12 hours over cover its hour of waiting
-# for the machine's lock and its own length, so one missed daily run is reported.
+# The scheduled full run records them once a day; the 12 hours over cover its hour of waiting
+# for the machine's lock and its own length, so one missed scheduled run is reported.
 FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE = 36
 # The runner, hooks and settings can affect every suite or session a suite starts.
 EVERY_SUITE_RUNS_WHEN_THESE_CHANGE = (
@@ -3720,14 +3720,14 @@ def suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
             f"{FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE} hours in {directory}, "
             f"so this selective run does not select such a suite when the "
             f"change edits a file the suite reads only through git or a shell script. "
-            f"scripts/daily-full-test-run-of-main.py makes those lists once a day on ned-box, so "
+            f"scripts/scheduled-full-test-run-of-main.py makes those lists once a day on ned-box, so "
             f"it has not recorded every suite {since}. The verdicts of the suites this run ran "
             f"stand; carry on with your work.\n"
-            f"If you have not yet told the user in this agent-session that the daily full test "
-            f"run's lists are stale: tell him \"The daily full test run on ned-box has not "
+            f"If you have not yet told the user in this agent-session that the scheduled full test "
+            f"run's lists are stale: tell him \"The scheduled full test run on ned-box has not "
             f"recorded every suite {since}, so selective test runs there can miss a suite whose "
-            f"git or shell reads changed. The daily run's records are in "
-            f"nedlern@ned-box:/home/nedlern/nedschorus-logs/daily-full-test-runs/ned-box/.\" "
+            f"git or shell reads changed. The scheduled run's records are in "
+            f"nedlern@ned-box:/home/nedlern/nedschorus-logs/scheduled-full-test-runs-of-main/ned-box/.\" "
             f"A subagent passes that sentence to the agent that dispatched it instead.")
 
 

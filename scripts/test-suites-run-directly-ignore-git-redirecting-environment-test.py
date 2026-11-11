@@ -107,7 +107,7 @@ REMOVE_THE_VARIABLES_ANOTHER_WAY = {
         "it removes the six from its own environment before it runs git",
     "scripts/branch-conflict-check-test.py":
         "its git runs with every GIT_ variable removed",
-    "scripts/daily-full-test-run-of-main-test.py":
+    "scripts/scheduled-full-test-run-of-main-test.py":
         "its fixture_git() runs with the runner's own stripped environment",
     "scripts/git-client-side-hooks-pre-push-test.py":
         "every GIT_ variable is removed from each case's environment",
