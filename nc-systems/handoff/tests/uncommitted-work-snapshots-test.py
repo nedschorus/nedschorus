@@ -13,7 +13,7 @@ The hook finds its owner by walking up its parent processes to one named
 claude. The cases run the hook's main() in this process, with that walk
 reading a fake /proc, so no binary named claude is needed; see
 FakeProcessTreeClaude. A real claude runs the hook once a week on each machine
-in nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py.
+in nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py.
 No case sends a signal.
 
 Run: python3 nc-systems/handoff/tests/uncommitted-work-snapshots-test.py
@@ -190,7 +190,7 @@ class FakeProcessTreeClaude:
     a real helper process's, so the owner key and the owner's liveness are the
     real platform's. The walk is the module's own function, given the fake
     /proc. A real claude runs the hook once a week in
-    nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py.
+    nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py.
     """
 
     started = 0

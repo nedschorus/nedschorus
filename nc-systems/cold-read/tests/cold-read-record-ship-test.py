@@ -169,7 +169,7 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
                            "scheduled-full-test-runs-of-main", "pull-request-head-test-runs",
                            "daily-memory-review-marks",
                            "handoff-agent-seat-died-without-session-handoff-restart-watcher",
-                           "uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-checks")),
+                           "uncommitted-work-snapshot-hook-scheduled-checks-that-real-claude-session-is-recorded-as-owner")),
           readme_text)
     readme_owner_paths = [token for token in readme_text.split("`")
                           if token.endswith(".py") and "/" in token]
