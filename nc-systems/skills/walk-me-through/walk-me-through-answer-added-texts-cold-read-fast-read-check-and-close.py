@@ -32,14 +32,19 @@ leaves with no decision, REASON saying why, which changes nothing.
 --moved-on-no-decision records that the user moved on from an
 item that asks for no decision, such as a summary item: it needs no
 `#case_against` line, runs no fast read, and close records the item as `<moved on, no
-decision>`.
+decision>`. It is refused, writing nothing, for an item that holds "Recommendation:" on a
+line outside fenced or indented code and HTML comments, because that item asks
+for a decision.
 
 Every answer but --not-asked, --already-decided and --moved-on, which record an
 item the user is not shown, needs --user-reply-as-typed, the user's reply
 exactly as he typed it; check writes it, its whitespace runs squeezed to single
-spaces, into the answer line right after the date, as in `in his words "a
-trivial - a bit longer doesn't matter."`, so that the minutes keep a
-remark that rides with the answer. A check without it is refused, writing
+spaces, into the answer line right after the date, as in ``in his words "`a
+trivial - a bit longer doesn't matter.`"``, so that the minutes keep a
+remark that rides with the answer. The reply, USER_RULING, REASON and the start
+of each text in a status line are written as code spans, so that a
+`#next_to_present` or `#approval_walk_paused` inside them is not read as the
+walk's marker. A check without it is refused, writing
 nothing, and so is one that gives it with any of those three. A reply that is a
 navigation word alone, next, N, continue or go, whatever its case and any
 trailing period or exclamation mark, is refused for every answer but
@@ -710,6 +715,11 @@ NAVIGATION_WORD_REFUSED = (
     "walk-me-through skill lets a navigation word alone advance only when no recommendation is outstanding.\n"
     "If {item} asks for no decision, such as a summary item, run `python3 {program} check --moved-on-no-decision "
     "--user-reply-as-typed {quoted_words}`, then close.")
+MOVED_ON_NO_DECISION_REFUSED = (
+    "nothing written: {item} holds the line \"{line}\", so it asks for a decision, and --moved-on-no-decision "
+    "records only a move on from an item that asks for none.\n"
+    "Ask the user to answer {item} with A, AO, Aa, D or Z, because the walk-me-through skill lets the walk move "
+    "on from an item only once its recommendation is answered.")
 UNREADABLE_NEW_MARKS = (
     "nothing written: {item} in the walk-document {document} has `#new` or `#new_if_d` marks whose text this "
     "program would not read whole, so an answer that adds such a text would be recorded without that text's "
@@ -832,6 +842,8 @@ ITEM_READS_DIRECTORY_SUFFIX = "-item-cold-read-fast-read-review-status-per-text-
 READ_DONE, READ_FAILED = "done", "failed"
 READ_POLL_SECONDS = 2
 FACT_LABELS = ("Recommendation:", "The alternative:")
+# Spelled as the short-answer hook's RECOMMENDATION, so the two programs agree on which items hold a recommendation.
+RECOMMENDATION_LINE = re.compile(r"Recommendation:", re.I)
 AUTOLINK = r"<[A-Za-z][A-Za-z0-9+.-]*:[^>\s]*>"
 # A backquoted span, a Markdown link, an autolink, or any other run of non-space characters.
 FACT_TOKEN = re.compile(r"`[^`\n]+`|!?\[[^\]\n]*\]\([^)\s]*\)|" + AUTOLINK + r"|\S+")
@@ -1223,8 +1235,9 @@ def run_fast_read(text, name, fast_read_program):
     return Path(lines[-1]).parent, notes
 
 
-def excerpt(text):
-    return text if len(text) <= 60 else text[:57].rstrip() + "..."
+def excerpt(walk_finder, text):
+    """The start of text, as a code span, so that no marker in it is read from the minutes."""
+    return walk_finder.text_wrapped_as_markdown_code_span(text if len(text) <= 60 else text[:57].rstrip() + "...")
 
 
 def file_name_part(text):
@@ -1269,7 +1282,7 @@ def guarded_paths(top, paths):
         guard.is_protected, guard.is_reusable_prompt, guard.is_reviewed_document))]
 
 
-def answered_word(arguments):
+def answered_word(arguments, walk_finder):
     """The answer as the walk-minutes write it: approved, disapproved, approved option N, or each part's word,
     as in `part 1 approved #approved_obvious, part 2 disapproved`."""
     if arguments.part_answer:
@@ -1285,9 +1298,9 @@ def answered_word(arguments):
     if arguments.not_asked is not None:
         return f"not asked, {not_asked_label(arguments.not_asked)}"
     if arguments.already_decided is not None:
-        return ALREADY_DECIDED_PREFIX + arguments.already_decided
+        return ALREADY_DECIDED_PREFIX + walk_finder.text_wrapped_as_markdown_code_span(arguments.already_decided)
     if arguments.moved_on is not None:
-        return MOVED_ON_PREFIX + arguments.moved_on
+        return MOVED_ON_PREFIX + walk_finder.text_wrapped_as_markdown_code_span(arguments.moved_on)
     return APPROVED
 
 
@@ -1547,16 +1560,21 @@ def check(arguments):
     if not not_shown_flag and not words:
         raise Failure(USER_WORDS_MISSING.format(program=program, flags=check_flags(arguments)))
     if NAVIGATION_WORD_ALONE.match(words) and not arguments.moved_on_no_decision:
-        raise Failure(NAVIGATION_WORD_REFUSED.format(words=words, item=item, answered=answered_word(arguments),
+        raise Failure(NAVIGATION_WORD_REFUSED.format(words=words, item=item,
+                                                     answered=answered_word(arguments, walk_finder),
                                                      program=program, quoted_words=shlex.quote(words)))
-    in_his_words = USER_WORDS.format(words=words) if words else ""
+    in_his_words = USER_WORDS.format(words=walk_finder.text_wrapped_as_markdown_code_span(words)) if words else ""
     document, lines, marks, unreadable = item_lines(walk_finder, minutes, value, numbers, total, parser)
     rating = case_against_rating(lines, item, document, arguments)
     rated = CASE_AGAINST_HASHTAG.format(rating=rating.replace(" ", "_")) if rating else ""
+    recommendation = next((line for line in lines if RECOMMENDATION_LINE.search(line)), None)
+    if arguments.moved_on_no_decision and recommendation is not None:
+        raise Failure(MOVED_ON_NO_DECISION_REFUSED.format(item=item, line=recommendation.strip()))
     if arguments.deferred or arguments.moved_on_no_decision or arguments.moved_on is not None:
         now = datetime.datetime.now().astimezone()
         no_change = CHECK_MOVED_ON_MINUTES if arguments.moved_on is not None else CHECK_DEFERRED_MINUTES
-        append_to_minutes(minutes, [no_change.format(item=item, answered=answered_word(arguments), rating=rated,
+        append_to_minutes(minutes, [no_change.format(item=item, answered=answered_word(arguments, walk_finder),
+                                                     rating=rated,
                                                      words=in_his_words, date_and_time=f"{now:%Y-%m-%d %H:%M}")])
         print(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
         return 0
@@ -1584,13 +1602,14 @@ def check(arguments):
         record = fast_read_record_holding(text, record_directories, walk_name)
         if record is not None:
             already_done += 1
-            statuses.append(STATUS_ALREADY_DONE.format(mark=mark, number=number, excerpt=excerpt(text),
+            statuses.append(STATUS_ALREADY_DONE.format(mark=mark, number=number, excerpt=excerpt(walk_finder, text),
                                                        record=record))
             continue
         name = walk_fast_read_name(walk_name, item, mark, number)
         record, notes = run_fast_read(text, name, arguments.fast_read_program)
         had_to_be_run += 1
-        statuses.append(STATUS_HAD_TO_BE_RUN.format(mark=mark, number=number, excerpt=excerpt(text), record=record)
+        statuses.append(STATUS_HAD_TO_BE_RUN.format(mark=mark, number=number, excerpt=excerpt(walk_finder, text),
+                                                    record=record)
                         + "".join(STATUS_FAST_READ_NOTE.format(note=note) for note in notes))
         for note in notes:
             if note.startswith(FAST_READ_RECORD_NOT_SHIPPED_MARKERS):
@@ -1602,7 +1621,7 @@ def check(arguments):
     now = datetime.datetime.now().astimezone()
     not_asked = arguments.not_asked is not None or arguments.already_decided is not None
     answer_minutes = CHECK_NOT_ASKED_MINUTES if not_asked else CHECK_MINUTES
-    append_to_minutes(minutes, [answer_minutes.format(item=item, answered=answered_word(arguments),
+    append_to_minutes(minutes, [answer_minutes.format(item=item, answered=answered_word(arguments, walk_finder),
                                                       hashtag=answer_hashtag(arguments), rating=rated,
                                                       words=in_his_words, date_and_time=f"{now:%Y-%m-%d %H:%M}")]
                       + [STATUS_LINE_PREFIX + status for status in statuses])

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
 import fcntl
 import hashlib
 import json
@@ -65,6 +64,9 @@ CREDENTIAL_DIRECTORIES = (
     pathlib.Path.home() / ".config" / "nedschorus",
     pathlib.Path.home() / ".config" / "gh",
     pathlib.Path.home() / ".ssh",
+    pathlib.Path.home() / ".steam",
+    # Denied whole: secrets/ holds credential files no name pattern matches.
+    pathlib.Path.home() / "nedsmessenger",
 )
 CREDENTIAL_FILE_NAME_PATTERNS = ("*.token", ".env")
 
@@ -91,84 +93,6 @@ def credential_directories_present() -> list:
     return [str(directory) for directory in CREDENTIAL_DIRECTORIES
             if directory.is_dir()]
 
-# Exclude /tmp: disappearing test fixtures can be recreated as sandbox mount points
-# or prevent the sandbox from starting.
-CREDENTIAL_FILE_SCAN_ROOTS = (pathlib.Path.home(), REPO_ROOT)
-
-
-# One find over ned-box's home took 6-8 s per cell launch, most of it in the
-# log-store's 900,000 entries; several finds over parts of the tree at once
-# take a third of that.
-CREDENTIAL_FILE_SCAN_SPLIT_DEPTH = 3
-CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = 64
-CREDENTIAL_FILE_SCAN_PARALLEL_FINDS = 16
-
-
-def credential_file_scan_parts(root: pathlib.Path) -> tuple:
-    """Split root into directories to list one level deep and subtrees to walk whole.
-
-    The two together reach every directory find -xdev would reach from root:
-    the first CREDENTIAL_FILE_SCAN_SPLIT_DEPTH levels are listed here, and
-    each directory below them is a subtree root. A symlink is never entered,
-    and a directory on another filesystem than root is left out, as -xdev does.
-    """
-    device = root.stat().st_dev
-    shallow, frontier = [], [str(root)]
-    for _level in range(CREDENTIAL_FILE_SCAN_SPLIT_DEPTH):
-        shallow += frontier
-        below = []
-        for directory in frontier:
-            try:
-                with os.scandir(directory) as entries:
-                    for entry in entries:
-                        try:
-                            if (entry.is_dir(follow_symlinks=False)
-                                    and entry.stat(follow_symlinks=False).st_dev == device):
-                                below.append(entry.path)
-                        except OSError:
-                            pass
-            except OSError:
-                pass
-        frontier = below
-    return shallow, frontier
-
-
-def credential_files_found_now() -> list:
-    """Return credential-named files outside directories already withheld whole.
-
-    Finds the same files one `find <roots> -xdev` would, by running several
-    finds at once over parts of each root's tree, which credential_file_scan_parts
-    splits off. Unreadable directories are skipped, as find skips them.
-    """
-    # find is faster over large homes; unreadable directories are expected, so errors are ignored.
-    name_tests = []
-    for pattern in CREDENTIAL_FILE_NAME_PATTERNS:
-        name_tests += (["-o"] if name_tests else []) + ["-name", pattern]
-    roots = []
-    for root in CREDENTIAL_FILE_SCAN_ROOTS:
-        if root.is_dir() and not any(root == kept or kept in root.parents
-                                     for kept in roots):
-            roots.append(root)
-    match = ["(", *name_tests, ")", "-type", "f"]
-    commands = []
-    for root in roots:
-        shallow, subtrees = credential_file_scan_parts(root)
-        commands.append(["find", *shallow, "-maxdepth", "1", *match])
-        commands += [["find", *subtrees[start::CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT], "-xdev", *match]
-                     for start in range(min(len(subtrees), CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT))]
-
-    def run(command):
-        return subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                              text=True, check=False).stdout.splitlines()
-
-    with concurrent.futures.ThreadPoolExecutor(CREDENTIAL_FILE_SCAN_PARALLEL_FINDS) as pool:
-        found = {path for lines in pool.map(run, commands) for path in lines}
-    return sorted(
-        path for path in found
-        if path and not any(directory == pathlib.Path(path)
-                            or directory in pathlib.Path(path).parents
-                            for directory in CREDENTIAL_DIRECTORIES))
-
 
 def codex_credential_denying_permission_profile_arguments(
         profile_name: str, extends: str, platform: str = sys.platform,
@@ -179,9 +103,7 @@ def codex_credential_denying_permission_profile_arguments(
                if platform.startswith("linux") and extends == ":workspace" else {})
     denied = credential_directories_present()
     denied += reviewer_program_login_files(only_present=True)
-    if platform.startswith("linux"):
-        denied += credential_files_found_now()
-    else:
+    if not platform.startswith("linux"):
         denied += [f"/**/{pattern}" for pattern in CREDENTIAL_FILE_NAME_PATTERNS]
     entries.update((path, "deny") for path in denied)
     table = "{" + ",".join(f"{json.dumps(path)}={json.dumps(access)}"

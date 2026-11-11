@@ -111,6 +111,12 @@ REFUSED += [
         LOOP_CONDITION),
     ("pgrep -f in a loop condition inside an ssh remote command",
         "ssh nedlern@ned-box 'until ! pgrep -f x; do sleep 5; done'", LOOP_CONDITION),
+    ("pgrep -f inside bash -c in a while condition, which the loop's own shell matches",
+        "while bash -c 'pgrep -f x'; do sleep 5; done", LOOP_CONDITION),
+    ("pgrep -f inside bash -c inside sh -c in an until condition",
+        "until ! sh -c \"bash -c 'pgrep -f x'\"; do sleep 5; done", LOOP_CONDITION),
+    ("pgrep -f in a loop inside an unquoted heredoc's substitution",
+        "cat <<EOF\n$(while pgrep -f x; do sleep 5; done)\nEOF", LOOP_CONDITION),
 ]
 
 for name, command, what in REFUSED:
@@ -160,6 +166,9 @@ ALLOWED += [
     ("pgrep -ufoo in a loop condition, whose f is part of -u's value",
         "while pgrep -ufoo x; do :; done"),
     ("pgrep -- -f in a loop condition, whose -f is the pattern", "while pgrep -- -f; do :; done"),
+    ("pgrep -f inside bash -c in a loop's body", "while true; do bash -c 'pgrep -f x' || break; sleep 5; done"),
+    ("pgrep -f run by ssh in a loop condition, which runs on the other machine, outside the loop's shell",
+        "while ssh host 'pgrep -f x'; do sleep 5; done"),
 ]
 
 for name, command in ALLOWED:

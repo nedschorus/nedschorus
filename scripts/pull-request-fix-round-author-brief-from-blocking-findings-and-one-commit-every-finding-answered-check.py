@@ -152,6 +152,10 @@ BLOCKING_COUNT_PATTERN = re.compile(r"\AREQUEST_CHANGES\n\n\*\*Blocking: (\d+)\*
 # merge-lane-pull-request-reviewer-review-post-and-read-back.py opens a nit's comment with this mark;
 # BLOCKING_MARKER_PATTERN must never match it, or a nit would block.
 NIT_MARK = "**fix-in-maintenance, nit** "
+# merge-lane-pull-request-reviewer-review-post-and-read-back.py moves each comment GitHub would refuse,
+# on a line outside the diff, into its review's body under this heading, one line each.
+OUTSIDE_THE_DIFF_HEADING = "Comments on lines outside this pull request's diff:"
+OUTSIDE_THE_DIFF_LINE_PATTERN = re.compile(r"^- `(?P<path>[^`]+):(?P<line>\d+)`: (?P<body>.*)$")
 ROUND_RECORD_FORMAT = ("Fix-round answered without a commit: frozen-head {frozen_head}, reviews {review_ids}.\n"
                        "Posted by {program} --check. A changes-requested review of the same head posted "
                        "after this comment starts a new fix-round.")
@@ -489,6 +493,16 @@ def stated_blocking_count(review, reviewer_login):
     return int(stated.group(1)) if stated else None
 
 
+def blocks_moved_into_review_body(review):
+    """The `path:line` of each blocking finding the review's body lists under OUTSIDE_THE_DIFF_HEADING."""
+    lines = (review.get("body") or "").split("\n")
+    if OUTSIDE_THE_DIFF_HEADING not in lines:
+        return []
+    moved = [OUTSIDE_THE_DIFF_LINE_PATTERN.match(line) for line in lines[lines.index(OUTSIDE_THE_DIFF_HEADING) + 1:]]
+    return [f"{match.group('path')}:{match.group('line')}" for match in moved
+            if match and BLOCKING_MARKER_PATTERN.match(match.group("body").lstrip())]
+
+
 def blocking_findings(number, anchor, reviews, reviewer_login=MERGE_LANE_2_REVIEWER_LOGIN):
     comments_by_review = [gh_json_lines(["api", "--paginate",
                                          f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews/{review['id']}/comments",
@@ -521,6 +535,14 @@ def blocking_findings(number, anchor, reviews, reviewer_login=MERGE_LANE_2_REVIE
         stated = stated_blocking_count(review, reviewer_login)
         if stated is None:
             continue
+        # The brief lists inline comments only, and a review with no inline Block of its own is counted
+        # below against the other reviews' Blocks, which can match its count by chance.
+        moved = blocks_moved_into_review_body(review)
+        if moved:
+            raise Refused(f"The review {review.get('html_url')} says **Blocking: {stated}**, and its body lists "
+                          f"{len(moved)} blocking finding(s) under \"{OUTSIDE_THE_DIFF_HEADING}\", which this "
+                          f"program cannot brief: {', '.join(moved)}.\n"
+                          + ask + ", and that the review's body holds blocking findings outside the diff.")
         own = without_reposts(marked_by_review[index])
         counted = own or findings
         if stated != len(counted):

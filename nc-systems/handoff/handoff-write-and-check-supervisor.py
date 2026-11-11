@@ -64,8 +64,15 @@ because the two are one decision: a handoff nobody is watching must not stop
 the agent working, and an agent that runs only the first half of a two-step
 procedure would stop anyway.
 
-Exit codes: 0 written and a supervisor is watching, 1 written but nothing is
-watching, 2 bad invocation or an empty next step.
+Exit codes, each with the verdict line it prints last on stdout:
+  0  VERDICT: handoff written; a supervisor is watching
+  1  VERDICT: handoff written; nothing is watching
+  2  VERDICT: handoff written; could not tell whether a supervisor is watching
+     -- the supervisor lock is unreadable, or ps cannot identify the live
+     process holding it. Do not rerun: the handoff is already on disk.
+  2  VERDICT: nothing written -- a bad invocation, an empty or missing next
+     step, or a refused agent name; the cause is on stderr.
+Exit 2 has two meanings, so a caller tells them apart by the verdict line.
 """
 
 import argparse
@@ -115,6 +122,12 @@ _threshold_hook_spec.loader.exec_module(threshold_hook)
 deferred_marker_files = threshold_hook.handoff_deferred_marker_and_refused_commands_files_common
 
 
+HANDOFF_WRITTEN_AND_HANDOFF_SUPERVISOR_IS_WATCHING_VERDICT_LINE = "VERDICT: handoff written; a supervisor is watching"
+HANDOFF_WRITTEN_AND_NO_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE = "VERDICT: handoff written; nothing is watching"
+HANDOFF_WRITTEN_CANNOT_TELL_WHETHER_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE = (
+    "VERDICT: handoff written; could not tell whether a supervisor is watching")
+HANDOFF_NOTHING_WRITTEN_VERDICT_LINE = "VERDICT: nothing written"
+
 NEXT_STEP_VERBATIM_FIELD = field_names.NEXT_STEP_VERBATIM_FIELD
 NEXT_STEP_BLOCK_OPENING_MARKER = field_names.NEXT_STEP_BLOCK_OPENING_MARKER
 NEXT_STEP_BLOCK_TERMINATOR = field_names.NEXT_STEP_BLOCK_TERMINATOR
@@ -151,7 +164,10 @@ WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT = "waiting on its own background work"
 STILL_WORKING_SUBAGENT_LAST_EVENTS = ("spawned", "resumed", WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT)
 
 # Prefilter megabytes of tool output before parsing possible subagent events.
-SUBAGENT_EVENT_RECORD_MARKERS = ("async_launched", "resumedAgentId", "<task-notification>")
+SUBAGENT_EVENT_RECORD_MARKERS = ("async_launched", "resumedAgentId", "<task-notification>",
+                                 threshold_hook.TASK_STOP_RESULT_KEY)
+# The last event of a subagent a TaskStop call stopped, which gets no task-notification.
+STOPPED_BY_TASK_STOP_EVENT = "stopped"
 
 
 def collapse_to_one_line(text: str) -> str:
@@ -273,7 +289,8 @@ def task_notification_text(record: dict):
 
 def spawned_subagent_roster(transcript_path: Path) -> list:
     """Return this session's spawned subagents in spawn order with their last events."""
-    # Agent results acknowledge spawn, not completion; terminal events arrive in notifications.
+    # Agent results acknowledge spawn, not completion; terminal events arrive in notifications,
+    # or, for a subagent TaskStop stopped, in the TaskStop result alone.
     # Predecessor rosters are not inherited; deferred work must remain in next-step.
     roster = []
     by_agent_id = {}
@@ -309,6 +326,11 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
                 if resumed is not None:
                     resumed["last_event"] = "resumed"
                     resumed["last_event_at"] = stamp
+                    continue
+                stopped = by_agent_id.get(result.get("task_id"))
+                if stopped is not None and threshold_hook.TASK_STOP_RESULT_KEY in result:
+                    stopped["last_event"] = STOPPED_BY_TASK_STOP_EVENT
+                    stopped["last_event_at"] = stamp
                     continue
 
             notification = task_notification_text(record)
@@ -782,7 +804,7 @@ def run_branch_protection_audit() -> str:
         return f"branch-protection audit: audit-failed — {type(error).__name__}: {error}"
 
 
-def main(argv=None) -> int:
+def write_handoff_and_report_supervisor(argv) -> int:
     parser = argparse.ArgumentParser(
         description="Write the handoff file that retires this session.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -813,6 +835,7 @@ def main(argv=None) -> int:
     next_step_path = Path(arguments.next_step_file).expanduser()
     if not next_step_path.is_file():
         print(f"handoff-write-and-check-supervisor: no such file: {next_step_path}", file=sys.stderr)
+        print(HANDOFF_NOTHING_WRITTEN_VERDICT_LINE)
         return 2
 
     next_step_text = next_step_path.read_text(encoding="utf-8")
@@ -823,6 +846,7 @@ def main(argv=None) -> int:
             "with no instruction, so nothing was written",
             file=sys.stderr,
         )
+        print(HANDOFF_NOTHING_WRITTEN_VERDICT_LINE)
         return 2
 
     verbatim_lines = verbatim_block_lines(next_step_text)
@@ -835,6 +859,7 @@ def main(argv=None) -> int:
             "what the successor reads. Reword that line and rerun. Nothing was written.",
             file=sys.stderr,
         )
+        print(HANDOFF_NOTHING_WRITTEN_VERDICT_LINE)
         return 2
 
     agent = arguments.agent or default_agent_name()
@@ -871,6 +896,7 @@ def main(argv=None) -> int:
             f"writing would destroy a handoff that seat may not have acted on yet. {exits}",
             file=sys.stderr,
         )
+        print(HANDOFF_NOTHING_WRITTEN_VERDICT_LINE)
         return 2
 
     # An unwatched name would strand the handoff even when this directory has a live supervisor.
@@ -890,6 +916,7 @@ def main(argv=None) -> int:
             f"as {agent}.",
             file=sys.stderr,
         )
+        print(HANDOFF_NOTHING_WRITTEN_VERDICT_LINE)
         return 2
 
     counter = next_restart_counter(handoff_path, state_path)
@@ -908,18 +935,40 @@ def main(argv=None) -> int:
     print(f"handoff-write-and-check-supervisor: {prune_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {run_branch_protection_audit()}")
 
-    alive, explanation = supervisor.supervisor_liveness(state_path)
-    if alive:
-        # With ps unavailable, a held lock only implies a supervisor; do not promise takeover.
+    answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(state_path)
+    machine = "ubuntu" if sys.platform.startswith("linux") else "mac"
+    if answer == supervisor.SUPERVISOR_LIVENESS_WATCHING:
         print(
             f"handoff-write-and-check-supervisor: {explanation}. Stop working now and wait — "
-            "if it is watching, it takes over within seconds."
+            "it takes over within seconds."
         )
+        print(HANDOFF_WRITTEN_AND_HANDOFF_SUPERVISOR_IS_WATCHING_VERDICT_LINE)
         return 0
+
+    if answer == supervisor.SUPERVISOR_LIVENESS_CANNOT_TELL:
+        # Guessing either way is unsafe: a wrong "watched" strands the work, and a wrong
+        # "unwatched" can bring a second supervisor that kills and relaunches the session.
+        print(
+            f"handoff-write-and-check-supervisor: {explanation}. The handoff is written at "
+            f"{handoff_path}, but whether a supervisor is watching this seat could not be told.\n"
+            "Stop working now, so that a supervisor that is watching takes over from the handoff "
+            "as written.\n"
+            "Do not rerun this program: the handoff is already written, and a second one would "
+            "replace it.\n"
+            f"Tell the user what this message says, and ask him to check on the {machine} machine, "
+            f"with `ps -ww -e -o pid=,args= | grep -F {supervisor.SUPERVISOR_SCRIPT_FILE_NAME}`, "
+            f"whether a {supervisor.SUPERVISOR_SCRIPT_FILE_NAME} with --agent {agent} is running.\n"
+            "If one is, it takes over this session from the handoff; there is nothing more to "
+            "do.\n"
+            f"If none is, the user runs `scripts/resupervise-seat.py {agent} --machine {machine}` "
+            "to seat a supervised successor from the handoff.",
+            file=sys.stderr, flush=True,
+        )
+        print(HANDOFF_WRITTEN_CANNOT_TELL_WHETHER_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE)
+        return 2
 
     # Use the supervised launcher to consume the waiting handoff.
     # Print --machine explicitly: the default is Mac, but a box seat must be recovered on the box.
-    machine = "ubuntu" if sys.platform.startswith("linux") else "mac"
     print(
         f"handoff-write-and-check-supervisor: {explanation} — and this seat has no supervisor to "
         f"reincarnate it. The handoff is written at {handoff_path}; nothing will act on it by itself. "
@@ -928,7 +977,20 @@ def main(argv=None) -> int:
         "tmux session and relaunches, and the supervisor starts a fresh agent-session from the handoff. Relaunching "
         "`claude` by hand instead produces another unsupervised seat. Until then, keep working."
     )
+    print(HANDOFF_WRITTEN_AND_NO_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE)
     return 1
+
+
+def main(argv=None) -> int:
+    try:
+        exit_code = write_handoff_and_report_supervisor(argv)
+    except SystemExit as stop:
+        # argparse stops with 2 on a bad invocation, before anything is written.
+        if stop.code != 2:
+            raise
+        exit_code = 2
+        print(HANDOFF_NOTHING_WRITTEN_VERDICT_LINE)
+    return exit_code
 
 
 if __name__ == "__main__":

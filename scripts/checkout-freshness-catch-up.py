@@ -86,12 +86,17 @@ the notes go out at Stop after all, with a line saying why, rather than
 being lost. Every note the agent receives ends by saying it is not for the
 user, because agents were repeating these notes to him.
 
-Everything here exits 0: a freshness fault must never block a turn from
-ending, and no `decision` field is ever emitted. A git command that fails
-where the script needs its answer stops the run, and the failure is told:
-to the user at Stop, to the agent at --deliver-pending-agent-notes, and on
-stdout in the operator-facing modes. Only a directory in no repository at
-all stays silent.
+Both hook modes and --report exit 0: a freshness fault must never block a
+turn from ending, and no `decision` field is ever emitted. --reference-pull
+exits 1 whenever the reference checkout did not end at origin/main as a
+fetch that worked shows it: git failed, the fetch failed, local work blocked
+the fast-forward, or no checkout was found. It exits 0 when the checkout
+ended there, whether it moved or was already current. A launcher reads the
+exit code only to print a warning, and launches anyway. A git command that
+fails where the script needs its answer stops the run, and the failure is
+told: to the user at Stop, to the agent at --deliver-pending-agent-notes,
+and on stdout in the operator-facing modes. Only a hook run in a directory
+in no repository at all stays silent.
 Silence is meaningful — no output means nothing changed. The stamp
 (<git-dir>/checkout-freshness-stamp.json) is what the status line and boot
 reports display, so "0 behind" is only ever claimed off a real fetch, with
@@ -105,7 +110,8 @@ because launchers read them on a terminal):
                         to the agent and clear the queue
   --cwd PATH            either hook mode without stdin (tests, ad-hoc runs)
   --report              print the stamp's one-line summary, fetch if stale
-  --reference-pull      only the reference-checkout fast-forward
+  --reference-pull      only the reference-checkout fast-forward; exits 1
+                        unless the checkout ends at origin/main
   --repo PATH           the checkout --report/--reference-pull operate on
   --interval-seconds    how long a fetch stays fresh (default 300)
 """
@@ -225,9 +231,9 @@ IGNORED_FILES_IN_THE_WAY_ADVICE = (
 )
 LEAVE_IT_ADVICE = (
     "This branch is pushed, so its review may be running. Do not rebase or "
-    "amend it. A fix for this topic is a new commit on top, pushed once. If the "
-    "branch conflicts with main, as python3 scripts/branch-conflict-check.py run "
-    "in its checkout reports, do what that report says. "
+    "amend it. A fix for this topic is a new commit on top, pushed once. To learn "
+    "whether the branch conflicts with main, run python3 scripts/branch-conflict-check.py "
+    "in this checkout, and if it reports a conflict, do what its report says. "
     "Start your next topic with `git checkout -b <name> origin/main`."
 )
 # A branch whose own commits are already on a remote branch, under another
@@ -549,6 +555,7 @@ NOTE_KINDS_DROPPED = set()
 STOP_AGENT_LINES = []   # notes that could not be queued, sent at Stop instead
 
 
+# Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 def report(line: str) -> None:
     """Queue one line for the USER's display."""
     REPORT_LINES.append(line)
@@ -1634,8 +1641,14 @@ def reference_checkout_of(checkout: Path):
 
 
 def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
-                                    operator_facing: bool = True) -> None:
+                                    operator_facing: bool = True) -> bool:
     """ff-only pull of a checkout parked on main; never a real merge.
+
+    Returns True when the checkout ends 0 behind origin/main and the fetch
+    behind that count worked, whether it moved or was already there; False
+    otherwise, a fast-forward to an origin/main whose fetch failed included,
+    since the real main may be further on. --reference-pull exits on this
+    value; the hook callers ignore it.
 
     Safe by construction only when the reference carries nothing of its own:
     any local commit, any tracked change, any in-progress operation, and it
@@ -1667,7 +1680,10 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
     """
     git_dir = git_directory(reference)
     if git_dir is None:
-        return
+        if operator_facing:
+            report(f"catch-up: reference checkout {reference} is not a git checkout, so it "
+                   f"was not brought to origin/main")
+        return False
     stamp_path = git_dir / STAMP_FILE_NAME
     stamp = fetch_if_stale(reference, stamp_path, interval_seconds)
     fetch_note = fetch_failure_note(stamp, "this count")
@@ -1691,11 +1707,25 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
                       f"origin/main, because git could not count how far behind it is: "
                       f"{error}{fetch_note}")
         write_stamp(stamp_path, stamp)
-        return
+        return False
     behind, ahead = counts
     stamp["behind"], stamp["ahead"] = behind, ahead
 
     if behind == 0:
+        branch = current_branch(reference)
+        stamp["branch"] = branch
+        not_at_main = []
+        if branch != "main":
+            not_at_main.append(f"on {branch or 'no branch'}, not main")
+        if ahead:
+            not_at_main.append(f"{ahead} local commit(s) main does not have")
+        if not_at_main:
+            stamp["last_action"] = f"reference not at origin/main: {'; '.join(not_at_main)}"
+            report_reason(not_at_main + (["fetch failed"] if fetch_note else []),
+                          f"catch-up: reference checkout {reference} is 0 behind origin/main "
+                          f"but does not end at it — {'; '.join(not_at_main)}{fetch_note}")
+            write_stamp(stamp_path, stamp)
+            return False
         if fetch_note:
             stamp["last_action"] = "reference fetch failed"
             report_reason(["fetch failed"],
@@ -1704,7 +1734,7 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
         else:
             stamp.pop("last_reference_blockers", None)
         write_stamp(stamp_path, stamp)
-        return
+        return not fetch_note
 
     blockers, branch = merge_blockers(reference, git_dir)
     stamp["branch"] = branch
@@ -1721,7 +1751,7 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
                       f"catch-up: reference checkout {reference} is {behind} behind and was "
                       f"left alone — {'; '.join(real_blockers)}{fetch_note}")
         write_stamp(stamp_path, stamp)
-        return
+        return False
 
     pulled = run_git(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"], reference, timeout=120)
     if pulled.returncode != 0:
@@ -1731,7 +1761,7 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
                       f"catch-up: reference checkout {reference} could not fast-forward: "
                       f"{detail}")
         write_stamp(stamp_path, stamp)
-        return
+        return False
     stamp["behind"], stamp["last_action"] = 0, f"reference fast-forwarded {behind}"
     stamp.pop("last_reference_blockers", None)
     write_stamp(stamp_path, stamp)
@@ -1742,7 +1772,8 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
                f"and its post-merge hook reported a failure:\n{pulled.stderr.strip()}")
     if operator_facing:
         report(f"catch-up: reference checkout {reference} fast-forwarded {behind} commit(s) "
-               f"to origin/main")
+               f"to origin/main{fetch_note}")
+    return not fetch_note
 
 
 def report_line(checkout: Path, interval_seconds: int) -> str:
@@ -1800,19 +1831,26 @@ def main(argv=None) -> int:
 
     if arguments.reference_pull:
         repository = Path(arguments.repo).resolve()
+        reached_origin_main = False
         try:
             root = checkout_root(repository)
-            if root is not None:
-                reference = reference_checkout_of(root)
-                if reference is not None:
-                    fast_forward_reference_checkout(reference, arguments.interval_seconds)
+            reference = reference_checkout_of(root) if root is not None else None
+            if root is None:
+                report(f"catch-up: {repository} is not in a git checkout, so no reference "
+                       f"checkout was found or brought to origin/main")
+            elif reference is None:
+                report(f"catch-up: git listed no worktrees for {root}, so no reference "
+                       f"checkout was found or brought to origin/main")
+            else:
+                reached_origin_main = fast_forward_reference_checkout(
+                    reference, arguments.interval_seconds)
         except git_output.GitCommandFailed as error:
             report(git_failed_text("catch-up", f"the reference checkout of {repository} "
                                    "was not updated", error, GIT_FAILED_RERUN_NEXT_STEP_LINES,
                                    rerun=f"`python3 {Path(__file__).resolve()} "
                                          f"--reference-pull --repo {repository}`"))
         flush_report()
-        return 0
+        return 0 if reached_origin_main else 1
 
     # Either hook mode reads the payload from stdin. --cwd means "no stdin": an
     # ad-hoc run on a terminal would otherwise block forever waiting for a

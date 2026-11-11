@@ -1007,8 +1007,8 @@ def main():
         return subprocess.CompletedProcess(list(command), 0, "", "")
 
     # The credential lists are pointed at a scratch home for the call, so the
-    # profile's denials name paths in it and the real home is neither scanned
-    # nor named in a failure line. The credential directories are re-rooted
+    # profile's denials name paths in it and the real home is not named in a
+    # failure line. The credential directories are re-rooted
     # from the real list rather than listed here, so a directory dropped from
     # CREDENTIAL_DIRECTORIES drops out of the profile.
     credential_scratch = tempfile.TemporaryDirectory()
@@ -1019,20 +1019,17 @@ def main():
     login_canary.parent.mkdir(parents=True)
     login_canary.write_text("CANARY-NOT-A-SECRET-sanity-check-adversarial-prompts-test\n", encoding="utf-8")
     shared = runner_memories.common
-    real_lists = (shared.CREDENTIAL_DIRECTORIES, shared.REVIEWER_PROGRAM_LOGIN_FILES,
-                  shared.credential_files_found_now)
+    real_lists = (shared.CREDENTIAL_DIRECTORIES, shared.REVIEWER_PROGRAM_LOGIN_FILES)
     try:
         runner_memories.run_agent_binary_unless_run_stopped = capture_command
         shared.CREDENTIAL_DIRECTORIES = tuple(
             scratch_home / directory.relative_to(pathlib.Path.home())
             for directory in real_lists[0])
         shared.REVIEWER_PROGRAM_LOGIN_FILES = {"codex": (login_canary,)}
-        shared.credential_files_found_now = lambda: []
         runner_memories.run_codex("a prompt no model ever sees")
     finally:
         runner_memories.run_agent_binary_unless_run_stopped = real_memories_launch
-        (shared.CREDENTIAL_DIRECTORIES, shared.REVIEWER_PROGRAM_LOGIN_FILES,
-         shared.credential_files_found_now) = real_lists
+        shared.CREDENTIAL_DIRECTORIES, shared.REVIEWER_PROGRAM_LOGIN_FILES = real_lists
     codex_command = captured.get("command", [])
     check("run_codex launches codex with memories disabled",
           ("--disable", "memories") in list(zip(codex_command, codex_command[1:])),
@@ -1412,20 +1409,15 @@ def main():
 
     review_checkout = pathlib.Path("/a/review/copy/of/the/commit")
     real_launch_run = agent_binary_launch_a_case_replaces(runner_launch)
-    # On Linux the codex cell's profile lists the credential files under the
-    # home by running `find` there: emptied, so the real home is not scanned.
-    real_launch_files_found = runner_launch.common.credential_files_found_now
     launch_error = None
     try:
         runner_launch.run_agent_binary_unless_run_stopped = capture_launch
-        runner_launch.common.credential_files_found_now = lambda: []
         runner_launch.run_claude("a prompt no model ever sees", review_checkout)
         runner_launch.run_codex("a prompt no model ever sees", review_checkout)
     except TypeError as error:
         launch_error = error
     finally:
         runner_launch.run_agent_binary_unless_run_stopped = real_launch_run
-        runner_launch.common.credential_files_found_now = real_launch_files_found
     claude_launches = [cwd for command, cwd in launches if command[0] == "claude"]
     codex_commands = [command for command, _ in launches if command[0] == "codex"]
     check("a claude cell runs in the review copy it is handed",
@@ -2090,12 +2082,6 @@ def main():
     # cold-read-codex-cell.py, recognised_failure_texts_for_model).
     runner_classes = load_runner()
     real_classes_run = agent_binary_launch_a_case_replaces(runner_classes)
-    # On Linux the codex cell's permission profile lists the credential files
-    # under the home, which it finds by running `find` there: emptied for
-    # these launches, as the launch-flag case above does, so the real home is
-    # not scanned and the only command the stand-ins see is the CLI's.
-    real_credential_files_found_now = runner_classes.common.credential_files_found_now
-    runner_classes.common.credential_files_found_now = lambda: []
     codex_logged_out = ("2026-09-18T19:37:41.140816Z ERROR codex_api::endpoint::"
                         "responses_websocket: failed to connect to websocket: HTTP "
                         "error: 401 Unauthorized, url: wss://api.openai.com/v1/responses")
@@ -2168,7 +2154,6 @@ def main():
                       f"output was {output[:400]!r}")
     finally:
         runner_classes.run_agent_binary_unless_run_stopped = real_classes_run
-        runner_classes.common.credential_files_found_now = real_credential_files_found_now
 
     # Case 41: a timeout is not relaunched: the same launch would cost the
     # same hour. The triage instructions follow its FAILED line. A relaunch
@@ -2457,7 +2442,6 @@ module.RECORDS_ROOT = module.REPO_ROOT / "sanity-check-records"
 module.REVIEW_COPIES_ROOT = pathlib.Path({str(base / "review-copies")!r})
 if not os.environ.get("DRIVER_PROBE_VERSIONS"):
     module.CLI_VERSION_CACHE.update({{"claude": "1.1.1-test", "codex": "2.2.2-test"}})
-module.common.credential_files_found_now = lambda: []
 if hasattr(module, "STOPPED_PROCESS_GRACE_SECONDS"):
     module.STOPPED_PROCESS_GRACE_SECONDS = 3.0
 
@@ -2772,12 +2756,8 @@ sys.exit(module.main())
         saved_environment = dict(os.environ)
         results = {}
         buffer = io.StringIO()
-        # On Linux the codex profile walks the home for credential files:
-        # emptied, so the real home is not walked.
-        real_bytes_files_found = runner_bytes.common.credential_files_found_now
         try:
             os.environ.update(environment)
-            runner_bytes.common.credential_files_found_now = lambda: []
             with contextlib.redirect_stdout(buffer):
                 for name, launcher in (("codex", runner_bytes.run_codex),
                                        ("claude", runner_bytes.run_claude)):
@@ -2786,7 +2766,6 @@ sys.exit(module.main())
                     except UnicodeDecodeError as error:
                         results[name] = error
         finally:
-            runner_bytes.common.credential_files_found_now = real_bytes_files_found
             os.environ.clear()
             os.environ.update(saved_environment)
         for name in ("codex", "claude"):

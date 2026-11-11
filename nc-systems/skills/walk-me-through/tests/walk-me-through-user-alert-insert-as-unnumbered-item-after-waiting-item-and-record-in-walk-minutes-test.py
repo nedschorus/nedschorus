@@ -163,7 +163,7 @@ def run_several_alert_cases(root):
         check(f"an alert titled {title!r} becomes the unnumbered item `## User alert: {title}`, not a refusal",
               result.returncode == 0 and f"\n## User alert: {title}\n" in document
               and sum(map(walk_finder.approval_walk_unit_is_unnumbered_item, units)) == 1
-              and f"`## User alert: {title}`" in result.stdout and f"User alert: {title}." in minutes,
+              and f"`## User alert: {title}`" in result.stdout and f"`User alert: {title}`." in minutes,
               result.stderr + document)
 
     sub_item = WALK_DOCUMENT.replace("## Items 5 and 6", "### Item 4.1 of 9: a part\n\n## Items 5 and 6")
@@ -186,6 +186,22 @@ def run_several_alert_cases(root):
           "alert by hand, and change nothing",
           result.returncode == 1 and "`##` part headings" in result.stderr and "alert-e" in result.stderr
           and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
+
+
+def run_marker_in_title_cases(root):
+    for number, title in enumerate(("pause it with #approval_walk_paused", "close it: #next_to_present none",
+                                    "quote `#next_to_present none` first")):
+        checkout, home = walk_checkout(root, f"marker-{number}")
+        claimed_alert(home, "alert-m", title)
+        result = run(checkout, home, "alert-m")
+        _, minutes = files(checkout)
+        parser = walk_finder.markdown_parser()
+        found = walk_finder.open_walk(checkout / "docs" / "walk", parser)
+        check(f"a marker in the alert title {title!r} is written to the walk-minutes as a quotation, so the walk "
+              "stays open on its waiting item",
+              result.returncode == 0 and found is not None and found[1] == "item 4 of 9"
+              and walk_finder.text_wrapped_as_markdown_code_span(title) in minutes,
+              f"{result.stderr} {found!r} {minutes}")
 
 
 def run_refusal_cases(root):
@@ -266,6 +282,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     scratch = Path(temporary_directory)
     run_one_alert_cases(scratch)
     run_several_alert_cases(scratch)
+    run_marker_in_title_cases(scratch)
     run_refusal_cases(scratch)
 
 if failures:

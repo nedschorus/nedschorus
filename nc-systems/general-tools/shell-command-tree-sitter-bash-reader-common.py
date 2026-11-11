@@ -67,6 +67,11 @@ _failed_command_lines_spec = importlib.util.spec_from_file_location(
     Path(__file__).resolve().with_name("failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py"))
 _failed_command_lines = importlib.util.module_from_spec(_failed_command_lines_spec)
 _failed_command_lines_spec.loader.exec_module(_failed_command_lines)
+_attendance_check_spec = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().with_name("agent-session-unattended-by-user-check-common.py"))
+_attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
+_attendance_check_spec.loader.exec_module(_attendance_check)
 
 REQUIREMENTS_FILE = python_libraries_pinned_requirements_install_if_missing_then_import_common.PINNED_REQUIREMENTS_FILE
 # The Bash guards run in parallel with a 30-second hook timeout; a cached wheel installs in about a second.
@@ -485,8 +490,7 @@ def parser():
 
 
 def _session_unattended(environment):
-    return bool(environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
-                or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0")
+    return _attendance_check.agent_session_unattended_by_user(environment)
 
 
 @contextlib.contextmanager
@@ -496,8 +500,8 @@ def agent_session_attendance_environment_variables_temporarily_set_for_test(atte
     A test of a message that names whom to tell sets both, so it reads the same in any
     agent-session it runs in.
     """
-    values = {"CLAUDE_CODE_SESSION_ATTENDED": attended,
-              "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": reincarnation_owned_by_caller}
+    values = {_attendance_check.SESSION_ATTENDED_VARIABLE: attended,
+              _attendance_check.REINCARNATION_OWNED_BY_CALLER_VARIABLE: reincarnation_owned_by_caller}
     saved = {name: os.environ.get(name) for name in values}
 
     def put(settings):
@@ -1054,17 +1058,19 @@ class _Collector:
         substitution is a child shell of its own, apart from every other body's.
         """
         for command in _heredoc_body_substitution_commands(taken.body, self.glob_markers):
-            identity = tuple(shell.placed(
+            command.child_shell = tuple(shell.placed(
                 lambda offset: -1 - offset - taken.number * BODY_IDENTITY_STRIDE)
                 for shell in command.child_shell)
-            self.commands.append(SimpleCommand(list(command), child_shell + identity,
-                                               command.redirects, command.heredocs))
+            self.adopt([command], child_shell)
 
     def adopt(self, commands, child_shell):
-        """Add commands read from a second parse, inside the child shell they run in."""
+        """Add commands read from a second parse, inside the child shell they run in.
+
+        Each command is moved, not rebuilt, so every attribute the second parse gave it stays.
+        """
         for command in commands:
-            self.commands.append(SimpleCommand(list(command), child_shell + command.child_shell,
-                                               command.redirects, command.heredocs))
+            command.child_shell = child_shell + command.child_shell
+            self.commands.append(command)
 
     def follows_process_id(self, node):
         return _follows_process_id(self.source, node.start_byte)

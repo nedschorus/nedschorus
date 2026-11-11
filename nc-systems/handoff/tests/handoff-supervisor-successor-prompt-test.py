@@ -758,18 +758,6 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
         str(remaining),
     )
 
-    # --- Queue status -----------------------------------------------------
-    project = workspace / "project"
-    (project / "nc-queue").mkdir(parents=True)
-    (project / "nc-queue" / "2026-07-28-older-note.md").write_text("x", encoding="utf-8")
-    (project / "nc-queue" / "2026-08-01-newer-note.md").write_text("x", encoding="utf-8")
-    (project / "nc-queue" / "README.md").write_text("x", encoding="utf-8")
-    (project / "docs" / "nedschorus-wiki" / "queue").mkdir(parents=True)
-    line = supervisor.queue_status_line(project)
-    check("queue status counts a loaded queue", "nc-queue: 2" in line, line)
-    check("queue status names the oldest item", "2026-07-28-older-note.md" in line, line)
-    check("queue status reports an empty queue", "docs/nedschorus-wiki/queue: empty" in line, line)
-
 
 def run_supervisor_names_replaced_unknown_name_cases():
     """The fixture refuses a stub under a name the supervisor does not define,
@@ -3340,14 +3328,11 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
     """carry_over_to_successor, with the extractor stubbed: what the reincarnation
     actually prints to the console, and what it actually puts in the prompt.
 
-    Two rulings of 2026-08-29 meet here. The queue-status line is CUT from
-    the initial agent instructions but the console print STAYS — before this change the
-    supervisor threaded queue status into every reincarnation prompt
-    unconditionally (queue_status_line always returns a truthy string), so
-    the prompt assertion below fails against that code. And the plan now
-    carries the predecessor's session directory, composed from the retiring
-    session id, so the roster sentence can name where the dead subagents'
-    transcripts survive.
+    The working directory holds a loaded nc-queue, so a queue status printed
+    to the console or put in the prompt would show. The plan carries the
+    predecessor's session directory, composed from the retiring session id,
+    so the roster sentence can name where the dead subagents' transcripts
+    survive.
     """
     home = workspace / "recycle-composition"
     handoff_directory = home / "handoffs"
@@ -3379,9 +3364,8 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
         supervisor.extract_dialog = original_extract_dialog
 
     printed = console.getvalue()
-    check("a reincarnation still prints the queue status to its own console",
-          "handoff-supervisor: queues — nc-queue: 1, oldest 2026-07-30-stale-item.md" in printed,
-          printed)
+    check("a reincarnation prints no queue status to its console",
+          "queues —" not in printed and "2026-07-30-stale-item.md" not in printed, printed)
     check("the plan names the predecessor's session directory, composed from its id",
           plan is not None and plan.predecessor_session_directory
           == supervisor.project_directory_for_working_directory(working_directory)

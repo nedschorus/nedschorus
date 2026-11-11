@@ -145,7 +145,8 @@ def head_mismatch_next_steps(pull_request, head, runner, git_failed):
         return (f"This checkout is on {on}, not the pull request's branch {branch}: run this "
                 f"again from the checkout that has {branch} checked out; git worktree list "
                 f"names each checkout of this clone with its branch. If no checkout has it, make "
-                f"one with git worktree add <a new directory> {quoted} and run this again there.")
+                f"one with python3 scripts/agent-seat-worktree-create-with-owner-file.py {quoted}, "
+                f"which prints its path, and run this again there.")
     # rev-parse --verify --quiet exits 1 silently only for a commit this clone lacks; an object
     # that is there but unreadable prints an error, with exit 128 or, for a hash mismatch, 1.
     pushed_is_here = git_answers_yes(

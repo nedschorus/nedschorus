@@ -161,7 +161,7 @@
     {
       "name": "claude-code-temp-folders-of-exited-agent-sessions-delete",
       "program": "nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py",
-      "arguments": [],
+      "arguments": ["--then-tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete"],
       "output": ".claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log",
       "on": {
         "ned-box": {"scheduler": "cron", "schedule": "30 7 * * *"}

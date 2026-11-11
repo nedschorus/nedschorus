@@ -6,13 +6,16 @@ Run: python3 nc-systems/handoff/tests/handoff-write-and-check-supervisor-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 # This suite sits at nc-systems/handoff/tests/; the system it tests is one
 # directory up. A with_name() lookup here would resolve inside tests/.
@@ -277,6 +280,8 @@ def run_invocation_cases(workspace: Path):
 
     result = run_writer(workspace, "   \n\t  ")
     check("an empty next step is refused", result.returncode == 2, result.stdout)
+    check("a refusal's last stdout line is the nothing-written verdict",
+          last_stdout_line(result) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, result.stdout)
     check("the refusal explains why", "empty" in result.stderr, result.stderr)
     fields = writer.supervisor.parse_handoff_file(handoff_path)
     check("a refused write leaves the previous handoff intact",
@@ -289,9 +294,60 @@ def run_invocation_cases(workspace: Path):
         capture_output=True, text=True, check=False,
     )
     check("a missing next-step file is refused", result.returncode == 2, result.stdout)
+    check("a missing next-step file prints the nothing-written verdict",
+          last_stdout_line(result) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, result.stdout)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--handoff-dir", str(workspace)],
+        capture_output=True, text=True, check=False,
+    )
+    check("an invocation argparse rejects exits 2 with the nothing-written verdict",
+          result.returncode == 2 and last_stdout_line(result) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    result = subprocess.run([sys.executable, str(SCRIPT_PATH), "--help"],
+                            capture_output=True, text=True, check=False)
+    check("--help exits 0 without a verdict",
+          result.returncode == 0 and "VERDICT: nothing written" not in result.stdout.splitlines()[-1:],
+          f"exit {result.returncode}")
+
+    # Only argparse's own stop, status 2, is a refusal before anything is written; any other
+    # SystemExit status must reach the caller unchanged and print no verdict.
+    printed = io.StringIO()
+    with mock.patch.object(writer, "write_handoff_and_report_supervisor", side_effect=SystemExit(3)), \
+            contextlib.redirect_stdout(printed):
+        try:
+            writer.main([])
+            stopped_with = None
+        except SystemExit as stop:
+            stopped_with = stop.code
+    check("a SystemExit other than argparse's status 2 passes through, without a verdict",
+          stopped_with == 3 and "VERDICT" not in printed.getvalue(),
+          f"stopped with {stopped_with}: {printed.getvalue()!r}")
 
     check("no partial file is left behind",
           not list(workspace.glob("*.partial")), str(list(workspace.glob("*.partial"))))
+
+
+def last_stdout_line(result) -> str:
+    lines = result.stdout.strip().splitlines()
+    return lines[-1] if lines else ""
+
+
+def check_cannot_tell(result, workspace: Path, situation: str):
+    """The handoff is on disk, so the agent stops and does not rerun; exit 2 says so."""
+    check(f"{situation}, the writer exits 2", result.returncode == 2,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    check(f"{situation}, the handoff is still written",
+          (workspace / "tester-handoff.md").is_file(), "handoff missing")
+    check(f"{situation}, the last stdout line is the cannot-tell verdict",
+          last_stdout_line(result) == writer.HANDOFF_WRITTEN_CANNOT_TELL_WHETHER_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE,
+          result.stdout)
+    check(f"{situation}, the agent is told to stop, not to wait or to keep working",
+          "Stop working now, so that" in result.stderr
+          and "Stop working now and wait" not in result.stdout
+          and "keep working" not in result.stdout, result.stdout + result.stderr)
+    check(f"{situation}, the agent is told not to rerun", "Do not rerun" in result.stderr,
+          result.stderr)
 
 
 def run_liveness_report_cases(workspace: Path):
@@ -335,14 +391,22 @@ def run_liveness_report_cases(workspace: Path):
         check("with a live supervisor, the writer exits 0", result.returncode == 0, result.stderr)
         check("with a live supervisor, the agent is told to stop and wait",
               "Stop working now and wait" in result.stdout, result.stdout)
-        # Conditional, not promised. alive can be yes-by-assumption: with ps
-        # unavailable and some process holding the lock, a supervisor is
-        # assumed rather than identified, and this agent has just written a
-        # handoff. "It takes over within seconds" would strand it on a sentence
-        # instead of a fact (#328 follow-up round, nedschorus#242).
-        check("and the takeover is stated conditionally, since alive can be an assumption",
-              "if it is watching, it takes over within seconds" in result.stdout,
-              result.stdout)
+        check("with a live supervisor, the last stdout line is the watching verdict",
+              last_stdout_line(result) == writer.HANDOFF_WRITTEN_AND_HANDOFF_SUPERVISOR_IS_WATCHING_VERDICT_LINE, result.stdout)
+
+        # ps fails while a live process holds the lock: the writer cannot tell
+        # whether that process is the supervisor, so it guesses neither way.
+        failing_ps_directory = workspace / "failing-ps"
+        failing_ps_directory.mkdir(parents=True, exist_ok=True)
+        failing_ps = failing_ps_directory / "ps"
+        failing_ps.write_text("#!/bin/sh\necho 'ps: fork failed' >&2\nexit 3\n", encoding="utf-8")
+        failing_ps.chmod(0o755)
+        result = run_writer(workspace, "Continue the walk.", environment_overrides={
+            "PATH": f"{failing_ps_directory}{os.pathsep}{os.environ.get('PATH', '')}"})
+        check_cannot_tell(result, workspace, "when ps fails")
+        check("when ps fails, the user is given the command that checks the supervisor",
+              "ps -ww -e -o pid=,args=" in result.stderr and "--agent tester" in result.stderr,
+              result.stderr)
     finally:
         watcher.kill()
         watcher.wait()
@@ -353,6 +417,14 @@ def run_liveness_report_cases(workspace: Path):
     check("a fresh stamp with no supervisor process does not tell the agent to wait",
           result.returncode == 1 and "Stop working now and wait" not in result.stdout,
           result.stdout)
+    check("with no supervisor, the last stdout line is the nothing-watching verdict",
+          last_stdout_line(result) == writer.HANDOFF_WRITTEN_AND_NO_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE, result.stdout)
+
+    (workspace / "tester-supervisor.lock").write_text("not a process id\n", encoding="utf-8")
+    result = run_writer(workspace, "Continue the walk.")
+    check_cannot_tell(result, workspace, "when the lock is unreadable")
+    check("when the lock is unreadable, the cause is named",
+          "is unreadable" in result.stderr, result.stderr)
     (workspace / "tester-supervisor.lock").unlink(missing_ok=True)
 
     writer.supervisor.write_supervisor_state(
@@ -1001,6 +1073,39 @@ def run_spawned_subagent_roster_cases(workspace: Path):
           and final_roster[0]["last_event"] == "completed"
           and final_roster[0]["last_event_at"] == "2026-10-27T21:45:00Z",
           str(final_roster))
+
+    # Claude Code writes no task-notification for a subagent TaskStop stops, only this result,
+    # trimmed from a real transcript.
+    stop_result = {"message": f"Successfully stopped task: {incident_agent} (Fix-round for PR 2045)",
+                   "task_id": incident_agent, "task_type": "local_agent",
+                   "command": "Fix-round for PR 2045"}
+    stopped_path = workspace / "roster-task-stop-after-interim.jsonl"
+    stopped_path.write_text("\n".join(json.dumps(record) for record in [
+        incident_spawn, *delivered(interim_body, "2026-10-27T21:31:58.572Z"),
+        {"type": "user", "timestamp": "2026-10-27T21:50:00.000Z",
+         "message": {"role": "user", "content": [{
+             "tool_use_id": "toolu_stop", "type": "tool_result",
+             "content": json.dumps(stop_result)}]},
+         "toolUseResult": stop_result, "sessionId": FIXTURE_SESSION_ID},
+    ]) + "\n", encoding="utf-8")
+    stopped_roster = writer.spawned_subagent_roster(stopped_path)
+    check("a TaskStop of a subagent after its interim notification ends the subagent",
+          writer.still_working_subagent_entries(stopped_roster) == []
+          and stopped_roster[0]["last_event"] == "stopped"
+          and stopped_roster[0]["last_event_at"] == "2026-10-27T21:50:00Z",
+          str(stopped_roster))
+    stopped_then_resumed_path = workspace / "roster-task-stop-then-resume.jsonl"
+    stopped_then_resumed_path.write_text(
+        stopped_path.read_text(encoding="utf-8")
+        + json.dumps(resume_record(incident_agent, "2026-10-27T21:55:00.000Z")) + "\n",
+        encoding="utf-8")
+    stopped_then_resumed_roster = writer.spawned_subagent_roster(stopped_then_resumed_path)
+    check("a subagent resumed after a TaskStop stopped it counts as still working",
+          [entry["agent_id"]
+           for entry in writer.still_working_subagent_entries(stopped_then_resumed_roster)]
+          == [incident_agent]
+          and stopped_then_resumed_roster[0]["last_event"] == "resumed",
+          str(stopped_then_resumed_roster))
 
     # An empty transcript is not an error: a session may spawn nothing.
     empty_path = workspace / "roster-empty.jsonl"

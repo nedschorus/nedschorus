@@ -140,7 +140,8 @@ NED_BOX_GUARDED_FILE_PRUNE_LINE = (
 # The deletion of exited agent-sessions' Claude Code temp folders, on ned-box alone.
 NED_BOX_TEMP_FOLDERS_DELETE_LINE = (
     "30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
-    "claude-code-temp-folders-of-exited-agent-sessions-delete.py >> "
+    "claude-code-temp-folders-of-exited-agent-sessions-delete.py "
+    "--then-tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete >> "
     "/home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1")
 # The no-sandbox test suites' run on main in a quiet gap, on ned-box alone.
 NED_BOX_NO_SANDBOX_SUITES_LINE = (
