@@ -208,6 +208,30 @@ check("S2 leaves the file names out of the probe",
           None, "/work", ["grep", "-rn", "--include", "*.md", "-A", "2", "needle", "docs",
                           "notes.md"], 0))
       == ["-rn", "--include", "*.md", "-A", "2", "needle"])
+dash_glob_grep = f"cd {PROJECTS} && grep -l needle -r -Users-el-agents-*/ 2>/dev/null"
+check("S2 leaves an unquoted glob that begins with - out of the probe, and keeps a quoted one",
+      [check_module.agents_grep_options_and_patterns_without_file_names(command)
+       for command in check_module.split_into_simple_commands_with_the_machine_and_directory_each_runs_in(
+           dash_glob_grep + " '-x*'", "/work")
+       if command.program == "grep"]
+      == [["-l", "needle", "-r", "-x*"]])
+
+
+class MachinesWhoseGrepRejectsUnknownOptions(MachinesOfTheDay):
+    """The real agent's grep reads an argument beginning with - as an option, and exits 2
+    without its refusal on one it does not know."""
+
+    @staticmethod
+    def refuse_other_programs(argv, **keywords):
+        if argv[0] == "ugrep" and any(argument.startswith("-U") for argument in argv[1:]):
+            return subprocess.CompletedProcess(argv, 2, "", "ugrep: invalid option -U\n")
+        return MachinesOfTheDay.refuse_other_programs(argv, **keywords)
+
+
+dash_glob_verdict = judge(dash_glob_grep, machines=MachinesWhoseGrepRejectsUnknownOptions())
+check("S1 alone speaks on a dash-led glob, with no unchecked S2 line from the probe",
+      dash_glob_verdict.signals == [GLOB_DASH_NAME] and dash_glob_verdict.unchecked == [],
+      f"signals {dash_glob_verdict.signals} unchecked {dash_glob_verdict.unchecked}")
 
 
 # ------------------------------------------------------- near misses, cause S3
@@ -511,7 +535,6 @@ except check_module.MachineStateQueryGotNoAnswer as error:
           f"real agent's grep: {error}")
 else:
     def real_agents_grep_answer(arguments):
-        # G033's unexpanded dash-named glob reaches ugrep as an option it rejects: no answer, not a refusal.
         try:
             return real_machines.agents_grep_refuses(arguments, None)
         except check_module.MachineStateQueryGotNoAnswer:
@@ -524,8 +547,10 @@ else:
                    if (arguments := check_module.agents_grep_options_and_patterns_without_file_names(command))]
         refused = [arguments for arguments, answer in answers if answer]
         unanswered = [arguments for arguments, answer in answers if answer is None]
-        check(f"{firing['id']}: the real agent's grep refuses what the fixture records",
-              refused == firing["arguments_the_agents_grep_refuses"], f"{refused} unanswered {unanswered}")
+        check(f"{firing['id']}: the real agent's grep answers every probe and refuses what the "
+              f"fixture records",
+              refused == firing["arguments_the_agents_grep_refuses"] and unanswered == [],
+              f"{refused} unanswered {unanswered}")
 
 
 if failures:

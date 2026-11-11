@@ -379,10 +379,15 @@ def agents_grep_options_and_patterns_without_file_names(command):
             or any(not shell_reader.ENVIRONMENT_ASSIGNMENT_PATTERN.match(word)
                    for word in command.words[:command.program_index]):
         return None
-    arguments = [plain(word) for word in command.words[command.program_index + 1:]]
+    words = command.words[command.program_index + 1:]
+    arguments = [plain(word) for word in words]
     if any(fnmatch.fnmatchcase(argument, rule) for argument in arguments
            for rule in AGENTS_GREP_PASSES_TO_SYSTEM_GREP):
         return None
+    # An unquoted glob names files even when it begins with -; ugrep would read it as an
+    # option and reject it, and glob_dash_name_causes judges what it expanded to.
+    arguments = [argument for word, argument in zip(words, arguments)
+                 if not (argument.startswith("-") and plain(word) != word)]
     kept = []
     pattern_given = False
     index = 0
