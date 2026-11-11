@@ -605,13 +605,28 @@ with tempfile.TemporaryDirectory() as scratch:
               and claimed.is_dir() and base.is_symlink(), str(claimed))
     signal.signal(signal.SIGALRM, previous_handler)
 
-LINK_TEXT = ("[a](file:///Volumes/nedhome/x/y.md) and file:///Volumes/nedhome/z, bare /Volumes/nedhome/w, "
-             "other file:///Volumes/other/q\n")
-LINK_TEXT_REWRITTEN = ("[a](/home/nedlern/x/y.md) and /home/nedlern/z, bare /Volumes/nedhome/w, "
-                       "other file:///Volumes/other/q\n")
+LINK_TEXT = ("[a](file:///Volumes/nedhome/x/y.md) and ![b](<file:///Volumes/nedhome/p q.png>), "
+             "bare /Volumes/nedhome/w, other [c](file:///Volumes/other/q)\n")
+LINK_TEXT_REWRITTEN = ("[a](/home/nedlern/x/y.md) and ![b](</home/nedlern/p q.png>), "
+                       "bare /Volumes/nedhome/w, other [c](file:///Volumes/other/q)\n")
 rewritten = names.text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(LINK_TEXT)
-check("the rewrite changes each file:///Volumes/nedhome/ link and nothing else",
+check("the rewrite changes each Markdown link target under file:///Volumes/nedhome/ and nothing else",
       rewritten == LINK_TEXT_REWRITTEN, repr(rewritten))
+# A sentence that names the link form, in prose, in code spans and in a fenced code block, as the
+# machine-setup wiki page does: rewriting it would tell the reviewer to replace a path with itself.
+NAMED_NOT_LINKED_TEXT = (
+    "Replace /home/nedlern/ with file:///Volumes/nedhome/ in a link for the user.\n"
+    "Replace `/home/nedlern/` with `file:///Volumes/nedhome/`, through a `file:///Volumes/nedhome/...` link.\n"
+    "Write it as ``[text](file:///Volumes/nedhome/x)``.\n"
+    "```\n[text](file:///Volumes/nedhome/x)\n```\n"
+    "~~~~\n```\n[text](file:///Volumes/nedhome/y)\n~~~~\n"
+    "After the fence, [d](file:///Volumes/nedhome/z).\n")
+NAMED_NOT_LINKED_TEXT_REWRITTEN = NAMED_NOT_LINKED_TEXT.replace(
+    "[d](file:///Volumes/nedhome/z)", "[d](/home/nedlern/z)")
+rewritten = names.text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(
+    NAMED_NOT_LINKED_TEXT)
+check("the rewrite leaves file:///Volumes/nedhome/ in prose, code spans and fenced code blocks unchanged",
+      rewritten == NAMED_NOT_LINKED_TEXT_REWRITTEN, repr(rewritten))
 with tempfile.TemporaryDirectory() as scratch:
     saved_override = os.environ.get(names.MAC_MOUNT_OF_NED_BOX_HOME_OVERRIDE_VARIABLE)
     try:
