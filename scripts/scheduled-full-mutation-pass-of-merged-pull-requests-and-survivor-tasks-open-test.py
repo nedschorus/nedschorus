@@ -879,6 +879,11 @@ def run_cases():
          "It printed:\n    mutation-testing: git worktree add failed (exit 128): Preparing "
          "worktree (detached HEAD 557f938)\n    error: unable to write file README: No space "
          "left on device\n    fatal: Could not reset index file to revision 'HEAD'.\n"),
+        # Above EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD, as when a signal stopped it.
+        ("the mutation testing program exits 143",
+         {"exit": 143, "stderr": "stopped"}, None,
+         "exited 143 without saying whether each mutant was killed. The next run tries this "
+         "merge again."),
         ("the mutation testing program writes no JSON file",
          {"exit": 0}, None, "but its JSON file"),
         ("the JSON file lacks a key",

@@ -935,7 +935,7 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
                 f"Fix the cause in a pull request. The nightly run carries the merge on until "
                 f"then; mark this task completed once a run records the merge as tested or "
                 f"carries it on with new mutants judged."))
-    if exit_code == mutation_testing.EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD:
+    if exit_code == mutation_testing.EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD:  # pragma: no mutate, `is` compares this small int as `==` does; the test's exit-143 case fails `>=`
         untestable_merge_recorded(arguments, state, state_file, merge, parent, merge_subject,
                                   exit_code, stderr, record, record_citation)
         return False, None
