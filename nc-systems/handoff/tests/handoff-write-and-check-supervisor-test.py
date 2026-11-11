@@ -33,6 +33,11 @@ failures = []
 for _task_list_environment_variable in ("CLAUDE_CODE_TASK_LIST_ID", "TRANSCRIPT_MIRROR_DESTINATION"):
     os.environ.pop(_task_list_environment_variable, None)
 
+# Most fixtures have no session transcript, so the roster and the handoff-deferral fields
+# cannot be read, and the writer would refuse to write until the agent acts on that. Every
+# writer run below passes this flag except the cases of that refusal.
+ACTED_ON_REPORTED_PROBLEMS_FLAG = "--acted-on-reported-problems"
+
 # What a handoff-supervisor tells every session it launches: the seat's name
 # and directory, and the session id they belong to. Scrubbed from every writer
 # run below that is not about them. These suites are run by agents inside
@@ -54,7 +59,8 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def run_writer(workspace: Path, next_step_text: str, *extra_arguments, environment_overrides=None):
+def run_writer(workspace: Path, next_step_text: str, *extra_arguments, environment_overrides=None,
+               acted_on_reported_problems=True):
     """Invoke the script as the agent would, returning its completed process.
 
     The session identity is scrubbed from the environment deliberately. These
@@ -79,6 +85,7 @@ def run_writer(workspace: Path, next_step_text: str, *extra_arguments, environme
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "tester",
          "--next-step-file", str(next_step_path), "--handoff-dir", str(workspace),
+         *([ACTED_ON_REPORTED_PROBLEMS_FLAG] if acted_on_reported_problems else []),
          *extra_arguments],
         capture_output=True, text=True, check=False, env=scrubbed_environment,
     )
@@ -385,7 +392,7 @@ def run_console_identity_case(workspace: Path):
     environment["CLAUDE_PID"] = "12345"
     environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
     result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--agent", "identcase",
+        [sys.executable, str(SCRIPT_PATH), "--agent", "identcase", ACTED_ON_REPORTED_PROBLEMS_FLAG,
          "--next-step-file", str(next_step_path), "--handoff-dir", str(handoffs)],
         capture_output=True, text=True, check=False, env=environment,
     )
@@ -429,7 +436,7 @@ def run_agent_name_and_claim_cases(workspace: Path):
         environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
         return subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "--next-step-file", str(next_step_path),
-             "--handoff-dir", str(handoffs), *extra],
+             "--handoff-dir", str(handoffs), ACTED_ON_REPORTED_PROBLEMS_FLAG, *extra],
             capture_output=True, text=True, check=False, env=environment, cwd=str(directory),
         )
 
@@ -503,7 +510,7 @@ def run_seat_name_the_supervisor_does_not_answer_to_cases(workspace: Path):
         environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
         return subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "--next-step-file", str(next_step_path),
-             "--handoff-dir", str(handoffs), *extra],
+             "--handoff-dir", str(handoffs), ACTED_ON_REPORTED_PROBLEMS_FLAG, *extra],
             capture_output=True, text=True, check=False, env=environment, cwd=str(directory),
         )
 
@@ -1115,6 +1122,72 @@ def run_roster_never_blocks_a_handoff_cases(workspace: Path):
           "CLAUDE_CODE_SESSION_ID is unset" in unidentified.stdout, unidentified.stdout)
 
 
+def run_writer_refuses_until_agent_acts_on_reported_problems_cases(workspace: Path):
+    """A line asking the agent to act must reach it before the session-handoff is written.
+
+    The handoff-supervisor ends the agent-session within seconds of the write, so a line printed
+    after it is never acted on.
+    """
+    handoffs = workspace / "act-first-handoffs"
+    handoffs.mkdir(parents=True, exist_ok=True)
+
+    unidentified = run_writer(handoffs, "carry on\n", "--agent", "actfirstcase",
+                              acted_on_reported_problems=False)
+    check("a roster that cannot be derived refuses the write, exit 2",
+          unidentified.returncode == 2 and not (handoffs / "actfirstcase-handoff.md").exists(),
+          f"exit {unidentified.returncode}: {unidentified.stdout}{unidentified.stderr}")
+    check("the refusal carries the roster and handoff-deferral lines and names the flag",
+          "nothing was written" in unidentified.stderr
+          and "Name any subagents in the next step by hand" in unidentified.stderr
+          and "handoff-deferral: not read" in unidentified.stderr
+          and ACTED_ON_REPORTED_PROBLEMS_FLAG in unidentified.stderr,
+          unidentified.stderr)
+    check("the refusal leaves out a report that asks nothing",
+          "completed tasks pruned" not in unidentified.stderr, unidentified.stderr)
+
+    acted = run_writer(handoffs, "carry on, and re-commission the reviewer\n", "--agent",
+                       "actfirstcase")
+    check("rerun with the flag, the same problems no longer stop the write",
+          acted.returncode == 1 and (handoffs / "actfirstcase-handoff.md").is_file()
+          and "not derived" in acted.stdout,
+          f"exit {acted.returncode}: {acted.stdout}{acted.stderr}")
+
+    home = workspace / "act-first-home"
+    write_fixture_transcript(home / ".claude" / "projects" / "-fixture-project"
+                             / f"{FIXTURE_SESSION_ID}.jsonl")
+    derived = run_writer(handoffs, "carry on\n", "--agent", "actfirstderivedcase",
+                         acted_on_reported_problems=False,
+                         environment_overrides={"HOME": str(home),
+                                                "CLAUDE_CODE_SESSION_ID": FIXTURE_SESSION_ID})
+    check("with nothing to act on, the writer writes without the flag",
+          derived.returncode == 1 and (handoffs / "actfirstderivedcase-handoff.md").is_file(),
+          f"exit {derived.returncode}: {derived.stdout}{derived.stderr}")
+
+    unreadable_session_id = "00000000-0000-4000-8000-0000000d1e00"
+    (home / ".claude" / "projects" / "-fixture-project" / f"{unreadable_session_id}.jsonl").mkdir()
+    unreadable = run_writer(handoffs, "carry on\n", "--agent", "actfirstunreadablecase",
+                            acted_on_reported_problems=False,
+                            environment_overrides={"HOME": str(home),
+                                                   "CLAUDE_CODE_SESSION_ID": unreadable_session_id})
+    check("a transcript that cannot be read refuses the write and names the error",
+          unreadable.returncode == 2
+          and not (handoffs / "actfirstunreadablecase-handoff.md").exists()
+          and "not derived — IsADirectoryError" in unreadable.stderr,
+          f"exit {unreadable.returncode}: {unreadable.stdout}{unreadable.stderr}")
+
+    prune_failure = run_writer(handoffs, "carry on\n", "--agent", "actfirstprunecase",
+                               acted_on_reported_problems=False,
+                               environment_overrides={"HOME": str(home),
+                                                      "CLAUDE_CODE_SESSION_ID": FIXTURE_SESSION_ID,
+                                                      "CLAUDE_CODE_TASK_LIST_ID": "list-with-no-folder"})
+    check("a failed task prune refuses the write and carries the prune line alone",
+          prune_failure.returncode == 2
+          and not (handoffs / "actfirstprunecase-handoff.md").exists()
+          and "no task folder at" in prune_failure.stderr
+          and "spawned-subagent roster" not in prune_failure.stderr,
+          f"exit {prune_failure.returncode}: {prune_failure.stderr}")
+
+
 def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Path):
     """The seat's name and directory come from the handoff-supervisor, not the shell.
 
@@ -1163,7 +1236,7 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
             environment["CLAUDE_CODE_SESSION_ID"] = session_id
         return subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "--next-step-file", str(next_step_path),
-             "--handoff-dir", str(handoffs), *extra],
+             "--handoff-dir", str(handoffs), ACTED_ON_REPORTED_PROBLEMS_FLAG, *extra],
             capture_output=True, text=True, check=False, env=environment, cwd=str(directory),
         )
 
@@ -1993,6 +2066,7 @@ with tempfile.TemporaryDirectory() as temporary_directory_name:
     run_seat_name_the_supervisor_does_not_answer_to_cases(temporary_directory)
     run_spawned_subagent_roster_cases(temporary_directory)
     run_roster_never_blocks_a_handoff_cases(temporary_directory)
+    run_writer_refuses_until_agent_acts_on_reported_problems_cases(temporary_directory)
     run_seat_name_and_directory_from_the_handoff_supervisor_cases(temporary_directory)
     run_completed_task_prune_cases(temporary_directory)
     run_completed_task_prune_remote_store_cases(temporary_directory)
