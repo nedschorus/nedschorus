@@ -90,24 +90,28 @@ class Harness:
         self.user_alert_write_to_pending = None
         # The task lists the Watcher writes into, through the program's own writer.
         self.task_lists_directory = log_directory / "task-lists"
-        # An OSError every task write raises, as when a task list cannot be written; None: none.
+        # An OSError the task writes to these agent-seats' lists raise, as when a task list cannot
+        # be written; None: none.
         self.task_write_error = None
+        self.task_write_error_agent_seats = ("merge-lane-2",)
 
     def agent_seat_task_write(self, agent_seat, subject, description):
-        if self.task_write_error is not None:
+        if self.task_write_error is not None and agent_seat in self.task_write_error_agent_seats:
             raise self.task_write_error
         (self.task_lists_directory / f"nedschorus-{agent_seat}-tasks").mkdir(parents=True,
                                                                              exist_ok=True)
         return watcher_module.agent_seat_task_list_new_pending_task_writer_function_factory_for_task_lists_directory(self.task_lists_directory)(
             agent_seat, subject, description)
 
-    def tasks(self, kind=None):
-        """The tasks written, each with its agent-seat as "owner"; of one kind when kind is given."""
+    def tasks(self, kind=None, owner=None):
+        """The tasks written, each with its agent-seat as "owner"; of one kind when kind is given,
+        on one agent-seat's list when owner is given."""
         found = []
         for task_file in sorted(self.task_lists_directory.glob("nedschorus-*-tasks/*.json")):
             task = json.loads(task_file.read_text(encoding="utf-8"))
             task["owner"] = task_file.parent.name[len("nedschorus-"):-len("-tasks")]
-            if kind is None or task["subject"].startswith(f"Crash watcher, {kind}:"):
+            if ((kind is None or task["subject"].startswith(f"Crash watcher, {kind}:"))
+                    and (owner is None or task["owner"] == owner)):
                 found.append(task)
         return found
 
@@ -173,8 +177,13 @@ class Harness:
         return sorted(directory.iterdir()) if directory.is_dir() else []
 
     def reports(self):
-        """Every notice and every task: each is one report of a failure or a seat left down."""
-        return [*self.notices(), *(task["subject"] for task in self.tasks())]
+        """Every notice and every task, leaving out the owner's copy of a down seat's task: each
+        is one report of a failure or a seat left down."""
+        return [*self.notices(), *(task["subject"] for task in self.tasks()
+                                   if task["owner"] != watcher_module.AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME
+                                   or not task["subject"].startswith(tuple(
+                                       f"Crash watcher, {kind}:"
+                                       for kind in watcher_module.DOWN_AGENT_SEAT_FAILURE_KINDS)))]
 
 
 def crash_after_running(harness, seat="merge-lane-2", start=SEEN_RUNNING):
@@ -263,7 +272,7 @@ def run_decision_cases(root: Path):
     harness = Harness(root / "second-crash")
     first_restart = crash_after_running(harness)
     crash_after_running(harness, start=first_restart + timedelta(minutes=5))
-    second_crash_tasks = harness.tasks("second-crash")
+    second_crash_tasks = harness.tasks("second-crash", "merge-lane-2")
     task = second_crash_tasks[0] if second_crash_tasks else {"subject": "", "description": ""}
     text = task["description"]
     check("a second crash within the hour is not restarted",
@@ -275,6 +284,17 @@ def run_decision_cases(root: Path):
           and task["subject"] == watcher_module.FAILURE_KIND_TO_AGENT_SEAT_TASK_SUBJECT_TEMPLATE[
               "second-crash"].format(seat="merge-lane-2")
           and "find why and fix the cause" in task["subject"], repr(harness.tasks()))
+    owner_copies = harness.tasks("second-crash", "fleet-restart-at-login")
+    owner_text = owner_copies[0]["description"] if owner_copies else ""
+    check("a second crash also becomes one task on the crash watcher's owner's list, with the same "
+          "subject, which says the seat is down and gives the restart command",
+          len(owner_copies) == 1 and owner_copies[0]["subject"] == task["subject"]
+          and "merge-lane-2 is down, and no other program restarts it" in owner_text
+          and "  python3 scripts/recover-crashed-seats.py merge-lane-2\n" in owner_text
+          and "only on an operator's yes at a terminal, tell the user" in owner_text
+          and "had restarted it at 2026-10-12 03:16 UTC" in owner_text, owner_text)
+    check("the seat's own copy of the task carries no restart command",
+          "recover-crashed-seats.py merge-lane-2\n" not in text, text)
     check("a second crash shows the user no notice, no page and no window",
           harness.notices() == [] and harness.windows == [], repr((harness.notices(), harness.windows)))
     check("the second-crash task gives the stop, the earlier restart and the transcripts on ned-box",
@@ -303,7 +323,7 @@ def run_decision_cases(root: Path):
     harness = Harness(root / "recovery-failed",
                       recovery_result=(1, "merge-lane-2: REFUSED — the durable checkout is missing"))
     crash_after_running(harness)
-    failed = harness.tasks("recovery-failed")
+    failed = harness.tasks("recovery-failed", "merge-lane-2")
     text = failed[0]["description"] if failed else ""
     check("a failed recovery becomes one task on the crashed agent-seat's list, with recovery's "
           "exit code and its words, and no notice",
@@ -315,14 +335,14 @@ def run_decision_cases(root: Path):
                       recovery_result=(1, "merge-lane-2: checking the seat\n"
                                           "merge-lane-2: REFUSED — the seat directory is in use\n\n"))
     crash_after_running(harness)
-    failed = harness.tasks("recovery-failed")
+    failed = harness.tasks("recovery-failed", "merge-lane-2")
     text = failed[0]["description"] if failed else ""
     check("the failed-recovery task quotes recovery's last line, not its earlier ones",
           "Recovery's last line was:\n  merge-lane-2: REFUSED — the seat directory is in use\n" in text
           and "checking the seat" not in text, text)
     harness = Harness(root / "recovery-failed-silent", recovery_result=(1, ""))
     crash_after_running(harness)
-    failed = harness.tasks("recovery-failed")
+    failed = harness.tasks("recovery-failed", "merge-lane-2")
     text = failed[0]["description"] if failed else ""
     check("a recovery that printed nothing is said to have printed nothing",
           "Recovery's last line was:\n  (it printed nothing)\n" in text, text)
@@ -499,9 +519,9 @@ def run_decision_cases(root: Path):
     harness.run(SEEN_RUNNING + timedelta(minutes=1))
     failed = harness.tasks("assessment-failed")
     text = failed[0]["description"] if failed else ""
-    check("an assessment that raises becomes one task on that agent-seat's list, with the error, "
-          "and no notice",
-          len(failed) == 1 and failed[0]["owner"] == "merge-lane-2" and "Permission denied" in text
+    check("an assessment that raises becomes one task, on the crash watcher's owner's list only, "
+          "with the error, and no notice",
+          len(failed) == 1 and failed[0]["owner"] == "fleet-restart-at-login" and "Permission denied" in text
           and harness.notices() == [], repr((harness.tasks(), harness.notices())))
     check("an assessment that raises is logged on every run",
           len([entry for entry in harness.decisions()
@@ -518,7 +538,7 @@ def run_handled_crash_cases(root: Path):
     restarted_at = crash_after_running(harness)
     for minutes in range(2, 10):
         harness.run(restarted_at + timedelta(minutes=minutes))
-    second = harness.tasks("second-crash")
+    second = harness.tasks("second-crash", "merge-lane-2")
     check("a seat that dies again after a restart, before a run sees it running, "
           "is handed to it as a second crash",
           harness.recoveries == ["merge-lane-2"] and len(second) == 1,
@@ -542,7 +562,7 @@ def run_handled_crash_cases(root: Path):
     harness.died_at = failed_at + timedelta(minutes=3, microseconds=250001)
     for minutes in (4, 5, 6):
         harness.run(failed_at + timedelta(minutes=minutes))
-    second = harness.tasks("second-crash")
+    second = harness.tasks("second-crash", "merge-lane-2")
     text = second[0]["description"] if second else ""
     check("a seat restarted by hand after a failed attempt, which dies within the hour, "
           "is watched as a new crash and handed to it as a task, not restarted",
@@ -620,7 +640,7 @@ def run_handled_death_key_cases(root: Path):
     harness.died_at = first_restart + timedelta(minutes=2, microseconds=660000)
     for minutes in range(3, 90):
         harness.run(first_restart + timedelta(minutes=minutes))
-    second = harness.tasks("second-crash")
+    second = harness.tasks("second-crash", "merge-lane-2")
     check("a second crash left down is told once, and the seat that never ran again is not "
           "restarted once the hour has passed",
           harness.recoveries == ["merge-lane-2"] and len(second) == 1,
@@ -694,11 +714,11 @@ def run_refused_cases(root: Path):
     refusal = ("the supervisor lock at /x names a live process, but ps could not confirm it "
                "is a supervisor of this seat")
     refused_after_running(harness, "refuse", refusal)
-    tasks = harness.tasks("recovery-refuses")
+    tasks = harness.tasks("recovery-refuses", "merge-lane-2")
     text = tasks[0]["description"] if tasks else ""
     check("a seat recovery refuses, seen running this boot, is not restarted, and gets one task "
           "on its own list, with no notice",
-          harness.recoveries == [] and len(harness.tasks()) == 1 and len(tasks) == 1
+          harness.recoveries == [] and len(harness.tasks(owner="merge-lane-2")) == 1 and len(tasks) == 1
           and tasks[0]["owner"] == "merge-lane-2" and harness.notices() == [],
           repr((harness.tasks(), harness.notices())))
     check("the recovery-refuses task quotes the refusal",
@@ -707,11 +727,11 @@ def run_refused_cases(root: Path):
 
     harness = Harness(root / "leftover-shell")
     refused_after_running(harness, "ask-to-close-the-leftover-idle-shell", LEFTOVER_SHELL_DETAIL)
-    tasks = harness.tasks("leftover-shell")
+    tasks = harness.tasks("leftover-shell", "merge-lane-2")
     text = tasks[0]["description"] if tasks else ""
     check("a seat whose tmux session is a leftover shell, seen running this boot, is not "
           "restarted, and gets one task on its own list, with no notice",
-          harness.recoveries == [] and len(harness.tasks()) == 1 and len(tasks) == 1
+          harness.recoveries == [] and len(harness.tasks(owner="merge-lane-2")) == 1 and len(tasks) == 1
           and tasks[0]["owner"] == "merge-lane-2" and harness.notices() == [],
           repr((harness.tasks(), harness.notices())))
     check("the leftover-shell task says the watcher could not close the shell",
@@ -763,7 +783,7 @@ def run_refused_cases(root: Path):
     check("a leftover shell over a crash is reported as a leftover shell, judged "
           "with the shell's own pane process ids",
           harness.recoveries == [] and asked and asked[0] == ("merge-lane-2", [4242])
-          and harness.tasks("leftover-shell"),
+          and harness.tasks("leftover-shell", "merge-lane-2"),
           repr((harness.reports(), asked)))
     for minute in range(9, 30):
         harness.run(SEEN_RUNNING + timedelta(minutes=minute))
@@ -780,11 +800,11 @@ def run_refused_cases(root: Path):
             lambda seat, pane_process_ids, answer=predicted: answer)
         refused_after_running(harness, "ask-to-close-the-leftover-idle-shell",
                               LEFTOVER_SHELL_DETAIL)
-        tasks = harness.tasks()
+        tasks = harness.tasks(owner="merge-lane-2")
         text = tasks[0]["description"] if tasks else ""
         check(f"a leftover shell where, with the shell closed, {what}, gets the "
               "recovery-refuses task quoting what recovery would say",
-              len(tasks) == 1 and harness.tasks("recovery-refuses") == tasks
+              len(tasks) == 1 and harness.tasks("recovery-refuses", "merge-lane-2") == tasks
               and predicted[1] in text, repr(tasks))
 
     harness = Harness(root / "leftover-shell-prediction-fails")
@@ -795,11 +815,11 @@ def run_refused_cases(root: Path):
     refused_after_running(harness, "ask-to-close-the-leftover-idle-shell", LEFTOVER_SHELL_DETAIL)
     logged = [entry for entry in harness.decisions()
               if entry["decision"].startswith("could not assess as though")]
-    tasks = harness.tasks()
+    tasks = harness.tasks(owner="merge-lane-2")
     text = tasks[0]["description"] if tasks else ""
     check("when the assessment as though the shell were closed fails, the recovery-refuses "
           "task quotes the error, and the failure is logged",
-          len(tasks) == 1 and harness.tasks("recovery-refuses") == tasks
+          len(tasks) == 1 and harness.tasks("recovery-refuses", "merge-lane-2") == tasks
           and "the handoff directory cannot be read" in text
           and logged and "the handoff directory cannot be read" in logged[0]["error"],
           repr((tasks, harness.decisions())))
@@ -827,7 +847,7 @@ def run_refused_cases(root: Path):
     harness.verdicts["merge-lane-2"] = ("refuse", "the second refusal")
     for minute in (15, 16, 17):
         harness.run(SEEN_RUNNING + timedelta(minutes=minute))
-    refuses = harness.tasks("recovery-refuses")
+    refuses = harness.tasks("recovery-refuses", "merge-lane-2")
     check("a refusal after the watcher restarted the seat is told again, though no run saw "
           "the seat running in between", harness.recoveries == ["merge-lane-2"]
           and len(refuses) == 2
@@ -1311,7 +1331,7 @@ def run_notice_page_cases(root: Path):
                              if name.endswith("_NOTICE_TEMPLATE")}
     check("no notice tells the user to ask an agent on ned-box without naming an agent-seat "
           "and where to reach it",
-          len(every_notice_template) == 4 and not any(
+          len(every_notice_template) == 5 and not any(
               "an agent on ned-box" in value.lower() for value in every_notice_template.values()),
           sorted(every_notice_template))
 
@@ -1489,7 +1509,7 @@ def run_user_alert_cases(root: Path):
         harness.user_alert_write_to_pending = lambda title, text, action: written.append(title) or "alert-2"
         setup(harness)
         check(f"a failure handed to its agent-seat as a task, {kind}, writes no alert",
-              written == [] and len(harness.tasks(kind)) == 1, repr((written, harness.tasks())))
+              written == [] and len(harness.tasks(kind, "merge-lane-2")) == 1, repr((written, harness.tasks())))
 
     written = []
     harness = Harness(root / "alert-for-a-task-not-written", recovery_result=(1, "merge-lane-2: REFUSED it"))
@@ -1500,7 +1520,8 @@ def run_user_alert_cases(root: Path):
     text = notices[0].read_text(encoding="utf-8") if notices else ""
     check("a task that cannot be written becomes a notice for the user, which names the agent-seat, "
           "the write's error and the task's subject and description",
-          len(notices) == 1 and "recovery-failed" in notices[0].name and harness.tasks() == []
+          len(notices) == 1 and "recovery-failed" in notices[0].name
+          and harness.tasks(owner="merge-lane-2") == []
           and "could not hand a failure to merge-lane-2 as a task" in text
           and "PermissionError" in text
           and "Task subject: Crash watcher, recovery-failed: scripts/recover-crashed-seats.py could not "
@@ -1524,12 +1545,42 @@ def run_user_alert_cases(root: Path):
         root / "task-list-missing" / "no-task-lists")
     crash_after_running(harness)
     notices = harness.notices()
-    text = notices[0].read_text(encoding="utf-8") if notices else ""
-    check("an agent-seat with no task list gets no list made for it: its failure becomes a notice "
-          "naming the missing list",
-          len(notices) == 1 and "FileNotFoundError" in text
+    text = "".join(notice.read_text(encoding="utf-8") for notice in notices)
+    check("an agent-seat with no task list gets no list made for it: each of the failure's two "
+          "tasks becomes a notice of its own, naming its missing list",
+          len(notices) == 2 and text.count("FileNotFoundError") == 2
           and str(root / "task-list-missing" / "no-task-lists" / "nedschorus-merge-lane-2-tasks") in text
-          and not (root / "task-list-missing" / "no-task-lists").exists(), text)
+          and str(root / "task-list-missing" / "no-task-lists" / "nedschorus-fleet-restart-at-login-tasks") in text
+          and not (root / "task-list-missing" / "no-task-lists").exists(), [n.name for n in notices])
+
+    owner = watcher_module.AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME
+    written = []
+    harness = Harness(root / "owner-left-down", recovery_result=(1, f"{owner}: LAUNCH FAILED (exit 1)"))
+    harness.user_alert_write_to_pending = lambda title, text, action: written.append((title, text, action)) or "alert-5"
+    harness.verdicts[owner] = ("seat-already-running", "supervisor alive")
+    harness.run(SEEN_RUNNING, seats=(owner,))
+    harness.verdicts[owner] = ("resume", ("session-id", "found"))
+    harness.run(SEEN_RUNNING + timedelta(minutes=15), seats=(owner,))
+    harness.run(SEEN_RUNNING + timedelta(minutes=16), seats=(owner,))
+    notices = harness.notices()
+    text = notices[0].read_text(encoding="utf-8") if notices else ""
+    check("when the seat left down is the crash watcher's owner, its failure is one task on its own "
+          "list, and no second task, since no other agent-seat would read it",
+          len(harness.tasks()) == 1 and harness.tasks("recovery-failed", owner), repr(harness.tasks()))
+    check("when the seat left down is the crash watcher's owner, the user is shown a notice with "
+          "the restart command run from his Mac, and the task the owner finds once restarted",
+          len(notices) == 1 and "recovery-failed" in notices[0].name
+          and f"{owner} is the agent-seat that restarts the agent-seats the crash watcher leaves down" in text
+          and f"  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
+              f"scripts/recover-crashed-seats.py {owner}'\n" in text
+          and f"  {watcher_module.MAC_LAUNCHER} {owner}\n" in text
+          and "Task subject: Crash watcher, recovery-failed:" in text, text)
+    check("that notice gets one user-alert, titled by the failure's kind, with the action of a "
+          "notice that gives a restart command",
+          len(written) == 1 and written[0] == (
+              f"{owner} is down: the crash watcher could not restart it", text,
+              watcher_module.FAILED_RESTART_NOTICE_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO),
+          repr(written))
 
     def unwritable(title, text, action):
         raise PermissionError(13, "Permission denied", "/home/nedlern/.local/state/nedschorus/user-alerts")

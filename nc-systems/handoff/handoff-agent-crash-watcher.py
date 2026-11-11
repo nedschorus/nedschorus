@@ -46,25 +46,29 @@ carries microseconds. A restart that succeeded counts as a sighting of the
 seat running; after a failed attempt the poll is recorded again, so the
 attempt's own brief run is part of the death it was handling.
 
-A failure an agent can fix becomes a task on the task list of the agent-seat
-it concerns, ~/.claude/tasks/nedschorus-<seat>-tasks/, written with
+A failure an agent can fix becomes a task on an agent-seat's task list,
+~/.claude/tasks/nedschorus-<seat>-tasks/, written with
 nc-systems/general-tools/agent-seat-task-list-new-pending-task-write-common.py;
 the task's subject names the failure's kind and what to fix, and its
 description tells the agent-seat to find the cause and fix it, telling the
 user only when the fix needs a guarded-file changed or the cause cannot be
-found. The kinds are a second crash inside RESTART_LIMIT_SECONDS
-(second-crash), a failed restart (recovery-failed), a seat recovery refuses
-(recovery-refuses) or a leftover shell holds (leftover-shell), and a seat the
-watcher cannot assess (assessment-failed); a run that fails as a whole
-(run-failed) concerns no one seat, and its task goes to
-AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME. Such a task waits on the list of a seat that
-is down until that seat runs again. A seat recovery keeps refusing gets one task
+found. A failure that leaves the seat down, a second crash inside
+RESTART_LIMIT_SECONDS (second-crash), a failed restart (recovery-failed), a
+seat recovery refuses (recovery-refuses) or a leftover shell holds
+(leftover-shell), becomes a task on the seat's own list, which waits there
+until the seat runs again, and one on the list of
+AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME, which also says how to
+restart the seat; when the seat down is that owner, the user is shown a
+notice instead of the second task. A seat the watcher cannot assess
+(assessment-failed) and a run that fails as a whole (run-failed) become a task
+on the owner's list only. A seat recovery keeps refusing gets its tasks once
 until it is seen running again or restarted, however long the refusal lasts.
 A task that cannot be written is logged, and shown to the user as a notice
 instead, quoting the task.
 
 The user hears from the watcher about a seat down in a state only he should
-restart from (the two cases above), and about a task it could not write. Each
+restart from (the two cases above), about the owner left down, and about a
+task it could not write. Each
 becomes a notice. Each notice is kept as text, and also written as an
 HTML page under notice-pages/ in LOG_DIRECTORY, which the program opens in the
 browser on his Mac with scripts/open-html-page-in-mac-browser-from-ned-box.py:
@@ -273,6 +277,19 @@ FAILURE_KIND_TO_AGENT_SEAT_TASK_DESCRIPTION_TEMPLATE = {
         "The watcher had seen {seat} running; its supervisor last checked in at about "
         "{died_at}.\n"),
 }
+# The kinds that leave the agent-seat down: its own task waits until it runs again, so the
+# owner gets the task too, with the restart.
+DOWN_AGENT_SEAT_FAILURE_KINDS = ("second-crash", "recovery-failed", "leftover-shell",
+                                 "recovery-refuses")
+DOWN_AGENT_SEAT_RESTART_BY_OWNER_TEMPLATE = (
+    "{seat} is down, and no other program restarts it; its own copy of this task waits on its "
+    "task list until it runs again. Once the cause is fixed, restart {seat} on ned-box, from "
+    "~/Projects/nedschorus, with:\n"
+    "  python3 scripts/recover-crashed-seats.py {seat}\n"
+    "If recovery's output says it restarts {seat} only on an operator's yes at a terminal, tell "
+    "the user that command and why recovery needs his yes: he runs it in a Terminal on his Mac "
+    "as ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
+    "scripts/recover-crashed-seats.py {seat}'.\n")
 AGENT_SEAT_TASK_DESCRIPTION_CLOSING_TEMPLATE = (
     "Find the cause and fix it going forward. A fix to code, settings or instructions goes in a "
     "pull request.\n"
@@ -280,6 +297,24 @@ AGENT_SEAT_TASK_DESCRIPTION_CLOSING_TEMPLATE = (
     "If you cannot find the cause, or cannot fix it, tell the user what you found.\n"
     "A subagent tells the agent that dispatched it instead of the user.\n"
     "Record: {record}\n")
+
+# What the user is shown when the agent-seat left down is the owner itself: no agent-seat reads
+# its task until he restarts it.
+OWNER_AGENT_SEAT_DOWN_NOTICE_TEMPLATE = (
+    "{seat} is down, and the crash watcher left it down. {seat} is the agent-seat that restarts "
+    "the agent-seats the crash watcher leaves down, so no agent-seat can restart it.\n"
+    "To restart it, run in a Terminal on your Mac:\n"
+    "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n"
+    "When recovery restarts {seat}, it opens {seat}'s window on your Mac itself. If "
+    "instead the last line recovery prints in your Terminal says WINDOW NOT OPENED, open "
+    "the window, also in a Terminal on your Mac, with:\n"
+    "  {mac_launcher} {seat}\n"
+    "{seat} then finds on its task list the task below, to find why it went down and fix the "
+    "cause.\n"
+    "Task subject: {subject}\n"
+    "Task description:\n"
+    "{description}"
+)
 
 # What the user is shown when a failure's task cannot be written: the task, for an agent to do.
 AGENT_SEAT_TASK_NOT_WRITTEN_NOTICE_TEMPLATE = (
@@ -522,7 +557,13 @@ class Watcher:
 
     def notice_path(self, seat, kind) -> Path:
         stamp = self.now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        return self.log_directory / "notices" / f"{stamp}-{seat}-{kind}.txt"
+        path = self.log_directory / "notices" / f"{stamp}-{seat}-{kind}.txt"
+        # One failure can write two notices in a run, as when both of its tasks cannot be written.
+        number = 2
+        while path.exists():
+            path = self.log_directory / "notices" / f"{stamp}-{seat}-{kind}-{number}.txt"
+            number += 1
+        return path
 
     def write_notice(self, seat, kind, template, title_template=None,
                      user_alert_action=FAILED_RESTART_NOTICE_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO,
@@ -559,30 +600,50 @@ class Watcher:
         self.log(seat, "user alert written", notice=str(notice_path), alert=alert_id)
         return True
 
-    def report_failure_to_agent_seat(self, seat, kind, owner, **fields):
-        """Hand a failure an agent can fix to the agent-seat owner as a task; return the task id.
+    def report_failure_to_agent_seat(self, seat, kind, **fields):
+        """Hand a failure an agent can fix to the agent-seats that fix it, as tasks.
 
-        When the task cannot be written, the user is shown it as a notice instead, with its
-        user-alert, and None is returned.
+        A failure that leaves the seat down becomes a task on the seat's own list and one, with
+        the restart, on AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME's; when the seat down is
+        that owner, the user is shown a notice with its user-alert instead of the second task.
+        Any other failure becomes a task on the owner's list only.
         """
+        owner = AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME
         subject = FAILURE_KIND_TO_AGENT_SEAT_TASK_SUBJECT_TEMPLATE[kind].format(seat=seat)
+        values = dict(seat=seat, record=f"nedlern@ned-box:{self.decisions_path}", **fields)
         description = (FAILURE_KIND_TO_AGENT_SEAT_TASK_DESCRIPTION_TEMPLATE[kind]
-                       + AGENT_SEAT_TASK_DESCRIPTION_CLOSING_TEMPLATE).format(
-            seat=seat, record=f"nedlern@ned-box:{self.decisions_path}", **fields)
+                       + AGENT_SEAT_TASK_DESCRIPTION_CLOSING_TEMPLATE).format(**values)
+        if kind not in DOWN_AGENT_SEAT_FAILURE_KINDS:
+            self.agent_seat_task_write_or_notice(seat, kind, owner, subject, description)
+            return
+        self.agent_seat_task_write_or_notice(seat, kind, seat, subject, description)
+        if seat == owner:
+            self.log(seat, "the agent-seat left down is the crash watcher's owner; the user is "
+                     "shown a notice", kind=kind)
+            self.write_notice(seat, kind, OWNER_AGENT_SEAT_DOWN_NOTICE_TEMPLATE, subject=subject,
+                              description=description)
+            return
+        owner_description = (FAILURE_KIND_TO_AGENT_SEAT_TASK_DESCRIPTION_TEMPLATE[kind]
+                             + DOWN_AGENT_SEAT_RESTART_BY_OWNER_TEMPLATE
+                             + AGENT_SEAT_TASK_DESCRIPTION_CLOSING_TEMPLATE).format(**values)
+        self.agent_seat_task_write_or_notice(seat, kind, owner, subject, owner_description)
+
+    def agent_seat_task_write_or_notice(self, seat, kind, task_owner, subject, description):
+        """Write the task on task_owner's list; when it cannot be written, show the user a
+        notice quoting it, with its user-alert."""
         try:
-            task_id, task_list = self.agent_seat_task_write(owner, subject, description)
+            task_id, task_list = self.agent_seat_task_write(task_owner, subject, description)
         except OSError as error:
             task_write_error = f"{type(error).__name__}: {error}"
             self.log(seat, "task not written; the user is shown it as a notice instead",
-                     kind=kind, owner=owner, error=task_write_error)
+                     kind=kind, owner=task_owner, error=task_write_error)
             self.write_notice(seat, kind, AGENT_SEAT_TASK_NOT_WRITTEN_NOTICE_TEMPLATE,
                               user_alert_action=AGENT_SEAT_TASK_NOT_WRITTEN_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO,
-                              owner=owner, task_write_error=task_write_error, subject=subject,
-                              description=description)
-            return None
+                              owner=task_owner, task_write_error=task_write_error,
+                              subject=subject, description=description)
+            return
         self.log(seat, "task written for the agent-seat to find the cause and fix it", kind=kind,
-                 owner=owner, task=task_id, task_list=str(task_list))
-        return task_id
+                 owner=task_owner, task=task_id, task_list=str(task_list))
 
     def write_notice_page(self, seat, notice_path: Path, text, title=None):
         """Write the notice's HTML page; return its path, or None to show the text instead."""
@@ -684,7 +745,7 @@ class Watcher:
         if key in self.state["reported_errors"]:
             return
         self.state["reported_errors"].append(key)
-        self.report_failure_to_agent_seat(seat, "assessment-failed", seat, error=error_text)
+        self.report_failure_to_agent_seat(seat, "assessment-failed", error=error_text)
 
     def down_kind(self, seat, verdict, detail):
         """Return "crash" to restart, "for-the-user" or "refused" to report, or None to leave alone."""
@@ -841,7 +902,7 @@ class Watcher:
             self.log(seat, "not restarted: a restart was attempted less than an hour ago",
                      died_at_about=timestamp(died_at), earlier_attempt=earlier)
             self.report_failure_to_agent_seat(
-                seat, "second-crash", seat, died_at=clock_text(died_at),
+                seat, "second-crash", died_at=clock_text(died_at),
                 earlier_attempt=earlier_attempt, transcripts=self.transcripts_directory(seat))
             return
         exit_code, output = self.recover(seat)
@@ -875,7 +936,7 @@ class Watcher:
         self.log(seat, "recovery failed", exit_code=exit_code,
                  died_at_about=timestamp(died_at), recovery_output=output)
         output_lines = [line for line in output.strip().splitlines() if line.strip()]
-        self.report_failure_to_agent_seat(seat, "recovery-failed", seat,
+        self.report_failure_to_agent_seat(seat, "recovery-failed",
                                           died_at=clock_text(died_at), exit_code=exit_code,
                                           recovery_last_line=(output_lines[-1].strip() if output_lines
                                                               else "(it printed nothing)"))
@@ -887,13 +948,13 @@ class Watcher:
                 self.log(seat, "not restarted: its tmux session is a leftover shell, which "
                          "recovery closes only on an operator's yes",
                          died_at_about=timestamp(died_at), detail=str(detail))
-                self.report_failure_to_agent_seat(seat, "leftover-shell", seat,
+                self.report_failure_to_agent_seat(seat, "leftover-shell",
                                                   died_at=clock_text(died_at))
                 return
             detail = reported_instead
         self.log(seat, "not restarted: recovery refuses it",
                  died_at_about=timestamp(died_at), detail=str(detail))
-        self.report_failure_to_agent_seat(seat, "recovery-refuses", seat,
+        self.report_failure_to_agent_seat(seat, "recovery-refuses",
                                           died_at=clock_text(died_at), refusal=str(detail))
 
     def report_down_for_the_user(self, seat, verdict, detail, died_at):
@@ -992,8 +1053,7 @@ def report_run_failure(error_text, state_directory: Path, log_directory: Path,
     for notice in list(state["pending_notices"]):
         watcher.show(notice)
     if error_text not in reported:
-        watcher.report_failure_to_agent_seat("watcher", "run-failed", AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME,
-                                             error=error_text)
+        watcher.report_failure_to_agent_seat("watcher", "run-failed", error=error_text)
     if state_readable:
         try:
             write_state(state_path, state)
