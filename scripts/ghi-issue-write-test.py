@@ -4438,9 +4438,7 @@ def run_close_cases(scratch: Path):
             ("completed", ["completed"], ["--reason", "completed"]),
             ("not planned, quoted", ["not planned"],
              ["--reason", "not planned"]),
-            ("duplicate", ["duplicate", "12"], ["--duplicate-of", "12"]),
-            ("duplicate given as #12", ["duplicate", "#12"],
-             ["--duplicate-of", "12"])]:
+            ("duplicate", ["duplicate", "12"], ["--duplicate-of", "12"])]:
         finishing = finished_edit()
         result = tool.close_ghi_after_its_outcome_edit_merges_to_main(
             source, reason_words, REPO, scratch, finishing, quiet)

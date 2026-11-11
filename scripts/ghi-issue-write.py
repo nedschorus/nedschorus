@@ -363,7 +363,8 @@ this check is reached — and a line promising otherwise would be false. The
 2026-09-08 ruling this implements gives a conflict no reconsider path
 either. The earlier-edit refusal is the same kind: the change it would
 discard is the author's own, sitting on a pull request nobody has merged,
-and the way past it is to let that merge and fold it in.
+and the way past it is to let that merge and fold it in. The 67 refusal
+has no reconsider line either: the way past it is the merge it waits for.
 """
 
 import argparse
@@ -3052,7 +3053,7 @@ CLOSE_GHI_REFUSED_WHILE_OUTCOME_EDIT_PULL_REQUEST_UNMERGED_EXIT_CODE = 67
 CLOSE_REASON_COMPLETED = "completed"
 CLOSE_REASON_NOT_PLANNED = "not planned"
 CLOSE_REASON_DUPLICATE = "duplicate"
-CLOSE_REASON_DUPLICATE_PATTERN = re.compile(r"duplicate #?(\d+)")
+CLOSE_REASON_DUPLICATE_PATTERN = re.compile(r"duplicate (\d+)")
 
 
 def close_reason_gh_arguments(reason_words, number: int):
@@ -3100,7 +3101,11 @@ def close_ghi_after_its_outcome_edit_merges_to_main(
     issue on an outcome main does not hold yet.
 
     Never with `--comment`: the outcome lives in the GHI-MD, which is what
-    the edit put there."""
+    the edit put there.
+
+    Whether the file records an outcome is not checked: a file main already
+    holds unchanged closes the issue on the first run, the same state a
+    rerun after the merge is in."""
     _, _, number, relative = validate_edit(path, repository_root)
     gh_reason, retyped_reason = close_reason_gh_arguments(reason_words, number)
     rerun = (f"python3 scripts/ghi-issue-write.py close "
