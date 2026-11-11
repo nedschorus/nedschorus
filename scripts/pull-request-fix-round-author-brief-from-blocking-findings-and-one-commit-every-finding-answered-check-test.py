@@ -98,6 +98,29 @@ print(f"SUMMARY: {len(failing)} failed")
 sys.exit(1 if failing else 2 if not_run else 0)
 '''
 
+# Stands in for scripts/branch-conflict-check.py in every scratch repository's base commit. FAKE_CONFLICT_CHECK
+# picks its report: unset or "clean" for no conflict, "replace" or "rebase" for a conflict with that answer,
+# "fail" for a run that could not answer, and "killed" for a run a signal ended before it printed anything. FAKE_CONFLICT_CHECK_CALLS records its arguments.
+FAKE_CONFLICT_CHECK = r'''import json, os, sys
+if os.environ.get("FAKE_CONFLICT_CHECK_CALLS"):
+    with open(os.environ["FAKE_CONFLICT_CHECK_CALLS"], "a") as calls:
+        calls.write(json.dumps(sys.argv[1:]) + "\n")
+kind = os.environ.get("FAKE_CONFLICT_CHECK", "clean")
+if kind == "clean":
+    print("VERDICT: CLEAN -- abc does not conflict with origin/main. Nothing to do.")
+    sys.exit(0)
+if kind == "fail":
+    print("UNFETCHED: git fetch origin failed; do not act on any conflict answer until a run succeeds.")
+    sys.exit(2)
+if kind == "killed":
+    import signal
+    os.kill(os.getpid(), signal.SIGTERM)
+print("VERDICT: CONFLICT -- abc conflicts with origin/main.")
+print("ANSWER: %s -- the fake's answer." % kind)
+print("Cut a new nc-topic-branch from current origin/main.")
+sys.exit(1)
+'''
+
 failures = []
 
 
@@ -130,7 +153,8 @@ def scratch_repository(root):
     (repository / ".gitignore").write_text(PROJECT_GITIGNORE.read_text())
     (repository / "scripts").mkdir()
     (repository / "scripts" / "run-all-test-suites.py").write_text(FAKE_SUITE_RUNNER)
-    git(repository, "add", ".gitignore", "scripts/run-all-test-suites.py")
+    (repository / "scripts" / "branch-conflict-check.py").write_text(FAKE_CONFLICT_CHECK)
+    git(repository, "add", ".gitignore", "scripts/run-all-test-suites.py", "scripts/branch-conflict-check.py")
     base = commit_file(repository, "base.txt", "base\n", "base")
     git(repository, "branch", "main-line")
     frozen_head = commit_file(repository, "hook.py", "one\n", "topic work")
@@ -278,11 +302,11 @@ def brief_cases(root, repository, base, frozen_head):
     check("brief: rule 2 says a fix that carries out a user ruling in a guarded-file is a user-approved-change",
           "\n   " + CARRYING_OUT_USER_RULING_PARAGRAPH + "\n3. Change nothing else" in out
           and out.index("2. Check each finding") < out.index(CARRYING_OUT_USER_RULING_PARAGRAPH), out)
-    check("brief: a conflict whose answer replaces the pull request stops the round before the steps that "
-          "check and push this pull request, and has merge-lane-2 told",
-          "If it reports VERDICT: CONFLICT with ANSWER: replace, stop the round and take none of steps 2 to 8" in out
-          and "tell merge-lane-2 with SendMessage that this round stopped on a conflict with main" in out
-          and out.index("ANSWER: replace") < out.index("2. Check each finding"), out)
+    check("brief: a replace answer found during the round stops the subagent, which hands it back to the author",
+          "If it reports VERDICT: CONFLICT with ANSWER: replace, stop and tell the agent that dispatched you what "
+          f"it printed: that agent runs python3 scripts/{PROGRAM.name} {NUMBER} again" in out
+          and out.index("ANSWER: replace") < out.index("2. Check each finding")
+          and "take none of steps 2 to 8" not in out, out)
     check("brief: a conflict defers to the conflict check's report, and asks for no merge itself",
           "If it reports VERDICT: CONFLICT with any other answer, do what its report says." in out
           and "merge origin/main as its report says" not in out and "merge nothing" not in out
@@ -1989,6 +2013,56 @@ def replaces_cases(root, repository, base, frozen_head):
           and f"#replaces https://github.com/o/r/pull/<the old pull request's number>" in err, err + out)
 
 
+def conflict_check_cases(root, repository, _base, frozen_head):
+    routes = routes_for(frozen_head, [review(commit_id=frozen_head)])
+    calls = root / "conflict-check-calls.jsonl"
+    code, out, err = run(root, repository, routes,
+                         environment_extra={"FAKE_CONFLICT_CHECK_CALLS": str(calls)})
+    check("conflict check: the brief runs the checkout's conflict check on this pull request",
+          code == 0 and calls.exists()
+          and [json.loads(line) for line in calls.read_text().splitlines()] == [["--pull-request", str(NUMBER)]],
+          err + out)
+    check("conflict check: no conflict prints the brief", "0. Make a local branch" in out, out)
+
+    code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": "replace"})
+    check("conflict check: a replace answer prints the check's report and the replace steps, and exits 0",
+          code == 0 and "ANSWER: replace -- the fake's answer." in out
+          and "Cut a new nc-topic-branch from current origin/main." in out
+          and f"No fix-round runs: pull request {NUMBER} conflicts with main" in out
+          and "tell merge-lane-2 with SendMessage that this round stopped on a conflict with main" in out
+          and f"Frozen-head: {frozen_head}" in out, err + out)
+    check("conflict check: a replace answer prints none of the round's rules, dispatch or check command",
+          "For the subagent" not in out and "For the author" not in out and "0. Make a local branch" not in out
+          and "2. Check each finding" not in out and "--check" not in out
+          and "hook.py swallows" not in out, out)
+
+    code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": "rebase"})
+    check("conflict check: a conflict with another answer still prints the brief, whose step 1 handles it",
+          code == 0 and "0. Make a local branch" in out and "No fix-round runs" not in out, err + out)
+
+    code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": "fail"})
+    check("conflict check: a check that cannot answer fails with exit 2, its output quoted, and prints no brief",
+          code == 2 and err.startswith("FAILED: ") and "exited 2, so whether this pull request conflicts with main "
+          "is not known" in err and "UNFETCHED: git fetch origin failed" in err and out == "", err + out)
+
+    code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": "killed"})
+    check("conflict check: a check a signal ended fails with exit 2 and prints no brief",
+          code == 2 and err.startswith("FAILED: ") and "exited -15" in err and out == "", err + out)
+
+    outside = root / "not-a-git-checkout"
+    outside.mkdir()
+    code, out, err = run(root, outside, routes)
+    check("conflict check: run outside a git checkout, it fails with exit 2 naming the missing checkout",
+          code == 2 and err.startswith("FAILED: git found no checkout here to run the conflict check from")
+          and out == "", err + out)
+
+    (repository / "scripts" / "branch-conflict-check.py").unlink()
+    code, out, err = run(root, repository, routes)
+    check("conflict check: a checkout without the conflict check fails with exit 2 and prints no brief",
+          code == 2 and err.startswith("FAILED: ") and out == "", err + out)
+    git(repository, "checkout", "-q", "--", "scripts/branch-conflict-check.py")
+
+
 gh_timeout_case()
 case("suites", suite_cases)
 case("nits", nit_cases)
@@ -1998,6 +2072,7 @@ case("move failure after push", move_failure_after_push_cases)
 case("move push failure", move_push_failure_cases)
 case("move pre-push hook output", move_pre_push_hook_output_cases)
 case("brief", brief_cases)
+case("conflict check", conflict_check_cases)
 case("check", check_cases)
 case("commissioned reviewer", commissioned_reviewer_cases)
 case("split review", split_review_cases)

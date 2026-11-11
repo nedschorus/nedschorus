@@ -51,7 +51,10 @@ even of the round's unchanged frozen-head, since they were carried into that rou
 request's own counts once. A #replaces line the reader cannot follow is refused.
 
 Without --check, run in the author's checkout: refuse when the pull request's head has moved past
-the frozen-head, else print the brief: the frozen-head, ADVISOR_FIX_ROUND_INSTRUCTION when the
+the frozen-head; else run that checkout's scripts/branch-conflict-check.py --pull-request <number>,
+and when it reports a conflict answered replace, print its report and REPLACE_INSTEAD_OF_ROUND_INSTRUCTION
+in place of the brief, since a fix-round would check and push the pull request being replaced; when it
+cannot answer, fail; else print the brief: the frozen-head, ADVISOR_FIX_ROUND_INSTRUCTION when the
 round's number is ADVISOR_FIX_ROUND_NUMBER and on no other, each blocking finding word for word, then
 each nit word for word, numbered on from the blocking findings, to fix in the same round, how to
 dispatch the fix-round subagent in a git worktree of its own and push from it, the round's rules,
@@ -98,9 +101,9 @@ the pre-push hook's output: after the success line, or inside the failure report
 The finish step does not judge those lines, so it exits 0 when every step succeeded even if the hook
 skipped a check; the agent reads the printed lines and does what they say.
 
-Exit codes: 0 brief printed, round passes or move step done; 1 the review or the round breaks a rule, said on
-stderr; 2 gh, git or the answers file could not be read, or the suite runner stopped before judging every
-suite, said on stderr.
+Exit codes: 0 brief or replace steps printed, round passes or move step done; 1 the review or the round breaks
+a rule, said on stderr; 2 gh, git or the answers file could not be read, the conflict check could not answer,
+or the suite runner stopped before judging every suite, said on stderr.
 """
 
 import argparse
@@ -233,6 +236,19 @@ WORKTREE_REMOVAL_INSTRUCTION = (
     "locked worktree).\n"
     "   2. Once the worktree is removed, run: git branch -D {local_branch}")
 PULL_REQUEST_FIELDS = ("url", "headRefOid", "headRefName")
+# scripts/branch-conflict-check.py's exit code for a conflict, and the answer line that replaces the pull request.
+CONFLICT_CHECK_EXIT_CONFLICT = 1
+CONFLICT_CHECK_EXIT_NO_CONFLICT = 0
+CONFLICT_CHECK_REPLACE_ANSWER_PREFIX = "ANSWER: replace"
+# The check reads GitHub up to 6 times, 10 seconds apart, after a fetch.
+CONFLICT_CHECK_TIMEOUT_SECONDS = 300
+REPLACE_INSTEAD_OF_ROUND_INSTRUCTION = (
+    "No fix-round runs: pull request {number} conflicts with main, and the conflict check above answers "
+    "replace, so a round would check and push the pull request being replaced.\n"
+    "Do what the report above says yourself. When it has you open the new pull request, its #replaces line "
+    "carries this round's findings into the new pull request's first round.\n"
+    "Then tell merge-lane-2 with SendMessage that this round stopped on a conflict with main, naming the new "
+    "pull request's link and head, or the comment that closed this one.")
 ADVISOR_FIX_ROUND_NUMBER = 3
 ADVISOR_FIX_ROUND_INSTRUCTION = (
     "This is the pull request's third fix-round, its last before merge-lane-2 brings it to the user: "
@@ -561,6 +577,33 @@ def round_facts(number, reviewer_login):
             None if recorded else [review.get("id") for review in reviews])
 
 
+def conflict_check_report(number):
+    """The report lines of this checkout's scripts/branch-conflict-check.py when it answers that the pull request
+    conflicts with main and is replaced, else None."""
+    try:
+        top_level = git(["rev-parse", "--show-toplevel"]).strip()
+    except StepFailed as failure:
+        raise StepFailed(f"git found no checkout here to run the conflict check from: {failure}") from failure
+    command = [sys.executable, str(Path(top_level) / "scripts" / "branch-conflict-check.py"),
+               "--pull-request", str(number)]
+    try:
+        completed = subprocess.run(command, cwd=top_level, capture_output=True, text=True,
+                                   stdin=subprocess.DEVNULL, timeout=CONFLICT_CHECK_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        raise StepFailed(f"{shlex.join(command)} did not finish in {CONFLICT_CHECK_TIMEOUT_SECONDS} seconds, so "
+                         "whether this pull request conflicts with main is not known") from None
+    report = completed.stdout.splitlines()
+    if completed.returncode == CONFLICT_CHECK_EXIT_NO_CONFLICT:
+        return None
+    if completed.returncode != CONFLICT_CHECK_EXIT_CONFLICT:
+        raise StepFailed(f"{shlex.join(command)} exited {completed.returncode}, so whether this pull request "
+                         "conflicts with main is not known. It printed:\n"
+                         + (completed.stdout + completed.stderr).strip())
+    if any(line.startswith(CONFLICT_CHECK_REPLACE_ANSWER_PREFIX) for line in report):
+        return report
+    return None
+
+
 def print_brief(number, reviewer_login):
     (url, head, branch, review_link, review_id, frozen_head, findings, nits,
      fix_round_number, _unrecorded_review_ids) = round_facts(number, reviewer_login)
@@ -569,6 +612,12 @@ def print_brief(number, reviewer_login):
                       "a commit was pushed after the review, so this fix-round has already pushed.\n"
                       "Wait for merge-lane-2's review of the new head, and run this again if it "
                       "requests changes.")
+    conflict_report = conflict_check_report(number)
+    if conflict_report is not None:
+        print("\n".join([f"Pull request {url} is not given a fix-round.", f"Frozen-head: {frozen_head}",
+                         f"The round's reviews: {review_link}", "", *conflict_report, "",
+                         REPLACE_INSTEAD_OF_ROUND_INSTRUCTION.format(number=number)]))
+        return
     lines = [
         f"Fix-round brief for pull request {url}",
         f"Frozen-head: {frozen_head}",
@@ -599,12 +648,8 @@ def print_brief(number, reviewer_login):
         "For the subagent, the rules of the round, in order, run in your own worktree:",
         f"0. Make a local branch at the frozen-head and switch to it: git fetch origin && git switch -C {local_branch} {frozen_head}",
         f"1. Before changing anything, run: python3 scripts/branch-conflict-check.py --pull-request {number}",
-        "   If it reports VERDICT: CONFLICT with ANSWER: replace, stop the round and take none of steps 2 to 8: "
-        "the pull request is replaced by a new one, and steps 6 and 7 would check and push this one.",
-        "   Then do what the report says; when it has you open the new pull request, the new pull request's "
-        "#replaces line carries this round's findings into its first round.",
-        "   Then tell merge-lane-2 with SendMessage that this round stopped on a conflict with main, naming "
-        "the new pull request's link and head, or the comment that closed this one.",
+        "   If it reports VERDICT: CONFLICT with ANSWER: replace, stop and tell the agent that dispatched you "
+        f"what it printed: that agent runs python3 {PROGRAM} {number} again, which prints what to do instead.",
         "   If it reports VERDICT: CONFLICT with any other answer, do what its report says.",
         "2. Check each finding against the code. Fix each one that holds, root cause included, "
         "with a test that fails without the fix; a nit needs no test.",
