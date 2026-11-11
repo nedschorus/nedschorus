@@ -852,8 +852,8 @@ def _commit(repository, name, content, message):
 
 
 def _make_origin_and_seat(root, seat_name):
-    """An origin repository and a seat checkout of it on its own branch —
-    the box's layout: ghi-guide-agent sits on a branch named `ghi-guide-agent`, never main."""
+    """An origin repository and a seat checkout of it detached at origin/main —
+    the box's layout: ghi-guide-agent's agent-home rests detached, on no branch."""
     origin = root / f"{seat_name}-origin"
     origin.mkdir()
     _git(["init", "-q", "-b", "main"], origin)
@@ -864,7 +864,7 @@ def _make_origin_and_seat(root, seat_name):
     _git(["clone", "-q", str(origin), str(seat)], root)
     _git(["config", "user.email", "test@example.invalid"], seat)
     _git(["config", "user.name", "ghi test"], seat)
-    _git(["checkout", "-q", "-b", "ghi-guide-agent"], seat)
+    _git(["checkout", "-q", "--detach", "origin/main"], seat)
     return origin, seat
 
 
@@ -878,8 +878,10 @@ with tempfile.TemporaryDirectory() as temporary:
           (seat / "design.md").exists(), line)
     check("and it says how far it moved",
           "refreshed the seat checkout 1 commit(s)" in line, line)
-    check("on its own branch, not main — the reference-checkout rule does not apply here",
-          _git(["rev-parse", "--abbrev-ref", "HEAD"], seat).stdout.strip() == "ghi-guide-agent")
+    check("and it stays detached, at origin/main — the reference-checkout rule does not apply here",
+          _git(["symbolic-ref", "-q", "HEAD"], seat).returncode == 1
+          and _git(["rev-parse", "HEAD"], seat).stdout.strip()
+          == _git(["rev-parse", "origin/main"], seat).stdout.strip())
 
     check("a checkout already level with main says nothing",
           ghi_ask.fast_forward_seat_checkout(seat) == "",
@@ -905,10 +907,10 @@ with tempfile.TemporaryDirectory() as temporary:
           "has 1 uncommitted tracked change(s)" in line
           and not (seat / "design.md").exists(), line)
 
-    # ghi-guide-agent commits its own document-side link repairs, so a checkout
-    # carrying a commit main does not have is a real state, not debris.
+    # A commit main does not have is someone's work, even though the
+    # pre-commit hook refuses commits in an agent-home: it may predate the hook.
     origin, seat = _make_origin_and_seat(root, "ff-diverged")
-    _commit(seat, "repair.md", "a link repair\n", "ghi-guide-agent repairs a link")
+    _commit(seat, "work.md", "work of its own\n", "a commit main does not have")
     _commit(origin, "design.md", "new design\n", "a design lands on main")
     head_before = _git(["rev-parse", "HEAD"], seat).stdout.strip()
     line = ghi_ask.fast_forward_seat_checkout(seat)
