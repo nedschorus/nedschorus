@@ -1112,6 +1112,37 @@ def test_an_html_block_that_is_not_a_comment_is_read():
           result.returncode == 0 and case.calls.read_text() == "Shown in a div.\n", described(result))
 
 
+def test_an_html_comment_inside_another_html_block_is_neither_a_new_mark_nor_a_recommendation():
+    document = WALK_DOCUMENT.replace("Nothing is proposed. Recommendation: leave it.\n",
+                                     "<div>\n<!--\n#new \"Hidden in a div's comment.\"\n-->\n</div>\n\n"
+                                     "#new \"Shown below the div.\"\n\nRecommendation: leave it.\n")
+    case = Case(next_to_present="item 4 of 9", document=document)
+    result = case.run("check")
+    check("a `#new` line in an HTML comment inside a `<div>` block never shows on the page, so it is not read",
+          result.returncode == 0 and case.calls.read_text() == "Shown below the div.\n", described(result))
+    case = Case(document=marks_document("<div>\n<!--\n#new\n-->\n</div>\n"))
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("the waiting-item read step does not refuse a `#new` with no text in an HTML comment inside a `<div>` block",
+          result.returncode == 0 and "has no text after it" not in result.stderr, described(result))
+    plain = SUB_STEPS_DOCUMENT.replace("Recommendation: change the sentence.\n", "{line}\n")
+    for line, refused, why in (
+            ("<div><!-- Recommendation: change it. --></div>", False,
+             "a recommendation in a comment inside a one-line `<div>` block is never shown"),
+            ("Recommendation: change the sentence.\n\n<div>\n<!-- Recommendation: hidden -->\n</div>", True,
+             "the shown recommendation is read, not a later one in a comment inside a `<div>` block")):
+        case = Case(next_to_present="item 1.2 of 2", document=plain.format(line=line))
+        case.minutes.write_text("# Minutes\n\n#next_to_present item 1.2 of 2\n")
+        checked = case.run("check", "--moved-on-no-decision", reply="next")
+        if refused:
+            check(f"check --moved-on-no-decision is refused naming the shown recommendation when {why}: {line!r}",
+                  checked.returncode == 1 and 'recommends "change the sentence"' in checked.stderr,
+                  described(checked))
+        else:
+            check(f"check --moved-on-no-decision records the move on when {why}: {line!r}",
+                  checked.returncode == 0 and "moved on, no decision" in case.minutes.read_text(),
+                  described(checked) + case.minutes.read_text())
+
+
 def test_lines_inside_code_in_the_minutes_record_nothing():
     case = summary_case(next_to_present="item 2 of 5",
                         recorded=approved_line("item 1 of 5") + "```\n" + approved_line("item 3 of 5") + "```\n")

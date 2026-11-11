@@ -254,9 +254,12 @@ def prose_lines(text, parser, tokens=None):
 
     Every search of a walk file for its structure, such as a marker, a `#new` line, a recommendation, an
     answer line or an outcome tag, runs over these lines, so that an example in code, or a note in a
-    comment the reader never sees, is never read as structure. Text that shows stays: other HTML blocks, and
-    text after a comment's `-->`, as in `<!-- note --> Recommendation: x`. In a paragraph that holds a comment,
-    a code span with comment text in it, such as `<!-- x -->` in backquotes, is cut too."""
+    comment the reader never sees, is never read as structure. A comment is cut from every HTML block, also
+    one that opens with another tag, as in `<div><!-- Recommendation: x --></div>`. Text that shows stays: the
+    rest of an HTML block, and text after a comment's `-->`, as in `<!-- note --> Recommendation: x`. In a
+    paragraph that holds a comment, a code span with comment text in it, such as `<!-- x -->` in backquotes, is
+    cut too. A comment in an HTML block that a blank line ends is cut only to the block's end, so its lines after
+    the blank line stay."""
     lines = text.split("\n")
     for token in parser.parse(text) if tokens is None else tokens:
         if token.map is None:
@@ -264,7 +267,7 @@ def prose_lines(text, parser, tokens=None):
         first, end = token.map
         if token.type in ("fence", "code_block"):
             lines[first:end] = [""] * (end - first)
-        elif (token.type == "html_block" and token.content.lstrip().startswith("<!--")
+        elif (token.type == "html_block"
               or token.type == "inline" and any(child.type == "html_inline" and child.content.startswith("<!--")
                                                 for child in token.children or [])):
             lines[first:end] = without_html_comments(lines[first:end])
