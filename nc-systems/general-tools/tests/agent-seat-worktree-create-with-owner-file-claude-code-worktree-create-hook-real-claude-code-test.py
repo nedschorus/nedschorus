@@ -32,6 +32,8 @@ HOOK = REPO_ROOT / "nc-systems" / "general-tools" / "agent-seat-worktree-create-
 CLAUDE_RUN_TIMEOUT_SECONDS = 600
 LOCK_POLL_SECONDS = 0.2
 SUBAGENT_WORKTREE_DIRECTORY_NAME = re.compile(r"worktree-agent-a[0-9a-f]{16}")
+# `git worktree add` itself holds this lock while it checks the files out, and drops it when the add ends.
+GIT_WORKTREE_ADD_OWN_LOCK_LINE = "locked initializing"
 
 
 def load_module(name, path):
@@ -75,6 +77,20 @@ def worktree_records(clone):
         lines = block.splitlines()
         records[lines[0].removeprefix("worktree ")] = lines[1:]
     return records
+
+
+def lock_lines_not_git_worktree_adds_own(lines):
+    """The `locked` lines of a worktree record, leaving out the lock git worktree add holds while it runs."""
+    return [line for line in lines if line.startswith("locked") and line != GIT_WORKTREE_ADD_OWN_LOCK_LINE]
+
+
+def test_git_worktree_adds_own_lock_is_not_counted_as_a_lock():
+    check("git worktree add's own `locked initializing` is not counted as a lock",
+          lock_lines_not_git_worktree_adds_own(["HEAD 0123", "detached", "locked initializing"]) == [])
+    check("any other lock reason, and a lock with no reason, is counted",
+          lock_lines_not_git_worktree_adds_own(["HEAD 0123", "locked claude agent agent-a1 (pid 7)"])
+          == ["locked claude agent agent-a1 (pid 7)"]
+          and lock_lines_not_git_worktree_adds_own(["locked"]) == ["locked"])
 
 
 def agent_seat_of_this_machine():
@@ -124,7 +140,7 @@ def test_trial_against_the_installed_claude_code():
                 except subprocess.CalledProcessError:
                     continue
                 locked_records.extend((path, lines) for path, lines in records.items()
-                                      if any(line.startswith("locked") for line in lines))
+                                      if lock_lines_not_git_worktree_adds_own(lines))
 
         watcher = threading.Thread(target=watch_for_locks)
         watcher.start()
@@ -159,14 +175,15 @@ def test_trial_against_the_installed_claude_code():
             check("Claude Code leaves the hook's worktree in place once claude has exited",
                   made[0].is_dir() and str(made[0]) in worktree_records(clone), "")
         check("Claude Code never locked a worktree while claude ran, nor after",
-              not locked_records and not any(line.startswith("locked") for lines in worktree_records(clone).values()
-                                             for line in lines),
+              not locked_records and not any(lock_lines_not_git_worktree_adds_own(lines)
+                                             for lines in worktree_records(clone).values()),
               f"locked records seen: {locked_records[:3]}")
     finally:
         shutil.rmtree(root, ignore_errors=True)
         shutil.rmtree(project_directory, ignore_errors=True)
 
 
+test_git_worktree_adds_own_lock_is_not_counted_as_a_lock()
 test_trial_against_the_installed_claude_code()
 print(f"FAILED: {len(failures)} failed" if failures else "PASSED: 0 failed")
 sys.exit(1 if failures else 0)

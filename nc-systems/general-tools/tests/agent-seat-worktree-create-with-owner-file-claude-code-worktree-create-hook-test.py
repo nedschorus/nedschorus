@@ -5,7 +5,7 @@ run alone.
 Each case feeds the hook the JSON Claude Code feeds it, on a scratch machine: a HOME with one
 agent-seat and a clone with a local bare origin, as
 scripts/agent-seat-worktree-create-with-owner-file-test.py builds it. The hook runs under a
-symbolic link to Python named claude, so its process is the `claude` process whose
+copy of the Python interpreter named claude, so its process is the `claude` process whose
 agent-session the owner file names, as Claude Code's is when it runs the hook.
 nc-systems/general-tools/tests/agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook-real-claude-code-test.py
 tries the hook with the installed Claude Code.
@@ -40,6 +40,8 @@ _git_environment_fixture = load_module("git_redirecting_environment_removal_test
                                        REPO_ROOT / "scripts" / "git-redirecting-environment-removal-test-fixture.py")
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 owner_file = load_module("worktree_owner_file_read_and_write", REPO_ROOT / "scripts" / "worktree-owner-file-read-and-write.py")
+interpreter_image = load_module("interpreter_image_of_this_process_test_fixture",
+                                REPO_ROOT / "scripts" / "interpreter-image-of-this-process-test-fixture.py")
 
 failures = []
 
@@ -71,7 +73,7 @@ def run_hook(hook_input, cwd, environment):
     claude = Path(environment["HOME"]).parent / "bin" / "claude"
     if not claude.exists():
         claude.parent.mkdir()
-        claude.symlink_to(sys.executable)
+        shutil.copy2(interpreter_image.interpreter_image_of_this_process(), claude)
     completed = subprocess.run([str(claude), str(HOOK)], input=text, cwd=cwd, env=environment,
                                capture_output=True, text=True, check=False)
     return completed.returncode, completed.stdout, completed.stderr
