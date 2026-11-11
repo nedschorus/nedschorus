@@ -30,9 +30,13 @@ scripts/run-all-test-suites.py keeps), plus the file's sibling
 THE QUICK MUTATION PASS, run before a push, mutates only the changed lines
 that are failure-handling code: the changed lines inside an `except` clause,
 or inside an `if` statement, `while` loop or conditional expression whose test
-reads an exit code (a name or attribute named `returncode`, or ending in
-`exit_code` or `exit_status`), each such clause or statement counted from its
-first line to its last. A clause's or statement's lines that the change did
+reads an exit code: a name or attribute named `returncode`, or ending in
+`exit_code` or `exit_status`; a call of `.wait()`, `os.system`,
+`subprocess.call` or `os.waitstatus_to_exitcode`; or a name that the same
+function sets to one of those, and to nothing wrapped around it, as
+`status = process.wait()` sets `status` for `if status != 0:`. A test of
+`.poll()` does not read an exit code. Each such clause or statement is counted
+from its first line to its last. A clause's or statement's lines that the change did
 not touch are not mutated.
 A changed file with no changed line of
 failure-handling code is not mutated, and is printed as NO FAILURE-HANDLING
@@ -403,18 +407,54 @@ def quick_mutation_pass_suites(suites, recordings_directory, runner, checkout, e
     return chosen
 
 
-def reads_an_exit_code(expression):
-    return any(EXIT_CODE_NAME.search(node.attr if isinstance(node, ast.Attribute) else node.id)
-               for node in ast.walk(expression) if isinstance(node, (ast.Attribute, ast.Name)))
+SCOPES = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+EXIT_CODE_FUNCTIONS = {("os", "system"), ("subprocess", "call"), ("os", "waitstatus_to_exitcode")}
+
+
+def gives_an_exit_code(node):
+    """Whether the node is itself an exit code: an EXIT_CODE_NAME name or attribute, a call of
+    an EXIT_CODE_FUNCTIONS function, or a `.wait()` call. `.poll()` is left out because
+    nearly every test of it asks whether a process is still running."""
+    if isinstance(node, ast.Name):
+        return bool(EXIT_CODE_NAME.search(node.id))
+    if isinstance(node, ast.Attribute):
+        return bool(EXIT_CODE_NAME.search(node.attr))
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+        return False
+    called = node.func
+    return called.attr == "wait" or (
+        isinstance(called.value, ast.Name) and (called.value.id, called.attr) in EXIT_CODE_FUNCTIONS)
+
+
+def nodes_of_scope(scope):
+    """The nodes inside the scope that belong to no scope nested in it."""
+    pending = list(ast.iter_child_nodes(scope))
+    while pending:
+        node = pending.pop()
+        yield node
+        if not isinstance(node, SCOPES):
+            pending.extend(ast.iter_child_nodes(node))
 
 
 def failure_handling_line_ranges(source):
     """(first line, last line) of each except clause, and of each if, while or conditional
-    expression whose test reads an exit code."""
-    return sorted(
-        (node.lineno, node.end_lineno) for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.ExceptHandler)
-        or (isinstance(node, (ast.If, ast.While, ast.IfExp)) and reads_an_exit_code(node.test)))
+    expression whose test contains an exit code, as gives_an_exit_code() judges, or reads a
+    name its own scope assigned one to."""
+    ranges = []
+    for scope in ast.walk(ast.parse(source)):
+        if not isinstance(scope, SCOPES):
+            continue
+        nodes = list(nodes_of_scope(scope))
+        exit_code_names = {target.id for node in nodes
+                           if isinstance(node, ast.Assign) and gives_an_exit_code(node.value)
+                           for target in node.targets if isinstance(target, ast.Name)}
+        ranges.extend(
+            (node.lineno, node.end_lineno) for node in nodes
+            if isinstance(node, ast.ExceptHandler)
+            or (isinstance(node, (ast.If, ast.While, ast.IfExp)) and any(
+                gives_an_exit_code(read) or (isinstance(read, ast.Name) and read.id in exit_code_names)
+                for read in ast.walk(node.test))))
+    return sorted(ranges)
 
 
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
