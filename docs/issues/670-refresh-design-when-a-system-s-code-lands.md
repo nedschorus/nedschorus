@@ -21,13 +21,17 @@ The user ruled these on 2026-10-30 and 2026-10-31, as items 9.2, 9.3, 9.3.1 and 
 
 The supporting design `docs/issues/670-system-overview-refresh-agent-design.md` predates these rulings: its 05:00 start, its overview-only scope, its agent-session of its own in the tmux session `system-overview-refresh`, and its 04:30 end are replaced by them.
 
+**What an overview refresh does, and when one is due, is defined by the section "Keeping an overview true" of `docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md`**, which also gives the `**Checked against:**` line its format. This GHI decides who runs a refresh and when. For an overview, where a section of this GHI-MD differs from that page, the page decides. No page defines a refresh of a design or a build-slice plan, so for those the sections below stand.
+
+**The reminder counts what that page counts.** In item 13b of the approval-walk git-checkouts-worktrees-and-branch-rules-design-draft-2026-10-09-2, whose walk-minutes are `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/git-checkouts-worktrees-and-branch-rules-design-draft-2026-10-09-2-minutes.md`, the user answered "Y" to: "edit-GHI adds to GHI 670 a task: the overview-refresh reminder finds every architecture overview in the wiki and counts changes to every component each lists, the hooks and the scheduled-jobs file, as the how-to page says". Today `overview_refresh_due_lines` in `nc-systems/handoff/handoff-supervisor.py` finds an overview only for a directory under `nc-systems/`, and counts only commits that change a file under `nc-systems/<system>/` other than a `.md` file.
+
 **The glossary gets its entry only when the step exists.** The user's words, 2026-09-23: "I would not add this to the glossary yet. I'd try to keep the glossary true now, not true eventually. Instead I'd make a GHI for it, assuming there isn't one." Until it is built, this issue is where the definition lives. A search on 2026-09-23 found no issue for it: `scripts/ghi-guide-agent-ask.py --include-closed` over open and closed issues, and `gh issue list --state all --search 'refresh-design OR "refresh design" OR overview OR BIPP OR "design lifecycle"'`.
 
 ## The draft definition, as put to the user on 2026-09-23
 
 > **refresh-design** — brings a system's three documents into line with what landed on main since the last refresh; run at a landing, and when a reincarnated agent's opening prompt reports the system due. The **design** is streamlined: what the build superseded is removed. The **build-slice plan** marks the slices that landed. The **overview** — what neither the code nor the design says: how the parts fit, why the system is built this way, what was rejected — is re-checked against the code, and created if the system has none. A refresh removes and never revises; a change to a decision is a redesign, a full design-to-main run. Each refresh appends a pinned line carrying the landing commit to the design and the overview. Over an empty commit range it does nothing.
 
-He redirected it here rather than approving it for the glossary; its wording is a draft, not a ruling.
+He redirected it here rather than approving it for the glossary; its wording is a draft, not a ruling. For an overview, the quoted definition's overview sentence and its pinned line are replaced by the how-to page named in the section "What is decided: the refresh as a nightly maintenance job".
 
 ## The rulings it rests on — walk "what a design becomes when its code lands", 2026-09-22/23
 
@@ -53,7 +57,7 @@ The walk's minutes are shipped at its close to the log-store as `nedlern@ned-box
 
 - **Design-to-main is not built** (its design, `docs/design-to-main/design-to-main-state-machine-design.md`, reads `status: design, not built`). So no landing fires a refresh today, and until it is built the supervisor's staleness check is the only trigger.
 - **The supervisor half belongs to the fleet seat**, which owns `nc-systems/handoff/` and the reincarnation cycle.
-- Item 9.3.1 of 2026-10-30 names the line a check adds `**Checked against:**`; its exact format, and whether it replaces the pinned line of the rulings above, are not yet fixed, and the program that lists due documents reads it, so the two are built together.
+- Item 9.3.1 of 2026-10-30 names the line a check adds `**Checked against:**`. For an overview, the how-to page fixes its format, and it is the only commit the overview names. For a design and a build-slice plan, its exact format, and whether it replaces the pinned line of the rulings above, are not yet fixed, and the program that lists due documents reads it, so the two are built together.
 
 ## What the first refresh by hand taught, 2026-09-23
 
@@ -77,8 +81,4 @@ The staleness check of item 5 is built: `nc-systems/handoff/handoff-supervisor.p
 
 ## Next action
 
-Build the refresh as a maintenance job of GHI 1058, after that GHI's nightly overseer, which is built first: the program that lists the documents due by their `**Checked against:**` line, and the refresh itself, one document every 2 hours overnight, as the section "What is decided: the refresh as a nightly maintenance job" says. Settle the draft definition and the line's format with the user first. Add the glossary entry in the pull request that makes the step exist.
-
-## Provisional additions (not yet vetted by the user)
-
-- The agent-seat cold-read-improvement (2026-10-14): rewrite this GHI-MD's definition of how an overview is refreshed to point at `docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md`, through /ghi-write and a short approval-walk.
+Build the refresh as a maintenance job of GHI 1058, after that GHI's nightly overseer, which is built first: the program that lists the documents due by their `**Checked against:**` line, and the refresh itself, one document every 2 hours overnight, as the section "What is decided: the refresh as a nightly maintenance job" says. For an overview, the program counts what the how-to page counts, as item 13b says. Settle the draft definition and the line's format for a design and a build-slice plan with the user first. Add the glossary entry in the pull request that makes the step exist.
