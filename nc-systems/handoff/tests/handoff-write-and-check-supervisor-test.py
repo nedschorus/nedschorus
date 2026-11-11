@@ -1676,6 +1676,17 @@ def run_completed_task_prune_cases(workspace: Path):
           and "RuntimeError: rsync of the completed tasks" in line and "exited 23" in line
           and fixture.handoff_written() and completed.returncode == 1, f"exit {completed.returncode}: {line}")
 
+    # subprocess gives a negative exit for a signal, so a check for nonzero exits alone would miss it.
+    fixture = PruneFixture(workspace, "copy-killed")
+    fixture.task("1.json", task_bytes(1, "completed"))
+    stubs = fixture.root / "copy-killed-stubs"
+    stubs.mkdir()
+    (stubs / "rsync").write_text("#!/bin/sh\nkill -9 $$\n", encoding="utf-8")
+    (stubs / "rsync").chmod(0o755)
+    line = prune_line(fixture.run(PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+    check("an rsync killed by a signal is a failed copy, and every completed task is kept",
+          fixture.present("1.json") and "exited -9" in line and "every completed task kept" in line, line)
+
     fixture = PruneFixture(workspace, "unset")
     fixture.task("1.json", task_bytes(1, "completed"))
     completed = run_writer(fixture.handoffs, "carry on\n", "--agent", "prunecase",
