@@ -596,13 +596,16 @@ def staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_
 
 def walk_files_ship_rerun_command(name: str, directory: pathlib.Path) -> str:
     """The command that ships walk `name` in `directory` again: this
-    program by its resolved path, and the walk by its name or its minutes'
-    resolved path, so it runs from any working directory, however the
-    program was started."""
+    program by its resolved path, and the walk by its name or its
+    walk-document's resolved path, so it runs from any working directory,
+    however the program was started."""
     # A name that begins with a dash would be read by argparse as an option,
-    # so such a walk is rerun by its minutes' path, as a walk elsewhere is.
+    # so such a walk is rerun by its walk-document's path, as a walk elsewhere is.
+    # The walk-document, not the minutes: walk_name_and_directory tries the
+    # longest candidate first, so from topic-minutes.md it would pick a walk
+    # named topic-minutes whenever topic-minutes-minutes.md also exists.
     walk_argument = (name if directory == WALK_DIRECTORY and not name.startswith("-")
-                     else str(directory / walk_file_name(name, MINUTES_ROLE_SUFFIX)))
+                     else str(directory / walk_file_name(name, WALK_TEXT_ROLE_SUFFIX)))
     return (f"{shlex.quote(str(REPO_ROOT / 'scripts' / 'walk-files-ship.py'))} "
             f"{shlex.quote(walk_argument)}")
 
