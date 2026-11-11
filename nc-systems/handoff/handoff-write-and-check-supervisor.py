@@ -349,6 +349,10 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
                 entry = by_agent_id.get(task_id)
                 if entry is None:
                     continue
+                # An interim notice queued before a TaskStop can arrive after it.
+                if entry["last_event"] == STOPPED_BY_TASK_STOP_EVENT and \
+                        event == WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT:
+                    continue
                 # Repeated notifications are echoes, not new events; preserve the first arrival time.
                 if event != entry["last_event"]:
                     entry["last_event"] = event
