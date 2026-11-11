@@ -107,7 +107,8 @@ def test_read_reports_failed_log_store_append():
         blocker.write_text("")
         code, out, _ = quiet(check.command_read, read_arguments(folder), reader=stub_reader(),
                              log_path=str(blocker / "log.jsonl"))
-        expect(code == 1 and "FAILED" in out, "read exits 1 and says FAILED when the log-store append fails")
+        expect(code == 1 and "FAILED: the readers' results were not added" in out,
+               "read exits 1 and says the results were not added when a local append fails")
         expect((folder / "run.json").exists(), "the run file is still written when the append fails")
 
 
@@ -193,11 +194,15 @@ def test_last_line_keeps_the_last_line_with_text_cut_short():
 
 def test_ssh_append_and_read_succeed_and_fail():
     ok = "#!/bin/sh\ncat > /dev/null\necho '{\"kind\": \"reader\"}'\nexit 0\n"
-    expect(with_stub_on_path("ssh", ok, lambda: check.append_to_log_store([{"kind": "x"}], "/x/l.jsonl", ssh_host="h")) is None,
+    expect(with_stub_on_path("ssh", ok, lambda: check.append_to_log_store([{"kind": "x"}], "/x/l.jsonl", ssh_host="h")) == (None, False),
            "an ssh append that exits 0 is no error")
     expect(with_stub_on_path("ssh", ok, lambda: check.read_log_lines("/x/l.jsonl", ssh_host="h")) == [{"kind": "reader"}],
            "an ssh read returns the log's lines")
     bad = "#!/bin/sh\necho 'first' >&2\necho 'no route' >&2\nexit 1\n"
+    error, may_have_appended = with_stub_on_path(
+        "ssh", bad, lambda: check.append_to_log_store([{"kind": "x"}], "/x/l.jsonl", ssh_host="h"))
+    expect(error == "could not append to h:/x/l.jsonl: ssh exit 1: no route" and not may_have_appended,
+           "a remote command that exits 1 is an append error that did not append")
     try:
         with_stub_on_path("ssh", bad, lambda: check.read_log_lines("/x/l.jsonl", ssh_host="h"))
         expect(False, "an ssh read that exits 1 raises")
@@ -206,18 +211,21 @@ def test_ssh_append_and_read_succeed_and_fail():
     old_path = os.environ["PATH"]
     os.environ["PATH"] = "/nonexistent"
     try:
-        error = check.append_to_log_store([{"kind": "x"}], "/x/l.jsonl", ssh_host="h")
+        error, may_have_appended = check.append_to_log_store([{"kind": "x"}], "/x/l.jsonl", ssh_host="h")
     finally:
         os.environ["PATH"] = old_path
-    expect(error is not None and "ssh did not run" in error, "ssh missing from PATH is an append error")
+    expect(error is not None and "ssh did not run" in error and not may_have_appended,
+           "ssh missing from PATH is an append error that surely did not append")
     slow = "#!/bin/sh\nsleep 5\n"
     old_timeout = check.SSH_TIMEOUT_SECONDS
     check.SSH_TIMEOUT_SECONDS = 1
     try:
-        error = with_stub_on_path("ssh", slow, lambda: check.append_to_log_store([{"kind": "x"}], "/x/l.jsonl", ssh_host="h"))
+        error, may_have_appended = with_stub_on_path(
+            "ssh", slow, lambda: check.append_to_log_store([{"kind": "x"}], "/x/l.jsonl", ssh_host="h"))
     finally:
         check.SSH_TIMEOUT_SECONDS = old_timeout
-    expect(error is not None and "ssh did not run" in error, "an ssh call past its timeout is an append error")
+    expect(error is not None and "ssh timed out" in error and may_have_appended,
+           "an ssh call past its timeout is an append error that may have appended")
 
 
 def test_run_reader_keeps_seconds_only_for_an_answer_and_reads_a_signal_exit():
@@ -237,10 +245,11 @@ def test_append_over_ssh_reports_ssh_failure():
         old_path = os.environ["PATH"]
         os.environ["PATH"] = f"{folder}:{old_path}"
         try:
-            error = check.append_to_log_store([{"kind": "x"}], "/x/log.jsonl", ssh_host="host")
+            error, may_have_appended = check.append_to_log_store([{"kind": "x"}], "/x/log.jsonl", ssh_host="host")
         finally:
             os.environ["PATH"] = old_path
-        expect(error is not None and "ssh exit 255" in error, "an ssh append failure is returned as an error")
+        expect(error is not None and "ssh exit 255" in error and may_have_appended,
+               "an ssh exit 255, which a dropped connection also gives, is an error that may have appended")
 
 
 def run_and_judge(folder, verdict_maker, reader=None, **verdict_options):
@@ -271,13 +280,82 @@ def test_one_miss_fails_its_candidate():
 
 def test_failed_readers():
     with tempfile.TemporaryDirectory() as folder:
-        code, _, _, run, _ = run_and_judge(pathlib.Path(folder), all_verdicts, reader=stub_reader({"gpt-6.1-sol"}))
-        expect(run["outcome"]["chosen"] == "short", "one failed reader per candidate still lets it pass")
-    with tempfile.TemporaryDirectory() as folder:
-        code, out, _, run, _ = run_and_judge(pathlib.Path(folder), all_verdicts,
-                                             reader=stub_reader({"gpt-6.1-sol", "gpt-6.1-terra"}))
+        code, out, _, run, _ = run_and_judge(pathlib.Path(folder), all_verdicts, reader=stub_reader({"gpt-6.1-sol"}))
         expect(code == 1 and run["outcome"]["passing"] == [] and "Build three new candidates" in out,
-               "two failed readers fail every candidate, and a first run says to build new ones")
+               "one failed reader fails its candidate, since all six must read it rightly; a first run says to build new ones")
+
+
+EXECUTING_SSH = '#!/bin/sh\nfor argument; do remote_command=$argument; done\nexec sh -c "$remote_command"\n'
+
+
+def test_ssh_read_fails_when_the_remote_cat_fails_and_reads_a_missing_log_as_empty():
+    with tempfile.TemporaryDirectory() as folder:
+        folder = pathlib.Path(folder)
+        unreadable = folder / "log.jsonl"
+        unreadable.write_text('{"kind": "reader"}\n')
+        unreadable.chmod(0o000)
+        try:
+            code, out, _ = with_stub_on_path("ssh", EXECUTING_SSH, lambda: quiet(
+                check.command_per_model_summary, None, log_path=str(unreadable), ssh_host="h"))
+        finally:
+            unreadable.chmod(0o600)
+        expect(code == 1 and out.startswith("FAILED: could not read"),
+               "per-model-summary exits 1 with FAILED when the remote cat of an existing log fails")
+        lines = with_stub_on_path("ssh", EXECUTING_SSH,
+                                  lambda: check.read_log_lines(str(folder / "absent.jsonl"), ssh_host="h"))
+        expect(lines == [], "a log not yet written reads as empty over ssh")
+
+
+def test_read_says_an_append_whose_connection_dropped_may_have_happened():
+    with tempfile.TemporaryDirectory() as folder:
+        folder = pathlib.Path(folder)
+        dropped = "#!/bin/sh\ncat > /dev/null\necho 'Connection reset' >&2\nexit 255\n"
+        code, out, _ = with_stub_on_path("ssh", dropped, lambda: quiet(
+            check.command_read, read_arguments(folder), reader=stub_reader(), log_path="/x/log.jsonl", ssh_host="h"))
+        expect(code == 1 and "may or may not have worked" in out and "were not added" not in out,
+               "read says an append whose connection dropped may have happened")
+
+
+def test_verdicts_finds_reader_lines_an_uncertain_append_left_and_does_not_add_them_again():
+    with tempfile.TemporaryDirectory() as folder:
+        folder = pathlib.Path(folder)
+        log = folder / "log.jsonl"
+        quiet(check.command_read, read_arguments(folder), reader=stub_reader(), log_path=str(log))
+        run = json.loads((folder / "run.json").read_text())
+        run["readers_logged"] = False
+        (folder / "run.json").write_text(json.dumps(run))
+        code, out, _ = quiet(check.command_verdicts, verdict_arguments(folder / "run.json", all_verdicts(run)),
+                             log_path=str(log))
+        kinds = [json.loads(line)["kind"] for line in log.read_text().splitlines()]
+        expect(code == 0 and kinds.count("reader") == 18 and "already holds 18 reader lines" in out,
+               "verdicts reports reader lines already in the log-store and does not add them again")
+        code, out, _ = quiet(check.command_verdicts, verdict_arguments(folder / "run.json", all_verdicts(run)),
+                             log_path=str(log))
+        kinds = [json.loads(line)["kind"] for line in log.read_text().splitlines()]
+        expect(code == 0 and kinds.count("reader") == 18 and "already holds judgements of this run" in out,
+               "a rerun of verdicts reports the judgements already there and adds no reader lines")
+        summary = check.per_model_summary([json.loads(line) for line in log.read_text().splitlines()])
+        expect(all(row["answered"] == 3 for row in summary.values()), "the summary counts each reader once")
+
+
+def test_verdicts_reports_a_log_store_it_could_not_look_in_and_still_appends():
+    with tempfile.TemporaryDirectory() as folder:
+        folder = pathlib.Path(folder)
+        log = folder / "log.jsonl"
+        quiet(check.command_read, read_arguments(folder), reader=stub_reader(), log_path=str(log))
+        run = json.loads((folder / "run.json").read_text())
+        with open(log, "a") as broken:
+            broken.write("not json\n")
+        code, out, _ = quiet(check.command_verdicts, verdict_arguments(folder / "run.json", all_verdicts(run)),
+                             log_path=str(log))
+        expect(code == 0 and "Could not look in the log-store" in out and log.read_text().count('"verdict"') >= 18,
+               "a log-store line that is not JSON is reported, and the judgements are still appended")
+        directory = folder / "a-directory"
+        directory.mkdir()
+        code, out, _ = quiet(check.command_verdicts, verdict_arguments(folder / "run.json", all_verdicts(run)),
+                             log_path=str(directory))
+        expect(code == 1 and "Could not look in the log-store" in out and "FAILED" in out,
+               "a log-store path that cannot be read is reported before the append fails")
 
 
 def test_verdicts_refuses_missing_or_extra():

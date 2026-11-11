@@ -30,7 +30,7 @@ each account with its reader id, and prints the `verdicts` command to run.
 Judging whether an account matches the sentence is the asking agent's work;
 `verdicts` takes the agent's judgement as a JSON object of reader id to
 "match" or "miss", one for every reader that answered. A candidate passes when
-every reader that answered matched and at most one reader failed. Of the
+all six of its readers answered and matched. Of the
 passing candidates, the shortest wins, unless --choose names another passing
 one with --reason. The judgements and the outcome are appended to
 READER_RESULTS_LOG. When none passes, a first run says to build three new
@@ -47,13 +47,19 @@ best ones.
 The log-store file is appended on ned-box directly, and from any other
 machine over `ssh nedlern@ned-box` in batch mode. When the append fails,
 `read` and `verdicts` still print their results and write the run file, then
-print a line opening FAILED with the error and exit 1, so the gap is seen. The
-run file records whether the readers' lines reached the log-store; `verdicts`
-appends them with the judgements when they did not, and rerunning `verdicts`
-appends the judgements again, so a later summary counts the newest ones.
+print a line opening FAILED with the error and exit 1, so the gap is seen.
+When ssh timed out or its connection dropped, the remote append may still have
+happened, and the FAILED line says so. The run file records whether the
+readers' lines are known to have reached the log-store; when they are not,
+`verdicts` first reads the log-store for this run's reader lines, adds them
+only if none are there, and reports what it found. Rerunning `verdicts`
+appends the judgements again, and says so when the log-store already holds
+judgements for the run; a later summary counts only the newest ones.
+`per-model-summary` reads a missing log as empty, and fails on any other
+read error.
 
-Exit codes: 0 done; 1 the log-store append failed, or `verdicts` found no
-passing candidate, as it does when two or more of a candidate's readers
+Exit codes: 0 done; 1 the log-store append or read failed, or `verdicts`
+found no passing candidate, as it does when any of a candidate's readers
 failed; 2 bad
 input (candidates not shorter, a missing or extra verdict, --choose not a
 passing candidate, a retry of a retry). Model calls cost quota: eighteen per
@@ -89,7 +95,7 @@ LOG_STORE_SSH_HOST = "nedlern@ned-box"
 READER_RESULTS_LOG = "/home/nedlern/nedschorus-logs/name-checks/new-name-name-only-model-reader-results.jsonl"
 READER_TIMEOUT_SECONDS = 300
 CANDIDATE_LENGTHS = ("full", "medium", "short")
-MAX_FAILED_READERS_FOR_A_PASS = 1
+MAX_FAILED_READERS_FOR_A_PASS = 0
 SSH_TIMEOUT_SECONDS = 60
 ERROR_LINE_CHARACTERS = 300
 
@@ -158,15 +164,20 @@ def last_line(text: str) -> str:
 
 
 def run_ssh(ssh_host: str, remote_command: str, input_text: str = None):
-    """(stdout, error text or None) of one batch-mode ssh call; never raises."""
+    """(stdout, error text or None, whether the remote command may have run anyway) of one batch-mode ssh call; never raises.
+
+    ssh exits 255 for its own errors, a dropped connection included, so after a
+    timeout or a 255 the remote command may have run."""
     try:
         completed = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", ssh_host, remote_command],
                                    input=input_text or "", capture_output=True, text=True, timeout=SSH_TIMEOUT_SECONDS)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        return None, f"ssh did not run: {error}"
+    except OSError as error:
+        return None, f"ssh did not run: {error}", False
+    except subprocess.TimeoutExpired as error:
+        return None, f"ssh timed out: {error}", True
     if completed.returncode:
-        return None, f"ssh exit {completed.returncode}: {last_line(completed.stderr)}"
-    return completed.stdout, None
+        return None, f"ssh exit {completed.returncode}: {last_line(completed.stderr)}", completed.returncode == 255
+    return completed.stdout, None, False
 
 
 def run_reader(runtime: str, model: str, effort, name: str) -> dict:
@@ -209,8 +220,8 @@ def run_all_readers(candidates: dict, reader=run_reader) -> list:
             for (reader_id, length, name, runtime, model, _), result in zip(jobs, results)]
 
 
-def append_to_log_store(lines: list, log_path: str = None, ssh_host: str = None) -> str:
-    """Append JSON lines to the log-store file; return the error text, or None when appended."""
+def append_to_log_store(lines: list, log_path: str = None, ssh_host: str = None):
+    """Append JSON lines to the log-store file; return (error text or None when appended, whether a failed append may have happened anyway)."""
     if log_path is None and ssh_host is None and socket.gethostname().split(".")[0] != LOG_STORE_HOSTNAME:
         ssh_host = LOG_STORE_SSH_HOST
     log_path = log_path or READER_RESULTS_LOG
@@ -221,11 +232,11 @@ def append_to_log_store(lines: list, log_path: str = None, ssh_host: str = None)
             with open(log_path, "a") as log:
                 log.write(text)
         except OSError as error:
-            return f"could not append to {log_path}: {error}"
-        return None
+            return f"could not append to {log_path}: {error}", False
+        return None, False
     remote = f"mkdir -p {shlex.quote(str(pathlib.PurePosixPath(log_path).parent))} && cat >> {shlex.quote(log_path)}"
-    _, error = run_ssh(ssh_host, remote, text)
-    return f"could not append to {ssh_host}:{log_path}: {error}" if error else None
+    _, error, may_have_run = run_ssh(ssh_host, remote, text)
+    return (f"could not append to {ssh_host}:{log_path}: {error}" if error else None), may_have_run
 
 
 def default_run_file(run_id: str) -> pathlib.Path:
@@ -264,7 +275,7 @@ def command_read(arguments, reader=run_reader, log_path=None, ssh_host=None) -> 
                 print(f"[{result['reader_id']}] {result['model']}: FAILED: {result['error']}")
             else:
                 print(f"[{result['reader_id']}] {result['model']} ({result['seconds']} s):\n{result['account']}")
-    error = append_to_log_store(reader_log_lines(run), log_path, ssh_host)
+    error, may_have_appended = append_to_log_store(reader_log_lines(run), log_path, ssh_host)
     run["readers_logged"] = error is None
     run_file.write_text(json.dumps(run, indent=2))
     answered = [r["reader_id"] for r in results if not r["error"]]
@@ -274,9 +285,14 @@ def command_read(arguments, reader=run_reader, log_path=None, ssh_host=None) -> 
     print(f"python3 {pathlib.Path(__file__).relative_to(REPO_ROOT)} verdicts {run_file} --verdicts '"
           + json.dumps({reader_id: "match|miss" for reader_id in answered}) + "'")
     if error:
-        print(f"FAILED: the readers' results were not added to the log-store: {error}. "
-              f"They are kept in {run_file}, and the `verdicts` command above adds them to the log-store "
-              "with your judgements, so run it as usual.")
+        if may_have_appended:
+            print(f"FAILED: adding the readers' results to the log-store may or may not have worked: {error}. "
+                  f"They are kept in {run_file}. The `verdicts` command above first looks for them in the "
+                  "log-store and adds them only if they are not there, so run it as usual.")
+        else:
+            print(f"FAILED: the readers' results were not added to the log-store: {error}. "
+                  f"They are kept in {run_file}, and the `verdicts` command above adds them to the log-store "
+                  "with your judgements, so run it as usual.")
         return 1
     return 0
 
@@ -348,10 +364,24 @@ def command_verdicts(arguments, log_path=None, ssh_host=None) -> int:
                   "retry_number": run.get("retry_number", 0)})
     run["verdicts"] = verdicts
     run["outcome"] = lines[-1]
-    if not run.get("readers_logged", True):
+    readers_logged = run.get("readers_logged", True)
+    try:
+        logged = [line for line in read_log_lines(log_path, ssh_host) if line.get("run_id") == run["run_id"]]
+    except (OSError, ValueError) as check_error:
+        logged = None
+        print(f"Could not look in the log-store for this run's lines: {check_error}.")
+    if logged is not None:
+        logged_readers = sum(line["kind"] == "reader" for line in logged)
+        if not readers_logged and logged_readers:
+            print(f"The log-store already holds {logged_readers} reader lines of this run, so they are not added again.")
+            readers_logged = True
+        if any(line["kind"] == "verdict" for line in logged):
+            print("The log-store already holds judgements of this run; these are added after them, "
+                  "and per-model-summary counts only the newest.")
+    if not readers_logged:
         lines = reader_log_lines(run) + lines
-    error = append_to_log_store(lines, log_path, ssh_host)
-    run["readers_logged"] = run.get("readers_logged", True) or error is None
+    error, may_have_appended = append_to_log_store(lines, log_path, ssh_host)
+    run["readers_logged"] = readers_logged or error is None
     run_file.write_text(json.dumps(run, indent=2))
     if chosen:
         print(f"Chosen: {run['candidates'][chosen]} ({chosen}). Passing: "
@@ -366,8 +396,10 @@ def command_verdicts(arguments, log_path=None, ssh_host=None) -> int:
         print(f"Report the first, with what its readers got wrong, and bring the user the readers' accounts in "
               f"{run_file} and {run.get('retry_of')}.")
     if error:
-        print(f"FAILED: the judgements were not added to the log-store: {error}. The outcome above stands. "
-              "Run this same command again once ned-box answers; until then the per-model data lacks this run.")
+        added = "may or may not have been added" if may_have_appended else "were not added"
+        print(f"FAILED: the judgements {added} to the log-store: {error}. The outcome above stands. "
+              "Run this same command again once ned-box answers; it reports what the log-store already holds "
+              "of this run, and until then the per-model data may lack this run.")
         return 1
     return 0 if chosen else 1
 
@@ -379,7 +411,8 @@ def read_log_lines(log_path=None, ssh_host=None) -> list:
     if ssh_host is None:
         text = pathlib.Path(log_path).read_text() if pathlib.Path(log_path).exists() else ""
     else:
-        text, error = run_ssh(ssh_host, f"cat {shlex.quote(log_path)} 2>/dev/null || true")
+        quoted = shlex.quote(log_path)
+        text, error, _ = run_ssh(ssh_host, f"if [ -e {quoted} ]; then cat {quoted}; fi")
         if error:
             raise OSError(error)
     return [json.loads(line) for line in text.splitlines() if line.strip()]
