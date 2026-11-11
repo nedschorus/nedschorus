@@ -886,6 +886,9 @@ class Verdict:
     # keeps the worktree when either has changed since.
     judged_head: str | None = None
     judged_branch: str | None = None
+    # When the idle rule judged the worktree, in seconds since the epoch; --remove keeps the
+    # worktree when anything in it changed since, or its HEAD did.
+    idle_judged_at: float | None = None
     # Kept locked by Claude Code's lock of an ended agent-session that no agent-seat's
     # transcripts name: the count lines name it for the user.
     for_the_user_to_keep_or_delete: bool = False
@@ -1027,7 +1030,9 @@ def idle_worktree_verdict(worktree, branch, record, pull_requests):
         return None
     if is_agent_home(worktree, git_directory):
         return None
-    cutoff = time.time() - IDLE_WORKTREE_REMOVED_AFTER_DAYS * 86400
+    # Taken before the checks below, so that a file written while they run counts as changed.
+    judged_at = time.time()
+    cutoff = judged_at - IDLE_WORKTREE_REMOVED_AFTER_DAYS * 86400
     try:
         if path_changed_since([worktree, git_directory], cutoff) is not None:
             return None
@@ -1063,7 +1068,30 @@ def idle_worktree_verdict(worktree, branch, record, pull_requests):
         return Verdict(False, f"{why}, but git cannot list its files ({listing_error})",
                        KEPT_NOT_CHECKABLE)
     return Verdict(True, why + removal_records_and_discarded_files_text(worktree, discarded),
-                   "", discarded=discarded)
+                   "", discarded=discarded, judged_head=commit_of(worktree, "HEAD"),
+                   idle_judged_at=judged_at)
+
+
+def idle_worktree_removal_keep_reason(worktree, verdict):
+    """Return why a worktree the idle rule judged done must be kept after all, because it changed
+    after the idle rule judged it, or None when it may still go."""
+    uncommitted, listing_error = uncommitted_or_untracked_files(worktree)
+    if uncommitted is None:
+        return f"git cannot list its uncommitted changes ({listing_error})"
+    if uncommitted:
+        return (f"it now holds {len(uncommitted)} uncommitted or untracked file(s): "
+                f"{discarded_files_text(uncommitted)}")
+    head_now = commit_of(worktree, "HEAD")
+    if head_now != verdict.judged_head:
+        return f"its HEAD changed during this run, from {verdict.judged_head} to {head_now}"
+    # Only the worktree itself: git's own reads during this run may rewrite files in its git directory.
+    try:
+        changed = path_changed_since([worktree], verdict.idle_judged_at)
+    except OSError as error:
+        return f"a file in it cannot be read ({error})"
+    if changed is not None:
+        return f"{changed} changed during this run"
+    return None
 
 
 def classify_unlocked(worktree, branch, record, pull_requests, owner_to_write=None):
@@ -1085,8 +1113,10 @@ def classify_unlocked(worktree, branch, record, pull_requests, owner_to_write=No
     if owner is None:
         if is_merge_lane_review_checkout(worktree):
             return merge_lane_review_checkout_verdict(worktree, pull_requests)
-        return Verdict(False, "it has no owner file, and the cleaner removes only a worktree "
-                              "holding one", KEPT_NO_OWNER_FILE)
+        return Verdict(False, "it has no owner file and is not idle: the cleaner removes a "
+                              "worktree with no owner file only once nothing in it has changed "
+                              "for 2 days and it holds no uncommitted or untracked file",
+                       KEPT_NO_OWNER_FILE)
 
     keep_reason = in_progress_git_operation_keep_reason(worktree)
     if keep_reason is not None:
@@ -1367,6 +1397,15 @@ def remove_worktree(worktree, branch, repo, verdict, one_named=False):
                   f"if the record fails the same way there, fix the cause its line names")
         return False
     worktree_removal_unshippable_approval_walk_files_report(worktree)
+    if verdict.idle_judged_at is not None:
+        # The vacancy check, the pull request listing and the shipments ran after the idle rule
+        # judged it; whoever left it may have come back since.
+        keep_reason = idle_worktree_removal_keep_reason(worktree, verdict)
+        if keep_reason is not None:
+            print(f"{worktree.name}: kept — the idle rule judged it done, but {keep_reason}. "
+                  f"Nothing needs doing now: the next scripts/clean-worktrees.py --remove run, "
+                  f"daily or at a handoff, judges it again")
+            return True
     if verdict.owner_state == owner_file.RUNNING:
         # classify() found it clean before the slow vacancy check and the shipments; its owner may
         # have written since.

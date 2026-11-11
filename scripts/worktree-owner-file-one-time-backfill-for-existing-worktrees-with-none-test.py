@@ -233,8 +233,10 @@ def run_cases(root):
           line_of(output, "detached").endswith(
               "0 commit(s) origin/main lacks; on a detached HEAD, so no branch to merge"), output)
     check("the list is followed by how to keep a worktree for the user",
-          "To keep one, do nothing: scripts/clean-worktrees.py never removes a listed worktree "
-          "while it has no owner file.\n" in output, output)
+          "To keep one, lock it with `git worktree lock --reason <why> <worktree>`: "
+          "scripts/clean-worktrees.py removes a worktree with no owner file once nothing in "
+          "it has changed for 2 days and it holds no uncommitted or untracked file.\n" in output,
+          output)
     check("the list ends with the two commands that delete one worktree for the user",
           "  scripts/worktree-owner-file-read-and-write.py write --agent-seat <agent-seat> "
           "--worktree <worktree>\n"

@@ -2494,8 +2494,9 @@ with tempfile.TemporaryDirectory() as scratch:
         check("a worktree with no owner file outside the merge-lane review checkouts directory is "
               "kept, though its name holds a merged pull request's number",
               outside_checkout.exists()
-              and "it has no owner file, and the cleaner removes only a worktree holding one"
-              in review_line(removal.stdout, "pr16-head"), removal.stdout)
+              and "it has no owner file and is not idle" in review_line(removal.stdout,
+                                                                       "pr16-head"),
+              removal.stdout)
         check("a merge-lane review checkout of a pull request merged an hour ago is kept, while "
               "merge-lane-2's merge program may still be testing main in it",
               recently_merged_checkout.exists()
@@ -3131,7 +3132,9 @@ with tempfile.TemporaryDirectory() as scratch:
     idle_done_start = ("done — nothing in it, its git directory included, has changed for 2 days, "
                        "it holds no uncommitted or untracked file, GitHub holds every commit of its "
                        "HEAD, and no open pull request is its")
-    no_owner_kept = "kept — it has no owner file, and the cleaner removes only a worktree holding one"
+    no_owner_kept = ("kept — it has no owner file and is not idle: the cleaner removes a worktree "
+                     "with no owner file only once nothing in it has changed for 2 days and it "
+                     "holds no uncommitted or untracked file")
 
     idle_worktree = idle_candidate("idle-wt")
     (idle_worktree / "build-output.log").write_text("ignored\n", encoding="utf-8")
@@ -3258,6 +3261,63 @@ with tempfile.TemporaryDirectory() as scratch:
           gh_failed_worktree.exists()
           and idle_line(gh_failed.stdout, "gh-failed-wt") == f"gh-failed-wt: {no_owner_kept}",
           gh_failed.stdout + gh_failed.stderr)
+
+    # A file written after the idle rule judged a worktree, here by a stub lsof during the vacancy
+    # check, must keep it: the removal would delete the file unsaved. Each run holds one idle
+    # worktree, so the stub's one write lands after that worktree was judged; this first run
+    # removes the idle worktrees the cases above left.
+    run_idle_cleanup("--remove")
+    for name, written in (("written-ignored-wt", "late-output.log"),
+                          ("written-untracked-wt", "late-notes.txt"),
+                          ("still-idle-wt", None)):
+        worktree = age(idle_candidate(name))
+        stub_directory = scratch / f"writing-lsof-{name}"
+        stub_directory.mkdir()
+        write_line = f"echo late > '{worktree}/{written}'\n" if written else ""
+        (stub_directory / "lsof").write_text(
+            f"#!/bin/sh\n{write_line}printf 'p1\\nn/\\n'\n", encoding="utf-8")
+        (stub_directory / "lsof").chmod(0o755)
+        written_removal = subprocess.run(
+            [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), "--remove"],
+            capture_output=True, text=True, check=False,
+            env=dict(os.environ, HOME=str(idle_home), FAKE_GH_PULL_REQUESTS="[]",
+                     PATH=f"{stub_directory}{os.pathsep}{os.environ['PATH']}"))
+        if written:
+            check(f"--remove keeps an idle worktree in which {written} was written after the idle "
+                  f"rule judged it, and says why",
+                  (worktree / written).exists()
+                  and idle_line(written_removal.stdout, name).startswith(
+                      f"{name}: kept — the idle rule judged it done, but "),
+                  written_removal.stdout + written_removal.stderr)
+        else:
+            check("--remove still removes an idle worktree in which nothing was written during "
+                  "the run", not worktree.exists(), written_removal.stdout + written_removal.stderr)
+
+    # A directory that becomes unreadable after the judgment leaves the re-check unable to tell
+    # whether anything in it changed, so the worktree is kept.
+    sealed_worktree = idle_candidate("sealed-later-wt")
+    (sealed_worktree / "sealed").mkdir()
+    (sealed_worktree / "sealed" / "kept.log").write_text("ignored\n", encoding="utf-8")
+    age(sealed_worktree)
+    sealing_stub = scratch / "sealing-lsof"
+    sealing_stub.mkdir()
+    (sealing_stub / "lsof").write_text(
+        f"#!/bin/sh\nchmod 0 '{sealed_worktree}/sealed'\nprintf 'p1\\nn/\\n'\n", encoding="utf-8")
+    (sealing_stub / "lsof").chmod(0o755)
+    try:
+        sealed_removal = subprocess.run(
+            [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), "--remove"],
+            capture_output=True, text=True, check=False,
+            env=dict(os.environ, HOME=str(idle_home), FAKE_GH_PULL_REQUESTS="[]",
+                     PATH=f"{sealing_stub}{os.pathsep}{os.environ['PATH']}"))
+    finally:
+        (sealed_worktree / "sealed").chmod(0o755)
+    check("--remove keeps an idle worktree in which a directory became unreadable after the idle "
+          "rule judged it, and says so",
+          sealed_worktree.exists()
+          and idle_line(sealed_removal.stdout, "sealed-later-wt").startswith(
+              "sealed-later-wt: kept — the idle rule judged it done, but a file in it cannot be read"),
+          sealed_removal.stdout + sealed_removal.stderr)
 
 # --- The machine's task lists stay out of the suite's runs ---
 with tempfile.TemporaryDirectory() as scratch:
