@@ -3137,7 +3137,7 @@ def test_moving_on_reads_the_recommendation_the_user_sees_outside_html_comments_
                   described(checked) + case.minutes.read_text())
 
 
-def test_moving_on_is_refused_when_an_html_parser_finds_a_recommendation_the_comment_cut_hides():
+def test_moving_on_is_refused_when_a_comment_opening_inside_a_tag_hides_a_recommendation():
     plain = SUB_STEPS_DOCUMENT.replace("Recommendation: change the sentence.\n", "{line}\n")
     for line, why in (
             ('<div title="<!--">\nRecommendation: change the sentence.\n</div>', "no `-->` follows"),
@@ -3150,10 +3150,25 @@ def test_moving_on_is_refused_when_an_html_parser_finds_a_recommendation_the_com
         check(f"check --moved-on-no-decision is refused, writing nothing, when `<!--` in an attribute hides the "
               f"recommendation and {why}: {line!r}",
               checked.returncode == 1 and case.minutes.read_text() == before
-              and 'but recommends "change the sentence" once comments are cut only where an HTML parser finds them'
+              and 'but recommends "change the sentence" once a `<!--` inside an HTML tag opens no comment'
               in checked.stderr
               and "check --moved-on-no-decision --user-reply-as-typed next` again." in checked.stderr,
               described(checked))
+
+
+def test_moving_on_is_not_refused_when_a_stray_less_than_sign_comes_before_a_hidden_note_in_a_real_comment():
+    plain = SUB_STEPS_DOCUMENT.replace("Recommendation: change the sentence.\n", "{line}\n")
+    for line in ("Keep x<y in mind.\n<!-- Recommendation: a hidden note. -->",
+                 "Keep `List<T` in mind.\n<!-- Recommendation: a hidden note. -->",
+                 "Keep x<y in mind.\n\n<!-- Recommendation: a hidden note. -->",
+                 "Keep `<script>` in mind.\n<!-- Recommendation: a hidden note. -->",
+                 "<!-- Recommendation: a hidden note, in a comment never closed."):
+        case = Case(next_to_present="item 1.2 of 2", document=plain.format(line=line))
+        case.minutes.write_text("# Minutes\n\n#next_to_present item 1.2 of 2\n")
+        checked = case.run("check", "--moved-on-no-decision", reply="next")
+        check(f"check --moved-on-no-decision is not refused when the item's only recommendation is in a real HTML "
+              f"comment: {line!r}",
+              checked.returncode == 0 and "a hidden note" not in checked.stderr, described(checked))
 
 
 def test_moving_on_from_a_sub_step_that_asks_no_decision_is_not_refused_for_a_later_sub_steps_recommendation():

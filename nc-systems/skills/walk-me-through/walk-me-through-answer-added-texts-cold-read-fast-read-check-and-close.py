@@ -36,9 +36,9 @@ decision>`. It is refused, writing nothing, for an item that has a recommendatio
 the short-answer hook reads it: text after its last "Recommendation:", outside
 fenced or indented code and HTML comments, because that item asks for a decision.
 It is refused too, writing nothing, when the item has no such recommendation but
-does have one once HTML comments are cut only where Python's HTML parser finds
-them, as when a `<!--` inside a tag's attribute, such as `<div title="<!--">`,
-hides the recommendation from the short-answer hook's reading.
+does have one once a `<!--` inside an HTML tag opens no comment, as when the
+`<!--` in an attribute, such as `<div title="<!--">`, hides the recommendation
+from the short-answer hook's reading.
 
 Every answer but --not-asked, --already-decided and --moved-on, which record an
 item the user is not shown, needs --user-reply-as-typed, the user's reply
@@ -373,7 +373,6 @@ import datetime
 import difflib
 import fnmatch
 import hashlib
-import html.parser
 import importlib.util
 import json
 import os
@@ -731,8 +730,8 @@ MOVED_ON_NO_DECISION_REFUSED = (
     "The check command for each answer, with REPLY replaced by his reply as he typed it:\n{commands}")
 MOVED_ON_NO_DECISION_HIDDEN_RECOMMENDATION = (
     "nothing written: {item} in the walk-document {document} shows no recommendation as this program cuts HTML "
-    "comments, but recommends \"{recommendation}\" once comments are cut only where an HTML parser finds them, as "
-    "when a `<!--` inside a tag's attribute, such as `<div title=\"<!--\">`, hides the text after it. So check "
+    "comments, but recommends \"{recommendation}\" once a `<!--` inside an HTML tag opens no comment, as when the "
+    "`<!--` in an attribute, such as `<div title=\"<!--\">`, hides the text after it. So check "
     "cannot tell whether {item} asks for a decision.\n"
     "If the user is meant to see that recommendation: rewrite each `<!--` in {item} that opens no comment, such as "
     "one in an attribute, as `&lt;!--`, then ask him to answer {item}, because the walk-me-through skill lets "
@@ -1013,48 +1012,27 @@ def item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_
     return document, text, tokens, ranges
 
 
-class HtmlCommentSpans(html.parser.HTMLParser):
-    """Collects the (start, end) offsets of each HTML comment Python's HTML parser finds in the text fed to it,
-    which, unlike the walk finder's pattern, skips a `<!--` inside a tag's attribute."""
-
-    def __init__(self, text):
-        super().__init__(convert_charrefs=False)
-        self.text, self.spans = text, []
-        self.line_starts = [0] + [index + 1 for index, character in enumerate(text) if character == "\n"]
-
-    def handle_comment(self, data):
-        line, column = self.getpos()
-        start = self.line_starts[line - 1] + column
-        end = start + len("<!--") + len(data)
-        closing = re.match(r"--!?>", self.text[end:])
-        self.spans.append((start, end + (len(closing[0]) if closing else 0)))
+# CommonMark's open tag, as the Markdown parser reads one; no `<!--` in it opens a comment.
+HTML_OPEN_TAG = re.compile(r"""<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][A-Za-z0-9:._-]*"""
+                           r"""(?:\s*=\s*(?:[^"'=<>`\x00-\x20]+|'[^']*'|"[^"]*"))?)*\s*/?>""")
 
 
-def html_parser_comments_cut(lines):
-    """Return lines with each HTML comment Python's HTML parser finds in them cut out, keeping the count of lines."""
-    text = "\n".join(lines)
-    finder = HtmlCommentSpans(text)
-    finder.feed(text)
-    finder.close()
-    for start, end in reversed(finder.spans):
-        text = text[:start] + "\n" * text.count("\n", start, end) + text[end:]
-    return text.split("\n")
+def comment_openings_in_tags_escaped(text):
+    """Return text with each `<!--` inside an HTML open tag, such as `<div title="<!--">`, written as `&lt;!--`."""
+    return HTML_OPEN_TAG.sub(lambda tag: tag[0].replace("<!--", "&lt;!--"), text)
 
 
 def item_lines(walk_finder, minutes, value, numbers, total, parser):
     """Return (walk-document path, the lines of the items numbered, outside fenced code, the items' marks as
     new_marks returns them, the problem line of each mark whose text would not be read whole, the same lines
-    as the first with HTML comments cut where Python's HTML parser finds them instead)."""
+    as the first read with no `<!--` inside an HTML open tag opening a comment)."""
     document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
     lines = walk_finder.prose_lines(text, parser, tokens)
     marks = new_marks(text, tokens, ranges, lines)
-    code_emptied = text.split("\n")
-    for token in tokens:
-        if token.map is not None and token.type in ("fence", "code_block"):
-            code_emptied[token.map[0]:token.map[1]] = [""] * (token.map[1] - token.map[0])
+    tag_comments_kept = walk_finder.prose_lines(comment_openings_in_tags_escaped(text), parser)
     return (document, [line for first, end in ranges for line in lines[first:end]], marks,
             unreadable_new_marks(marks),
-            html_parser_comments_cut([line for first, end in ranges for line in code_emptied[first:end]]))
+            [line for first, end in ranges for line in tag_comments_kept[first:end]])
 
 
 def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None, refused_unless_marks_read=None):
@@ -1641,7 +1619,7 @@ def check(arguments):
                                                      answered=answered_word(arguments, walk_finder),
                                                      program=program, quoted_words=shlex.quote(words)))
     in_his_words = USER_WORDS.format(words=walk_finder.text_wrapped_as_markdown_code_span(words)) if words else ""
-    document, lines, marks, unreadable, html_parser_lines = item_lines(walk_finder, minutes, value, numbers, total,
+    document, lines, marks, unreadable, tag_comments_kept = item_lines(walk_finder, minutes, value, numbers, total,
                                                                        parser)
     rating = case_against_rating(lines, item, document, arguments)
     rated = CASE_AGAINST_HASHTAG.format(rating=rating.replace(" ", "_")) if rating else ""
@@ -1650,7 +1628,7 @@ def check(arguments):
         raise Failure(MOVED_ON_NO_DECISION_REFUSED.format(
             item=item, recommendation=recommendation,
             commands=answer_check_commands(program)))
-    hidden = (walk_finder.approval_walk_item_last_recommendation_text_from_item_lines(html_parser_lines)
+    hidden = (walk_finder.approval_walk_item_last_recommendation_text_from_item_lines(tag_comments_kept)
               if arguments.moved_on_no_decision and recommendation is None else None)
     if hidden is not None:
         raise Failure(MOVED_ON_NO_DECISION_HIDDEN_RECOMMENDATION.format(
