@@ -984,6 +984,22 @@ with tempfile.TemporaryDirectory() as scratch:
         tag_merged_wt = owned_worktree("tag-merged-wt", running_session_owner)
         git(checkout, "tag", "tag-merged-wt-branch", head_of(tag_merged_wt))
         reused_wt = owned_worktree("reused-wt", running_session_owner)
+
+        def child_commit_of(worktree, message):
+            """A commit on top of the worktree's HEAD, made without moving the worktree, as a
+            fix-round pushed from another worktree makes the pull request's later commits."""
+            return git(worktree, "commit-tree", "-p", "HEAD", "-m", message,
+                       "HEAD^{tree}").strip()
+
+        # Its HEAD is an earlier commit of its branch's merged pull request.
+        ancestor_merged_wt = owned_worktree("ancestor-merged-wt", running_session_owner)
+        commit_in(ancestor_merged_wt, "first-of-two")
+        # Its HEAD was pushed and merged under another branch name.
+        other_name_merged_wt = owned_worktree("other-name-merged-wt", running_session_owner)
+        commit_in(other_name_merged_wt, "pushed-under-another-name")
+        # A new worktree on a reused branch name, cut from the main commit an earlier closed pull
+        # request on that name started from: its HEAD is an ancestor of that pull request's head.
+        reused_base_wt = owned_worktree("reused-base-wt", running_session_owner)
         seat_running_wt = owned_worktree("seat-running-wt",
                                          {"owner_kind": "agent-seat", "agent_seat": "seat-running"})
         seat_stopped_wt = owned_worktree("seat-stopped-wt",
@@ -1025,6 +1041,12 @@ with tempfile.TemporaryDirectory() as scratch:
              "headRefOid": head_of(seat_stopped_wt)},
             {"number": 7, "state": "OPEN", "headRefName": "stopped-open-wt-branch",
              "headRefOid": head_of(stopped_open_wt)},
+            {"number": 9, "state": "MERGED", "headRefName": "ancestor-merged-wt-branch",
+             "headRefOid": child_commit_of(ancestor_merged_wt, "second-of-two")},
+            {"number": 10, "state": "MERGED", "headRefName": "a-name-no-worktree-has",
+             "headRefOid": head_of(other_name_merged_wt)},
+            {"number": 11, "state": "CLOSED", "headRefName": "reused-base-wt-branch",
+             "headRefOid": child_commit_of(reused_base_wt, "earlier-closed-work")},
         ]
 
         def run_owner_rules(*flags, gh_exit=None):
@@ -1063,6 +1085,20 @@ with tempfile.TemporaryDirectory() as scratch:
         check("an earlier merged pull request on a reused branch name, opened on another commit, "
               "does not make a new worktree done",
               line_of(report, "reused-wt").startswith("reused-wt: kept"), report)
+        check("a worktree whose owner runs is done once the merged pull request on its branch "
+              "holds its HEAD as an earlier commit, as when a fix-round pushed later commits "
+              "from another worktree",
+              line_of(report, "ancestor-merged-wt").startswith("ancestor-merged-wt: done")
+              and "pull request #9 (merged) on its branch ancestor-merged-wt-branch is finished"
+              in line_of(report, "ancestor-merged-wt"), report)
+        check("a worktree whose owner runs is done once a pull request whose head commit is its "
+              "HEAD has merged under another branch name",
+              line_of(report, "other-name-merged-wt").startswith("other-name-merged-wt: done")
+              and "pull request #10 (merged)" in line_of(report, "other-name-merged-wt"), report)
+        check("a new worktree on a reused branch name, at the main commit an earlier closed pull "
+              "request on that name started from, is kept though its HEAD is an ancestor of that "
+              "pull request's head",
+              line_of(report, "reused-base-wt").startswith("reused-base-wt: kept"), report)
         check("an agent-seat whose handoff-supervisor runs keeps its worktree",
               line_of(report, "seat-running-wt").startswith(
                   "seat-running-wt: kept — its owner, the agent-seat seat-running, runs"), report)
@@ -1108,8 +1144,10 @@ with tempfile.TemporaryDirectory() as scratch:
         check("--remove removes the worktrees whose owner runs and whose pull request has merged or "
               "closed, and keeps every other",
               not merged_wt.exists() and not closed_wt.exists()
+              and not ancestor_merged_wt.exists() and not other_name_merged_wt.exists()
               and all(path.exists() for path in (
-                  fresh_wt, merged_untracked_wt, open_running_wt, reused_wt, seat_running_wt,
+                  fresh_wt, merged_untracked_wt, open_running_wt, reused_wt, reused_base_wt,
+                  seat_running_wt,
                   seat_stopped_wt, stopped_open_wt, unknown_wt, unreadable_owner_wt,
                   locked_owned_wt)),
               removal.stdout + removal.stderr)
