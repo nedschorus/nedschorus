@@ -39,7 +39,8 @@ fenced or indented code and HTML comments, because that item asks for a decision
 Every answer but --not-asked, --already-decided and --moved-on, which record an
 item the user is not shown, needs --user-reply-as-typed, the user's reply
 exactly as he typed it; check writes it, its whitespace runs squeezed to single
-spaces, into the answer line right after the date, as in ``in his words "`a
+spaces, into the answer line right after the time of the answer, which check
+writes in UTC marked Z, in the form `(YYYY-MM-DD HH:MMZ)`, as in ``in his words "`a
 trivial - a bit longer doesn't matter.`"``, so that the minutes keep a
 remark that rides with the answer. The reply, USER_RULING, REASON and the start
 of each text in a status line are written as code spans, so that a
@@ -566,6 +567,10 @@ CLOSE_NO_NEXT_ITEM = ("No item is left to present, and the minutes' `#next_to_pr
 NEXT_MARKER_LINE = "#next_to_present {value}"
 CLOSED_MARKER_VALUE = "none, closed"
 PROGRAM_LINE_ITEMS = re.compile(r"^(items?\s[^:]*): ", re.I)
+
+
+def minutes_time(moment):
+    return moment.astimezone(datetime.timezone.utc).strftime("%Y-%m-%d %H:%MZ")
 
 
 def _one_of(values):
@@ -1594,7 +1599,7 @@ def check(arguments):
         no_change = CHECK_MOVED_ON_MINUTES if arguments.moved_on is not None else CHECK_DEFERRED_MINUTES
         append_to_minutes(minutes, [no_change.format(item=item, answered=answered_word(arguments, walk_finder),
                                                      rating=rated,
-                                                     words=in_his_words, date_and_time=f"{now:%Y-%m-%d %H:%M}")])
+                                                     words=in_his_words, date_and_time=minutes_time(now))])
         print(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
         return 0
     if unreadable:
@@ -1642,7 +1647,7 @@ def check(arguments):
     answer_minutes = CHECK_NOT_ASKED_MINUTES if not_asked else CHECK_MINUTES
     append_to_minutes(minutes, [answer_minutes.format(item=item, answered=answered_word(arguments, walk_finder),
                                                       hashtag=answer_hashtag(arguments), rating=rated,
-                                                      words=in_his_words, date_and_time=f"{now:%Y-%m-%d %H:%M}")]
+                                                      words=in_his_words, date_and_time=minutes_time(now))]
                       + [STATUS_LINE_PREFIX + status for status in statuses])
     output = list(statuses)
     if had_to_be_run:
