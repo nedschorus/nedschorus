@@ -56,7 +56,7 @@ REMINDER_TEMPLATE = (
     "Send them, with one sentence on what each names, to the {agent} subagent, run in the "
     "background, and keep working.\n"
     "If you are a subagent and cannot start one, do not run the check yourself. In your final "
-    "report, put a heading `New shared names: send these to the {agent} subagent` and under it "
+    "report, put a heading `{heading}` and under it "
     "one line per name: <name>: <one sentence saying what it names and which file it is in>, "
     "leaving out the parentheses that follow each name above. The agent that dispatched you "
     "runs the check and makes any renames.\n"
@@ -382,14 +382,14 @@ def failure_report_once(state: dict, error: str, template: str = FAILURE_TEMPLAT
     return template.format(error=error, page=NAMING_PAGE_PATH)
 
 
-def reminder_text(new_names) -> str:
+def reminder_text(new_names, subagent_report_heading: str) -> str:
     lines = [f"  {name} ({kind}{', in ' + path if path and path != name else ''})"
              for path, kind, name in new_names[:REMINDER_NAME_LIMIT]]
     if len(new_names) > REMINDER_NAME_LIMIT:
         lines.append(MORE_NAMES_LINE.format(count=len(new_names) - REMINDER_NAME_LIMIT,
                                             command=LISTER_COMMAND))
     return REMINDER_TEMPLATE.format(names="\n".join(lines), agent=NAMING_FRESH_AGENT_NAME,
-                                    page=NAMING_PAGE_PATH)
+                                    heading=subagent_report_heading, page=NAMING_PAGE_PATH)
 
 
 def emit(text: str) -> None:
@@ -524,7 +524,8 @@ def main() -> int:
         record_merge_prune_and_write_telling_failures(newly_reported)
     write_state(session_id, state)
     if names:
-        messages.append(reminder_text(names))
+        messages.append(reminder_text(
+            names, lister.SUBAGENT_REPORT_HEADING_ABOVE_NEW_SHARED_NAMES_FOR_DISPATCHING_AGENT_TO_CHECK))
     if messages:
         emit("\n\n".join(messages))
     return 0

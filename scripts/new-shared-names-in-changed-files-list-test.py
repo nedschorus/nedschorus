@@ -730,16 +730,18 @@ def case_branch_check_failure_on_a_quiet_shell_call_is_told(root):
 
 def case_reminder_is_capped():
     hook = load_module("hook_for_cap_case", HOOK_PATH)
+    heading = load_module("lister_for_cap_case", LISTER_PATH).SUBAGENT_REPORT_HEADING_ABOVE_NEW_SHARED_NAMES_FOR_DISPATCHING_AGENT_TO_CHECK
     many = [("a.md", "markdown-backquoted-name", f"listed-name-{index:02d}") for index in range(35)]
-    text = hook.reminder_text(many)
+    text = hook.reminder_text(many, heading)
+    check("the reminder tells a subagent to use the lister's report heading", f"heading `{heading}`" in text, text)
     check("the reminder lists the first 30 names", "listed-name-29" in text and "listed-name-30" not in text, text)
     check("the reminder says how many more and how to see them",
           "and 5 more" in text and "new-shared-names-in-changed-files-list.py" in text, text)
     check("the more-names line gives a command that runs the lister with python3",
           "python3 scripts/new-shared-names-in-changed-files-list.py" in text, text)
-    few = hook.reminder_text(many[:3])
+    few = hook.reminder_text(many[:3], heading)
     check("a short reminder has no more-names line", " more," not in few, few)
-    exactly_at_cap = hook.reminder_text(many[:30])
+    exactly_at_cap = hook.reminder_text(many[:30], heading)
     check("a reminder of exactly 30 names has no more-names line", " more," not in exactly_at_cap, exactly_at_cap)
 
 
