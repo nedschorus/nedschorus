@@ -1184,6 +1184,24 @@ with scratch() as directory:
 with scratch() as directory:
     base = pathlib.Path(directory)
     make_stand_in_bin(base)
+    full_name = "mount-rerun-probe-minutes.md"
+    write(base / "mac" / "agents" / "c" / full_name, "x")
+    mounted_dir = base / "mac" / "Volumes" / "nedhome" / "logs" / "s"
+    code, stdout, stderr = run(base, str(mounted_dir / "mount-rerun-probe.md"),
+                               mode="unreachable")
+    runs = backup_search_runs(base)
+    check("a rerun after the other machine was unreachable keeps that machine's "
+          "path spellings, so a query spelled through its mount reaches the "
+          "backup search in that machine's own spelling",
+          RERUN_LINE_OPENING in stdout
+          and [one["argv"][-1] for one in runs]
+          == [str(base / "box" / "logs" / "s" / "mount-rerun-probe.md"),
+              str(base / "box" / "logs" / "s" / full_name)],
+          (runs, stdout + stderr))
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
     for number in range(program.MAX_FILE_HITS_PER_MACHINE):
         write(base / "mac" / "agents" / f"cut-{number:03d}" / "cut-probe-minutes.md",
               f"candidate {number}", NOW - 10 - number)

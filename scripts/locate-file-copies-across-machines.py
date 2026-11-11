@@ -1160,8 +1160,11 @@ def main(argv=None) -> int:
                f"{rerun_query} in place of {query}.\n\n")
     if unreached is not None:
         # The other machine did not answer the first search; asking again would wait out the same timeout.
-        plan = dict(plan, other={"machine": plan["other"]["machine"],
-                                 "not_searched_because": unreached})
+        # Its layout and spellings stay, because the query's target is placed with them.
+        other = {key: value for key, value in plan["other"].items()
+                 if key != "ssh_target"}
+        other["not_searched_because"] = unreached
+        plan = dict(plan, other=other)
     return search_and_report(rerun_query, plan)[0]
 
 
