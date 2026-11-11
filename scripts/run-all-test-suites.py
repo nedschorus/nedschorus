@@ -387,7 +387,7 @@ which the floor covers; no pass exceeded this limit measured from the suite's
 fastest pass. 1800 s is six times the longest pass seen. A suite past its limit
 has its process group killed with SIGKILL; each suite starts in a session of
 its own, so the group holds every process it started except one that starts a
-session of its own. In an nc-test-sandbox the group holds the init of the suite's
+session or process group of its own. In an nc-test-sandbox the group holds the init of the suite's
 PID namespace, whose end ends every process inside, so nothing is left; outside
 one, such a process is not reached. A suite outside an nc-test-sandbox runs
 with TMPDIR set to a directory of its own in the system temp directory, which
@@ -3214,7 +3214,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
 
 def kill_test_suite_process_group(process):
     """SIGKILL the suite's process group, which every process it started stays in unless
-    it starts a session of its own.
+    it starts a session or process group of its own.
 
     In an nc-test-sandbox the group holds the init of the suite's PID namespace, since bwrap
     is not given --new-session, and the init's end ends every process in the namespace.
