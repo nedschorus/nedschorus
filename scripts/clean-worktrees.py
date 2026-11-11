@@ -22,7 +22,7 @@ agent-session, counts as running. A worktree is KEPT, with the reason, when:
   - whether its owner runs cannot be read;
   - a live process has its working directory inside it, or the vacancy check
     (lsof) cannot be trusted: lsof missing, failing, timing out or listing no
-    working directories at all.
+    working directory for any process.
 
 Otherwise the owner and the branch's pull request decide. The pull requests
 come from one `gh pr list --state all` per invocation; a pull request is the
@@ -216,7 +216,8 @@ it was and a line opening `FAILED: ` says so.
 Modes:
   (default)    report every worktree, one line each, then the count lines
   --only-done  print only what needs someone's attention — done worktrees,
-               the orphaned-branch-ref line, and the dead-registration line
+               the line naming branch refs with no worktree that are fully
+               on main (orphaned branch refs), and the dead-registration line
                when there are any; nothing otherwise (the launchers run this
                at boot, so a reapable worktree, an orphaned branch ref or a
                dead registration is named at the moment someone is looking)
@@ -251,7 +252,8 @@ When a line cannot be written, the run prints a line containing FAILED
 with the cause, then the command that writes the unwritten line once the
 cause is fixed, then what to do if that command fails; it carries on
 removing, and exits 1 at the end. When the handoff-supervisor runs --remove
-at a session-handoff, its report keeps all three lines. The environment variable
+at a session-handoff, its report to the agent-session keeps the FAILED line
+and the two lines after it. The environment variable
 CLEAN_WORKTREES_REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE names
 a local file to append to instead, which is how the tests keep out of the
 log-store.

@@ -30,7 +30,8 @@ Usage:
       commits the kept files' changes on a new branch, restored-<the ref's
       last two parts joined by a hyphen>, in a new worktree of that name
       under <clone>/.claude/worktrees/, made from the work-snapshot's parent
-      and given an owner file naming the agent-seat GIT_AUTHOR_NAME names;
+      and given an owner file, the file scripts/worktree-owner-file-read-and-write.py
+      writes, naming the agent-seat GIT_AUTHOR_NAME names;
       opens a task naming the branch on the task list
       ~/.claude/tasks/<CLAUDE_CODE_TASK_LIST_ID>; deletes the ref
   uncommitted-work-snapshots.py discard REF [--repo PATH]
@@ -43,7 +44,7 @@ Usage:
   before the commit, the worktree and branch it made are removed and the ref
   is kept; opening the task, the task's text is printed for TaskCreate and
   the ref is still deleted; deleting the ref, the command is printed.
-  Exit 0 done, 1 a step failed, 2 bad invocation, 3 refused.
+  restore and discard exit 0 done, 1 a step failed, 2 bad invocation, 3 refused.
 """
 
 import hashlib
@@ -911,9 +912,9 @@ def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
                 raise owners.WorktreeOwnerFileError(
                     f"git worktree add left an owner file naming {json.dumps(written)}, where "
                     f"restore names {json.dumps(owner)}. scripts/git-client-side-hooks/post-checkout "
-                    f"writes that file, naming GIT_AUTHOR_NAME's agent-seat as restore does, and "
-                    f"restore cannot tell why the two differ. restore never overwrites an owner file "
-                    f"that names another owner, because scripts/clean-worktrees.py decides from the "
+                    f"writes that file and should name GIT_AUTHOR_NAME's agent-seat as restore does; a "
+                    f"likely cause is a core.hooksPath naming another clone's older hook. restore never "
+                    f"overwrites an owner file that names another owner, because scripts/clean-worktrees.py decides from the "
                     f"owner when to remove the worktree") from None
     except Exception as error:
         return undo_after(f"writing the owner file of {worktree}", f"{type(error).__name__}: {error}")
@@ -1106,7 +1107,9 @@ def command_exit_code(run):
     try:
         return run()
     except WorkSnapshotError as error:
-        print(f"FAILED: {error}. Nothing after that step was done; tell the user what failed.")
+        print(f"FAILED: {error}. Nothing after that step was done, and what the steps before it made, "
+              f"such as a restore's new worktree, branch and commit, is left in place; tell the user "
+              f"what failed.")
         return EXIT_STEP_FAILED
 
 
