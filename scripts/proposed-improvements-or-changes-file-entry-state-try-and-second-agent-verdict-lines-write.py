@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Change the lines of a proposed-improvements-or-changes-file that the
-handler of GHI 1132 may change, and refuse the changes rules 4 and 5 of that
-GHI-MD's § The design forbid.
+"""Change the lines of a proposed-improvements-or-changes-file that its
+handler may change, and refuse the changes that rules 4 and 5 of § The design
+in docs/issues/1132-concerns-about-a-ghi-are-handled-by-agents.md forbid.
 
 The handler is the forked subagent that settles a file's entries by
 docs/agents/queue/proposed-improvements-or-changes-file-reviewer-entries-settling-subagent-instructions.md.
@@ -54,8 +54,8 @@ nedlern@ned-box:<path> that scripts/ghi-issue-write.py prints for a file in
 the log-store; that form is read as a local path on ned-box and refused
 elsewhere with the ssh command to run instead, its arguments quoted.
 
-Does not handle: two handlers changing one file at the same time (GHI 1132's
-open question 2): the file is read, changed and replaced whole, so the later
+Does not handle: two handlers changing one file at the same time (that
+design's open question 2): the file is read, changed and replaced whole, so the later
 writer's replacement drops the earlier writer's lines.
 
 Failures: a value holding a line break, a refused change, a missing file or entry, or a file that cannot be
