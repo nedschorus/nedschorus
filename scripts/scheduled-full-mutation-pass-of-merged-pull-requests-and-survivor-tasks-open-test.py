@@ -90,6 +90,7 @@ if rechecking:
                                                                "survived"), "why": "fake"}}
                 for name in diff_files}}}}))
     print(step.get("stdout", "RECORDED MUTANTS: fake"))
+    print(step.get("stderr", ""), file=sys.stderr)
     sys.exit(step.get("exit", 1))
 if "json" in step:
     pathlib.Path(arguments[arguments.index("--survived-and-errored-mutants-json-file") + 1]
@@ -316,6 +317,89 @@ def run_every_exit_but_0_6_7_9_opens_a_job_failure_task_cases():
           (sorted(exits), opened_for_exit))
 
 
+def run_untestable_merge_cases():
+    """A merge the mutation testing program finds a suite failing on, with no mutant applied."""
+    failing_suite = "scripts/thing-test.py"
+    untestable_step = {
+        "exit": job.mutation_testing.EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD,
+        "stderr": (f"mutation-testing: not run — a suite for scripts/thing.py fails on the "
+                   f"unmutated head, so no mutant can be judged:\n"
+                   f"{job.mutation_testing.SUITE_FAILS_ON_UNMUTATED_HEAD_LINE_PREFIX}"
+                   f"{failing_suite}\nMake the suite pass at the head, then run this again.")}
+
+    # The untestable merge is recorded, its task opened, and the merge after it tested in the
+    # same run, from a state file an earlier version wrote without untestable_merges.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        alpha_list = fixture.seat("alpha")
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        untestable = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                                    author="alpha")
+        after = fixture.commit("scripts/other.py", "def triple(x):\n    return x * 3\n",
+                               author="alpha")
+        completed = fixture.run({untestable: untestable_step,
+                                 after: {"json": verdict(survived=[survivor()])}})
+        record = fixture.records()[-1].read_text() if fixture.records() else ""
+        tasks = job_failure_tasks(fixture)
+        heads = [call[call.index("--head") + 1] for call in fixture.calls()]
+        check("a merge whose suite fails on its unchanged code is recorded as untestable with "
+              "that suite, and the run goes on to test the next merge and exits 0",
+              completed.returncode == job.EXIT_ALL_DONE
+              and heads == [untestable, after]
+              and fixture.state_json()["last_tested_main_commit"] == after
+              and fixture.state_json()[job.UNTESTABLE_MERGES_STATE_KEY]
+              == {untestable: [failing_suite]}
+              and task_files(alpha_list) == ["1.json"],
+              (completed.returncode, completed.stderr, heads, fixture.state_json()))
+        check("an untestable merge opens one job failure task naming the merge, the failing "
+              "suite and a later commit's run with the merge's own parent as --base",
+              [task["subject"] for task in tasks]
+              == [job.untestable_merge_job_failure_task_subject(untestable)]
+              and untestable in tasks[0]["description"]
+              and failing_suite in tasks[0]["description"]
+              and f"--base {start}" in tasks[0]["description"]
+              and f"--head <that commit>" in tasks[0]["description"],
+              tasks)
+        check("the record names the untestable merge, its failing suite and its task, and "
+              "counts it among the merges tested",
+              f"UNTESTABLE: merge {untestable[:12]} (change scripts/thing.py): on its unchanged "
+              f"code the suite(s) {failing_suite} fail" in record
+              and f"JOB FAILURE TASK: opened task #{tasks[0]['id'] if tasks else ''} on "
+                  f"{job.JOB_FAILURE_TASK_AGENT_SEAT}'s task list, "
+                  f"{job.untestable_merge_job_failure_task_subject(untestable)}" in record
+              and "merges tested: 2 of 2, 1 of them recorded as untestable" in record,
+              record)
+        calls_before = len(fixture.calls())
+        completed = fixture.run({"recheck": {"exit": 1}})
+        check("the next run does not try the untestable merge again",
+              completed.returncode == job.EXIT_ALL_DONE
+              and not any("--recorded-mutant-killed-check" not in call
+                          for call in fixture.calls()[calls_before:]),
+              (completed.returncode, fixture.calls()[calls_before:]))
+
+    # The task cannot be opened: a failed step, the state left as it was.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        untestable = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n")
+        after = fixture.commit("scripts/other.py", "def triple(x):\n    return x * 3\n")
+        completed = fixture.run({untestable: untestable_step})
+        heads = [call[call.index("--head") + 1] for call in fixture.calls()]
+        check("an untestable merge whose job failure task cannot be opened stops the run at "
+              "that merge, exit 4, with the state not advanced and no merge recorded as "
+              "untestable",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and heads == [untestable]
+              and f"merge {untestable[:12]} (change scripts/thing.py): a suite fails on its "
+                  f"unchanged code ({failing_suite}), so it is untestable, but its job failure "
+                  f"task could not be opened" in completed.stderr
+              and fixture.state_json() == {"last_tested_main_commit": start, "tasks_opened": {}},
+              (completed.returncode, completed.stderr, heads, fixture.state_json()))
+
+
 def run_carry_on_and_job_failure_task_cases():
     # A merge past the limit with no mutant judged: carried on, not recorded as tested, and
     # one job failure task, not a second on the next run.
@@ -464,11 +548,12 @@ def run_carry_on_and_job_failure_task_cases():
               and tasks[0]["subject"] == f"Nightly full mutation pass stopped at a failed step: "
                                          f"merge {merge[:12]} (change scripts/thing.py): the "
                                          f"mutation testing program exited 2 without saying "
-                                         f"whether each mutant was killed: mutation-testing: not "
-                                         f"run — cosmic-ray is missing. The next run tries this "
-                                         f"merge again."[:len("Nightly full mutation pass stopped "
-                                                               "at a failed step: ") + 200]
-              and "If it fails the same way again" in tasks[0]["description"]
+                                         f"whether each mutant was killed. The next run tries "
+                                         f"this merge again. It printed:"[
+                                             :len("Nightly full mutation pass stopped at a "
+                                                  "failed step: ") + 200]
+              and "It printed:\n    mutation-testing: not run — cosmic-ray is missing\nIf it "
+                  "fails the same way again" in tasks[0]["description"]
               and str(fixture.records()[0]) in tasks[0]["description"],
               f"rc={completed.returncode} tasks={tasks}")
         fixture.run(step)
@@ -631,7 +716,23 @@ def run_carry_on_and_job_failure_task_cases():
           "the cores", counts == [12, 1, 16, 1], counts)
 
 
+def run_last_line_said_cases():
+    kept = (f"{job.mutation_testing.TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX}/tmp/x; "
+            f"remove that directory once you have read them.")
+    check("last_line_said quotes the refusal on standard error, not the line naming where the "
+          "suite runner's logs are kept after it",
+          job.last_line_said("MUTATING a.py", f"refused: the suites fail\n{kept}\n")
+          == "refused: the suites fail")
+    check("last_line_said falls back to standard output's last line when standard error holds "
+          "only the kept-logs line",
+          job.last_line_said("MUTATING a.py with b-test.py\n", f"{kept}\n")
+          == "MUTATING a.py with b-test.py")
+    check("last_line_said says nothing when neither stream holds another line",
+          job.last_line_said("", f"{kept}\n") == "nothing")
+
+
 def run_cases():
+    run_last_line_said_cases()
     # The first run writes the state file and tests nothing.
     with tempfile.TemporaryDirectory() as scratch:
         fixture = Fixture(scratch)
@@ -767,8 +868,22 @@ def run_cases():
     for case_name, step, timeout_seconds, wanted in [
         ("the mutation testing program exits 2",
          {"exit": 2, "stderr": "mutation-testing: not run — cosmic-ray is missing"}, None,
-         "exited 2 without saying whether each mutant was killed: mutation-testing: not run — "
-         "cosmic-ray is missing"),
+         "exited 2 without saying whether each mutant was killed. The next run tries this merge "
+         "again. It printed:\n    mutation-testing: not run — cosmic-ray is missing"),
+        # git puts the cause before its last line.
+        ("the mutation testing program exits 2 with the cause before its last line of stderr",
+         {"exit": 2, "stderr": "mutation-testing: git worktree add failed (exit 128): "
+                               "Preparing worktree (detached HEAD 557f938)\n"
+                               "error: unable to write file README: No space left on device\n"
+                               "fatal: Could not reset index file to revision 'HEAD'."}, None,
+         "It printed:\n    mutation-testing: git worktree add failed (exit 128): Preparing "
+         "worktree (detached HEAD 557f938)\n    error: unable to write file README: No space "
+         "left on device\n    fatal: Could not reset index file to revision 'HEAD'.\n"),
+        # Above EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD, as when a signal stopped it.
+        ("the mutation testing program exits 143",
+         {"exit": 143, "stderr": "stopped"}, None,
+         "exited 143 without saying whether each mutant was killed. The next run tries this "
+         "merge again."),
         ("the mutation testing program writes no JSON file",
          {"exit": 0}, None, "but its JSON file"),
         ("the JSON file lacks a key",
@@ -797,6 +912,7 @@ def run_cases():
                   in completed.stderr and not crash_tasks, (completed.stderr, crash_tasks))
 
     run_carry_on_and_job_failure_task_cases()
+    run_untestable_merge_cases()
 
     # No task list for the survivor at all: the merge is not recorded as tested.
     with tempfile.TemporaryDirectory() as scratch:
@@ -1409,7 +1525,19 @@ def run_cases():
     for case_name, plan_step, flags, wanted in [
         ("the recorded mutant killed check writes no verdicts", {"no_verdicts": True, "exit": 2,
                                                                   "stdout": "could not run"},
-         (), "the recorded mutant killed check exited 2 without verdicts"),
+         (), "the recorded mutant killed check exited 2 without verdicts (FileNotFoundError: "),
+        ("with nothing on standard error, the recorded mutant killed check's last line of "
+         "standard output is named", {"no_verdicts": True, "exit": 2,
+                                      "stdout": "checking\ncould not run"},
+         (), "; it printed:\n    could not run\n"),
+        ("the recorded mutant killed check's whole standard error is named",
+         {"no_verdicts": True, "exit": 2, "stdout": "checking",
+          "stderr": "mutation-testing: git worktree add failed (exit 128): Preparing worktree\n"
+                    "error: unable to write file README: No space left on device\n"
+                    "fatal: Could not reset index file to revision 'HEAD'."},
+         (), "; it printed:\n    mutation-testing: git worktree add failed (exit 128): "
+             "Preparing worktree\n    error: unable to write file README: No space left on "
+             "device\n    fatal: Could not reset index file to revision 'HEAD'.\n"),
         ("the recorded mutant killed check runs past its limit", {"sleep": 30}, (
             "--survivor-task-recorded-mutant-killed-check-timeout-seconds", "1"),
          "the recorded mutant killed check ran past the limit of 1 s without verdicts"),

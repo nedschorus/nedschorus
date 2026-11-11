@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Find the agent-facing-messages in a Python file's source, and say which
+"""Find the tool-messages-to-agent in a Python file's source, and say which
 files are tests.
 
-An agent-facing-message is recognized by its form alone: a string printed or
+A tool-message-to-agent is recognized by its form alone: a string printed or
 written to sys.stdout or sys.stderr; a string passed to a helper printer, a
 function defined once at module level whose parameter reaches print,
 sys.stdout.write, sys.stderr.write, `<parameter>.write` or another helper
@@ -10,7 +10,7 @@ printer, as text in say(stream, text) does, in the position or under the
 keyword of that parameter; a string in a raise statement; a string
 assigned to a name ending in one of AGENT_STRING_NAME_SUFFIXES, or in one of
 them followed by S; the value, in a dict literal, of one of
-AGENT_FACING_HOOK_OUTPUT_KEYS, the keys through which a Claude Code hook's JSON
+TOOL_MESSAGE_TO_AGENT_HOOK_OUTPUT_KEYS, the keys through which a Claude Code hook's JSON
 output reaches the agent, when that value is a string-building expression, as a local name's
 binding below may be, or a name assigned a string once at module level; and the module docstring of a file
 whose source holds the text __doc__ anywhere, comments and strings included,
@@ -31,8 +31,8 @@ the field of a standalone f-string. Each entry also holds literal_text, the mess
 pieces alone, outside every {...} placeholder, and text_as_agent_reads_it_with_placeholder_stand_ins,
 the message as the agent reads it, with each placeholder shown as <its source>, or as its value
 when it names a module-level string constant whose one assignment is the only binding of that
-name anywhere in the file, as module_string_values_bound_nowhere_else says. A message held in a local name
-is found when its own function's body binds the name, with =, an annotation or +=, to a
+name anywhere in the file, as module_level_string_values_whose_name_the_file_binds_only_once says.
+A message held in a local name is found when its own function's body binds the name, with =, an annotation or +=, to a
 non-empty string literal, an f-string, a + chain holding a string literal, a string literal
 % something or a string literal's join, or to a conditional expression with such a branch,
 and the name reaches one of the forms above, or a return statement that returns the name or
@@ -82,11 +82,11 @@ parameter hides the helper printer's name; nor one that fills a helper's
 *args or **kwargs, as in warn("text") for def warn(*parts): print(*parts). "systemMessage" is not
 among the keys: Claude Code shows that text to the user, not to the agent.
 
-A test file's strings are not agent-facing-messages: a test's copy of an
+A test file's strings are not tool-messages-to-agent: a test's copy of an
 expected message is not handed to an agent.
 
 scripts/pull-request-review-plan.py and
-nc-systems/general-tools/python-edit-changed-agent-facing-message-check-reminder-hook.py
+nc-systems/general-tools/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py
 load this file with importlib.util.spec_from_file_location, because Python
 cannot import a hyphenated file name by name.
 """
@@ -95,10 +95,10 @@ import ast
 
 AGENT_STRING_NAME_SUFFIXES = ("_ADVICE", "_INSTRUCTION", "_LINE", "_MESSAGE", "_NOTICE", "_REASON",
                               "_REFUSAL", "_TEMPLATE")
-AGENT_FACING_HOOK_OUTPUT_KEYS = ("additionalContext", "permissionDecisionReason", "reason", "stopReason")
+TOOL_MESSAGE_TO_AGENT_HOOK_OUTPUT_KEYS = ("additionalContext", "permissionDecisionReason", "reason", "stopReason")
 
 
-def variable_name_has_agent_facing_message_suffix(name):
+def variable_name_has_tool_message_to_agent_suffix(name):
     stem = name[:-1] if name.endswith("S") else name
     return stem.endswith(AGENT_STRING_NAME_SUFFIXES)
 
@@ -214,8 +214,8 @@ def render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(node, m
     spec, becomes its value, rendered the same way; any other f-string field or non-literal operand
     becomes <its source>, as {path} becomes <path>. So does a name whose value is being expanded
     already, so that two constants naming each other end. module_string_values holds only the names
-    module_string_values_bound_nowhere_else keeps, so where a name stands in the file never changes
-    what it renders as."""
+    module_level_string_values_whose_name_the_file_binds_only_once keeps, so where a name stands in
+    the file never changes what it renders as."""
     def render(part):
         return render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(
             part, module_string_values, names_being_expanded)
@@ -515,7 +515,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
     def visit_assignment_value(self, node):
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
         for target in targets:
-            if isinstance(target, ast.Name) and variable_name_has_agent_facing_message_suffix(target.id):
+            if isinstance(target, ast.Name) and variable_name_has_tool_message_to_agent_suffix(target.id):
                 self.collect_sink_expression(node.value, f"{target.id} =")
         self.generic_visit(node)
 
@@ -525,14 +525,14 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
 
     def visit_Dict(self, node):
         for key, value in zip(node.keys, node.values):
-            if not (isinstance(key, ast.Constant) and key.value in AGENT_FACING_HOOK_OUTPUT_KEYS):
+            if not (isinstance(key, ast.Constant) and key.value in TOOL_MESSAGE_TO_AGENT_HOOK_OUTPUT_KEYS):
                 continue
             label = f'"{key.value}" value'
             if isinstance(value, ast.Name):
                 if self.enclosing_local_string_bindings and value.id in self.enclosing_local_string_bindings[-1]:
                     self.collect_local_strings_reaching(value)
                 # A name ending in a suffix is collected already, at its assignment.
-                elif value.id in self.module_string_values and not variable_name_has_agent_facing_message_suffix(value.id):
+                elif value.id in self.module_string_values and not variable_name_has_tool_message_to_agent_suffix(value.id):
                     self.collect_expression_strings(self.module_string_values[value.id], f"{label} {value.id} =")
             elif string_building_parts(value):
                 self.collect_sink_expression(value, label)
@@ -781,7 +781,7 @@ def module_level_string_values(tree):
             if len(values) == 1 and values[0] is not None and is_string_expression(values[0])}
 
 
-def names_bound_anywhere_in_the_file(tree):
+def binding_count_of_each_name_anywhere_in_the_file(tree):
     """Each name, with how many times the file binds it: assignment and every other store, including a
     loop's, a comprehension's and a := target; deletion; a parameter of any function or lambda; an
     import; except ... as; a match capture; a function or class definition's name; a type parameter;
@@ -811,16 +811,16 @@ def names_bound_anywhere_in_the_file(tree):
     return counts
 
 
-def module_string_values_bound_nowhere_else(tree, module_string_values):
+def module_level_string_values_whose_name_the_file_binds_only_once(tree, module_string_values):
     """The module constants whose one module-level assignment is the only binding of their name
     anywhere in the file, so a placeholder naming one means that constant wherever it stands. A
     name a function also binds, takes as a parameter, declares global or loops over keeps its
     <source> stand-in, which may hide a value Python would use, but never shows a wrong one."""
-    counts = names_bound_anywhere_in_the_file(tree)
+    counts = binding_count_of_each_name_anywhere_in_the_file(tree)
     return {name: value for name, value in module_string_values.items() if counts.get(name) == 1}
 
 
-def agent_facing_string_nodes_in_source(source):
+def tool_message_to_agent_string_nodes_in_source(source):
     """Each entry holds line and end_line, counted from 1, label, text, literal_text,
     placeholder_value_source_code_texts, text_as_agent_reads_it_with_placeholder_stand_ins and kind,
     "prompt" or "message".
@@ -832,7 +832,8 @@ def agent_facing_string_nodes_in_source(source):
     except (SyntaxError, ValueError):
         return []
     module_string_values = module_level_string_values(tree)
-    rendered_module_string_values = module_string_values_bound_nowhere_else(tree, module_string_values)
+    rendered_module_string_values = module_level_string_values_whose_name_the_file_binds_only_once(
+        tree, module_string_values)
     helper_printers = helper_printers_in_tree(tree)
     # A pass can find a function called for text only after visiting its definition, and a
     # followed function's return can name another, so passes repeat until none is new.

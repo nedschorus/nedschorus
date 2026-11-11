@@ -21,22 +21,25 @@ The cycle, per reincarnation:
      no conversation-tail, and has the recovery note step 3 describes
      instead. Started with
      --started-by-handoff-supervisor-restarting-itself-on-main-code, the fresh
-     process prints that the restart worked. When the checkout cannot be
-     fast-forwarded, or os.execv fails, this process prints why, carries on
-     with the code it started with, and the successor's initial agent
-     instructions say why too.
+     process prints that the restart worked. When the checkout is the
+     reference-checkout and cannot be fast-forwarded, this process first
+     puts it back on main with put_reference_checkout_back_on_main, of
+     handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py,
+     which pushes the checkout's leftovers to a branch; neither the
+     successor nor the user is told of such a branch. When the checkout cannot be fast-forwarded,
+     when that program fails, or when os.execv fails, this process prints
+     why, carries on with the code it started with, and the successor's
+     initial agent instructions say why too, and, when that program
+     failed, what it printed.
   3. Extract its dialog to disk before anything else proceeds. When the
      extraction fails, the successor's prompt is a recovery note saying the
      session-dialog could not be extracted and where the retiring session's
      transcript is, or that it was not found, then the instruction to put
-     items needing the user in one approval-walk, then the lines step 6 says
+     items needing the user in one approval-walk, then the lines step 5 says
      the initial agent instructions carry, such as the launch-time-git-sync's
      line and the leftovers, and last the handoff's next step.
   4. Each generation opens the same launcher-pinned task list.
-  5. Print one queue-status line — to the console only. It does not ride
-     the initial agent instructions (user-ruled 2026-08-29: "Also useless is the
-     reminder there are files in the queues. Thats what queues are for.").
-  6. Launch the successor with the initial agent instructions. Beside the
+  5. Launch the successor with the initial agent instructions. Beside the
      launch-time-git-sync's line they carry, for agent-instructions-editor alone, one
      line per system whose code moved on
      main past the commit its overview was checked against, until the user has been shown
@@ -55,7 +58,7 @@ The cycle, per reincarnation:
      first prompt(s))"; the branches the first-prompt list deleted go above
      the leftovers' opening sentence, under a line that opens with their
      heading (launch_prompt_with_leftovers_before_the_next_step).
-  7. Keep the current and previous handoff and conversation-tail; delete older ones.
+  6. Keep the current and previous handoff and conversation-tail; delete older ones.
 
 The handoff file the agent writes (simple `key: value` lines):
   written-at:           UTC timestamp, ISO 8601
@@ -143,9 +146,9 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIRECTORY = REPOSITORY_ROOT / "scripts"
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
     REPOSITORY_ROOT / "nc-systems" / "general-tools"
-    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
@@ -218,6 +221,16 @@ _reference_checkout_steps_spec = importlib.util.spec_from_file_location(
     / "handoff-reference-checkout-fetch-and-fast-forward-to-origin-main-check-common.py")
 reference_checkout_steps = importlib.util.module_from_spec(_reference_checkout_steps_spec)
 _reference_checkout_steps_spec.loader.exec_module(reference_checkout_steps)
+
+# Loaded at startup, so the version that runs is the one this process started with, whatever
+# the stuck reference-checkout now holds on disk.
+_reference_checkout_back_on_main_spec = importlib.util.spec_from_file_location(
+    "handoff_reference_checkout_back_on_main_after_pushing_leftovers_to_a_branch",
+    REPOSITORY_ROOT / "nc-systems" / "handoff"
+    / "handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py")
+reference_checkout_back_on_main = importlib.util.module_from_spec(
+    _reference_checkout_back_on_main_spec)
+_reference_checkout_back_on_main_spec.loader.exec_module(reference_checkout_back_on_main)
 
 UNCOMMITTED_WORK_SNAPSHOTS_PATH = Path(__file__).resolve().with_name(
     "uncommitted-work-snapshots.py")
@@ -437,7 +450,7 @@ def choose_branch_state_instruction_from_working_directory_push_state(working_di
     """The one branch-state instruction that applies to the checkout's branch, or "" on
     main, on a detached HEAD, or when git cannot tell, which it prints. Call it after
     launch_time_git_sync, whose fetch brings origin's branches up to date."""
-    branch = run_git_here(["rev-parse", "--abbrev-ref", "HEAD"], working_directory, timeout=15)
+    branch = run_git_here(["rev-parse", "--abbrev-ref", "HEAD"], working_directory, timeout=15)  # pragma: no mutate, a limit a second longer or shorter behaves the same
     if branch.returncode != 0:
         command = shlex.join(["git", "-C", str(working_directory), "rev-parse", "--abbrev-ref", "HEAD"])
         print(BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE.format(
@@ -451,11 +464,11 @@ def choose_branch_state_instruction_from_working_directory_push_state(working_di
         return ""
     # The Stop hook rebases only what head_state calls unpushed, so the successor is told the same.
     key, text = checkout_freshness_catch_up.head_state(working_directory, name)
-    if key == "unpushed":
+    if key == "unpushed":  # pragma: no mutate, no key head_state returns sorts after "unpushed", so >= acts as ==
         return BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION
     if key == "detached":
         return ""
-    if key == "unknown":
+    if key == "unknown":  # pragma: no mutate, of the keys head_state returns only "unpushed", handled above, sorts after "unknown", so >= acts as ==
         print(BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE.format(
             branch=f"branch {name} in {working_directory}",
             cause=f"git could not tell whether branch {name} in {working_directory} is pushed to origin: {text}"))
@@ -808,50 +821,32 @@ def process_exists_by_signal(process_id: int) -> bool:
         return True
 
 
-def process_is_supervisor_for_agent(process_id, agent_name: str,
-                                    read_command_line=read_process_command_line,
-                                    lock_path: Optional[Path] = None):
-    """Return (is_supervisor, explanation), assuming ownership when a live PID cannot be identified."""
+SUPERVISOR_LIVENESS_WATCHING = "watching"
+SUPERVISOR_LIVENESS_NOT_WATCHING = "not watching"
+SUPERVISOR_LIVENESS_CANNOT_TELL = "cannot tell"
+
+
+def _supervisor_process_identity(process_id, agent_name: str, read_command_line):
+    """Return (answer, explanation): one of SUPERVISOR_LIVENESS_WATCHING, SUPERVISOR_LIVENESS_NOT_WATCHING or SUPERVISOR_LIVENESS_CANNOT_TELL."""
     # PIDs survive in locks and can be reused; heartbeat freshness does not prove ownership.
-    # An unidentified live PID must block another supervisor, which could kill and relaunch the same session.
-    # Tests must pass read_command_line explicitly; replacing the module attribute cannot change the bound default.
     try:
         process_id = int(process_id)
     except (TypeError, ValueError):
-        return False, f"process id {process_id!r} is not a number"
+        return SUPERVISOR_LIVENESS_NOT_WATCHING, f"process id {process_id!r} is not a number"
     if process_id <= 0:
-        return False, f"process id {process_id} cannot name a process"
+        return SUPERVISOR_LIVENESS_NOT_WATCHING, f"process id {process_id} cannot name a process"
 
     command_line, ps_answered = read_command_line(process_id)
     if not ps_answered:
         if not process_exists_by_signal(process_id):
-            return False, (f"process {process_id} is not running — ps could not be run, or "
-                           "ran and failed, but os.kill reports no such process")
-        program = Path(sys.argv[0]).name or "the program that asked"
-        lock = (f"the supervisor lock {lock_path}" if lock_path is not None
-                else f"the supervisor lock of {agent_name} in the handoff directory")
-        print(f"handoff-supervisor: could not identify process {process_id}: ps could not be "
-              "run, or it ran and failed, in which case ps's own error was printed just before "
-              f"this message. A process with id {process_id} exists, so {program} is told a "
-              f"supervisor of {agent_name} is running, and treats {agent_name} as supervised "
-              f"until ps answers or the lock is gone.\n"
-              f"To find out whether a supervisor of {agent_name} is running, the user runs "
-              f"`ps -ww -p {process_id} -o args=`, the command {program} itself ran.\n"
-              f"If its output shows {SUPERVISOR_SCRIPT_FILE_NAME} with --agent {agent_name}, "
-              "a supervisor is running, and the lock stays.\n"
-              f"If its output shows any other command, none is, and the user removes {lock}.\n"
-              "If it prints nothing, or fails with an error, ps has still not answered, so the "
-              "lock stays: when the process has ended, the next check finds that by itself; "
-              "otherwise the user runs the command again once ps works.\n"
-              "An agent that sees this message tells the user what it says, and does not "
-              "remove the lock itself.",
-              file=sys.stderr)
-        return True, (f"cannot tell whether process {process_id} is the supervisor of "
-                      f"{agent_name} — ps could not be run, or ran and failed, and a process "
-                      "with that id exists, so a supervisor is assumed present rather than "
-                      "risk starting a second one")
+            return SUPERVISOR_LIVENESS_NOT_WATCHING, (
+                f"process {process_id} is not running — ps could not be run, or ran and failed, "
+                "but os.kill reports no such process")
+        return SUPERVISOR_LIVENESS_CANNOT_TELL, (
+            f"cannot tell whether process {process_id} is the supervisor of {agent_name} — ps "
+            "could not be run, or ran and failed, and a process with that id exists")
     if command_line is None:
-        return False, f"process {process_id} is not running"
+        return SUPERVISOR_LIVENESS_NOT_WATCHING, f"process {process_id} is not running"
 
     words = command_line.split()
     runs_this_script = any(word.rpartition("/")[2] == SUPERVISOR_SCRIPT_FILE_NAME
@@ -860,29 +855,98 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
     named_agents += [words[position + 1] for position, word in enumerate(words)
                      if word == "--agent" and position + 1 < len(words)]
     if runs_this_script and agent_name in named_agents:
-        return True, f"process {process_id} is the supervisor of {agent_name}"
-    return False, (f"process {process_id} is live but not a supervisor of {agent_name}: "
-                   f"{command_line}")
+        return SUPERVISOR_LIVENESS_WATCHING, f"process {process_id} is the supervisor of {agent_name}"
+    return SUPERVISOR_LIVENESS_NOT_WATCHING, (f"process {process_id} is live but not a supervisor of "
+                                     f"{agent_name}: {command_line}")
 
 
-def supervisor_liveness(state_path: Path):
-    """Return (is_alive, explanation) for the supervisor owning this state file."""
+def process_is_supervisor_for_agent(process_id, agent_name: str,
+                                    read_command_line=read_process_command_line,
+                                    lock_path: Optional[Path] = None):
+    """Return (is_supervisor, explanation), assuming ownership when a live PID cannot be identified."""
+    # An unidentified live PID must block another supervisor, which could kill and relaunch the same session.
+    # Tests must pass read_command_line explicitly; replacing the module attribute cannot change the bound default.
+    answer, explanation = _supervisor_process_identity(process_id, agent_name, read_command_line)
+    if answer != SUPERVISOR_LIVENESS_CANNOT_TELL:
+        return answer == SUPERVISOR_LIVENESS_WATCHING, explanation
+    program = Path(sys.argv[0]).name or "the program that asked"
+    lock = (f"the supervisor lock {lock_path}" if lock_path is not None
+            else f"the supervisor lock of {agent_name} in the handoff directory")
+    print(f"handoff-supervisor: could not identify process {process_id}: ps could not be "
+          "run, or it ran and failed, in which case ps's own error was printed just before "
+          f"this message. A process with id {process_id} exists, so {program} is told a "
+          f"supervisor of {agent_name} is running, and treats {agent_name} as supervised "
+          f"until ps answers or the lock is gone.\n"
+          f"To find out whether a supervisor of {agent_name} is running, the user runs "
+          f"`ps -ww -p {process_id} -o args=`, the command {program} itself ran.\n"
+          f"If its output shows {SUPERVISOR_SCRIPT_FILE_NAME} with --agent {agent_name}, "
+          "a supervisor is running, and the lock stays.\n"
+          f"If its output shows any other command, none is, and the user removes {lock}.\n"
+          "If it prints nothing, or fails with an error, ps has still not answered, so the "
+          "lock stays: when the process has ended, the next check finds that by itself; "
+          "otherwise the user runs the command again once ps works.\n"
+          "An agent that sees this message tells the user what it says, and does not "
+          "remove the lock itself.",
+          file=sys.stderr)
+    return True, (f"{explanation}, so a supervisor is assumed present rather than risk "
+                  "starting a second one")
+
+
+def _supervisor_lock_holder(state_path: Path):
+    """Return (agent_name, lock_path, holder, no_holder): the PID in the lock, or None and why.
+
+    no_holder is None when holder is a PID, else (answer, explanation): the
+    answer is SUPERVISOR_LIVENESS_NOT_WATCHING when no state or no lock exists, and
+    SUPERVISOR_LIVENESS_CANNOT_TELL when the lock cannot be read.
+    """
     # Read the PID from the lock: the state file holds none.
     if not state_path.is_file():
-        return False, f"no supervisor state at {state_path} — none has ever run for this agent"
-
+        return "", None, None, (SUPERVISOR_LIVENESS_NOT_WATCHING, f"no supervisor state at {state_path} — "
+                                "none has ever run for this agent")
     agent_name = agent_name_from_supervisor_file(state_path)
     lock_path = supervisor_lock_path(state_path.parent, agent_name)
     # Callers reuse this common opening when reporting why recovery may proceed.
     if not lock_path.is_file():
-        return False, (f"no supervisor is watching — no supervisor lock at {lock_path}, "
-                       "and a supervisor removes it when it stops cleanly")
+        return agent_name, lock_path, None, (
+            SUPERVISOR_LIVENESS_NOT_WATCHING, f"no supervisor is watching — no supervisor lock at "
+                                     f"{lock_path}, and a supervisor removes it when it stops "
+                                     "cleanly")
     try:
         holder = int(lock_path.read_text(encoding="utf-8").strip())
     except (ValueError, OSError) as error:
-        return False, (f"no supervisor is watching — the supervisor lock at {lock_path} "
-                       f"is unreadable: {error}")
+        return agent_name, lock_path, None, (
+            SUPERVISOR_LIVENESS_CANNOT_TELL, f"the supervisor lock at {lock_path} is unreadable: "
+                                             f"{error}")
+    return agent_name, lock_path, holder, None
 
+
+def supervisor_liveness_or_cannot_tell(state_path: Path,
+                                       read_command_line=read_process_command_line):
+    """Return (answer, explanation): SUPERVISOR_LIVENESS_WATCHING, SUPERVISOR_LIVENESS_NOT_WATCHING or SUPERVISOR_LIVENESS_CANNOT_TELL."""
+    agent_name, _lock_path, holder, no_holder = _supervisor_lock_holder(state_path)
+    if no_holder is not None:
+        answer, explanation = no_holder
+        if answer == SUPERVISOR_LIVENESS_CANNOT_TELL:
+            return answer, f"cannot tell whether a supervisor is watching — {explanation}"
+        return answer, explanation
+    answer, identity = _supervisor_process_identity(holder, agent_name, read_command_line)
+    if answer == SUPERVISOR_LIVENESS_WATCHING:
+        return answer, f"supervisor alive — {identity}{heartbeat_age_sentence(state_path)}"
+    if answer == SUPERVISOR_LIVENESS_NOT_WATCHING:
+        return answer, f"no supervisor is watching — {identity}"
+    return answer, identity
+
+
+def supervisor_liveness(state_path: Path):
+    """Return (is_alive, explanation) for the supervisor owning this state file."""
+    # Callers that cannot yet act on "cannot tell" keep this reading: an unidentified live
+    # holder counts as alive, so nothing recovers over it; an unreadable lock counts as dead.
+    agent_name, lock_path, holder, no_holder = _supervisor_lock_holder(state_path)
+    if no_holder is not None:
+        answer, explanation = no_holder
+        if answer == SUPERVISOR_LIVENESS_CANNOT_TELL:
+            return False, f"no supervisor is watching — {explanation}"
+        return False, explanation
     running, identity = process_is_supervisor_for_agent(holder, agent_name, lock_path=lock_path)
     if running:
         return True, f"supervisor alive — {identity}{heartbeat_age_sentence(state_path)}"
@@ -996,7 +1060,7 @@ def agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build(p
     start_again_instruction says how to start the agent-seat again once the file is fixed;
     it depends on the program that refused.
     """
-    # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md
+    # docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md
     machine = ("ned-box" if handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
                else "the Mac")
     unix_user = getpass.getuser()
@@ -1060,24 +1124,6 @@ def transcript_unreadable_stop_message(agent: str, handoff_directory: Path, sess
             f"be decided, because its transcript could not be read: "
             f"{error.filename}: {error.strerror}.\n"
             + unreadable_path_restart_instruction(agent, handoff_directory, error.filename))
-
-
-def queue_status_line(working_directory: Path) -> str:
-    """Return each queue's depth and oldest item for the console."""
-    reports = []
-    for queue_directory in ("nc-queue", "docs/issues/queue", "docs/nedschorus-wiki/queue", "legacy-feature-queue"):
-        directory = working_directory / queue_directory
-        if not directory.is_dir():
-            continue
-        entries = sorted(
-            item for item in directory.glob("*.md") if item.name.lower() != "readme.md"
-        )
-        if not entries:
-            reports.append(f"{queue_directory}: empty")
-            continue
-        oldest = min(entries, key=lambda item: item.name)
-        reports.append(f"{queue_directory}: {len(entries)}, oldest {oldest.name}")
-    return "queues — " + ("; ".join(reports) if reports else "none found")
 
 
 def extract_dialog(session_id: str, working_directory: Path, output_path: Path) -> bool:
@@ -1376,7 +1422,8 @@ def launch_time_git_sync(working_directory: Path) -> str:
         return (f"launch-time-git-sync: {branch} left as is — {error}{fetch_note}\n"
                 f"{launch_time_git_sync_git_failure_next_steps(error)}")
 
-    merged = run_git_here(["merge", "--ff-only", "origin/main"], working_directory)
+    merged = run_git_here(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"],
+                          working_directory)
     if merged.returncode != 0:
         error = "; ".join(line.strip() for line in merged.stderr.splitlines()
                           if line.strip())
@@ -1631,10 +1678,12 @@ def uncommitted_work_snapshot_text(agent: str, working_directory: Path,
 
 NEXT_STEP_HEADING = "\n\nThen take the next step:\n"
 LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE = (
-    "Before you take the next step, keep, delete or hand on each leftover listed below, which "
-    "an earlier agent-session of this agent-seat left, as its list says; you may instead hand "
-    "that work to a background subagent and take the next step while it runs. Each leftover's "
-    "entry opens with how many first prompts have listed it, this one included.")
+    "Give the leftovers listed below, which an earlier agent-session of this agent-seat left, "
+    "to a background subagent. It deletes each leftover that no open task or pull request of "
+    "this agent-seat needs, and reports the rest to you. Take the next step while it runs. "
+    "Then, for each leftover it reports, carry it on yourself, or name in your session-handoff "
+    "the agent-seat that will. Each leftover's entry opens with how many first prompts have "
+    "listed it, this one included.")
 LEFTOVER_PROMPT_LISTING_COUNTS_FILE_SUFFIX = "-leftovers-prompt-listing-counts.json"
 # The entries whose count is kept: a branch, a worktree or a work-snapshot, by what opens the entry.
 LEFTOVER_ENTRY_PREFIXES = ("- branch ", "- worktree ", "- refs/work-snapshots/")
@@ -2203,8 +2252,6 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
     prune_old_generations(settings.handoff_directory, f"{settings.agent}-dialog")
     prune_old_generations(settings.handoff_directory, f"{settings.agent}-handoff")
 
-    print(f"handoff-supervisor: {queue_status_line(settings.working_directory)}")
-
     successor_session_id = str(uuid.uuid4())
     plan = DialogIgnitionPlan(
         extract_path, handoff_fields,
@@ -2231,16 +2278,19 @@ RESTART_PROGRAM_PATH_FROM_HOME = (
 REFERENCE_CHECKOUT_BACK_ON_MAIN_PROGRAM_PATH_FROM_HOME = (
     f"{HANDOFF_PROGRAMS_PATH_FROM_HOME}"
     "handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py")
-HANDOFF_SUPERVISOR_NOT_RESTARTED_BECAUSE_REFERENCE_CHECKOUT_WILL_NOT_FAST_FORWARD_TAIL = (
-    "The handoff-supervisor restarts itself at a session-handoff only when that checkout "
-    "fast-forwards to main or is current with it. No agent works in that checkout, so anything "
-    "that stops it is left over. Run `{command}`: it saves any leftovers to a pushed branch and "
-    "puts the checkout back on main. Name to the user the branch it prints, if any. If it fails, "
-    "work out why from what it printed, asking an advisor if you have one, and fix it without "
-    "losing anything the checkout holds, then run `{command}` again to check; tell the user "
-    "afterwards what you found and did. Once the checkout is on main, the handoff-supervisor "
-    "restarts itself at the next session-handoff at which it starts the successor without "
-    "stopping to ask the user."
+HANDOFF_SUPERVISOR_NOT_RESTARTED_BECAUSE_REFERENCE_CHECKOUT_BACK_ON_MAIN_PROGRAM_FAILED_TAIL = (
+    "That checkout would not fast-forward to main, so the handoff-supervisor ran the program "
+    "that saves the checkout's leftovers to a pushed branch and puts it back on main, and "
+    "that program failed, printing: \"{output}\". Work out the cause from what it printed, "
+    "asking an advisor if you have one, fix it without losing anything the checkout holds, "
+    "and run the program again as `{command}`, the form that works from this agent-session. "
+    "Afterwards, tell the user what you found and did, and name any branch a run of the "
+    "program printed; when the cause is not one you can fix, quote him what the program "
+    "printed. The handoff-supervisor does not run the program again once the checkout is on "
+    "main, which it can be even after a failed push, so a leftovers branch the program could "
+    "not push stays only in that checkout until you run the program again. Once the checkout "
+    "is on main, the handoff-supervisor restarts itself at the next session-handoff at which "
+    "it starts the successor without stopping to ask the user."
 )
 HANDOFF_SUPERVISOR_NOT_RESTARTED_RESTART_PROGRAM_TAIL = (
     "The restart program restarts it from the reference-checkout {reference_checkout}. Once "
@@ -2260,17 +2310,17 @@ def handoff_program_command_for_this_machine(path_from_home_and_arguments: str,
 
 
 def handoff_supervisor_not_restarted_on_main_code_notice(
-        report: str, seat: str, checkout: Path = REPOSITORY_ROOT,
+        report: str, seat: str, back_on_main_program_failure_output: str = "",
         on_the_mac: bool = sys.platform == "darwin") -> str:
     """The successor's notice that the handoff-supervisor did not restart itself, naming
-    the tool for its cause: the program that puts the reference-checkout back on main, when
-    that checkout will not fast-forward, since the restart program's step 0 would fail the
-    same way; else the restart program."""
+    the tool for its cause: the program that puts the reference-checkout back on main, with
+    what it printed, when the handoff-supervisor ran it and it failed; else the restart
+    program."""
     notice = HANDOFF_SUPERVISOR_NOT_RESTARTED_ON_MAIN_CODE_TEMPLATE.format(
-        report=report, checkout=checkout)
-    if (not report.startswith(OS_EXECV_FAILURE_REPORT_PREFIX)
-            and Path(checkout) == REFERENCE_CHECKOUT):
-        return notice + HANDOFF_SUPERVISOR_NOT_RESTARTED_BECAUSE_REFERENCE_CHECKOUT_WILL_NOT_FAST_FORWARD_TAIL.format(
+        report=report, checkout=REPOSITORY_ROOT)
+    if back_on_main_program_failure_output:
+        return notice + HANDOFF_SUPERVISOR_NOT_RESTARTED_BECAUSE_REFERENCE_CHECKOUT_BACK_ON_MAIN_PROGRAM_FAILED_TAIL.format(
+            output=back_on_main_program_failure_output,
             command=handoff_program_command_for_this_machine(
                 REFERENCE_CHECKOUT_BACK_ON_MAIN_PROGRAM_PATH_FROM_HOME, on_the_mac))
     return notice + HANDOFF_SUPERVISOR_NOT_RESTARTED_RESTART_PROGRAM_TAIL.format(
@@ -2302,17 +2352,53 @@ def replace_this_process_with(arguments: list) -> None:
     os.execv(arguments[0], arguments)
 
 
-def handoff_supervisor_restart_itself_on_main_code_or_return_failure_report(
-        settings: SupervisorSettings) -> str:
-    """Fast-forward the checkout holding this program to origin/main and replace this
-    process, keeping its process ID, with a fresh start of the program from there.
-    Return, without raising, the one-line reason when it did not restart."""
+def launch_time_git_sync_of_own_checkout_first_line_if_not_on_main() -> str:
+    """Return "" when the checkout holding this program is now at main's commit, else the
+    first line of the launch-time-git-sync's report, which says why not."""
     report = launch_time_git_sync(REPOSITORY_ROOT)
     print(f"handoff-supervisor: its own checkout {REPOSITORY_ROOT}: {report}")
     first_line = report.splitlines()[0]
-    if (LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_FAST_FORWARDED_TO_MAIN not in first_line
-            and LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_CURRENT_WITH_MAIN not in first_line):
-        return first_line
+    if (LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_FAST_FORWARDED_TO_MAIN in first_line
+            or LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_CURRENT_WITH_MAIN in first_line):
+        return ""
+    return first_line
+
+
+def handoff_supervisor_not_restarted_notice_and_console_line(
+        report: str, seat: str, back_on_main_program_failure_output: str = "") -> str:
+    print("handoff-supervisor: not restarted on main's code, carrying on with the code "
+          f"this process started with: {report}")
+    return handoff_supervisor_not_restarted_on_main_code_notice(
+        report, seat, back_on_main_program_failure_output=back_on_main_program_failure_output)
+
+
+def handoff_supervisor_restart_itself_on_main_code_after_putting_reference_checkout_back_on_main_or_return_successor_notice(
+        settings: SupervisorSettings) -> str:
+    """Fast-forward the checkout holding this program to origin/main and replace this
+    process, keeping its process ID, with a fresh start of the program from there. When
+    that checkout is the reference-checkout and will not fast-forward, first put it back
+    on main with the reference-checkout back-on-main program.
+    Return, without raising, the successor's notice saying why it did not restart."""
+    report = launch_time_git_sync_of_own_checkout_first_line_if_not_on_main()
+    if report and REPOSITORY_ROOT == REFERENCE_CHECKOUT:
+        print("handoff-supervisor: putting the reference-checkout back on main, saving its "
+              "leftovers to a pushed branch")
+        try:
+            main_commit, leftovers_branches = (
+                reference_checkout_back_on_main.put_reference_checkout_back_on_main(
+                    REFERENCE_CHECKOUT, datetime.now().date()))
+        except reference_checkout_back_on_main.StepFailed as error:
+            output = reference_checkout_back_on_main.reference_checkout_back_on_main_failure_text_build(
+                REFERENCE_CHECKOUT, error)
+            print(f"handoff-supervisor: {output}")
+            return handoff_supervisor_not_restarted_notice_and_console_line(
+                report, settings.agent, back_on_main_program_failure_output=output)
+        print("handoff-supervisor: "
+              + reference_checkout_back_on_main.reference_checkout_back_on_main_success_line_build(
+                  REFERENCE_CHECKOUT, main_commit, leftovers_branches))
+        report = launch_time_git_sync_of_own_checkout_first_line_if_not_on_main()
+    if report:
+        return handoff_supervisor_not_restarted_notice_and_console_line(report, settings.agent)
     arguments = handoff_supervisor_restart_arguments_build(settings)
     print(f"handoff-supervisor: restarting on main's code as process {os.getpid()}: "
           f"{shlex.join(arguments)}")
@@ -2321,9 +2407,10 @@ def handoff_supervisor_restart_itself_on_main_code_or_return_failure_report(
     sys.stderr.flush()
     try:
         replace_this_process_with(arguments)
+        report = f"{OS_EXECV_FAILURE_REPORT_PREFIX}returned without replacing the process"
     except OSError as error:
-        return f"{OS_EXECV_FAILURE_REPORT_PREFIX}failed: {type(error).__name__}: {error}"
-    return f"{OS_EXECV_FAILURE_REPORT_PREFIX}returned without replacing the process"
+        report = f"{OS_EXECV_FAILURE_REPORT_PREFIX}failed: {type(error).__name__}: {error}"
+    return handoff_supervisor_not_restarted_notice_and_console_line(report, settings.agent)
 
 
 def successor_session_id_and_ignition_plan_without_conversation_tail(
@@ -2385,7 +2472,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     if settings.started_by_handoff_supervisor_restarting_itself_on_main_code:
         print(f"handoff-supervisor: restarted on main's code as process {os.getpid()}, "
               f"from {HANDOFF_SUPERVISOR_SCRIPT_PATH}")
-    not_restarted_on_main_code_report = ""
+    successor_notice = ""
 
     # Consume a waiting handoff before resume, or the wait loop would kill the resumed session for an old handoff.
     if next_launch_resumes_the_session and settings.handoff_path.is_file():
@@ -2500,10 +2587,9 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 launch_time_git_sync_report, overview_refresh_due, memory_review_due,
                 branch_state_instruction=branch_state_instruction)
             ignition_plan = None
-            if not_restarted_on_main_code_report:
-                prompt += " " + handoff_supervisor_not_restarted_on_main_code_notice(
-                    not_restarted_on_main_code_report, settings.agent)
-                not_restarted_on_main_code_report = ""
+            if successor_notice:
+                prompt += " " + successor_notice
+                successor_notice = ""
         # Read after sync, which may have updated the prompt file.
         appended_system_prompt_file = appended_system_prompt_file_for_launch(
             settings.appended_system_prompt_file,
@@ -2620,10 +2706,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         # An ask-user-before-restart handoff is not restarted on, or the startup path would ask restart? y/n again.
         if (settings.restarts_itself_on_main_code_at_each_session_handoff
                 and not read_ask_user_before_restart_reason_from_session_handoff_fields(handoff_fields)):
-            not_restarted_on_main_code_report = (
-                handoff_supervisor_restart_itself_on_main_code_or_return_failure_report(settings))
-            print("handoff-supervisor: not restarted on main's code, carrying on with the code "
-                  f"this process started with: {not_restarted_on_main_code_report}")
+            successor_notice = (
+                handoff_supervisor_restart_itself_on_main_code_after_putting_reference_checkout_back_on_main_or_return_successor_notice(settings))
 
         retiring_session_id = retiring_session_id_from_handoff_writer_or_tracked_launch(
             session_id, handoff_fields)

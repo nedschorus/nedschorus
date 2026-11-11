@@ -12,6 +12,8 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -94,6 +96,29 @@ REFUSED = [
     ("pkill with only a signal and no -P", "pkill -TERM -f", "`pkill`"),
 ]
 
+LOOP_CONDITION = "`pgrep -f` in the condition of a while or until loop"
+REFUSED += [
+    ("pgrep -f in an until condition, as the 2026-11-08 waits wrote it",
+        'until ! pgrep -f "run-all-test-suites.py --only"; do sleep 30; done', LOOP_CONDITION),
+    ("kill -0 of pgrep -f in an until condition, the hook docstring's former example",
+        'until ! kill -0 $(pgrep -f "git push -q -u origin HEAD" | head -1) 2>/dev/null; do sleep 5; done',
+        LOOP_CONDITION),
+    ("pgrep -af in a while condition", "while pgrep -af x >/dev/null; do sleep 5; done", LOOP_CONDITION),
+    ("pgrep --full in a test's substitution in an until condition",
+        'until [ -z "$(pgrep --full x)" ]; do sleep 5; done', LOOP_CONDITION),
+    ("pgrep -f behind timeout in a while condition", "while timeout 5 pgrep -f x; do :; done", LOOP_CONDITION),
+    ("pgrep -f in a loop condition inside bash -c", "bash -c 'while pgrep -f x; do sleep 1; done'",
+        LOOP_CONDITION),
+    ("pgrep -f in a loop condition inside an ssh remote command",
+        "ssh nedlern@ned-box 'until ! pgrep -f x; do sleep 5; done'", LOOP_CONDITION),
+    ("pgrep -f inside bash -c in a while condition, which the loop's own shell matches",
+        "while bash -c 'pgrep -f x'; do sleep 5; done", LOOP_CONDITION),
+    ("pgrep -f inside bash -c inside sh -c in an until condition",
+        "until ! sh -c \"bash -c 'pgrep -f x'\"; do sleep 5; done", LOOP_CONDITION),
+    ("pgrep -f in a loop inside an unquoted heredoc's substitution",
+        "cat <<EOF\n$(while pgrep -f x; do sleep 5; done)\nEOF", LOOP_CONDITION),
+]
+
 for name, command, what in REFUSED:
     got = refusal(command)
     check(f"refused: {name}", got is not None and what in got, f"got {got!r}")
@@ -113,8 +138,6 @@ ALLOWED = [
     ("grep for pkill", "grep -rn pkill scripts/"),
     ("pkill in a commit message", 'git commit -m "refuse pkill and killall"'),
     ("kill of a pid inside ssh", "ssh ned-box 'kill 1234'"),
-    ("kill -0 of pgrep in a wait loop",
-        'until ! kill -0 $(pgrep -f "git push -q -u origin HEAD" | head -1) 2>/dev/null; do sleep 5; done'),
     ("kill -s 0 of pgrep", "kill -s 0 $(pgrep x)"),
     ("kill -n 0 of pgrep", "kill -n 0 $(pgrep x)"),
     ("pgrep | xargs kill -0", "pgrep x | xargs kill -0"),
@@ -135,12 +158,43 @@ ALLOWED = [
         "ssh -o BatchMode=yes nedlern@ned-box 'command -v pkill'"),
 ]
 
+ALLOWED += [
+    ("kill -0 of a recorded pid in an until condition", 'until ! kill -0 "$pid"; do sleep 5; done'),
+    ("pgrep -f in a loop's body", "while true; do pgrep -f x || break; sleep 5; done"),
+    ("pgrep without -f in a loop condition, which matches process names only",
+        "until ! pgrep x; do sleep 5; done"),
+    ("pgrep -ufoo in a loop condition, whose f is part of -u's value",
+        "while pgrep -ufoo x; do :; done"),
+    ("pgrep -- -f in a loop condition, whose -f is the pattern", "while pgrep -- -f; do :; done"),
+    ("pgrep -f inside bash -c in a loop's body", "while true; do bash -c 'pgrep -f x' || break; sleep 5; done"),
+    ("pgrep -f run by ssh in a loop condition, which runs on the other machine, outside the loop's shell",
+        "while ssh host 'pgrep -f x'; do sleep 5; done"),
+]
+
 for name, command in ALLOWED:
     got = refusal(command)
     check(f"allowed: {name}", got is None, f"got {got!r}")
 
 check("the refusal names the TaskStop tool and killing by the recorded process id",
       "TaskStop tool" in hook.REFUSAL_TEMPLATE and "process id you recorded" in hook.REFUSAL_TEMPLATE)
+
+check("the loop condition refusal names the wait program, which exists, with an example command",
+      hook.BACKGROUND_COMMAND_OUTPUT_FILE_WAIT_PROGRAM.is_file()
+      and f"python3 {hook.BACKGROUND_COMMAND_OUTPUT_FILE_WAIT_PROGRAM} <output file>"
+      in hook.PGREP_FULL_COMMAND_LINE_LOOP_CONDITION_REFUSAL)
+
+# The pattern is a word no other process holds, so only the loop's own shell can match it; the loop
+# counts its turns and stops at 3, where the unbounded loop would go on for ever.
+token = f"pgrep-self-match-reproduction-{os.getpid()}"
+self_matching_loop = f'n=0; while pgrep -f "{token}" >/dev/null && [ "$n" -lt 3 ]; do n=$((n+1)); done; echo "$n"'
+if shutil.which("pgrep") is None:
+    print("SKIP  the self-match reproduction needs pgrep [this machine cannot run it]")
+else:
+    looped = subprocess.run(["bash", "-c", self_matching_loop], capture_output=True, text=True, timeout=60)
+    check("reproduced: pgrep -f in a loop condition matches the loop's own shell, so the loop runs to its "
+          "bound, and the hook refuses that loop",
+          looped.stdout.strip() == "3" and LOOP_CONDITION in (refusal(self_matching_loop) or ""),
+          (looped.stdout, looped.stderr))
 
 check("a tool other than Bash is ignored", refusal("pkill -f x", tool_name="Read") is None)
 

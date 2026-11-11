@@ -81,7 +81,7 @@ DEFAULT_THRESHOLD_USED_PERCENTAGE = 33.0
 
 FIRST_TAIL_READ_BYTES = 256 * 1024
 
-# Messages below follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# Messages below follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 # Keep the procedure in the skill so hook instructions cannot drift from it.
 HANDOFF_INSTRUCTION = (
     "This session has used {share} of its context window, which has "
@@ -89,8 +89,10 @@ HANDOFF_INSTRUCTION = (
 )
 
 MODEL_ID_NOT_IN_CONTEXT_WINDOW_TABLE_LINE = (
-    "The model id {model} is not in the threshold hook's context-window table, so the share "
-    "above assumes a {default_window_thousands}K window; tell the user, so the table can be updated."
+    "The model id {model} is not in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the threshold-hook's "
+    "context-window table in scripts/handoff-context-threshold-hook.py, so the {share} of its "
+    "context window this session has used assumes a {default_window_thousands}K window; tell the "
+    "user, so the table can be updated."
 )
 
 BACKGROUND_TASKS_LIST_MISSING_SENTENCE = (
@@ -103,13 +105,18 @@ CLAUDE_VERSION_TIMEOUT_SECONDS = 10
 # The approved ban on new work; the wait no longer counts work started after the deferral began.
 NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION = (
     "Carry on, open approval-walks included. Short work, which usually ends "
-    "within 10 minutes, such as a cold-read-fast-read, may start; if that work "
-    "is still running when the session-handoff ends this agent-session, the work "
-    "stops, and the handoff writer script, "
-    "nc-systems/handoff/handoff-write-and-check-supervisor.py, names each "
-    "subagent and each background Bash task still running in your "
-    "session-handoff for your successor, so you need not add that work to your "
-    "task list. Do not start long "
+    "within 10 minutes, such as a cold-read-fast-read, may start; run such work "
+    "as a subagent or a background Bash task. When you run the handoff writer "
+    "script, nc-systems/handoff/handoff-write-and-check-supervisor.py, before "
+    "this agent-session ends, it names in your session-handoff each subagent "
+    "still working, whenever it started, and each background Bash task that "
+    "started since this handoff-deferral began and is still running, so you need "
+    "not add that work to "
+    "your task list; the end of this agent-session stops that work. Your "
+    "successor is shown that work, and "
+    "decides whether to start it again. If the writer script says it could not list "
+    "that work, it says what to name by hand; name it in the session-handoff's next "
+    "step. Do not start long "
     "work, such as a cold-read-full-run or a pull-request review: add it to "
     "your task list for your successor."
 )
@@ -208,8 +215,15 @@ class TranscriptCouldNotBeFullyRead(Exception):
 
 SPAWNED_SUBAGENT_STATUS = "async_launched"
 
+# SendMessage to a finished subagent resumes it under the same task-id; its next notification decides.
+RESUMED_SUBAGENT_KEY = "resumedAgentId"
+
 # Check a toolUseResult key, not raw text: foreground grep output can contain the launch marker.
 BACKGROUND_TASK_LAUNCH_KEY = "backgroundTaskId"
+
+# Claude Code writes no task-notification for a task TaskStop stops; only the TaskStop result,
+# whose toolUseResult carries this key beside task_id, records that the task ended.
+TASK_STOP_RESULT_KEY = "task_type"
 
 # Completion notifications use these tags across several record types.
 TASK_NOTIFICATION_PATTERN = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
@@ -239,16 +253,12 @@ def hook_payload_from_stdin() -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def context_window_for(model: str) -> int:
-    """Return the model's context window in tokens."""
+def context_window_tokens_from_table_or_none(model: str):
+    """Return the model's context window in tokens from the table, or None when no prefix matches."""
     for prefix, window in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX.items():
         if model.startswith(prefix):
             return window
-    return DEFAULT_CONTEXT_WINDOW_TOKENS
-
-
-def model_id_is_in_context_window_table(model: str) -> bool:
-    return any(model.startswith(prefix) for prefix in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX)
+    return None
 
 
 def newest_assistant_message(path: Path):
@@ -301,7 +311,10 @@ def context_used_tokens_window_and_model_from_transcript(transcript_path: str):
         return None
 
     model = message.get("model", "")
-    return used_tokens_of(message["usage"]), context_window_for(model), model
+    window = context_window_tokens_from_table_or_none(model)
+    if window is None:
+        window = DEFAULT_CONTEXT_WINDOW_TOKENS
+    return used_tokens_of(message["usage"]), window, model
 
 
 def context_used_percentage_from_transcript(transcript_path: str):
@@ -398,8 +411,11 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                    should_raise_on_undecodable_bytes=False) -> WorkInFlight:
     """Return running subagents and background tasks in launch order.
 
-    A subagent whose last task-notification is interim counts only while its own transcript
-    shows work in flight; should_read_subagent_own_transcripts=False counts it from the notices alone.
+    A subagent counts from its spawn, or from a resume after a SendMessage, until a final
+    task-notification or a TaskStop call stops it; a TaskStop also ends a background task, and the
+    background tasks of a subagent it stopped. One whose last task-notification is interim counts
+    only while its own transcript shows work in flight; should_read_subagent_own_transcripts=False
+    counts it from the notices alone.
     should_raise_on_undecodable_bytes=True raises TranscriptCouldNotBeFullyRead on bytes that are
     not UTF-8 anywhere in the file, instead of reading past them.
     """
@@ -415,21 +431,30 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
     launched_task_ids = []
     launched_task_age = {}
     launched_at_by_id = {}
-    # The last notification for a task-id decides: an interim one leaves its subagent running.
+    # The last notification, TaskStop or resume for a task-id decides: an interim notification
+    # leaves its subagent running, and a resume clears the entry so the subagent counts again.
     last_notification_is_interim = {}
     try:
         decoding_errors = "strict" if should_raise_on_undecodable_bytes else "replace"
         with path.open("r", encoding="utf-8", errors=decoding_errors) as handle:
-            for line in handle:
+            for line_number, line in enumerate(handle, start=1):
                 is_spawn_candidate = SPAWNED_SUBAGENT_STATUS in line
                 is_launch_candidate = BACKGROUND_TASK_LAUNCH_KEY in line
-                if is_spawn_candidate or is_launch_candidate:
+                is_resume_candidate = RESUMED_SUBAGENT_KEY in line
+                is_stop_candidate = TASK_STOP_RESULT_KEY in line
+                if is_spawn_candidate or is_launch_candidate or is_resume_candidate or \
+                        is_stop_candidate:
                     try:
                         record = json.loads(line)
                     except (json.JSONDecodeError, UnicodeDecodeError) as problem:
-                        raise TranscriptCouldNotBeFullyRead(
-                            f"{path}: a spawn or launch record did not parse"
-                        ) from problem
+                        # A stop record not read only leaves its task counted as running.
+                        if is_spawn_candidate or is_launch_candidate or is_resume_candidate:
+                            raise TranscriptCouldNotBeFullyRead(
+                                f"{path}, line {line_number}: a spawn, resume or launch record did "
+                                f"not parse ({problem}); the line's first 200 characters: "
+                                f"{line[:200].rstrip()!r}"
+                            ) from problem
+                        record = None
                     tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
                     if not isinstance(tool_result, dict):
                         tool_result = {}
@@ -439,12 +464,18 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                         if agent_id and agent_id not in spawned_ids:
                             spawned_ids.append(agent_id)
                             launched_at_by_id[agent_id] = record_time(record)
+                    # A resume clears the subagent's last notification, so it counts as in flight
+                    # again; a record without the key pops None, which is never a key.
+                    last_notification_is_interim.pop(tool_result.get(RESUMED_SUBAGENT_KEY), None)
                     if is_launch_candidate:
                         task_id = tool_result.get(BACKGROUND_TASK_LAUNCH_KEY)
                         if task_id and task_id not in launched_task_age:
                             launched_task_ids.append(task_id)
                             launched_task_age[task_id] = record_age_seconds(record, now)
                             launched_at_by_id[task_id] = record_time(record)
+                    stopped_id = tool_result.get("task_id")
+                    if TASK_STOP_RESULT_KEY in tool_result and isinstance(stopped_id, str):
+                        last_notification_is_interim[stopped_id] = False
                 if "<task-id>" in line:
                     for notification in TASK_NOTIFICATION_PATTERN.findall(line):
                         interim = interim_recognizer.task_notification_is_interim(notification)
@@ -463,7 +494,8 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
     def subagent_still_in_flight(agent_id):
         if agent_id in finished_ids:
             return False
-        # A subagent with no notice yet has not stopped once; only an interim last notice is doubted.
+        # A subagent with no notice since its spawn or resume has not stopped; only an interim
+        # last notice is doubted.
         if agent_id not in last_notification_is_interim or not should_read_subagent_own_transcripts:
             return True
         return subagent_own_transcript_shows_work_in_flight(
@@ -483,9 +515,10 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
     """Return the running subagents, workflows and background shell tasks on Claude Code's list.
 
     The list gives no start time and shows a Monitor as a shell task, so each listed shell task's
-    launch record is looked up in the session's transcript and its subagents' transcripts: a shell
-    task launched by the Monitor tool holds nothing, nor does one launched longer ago than the wait;
-    one whose launch no transcript records counts as within its wait. Each listed subagent and shell
+    launch record is looked up in the session's transcript and its subagents' transcripts, the
+    Workflow-tool agents' included: a shell task launched by the Monitor tool holds nothing, nor
+    does one launched longer ago than the wait; one whose launch no transcript records counts as
+    within its wait. Each listed subagent and shell
     task is dated by its launch record, for a deferral that saved no list, and so is each subagent
     off the list whose transcript launched a listed shell task; a workflow, or work whose launch no
     transcript records, has no date. An entry that is not a running subagent, workflow or
@@ -544,8 +577,9 @@ def subagent_launched_at_by_id_from_transcript_spawn_records(transcript_path: st
                 except json.JSONDecodeError as problem:
                     raise TranscriptCouldNotBeFullyRead(
                         f"{path}, line {line_number}: this line holds the id of a subagent on Claude "
-                        f"Code's background_tasks list and the text {SPAWNED_SUBAGENT_STATUS!r}, "
-                        f"but is not valid JSON ({problem})") from problem
+                        f"Code's background_tasks list and the text {SPAWNED_SUBAGENT_STATUS!r}, which "
+                        f"marks the record of a subagent's launch, but is not valid JSON ({problem}); "
+                        f"the transcript is not read past this line") from problem
                 tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
                 if isinstance(tool_result, dict) \
                         and tool_result.get("status") == SPAWNED_SUBAGENT_STATUS \
@@ -570,7 +604,7 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
     subagent_directory = session_path.with_suffix("") / "subagents"
     # An undated subagent shell task counts as within its wait, so a subagent directory that
     # cannot be listed only keeps the handoff waiting, up to the ceiling.
-    paths = [session_path, *sorted(subagent_directory.glob("*.jsonl"))]
+    paths = [session_path, *session_subagent_transcript_paths(session_path)]
     for path in paths:
         try:
             with path.open("r", encoding="utf-8", errors="replace") as handle:
@@ -584,8 +618,10 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
                     except json.JSONDecodeError as problem:
                         raise TranscriptCouldNotBeFullyRead(
                             f"{path}, line {line_number}: this line holds the id of a shell task on "
-                            f"Claude Code's background_tasks list and a launch key, but is not valid JSON "
-                            f"({problem}); its first 200 characters: {line[:200].rstrip()!r}"
+                            f"Claude Code's background_tasks list and the text {BACKGROUND_TASK_LAUNCH_KEY!r} or "
+                            f"{MONITOR_LAUNCH_KEY!r}, which mark the record of a background task's launch, "
+                            f"but is not valid JSON ({problem}); the transcript is not read past this line; "
+                            f"the line's first 200 characters: {line[:200].rstrip()!r}"
                         ) from problem
                     tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
                     if not isinstance(tool_result, dict):
@@ -593,11 +629,14 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
                     if tool_result.get(BACKGROUND_TASK_LAUNCH_KEY) in shell_ids:
                         launch_ages.setdefault(tool_result[BACKGROUND_TASK_LAUNCH_KEY],
                                                record_age_seconds(record, now))
-                        if path != session_path and path.stem.startswith(SUBAGENT_TRANSCRIPT_PREFIX):
+                        # A Workflow-tool agent's task is tied to no subagent: the workflow is
+                        # listed while its agents run, and their tasks are killed with it.
+                        if path.parent == subagent_directory \
+                                and path.stem.startswith(SUBAGENT_TRANSCRIPT_PREFIX):
                             launching_subagent_id_by_task_id.setdefault(
                                 tool_result[BACKGROUND_TASK_LAUNCH_KEY],
                                 path.stem[len(SUBAGENT_TRANSCRIPT_PREFIX):])
-                    if MONITOR_LAUNCH_KEY in tool_result and tool_result.get("taskId") in shell_ids:
+                    if MONITOR_LAUNCH_KEY in tool_result and tool_result.get("taskId") in shell_ids:  # pragma: no mutate, only a Monitor's result carries timeoutMs and it always carries a taskId, while the other results with a taskId are task-list updates, whose numeric ids no shell task has, so or acts as and
                         monitor_ids.add(tool_result["taskId"])
         except OSError as problem:
             raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
@@ -605,6 +644,15 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
 
 
 SUBAGENT_TRANSCRIPT_PREFIX = "agent-"
+
+
+def session_subagent_transcript_paths(session_transcript_path) -> list:
+    """Return the session's subagent transcripts, sorted: the Agent-tool subagents' beside the
+    session's, then the Workflow-tool agents', one directory per workflow run under workflows/."""
+    subagent_directory = Path(session_transcript_path).with_suffix("") / "subagents"
+    # A workflow run's directory also holds journal.jsonl, which is not a transcript.
+    return [*sorted(subagent_directory.glob("*.jsonl")),
+            *sorted(subagent_directory.glob(f"workflows/*/{SUBAGENT_TRANSCRIPT_PREFIX}*.jsonl"))]
 
 
 def subagent_transcript_path(session_transcript_path, agent_id) -> Path:
@@ -797,9 +845,10 @@ def main(argv=None) -> int:
                   path=deferred_marker, host=socket.gethostname(), error=error),
               file=sys.stderr)
     # Printed last: the marker message above refers to the instruction just before it.
-    if not model_id_is_in_context_window_table(model):
+    if context_window_tokens_from_table_or_none(model) is None:
         print(MODEL_ID_NOT_IN_CONTEXT_WINDOW_TABLE_LINE.format(
-                  model=model, default_window_thousands=DEFAULT_CONTEXT_WINDOW_TOKENS // 1000),
+                  model=model, share=share,
+                  default_window_thousands=DEFAULT_CONTEXT_WINDOW_TOKENS // 1000),
               file=sys.stderr)
     return 2
 

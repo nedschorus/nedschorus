@@ -37,7 +37,7 @@ runs once the user has answered. The judging and the change stay with the subage
 
 start-topic-branch, in the subagent's worktree: refuse a finding that does not exist or already has an answer, and a
 worktree with uncommitted changes to tracked files, which git switch could refuse to carry over; git
-fetch origin and git switch -c <topic-branch> origin/main; then record the branch and the worktree's path in
+fetch origin and git switch --no-overwrite-ignore -c <topic-branch> origin/main; then record the branch and the worktree's path in
 TOPIC_BRANCHES_AND_WORKTREES_FILE_NAME_FORMAT, so remove-topic-branches-and-worktrees can remove them, and
 record under "started" in FINDING_ANSWERS_FILE_NAME_FORMAT that the branch takes on the findings, so next-step and
 open-pull-request know them; a finding named again moves to the new branch. A branch git could not make is not
@@ -83,7 +83,9 @@ recorded worktree with git worktree remove, unless the agent harness still
 locks it (a lock reason starting HARNESS_LOCK_REASON_START), something else
 locks it, or it holds changed or untracked files; then delete each recorded
 topic branch whose commits are all on a remote-tracking branch of origin.
-Each worktree or branch left in place is printed with what the author should
+Every git command after the worktree list runs in the main worktree, the
+first git worktree list names, so the step works from any worktree of the
+checkout, one it removes included. Each worktree or branch left in place is printed with what the author should
 do, and the exit code is 1.
 
 print-follow-up-request-block-from-merge-lane-2-reviews, run by merge-lane-2 after the merge: read every
@@ -156,6 +158,9 @@ REPOSITORY = "nedschorus/nedschorus"
 POSTING_PROGRAM_FILE_NAME = "merge-lane-pull-request-reviewer-review-post-and-read-back.py"
 REPLACES_READER_FILE_NAME = "pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py"
 FOLLOW_UP_REQUEST_LINE_START = "#follow_up_request"
+FOLLOW_UP_REQUEST_BLOCK_SAVE_HOOK_PATH = ("nc-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-and-"
+                  "forked-subagent-brief-hand-over-user-prompt-submit-hook.py")
+MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR = "the SendMessage message in which merge-lane-2 tells the pull request's author that the pull request merged"
 FOLLOW_UP_REQUEST_LINE_PATTERN = re.compile(r"^#follow_up_request pull request (\d+)[ \t]*$")
 FINDING_LINE_PATTERN = re.compile(r"^(\d+)\.\s+(\S.*)$")
 PULL_REQUEST_LINK_PATTERN = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+")
@@ -182,7 +187,7 @@ TITLE_AND_DESCRIPTION_FORM = "the pull request's title on the first line, a blan
 DO_NOT_COMMIT_LINE = "Do not commit it: it is never part of the pull request."
 SUBAGENT_LINE = "If you are a subagent, pass that sentence to the agent that dispatched you instead."
 # Each text this program hands an agent follows
-# docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 
 
 def push_time_limit_seconds(environment):
@@ -488,7 +493,7 @@ def start_topic_branch(number, branch, findings):
     records = read_json(branches_file, [])
     git(".", ["fetch", "origin"], timeout_seconds=FETCH_TIMEOUT_SECONDS)
     try:
-        git(".", ["switch", "-c", branch, "origin/main"])
+        git(".", ["switch", "--no-overwrite-ignore", "-c", branch, "origin/main"])
     except StepFailed as failure:
         raise StepFailed(str(failure),
                          "If git says the branch already exists or is not a valid branch name, run "
@@ -839,8 +844,10 @@ def remove_topic_branches_and_worktrees(number):
               "nothing.")
         return 0
     again = command(number, "remove-topic-branches-and-worktrees")
-    worktrees = {worktree.path.rstrip("/"): worktree for worktree in git_output.worktree_records(
-        git(".", ["worktree", "list", "--porcelain", "-z"]))}
+    listed_worktrees = git_output.worktree_records(git(".", ["worktree", "list", "--porcelain", "-z"]))
+    # The worktree this program runs in may be one it removes; git run there after the removal fails at os.getcwd.
+    main_worktree = listed_worktrees[0].path
+    worktrees = {worktree.path.rstrip("/"): worktree for worktree in listed_worktrees}
     left_paths, left = set(), []
     for path in dict.fromkeys(record["worktree"] for record in records):
         worktree = worktrees.get(path.rstrip("/"))
@@ -880,7 +887,7 @@ def remove_topic_branches_and_worktrees(number):
                             "SendMessage.\n"
                             f"Then run: git worktree remove --force {path}")
             else:
-                git(".", ["worktree", "remove", path])
+                git(main_worktree, ["worktree", "remove", path])
                 print(f"Removed worktree {path}.")
                 continue
         left_paths.add(path)
@@ -888,18 +895,18 @@ def remove_topic_branches_and_worktrees(number):
         branch = record["branch"]
         if record["worktree"] in left_paths:
             continue
-        if not git(".", ["rev-parse", "--verify", "--quiet", "refs/heads/" + branch],
+        if not git(main_worktree, ["rev-parse", "--verify", "--quiet", "refs/heads/" + branch],
                    accepted_exit_codes=(0, 1)).strip():
             continue
-        if not git(".", ["for-each-ref", "--contains", "refs/heads/" + branch, "refs/remotes/origin/"]).strip():
-            commits = git(".", ["log", "--oneline", "refs/heads/" + branch, "--not", "--remotes=origin"]).rstrip("\n")
+        if not git(main_worktree, ["for-each-ref", "--contains", "refs/heads/" + branch, "refs/remotes/origin/"]).strip():
+            commits = git(main_worktree, ["log", "--oneline", "refs/heads/" + branch, "--not", "--remotes=origin"]).rstrip("\n")
             left.append(f"Branch {branch} holds commits on no branch of origin, so remove-topic-branches-and-worktrees left it:\n"
                         f"{commits}\n"
                         f"Read them with git log -p {branch} --not --remotes=origin, copy out any that is work to keep, "
                         "and tell merge-lane-2 about it with SendMessage.\n"
                         f"Then run: git branch -D {branch}")
             continue
-        git(".", ["branch", "-D", branch])
+        git(main_worktree, ["branch", "-D", branch])
         print(f"Deleted branch {branch}.")
     if left:
         print("\n".join(left))
@@ -919,8 +926,8 @@ def gh_api_pages(path):
     try:
         return [item for page in json.loads(output) for item in page]
     except (ValueError, TypeError) as error:
-        raise StepFailed(f"gh api {path} printed output that is not the JSON list of result pages --paginate --slurp prints: "
-                         f"{error}") from None
+        raise StepFailed(f"gh api {path} exited 0, but its output is not the JSON list of result pages that "
+                         f"--paginate --slurp prints. The JSON decode error: {error}") from None
 
 
 def merge_lane_2_reviews_and_their_comments(number, posting, account):
@@ -962,10 +969,11 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
     account = posting.MERGE_LANE_ACCOUNT
     reviews, comments = merge_lane_2_reviews_and_their_comments(number, posting, account)
     if not any(review.get("state") == "APPROVED" for review in reviews):
-        raise Refused(f"{account}, merge-lane-2's GitHub account, has no approving review of pull request {number}, so "
-                      f"merge-lane-2 has not approved it yet: its review is still running or it requested changes. No "
+        raise Refused(f"{account}, merge-lane-2's GitHub account, has no approving review of pull request {number}: "
+                      f"merge-lane-2's review of pull request {number} is still running, or merge-lane-2 requested "
+                      f"changes and has not yet approved the author's fixes. No "
                       f"{FOLLOW_UP_REQUEST_LINE_START} block was printed.\n"
-                      f"Once {account}'s approving review is posted, run: "
+                      f"After {account} posts an approving review of pull request {number}, run: "
                       f"{command(number, 'print-follow-up-request-block-from-merge-lane-2-reviews')}")
     replaced_comments = []
     for replaced in replaced_pull_request_numbers(number):
@@ -980,10 +988,10 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
                 f"{FOLLOW_UP_REQUEST_LINE_START} block was printed; reviews posted before "
                 f"scripts/{POSTING_PROGRAM_FILE_NAME} wrote category marks have none.\n"
                 "If merge-lane-2's reviews of the pull request hold a fix-next, fix-in-maintenance or file-for-later "
-                "finding, write the block by hand at the end of the message that tells the author the pull request merged: "
+                f"finding, write the block by hand at the end of {MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR}: "
                 "the line "
                 f"{FOLLOW_UP_REQUEST_LINE_START} pull request {number}, then one line for each such finding, numbered "
-                "from 1, such as: 1. fix-next: <path>:<line>: <the finding on one line>\n"
+                "from 1, such as: 1. fix-next: `<path>:<line>`: <the finding on one line>\n"
                 "If merge-lane-2's reviews hold no such finding, write no block.")
         category, text, _nit = marked
         finding = (category, comment["path"], " ".join(text.split()))
@@ -1000,11 +1008,10 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
     except ValueError as error:
         read_back = str(error)
     if read_back != [lines]:
-        raise StepFailed(f"the block built from {account}'s reviews does not read back as itself, so the hook would "
-                         f"save something else: it reads back as {read_back!r}.\n"
-                         "Do not paste the block; write it by hand at the end of the message that tells the author the "
-                         "pull request merged, and report this failure to the owner of "
-                         "scripts/pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py.")
+        raise StepFailed(f"the block built from {account}'s reviews does not read back as itself, so the hook "
+                         f"{FOLLOW_UP_REQUEST_BLOCK_SAVE_HOOK_PATH}, which saves the block from merge-lane-2's message for the author, would "
+                         f"save something else: the block reads back as {read_back!r}.\n"
+                         f"The block was not printed; write it by hand at the end of {MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR}.")
     print(block, end="")
 
 

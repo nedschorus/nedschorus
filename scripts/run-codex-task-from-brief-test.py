@@ -10,11 +10,9 @@ variable, writes a report, writes a report file of its own with or without a fin
 message, fails with or without a report, writes nothing,
 sleeps past the deadline with a child that may ignore SIGTERM, writes a
 final message and then sleeps past the deadline, or blocks
-reading stdin. Each case runs the real program as a process. The deadline and
-stdin cases run a second time with a fake `find` that sleeps 31 s first, so the
-credential-file scan done before Codex starts must not count against their limits.
-Two cases check the test's own bounds: a program stalled before it starts Codex,
-and one stalled after, are each stopped with every process they started.
+reading stdin. Each case runs the real program as a process. One case checks
+the test's own bound: a program stalled after it starts Codex is stopped with
+every process it started.
 
 Run: python3 scripts/run-codex-task-from-brief-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -136,31 +134,22 @@ try:
     arguments_file = scratch / "arguments.json"
     child_pid_file = scratch / "child.pid"
     codex_pid_file = scratch / "codex.pid"
-    # A scratch HOME keeps each run's credential-file scan, done before Codex starts,
-    # from walking the real home directory; it only shortens the suite.
+    # A scratch HOME, so Codex's credential profile names paths in it, not the real home's.
     scratch_home = scratch / "home"
     scratch_home.mkdir()
-    # Stands in for a scan slowed by a busy machine: the time limits must not count it.
-    slow_find_dir = scratch / "slow-find-bin"
-    slow_find_dir.mkdir()
-    real_find = shutil.which("find")
-    slow_find = slow_find_dir / "find"
-    slow_find.write_text(f'#!/bin/sh\nsleep 31\nexec "{real_find}" "$@"\n')
-    slow_find.chmod(0o755)
 
-    def run(mode, *extra, stdin=None, timeout=60, path_first=None,
+    def run(mode, *extra, stdin=None, timeout=60,
             start_line_timeout=600, gh_mode="data", extra_environment=None):
         """Run the program; return (completed, report, seconds since it said it is running Codex).
 
         timeout counts from that stderr line, which the program prints after building
         Codex's command line, so preparing the command line counts against no limit.
-        start_line_timeout bounds the wait for that line, only so a hung scan cannot
-        hang the suite. When either runs out, the program, the processes it started
+        start_line_timeout bounds the wait for that line, only so a program hung
+        before it cannot hang the suite. When either runs out, the program, the processes it started
         and the fake Codex's process group are killed, and subprocess.TimeoutExpired
         is raised.
         """
-        path = os.pathsep.join(str(d) for d in (path_first, bin_dir) if d)
-        environment = dict(os.environ, PATH=f"{path}{os.pathsep}{os.environ['PATH']}",
+        environment = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
                            HOME=str(scratch_home), FAKE_CODEX_MODE=mode,
                            FAKE_CODEX_ARGUMENTS_FILE=str(arguments_file),
                            FAKE_CODEX_CHILD_PID_FILE=str(child_pid_file),
@@ -387,10 +376,9 @@ try:
           f"exit {completed.returncode}, report exists {report.exists()}, "
           f"stderr {completed.stderr!r}")
 
-    def check_deadline_stops_codex(case_suffix="", path_first=None, extra=()):
+    def check_deadline_stops_codex(case_suffix="", extra=()):
         child_pid_file.unlink(missing_ok=True)
-        completed, report, elapsed = run("sleep", "--deadline-minutes", "0.05", *extra,
-                                         path_first=path_first)
+        completed, report, elapsed = run("sleep", "--deadline-minutes", "0.05", *extra)
         child_pid = int(child_pid_file.read_text()) if child_pid_file.exists() else None
         time.sleep(0.5)
         child_alive = False
@@ -428,12 +416,11 @@ try:
           completed.returncode == 1 and child_pid is not None and not child_alive,
           f"exit {completed.returncode}, child {child_pid} alive={child_alive}, {elapsed:.1f}s")
 
-    def check_codex_stdin_closed(case_suffix="", path_first=None, extra=()):
+    def check_codex_stdin_closed(case_suffix="", extra=()):
         # The caller's own stdin is an open pipe that never closes; the fake must still see EOF.
         holder = subprocess.Popen(["sleep", "600"], stdout=subprocess.PIPE)
         try:
-            completed, report, elapsed = run("read-stdin", *extra, stdin=holder.stdout, timeout=30,
-                                             path_first=path_first)
+            completed, report, elapsed = run("read-stdin", *extra, stdin=holder.stdout, timeout=30)
         except subprocess.TimeoutExpired:
             completed, report = None, None
         finally:
@@ -446,15 +433,6 @@ try:
 
     check_codex_stdin_closed()
     check_codex_stdin_closed(", with --resume", extra=("--resume", session_id))
-
-    # The program scans for credential files with find only on Linux.
-    if sys.platform.startswith("linux"):
-        slow_scan_suffix = ", with a credential-file scan that takes 31 s"
-        check_deadline_stops_codex(slow_scan_suffix, path_first=slow_find_dir)
-        check_codex_stdin_closed(slow_scan_suffix, path_first=slow_find_dir)
-    else:
-        print("SKIP  the deadline and stdin cases with a 31 s credential-file scan: "
-              "the program runs find only on Linux")
 
     def process_alive(pid):
         try:
@@ -476,32 +454,6 @@ try:
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-
-    if sys.platform.startswith("linux"):
-        stalled_find_dir = scratch / "stalled-find-bin"
-        stalled_find_dir.mkdir()
-        stalled_find_pid_file = scratch / "stalled-find.pid"
-        stalled_find = stalled_find_dir / "find"
-        stalled_find.write_text(f'#!/bin/sh\necho $$ > "{stalled_find_pid_file}"\nexec sleep 120\n')
-        stalled_find.chmod(0o755)
-        started = time.monotonic()
-        try:
-            # A loaded machine can take seconds to start the program, so the bound leaves room
-            # for it to reach its scan; the scan sleeps far past the bound.
-            completed, _, _ = run("report", path_first=stalled_find_dir, start_line_timeout=20)
-            timed_out = False
-        except subprocess.TimeoutExpired:
-            timed_out = True
-        waited = time.monotonic() - started
-        time.sleep(0.5)
-        left = [pid for pid in pids_from(stalled_find_pid_file) if process_alive(pid)]
-        kill_leftovers(left)
-        check("a program stalled before it starts Codex is stopped at the start-line bound, "
-              "with the scan it started",
-              timed_out and waited < 60 and stalled_find_pid_file.exists() and not left,
-              f"timed out {timed_out}, {waited:.1f}s, left running {left}")
-    else:
-        print("SKIP  a program stalled before it starts Codex: the program runs find only on Linux")
 
     child_pid_file.unlink(missing_ok=True)
     try:
@@ -673,14 +625,13 @@ try:
     fresh_prefetch_case()
     no_gh_dir = scratch / "no-gh-bin"
     no_gh_dir.mkdir()
-    # Without the fake codex and the find its command line needs, a runner that went on
-    # to start Codex would fail first and leave no arguments file to show it. The fake
-    # names its interpreter, since this PATH holds no python3.
+    # Without the fake codex, a runner that went on to start Codex would fail first and
+    # leave no arguments file to show it. The fake names its interpreter, since this
+    # PATH holds no python3.
     codex_without_gh = no_gh_dir / "codex"
     codex_without_gh.write_text(FAKE_CODEX.replace("#!/usr/bin/env python3",
                                                    f"#!{sys.executable}", 1))
     codex_without_gh.chmod(0o755)
-    (no_gh_dir / "find").symlink_to(shutil.which("find"))
     completed = subprocess.run(
         [sys.executable, str(PROGRAM), "-C", str(checkout), "--brief", str(brief),
          "-o", str(scratch / "no-gh-report.md"), "--prefetch-github", "pr view 1"],

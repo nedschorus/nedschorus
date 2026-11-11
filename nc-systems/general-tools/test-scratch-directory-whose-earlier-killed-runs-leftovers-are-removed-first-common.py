@@ -19,8 +19,8 @@ It does not remove a directory named otherwise, such as one a killed run of a
 test that does not use this module left, nor one an earlier run on another
 machine left. A directory it cannot read or remove is kept and named on
 standard error, with the reason, and the run goes on in a new scratch
-directory: the failure costs only disk space, which the test's next run tries
-again to recover.
+directory without failing: the failure costs only disk space, which the test's
+next run tries again to recover.
 
 Load it by path, under the snake_case form of its file name:
 
@@ -94,6 +94,8 @@ def scratch_directory_after_removing_ones_killed_runs_left(prefix, temp_dir=None
     _removed, kept = remove_scratch_directories_killed_runs_left(prefix, temp_dir=temp_dir)
     for directory, reason in kept:
         print(f"{prefix}: could not remove {directory}, which an earlier killed run of this test "
-              f"left ({reason}); the test goes on in a new scratch directory, and the test's next run "
-              f"tries again to remove it.", file=sys.stderr)
+              f"left ({reason}). This notice is for information only and needs no action: the failed "
+              f"removal does not fail the test, whose result depends only on its own checks. The test goes "
+              f"on in a new scratch directory. Nothing tries the removal again now: this test's next run, whenever it comes, "
+              f"tries again to remove the leftover directory.", file=sys.stderr)
     return Path(tempfile.mkdtemp(prefix=prefix, dir=temp_dir)).resolve()

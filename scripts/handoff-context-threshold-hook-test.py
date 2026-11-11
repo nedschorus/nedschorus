@@ -331,6 +331,21 @@ def monitor_start_record(task_id="b45e25tz2"):
     }
 
 
+def task_stop_record(task_id, task_type):
+    """A TaskStop tool_result that stopped the task, read off a real transcript and trimmed to
+    the fields the hook reads."""
+    message = f"Successfully stopped task: {task_id} (Sweep this seat's leftover worktrees)"
+    result = {"message": message, "task_id": task_id, "task_type": task_type,
+              "command": "Sweep this seat's leftover worktrees"}
+    return {
+        "type": "user", "timestamp": GRID_LAUNCHED_AT,
+        "message": {"role": "user", "content": [{
+            "tool_use_id": f"toolu_stop_{task_id}", "type": "tool_result",
+            "content": json.dumps(result)}]},
+        "toolUseResult": result,
+    }
+
+
 # The two shapes below were read off session 44674c20 of 2026-09-14, the
 # cold-read grid run that this deferral was extended for, and trimmed to the
 # fields the hook reads.
@@ -402,6 +417,49 @@ def bash_stdout_record_mentioning_the_marker():
     }
 
 
+# A subagent that finished, was resumed by SendMessage, and finished again, read off a real
+# transcript; trimmed to the fields the hook reads.
+RESUMED_SUBAGENT_ID = "ac25f42af3e1481af"
+RESUMED_SUBAGENT_FINAL_NOTIFICATION = (
+    "<task-notification>\n"
+    "<task-id>ac25f42af3e1481af</task-id>\n"
+    "<tool-use-id>toolu_01AgYc8eUQGoaYS9jynrNu53</tool-use-id>\n"
+    "<status>completed</status>\n"
+    '<summary>Agent "Fix GHI 1112\'s fast-read findings" finished</summary>\n'
+    "<note>A task-notification fires each time this agent stops with no live background "
+    "children of its own. The user can send it another message and resume it, so the same "
+    "task-id may notify more than once.</note>\n"
+    '<result>This agent\'s report was delivered to you as a message from "ac25f42af3e1481af" '
+    "(its SubagentHandback call). Read it there; it is not repeated here.\n</result>\n"
+    "</task-notification>")
+
+
+def subagent_resume_record(agent_id=RESUMED_SUBAGENT_ID, timestamp="2026-10-13T19:35:53.110Z"):
+    """The SendMessage tool_result that resumes a finished subagent."""
+    result = {"success": True, "message": f"Resuming agent {agent_id[:7]}",
+              "resumedAgentId": agent_id,
+              "pin": {"id": agent_id, "name": agent_id, "ref": "6f1f0b"}}
+    return {
+        "type": "user", "timestamp": timestamp,
+        "message": {"role": "user", "content": [{
+            "tool_use_id": "toolu_01AHzbGageT9pSdG6yHP3VB5", "type": "tool_result",
+            "content": [{"type": "text", "text": json.dumps(result)}]}]},
+        "toolUseResult": result,
+    }
+
+
+def bash_stdout_record_mentioning_a_resume():
+    """A foreground Bash result whose stdout is a grep hit on a resume record, as a search of
+    transcripts for resumedAgentId prints it; its own toolUseResult has no such key."""
+    hit = '838:{"toolUseResult":{"resumedAgentId":"ac25f42af3e1481af"}}'
+    return {
+        "type": "user", "timestamp": "2026-10-13T19:40:00.000Z",
+        "message": {"role": "user", "content": [{
+            "tool_use_id": "toolu_grep_resume", "type": "tool_result", "content": hit}]},
+        "toolUseResult": {"stdout": hit, "stderr": "", "interrupted": False, "isImage": False},
+    }
+
+
 with tempfile.TemporaryDirectory() as workspace:
     # --- The suite's own handoff directory -------------------------------
     # Fails if the redirect above is removed: without it HANDOFF_DIRECTORY is
@@ -417,13 +475,13 @@ with tempfile.TemporaryDirectory() as workspace:
 
     # --- The window table -------------------------------------------------
     check("window lookup knows the million-token models",
-          hook.context_window_for("claude-fable-5") == 1_000_000
-          and hook.context_window_for("claude-opus-5") == 1_000_000
-          and hook.context_window_for("claude-sonnet-5") == 1_000_000)
-    check("window lookup knows the 200k model",
-          hook.context_window_for("claude-haiku-4-5-20251001") == 200_000)
-    check("an unknown model falls back to the default window",
-          hook.context_window_for("claude-something-unreleased") == 200_000)
+          hook.context_window_tokens_from_table_or_none("claude-fable-5") == 1_000_000
+          and hook.context_window_tokens_from_table_or_none("claude-opus-5") == 1_000_000
+          and hook.context_window_tokens_from_table_or_none("claude-sonnet-5") == 1_000_000)
+    check("window lookup knows the 200k model by a table prefix",
+          hook.context_window_tokens_from_table_or_none("claude-haiku-4-5-20251001") == 200_000)
+    check("window lookup finds no window for a model id not in the table",
+          hook.context_window_tokens_from_table_or_none("claude-something-unreleased") is None)
 
     # --- Reading the used share from a transcript -------------------------
     transcript = Path(workspace) / "probe-transcript.jsonl"
@@ -611,6 +669,52 @@ with tempfile.TemporaryDirectory() as workspace:
           hook.spawned_subagent_ids_in_flight(str(final_after_interim)) == [],
           str(hook.spawned_subagent_ids_in_flight(str(final_after_interim))))
 
+    # A SendMessage to a finished subagent resumes it, under the same task-id.
+    resumed_after_final = transcript_of(workspace, "resumed-after-final-notification.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(RESUMED_SUBAGENT_ID, "Fix GHI 1112's fast-read findings"),
+        *notification_records(RESUMED_SUBAGENT_FINAL_NOTIFICATION, "2026-10-13T19:35:01.611Z"),
+        subagent_resume_record(),
+    ])
+    check("a subagent resumed after its final notification is in flight again",
+          hook.spawned_subagent_ids_in_flight(str(resumed_after_final)) == [RESUMED_SUBAGENT_ID],
+          str(hook.spawned_subagent_ids_in_flight(str(resumed_after_final))))
+    resumed_and_finished_again = transcript_of(workspace, "resumed-and-finished-again.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(RESUMED_SUBAGENT_ID),
+        *notification_records(RESUMED_SUBAGENT_FINAL_NOTIFICATION, "2026-10-13T19:35:01.611Z"),
+        subagent_resume_record(),
+        *notification_records(RESUMED_SUBAGENT_FINAL_NOTIFICATION, "2026-10-13T19:37:28.832Z"),
+    ])
+    check("a resumed subagent's next final notification takes it out of flight",
+          hook.spawned_subagent_ids_in_flight(str(resumed_and_finished_again)) == [],
+          str(hook.spawned_subagent_ids_in_flight(str(resumed_and_finished_again))))
+    resumed_unknown_agent = transcript_of(workspace, "resumed-agent-never-spawned-here.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_resume_record(),
+    ])
+    check("a resume of a subagent this transcript never spawned adds nothing",
+          hook.spawned_subagent_ids_in_flight(str(resumed_unknown_agent)) == [],
+          str(hook.spawned_subagent_ids_in_flight(str(resumed_unknown_agent))))
+    resume_word_in_stdout = transcript_of(workspace, "resume-word-in-stdout.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(RESUMED_SUBAGENT_ID),
+        *notification_records(RESUMED_SUBAGENT_FINAL_NOTIFICATION, "2026-10-13T19:35:01.611Z"),
+        bash_stdout_record_mentioning_a_resume(),
+    ])
+    check("a Bash result that merely prints a resume record is not a resume",
+          hook.spawned_subagent_ids_in_flight(str(resume_word_in_stdout)) == [],
+          str(hook.spawned_subagent_ids_in_flight(str(resume_word_in_stdout))))
+    truncated_resume = Path(workspace) / "truncated-resume.jsonl"
+    resume_text = json.dumps(subagent_resume_record())
+    truncated_resume.write_text(
+        json.dumps(subagent_spawn_record(RESUMED_SUBAGENT_ID)) + "\n"
+        + json.dumps(notification_records(RESUMED_SUBAGENT_FINAL_NOTIFICATION)[0]) + "\n"
+        + resume_text[:resume_text.index('"resumedAgentId"') + len('"resumedAgentId": "ac25')],
+        encoding="utf-8")
+    check("a resume record cut off mid-write is not read as the subagent having finished",
+          raises_could_not_read(truncated_resume), "the scan answered instead of refusing")
+
     # --- Which background tasks are still in flight -------------------------
     # A reincarnation kills a background Bash task with the session too. On
     # 2026-09-14 session 831c08ee handed off at 50% with the cold-read grid
@@ -711,10 +815,90 @@ with tempfile.TemporaryDirectory() as workspace:
     try:
         hook.work_in_flight(str(truncated_launch), thirty_minutes, now=grid_at_13_minutes)
         refused = False
-    except hook.TranscriptCouldNotBeFullyRead:
+        truncated_launch_message = ""
+    except hook.TranscriptCouldNotBeFullyRead as problem:
         refused = True
+        truncated_launch_message = str(problem)
     check("a background launch record cut off mid-write is not read as nothing running",
           refused, "the scan answered instead of refusing")
+    check("the scan's refusal names the line number of the record that did not parse",
+          f"{truncated_launch}, line 2: " in truncated_launch_message, truncated_launch_message)
+    check("the scan's refusal quotes the start of the line that did not parse",
+          repr(launch_text[:cut][:200]) in truncated_launch_message, truncated_launch_message)
+    long_broken_launch = Path(workspace) / "long-broken-background-launch.jsonl"
+    long_broken_line = '{"toolUseResult": {"backgroundTaskId": "b27dndn4c", "x": "' + "a" * 300
+    long_broken_launch.write_text(long_broken_line + "\n", encoding="utf-8")
+    try:
+        hook.work_in_flight(str(long_broken_launch), thirty_minutes, now=grid_at_13_minutes)
+        long_broken_message = ""
+    except hook.TranscriptCouldNotBeFullyRead as problem:
+        long_broken_message = str(problem)
+    check("the scan's refusal quotes exactly the first 200 characters of a longer line",
+          repr(long_broken_line[:200]) in long_broken_message, long_broken_message[-260:])
+
+    # Claude Code writes no task-notification for a task TaskStop stops, only this result.
+    bash_stopped = transcript_of(workspace, "background-task-stopped.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        background_task_launch_record("b27dndn4c"),
+        background_task_launch_record("bzzzzzzzz"),
+        task_stop_record("b27dndn4c", "local_bash"),
+    ])
+    flight = hook.work_in_flight(str(bash_stopped), float("inf"), now=grid_at_13_minutes)
+    check("a background task TaskStop stopped is not in flight; one it did not stop still is",
+          flight.background_task_ids == ["bzzzzzzzz"], str(flight.background_task_ids))
+
+    # A subagent reports interim while its own background command runs; the parent then stops the
+    # subagent with TaskStop, which kills the command with it and writes no notification for either.
+    subagent_stopped = transcript_of(workspace, "subagent-stopped.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record("a01d1eb8fe1e4066a"),
+        *notification_records(
+            "<task-notification>\n<task-id>a01d1eb8fe1e4066a</task-id>\n<status>completed"
+            "</status>\n<note>This agent stopped with background work of its own still running; "
+            "the result below may be interim.</note>\n<result>12 of 15 deleted.</result>\n"
+            "</task-notification>"),
+        task_stop_record("a01d1eb8fe1e4066a", "local_agent"),
+    ])
+    stopped_subagent_own = hook.subagent_transcript_path(subagent_stopped, "a01d1eb8fe1e4066a")
+    stopped_subagent_own.parent.mkdir(parents=True, exist_ok=True)
+    transcript_of(stopped_subagent_own.parent, stopped_subagent_own.name,
+                  [background_task_launch_record("bdrdn0t9k")])
+    flight = hook.work_in_flight(str(subagent_stopped), float("inf"), now=grid_at_13_minutes)
+    check("a subagent TaskStop stopped after an interim report is not in flight, though its own "
+          "background command never notified",
+          flight.subagent_ids == [], str(flight.subagent_ids))
+
+    # A cut-off stop record, unlike a cut-off launch, is skipped: missing it only leaves the task
+    # counted as running.
+    stop_cut_off = Path(workspace) / "background-task-stop-cut-off.jsonl"
+    stop_text = json.dumps(task_stop_record("b27dndn4c", "local_bash"))
+    stop_cut_off.write_text(
+        json.dumps(background_task_launch_record("b27dndn4c")) + "\n"
+        + stop_text[:stop_text.index('"task_type"') + len('"task_type": "loc')], encoding="utf-8")
+    flight = hook.work_in_flight(str(stop_cut_off), float("inf"), now=grid_at_13_minutes)
+    check("a TaskStop result cut off mid-write is skipped and leaves its task in flight",
+          flight.background_task_ids == ["b27dndn4c"], str(flight.background_task_ids))
+
+    # A TaskStop and a resume of the same subagent: whichever comes later in the transcript decides.
+    stopped_then_resumed = transcript_of(workspace, "subagent-stopped-then-resumed.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(RESUMED_SUBAGENT_ID),
+        task_stop_record(RESUMED_SUBAGENT_ID, "local_agent"),
+        subagent_resume_record(),
+    ])
+    flight = hook.work_in_flight(str(stopped_then_resumed), float("inf"), now=grid_at_13_minutes)
+    check("a subagent TaskStop stopped and then resumed is in flight again",
+          flight.subagent_ids == [RESUMED_SUBAGENT_ID], str(flight.subagent_ids))
+    resumed_then_stopped = transcript_of(workspace, "subagent-resumed-then-stopped.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(RESUMED_SUBAGENT_ID),
+        *notification_records(RESUMED_SUBAGENT_FINAL_NOTIFICATION, "2026-10-13T19:35:01.611Z"),
+        subagent_resume_record(),
+        task_stop_record(RESUMED_SUBAGENT_ID, "local_agent"),
+    ])
+    flight = hook.work_in_flight(str(resumed_then_stopped), float("inf"), now=grid_at_13_minutes)
+    check("a resumed subagent that TaskStop then stopped is not in flight",
+          flight.subagent_ids == [], str(flight.subagent_ids))
 
     # --- "Could not tell" is not "nothing is running" ----------------------
     # A spawn record caught mid-append is not observed in practice — 841
@@ -844,13 +1028,12 @@ with tempfile.TemporaryDirectory() as workspace:
               result.returncode == 2 and len(message_lines) == 2
               and HANDOFF_INSTRUCTION_PATTERN.fullmatch(message_lines[0]) is not None
               and message_lines[1] == (
-                  "The model id claude-something-unreleased is not in the threshold hook's "
-                  "context-window table, so the share above assumes a 200K window; tell the "
-                  "user, so the table can be updated."),
+                  "The model id claude-something-unreleased is not in "
+                  "CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the threshold-hook's context-window "
+                  "table in scripts/handoff-context-threshold-hook.py, so the 35% of its context "
+                  "window this session has used assumes a 200K window; tell the user, so the "
+                  "table can be updated."),
               f"code {result.returncode}, stderr {result.stderr!r}")
-        check("a model id matching a table prefix is in the table, and an unlisted one is not",
-              hook.model_id_is_in_context_window_table("claude-haiku-4-5-20251001")
-              and not hook.model_id_is_in_context_window_table("claude-something-unreleased"))
 
         marker_file.unlink(missing_ok=True)
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(loud)},
@@ -933,9 +1116,10 @@ with tempfile.TemporaryDirectory() as workspace:
         check("the deferral names the work it waits for",
               "(subagent a2573a7737ae643dc)" in result.stderr, result.stderr[:600])
         check("the instruction on new work says the handoff writer, not the agent, adds stopped work to the session-handoff",
-              "the handoff writer script, nc-systems/handoff/handoff-write-and-check-supervisor.py,"
-              " names each subagent and each background Bash task still running in your"
-              " session-handoff for your successor, so you need not add that work to your task list."
+              "When you run the handoff writer script, nc-systems/handoff/handoff-write-and-check-supervisor.py,"
+              " before this agent-session ends, it names in your session-handoff each subagent still working,"
+              " whenever it started, and each background Bash task that started since this handoff-deferral"
+              " began and is still running, so you need not add that work to your task list"
               in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
               hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION)
         # Agents read "handoff" in the notice and ran the skill anyway.
@@ -1418,16 +1602,94 @@ with tempfile.TemporaryDirectory() as workspace:
         flight = flight_of([list_entry("bsubold", "shell")])
         check("a subagent's own shell task past the wait holds nothing", not flight,
               str(flight.background_task_ids))
+        # A Workflow-tool agent keeps its transcript a level deeper, under
+        # subagents/workflows/<run>/, beside a journal.jsonl. The layout and journal lines are
+        # copied from a real headless probe session; its transcript carries no toolUseResult,
+        # so the launch records take the interactive shape above.
+        workflow_session = transcript_of(workspace, "65d644bd-b689-43c4-b258-efed0a8087b4.jsonl", [
+            usage_record(100_000, cache_read=450_000)])
+        workflow_run = workflow_session.with_suffix("") / "subagents" / "workflows" / "wf_b109740f-730"
+        workflow_run.mkdir(parents=True, exist_ok=True)
+        transcript_of(workflow_run, "agent-a59a8abb54ebd7b15.jsonl", [
+            background_task_launch_record("bxecf0mah", launched_at=two_hours_ago),
+            background_task_launch_record("bwfyoung1", launched_at=ten_minutes_ago),
+            monitor_start_record("bwfmonitor"),
+        ])
+        (workflow_run / "journal.jsonl").write_text(
+            '{"type":"launched"}\n'
+            '{"type":"started","agentId":"a59a8abb54ebd7b15","label":"probe-sleep"}\n'
+            'not JSON, yet naming bxecf0mah and "backgroundTaskId"\n', encoding="utf-8")
+
+        def workflow_flight_of(entries):
+            return flight_of(entries, transcript=workflow_session)
+
+        flight = workflow_flight_of([list_entry("w2c4bv83u", "workflow"),
+                                     list_entry("bxecf0mah", "shell")])
+        check("a Workflow-tool agent's shell task past the wait holds nothing, dated from the"
+              " agent's transcript under subagents/workflows/",
+              flight.background_task_ids == [] and flight.workflow_ids == ["w2c4bv83u"],
+              f"{flight.background_task_ids} {flight.workflow_ids}")
+        flight = workflow_flight_of([list_entry("bwfyoung1", "shell")])
+        check("a Workflow-tool agent's shell task within the wait holds the handoff, tied to no"
+              " subagent", flight.background_task_ids == ["bwfyoung1"]
+              and flight.launching_subagent_id_by_task_id == {},
+              f"{flight.background_task_ids} {flight.launching_subagent_id_by_task_id}")
+        flight = workflow_flight_of([list_entry("bwfmonitor", "shell")])
+        check("a Monitor a Workflow-tool agent started holds nothing", not flight,
+              str(flight.background_task_ids))
         flight = flight_of([list_entry("bmonitor01", "shell")])
         check("a Monitor, which the list shows as a shell task, holds nothing", not flight,
               str(flight.background_task_ids))
         flight = flight_of([list_entry("bunrecorded", "shell")])
         check("a shell task no transcript records counts as within its wait",
               flight.background_task_ids == ["bunrecorded"], str(flight.background_task_ids))
+        # Launch records carry milliseconds, so the clock is cut to them for an age of exactly the wait.
+        boundary_clock = clock.replace(microsecond=clock.microsecond // 1000 * 1000)
+        boundary_session = transcript_of(workspace, "background-tasks-list-launched-exactly-the-wait-ago.jsonl", [
+            usage_record(100_000, cache_read=450_000),
+            background_task_launch_record(
+                "bshellboundary", launched_at=utc_iso(boundary_clock - timedelta(seconds=wait_seconds))),
+        ])
+        flight = hook.work_in_flight_from_background_tasks(
+            [list_entry("bshellboundary", "shell")], str(boundary_session), wait_seconds,
+            now=boundary_clock)
+        check("a shell task launched exactly the wait ago still holds the handoff",
+              flight.background_task_ids == ["bshellboundary"], str(flight.background_task_ids))
+        # A line naming a listed shell task that is not its launch record must not end the reading
+        # of the transcript, or a later launch record goes unread and its task counts as undated.
+        three_hours_ago = utc_iso(clock - timedelta(hours=3))
+        mentioned_without_launch_key = transcript_of(
+            workspace, "background-tasks-list-task-mentioned-before-later-launch.jsonl", [
+                usage_record(100_000, cache_read=450_000),
+                background_task_launch_record("bshellearlier", launched_at=three_hours_ago),
+                {"type": "assistant", "message": {"role": "assistant", "content": [
+                    {"type": "text", "text": "bshellearlier is still running."}]}},
+                background_task_launch_record("bshelllater", launched_at=two_hours_ago),
+            ])
+        flight = flight_of([list_entry("bshellearlier", "shell"), list_entry("bshelllater", "shell")],
+                           transcript=mentioned_without_launch_key)
+        check("a line naming a listed shell task without a launch key leaves later launch records"
+              " read", not flight, str(flight.background_task_ids))
+        # The assistant's own tool call can quote the launch key; it carries no toolUseResult.
+        quoted_launch_key = transcript_of(
+            workspace, "background-tasks-list-launch-key-quoted-before-later-launch.jsonl", [
+                usage_record(100_000, cache_read=450_000),
+                background_task_launch_record("bshellearlier", launched_at=three_hours_ago),
+                {"type": "assistant", "message": {"role": "assistant", "content": [
+                    {"type": "tool_use", "name": "Bash", "input": {
+                        "command": "grep -c 'backgroundTaskId.*bshellearlier' session.jsonl"}}]}},
+                background_task_launch_record("bshelllater", launched_at=two_hours_ago),
+            ])
+        flight = flight_of([list_entry("bshellearlier", "shell"), list_entry("bshelllater", "shell")],
+                           transcript=quoted_launch_key)
+        check("a line quoting the launch key and a listed shell task with no toolUseResult leaves"
+              " later launch records read", not flight, str(flight.background_task_ids))
         flight = flight_of([list_entry("a1", "subagent", status="completed"),
                             list_entry("x1", "some-later-kind"), "not an entry",
-                            {"type": "subagent", "status": "running"}])
-        check("a finished entry, an unknown kind and a malformed entry hold nothing", not flight,
+                            {"type": "subagent", "status": "running"},
+                            {"id": "bnostatus", "type": "shell"}])
+        check("a finished entry, an unknown kind, malformed entries and an entry with no status"
+              " hold nothing", not flight,
               f"{flight.subagent_ids} {flight.background_task_ids} {flight.workflow_ids}")
         # With no saved list, only work launched before the deferral began holds the handoff,
         # so the list's entries must carry their launch times from the transcripts.

@@ -651,6 +651,45 @@ with tempfile.TemporaryDirectory() as scratch_name:
           and len(str(made.parent)) - len(str(pathlib.Path(tempfile.gettempdir()))) <= 13,
           made)
 
+    # A process that outlives its SIGKILL cannot be made on purpose, so the kill reports one.
+    given_record = scratch / "given-to-the-killed-suite"
+    (scratch / "records-its-tmpdir-then-sleeps-test.py").write_text(
+        "import os, pathlib, time\n"
+        f"pathlib.Path({str(given_record)!r}).write_text(os.environ['TMPDIR'])\n"
+        "time.sleep(60)\n")
+    real_kill = runner.kill_test_suite_process_group_and_descendants
+    runner.kill_test_suite_process_group_and_descendants = (
+        lambda process: real_kill(process) + [(4242424, 1)])
+    run_stops = []
+
+    def stop_once_the_directory_is_recorded():
+        deadline = time.monotonic() + 30
+        while not given_record.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        run_stops.append("the test's stop")
+
+    stopper = threading.Thread(target=stop_once_the_directory_is_recorded, daemon=True)
+    stopper.start()
+    try:
+        outlived = runner.run_one_suite(scratch, sys.executable,
+                                        "records-its-tmpdir-then-sleeps-test.py", scratch,
+                                        run_stops=run_stops)
+    finally:
+        runner.kill_test_suite_process_group_and_descendants = real_kill
+    stopper.join()
+    given = pathlib.Path(given_record.read_text()) if given_record.exists() else None
+    check("a TMPDIR whose suite left a killed process still running is kept, and the suite's "
+          "output note names the process, the directory and the command that removes it",
+          given is not None and given.is_dir()
+          and "1 process(es) the suite started, pid(s) 4242424, still ran "
+              f"{runner.TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS} s after they were sent "
+              f"SIGKILL, so the temporary directory the suite was given, {given}, is kept for "
+              f"them; once they have ended, remove it with `rm -rf {shlex.quote(str(given))}`"
+              in (outlived["output_note"] or ""),
+          (outlived, given))
+    if given is not None and given.is_dir():
+        shutil.rmtree(given)
+
     # Root removes a directory whatever its mode, so the runner's removal cannot be made to fail.
     if os.geteuid() != 0:
         given_record = scratch / "given"

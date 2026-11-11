@@ -665,6 +665,24 @@ def case_tmux_server_gone(namespace):
         fixture.close()
 
 
+def case_notice_from_a_checkout_with_a_long_path(namespace):
+    """The path is injected because the checkout this test runs from may have a short one."""
+    long_path = ("/home/nedlern/Projects/nedschorus/.claude/worktrees/" + "long-topic-branch-name-" * 12
+                 + "/nc-systems/handoff/" + Path(watcher.__file__).name)
+    real_file = watcher.__file__
+    watcher.__file__ = long_path
+    fixture = lost_seat("long-checkout", namespace, pane=False)
+    try:
+        exit_code, errors = fixture.run()
+        check("a watcher run from a checkout whose path is over 256 characters still opens its notice on the Mac",
+              len(long_path) > 256 and exit_code == 1 and fixture.decisions() == ["failure", "user told"]
+              and len(fixture.ssh_requests()) == 1 and f" {long_path} --show-notice " in fixture.ssh_requests()[0],
+              (exit_code, errors, fixture.entries(), fixture.ssh_requests()))
+    finally:
+        watcher.__file__ = real_file
+        fixture.close()
+
+
 def case_capture_pane_failing(namespace):
     fixture = lost_seat("capture-fails", namespace)
     real_tmux = watcher.tmux
@@ -1145,6 +1163,7 @@ def main():
         case_record_missing(namespace)
         case_record_unreadable(namespace)
         case_tmux_server_gone(namespace)
+        case_notice_from_a_checkout_with_a_long_path(namespace)
         case_capture_pane_failing(namespace)
         case_send_keys_failing(namespace)
         case_reconnected_while_reading_the_pane(namespace)

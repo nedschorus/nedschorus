@@ -70,6 +70,7 @@ import json
 import multiprocessing.util
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -120,6 +121,22 @@ SCRATCH_OR_RUN_LOG_DIRECTORY_NOT_REMOVED_MESSAGE = (
     "found nothing to report, in its run log directory.\n"
     "Remove each listed path with rm -rf <path>, because nothing else removes it, and the disk it is on can "
     "fill.\n  ")
+REGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE = (
+    "{checkout} already exists, and git lists it as a worktree of {repository}, most likely one an earlier replay "
+    "in this --scratch-directory could not remove; so this Bash guards replay adds no worktree there, leaves the "
+    "path as it is, and exits 2 before it replays any recorded command.\n"
+    "Remove it with {remove_command}, then run the replay again with "
+    "the same arguments. A replay's worktree holds only the commit it read, so removing it loses no work.")
+UNREGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE = (
+    "{checkout} already exists, and git does not list it as a worktree of {repository}, so it is no worktree an "
+    "earlier replay left, and it may hold someone's files; this Bash guards replay adds no worktree there, leaves "
+    "the path as it is, and exits 2 before it replays any recorded command.\n"
+    "Run the replay again with the same arguments, except a --scratch-directory that does not exist yet.")
+CHECKOUTS_NOT_REMOVED_MESSAGE = (
+    "REPLAY FAILED: these worktrees could not be removed, so this Bash guards replay exits 2; any verdicts it "
+    "printed above stand.\n"
+    "Run the command each line ends with, which removes that line's worktree; if the command fails, its own error "
+    "says why.\n  ")
 DEFAULT_LOG_STORE_RUNS_DIRECTORY = (
     "/home/nedlern/nedschorus-logs/bash-guards-replay-changed-verdict-or-failed-run-log-directories")
 VERDICT_CHANGED_MESSAGE = (
@@ -195,9 +212,13 @@ _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
     Path(__file__).resolve().with_name("git-redirecting-environment-variables-removal-common.py"))
 _git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
 _git_redirecting_removal_spec.loader.exec_module(_git_redirecting_removal)
-ENVIRONMENT_VARIABLES_REMOVED = _git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES + (
-    "CLAUDE_CODE_SESSION_ATTENDED", "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
-)
+_attendance_check_spec = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().with_name("agent-session-unattended-by-user-check-common.py"))
+_attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
+_attendance_check_spec.loader.exec_module(_attendance_check)
+ENVIRONMENT_VARIABLES_REMOVED = (_git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
+                                 + _attendance_check.AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES)
 
 
 class ReplayFailed(Exception):
@@ -559,7 +580,7 @@ def read_handoff_deferral_cold_read_full_run_launch(guard, command, working_dire
 def read_git_worktree_remove_records_ship_first(guard, command, working_directory, search_file_directory):
     # Only whether the command removes a worktree is read: running the shippers would copy real records during a replay.
     if guard.command_runs_git_worktree_remove(command):
-        return "ships every worktree's records first", None
+        return "ships the removed worktree's records first", None
     return "passed", None
 
 
@@ -1090,38 +1111,57 @@ def print_added_guard_refusal_groups(groups, groups_file):
               f"holding {left_out_commands} refused recorded {'command' if left_out_commands == 1 else 'commands'}")
 
 
+def registered_checkout_paths(worktree_list_porcelain):
+    """Return the resolved path of each checkout in `git worktree list --porcelain` output."""
+    # git lists each checkout by its resolved path, so a checkout named through a symlink, such as macOS's
+    # /var for /private/var, must be compared by its resolved path, or it would be taken as unregistered.
+    return {os.path.realpath(line[len("worktree "):])
+            for line in worktree_list_porcelain.splitlines() if line.startswith("worktree ")}
+
+
+def worktree_remove_command(repository, checkout):
+    # Plain --force refuses a locked checkout, and git worktree remove refuses a path git has not registered.
+    return f"git -C {shlex.quote(str(repository))} worktree remove --force --force {shlex.quote(str(checkout))}"
+
+
 def remove_checkouts(repository, checkouts):
-    """Remove each checkout that git has registered or that exists; return the ones that could not be
-    removed, with the reason."""
+    """Remove each checkout that git has registered or that exists; return a line for each one that could not be
+    removed, giving the reason and ending with the command that removes it."""
     failed = []
+    # git lists a checkout by its resolved path, which differs from the given one through a symlink.
+    unlisted_remedy = lambda checkout: (f"run git -C {shlex.quote(str(repository))} worktree list; if it lists "
+                                        f"{os.path.realpath(checkout)}, run "
+                                        f"{worktree_remove_command(repository, checkout)}, and if not, "
+                                        f"run rm -rf {shlex.quote(str(checkout))}")
     try:
         listed = subprocess.run(["git", "-C", repository, "worktree", "list", "--porcelain"], capture_output=True,
                                 text=True, env=child_environment(), timeout=GIT_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
-        return [f"{checkout}: git worktree list did not finish in {GIT_TIMEOUT_SECONDS} s" for checkout in checkouts]
-    if listed.returncode != 0:
-        return [f"{checkout}: git worktree list exited {listed.returncode}: {listed.stderr.strip()}"
+        return [f"{checkout}: git worktree list did not finish in {GIT_TIMEOUT_SECONDS} s; {unlisted_remedy(checkout)}"
                 for checkout in checkouts]
-    # git lists each checkout by its resolved path, so a checkout named through a symlink, such as macOS's
-    # /var for /private/var, is matched by its resolved path; otherwise it would be deleted as unregistered.
-    registered = {os.path.realpath(line[len("worktree "):])
-                  for line in listed.stdout.splitlines() if line.startswith("worktree ")}
+    if listed.returncode != 0:
+        return [f"{checkout}: git worktree list exited {listed.returncode}: {listed.stderr.strip()}; "
+                f"{unlisted_remedy(checkout)}" for checkout in checkouts]
+    registered = registered_checkout_paths(listed.stdout)
     for checkout in checkouts:
         if os.path.realpath(checkout) not in registered:
             if os.path.exists(checkout):
                 shutil.rmtree(checkout, ignore_errors=True)  # An add stopped before git registered it.
             if os.path.exists(checkout):
-                failed.append(f"{checkout}: not registered with git, and it could not be deleted")
+                failed.append(f"{checkout}: not registered with git, and it could not be deleted; "
+                              f"run rm -rf {shlex.quote(str(checkout))}, which prints what stops the deletion")
             continue
         try:
             completed = subprocess.run(["git", "-C", repository, "worktree", "remove", "--force", str(checkout)],
                                        capture_output=True, text=True, env=child_environment(),
                                        timeout=GIT_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
-            failed.append(f"{checkout}: git worktree remove did not finish in {GIT_TIMEOUT_SECONDS} s")
+            failed.append(f"{checkout}: git worktree remove did not finish in {GIT_TIMEOUT_SECONDS} s; "
+                          f"run {worktree_remove_command(repository, checkout)}")
             continue
         if completed.returncode != 0:
-            failed.append(f"{checkout}: git worktree remove exited {completed.returncode}: {completed.stderr.strip()}")
+            failed.append(f"{checkout}: git worktree remove exited {completed.returncode}: {completed.stderr.strip()}; "
+                          f"run {worktree_remove_command(repository, checkout)}")
     return failed
 
 
@@ -1203,6 +1243,15 @@ def replay_with_sigterm_handled(arguments):
         (search_file_directory / "a.txt").touch()
 
         repository = run_git(arguments.repository, "rev-parse", "--show-toplevel")
+        # Refused before any checkout is enrolled, or the cleanup below would remove a path this replay did not make.
+        existing = [path for path in (scratch / "checkout-base", scratch / "checkout-head") if os.path.lexists(path)]
+        if existing:
+            registered = registered_checkout_paths(run_git(repository, "worktree", "list", "--porcelain"))
+            raise ReplayFailed("\n".join(
+                (REGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE if os.path.realpath(path) in registered
+                 else UNREGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE).format(
+                    checkout=path, repository=repository, remove_command=worktree_remove_command(repository, path))
+                for path in existing))
         commits = {}
         for label, ref in (("base", arguments.base_ref), ("head", arguments.head_ref)):
             commits[label] = commit = run_git(repository, "rev-parse", "--verify", ref + "^{commit}")
@@ -1307,8 +1356,7 @@ def replay_with_sigterm_handled(arguments):
         if checkouts:
             not_removed = remove_checkouts(repository, checkouts.values())
         if not_removed:
-            print("REPLAY FAILED: these checkouts could not be removed; remove them with git worktree remove --force:\n  "
-                  + "\n  ".join(not_removed))
+            print(CHECKOUTS_NOT_REMOVED_MESSAGE + "\n  ".join(not_removed))
             status = 2
         # Not after a checkout was left: removing its files would leave git a registration with no checkout.
         if scratch is None:

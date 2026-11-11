@@ -9,7 +9,7 @@ Gather the project's regular maintenance into one list of maintenance jobs, each
 
 ## Why
 
-Wiki pages describe how the fleet works: where files live, which machine runs what, which agent-seat merges. When the fleet changes, nothing re-reads those pages. The machine-paths page, `docs/nedschorus-wiki/nedschorus-fleet-machine-paths-and-checkouts.md`, went on saying that merges to main happen from the Mac after merging had moved to the agent-seat merge-lane-2 on ned-box; the page was corrected by PR [Machine-paths wiki page: merges happen at merge-lane-2 on ned-box, not on the Mac](https://github.com/nedschorus/nedschorus/pull/1049) only because an agent happened to read it while doing other work. An agent that reads a stale page acts on a false description.
+Wiki pages describe how the fleet works: where files live, which machine runs what, which agent-seat merges. When the fleet changes, nothing re-reads those pages. The machine-paths page, `docs/nedschorus-wiki/nedschorus-mac-and-ned-box-machine-setup.md`, went on saying that merges to main happen from the Mac after merging had moved to the agent-seat merge-lane-2 on ned-box; the page was corrected by PR [Machine-paths wiki page: merges happen at merge-lane-2 on ned-box, not on the Mac](https://github.com/nedschorus/nedschorus/pull/1049) only because an agent happened to read it while doing other work. An agent that reads a stale page acts on a false description.
 
 The user asked for this on 2026-10-05 (UTC), in the merge-lane-backlog agent-seat: "There is a daily maintence ghi I hope. This is just one other part of daily maintence. We should check the whole wiki every day. It's not that big."
 

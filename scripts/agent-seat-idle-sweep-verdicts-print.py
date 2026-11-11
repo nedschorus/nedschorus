@@ -20,8 +20,9 @@ What it reads, for each agent-seat that has a handoff-supervisor state file
 
 It prints one JSON object per agent-seat, one per line. Each holds what the later slice needs
 without reading anything again: the session id, the transcript path, the last time a token was
-spent and the file that showed it, what is running and since when, the matched sentences with the
-code's reading of each, the agent-seat's last message, the tool calls a judge of the sentences
+spent and the file that showed it, what is running and since when (a subagent that reported and
+stopped while background commands it launched still run gets the time of its report under
+`stopped_at` and a list of those commands under `own_running_background_commands`), the matched sentences with the code's reading of each, the agent-seat's last message, the tool calls a judge of the sentences
 looks through, the rule that applies and its decision.
 
 What it does not handle: it keeps no record of earlier runs, so it cannot tell which turn-ending
@@ -77,6 +78,8 @@ walk_finder = _load("walk_me_through_approval_walk_minutes_and_walk_document_ite
                     / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py")
 fields = _load("agent_seat_idle_sweep_verdict_fields_common",
                _SCRIPTS / "agent-seat-idle-sweep-verdict-fields-common.py")
+interim_recognizer = threshold_hook.interim_recognizer
+TASK_NOTIFICATION_TASK_ID_PATTERN = threshold_hook.TASK_NOTIFICATION_TASK_ID_PATTERN
 transcript_lookup = _load("claude_code_session_transcript_lookup_and_text_search_common",
                           _SCRIPTS / "claude-code-session-transcript-lookup-and-text-search-common.py")
 
@@ -323,6 +326,20 @@ class TranscriptFacts:
         self.task_tool_calls = []        # (time, name, input)
         self.tool_calls = []             # (time, name, input), every tool call
         self.launch_times = {}           # subagent or background task id -> time
+        self.last_task_notification = {} # task id -> (time, whether it is interim)
+
+
+def task_notification_carrier_text(record):
+    """The text of a record that can carry task notifications: a `user` message, or a
+    `queued_command` attachment, the form Claude Code uses for a notification queued while the
+    session was busy. Any other record gives ""."""
+    if record.get("type") == "user":
+        return message_text(record)
+    attachment = record.get("attachment")
+    if record.get("type") == "attachment" and isinstance(attachment, dict) \
+            and attachment.get("type") == "queued_command" and isinstance(attachment.get("prompt"), str):
+        return attachment["prompt"]
+    return ""
 
 
 def read_main_transcript(path):
@@ -355,6 +372,11 @@ def read_main_transcript(path):
             facts.tool_calls.append((moment, block.get("name"), block.get("input") or {}))
             if block.get("name") in TASK_TOOL_NAMES:
                 facts.task_tool_calls.append((moment, block.get("name"), block.get("input") or {}))
+        if "<task-id>" in (text := task_notification_carrier_text(record)):
+            for notification in threshold_hook.TASK_NOTIFICATION_PATTERN.findall(text):
+                interim = interim_recognizer.task_notification_is_interim(notification)
+                for task_id in TASK_NOTIFICATION_TASK_ID_PATTERN.findall(notification):
+                    facts.last_task_notification[task_id] = (moment, interim)
         result = record.get("toolUseResult")
         if isinstance(result, dict) and moment:
             for key in ("agentId", threshold_hook.BACKGROUND_TASK_LAUNCH_KEY):
@@ -371,6 +393,27 @@ def newest_token_spend_in(path):
         if moment and spends_tokens(record) and (newest is None or moment > newest):
             newest = moment
     return newest
+
+
+def running_subagent_entry(agent_id, facts, transcript, newest_spend_by_subagent_transcript, now):
+    """The entry for a subagent the session's records leave running. Claude Code marks a subagent's
+    report interim while background commands it launched still run, its final report included, so
+    a subagent whose last report is interim and that has spent no token since is reported as
+    stopped, with those commands."""
+    entry = {"id": agent_id, "started": iso(facts.launch_times.get(agent_id))}
+    stopped_at, interim = facts.last_task_notification.get(agent_id, (None, False))
+    own_transcript = threshold_hook.subagent_transcript_path(transcript, agent_id)
+    spent = newest_spend_by_subagent_transcript.get(own_transcript)
+    if not interim or stopped_at is None or (spent and spent > stopped_at):
+        return entry
+    own = threshold_hook.work_in_flight(str(own_transcript),
+                                        background_task_wait_seconds=float("inf"), now=now,
+                                        should_raise_on_undecodable_bytes=True)
+    entry[fields.SUBAGENT_STOPPED_AT] = iso(stopped_at)
+    entry[fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS] = [
+        {"id": task_id, "started": iso(own.launched_at_by_id.get(task_id))}
+        for task_id in own.background_task_ids]
+    return entry
 
 
 # --- Other files ---
@@ -556,10 +599,12 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
 
         facts = read_main_transcript(transcript)
         last_spend, source = facts.last_token_spend, transcript
+        newest_spend_by_subagent_transcript = {}
         subagent_directory = project_directory / session_id / "subagents"
         if subagent_directory.is_dir():
             for subagent_transcript in sorted(subagent_directory.glob("*.jsonl")):
                 spent = newest_token_spend_in(subagent_transcript)
+                newest_spend_by_subagent_transcript[subagent_transcript] = spent
                 if spent and (last_spend is None or spent > last_spend):
                     last_spend, source = spent, subagent_transcript
         verdict["last_activity"] = {"time": iso(last_spend),
@@ -578,12 +623,15 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         try:
             flight = threshold_hook.work_in_flight(
                 str(transcript), background_task_wait_seconds=float("inf"), now=now)
+            running_subagents = [
+                running_subagent_entry(agent_id, facts, transcript,
+                                       newest_spend_by_subagent_transcript, now)
+                for agent_id in flight.subagent_ids]
         except threshold_hook.TranscriptCouldNotBeFullyRead as error:
             raise ReadFailure(f"{error}: it is the last line, still being written, which the next "
                               "run reads") from error
         verdict["running"] = {
-            "subagents": [{"id": agent_id, "started": iso(facts.launch_times.get(agent_id))}
-                          for agent_id in flight.subagent_ids],
+            "subagents": running_subagents,
             "background_commands": [{"id": task_id, "started": iso(facts.launch_times.get(task_id))}
                                     for task_id in flight.background_task_ids]}
         marker = deferred_marker_files.handoff_deferred_marker_path(
@@ -619,7 +667,7 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         raised = [item for item in verdict["sentences"] if item["code_reading"] != fields.NOT_RAISED]
         if not raised:
             verdict.update(rules_three_to_five(verdict, put_off_at, checker, task_directory))
-        elif any(item["code_reading"] == fields.JUDGE for item in raised):
+        elif any(item["code_reading"] == fields.JUDGE for item in raised):  # pragma: no mutate, raised holds only the UNBACKED and JUDGE constants themselves, and "unbacked" sorts after "judge", so <= and is give what == gives
             judged = [item for item in raised if item["code_reading"] == fields.JUDGE]
             verdict[fields.TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE] = (
                 tool_calls_since_start_of_earliest_turn_with_sentence_to_judge(facts, judged))

@@ -98,6 +98,29 @@ print(f"SUMMARY: {len(failing)} failed")
 sys.exit(1 if failing else 2 if not_run else 0)
 '''
 
+# Stands in for scripts/branch-conflict-check.py in every scratch repository's base commit. FAKE_CONFLICT_CHECK
+# picks its report: unset or "clean" for no conflict, "replace" or "rebase" for a conflict with that answer,
+# "fail" for a run that could not answer, and "killed" for a run a signal ended before it printed anything. FAKE_CONFLICT_CHECK_CALLS records its arguments.
+FAKE_CONFLICT_CHECK = r'''import json, os, sys
+if os.environ.get("FAKE_CONFLICT_CHECK_CALLS"):
+    with open(os.environ["FAKE_CONFLICT_CHECK_CALLS"], "a") as calls:
+        calls.write(json.dumps(sys.argv[1:]) + "\n")
+kind = os.environ.get("FAKE_CONFLICT_CHECK", "clean")
+if kind == "clean":
+    print("VERDICT: CLEAN -- abc does not conflict with origin/main. Nothing to do.")
+    sys.exit(0)
+if kind == "fail":
+    print("UNFETCHED: git fetch origin failed; do not act on any conflict answer until a run succeeds.")
+    sys.exit(2)
+if kind == "killed":
+    import signal
+    os.kill(os.getpid(), signal.SIGTERM)
+print("VERDICT: CONFLICT -- abc conflicts with origin/main.")
+print("ANSWER: %s -- the fake's answer." % kind)
+print("Cut a new nc-topic-branch from current origin/main.")
+sys.exit(1)
+'''
+
 failures = []
 
 
@@ -130,7 +153,8 @@ def scratch_repository(root):
     (repository / ".gitignore").write_text(PROJECT_GITIGNORE.read_text())
     (repository / "scripts").mkdir()
     (repository / "scripts" / "run-all-test-suites.py").write_text(FAKE_SUITE_RUNNER)
-    git(repository, "add", ".gitignore", "scripts/run-all-test-suites.py")
+    (repository / "scripts" / "branch-conflict-check.py").write_text(FAKE_CONFLICT_CHECK)
+    git(repository, "add", ".gitignore", "scripts/run-all-test-suites.py", "scripts/branch-conflict-check.py")
     base = commit_file(repository, "base.txt", "base\n", "base")
     git(repository, "branch", "main-line")
     frozen_head = commit_file(repository, "hook.py", "one\n", "topic work")
@@ -278,8 +302,13 @@ def brief_cases(root, repository, base, frozen_head):
     check("brief: rule 2 says a fix that carries out a user ruling in a guarded-file is a user-approved-change",
           "\n   " + CARRYING_OUT_USER_RULING_PARAGRAPH + "\n3. Change nothing else" in out
           and out.index("2. Check each finding") < out.index(CARRYING_OUT_USER_RULING_PARAGRAPH), out)
+    check("brief: a replace answer found during the round stops the subagent, which hands it back to the author",
+          "If it reports VERDICT: CONFLICT with ANSWER: replace, stop and tell the agent that dispatched you what "
+          f"it printed: that agent runs python3 scripts/{PROGRAM.name} {NUMBER} again" in out
+          and out.index("ANSWER: replace") < out.index("2. Check each finding")
+          and "take none of steps 2 to 8" not in out, out)
     check("brief: a conflict defers to the conflict check's report, and asks for no merge itself",
-          "If it reports VERDICT: CONFLICT, do what its report says." in out
+          "If it reports VERDICT: CONFLICT with any other answer, do what its report says." in out
           and "merge origin/main as its report says" not in out and "merge nothing" not in out
           and "had you merge origin/main" not in out and "--after-conflict-merge" not in out, out)
     check("brief: says what to do when the push itself fails, and numbers the steps after the check on",
@@ -1220,6 +1249,32 @@ PULL_REQUEST_2620_MERGE_LANE_2_COMMENTS = [
      "body": ('The continuation-join line `elif comments: comments[-1]["body"] += "\\n" + line` has no test: replacing it with `elif False: pass` leaves both test files passing (mac-claude, mutant M4). A round-trip case with a multi-line comment on a line outside the diff would kill it.')}]
 
 
+def moved_into_body_cases(root, repository, base, frozen_head):
+    """merge-lane-2's review whose only Block the review poster moved into the body, being outside the diff,
+    beside the commissioned reviewer's inline Block, which merge-lane-2 graded fix-next."""
+    reviewer = review(state="COMMENTED", review_id=20, commit_id=frozen_head, login="mac-claude", body="REQUEST_CHANGES")
+    grading_body = ("REQUEST_CHANGES\n\n**Blocking: 1**\n\nmerge-lane-2's graded review.\n\n"
+                    "Comments on lines outside this pull request's diff:\n"
+                    "- `setup.py:3`: **Blocks** setup.py drops the exit code.\n  Second line of the finding.\n"
+                    "- `setup.py:9`: **fix-next** a note.")
+    grading = review(review_id=21, commit_id=frozen_head, body=grading_body)
+    routes = {**routes_for(frozen_head, [reviewer, grading],
+                           comments=[comment("run.py", "**fix-next** the reviewer's finding.", line=40, comment_id=33)],
+                           review_id=21),
+              **comments_route(20, [comment("run.py", "**Blocks.** the reviewer's finding.", line=40, comment_id=31)])}
+    code, out, err = run(root, repository, routes)
+    check("a Block merge-lane-2's review moved into its body refuses the brief, naming it, though the other "
+          "reviews' Blocks match the stated count",
+          code == 1 and "setup.py:3" in err and "setup.py:9" not in err and "Blocking findings" not in out, err + out)
+
+    moved_fix_next = dict(routes, **{REVIEWS: {"stdout": lines([reviewer, dict(grading, body=grading_body.replace(
+        "**Blocks** setup.py", "**fix-next** setup.py"))])}})
+    code, out, err = run(root, repository, moved_fix_next)
+    check("a moved comment that does not block leaves the brief to the stated count",
+          code == 0 and "Blocking findings (1)" in out, err + out)
+    del base
+
+
 def stated_count_position_cases(root, repository, base, frozen_head):
     """Pull request 2620's round 1, its reviews and their comments as GitHub returned them, in order.
 
@@ -1382,6 +1437,32 @@ def move_cases(root, _repository, _base, _frozen_head):
           and answers.read_text() == ANSWERS_TEXT and not state_file.exists()
           and git(repository, "branch", "--show-current") == LOCAL_BRANCH, out + err)
     git(repository, "branch", "-q", "-D", NEW_BRANCH)
+    # An ignored directory at a path origin/main newly tracks: without --no-overwrite-ignore,
+    # git switch replaces its file with main's, and the only copy is lost.
+    main_clone = root / "move-main-clone"
+    git(root, "clone", "-q", str(root / "origin.git"), str(main_clone))
+    (main_clone / "ignored-here").mkdir()
+    (main_clone / "ignored-here" / "notes.txt").write_text("main's copy\n")
+    git(main_clone, "add", "-A")
+    git(main_clone, "-c", "user.email=test@example.invalid", "-c", "user.name=test",
+        "commit", "-q", "-m", "main tracks a file the worktree ignores")
+    git(main_clone, "push", "-q", "origin", "main")
+    git(repository, "fetch", "-q", "origin")
+    (repository / "ignored-here").mkdir()
+    (repository / "ignored-here" / ".gitignore").write_text("*\n")
+    (repository / "ignored-here" / "notes.txt").write_text("the only copy\n")
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch",
+                         NEW_BRANCH, "moved.py")
+    check("move-start: a switch over an ignored file at a path origin/main tracks fails with exit 2, naming the "
+          "file, leaving nothing recorded, and the file survives",
+          code == 2 and "ignored-here/notes.txt" in err and not state_file.exists()
+          and answers.read_text() == ANSWERS_TEXT
+          and git(repository, "branch", "--show-current") == LOCAL_BRANCH
+          and (repository / "ignored-here" / "notes.txt").read_text() == "the only copy\n", out + err)
+    shutil.rmtree(repository / "ignored-here")
+    # Put origin/main back, so the cases below see the main they were written for.
+    git(main_clone, "push", "-q", "--force", "origin", "HEAD~1:main")
+    git(repository, "fetch", "-q", "origin")
 
     code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
     check("move-start: switches to the new topic branch cut from origin/main, with the named file copied whole",
@@ -1958,6 +2039,56 @@ def replaces_cases(root, repository, base, frozen_head):
           and f"#replaces https://github.com/o/r/pull/<the old pull request's number>" in err, err + out)
 
 
+def conflict_check_cases(root, repository, _base, frozen_head):
+    routes = routes_for(frozen_head, [review(commit_id=frozen_head)])
+    calls = root / "conflict-check-calls.jsonl"
+    code, out, err = run(root, repository, routes,
+                         environment_extra={"FAKE_CONFLICT_CHECK_CALLS": str(calls)})
+    check("conflict check: the brief runs the checkout's conflict check on this pull request",
+          code == 0 and calls.exists()
+          and [json.loads(line) for line in calls.read_text().splitlines()] == [["--pull-request", str(NUMBER)]],
+          err + out)
+    check("conflict check: no conflict prints the brief", "0. Make a local branch" in out, out)
+
+    code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": "replace"})
+    check("conflict check: a replace answer prints the check's report and the replace steps, and exits 0",
+          code == 0 and "ANSWER: replace -- the fake's answer." in out
+          and "Cut a new nc-topic-branch from current origin/main." in out
+          and f"No fix-round runs: pull request {NUMBER} conflicts with main" in out
+          and "tell merge-lane-2 with SendMessage that this round stopped on a conflict with main" in out
+          and f"Frozen-head: {frozen_head}" in out, err + out)
+    check("conflict check: a replace answer prints none of the round's rules, dispatch or check command",
+          "For the subagent" not in out and "For the author" not in out and "0. Make a local branch" not in out
+          and "2. Check each finding" not in out and "--check" not in out
+          and "hook.py swallows" not in out, out)
+
+    code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": "rebase"})
+    check("conflict check: a conflict with another answer still prints the brief, whose step 1 handles it",
+          code == 0 and "0. Make a local branch" in out and "No fix-round runs" not in out, err + out)
+
+    code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": "fail"})
+    check("conflict check: a check that cannot answer fails with exit 2, its output quoted, and prints no brief",
+          code == 2 and err.startswith("FAILED: ") and "exited 2, so whether this pull request conflicts with main "
+          "is not known" in err and "UNFETCHED: git fetch origin failed" in err and out == "", err + out)
+
+    code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": "killed"})
+    check("conflict check: a check a signal ended fails with exit 2 and prints no brief",
+          code == 2 and err.startswith("FAILED: ") and "exited -15" in err and out == "", err + out)
+
+    outside = root / "not-a-git-checkout"
+    outside.mkdir()
+    code, out, err = run(root, outside, routes)
+    check("conflict check: run outside a git checkout, it fails with exit 2 naming the missing checkout",
+          code == 2 and err.startswith("FAILED: git found no checkout here to run the conflict check from")
+          and out == "", err + out)
+
+    (repository / "scripts" / "branch-conflict-check.py").unlink()
+    code, out, err = run(root, repository, routes)
+    check("conflict check: a checkout without the conflict check fails with exit 2 and prints no brief",
+          code == 2 and err.startswith("FAILED: ") and out == "", err + out)
+    git(repository, "checkout", "-q", "--", "scripts/branch-conflict-check.py")
+
+
 gh_timeout_case()
 case("suites", suite_cases)
 case("nits", nit_cases)
@@ -1967,11 +2098,13 @@ case("move failure after push", move_failure_after_push_cases)
 case("move push failure", move_push_failure_cases)
 case("move pre-push hook output", move_pre_push_hook_output_cases)
 case("brief", brief_cases)
+case("conflict check", conflict_check_cases)
 case("check", check_cases)
 case("commissioned reviewer", commissioned_reviewer_cases)
 case("split review", split_review_cases)
 case("rounds on one head", rounds_on_one_head_cases)
 case("stated count position", stated_count_position_cases)
+case("moved into body", moved_into_body_cases)
 case("replaces", replaces_cases)
 print(f"{'FAILED' if failures else 'PASSED'}: {len(failures)} failed")
 sys.exit(1 if failures else 0)

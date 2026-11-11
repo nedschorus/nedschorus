@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """After an agent's Edit, MultiEdit or Write of a Python file in the repository,
-list the agent-facing-messages the tool call added or changed, tell the agent
+list the tool-messages-to-agent the tool call added or changed, tell the agent
 to check each against the page on writing them, and give each listed message
 its cold-read-fast-read command: the hook writes each message's text to a file
 of its own under the temporary directory, because cold-read-fast-read.py reads
@@ -23,8 +23,8 @@ that fails the page. The reminder goes in hookSpecificOutput.additionalContext,
 which the agent reads next; a PostToolUse hook's plain stdout reaches only the
 debug log.
 
-Which strings are agent-facing-messages is decided by
-python-source-agent-facing-string-collector-common.py, which also says which
+Which strings are tool-messages-to-agent is decided by
+python-source-tool-message-to-agent-string-collector-common.py, which also says which
 files are tests; a test file gets no reminder. A message counts as added or
 changed when the tool call wrote one of the message's lines and the file at
 HEAD holds no message with the same text, so code moved or re-indented around
@@ -61,8 +61,8 @@ import tempfile
 from pathlib import Path
 
 _collector_spec = importlib.util.spec_from_file_location(
-    "python_source_agent_facing_string_collector_common",
-    Path(__file__).resolve().with_name("python-source-agent-facing-string-collector-common.py"))
+    "python_source_tool_message_to_agent_string_collector_common",
+    Path(__file__).resolve().with_name("python-source-tool-message-to-agent-string-collector-common.py"))
 collector = importlib.util.module_from_spec(_collector_spec)
 _collector_spec.loader.exec_module(collector)
 _checkout_path_spec = importlib.util.spec_from_file_location(
@@ -72,11 +72,11 @@ _checkout_path_spec = importlib.util.spec_from_file_location(
 checkout_path = importlib.util.module_from_spec(_checkout_path_spec)
 _checkout_path_spec.loader.exec_module(checkout_path)
 
-HOOK_NAME = "python-edit-changed-agent-facing-message-check-reminder"
+HOOK_NAME = "python-edit-changed-tool-message-to-agent-strings-check-reminder"
 PAGE_PATH = ("docs/nedschorus-wiki/"
-             "nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md")
+             "nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md")
 FAST_READ_COMMAND = "python3 nc-systems/cold-read/cold-read-fast-read.py --target {target}"
-FAST_READ_TARGET_DIRECTORY_NAME = "agent-facing-message-fast-read-targets"
+FAST_READ_TARGET_DIRECTORY_NAME = "tool-message-to-agent-fast-read-targets"
 EDIT_TOOL_NAMES = ("Edit", "MultiEdit")
 INSPECTED_TOOL_NAMES = (*EDIT_TOOL_NAMES, "Write")
 LISTED_MESSAGE_LIMIT = 20
@@ -88,7 +88,7 @@ REASON_CHARACTER_LIMIT = 300
 GIT_TIMEOUT_SECONDS = 10
 
 REMINDER_MESSAGE_TEMPLATE = (
-    HOOK_NAME + ": your {tool} of {path} added or changed {count} agent-facing-message(s), "
+    HOOK_NAME + ": your {tool} of {path} added or changed {count} tool-message(s)-to-agent, "
     "text that a program hands an agent to act on:\n"
     "{listing}\n"
     "An agent that meets one of these messages has only the message to go on, so each "
@@ -104,7 +104,7 @@ REMINDER_MESSAGE_TEMPLATE = (
     "raised, assigned to a name ending in {suffixes}, or given in a dict literal as {keys}.\n"
     "If your edit changed a message held in a local variable or built any other way, check "
     "that message against the page too.\n"
-    "Before you write or change an agent-facing-message from now on, read the page first."
+    "Before you write or change a tool-message-to-agent from now on, read the page first."
 )
 FAST_READ_MESSAGE_TEMPLATE = (
     "Give each listed message its cold-read-fast-read before you open the pull request, "
@@ -133,19 +133,19 @@ MORE_NOT_LISTED_LINE_TEMPLATE = (
     "  and {more} more in {path}, not listed here; check those against the page too.")
 NOT_INSPECTED_MESSAGE_TEMPLATE = (
     HOOK_NAME + ": this hook could not inspect your {tool} of {path}, because {reason}. "
-    "No agent-facing-message your edit added or changed has been listed for checking "
+    "No tool-message-to-agent your edit added or changed has been listed for checking "
     "against " + PAGE_PATH + ".\n"
-    "If your edit added or changed an agent-facing-message, such as the text of a refusal, "
+    "If your edit added or changed a tool-message-to-agent, such as the text of a refusal, "
     "a warning, a reminder or an error that a program hands an agent, check that message "
     "against the page yourself, and rewrite the message in this turn if the message fails "
     "the page."
 )
 FILE_DID_NOT_PARSE_MESSAGE_TEMPLATE = (
     HOOK_NAME + ": {path} does not parse as Python after your {tool} ({error}), so this "
-    "hook could not find the agent-facing-messages your edit added or changed. A file "
+    "hook could not find the tool-messages-to-agent your edit added or changed. A file "
     "often does not parse partway through an edit; the hook looks again after your next "
     "edit of {path}, but then lists only the messages that next edit writes.\n"
-    "If this edit added or changed an agent-facing-message, check that message against "
+    "If this edit added or changed a tool-message-to-agent, check that message against "
     + PAGE_PATH + " yourself once the file parses, and rewrite the message in this turn "
     "if the message fails the page."
 )
@@ -200,13 +200,13 @@ def run_git(arguments, directory: Path):
 
 
 def message_texts_at_head(file_path: Path):
-    """The texts of the agent-facing-messages in the file at HEAD; none for a
+    """The texts of the tool-messages-to-agent in the file at HEAD; none for a
     file HEAD does not hold."""
     directory = file_path.parent
     if not run_git(["ls-tree", "-z", "--name-only", "HEAD", "--", file_path.name], directory):
         return set()
     source = run_git(["show", f"HEAD:./{file_path.name}"], directory)
-    return {entry["text"] for entry in collector.agent_facing_string_nodes_in_source(source)}
+    return {entry["text"] for entry in collector.tool_message_to_agent_string_nodes_in_source(source)}
 
 
 def first_line_of(text: str) -> str:
@@ -241,7 +241,7 @@ def fast_read_target_file_name(relative_path: str, text: str) -> str:
     temporary directory can be found."""
     slug = re.sub(r"[^A-Za-z0-9]+", "-", relative_path.removesuffix(".py")).strip("-")
     digest = hashlib.sha256(text.encode()).hexdigest()[:16]
-    return f"{slug}-{digest}-agent-facing-message.md"
+    return f"{slug}-{digest}-tool-message-to-agent.md"
 
 
 def fast_read_target_path(relative_path: str, text: str) -> Path:
@@ -305,7 +305,7 @@ def reminder_text_listing(tool_name, relative_path, entries, listed_count, targe
         tool=tool_name, path=relative_path, count=len(entries), listing="\n".join(listing),
         fast_read=fast_read,
         suffixes=words_joined_with_or(collector.AGENT_STRING_NAME_SUFFIXES),
-        keys=words_joined_with_or(collector.AGENT_FACING_HOOK_OUTPUT_KEYS))
+        keys=words_joined_with_or(collector.TOOL_MESSAGE_TO_AGENT_HOOK_OUTPUT_KEYS))
 
 
 def words_joined_with_or(words):
@@ -324,7 +324,7 @@ def inspection_text(payload, relative_path: str):
         ast.parse(source)
     except (SyntaxError, ValueError) as error:
         return FILE_DID_NOT_PARSE_MESSAGE_TEMPLATE.format(path=relative_path, tool=tool_name, error=error)
-    written = collector.agent_facing_string_nodes_in_source(source)
+    written = collector.tool_message_to_agent_string_nodes_in_source(source)
     if tool_name in EDIT_TOOL_NAMES:
         added, gaps = edit_written_lines_and_gaps(payload.get("tool_response"))
         written = [entry for entry in written if entry_was_written(entry, added, gaps)]

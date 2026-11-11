@@ -274,6 +274,10 @@ def reviews_saved_lines(result):
 # COLD_READ_GRID_TEST_STUB_HANG_AFTER_WRITING_REPORT_SECONDS, when set, is how long the
 # stub hangs after writing its report: a reviewer that wrote and never exited.
 # The fast cell does not hang either, so it can still edit the target.
+# COLD_READ_GRID_TEST_STUB_ANOTHER_READ_STORE_RECORDS_DIRECTORY, when set, is a
+# log-store's records directory: the stub first writes another read's report
+# under its own report's name into the store's directory of its record's name,
+# as a read that took the name without claiming it would ship there.
 # COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET_AFTER_THESE_REPORT_FILES_EXIST, when set, is a
 # comma-separated list of report names in the stub's own record directory;
 # the stub that edits its given target first waits, for at most 30 seconds,
@@ -359,6 +363,11 @@ if ship_line_file and fast_fragment and fast_fragment in given.name:
         [sys.executable, str(given.parent.parent.parent / "nc-systems" / "cold-read" / "cold-read-record-ship.py"),
          str(given.parent)], capture_output=True, text=True, check=False)
     pathlib.Path(ship_line_file).write_text(shipped.stdout, encoding="utf-8")
+another_read_store = os.environ.get("COLD_READ_GRID_TEST_STUB_ANOTHER_READ_STORE_RECORDS_DIRECTORY")
+if another_read_store:
+    another_read_report = pathlib.Path(another_read_store) / given.parent.name / given.name
+    another_read_report.parent.mkdir(parents=True, exist_ok=True)
+    another_read_report.write_text("ANOTHER READ'S REPORT\n", encoding="utf-8")
 near_miss_character = os.environ.get("COLD_READ_GRID_TEST_STUB_NEAR_MISS_CHARACTER")
 if near_miss_character:
     given = (given.parent.parent / (given.parent.name[:-1] + near_miss_character)
@@ -446,8 +455,8 @@ def run_grid(repository, stub_directory, environment_overrides=None,
         stub.write_text(STUB_MODEL_RUNTIME, encoding="utf-8")
         stub.chmod(0o755)
     scratch_repository_fixture.install_fake_sandbox_programs(stub_directory)
-    # Every Codex cell scans HOME for credential files at launch, and the
-    # real home takes seconds to walk.
+    # A scratch HOME, so every cell's credential rules name paths in it, not
+    # the real home's.
     scratch_home = repository.parent / "scratch-home"
     scratch_home.mkdir(exist_ok=True)
     environment = dict(os.environ)
@@ -2030,20 +2039,14 @@ try:
           and frozen_target_path_in_scratch_repository(repository, record_directory).is_file())
 
     # --- A store that refuses the record: the run finishes, exits 1 ----------
-    # The store already holds this record's name with other bytes, so the
-    # add-only shipper refuses it, and the record did not reach the store.
-    # The grid names its record against the store's names too, so the store
-    # root is made unlistable (write and search only): the grid then falls
-    # back to a name free in the checkout, which the store already holds.
-    unreachable_record_name = record_directory.name
+    # The store holds this record's name with other bytes, so the add-only
+    # shipper refuses it, and the record did not reach the store. The grid
+    # claims its record's name in the store before its cells run, so each
+    # cell writes another read's report into that claimed directory first.
     repository = build_scratch_repository(scratch, "checkout-store-refuses")
-    seed_log_store_record(repository, unreachable_record_name, [])
-    store_root = repository / SCRATCH_LOG_STORE_RELATIVE
-    store_root.chmod(0o333)
-    try:
-        result = run_grid(repository, stubs)
-    finally:
-        store_root.chmod(0o755)
+    result = run_grid(repository, stubs, {
+        "COLD_READ_GRID_TEST_STUB_ANOTHER_READ_STORE_RECORDS_DIRECTORY":
+            str(repository / SCRATCH_LOG_STORE_RELATIVE)})
     record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
     check("a store holding the record's name with other bytes prints record: REFUSED, "
           "the run finishes all seven, and exits 1",
@@ -2052,8 +2055,8 @@ try:
           f"exit {result.returncode}; {record_lines!r}; stderr={result.stderr[-400:]!r}")
 
     # --- A shipment made while the run is still writing its record ----------
-    # The pre-remove hook ships every worktree's records whenever any
-    # agent-seat runs `git worktree remove`. A shipment made mid-run holds
+    # The pre-remove hook ships a worktree's records whenever an
+    # agent-seat runs `git worktree remove` on it. A shipment made mid-run holds
     # files the run then rewrites or deletes, such as a cell's .stderr.log,
     # so the run's own shipment, and every later one, was refused. The run
     # holds its record's being-written lock, so that shipment copies nothing.

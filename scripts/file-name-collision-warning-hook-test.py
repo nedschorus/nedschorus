@@ -556,6 +556,19 @@ def tracked_files_unlisted_failure_detail(error):
         "Fix what the line above reports, then run this suite again."])
 
 
+NO_SHARED_NAME_CASE = "no two tracked files in this repository share a name"
+
+
+def tracked_names_unique_case(repository_root: Path):
+    """(passed, detail) of the no-shared-name case, run on any checkout, so a
+    planted checkout prints the message the real one would."""
+    try:
+        tracked_names, collisions = tracked_name_collisions(repository_root)
+    except RuntimeError as unanswered:
+        return False, tracked_files_unlisted_failure_detail(unanswered)
+    return not collisions, tracked_name_collisions_failure_detail(tracked_names, collisions)
+
+
 with tempfile.TemporaryDirectory() as planted_temporary_directory:
     planted = Path(planted_temporary_directory).resolve() / "checkout"
     planted.mkdir()
@@ -582,10 +595,10 @@ with tempfile.TemporaryDirectory() as planted_temporary_directory:
           "readme.md" in planted_names
           and "readme.md" not in planted_collisions,
           planted_failure or repr(sorted(planted_names)))
-    planted_detail = tracked_name_collisions_failure_detail(planted_names, planted_collisions)
+    planted_passed, planted_detail = tracked_names_unique_case(planted)
     check("a planted collision's failure lists the files, says the rule and its home, gives the fix, "
           "and ends with the line for a rule main broke",
-          planted_detail.split("\n") == [
+          not planted_passed and planted_detail.split("\n") == [
               f"over {len(planted_names)} names: named-twice-on-purpose.py: "
               + ", ".join(planted_collisions.get("named-twice-on-purpose.py", [])),
               "Two tracked files may not share a basename, compared ignoring case, except SKILL.md, "
@@ -603,24 +616,18 @@ with tempfile.TemporaryDirectory() as planted_temporary_directory:
     except RuntimeError as unanswered:
         check("a repository git cannot list is a failure, not a clean result",
               "git ls-files exited" in str(unanswered), str(unanswered))
+        unlisted_passed, unlisted_detail = tracked_names_unique_case(unlistable)
         check("a repository git cannot list fails with git's error and says its names went unchecked",
-              tracked_files_unlisted_failure_detail(unanswered) == "\n".join([
+              not unlisted_passed and unlisted_detail == "\n".join([
                   str(unanswered),
                   "The suite could not list this checkout's tracked files, so it did not check their names.",
                   "Fix what the line above reports, then run this suite again."]),
-              tracked_files_unlisted_failure_detail(unanswered))
+              unlisted_detail)
     else:
         check("a repository git cannot list is a failure, not a clean result",
               False, "tracked_name_collisions returned instead of raising")
 
-try:
-    tracked_names, collisions = tracked_name_collisions(REPOSITORY_ROOT)
-except RuntimeError as unanswered:
-    check("no two tracked files in this repository share a name", False,
-          tracked_files_unlisted_failure_detail(unanswered))
-else:
-    check("no two tracked files in this repository share a name",
-          not collisions, tracked_name_collisions_failure_detail(tracked_names, collisions))
+check(NO_SHARED_NAME_CASE, *tracked_names_unique_case(REPOSITORY_ROOT))
 
 several = HOOK_MODULE.collision_warning_line(
     PurePath("docs/new/shared-name.md"), ["docs/a/shared-name.md", "docs/b/shared-name.md"])

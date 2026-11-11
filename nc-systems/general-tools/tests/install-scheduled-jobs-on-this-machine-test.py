@@ -140,7 +140,8 @@ NED_BOX_GUARDED_FILE_PRUNE_LINE = (
 # The deletion of exited agent-sessions' Claude Code temp folders, on ned-box alone.
 NED_BOX_TEMP_FOLDERS_DELETE_LINE = (
     "30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
-    "claude-code-temp-folders-of-exited-agent-sessions-delete.py >> "
+    "claude-code-temp-folders-of-exited-agent-sessions-delete.py "
+    "--then-tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete >> "
     "/home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1")
 # The no-sandbox test suites' run on main in a quiet gap, on ned-box alone.
 NED_BOX_NO_SANDBOX_SUITES_LINE = (
@@ -490,7 +491,7 @@ check("--help ends with the docstring's exit-codes paragraph and prints nothing 
       and " ".join(help_text.split()).endswith(
           "Exit codes: 0 done, or for --check every job matches; 1 a step failed after this "
           "program began changing the machine, or for --check a job differs or is not in the "
-          "table; 2 not run — a bad "
+          "table, or for --remove-not-in-table a crontab line was KEPT; 2 not run — a bad "
           "invocation, a table this program cannot use, a machine the table does not name, a "
           "job's program missing, a crontab that could not be read, or a shell parser that "
           "could not be installed; or for --check, a job not checked because `launchctl print` "
@@ -1375,6 +1376,37 @@ with tempfile.TemporaryDirectory() as temporary:
     exit_code, printed, errors = run_main(["--check"] + TWO_JOBS, NED_BOX, stub)
     check("and --check limited by --job does not read that line",
           exit_code == 0 and errors == "", (exit_code, errors))
+    defines_a_function = f"0 5 * * * f() {{ {box_clone}/scripts/a-helper.py; }}; /usr/bin/other"
+    no_program_after_interpreter = f"0 11 * * * /usr/bin/python3 < {box_clone}/scripts/a.py"
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [BOX_MIRROR, BOX_DAILY, BOX_ALONE, interpreter_option,
+                                 defines_a_function, no_program_after_interpreter]).encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("each NOT CHECKED line names its one cause: the option line its option, the function "
+          "line its function, the line with no program after its interpreter that, and none "
+          "another's",
+          exit_code == 2
+          and f"NOT CHECKED: the crontab line {no_program_after_interpreter} — it names no "
+              f"program after its interpreter or env, so whether" in errors
+          and f"NOT CHECKED: the crontab line {interpreter_option} — it gives an interpreter or "
+              f"env an option, which may take the next word, so whether" in errors
+          and f"NOT CHECKED: the crontab line {defines_a_function} — it defines a function, "
+              f"whose body may never run, so whether" in errors
+          and errors.count("it defines a function") == 1
+          and errors.count("it gives an interpreter or env an option") == 1
+          and "crontab -e" not in errors and "ask the user to take the line off" in errors,
+          (exit_code, errors))
+    daily_behind_an_option = BOX_DAILY.replace(
+        f" {box_clone}/scripts/daily-full-test-run-of-main.py",
+        f" -u {box_clone}/scripts/daily-full-test-run-of-main.py")
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [BOX_MIRROR, daily_behind_an_option, BOX_ALONE]).encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("a table job's own line that gives its interpreter an option is that job's DIFFERS, "
+          "exit 1, and not NOT CHECKED",
+          daily_behind_an_option != BOX_DAILY and exit_code == 1
+          and "DIFFERS: daily-full-test-run-of-main" in printed and "NOT CHECKED" not in errors,
+          (daily_behind_an_option, exit_code, printed, errors))
     stub = MachineStub(crontab="".join(
         line + "\n" for line in [path_setting, BOX_MIRROR, BOX_DAILY, BOX_ALONE]
         + not_runs + runs).encode())
@@ -1653,6 +1685,18 @@ with tempfile.TemporaryDirectory() as temporary:
                           "\"tree-sitter-bash is missing on ", environment={}) in errors
                       and shell_reader.REQUIREMENTS_FILE.name in errors,
                       (install_calls, exit_code, printed, errors, stub.crontab_writes))
+        install_calls.clear()
+        shell_reader._parser = None
+        shutil.rmtree(shell_reader.STATE_DIRECTORY, ignore_errors=True)
+        shell_reader.load_parser = (lambda: real_load_parser(
+            importer=missing_until_installed, installer=failing_install))
+        stub = MachineStub(crontab=(BOX_MIRROR + "\n" + BOX_DAILY + "\n" + BOX_ALONE + "\n").encode())
+        with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, None):
+            exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+        check("with tree-sitter-bash missing and its install failing, --check on a crontab that "
+              "holds only the table's own jobs reads no line with the parser and exits 0",
+              install_calls == [] and exit_code == 0 and printed.count("matches: ") == 3,
+              (install_calls, exit_code, printed, errors))
     finally:
         shell_reader.load_parser, shell_reader.STATE_DIRECTORY = real_load_parser, saved_state_directory
         shell_reader._parser = saved_parser

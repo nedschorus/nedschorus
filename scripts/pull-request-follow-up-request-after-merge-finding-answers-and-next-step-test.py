@@ -4,7 +4,7 @@
 Each case runs the program in a scratch clone of a scratch bare origin, with the follow-up request
 saved by the program's own save_follow_up_request_and_clear_answers_when_its_findings_changed(), as the hook saves it.
 next-step, start, open, record-finding-leave-out-reason and finish run in a second worktree of the clone, as the forked subagent
-runs them; remove-topic-branches-and-worktrees runs in the clone, as the author runs it. A fake gh first on PATH stands in for
+runs them; remove-topic-branches-and-worktrees runs in the clone, as the author runs it, and once in a worktree it removes. A fake gh first on PATH stands in for
 GitHub; a pre-push hook in the clone injects a refused push.
 
 Run: python3 scripts/pull-request-follow-up-request-after-merge-finding-answers-and-next-step-test.py
@@ -345,7 +345,7 @@ def test_start():
                   "<n>[,<n>...]\n" in err
               and "again once" not in err
               and err.endswith(fails_line("start-topic-branch", start="Otherwise pass")
-                               + f"git switch -c topic-one origin/main in {worktree} failed (exit 128: fatal: a branch "
+                               + f"git switch --no-overwrite-ignore -c topic-one origin/main in {worktree} failed (exit 128: fatal: a branch "
                                  "named 'topic-one' already exists)" + SUBAGENT_END)
               and git(worktree, "branch", "--show-current") == "topic-two"
               and [record["branch"] for record in case.topic_branches()] == ["topic-one", "topic-two"]
@@ -366,6 +366,24 @@ def test_start():
         check("start goes on in a worktree whose only change is an untracked file",
               code == 0 and git(worktree, "branch", "--show-current") == "topic-untracked", err)
         (worktree / "untracked.txt").unlink()
+        # An ignored directory at a path main newly tracks: without --no-overwrite-ignore,
+        # git switch replaces its file with main's, and the only copy is lost.
+        (case.repository / "ignored-here").mkdir()
+        (case.repository / "ignored-here" / "notes.txt").write_text("main's copy\n")
+        git(case.repository, "add", "ignored-here/notes.txt")
+        git(case.repository, "commit", "-q", "-m", "main tracks a file the worktree ignores")
+        git(case.repository, "push", "-q", "origin", "main")
+        (worktree / "ignored-here").mkdir()
+        (worktree / "ignored-here" / ".gitignore").write_text("*\n")
+        (worktree / "ignored-here" / "notes.txt").write_text("the only copy\n")
+        code, out, err = case.run(worktree, "start-topic-branch", "topic-ignored", "--finding-numbers", "1")
+        check("start over an ignored file at a path main tracks is FAILED with exit 2, naming the file, "
+              "records no branch, and the file survives",
+              code == 2 and err.startswith("FAILED: ") and "ignored-here/notes.txt" in err
+              and git(worktree, "branch", "--show-current") == "topic-untracked"
+              and len(case.topic_branches()) == 3
+              and (worktree / "ignored-here" / "notes.txt").read_text() == "the only copy\n", err)
+        shutil.rmtree(worktree / "ignored-here")
         case.run(worktree, "record-finding-leave-out-reason", "2", "--reason", "fixed")
         for label, findings, words in (
                 ("a finding that does not exist", "3", "so there is no finding 3, and no topic branch was made.\n"),
@@ -1109,6 +1127,37 @@ def test_clean_up_failure():
         case.close()
 
 
+def test_clean_up_run_from_inside_a_worktree_it_removes():
+    case = Case()
+    try:
+        command = "remove-topic-branches-and-worktrees"
+        # Recorded first, so the worktree the program runs in is removed before the other one.
+        worktree = started(case)
+        other = case.subagent_worktree("worktree-other")
+        code, _, err = case.run(other, "start-topic-branch", "branch-other", "--finding-numbers", "2")
+        assert code == 0, err
+        case.worktree = worktree
+        case.commit_change()
+        git(worktree, "push", "-q", "origin", "topic-one")
+        code, _, err = case.run(worktree, "start-topic-branch", "topic-unpushed", "--finding-numbers", "1")
+        assert code == 0, err
+        case.commit_change("unpushed.txt")
+        git(worktree, "switch", "-q", "topic-one")
+        code, out, err = case.run(worktree, command)
+        branches = git(case.repository, "branch")
+        check("remove-topic-branches-and-worktrees run from inside a worktree it removes removes the other worktree "
+              "after it, deletes the pushed branch and names the unpushed one's commits",
+              code == 1 and "Traceback" not in err and not worktree.exists() and not other.exists()
+              and f"Removed worktree {worktree}." in out and f"Removed worktree {other}." in out
+              and "Deleted branch topic-one." in out and "topic-one" not in branches
+              and "Deleted branch branch-other." in out and "branch-other" not in branches
+              and "Branch topic-unpushed holds commits on no branch of origin" in out
+              and len(out.split("left it:\n")[1].split("\nRead them")[0].splitlines()) == 1
+              and "topic-unpushed" in branches, out + err)
+    finally:
+        case.close()
+
+
 def judge_text(*findings, decisions=None):
     lines = BLOCK.splitlines()
     decisions = decisions or {}
@@ -1397,16 +1446,17 @@ def test_print_block():
     check(f"{PRINT_BLOCK} refuses when merge-lane-2 has no approving review, saying when to run it again",
           code == 1 and out == "" and err == (
               f"REFUSED: ned-review-merge, merge-lane-2's GitHub account, has no approving review of pull request "
-              f"{NUMBER}, so merge-lane-2 has not approved it yet: its review is still running or it requested changes. No "
-              "#follow_up_request block was printed.\n"
-              "Once ned-review-merge's approving review is posted, run: "
+              f"{NUMBER}: merge-lane-2's review of pull request {NUMBER} is still running, or merge-lane-2 requested "
+              "changes and has not yet approved the author's fixes. No #follow_up_request block was printed.\n"
+              f"After ned-review-merge posts an approving review of pull request {NUMBER}, run: "
               f"python3 {program.PROGRAM} {NUMBER} {PRINT_BLOCK}\n"), err)
     code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "Rename it.")])
     check(f"{PRINT_BLOCK} refuses a merge-lane-2 comment with no mark, naming it, and says how to write the block "
           "by hand",
           code == 1 and out == "" and "comment on scripts/thing.py:3 of pull request 1964 does not open with a "
                                       "category mark" in err
-          and f"the line #follow_up_request pull request {NUMBER}, then one line" in err, err)
+          and f"the line #follow_up_request pull request {NUMBER}, then one line" in err
+          and f"at the end of {program.MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR}: " in err, err)
     code, out, err = print_block([merge_lane_review(
         1, body="APPROVE\n\nBody.\n\nComments on lines outside this pull request's diff:\n- `a.py:4`: Unmarked.")], [])
     check(f"{PRINT_BLOCK} refuses an unmarked comment moved into the review body",
@@ -1416,8 +1466,8 @@ def test_print_block():
           code == 2 and out == "" and err.startswith("FAILED: gh api exited 1: HTTP 502\n"), err)
     code, out, err = print_block("not json", [])
     check(f"{PRINT_BLOCK} reports gh output that is not a list of pages as FAILED with exit 2",
-          code == 2 and err.startswith(f"FAILED: gh api pulls/{NUMBER}/reviews printed output that is not the JSON list of result pages "
-                                       "--paginate --slurp prints: "), err)
+          code == 2 and err.startswith(f"FAILED: gh api pulls/{NUMBER}/reviews exited 0, but its output is not "
+                                       "the JSON list of result pages that --paginate --slurp prints. The JSON decode error: "), err)
     code, out, err = print_block([{"id": 1}], [])
     check(f"{PRINT_BLOCK} reports a review without its expected fields as FAILED with exit 2",
           code == 2 and err.startswith(f"FAILED: GitHub's reviews of pull request {NUMBER} were not in the "
@@ -1425,11 +1475,14 @@ def test_print_block():
     code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "**fix-next** Rename it.")],
                                  read_back=lambda text: [])
     check(f"{PRINT_BLOCK} prints nothing and fails with exit 2 when its block does not read back as itself",
-          code == 2 and out == "" and "does not read back as itself" in err and "Do not paste the block" in err, err)
+          code == 2 and out == "" and f"does not read back as itself, so the hook {program.FOLLOW_UP_REQUEST_BLOCK_SAVE_HOOK_PATH}, " in err
+          and f"The block was not printed; write it by hand at the end of {program.MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR}.\n" in err, err)
+    check("the save hook the read-back failure names is in this repository",
+          (PROGRAM.parent.parent / program.FOLLOW_UP_REQUEST_BLOCK_SAVE_HOOK_PATH).is_file(), program.FOLLOW_UP_REQUEST_BLOCK_SAVE_HOOK_PATH)
     code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "**fix-next** Rename it.")],
                                  read_back=lambda text: (_ for _ in ()).throw(ValueError("unreadable")))
     check(f"{PRINT_BLOCK} fails with exit 2 when the parser refuses its block, quoting the parser",
-          code == 2 and out == "" and "it reads back as 'unreadable'" in err, err)
+          code == 2 and out == "" and "the block reads back as 'unreadable'" in err, err)
 
 
 def test_print_block_with_replaced_pull_requests():
@@ -1466,7 +1519,7 @@ for test in (test_help, test_block_parsing, test_print_block, test_print_block_w
              test_open_title_and_description_file_removal_failure,
              test_leave_out_and_finish, test_three_findings, test_waiting_for_user_ruling,
              test_state_failures, test_clean_up, test_clean_up_goes_on_past_each_worktree_and_branch,
-             test_clean_up_failure, test_next_step, test_next_step_branch_choice):
+             test_clean_up_failure, test_clean_up_run_from_inside_a_worktree_it_removes, test_next_step, test_next_step_branch_choice):
     test()
 
 print(f"FAILED: {len(failures)} failed" if failures else "PASSED: 0 failed")

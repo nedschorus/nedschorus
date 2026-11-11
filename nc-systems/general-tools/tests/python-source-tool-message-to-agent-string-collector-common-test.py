@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for python-source-agent-facing-string-collector-common.py.
+"""Tests for python-source-tool-message-to-agent-string-collector-common.py.
 
-Run: python3 nc-systems/general-tools/tests/python-source-agent-facing-string-collector-common-test.py
+Run: python3 nc-systems/general-tools/tests/python-source-tool-message-to-agent-string-collector-common-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 Each case hands the collector a small Python source and checks which strings
@@ -14,8 +14,8 @@ import sys
 from pathlib import Path
 
 _collector_spec = importlib.util.spec_from_file_location(
-    "python_source_agent_facing_string_collector_common",
-    Path(__file__).resolve().parent.parent / "python-source-agent-facing-string-collector-common.py")
+    "python_source_tool_message_to_agent_string_collector_common",
+    Path(__file__).resolve().parent.parent / "python-source-tool-message-to-agent-string-collector-common.py")
 collector = importlib.util.module_from_spec(_collector_spec)
 _collector_spec.loader.exec_module(collector)
 
@@ -31,11 +31,11 @@ def check(case_name, condition, detail=""):
 
 
 def texts(source):
-    return [entry["text"] for entry in collector.agent_facing_string_nodes_in_source(source)]
+    return [entry["text"] for entry in collector.tool_message_to_agent_string_nodes_in_source(source)]
 
 
 def entries(source):
-    return collector.agent_facing_string_nodes_in_source(source)
+    return collector.tool_message_to_agent_string_nodes_in_source(source)
 
 
 RECOGNIZED_FORMS = (
@@ -684,7 +684,12 @@ for case_name, binding in (("a for loop's target", "for NAME in items:\n    pass
                            ("a := target", "if (NAME := read()):\n    pass\n"),
                            ("a function's name", "def NAME():\n    pass\n"),
                            ("a type parameter", "def first[NAME](items):\n    pass\n"),
-                           ("a match capture", "match value:\n    case [NAME]:\n        pass\n")):
+                           ("a match capture", "match value:\n    case [NAME]:\n        pass\n"),
+                           ("a match star capture", "match value:\n    case [*NAME]:\n        pass\n"),
+                           ("a mapping pattern's **rest", "match value:\n    case {**NAME}:\n        pass\n"),
+                           ("a class's name", "class NAME:\n    pass\n"),
+                           ("a ParamSpec type parameter", "def first[**NAME](items):\n    pass\n"),
+                           ("a TypeVarTuple type parameter", "def first[*NAME](items):\n    pass\n")):
     found = texts_as_agent_reads_them(f'NAME = "module"\n{binding}print(f"x {{NAME}}")\n')
     check(f"text as the agent reads it: a module constant also bound by {case_name} stays <source>",
           found == ["x <NAME>"], found)

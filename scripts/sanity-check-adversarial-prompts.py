@@ -317,9 +317,9 @@ git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
     REPO_ROOT / "nc-systems" / "general-tools"
-    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 _command_line_prefix_spec = importlib.util.spec_from_file_location(
@@ -1461,30 +1461,19 @@ def fresh_record_dir(target_stem: str) -> pathlib.Path:
     look-then-create test and return the same path, and the second overwrites
     the first.
 
-    A name the log-store's sanity-check-records already hold is skipped too:
+    The name is claimed the same way in the log-store's sanity-check-records:
     another checkout's record of the same target and day ships to the same
     store, and shipping this one under its name is refused. When the store
-    cannot be listed, the name is checked against this checkout alone and a
-    warning on stderr says so."""
+    cannot be reached to claim the name, the name is checked against this
+    checkout alone and a warning on stderr says so."""
     base = RECORDS_ROOT / f"{datetime.date.today().isoformat()}-{target_stem}"
-    names_in_store, unlisted = record_ship.shipper.log_store_listed_record_directory_names_or_listing_failure_reason(
-        *record_ship.destination_for_this_machine())
-    names_in_store = names_in_store or set()
-    counter = 1
-    while True:
-        out_dir = base if counter == 1 else pathlib.Path(f"{base}-{counter}")
-        counter += 1
-        if out_dir.name in names_in_store:
-            continue
-        try:
-            out_dir.mkdir(parents=True)
-        except FileExistsError:
-            continue
-        record_ship.shipper.record_directory_being_written_lock_take(out_dir)
-        if unlisted:
-            print(record_ship.shipper.log_store_listing_failed_record_name_may_collide_warning_line(
-                "sanity-check-adversarial-prompts.py", out_dir, unlisted), file=sys.stderr)
-        return out_dir
+    out_dir, unclaimed = record_ship.shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_claimed_in_log_store_and_log_store_claim_failure_reason_or_none(
+        base, *record_ship.destination_for_this_machine())
+    record_ship.shipper.record_directory_being_written_lock_take(out_dir)
+    if unclaimed:
+        print(record_ship.shipper.log_store_claim_failed_so_record_name_may_collide_warning_line(
+            "sanity-check-adversarial-prompts.py", out_dir, unclaimed), file=sys.stderr)
+    return out_dir
 
 
 def cell_scratch_dir(out_dir: pathlib.Path, cell: str) -> pathlib.Path:

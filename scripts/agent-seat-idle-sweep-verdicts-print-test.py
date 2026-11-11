@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Cases for scripts/agent-seat-idle-sweep-verdicts-print.py.
 
-Every case runs the program as a subprocess against folders this suite made: a handoff directory,
+Every case but one runs the program as a subprocess against folders this suite made: a handoff directory,
 an agents root, a projects root, a tasks root and a ~/.claude.json, never the real ones. `gh` is a
 stand-in placed first on PATH that answers from a file the case writes. Each case fixes the time
-with --now, so the 5-minute idle test does not depend on the clock.
+with --now, so the 5-minute idle test does not depend on the clock. The other case calls
+open_tasks_nothing_holds directly, since a run of the program reports a task file that will not
+read at the earlier read of the task list and never reaches that function's own check.
 """
 
 import importlib.util
@@ -208,6 +210,15 @@ _, verdicts, _ = machine.run()
 check("a hold backed by addBlockedBy goes to the judge",
       [(s["kind"], s["code_reading"]) for s in verdicts["alpha"]["sentences"]]
       == [("hold", "judge")], verdicts["alpha"])
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant("I'll hold."),
+                       assistant(tool=("TaskUpdate", {"taskId": "3", "addBlockedBy": ["2"]}),
+                                 at=None),
+                       turn_end()])
+code, verdicts, _ = machine.run()
+check("a task call in a record with no timestamp cannot back a hold: code finds it unbacked",
+      code == 0 and [(s["kind"], s["code_reading"]) for s in verdicts["alpha"]["sentences"]]
+      == [("hold", "unbacked")], (code, verdicts.get("alpha")))
 machine = Machine()
 machine.seat("alpha", [user("a", at="2026-11-02T11:30:00Z"),
                        assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
@@ -480,6 +491,102 @@ check("a subagent whose final report came is not running",
       verdicts["alpha"]["running"]["subagents"] == [] and verdicts["alpha"]["rule"] == 4,
       verdicts["alpha"])
 
+
+def subagent_report(agent_id, result, at, interim):
+    note = ("<note>This agent stopped with background work of its own still running; the result "
+            "below may be interim.</note>" if interim else "")
+    return user(f"<task-notification>\n<task-id>{agent_id}</task-id>\n<status>completed</status>\n"
+                f"{note}\n<result>{result}</result>\n</task-notification>", at=at)
+
+
+SUBAGENT_SPAWN = user("", at="2026-11-02T09:00:00Z",
+                      tool_result={"status": "async_launched", "agentId": "a1b2"})
+WAITING_REPORT = subagent_report("a1b2", "I'll wait for the test-run notification.",
+                                 "2026-11-02T09:10:00Z", interim=True)
+machine.seat("alpha", [user("go"), SUBAGENT_SPAWN, WAITING_REPORT,
+                       subagent_report("a1b2", "Fix-round pushed.", "2026-11-02T09:20:00Z",
+                                       interim=False),
+                       assistant("Done."), turn_end()])
+_, verdicts, _ = machine.run()
+check("a subagent whose last report is final, after one that waited on its own background work, "
+      "is not running",
+      verdicts["alpha"]["running"]["subagents"] == [], verdicts["alpha"])
+
+
+def subagent_with_own_background_command(machine, last_spend_at):
+    project, _ = machine.seat("alpha", [
+        user("go"), SUBAGENT_SPAWN, WAITING_REPORT,
+        subagent_report("a1b2", "Fix-round pushed.", "2026-11-02T09:20:00Z", interim=True),
+        assistant("Done."), turn_end()])
+    own = project / "s-1" / "subagents"
+    own.mkdir(parents=True, exist_ok=True)
+    (own / "agent-a1b2.jsonl").write_text("".join(json.dumps(record) + "\n" for record in [
+        user("", at="2026-11-02T09:05:00Z", tool_result={"backgroundTaskId": "bash-9"}),
+        assistant("Fix-round pushed.", at=last_spend_at)]))
+
+
+# Claude Code marks even the final report interim while a background command the subagent
+# launched still runs and has not notified it.
+machine = Machine()
+subagent_with_own_background_command(machine, last_spend_at="2026-11-02T09:19:59Z")
+_, verdicts, _ = machine.run()
+check("a subagent whose final report is marked interim, with a background command of its own "
+      "still running: reported stopped at its report, with that command and its start",
+      verdicts["alpha"]["running"]["subagents"] == [{
+          "id": "a1b2", "started": "2026-11-02T09:00:00Z",
+          fields.SUBAGENT_STOPPED_AT: "2026-11-02T09:20:00Z",
+          fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS: [
+              {"id": "bash-9", "started": "2026-11-02T09:05:00Z"}]}]
+      and verdicts["alpha"]["rule"] == 5, verdicts["alpha"])
+machine = Machine()
+subagent_with_own_background_command(machine, last_spend_at="2026-11-02T09:30:00Z")
+_, verdicts, _ = machine.run()
+check("a subagent that spent a token after its interim report has resumed: reported running, "
+      "not stopped",
+      verdicts["alpha"]["running"]["subagents"] == [
+          {"id": "a1b2", "started": "2026-11-02T09:00:00Z"}], verdicts["alpha"])
+
+# A parent that stops such a subagent with TaskStop kills its background command too, and Claude
+# Code writes no task-notification for either.
+machine = Machine()
+subagent_with_own_background_command(machine, last_spend_at="2026-11-02T09:19:59Z")
+_, transcript = machine.seat("alpha", None)
+stop_result = {"message": "Successfully stopped task: a1b2 (Fix-round)", "task_id": "a1b2",
+               "task_type": "local_agent", "command": "Fix-round"}
+with transcript.open("a") as handle:
+    for record in (user("", at="2026-11-02T09:30:00Z", tool_result=stop_result),
+                   assistant("Stopped it."), turn_end()):
+        handle.write(json.dumps(record) + "\n")
+_, verdicts, _ = machine.run()
+check("a subagent the parent stopped with TaskStop after its interim report is not running, "
+      "nor is its own background command",
+      verdicts["alpha"]["running"] == {"subagents": [], "background_commands": []}
+      and verdicts["alpha"]["rule"] == 4, verdicts["alpha"])
+
+# Claude Code delivers a notification queued while the session was busy as a queued_command
+# attachment, not as a user record.
+machine = Machine()
+attachment_report = subagent_report("a1b2", "Fix-round pushed.", "2026-11-02T09:20:00Z",
+                                    interim=True)
+attachment_report = {"type": "attachment", "timestamp": attachment_report["timestamp"],
+                     "attachment": {"type": "queued_command",
+                                    "prompt": attachment_report["message"]["content"]}}
+project, _ = machine.seat("alpha", [user("go"), SUBAGENT_SPAWN, attachment_report,
+                                    assistant("Done."), turn_end()])
+own = project / "s-1" / "subagents"
+own.mkdir(parents=True, exist_ok=True)
+(own / "agent-a1b2.jsonl").write_text("".join(json.dumps(record) + "\n" for record in [
+    user("", at="2026-11-02T09:05:00Z", tool_result={"backgroundTaskId": "bash-9"}),
+    assistant("Fix-round pushed.", at="2026-11-02T09:19:59Z")]))
+_, verdicts, _ = machine.run()
+check("a subagent whose interim final report came as a queued_command attachment: reported "
+      "stopped at that report, with its own background command",
+      verdicts["alpha"]["running"]["subagents"] == [{
+          "id": "a1b2", "started": "2026-11-02T09:00:00Z",
+          fields.SUBAGENT_STOPPED_AT: "2026-11-02T09:20:00Z",
+          fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS: [
+              {"id": "bash-9", "started": "2026-11-02T09:05:00Z"}]}], verdicts["alpha"])
+
 # --- rule 4 against rule 5: open tasks and their prerequisites -------------------------------
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant("Done."), turn_end()])
@@ -640,6 +747,28 @@ check("a task file that will not read: an error and exit 1, not rule 4",
       code == 1 and verdicts["alpha"]["rule"] is None
       and "2.json could not be read as a task" in verdicts["alpha"]["errors"][0]
       and "then run this program again" in verdicts["alpha"]["errors"][0], verdicts["alpha"])
+(machine.tasks / "nedschorus-alpha-tasks" / "1.json").write_text("{not json")
+code, verdicts, _ = machine.run()
+check("two task files that will not read: the error names the first",
+      code == 1 and "1.json could not be read as a task" in verdicts["alpha"]["errors"][0],
+      verdicts["alpha"])
+# Rules 3 to 5 read the task list again after the read that finds waiting tasks, so a file can
+# turn unreadable between the two; only a direct call reaches the second read's check.
+_program_specification = importlib.util.spec_from_file_location(
+    "agent_seat_idle_sweep_verdicts_print", PROGRAM)
+program = importlib.util.module_from_spec(_program_specification)
+_program_specification.loader.exec_module(program)
+unreadable_tasks = Path(tempfile.mkdtemp(dir=str(SUITE_ROOT)))
+for name in ("1.json", "2.json"):
+    (unreadable_tasks / name).write_text("{not json")
+try:
+    program.open_tasks_nothing_holds(unreadable_tasks, checker=None)
+    message = None
+except program.ReadFailure as error:
+    message = str(error)
+check("open tasks nothing holds, from two task files that will not read: the error names the first",
+      message is not None and message.startswith(f"{unreadable_tasks / '1.json'} could not be read")
+      and "holds the agent-seat's work is unknown" in message, message)
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant("Done."), turn_end()])
 machine.seat("beta", [user("go"), assistant("Done."), turn_end()])

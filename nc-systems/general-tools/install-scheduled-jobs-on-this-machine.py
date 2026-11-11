@@ -10,16 +10,17 @@ Usage:
                 or launchd plist. Reads nothing on the machine, changes nothing.
   --check       compare what this machine has installed with the table; exit 1
                 when any job differs, or when this machine runs a job the
-                table does not name. Changes nothing.
+                table does not name; exit 2 when a job or a crontab line is
+                NOT CHECKED. Changes nothing.
   --install     make this machine's crontab and launchd jobs what the table
                 says. A job already installed as the table says is left alone.
   --start-once  with --install: after installing, ask launchd to run each
                 selected launchd job once, now.
-  --remove      take the named jobs off this machine. Needs --job: nothing
-                removes every job at once.
+  --remove      take the named jobs off this machine. Needs --job, so that
+                --remove never takes off every job of the table at once.
   --remove-not-in-table
                 take off this machine every job --check reports NOT IN THE
-                TABLE. Takes no --job.
+                TABLE. Takes no --job. Exits 1 when it leaves a line KEPT.
   --job NAME    limit the run to this job of the table; repeat for several.
                 Without it --print, --check and --install take every job the
                 table places on this machine.
@@ -128,8 +129,10 @@ writes a file in the clone; and a plist carrying
 PLIST_WRITTEN_BY_THIS_PROGRAM whose label is no launchd job's of the table.
 A plist written before that line existed is not found. A cron line whose
 programs this program cannot tell, because it gives an interpreter or env an
-option or defines a function, is reported NOT CHECKED instead.
---remove-not-in-table takes exactly those off, except a cron line that also
+option, defines a function, or names no program after its interpreter or env,
+is reported NOT CHECKED instead, with which of these it does, and
+--remove-not-in-table leaves it in place.
+--remove-not-in-table takes exactly the NOT IN THE TABLE jobs off, except a cron line that also
 runs a job that is not a program of the clone: it reports that line as KEPT
 and leaves it for a person to edit, since removing it would stop the other
 job too. A later pipeline stage, such as the logger of `job | logger`, only
@@ -143,7 +146,7 @@ only in its output file.
 
 Exit codes: 0 done, or for --check every job matches; 1 a step failed after
 this program began changing the machine, or for --check a job differs or is
-not in the table; 2 not run — a bad invocation, a table this program cannot
+not in the table, or for --remove-not-in-table a crontab line was KEPT; 2 not run — a bad invocation, a table this program cannot
 use, a machine the table does not name, a job's program missing, a crontab
 that could not be read, or a shell parser that could not be installed; or for
 --check, a job not checked because `launchctl print` could not report it, or
@@ -176,8 +179,8 @@ shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
 _shell_reader_spec.loader.exec_module(shell_reader)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
-    Path(__file__).resolve().with_name("failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py"))
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().with_name("failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py"))
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
@@ -674,6 +677,14 @@ def _defines_a_function(command_text: str) -> bool:
     return False
 
 
+def _cron_line_command_text(line: str):
+    special_schedule = line.lstrip().startswith("@")
+    fields = line.split(None, 1 if special_schedule else 5)
+    if len(fields) < (2 if special_schedule else 6):
+        return None
+    return fields[-1]
+
+
 def programs_a_cron_line_runs(line: str) -> list:
     """Return (program, reads_output) for each command a cron line runs, or [] for none.
 
@@ -682,31 +693,38 @@ def programs_a_cron_line_runs(line: str) -> list:
     words. reads_output is true for a later stage of a pipeline, such as the
     logger of `job | logger`, which only reads the job's output.
     """
+    return [(program, reads_output)
+            for program, reads_output, _ in _cron_line_programs_and_causes(line)]
+
+
+def _cron_line_programs_and_causes(line: str) -> list:
+    # Each entry adds the cause program is None, or None where program is resolved.
     # Interpreter and env options may consume arguments; guessing could remove an unrelated job.
     if not line.strip() or line.lstrip().startswith("#") or CRON_ENVIRONMENT_ASSIGNMENT.match(line):
         return []
-    special_schedule = line.lstrip().startswith("@")
-    fields = line.split(None, 1 if special_schedule else 5)
-    if len(fields) < (2 if special_schedule else 6):
+    command_text = _cron_line_command_text(line)
+    if command_text is None:
         return []
     try:
-        commands = shell_reader.simple_commands(fields[-1])
-        defines_a_function = _defines_a_function(fields[-1])
+        commands = shell_reader.simple_commands(command_text)
+        defines_a_function = _defines_a_function(command_text)
     except shell_reader.ShellParserUnavailable as error:
         raise shell_parser_refusal(error, line)
     # A function's body may never run.
     if defines_a_function:
-        return [(None, False)]
+        return [(None, False, _FUNCTION_DEFINITION_CAUSE)]
     commands = [command for command in commands if not command.inside_substitution()]
     stage_sizes = {}
     for command in commands:
         for shell in command.child_shell:
             stage_sizes[shell] = stage_sizes.get(shell, 0) + 1
-    # Only a later stage that is one command and nothing more reads the output; a stage such
-    # as `(cat; /usr/bin/other-job)` runs other jobs of its own.
-    return [(_program_of_a_cron_job(command),
-             _only_command_of_a_later_pipeline_stage(command, stage_sizes))
-            for command in commands]
+    found = []
+    for command in commands:
+        program, cause = _program_of_a_cron_job(command)
+        # Only a later stage that is one command and nothing more reads the output; a stage such
+        # as `(cat; /usr/bin/other-job)` runs other jobs of its own.
+        found.append((program, _only_command_of_a_later_pipeline_stage(command, stage_sizes), cause))
+    return found
 
 
 def _only_command_of_a_later_pipeline_stage(command, stage_sizes):
@@ -719,18 +737,25 @@ def _only_command_of_a_later_pipeline_stage(command, stage_sizes):
             and stage_sizes[shells[-1]] == 1)
 
 
+_INTERPRETER_OPTION_CAUSE = "it gives an interpreter or env an option, which may take the next word"
+_FUNCTION_DEFINITION_CAUSE = "it defines a function, whose body may never run"
+_NO_PROGRAM_AFTER_INTERPRETER_CAUSE = "it names no program after its interpreter or env"
+_NO_PROGRAM_CAUSE = "it names no program"
+
+
 def _program_of_a_cron_job(words):
+    """Return (program, None), or (None, cause) where the program is unresolved."""
     after_interpreter = False
     for word in words:
         if CRON_ENVIRONMENT_ASSIGNMENT.match(word):
             continue
         if after_interpreter and word.startswith("-"):
-            return None
+            return None, _INTERPRETER_OPTION_CAUSE
         if INTERPRETER_PROGRAM_NAME.fullmatch(Path(word).name):
             after_interpreter = True
             continue
-        return word
-    return None
+        return word, None
+    return None, (_NO_PROGRAM_AFTER_INTERPRETER_CAUSE if after_interpreter else _NO_PROGRAM_CAUSE)
 
 
 def _cron_lines_of_placed_jobs(placed: list, lines: list) -> set:
@@ -743,9 +768,18 @@ def _cron_lines_of_placed_jobs(placed: list, lines: list) -> set:
 
 
 def _cron_lines_not_read(placed: list, lines: list) -> list:
+    """Return (line, cause) for each cron line no table job owns whose programs are unresolved."""
     owned = _cron_lines_of_placed_jobs(placed, lines)
-    return [line for index, line in enumerate(lines) if index not in owned
-            and any(program is None for program, _ in programs_a_cron_line_runs(line))]
+    found = []
+    for index, line in enumerate(lines):
+        # A line a table job owns is never read: it needs no shell parser.
+        if index in owned:
+            continue
+        causes = [cause for program, _, cause in _cron_line_programs_and_causes(line)
+                  if program is None]
+        if causes:
+            found.append((line, causes[0]))
+    return found
 
 
 def cron_lines_not_in_table(machine: dict, placed: list, lines: list) -> list:
@@ -914,8 +948,8 @@ def remove_not_in_table_mode(machine, placed, launch_agents_directory: Path,
         print(f"KEPT: not in the table — the crontab line {lines[index]} also runs a job that is "
               f"not a program of the clone, so this program left the line in place.")
     if left_in_place:
-        print("To take the retired job off a KEPT line, edit the line by hand with `crontab -e` on "
-              "this machine, and keep the job that is not the clone's.")
+        print("To take the retired job off a KEPT line, ask the user to edit the line by hand in "
+              "this machine's crontab, and keep the job that is not the clone's.")
     plists = plists_not_in_table(machine, placed, launch_agents_directory)
     every_step_worked = True
     for plist_path, label in plists:
@@ -1017,8 +1051,8 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
               f"through a pull request.")
         if shares_a_line:
             print("When a retired job shares its crontab line with a job that is not the clone's, "
-                  "take the retired job off that line by hand with `crontab -e` on this machine, "
-                  "and keep the other job.")
+                  "ask the user to take the retired job off that line by hand in this machine's "
+                  "crontab, and keep the other job.")
         print(f"To learn whether a job was retired on purpose, run "
               f"`git log -p -- {table_path}` in the clone.")
     for name, placement, failure in not_checked:
@@ -1026,15 +1060,13 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
               f"{placement['label']} loaded is unknown.", file=sys.stderr)
         print(failure.next_steps(rerun_command('--check', name), f"NOT CHECKED: {name}",
                                  drift_line="DIFFERS"), file=sys.stderr)
-    for line in lines_not_read:
-        print(f"NOT CHECKED: the crontab line {line} — it gives an interpreter or env an option, "
-              f"which may take the next word, or defines a function, whose body may never run, "
-              f"so whether it runs a program of the clone that no job of the table names is "
-              f"unknown.", file=sys.stderr)
+    for line, cause in lines_not_read:
+        print(f"NOT CHECKED: the crontab line {line} — {cause}, so whether it runs a program of "
+              f"the clone that no job of the table names is unknown.", file=sys.stderr)
     if lines_not_read:
         print(f"When such a line runs a program of the clone, add its job to {table_path} through "
-              f"a pull request, or take the line off with `crontab -e` on this machine.",
-              file=sys.stderr)
+              f"a pull request, or ask the user to take the line off this machine's crontab "
+              f"by hand.", file=sys.stderr)
         print("When it runs no program of the clone, tell the user, quoting the line: --check "
               "exits 2 for as long as the line is in the crontab.", file=sys.stderr)
     if not_checked or lines_not_read:

@@ -533,12 +533,13 @@ def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Pat
     """Create and return the first record directory for this document and day
     unused both here and in the log-store, holding its being-written lock
     until ship_record."""
-    record_dir, store_unlisted = record_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
-        RECORDS_DIR / record_directory_name_for_target(target, now))
+    record_dir, store_unclaimed = record_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_claimed_in_log_store_and_log_store_claim_failure_reason_or_none(
+        RECORDS_DIR / record_directory_name_for_target(target, now),
+        *record_shipper.destination_for_this_machine())
     record_shipper.record_directory_being_written_lock_take(record_dir)
-    if store_unlisted is not None:
-        print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(
-            "cold-read-grid", record_dir, store_unlisted), file=sys.stderr)
+    if store_unclaimed is not None:
+        print(record_shipper.log_store_claim_failed_so_record_name_may_collide_warning_line(
+            "cold-read-grid", record_dir, store_unclaimed), file=sys.stderr)
     return record_dir
 
 
