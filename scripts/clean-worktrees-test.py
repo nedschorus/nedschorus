@@ -3070,6 +3070,190 @@ with tempfile.TemporaryDirectory() as scratch:
               "scripts/clean-worktrees.py could not write its removal record" in refused.stdout,
           refused.stdout + refused.stderr)
 
+# --- Idle worktrees: removed, owner file or not, when nothing unsaved is in them ---
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch).resolve()
+    checkout = scratch / "checkout"
+    origin = scratch / "origin.git"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    (checkout / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    (checkout / "tracked").mkdir()
+    (checkout / "tracked" / "file.txt").write_text("tracked\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
+    git(checkout, "remote", "add", "origin", str(origin))
+    git(checkout, "push", "-u", "origin", "main")
+    idle_home = scratch / "home"
+    (idle_home / ".claude" / "handoffs").mkdir(parents=True)
+    worktrees_directory = scratch / "worktrees"
+    three_days_ago = float(int(time.time()) - 3 * 86400)
+
+    def idle_git_directory(worktree):
+        return Path(git(worktree, "rev-parse", "--absolute-git-dir").strip())
+
+    def age(worktree):
+        """Set the mtime of every file and directory in the worktree and its own git directory to
+        three days ago."""
+        for root in (worktree, idle_git_directory(worktree)):
+            for directory, directory_names, file_names in os.walk(root, topdown=False):
+                for name in directory_names + file_names:
+                    os.utime(os.path.join(directory, name), (three_days_ago, three_days_ago),
+                             follow_symlinks=False)
+            os.utime(root, (three_days_ago, three_days_ago))
+        return worktree
+
+    def idle_candidate(name, where=None, pushed=True, detach=False):
+        path = (where or worktrees_directory) / name
+        if detach:
+            git(checkout, "worktree", "add", "--detach", str(path), "origin/main")
+        else:
+            git(checkout, "worktree", "add", "-b", name, str(path), "origin/main")
+            if pushed:
+                git(path, "push", "-q", "origin", name)
+        return path
+
+    def run_idle_cleanup(*flags, pull_requests=(), gh_exit=None):
+        environment = dict(os.environ, HOME=str(idle_home),
+                           FAKE_GH_PULL_REQUESTS=json.dumps(list(pull_requests)))
+        if gh_exit is not None:
+            environment["FAKE_GH_EXIT_CODE"] = str(gh_exit)
+        return subprocess.run([sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), *flags],
+                              capture_output=True, text=True, check=False, env=environment)
+
+    def idle_line(output, name):
+        return next((line for line in output.splitlines() if line.startswith(f"{name}:")), "")
+
+    idle_done_start = ("done — nothing in it, its git directory included, has changed for 2 days, "
+                       "it holds no uncommitted or untracked file, GitHub holds every commit of its "
+                       "HEAD, and no open pull request is its")
+    no_owner_kept = "kept — it has no owner file, and the cleaner removes only a worktree holding one"
+
+    idle_worktree = idle_candidate("idle-wt")
+    (idle_worktree / "build-output.log").write_text("ignored\n", encoding="utf-8")
+    age(idle_worktree)
+    owned_idle_worktree = age(give_stopped_owner(idle_candidate("owned-idle-wt")))
+    detached_idle_worktree = age(idle_candidate("detached-idle-wt", detach=True))
+    fresh_worktree = idle_candidate("fresh-wt")
+    touched_worktree = age(idle_candidate("touched-wt"))
+    os.utime(touched_worktree / "tracked" / "file.txt")
+    git_touched_worktree = age(idle_candidate("git-touched-wt"))
+    os.utime(idle_git_directory(git_touched_worktree) / "HEAD")
+    untracked_worktree = idle_candidate("untracked-wt")
+    (untracked_worktree / "notes.txt").write_text("unsaved\n", encoding="utf-8")
+    age(untracked_worktree)
+    modified_worktree = idle_candidate("modified-wt")
+    (modified_worktree / "README.md").write_text("changed\n", encoding="utf-8")
+    age(modified_worktree)
+    unpushed_worktree = idle_candidate("unpushed-wt")
+    (unpushed_worktree / "new.txt").write_text("new\n", encoding="utf-8")
+    git(unpushed_worktree, "add", "-A")
+    git(unpushed_worktree, "commit", "-q", "-m", "not on origin")
+    age(unpushed_worktree)
+    open_pull_request_worktree = age(idle_candidate("open-pr-wt"))
+    git(checkout, "switch", "-q", "-c", "elsewhere")
+    (checkout / "elsewhere.txt").write_text("elsewhere\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-q", "-m", "an open pull request's head commit")
+    git(checkout, "push", "-q", "origin", "elsewhere")
+    git(checkout, "switch", "-q", "main")
+    open_head_worktree = idle_candidate("open-head-wt", detach=True)
+    git(open_head_worktree, "switch", "-q", "--detach", "origin/elsewhere")
+    age(open_head_worktree)
+    marked_home = idle_candidate("marked-home-wt", detach=True)
+    (idle_git_directory(marked_home) / "agent-home-marker").write_text("", encoding="utf-8")
+    age(marked_home)
+    (idle_home / "agents").mkdir()
+    located_home = age(idle_candidate("some-seat", where=idle_home / "agents", detach=True))
+    merging_worktree = idle_candidate("merging-wt")
+    (idle_git_directory(merging_worktree) / "MERGE_HEAD").write_text(
+        git(checkout, "rev-parse", "origin/main"), encoding="utf-8")
+    age(merging_worktree)
+    locked_idle_worktree = idle_candidate("locked-idle-wt")
+    git(checkout, "worktree", "lock", "--reason", "kept by hand", str(locked_idle_worktree))
+    age(locked_idle_worktree)
+    occupied_idle_worktree = age(idle_candidate("occupied-idle-wt"))
+    unreadable_worktree = idle_candidate("unreadable-wt")
+    (unreadable_worktree / "sealed").mkdir()
+    age(unreadable_worktree)
+    (unreadable_worktree / "sealed").chmod(0)
+    # A tracked file whose mtime differs from the index's record of it: a status that refreshed the
+    # index would rewrite it, and the worktree would look changed today to the next run.
+    stale_index_worktree = age(idle_candidate("stale-index-wt"))
+    os.utime(stale_index_worktree / "README.md", (three_days_ago - 3600, three_days_ago - 3600))
+
+    open_pull_request = {"number": 30, "state": "OPEN", "headRefName": "open-pr-wt",
+                         "headRefOid": "a" * 40, "closedAt": None}
+    open_head_pull_request = {"number": 31, "state": "OPEN", "headRefName": "renamed-elsewhere",
+                              "headRefOid": git(checkout, "rev-parse", "origin/elsewhere").strip(),
+                              "closedAt": None}
+
+    occupant = subprocess.Popen(["sleep", "600"], cwd=occupied_idle_worktree)
+    try:
+        report = run_idle_cleanup(pull_requests=[open_pull_request, open_head_pull_request])
+        index_mtime_after_report = os.stat(idle_git_directory(stale_index_worktree) / "index").st_mtime
+        removal = run_idle_cleanup("--remove", pull_requests=[open_pull_request,
+                                                              open_head_pull_request])
+    finally:
+        occupant.kill()
+        occupant.wait()
+        if unreadable_worktree.exists():
+            (unreadable_worktree / "sealed").chmod(0o755)
+
+    check("the report calls an idle worktree with no owner file done, naming the ignored file "
+          "its removal discards",
+          idle_line(report.stdout, "idle-wt").startswith(f"idle-wt: {idle_done_start}")
+          and "build-output.log" in idle_line(report.stdout, "idle-wt"), report.stdout)
+    check("the report calls an idle worktree with a stopped owner done by the idle rule",
+          idle_line(report.stdout, "owned-idle-wt").startswith(f"owned-idle-wt: {idle_done_start}"),
+          report.stdout)
+    check("a report's git status does not refresh an idle worktree's index",
+          index_mtime_after_report == three_days_ago
+          and idle_line(removal.stdout, "stale-index-wt").startswith("stale-index-wt: removed"),
+          f"{index_mtime_after_report} {three_days_ago}\n{removal.stdout}")
+    check("--remove removes idle worktrees, owner file or not, on a branch or detached",
+          not idle_worktree.exists() and not owned_idle_worktree.exists()
+          and not detached_idle_worktree.exists() and removal.returncode == 0,
+          removal.stdout + removal.stderr)
+    check("an idle worktree's branch keeps its commits on origin",
+          "idle-wt" in git(origin, "branch", "--list", "idle-wt"), removal.stdout)
+    for worktree, why in ((fresh_worktree, "it was made today"),
+                          (touched_worktree, "one of its files changed today"),
+                          (git_touched_worktree, "a file in its own git directory changed today"),
+                          (untracked_worktree, "it holds an untracked file"),
+                          (modified_worktree, "it holds an uncommitted change"),
+                          (unpushed_worktree, "it holds a commit GitHub lacks"),
+                          (open_pull_request_worktree, "its branch is an open pull request's"),
+                          (open_head_worktree,
+                           "its detached HEAD is an open pull request's head commit"),
+                          (merging_worktree, "a merge is in progress in it"),
+                          (unreadable_worktree, "a directory in it cannot be read"),
+                          (marked_home, "it is an agent-home by its marker file"),
+                          (located_home, "it is an agent-home by its place in ~/agents")):
+        check(f"a worktree with no owner file is not idle, and is kept, when {why}",
+              worktree.exists()
+              and idle_line(removal.stdout, worktree.name) == f"{worktree.name}: {no_owner_kept}",
+              idle_line(removal.stdout, worktree.name) or removal.stdout)
+    check("a locked idle worktree is kept for its lock",
+          locked_idle_worktree.exists()
+          and idle_line(removal.stdout, "locked-idle-wt").startswith(
+              "locked-idle-wt: kept — locked with git worktree lock (kept by hand)"), removal.stdout)
+    check("an idle worktree a live process works in is kept, saying so",
+          occupied_idle_worktree.exists()
+          and idle_line(removal.stdout, "occupied-idle-wt").endswith(
+              "no open pull request is its, but a live process is rooted inside it"), removal.stdout)
+
+    gh_failed_worktree = age(idle_candidate("gh-failed-wt"))
+    gh_failed = run_idle_cleanup("--remove", gh_exit=1)
+    check("when gh cannot list the pull requests, no worktree is idle",
+          gh_failed_worktree.exists()
+          and idle_line(gh_failed.stdout, "gh-failed-wt") == f"gh-failed-wt: {no_owner_kept}",
+          gh_failed.stdout + gh_failed.stderr)
+
 # --- The machine's task lists stay out of the suite's runs ---
 with tempfile.TemporaryDirectory() as scratch:
     scratch = Path(scratch).resolve()

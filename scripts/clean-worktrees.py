@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Report or remove the worktrees whose work is done, judged by each worktree's owner file, or for
-a merge-lane review checkout by its pull request.
+a merge-lane review checkout by its pull request, or, for any worktree, by its having been idle with
+nothing unsaved in it.
 
 WHICH WORKTREES. Every worktree of the clone except its main checkout, the
-reference-checkout, wherever the worktree is. Only a worktree holding an owner
-file, or a merge-lane review checkout, as MERGE-LANE REVIEW CHECKOUTS below
-says, can be removed: scripts/worktree-owner-file-read-and-write.py says where
-the file is, what it holds, and when its owner, an agent-seat or an
-agent-session, counts as running. A worktree is KEPT, with the reason, when:
+reference-checkout, wherever the worktree is. An idle worktree, as IDLE
+WORKTREES below says, can be removed whatever its owner file says. Otherwise
+only a worktree holding an owner file, or a merge-lane review checkout, as
+MERGE-LANE REVIEW CHECKOUTS below says, can be removed:
+scripts/worktree-owner-file-read-and-write.py says where the file is, what it
+holds, and when its owner, an agent-seat or an agent-session, counts as
+running. A worktree that is not idle is KEPT, with the reason, when:
 
   - its owner file cannot be read;
   - it has no owner file, as agent-homes and worktrees made by hand have,
@@ -46,6 +49,26 @@ worktree whose verdict needs a pull request is kept.
   this invocation's own process and carrying the owner file's agent-seat, so
   the agent-seat's next agent-session is told of it once this invocation has
   ended. The branch keeps its commits.
+
+IDLE WORKTREES. A worktree is idle, and is removed, owner file or not,
+when all of these hold: it is not an agent-home, which is a worktree directly
+inside ~/agents or one whose own git directory holds AGENT_HOME_MARKER_FILE_NAME;
+no file or directory in it or in its own git directory, by mtime, has changed
+for IDLE_WORKTREE_REMOVED_AFTER_DAYS days; it holds no uncommitted or untracked
+file; every commit of its HEAD is on a remote-tracking ref of origin, as last
+fetched; no open pull request has its branch as head branch or its HEAD as
+head commit; and no rebase, merge, cherry-pick or revert is in progress in it.
+The mtimes are read before any git command, and the cleaner's `git status`
+runs with --no-optional-locks, so that its own index refresh does not reset
+the clock. Removing an idle worktree loses nothing: its branch keeps its
+commits, as BRANCHES says. When any of these cannot be read, such as gh
+failing or a file that cannot be read, the worktree is not idle and the other
+rules judge it. A locked worktree is not idle, since the lock is judged first,
+nor is one whose ended Claude Code lock --remove unlocks, since writing its
+owner file changes its git directory. An idle worktree is still kept when the
+vacancy check finds or cannot rule out a live process in it, or git cannot
+list its files; its ignored files are named and discarded with it, as for any
+removal.
 
 CLAUDE CODE'S LOCK. A lock in the form Claude Code writes on a subagent's
 worktree, "claude agent agent-<id> (pid N start T)", once no process N that
@@ -295,6 +318,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -338,6 +362,10 @@ _merge_lane_common_spec.loader.exec_module(merge_lane_common)
 # in pr<n>-merge-commit-on-main-worktree; between its steps no process has a working directory
 # there, so the vacancy check alone could let a removal race it.
 MERGE_LANE_REVIEW_CHECKOUT_KEPT_AFTER_ITS_PULL_REQUEST_FINISHED_HOURS = 24
+
+IDLE_WORKTREE_REMOVED_AFTER_DAYS = 2
+
+AGENT_HOME_MARKER_FILE_NAME = "agent-home-marker"
 
 # One hyphen-separated part of a merge-lane review checkout's name: pr2700, 2700, 2700r2, 2420m.
 MERGE_LANE_REVIEW_CHECKOUT_NAME_PULL_REQUEST_NUMBER_PART = re.compile(r"(?:pr)?(\d+)(?:r\d*)?[a-z]?")
@@ -661,7 +689,9 @@ def worktree_vacancy_keep_reason(worktree):
 def uncommitted_or_untracked_files(worktree):
     """Return (paths, None) for every uncommitted or untracked file, junk left out, or (None, git's
     error) when git cannot list them. Ignored files are not among them."""
-    status = run_git(worktree, "status", "--porcelain", "-z", "--untracked-files=all")
+    # --no-optional-locks: a status that refreshed the index would reset the idle clock it is read for.
+    status = run_git(worktree, "--no-optional-locks", "status", "--porcelain", "-z",
+                     "--untracked-files=all")
     if status.returncode != 0:
         return None, status.stderr.strip()[:80]
     return [entry.path for entry in git_output.status_entries(status.stdout)
@@ -676,7 +706,7 @@ def files_a_removal_discards(worktree):
     """Return (paths, None) for every uncommitted, untracked or ignored file, junk left out,
     or (None, git's error) when git cannot list them."""
     # --untracked-files=all with --ignored names each file; without it git names only a directory.
-    status = run_git(worktree, "status", "--porcelain", "-z", "--ignored",
+    status = run_git(worktree, "--no-optional-locks", "status", "--porcelain", "-z", "--ignored",
                      "--untracked-files=all")
     if status.returncode != 0:
         return None, status.stderr.strip()[:80]
@@ -962,12 +992,89 @@ def classify(worktree, branch, record, pull_requests):
     return verdict
 
 
+def is_agent_home(worktree, git_directory):
+    """Whether the worktree is an agent-home: ~/agents/<seat>, or marked by AGENT_HOME_MARKER_FILE_NAME
+    in its own git directory."""
+    # Most agent-homes predate the marker, so the location counts too.
+    return (worktree.resolve().parent == (Path.home() / "agents").resolve()
+            or (git_directory / AGENT_HOME_MARKER_FILE_NAME).exists())
+
+
+def path_changed_since(roots, cutoff):
+    """Return the first file or directory under roots, the roots included, whose mtime is at or after
+    cutoff (seconds since the epoch), or None when none is; raise OSError when one cannot be read."""
+    def raise_error(error):
+        raise error
+    for root in roots:
+        if os.lstat(root).st_mtime >= cutoff:
+            return root
+        for directory, directory_names, file_names in os.walk(root, onerror=raise_error):
+            for name in directory_names + file_names:
+                path = os.path.join(directory, name)
+                if os.lstat(path).st_mtime >= cutoff:
+                    return Path(path)
+    return None
+
+
+def idle_worktree_verdict(worktree, branch, record, pull_requests):
+    """Return the Verdict for a worktree that holds no unsaved work and in which nothing has changed
+    for IDLE_WORKTREE_REMOVED_AFTER_DAYS, owner file or not; or None when the rule does not apply, so
+    that the other rules judge it."""
+    located = run_git(worktree, "rev-parse", "--absolute-git-dir")
+    if located.returncode != 0:
+        return None
+    git_directory = Path(located.stdout.strip())
+    if is_agent_home(worktree, git_directory):
+        return None
+    cutoff = time.time() - IDLE_WORKTREE_REMOVED_AFTER_DAYS * 86400
+    try:
+        if path_changed_since([worktree, git_directory], cutoff) is not None:
+            return None
+    except OSError:
+        return None
+    uncommitted, _ = uncommitted_or_untracked_files(worktree)
+    if uncommitted is None or uncommitted:
+        return None
+    not_on_github = run_git(worktree, "rev-list", "--count", "HEAD", "--not", "--remotes=origin")
+    if not_on_github.returncode != 0 or int(not_on_github.stdout.strip() or 1) != 0:
+        return None
+    try:
+        by_head_branch = pull_requests.by_head_branch()
+    except PullRequestListingFailed:
+        return None
+    if any(pull_request["state"] == "OPEN"
+           and (pull_request["headRefName"] == branch or pull_request["headRefOid"] == record.head)
+           for pull_requests_of_branch in by_head_branch.values()
+           for pull_request in pull_requests_of_branch):
+        return None
+    if in_progress_git_operation_keep_reason(worktree) is not None:
+        return None
+    why = (f"nothing in it, its git directory included, has changed for "
+           f"{IDLE_WORKTREE_REMOVED_AFTER_DAYS} days, it holds no uncommitted or untracked file, "
+           f"GitHub holds every commit of its HEAD, and no open pull request is its")
+    keep_reason = worktree_vacancy_keep_reason(worktree)
+    if keep_reason is not None:
+        return Verdict(False, f"{why}, but {keep_reason}", KEPT_IN_USE)
+    discarded, listing_error = files_a_removal_discards(worktree)
+    if discarded is None:
+        return Verdict(False, f"{why}, but git cannot list its files ({listing_error})",
+                       KEPT_NOT_CHECKABLE)
+    return Verdict(True, why + removal_records_and_discarded_files_text(worktree, discarded),
+                   "", discarded=discarded)
+
+
 def classify_unlocked(worktree, branch, record, pull_requests, owner_to_write=None):
     """Return the Verdict for an unlocked worktree, or one --remove will have unlocked and given
     owner_to_write as its owner file."""
     if record.prunable_reason is not None:
         return Verdict(False, f"git would prune its registration ({record.prunable_reason}); "
                               f"the dead registration line below names it", KEPT_NOT_CHECKABLE)
+    # An ended lock's owner file is written only by --remove, so the report judges the worktree
+    # as --remove will find it after the write: changed today, so not idle.
+    if owner_to_write is None:
+        verdict = idle_worktree_verdict(worktree, branch, record, pull_requests)
+        if verdict is not None:
+            return verdict
     try:
         owner = owner_to_write or owner_file.worktree_owner_file_read(worktree)
     except owner_file.WorktreeOwnerFileError as error:
