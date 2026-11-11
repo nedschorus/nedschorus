@@ -77,9 +77,14 @@ run's log directory is removed once its outcome is known, unless the script
 reports that run's failure: a run on the unmutated head that fails, a mutant
 printed as ERRORED, or a recorded mutant that could not be judged. A pass that
 stops before a changed file's mutants are all judged, as on exit 2, keeps
-every log directory of that file. At the end,
+every log directory of that file, and so does a file with an ERRORED mutant
+whose output names no log directory, as when cosmic-ray stopped the run at its
+own limit and recorded only "timeout". At the end,
 that one directory is removed when it is empty, or when a stop signal ended
-the script, since no one reads a stopped run's output; otherwise the script
+the script, since no one reads a stopped run's output, unless
+--cosmic-ray-sessions-directory-kept-to-resume is given: a resumed run reports
+the ERRORED mutants its kept sessions saved, with the log directories their
+outputs name. Otherwise the script
 names it on standard error, in a line opening with
 TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX, as holding the logs of the failures it
 reported. At start, the script removes each such directory an earlier run left
@@ -823,7 +828,8 @@ def test_suite_runner_log_directories_parent_removed_or_named_as_kept(log_direct
         shutil.rmtree(log_directories_parent, ignore_errors=True)
     elif any(log_directories_parent.iterdir()):
         print(f"{TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX}{log_directories_parent}; "
-              f"remove that directory once you have read them.", file=sys.stderr)
+              f"remove that directory once you have read them; a later run of {PROGRAM}.py "
+              f"removes it once it has not changed for two days.", file=sys.stderr)
     else:
         log_directories_parent.rmdir()
 
@@ -1559,9 +1565,9 @@ def main_with_stop_signals_raising_system_exit(argv):
     # An inherited GIT_DIR or GIT_WORK_TREE would point every git command at another repository,
     # and cosmic-ray launches the suites with this environment, as the runner launches them.
     environment = runner.launch_environment_for_a_test_suite_with_git_redirecting_agent_session_attendance_and_credential_variables_removed()
-    # Resolved, as the runner resolves the --log-dir it names in its first line.
     test_suite_runner_log_directories_parents_past_retention_removed(tempfile.gettempdir(),
                                                                      time.time())
+    # Resolved, as the runner resolves the --log-dir it names in its first line.
     log_directories_parent = Path(tempfile.mkdtemp(
         prefix=TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_PREFIX)).resolve()
     stopped_by_signal = False
@@ -1573,7 +1579,8 @@ def main_with_stop_signals_raising_system_exit(argv):
         raise
     finally:
         test_suite_runner_log_directories_parent_removed_or_named_as_kept(
-            log_directories_parent, stopped_by_signal)
+            log_directories_parent,
+            stopped_by_signal and arguments.cosmic_ray_sessions_directory_kept_to_resume is None)
 
 
 def quick_or_full_mutation_pass_or_recorded_mutant_killed_check(
@@ -1734,6 +1741,11 @@ def quick_or_full_mutation_pass_or_recorded_mutant_killed_check(
                         log_dir for output in errored_outputs
                         for log_dir in test_suite_runner_log_directories_named_in_output(
                             output, runner)}
+                    # An ERRORED mutant whose output names no log directory, such as one
+                    # cosmic-ray recorded only as "timeout", may own any of this file's.
+                    if any(not test_suite_runner_log_directories_named_in_output(output, runner)
+                           for output in errored_outputs):
+                        kept_log_directories |= set(log_directories_parent.iterdir())
                     remove_test_suite_runner_log_directories_not_kept(log_directories_parent,
                                                                       kept_log_directories)
                     all_survivors += survivors
