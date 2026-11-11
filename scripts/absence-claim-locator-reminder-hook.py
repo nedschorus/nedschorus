@@ -29,9 +29,9 @@ THE HOOK STAYS SILENT when any of these holds:
     programs, SEARCH_PROGRAM_NAMES;
   - this agent-session (for a subagent, this subagent) was already reminded:
     agents remember the reminder for a while, so it comes once;
-  - the agent-session is a headless `claude -p` child, told apart as the
-    due-task hook does: NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER set,
-    or CLAUDE_CODE_SESSION_ATTENDED == "0". The reminder would otherwise
+  - no user attends the agent-session, as
+    nc-systems/general-tools/agent-session-unattended-by-user-check-common.py
+    decides, such as a headless `claude -p` child. The reminder would otherwise
     become the child's last words, which its caller reads as the answer;
   - a SubagentStop payload names no agent_transcript_path: the main
     transcript holds the parent's reply, not the subagent's;
@@ -91,6 +91,15 @@ _stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_locat
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
 stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
 _stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
+
+_agent_session_unattended_by_user_check_common_specification = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "agent-session-unattended-by-user-check-common.py")
+agent_session_unattended_by_user_check_common = importlib.util.module_from_spec(
+    _agent_session_unattended_by_user_check_common_specification)
+_agent_session_unattended_by_user_check_common_specification.loader.exec_module(
+    agent_session_unattended_by_user_check_common)
 
 _claude_code_session_transcript_records_read_backward_common_specification = importlib.util.spec_from_file_location(
     "claude_code_session_transcript_records_read_backward_common",
@@ -501,8 +510,7 @@ def run(stdin_text, environment, home, now):
     session_key = str(payload.get("session_id") or "unknown-session")
     if event == "SubagentStop":
         session_key += "-" + str(payload.get("agent_id") or "unknown-agent")
-    headless = bool(environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
-                    or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0")
+    headless = agent_session_unattended_by_user_check_common.agent_session_unattended_by_user(environment)
     if headless:
         outcome = "headless"
     elif locator_ran:
