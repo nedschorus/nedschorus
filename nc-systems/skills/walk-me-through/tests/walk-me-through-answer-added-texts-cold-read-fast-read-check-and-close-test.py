@@ -53,7 +53,7 @@ _scratch_directory_common_spec = importlib.util.spec_from_file_location(
     / "test-scratch-directory-whose-earlier-killed-runs-leftovers-are-removed-first-common.py")
 _scratch_directory_common = importlib.util.module_from_spec(_scratch_directory_common_spec)
 _scratch_directory_common_spec.loader.exec_module(_scratch_directory_common)
-SUITE_ROOT = _scratch_directory_common.scratch_directory_after_removing_ones_killed_runs_left(
+SUITE_ROOT = _scratch_directory_common.make_test_scratch_directory_after_removing_killed_runs_leftovers(
     "answer-added-texts-fast-read-check-test-")
 WALK_NAME = "poem-page-2026-10-12"
 FAILURE_PREFIX = "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close "
