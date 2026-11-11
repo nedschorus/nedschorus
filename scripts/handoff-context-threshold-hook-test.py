@@ -402,9 +402,8 @@ def bash_stdout_record_mentioning_the_marker():
     }
 
 
-# Read off merge-lane-2's session 0ff38bda-4a61-4423-a64e-bda80eb1b34a of 2026-10-13: subagent
-# ac25f42af3e1481af finished (line 795), was sent a follow-up with SendMessage (the resume, line
-# 838), and finished again (line 861). Trimmed to the fields the hook reads.
+# A subagent that finished, was resumed by SendMessage, and finished again, read off a real
+# transcript; trimmed to the fields the hook reads.
 RESUMED_SUBAGENT_ID = "ac25f42af3e1481af"
 RESUMED_SUBAGENT_FINAL_NOTIFICATION = (
     "<task-notification>\n"
