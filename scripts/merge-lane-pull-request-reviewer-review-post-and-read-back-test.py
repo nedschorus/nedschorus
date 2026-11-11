@@ -632,8 +632,11 @@ def main():
                 ("a comment whose line is true", review("APPROVE", comments=[
                     {"path": "p", "line": True, "body": "b"}]), "a number \"line\"")):
             result = run_program(scratch, text)
-            check(f"a review file with {name} exits 2, says why, and calls no gh",
+            check(f"a review file with {name} exits 2, says why, calls no gh, and says not to run the "
+                  "reviewer's run again, since it should have refused the file",
                   result.code == 2 and reason in result.stderr and "review not posted" in result.stderr
+                  and "should have refused this file" in result.stderr
+                  and "fix it and run the same command again" not in result.stderr
                   and not result.calls, result.detail)
 
         result = run_program(scratch, review("APPROVE"), token=None)
