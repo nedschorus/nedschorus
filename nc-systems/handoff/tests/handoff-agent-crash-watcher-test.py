@@ -52,6 +52,49 @@ SEEN_RUNNING = datetime(2026, 10, 12, 3, 0, tzinfo=timezone.utc)
 DIED_AT = datetime(2026, 10, 12, 3, 14, 18, 437512, tzinfo=timezone.utc)
 
 
+def leftover_shell_condition_against_real_recovery_output(owner_text, root):
+    """Run recover_seat on a seat behind a leftover shell, with no terminal, and return
+    (condition, detail) for the owner task's REFUSED-then-dry-run instruction."""
+    phrase = watcher_module.LEFTOVER_SHELL_RECOVERY_DRY_RUN_OPERATOR_QUESTION_PHRASE
+    seat = "merge-lane-2"
+    agents_root, handoffs, projects = root / "real-recovery-agents", root / "real-recovery-handoffs", root / "real-recovery-projects"
+    (agents_root / seat).mkdir(parents=True)
+    handoffs.mkdir()
+    projects.mkdir()
+    replaced = {}
+
+    def stub(name, value):
+        replaced[name] = getattr(recovery_module, name)
+        setattr(recovery_module, name, value)
+
+    def run(prediction, dry_run):
+        stub("predicted_assessment_once_the_leftover_idle_shell_is_closed", lambda *_: prediction)
+        return recovery_module.recover_seat(seat, agents_root, handoffs, projects, dry_run=dry_run,
+                                            fresh_session_from_conversation_tail=False)
+
+    try:
+        stub("tmux_session_alive_anywhere",
+             lambda name: (True, f"tmux session '{name}' is alive on socket '{name}'"))
+        stub("seat_supervisor_confirmed_by_ps",
+             lambda name, lock: (recovery_module.SUPERVISOR_NOT_CONFIRMED, f"no supervisor lock at {lock}"))
+        stub("tmux_session_is_a_leftover_idle_shell",
+             lambda name, directory: (True, [4242], "its one pane runs bash"))
+        stub("recovery_has_an_operator_terminal", lambda: False)
+        stub("durable_checkout_file_a_launch_here_runs", lambda: Path(recovery_module.__file__))
+        launches = ("resume", None)
+        unattended = run(launches, dry_run=False)
+        dry_run_that_asks = run(launches, dry_run=True)
+        dry_run_that_reports = run(("seat-already-running", "a live supervisor holds the lock"),
+                                   dry_run=True)
+    finally:
+        for name, value in replaced.items():
+            setattr(recovery_module, name, value)
+    condition = (phrase in owner_text
+                 and unattended.startswith(f"{seat}: REFUSED — ") and phrase not in unattended
+                 and phrase in dry_run_that_asks and phrase not in dry_run_that_reports)
+    return condition, repr((unattended, dry_run_that_asks, dry_run_that_reports))
+
+
 def check(case_name, condition, detail=""):
     if condition:
         print(f"PASS  {case_name}")
@@ -291,10 +334,14 @@ def run_decision_cases(root: Path):
           len(owner_copies) == 1 and owner_copies[0]["subject"] == task["subject"]
           and "merge-lane-2 is down, and no other program restarts it" in owner_text
           and "  python3 scripts/recover-crashed-seats.py merge-lane-2\n" in owner_text
-          and "If recovery prints REFUSED and says it has no terminal" in owner_text
+          and "If recovery prints REFUSED, run the same command with --dry-run added" in owner_text
           and "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
               "scripts/recover-crashed-seats.py merge-lane-2'\n" in owner_text
           and "had restarted it at 2026-10-12 03:16 UTC" in owner_text, owner_text)
+    check("the owner task's leftover-shell condition is met by what recovery really prints: its "
+          "unattended run refuses without the words, and its dry run says them only when a yes "
+          "at a terminal would restart the seat",
+          *leftover_shell_condition_against_real_recovery_output(owner_text, root))
     check("the seat's own copy of the task carries no restart command",
           "recover-crashed-seats.py merge-lane-2\n" not in text, text)
     check("a second crash shows the user no notice, no page and no window",

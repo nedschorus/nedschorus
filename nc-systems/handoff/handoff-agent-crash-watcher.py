@@ -281,6 +281,10 @@ FAILURE_KIND_TO_AGENT_SEAT_TASK_DESCRIPTION_TEMPLATE = {
 # owner gets the task too, with the restart.
 DOWN_AGENT_SEAT_FAILURE_KINDS = ("second-crash", "recovery-failed", "leftover-shell",
                                  "recovery-refuses")
+# Words a recover-crashed-seats.py --dry-run prints only when a leftover shell holds the
+# agent-seat's tmux session and an operator's yes at a terminal would close it; the
+# unattended run's refusal never says so.
+LEFTOVER_SHELL_RECOVERY_DRY_RUN_OPERATOR_QUESTION_PHRASE = "would ask an operator at a terminal"
 DOWN_AGENT_SEAT_RESTART_BY_OWNER_TEMPLATE = (
     "{seat} is down, and no other program restarts it; its own copy of this task waits on its "
     "task list until it runs again. Restart {seat} once you know the cause and judge that a "
@@ -288,9 +292,12 @@ DOWN_AGENT_SEAT_RESTART_BY_OWNER_TEMPLATE = (
     "keep it down, since merge-lane-2 merges nothing while it is down. Restart it on ned-box, "
     "from your own checkout, with:\n"
     "  python3 scripts/recover-crashed-seats.py {seat}\n"
-    "If recovery prints REFUSED and says it has no terminal to ask its question on, tell the "
-    "user that only his yes at a terminal restarts {seat}, and give him this command to run in "
-    "a Terminal on his Mac:\n"
+    "If recovery prints REFUSED, run the same command with --dry-run added. If the dry run "
+    "says it " + LEFTOVER_SHELL_RECOVERY_DRY_RUN_OPERATOR_QUESTION_PHRASE + ", a shell left "
+    "open holds {seat}'s tmux session, and recovery closes it only on an operator's yes at a "
+    "terminal. Do not exit that session yourself, though the refusal says to: tell the user "
+    "that only his yes at a terminal restarts {seat}, and give him this command to run in a "
+    "Terminal on his Mac:\n"
     "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n")
 AGENT_SEAT_TASK_DESCRIPTION_CLOSING_TEMPLATE = (
     "Find the cause and fix it going forward. A fix to code, settings or instructions goes in a "
