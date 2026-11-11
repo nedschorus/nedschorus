@@ -115,8 +115,6 @@ REMOVE_THE_VARIABLES_ANOTHER_WAY = {
         "its git() removes the same six from the environment of every git it runs",
     "scripts/pull-request-head-test-run-test.py":
         "its fixture_git() runs with the runner's own stripped environment",
-    "scripts/unvalidated-negative-result-check-test.py":
-        "its git runs with every GIT_ variable removed",
     "scripts/test-suites-run-directly-ignore-git-redirecting-environment-test.py":
         "this suite: it removes the runner's list from its own environment, below",
 }
