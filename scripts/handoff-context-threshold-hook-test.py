@@ -815,10 +815,16 @@ with tempfile.TemporaryDirectory() as workspace:
     try:
         hook.work_in_flight(str(truncated_launch), thirty_minutes, now=grid_at_13_minutes)
         refused = False
-    except hook.TranscriptCouldNotBeFullyRead:
+        truncated_launch_message = ""
+    except hook.TranscriptCouldNotBeFullyRead as problem:
         refused = True
+        truncated_launch_message = str(problem)
     check("a background launch record cut off mid-write is not read as nothing running",
           refused, "the scan answered instead of refusing")
+    check("the scan's refusal names the line number of the record that did not parse",
+          f"{truncated_launch}, line 2: " in truncated_launch_message, truncated_launch_message)
+    check("the scan's refusal quotes the start of the line that did not parse",
+          repr(launch_text[:cut][:200]) in truncated_launch_message, truncated_launch_message)
 
     # Claude Code writes no task-notification for a task TaskStop stops, only this result.
     bash_stopped = transcript_of(workspace, "background-task-stopped.jsonl", [
