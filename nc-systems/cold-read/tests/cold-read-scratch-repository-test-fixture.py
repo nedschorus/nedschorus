@@ -123,9 +123,12 @@ def commit_seeded_cold_read_scratch_repository(repository):
 
 # A stub `agy` that answers in chat, long enough for the cell to keep the
 # answer as the report, and a stub `claude` that fails, so no model starts.
+# agy prints stream-json, and the cell takes the chat answer only from its result line.
 STUB_AGY_ANSWERING_IN_CHAT = """#!/usr/bin/env python3
-import sys
-sys.stdout.write(" ".join(f"word{index}" for index in range(150)) + "\\n")
+import json, sys
+answer = " ".join(f"word{index}" for index in range(150)) + "\\n"
+sys.stdout.write(json.dumps({"event": "result", "result": {
+    "conversation_id": "", "status": "SUCCESS", "response": answer, "error": ""}}) + "\\n")
 """
 STUB_CLAUDE_FAILING = """#!/usr/bin/env python3
 import sys

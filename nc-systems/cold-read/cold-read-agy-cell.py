@@ -51,6 +51,22 @@ as well, exactly as the campaign passed it. agy does not always stop at
 `--print-timeout`, so the cell runs agy in a process group of its own and kills
 that group 60 seconds after agy's own deadline; the attempt then fails with
 the cause `timed-out`, like any other failed attempt.
+The cell passes `--output-format stream-json` in place of `text`, for the
+reason the next paragraph gives.
+
+AGY OFTEN DOES NOT EXIT AFTER IT HAS FINISHED: it prints its result, logs that
+it is shutting down, then hangs, for minutes, and it ignores SIGTERM. So agy
+prints one JSON event per line (`--output-format stream-json`), and the line
+whose `event` is `result` ends the run: the cell waits up to
+COLD_READ_AGY_CELL_WAIT_FOR_REPORT_FILE_AFTER_AGY_STDOUT_RESULT_LINE_BEFORE_PROCESS_GROUP_KILL_SECONDS for the report file
+or for agy to exit, then kills agy's process group with SIGKILL and says so on
+stderr. The result's `status` SUCCESS counts as exit 0 and any other status as
+exit 1, unless agy exited by itself, when its own exit code counts. The
+result's `response`, the text the model answered in chat, stands in for agy's
+stdout from then on, so the chat-instead-of-file rule below reads the same
+text it read when agy printed plain text. A run with no result line ends as
+before, when agy exits or at the deadline above. agy's error line, opening
+`AGY_ERROR:`, and its no-login line stay on stderr in this format.
 
 THE CHAT-INSTEAD-OF-FILE QUIRK, and how it is handled. The campaign measured
 that gemini-3.8-flash sometimes answers the whole review in chat instead of
@@ -146,6 +162,11 @@ COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS = 60
 COLD_READ_AGY_CELL_PER_MODEL_RUN_KILL_AFTER_SECONDS = (
     COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS
     + COLD_READ_AGY_CELL_KILL_MARGIN_PAST_AGY_PRINT_TIMEOUT_SECONDS)
+# agy writes the report before its result line; a model that answered in chat
+# writes none and pays this whole wait.
+COLD_READ_AGY_CELL_WAIT_FOR_REPORT_FILE_AFTER_AGY_STDOUT_RESULT_LINE_BEFORE_PROCESS_GROUP_KILL_SECONDS = 2
+AGY_RESULT_EVENT_NAME = "result"
+AGY_RESULT_SUCCESS_STATUS = "SUCCESS"
 
 AGY_MISSING_GOOGLE_LOGIN_STDERR_LINE_PREFIX = "Authentication required."
 AGY_LOGGED_OUT_CAUSE_DETAIL = ("agy has no Google login on this machine; "
@@ -160,6 +181,21 @@ def stdout_is_a_review(runtime_stdout: str) -> str:
     if len(runtime_stdout.split()) >= STDOUT_REVIEW_MINIMUM_WORDS:
         return runtime_stdout
     return ""
+
+
+def agy_stream_json_stdout_line_final_result_event_parse_to_exit_code_and_response_or_none(line: str):
+    """Return (exit code, response text) for agy's stream-json result line, else None."""
+    try:
+        event = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(event, dict) or event.get("event") != AGY_RESULT_EVENT_NAME:
+        return None
+    result = event.get(AGY_RESULT_EVENT_NAME)
+    if not isinstance(result, dict):
+        result = {}
+    exit_code = 0 if result.get("status") == AGY_RESULT_SUCCESS_STATUS else 1
+    return exit_code, str(result.get("response") or "")
 
 
 def agy_environment_copy_without_gemini_api_key(environment) -> dict:
@@ -241,7 +277,7 @@ def invocation_builder(effort: str):
             "--model", model,
             "--effort", effort,
             "--print-timeout", AGY_PRINT_TIMEOUT,
-            "--output-format", "text",
+            "--output-format", "stream-json",
             "--print", prompt,
         ]
         return command, None
@@ -270,6 +306,8 @@ def main() -> int:
         recognised_failure_texts_for_model=logged_out_failure_texts,
         child_environment=agy_environment_copy_without_gemini_api_key(os.environ),
         per_model_run_timeout_seconds=COLD_READ_AGY_CELL_PER_MODEL_RUN_KILL_AFTER_SECONDS,
+        parse_agent_binary_final_result_from_stdout_line=agy_stream_json_stdout_line_final_result_event_parse_to_exit_code_and_response_or_none,
+        report_wait_after_result_line_seconds=COLD_READ_AGY_CELL_WAIT_FOR_REPORT_FILE_AFTER_AGY_STDOUT_RESULT_LINE_BEFORE_PROCESS_GROUP_KILL_SECONDS,
     )
 
 
