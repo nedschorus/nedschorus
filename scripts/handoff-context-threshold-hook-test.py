@@ -2201,6 +2201,25 @@ with tempfile.TemporaryDirectory() as wait_set_workspace:
           hook.record_time({"timestamp": "2026-10-28T21:12:00+01:00"}) == began,
           hook.record_time({"timestamp": "2026-10-28T21:12:00+01:00"}))
 
+# --help prints each flag's default, so an agent reads it there and not from the source.
+help_result = subprocess.run([sys.executable, str(HOOK_SCRIPT), "--help"],
+                             capture_output=True, text=True, check=False)
+check("--help exits 0", help_result.returncode == 0, help_result.stderr)
+# argparse wraps help text, so a default can be split across lines.
+help_text = " ".join(help_result.stdout.split())
+help_flags = [flag for flag in re.findall(r"^\s+(--[a-z][a-z-]*)", help_result.stdout, re.MULTILINE)
+              if flag != "--help"]
+check("--help lists the hook's three flags",
+      help_flags == ["--threshold-used-percentage", "--ceiling-used-percentage",
+                     "--background-task-wait-minutes"], help_flags)
+for flag, default in (("--threshold-used-percentage", 33.0),
+                      ("--ceiling-used-percentage", 65.0),
+                      ("--background-task-wait-minutes", 75.0)):
+    flag_entry = re.search(re.escape(flag) + r" [A-Z_]+ (.*?)(?= --[a-z]|$)", help_text)
+    check(f"--help shows {flag}'s default, {default}",
+          flag_entry is not None and flag_entry.group(1).endswith(f"(default: {default})"),
+          flag_entry.group(1) if flag_entry else help_text)
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
