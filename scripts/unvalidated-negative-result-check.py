@@ -1,66 +1,94 @@
 #!/usr/bin/env python3
-"""Decide whether an empty search result is evidence of absence."""
+"""Say when a search's empty result could not have found anything, for one of three causes.
+
+The check reads a Bash command and its result. It speaks only when the command holds a
+search, such as grep, rg or find, and the result is empty, and then only for these causes:
+
+- An unquoted relative glob expanded to a name beginning with -, in the directory the
+  command had cd'd into, before any --: the program read that name as an option.
+- The agent's grep, which is ugrep, refuses the pattern of a bare grep with "exceeds
+  complexity limits".
+- A search program is not installed on the machine that ran it.
+
+Each cause is a fact about the machine, which the command's output hides once the search's
+stderr is discarded, so the check asks the machine: it lists a directory, asks whether a
+program is installed, and runs the agent's ugrep with the agent's pattern on /dev/null. For
+a command ssh runs elsewhere, it asks that machine over ssh, for the first two causes.
+
+It does not handle: a `2>/dev/null`, a swallowed exit status or a cut input, which are not
+causes; a glob or a cd held in a variable, or one under bash -c; a remote command's
+patterns, which no agent's grep reads; and an absolute glob, which cannot begin with -.
+It answers for the machine as it is now, so over old transcripts a program installed since,
+or a directory changed since, gives a different answer than it would have then.
+
+It can fail when ssh, the directory listing or the agent's ugrep cannot run; it then says
+which cause it could not check, and the command-line mode exits 3. It changes nothing on
+any machine, and runs nothing of the agent's command but the grep pattern on /dev/null.
+"""
 
 import argparse
-import glob
+import collections
+import fnmatch
+import importlib.util
 import itertools
 import json
 import os
 import pathlib
 import re
 import shlex
+import shutil
 import subprocess
 import sys
-import tempfile
 
 PROGRAM = "unvalidated-negative-result-check"
 
 EXIT_QUIET = 0
 EXIT_FIRED = 1
 EXIT_BAD_INVOCATION = 2
-# Nothing fired, and a weakened control search that could have fired did not run.
-EXIT_CONTROL_SEARCH_COULD_NOT_RUN = 2
+EXIT_A_CAUSE_COULD_NOT_BE_CHECKED = 3
 
-FIXTURES_DIRECTORY_NAME = "unvalidated-negative-result-check-fixtures"
+_shell_reader_spec = importlib.util.spec_from_file_location(
+    "shell_command_tree_sitter_bash_reader_common",
+    pathlib.Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "shell-command-tree-sitter-bash-reader-common.py")
+shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
+_shell_reader_spec.loader.exec_module(shell_reader)
 
 SEARCH_PROGRAMS = frozenset({
-    "grep", "egrep", "fgrep", "zgrep", "rg", "ripgrep", "ag", "ack", "fd",
-    "find", "ugrep",
-})
+    "grep", "egrep", "fgrep", "zgrep", "rg", "ugrep", "ag", "ack", "fd", "find"})
 
-# find and fd can execute actions, so replaying them could modify the corpus.
-CONTROL_PROGRAMS = SEARCH_PROGRAMS - {"find", "fd"}
+GLOB_DASH_NAME = "glob-expanded-to-a-name-beginning-with-dash"
+PATTERN_TOO_COMPLEX = "pattern-the-agents-grep-refuses-as-too-complex"
+PROGRAM_MISSING = "search-program-missing-on-the-machine-that-ran-it"
 
-OPTION_THAT_RUNS_ANOTHER_PROGRAM = re.compile(
-    r"^(?:--pre(?:=|$)|--filter(?:=|$)|--open-files-in-pager|-[A-Za-z]*O)")
+# Private-use characters mark the glob characters the shell would expand.
+GLOB_MARKERS = {"*": "\ue000", "?": "\ue001", "[": "\ue002", "]": "\ue003"}
+MARKED_GLOB_CHARACTERS = {marker: character for character, marker in GLOB_MARKERS.items()}
 
-# Use lookahead, not a word boundary: compact flags such as -c1 have no boundary after c.
-TRUNCATING_STAGE = re.compile(
-    r"^(?:cut\s+(?:[^|]*\s)?-[cb](?=[\d\s'\"-])"
-    r"|(?:head|tail)\s+(?:[^|]*\s)?-[cn](?=[\d\s'\"+])"
-    r"|(?:head|tail)\s+-\d"
-    r"|(?:head|tail)\s*$"
-    r"|fold\s+(?:[^|]*\s)?-w(?=[\d\s'\"]))")
+UNRESOLVABLE_DIRECTORY = re.compile(r"[$`]")
 
-# Ignore quoted redirects: a pattern containing 2>/dev/null does not discard stderr.
-STDERR_DISCARDED = re.compile(r"2>\s*/dev/null|2>&-|2>\s*&\s*-")
+# Claude Code's grep shell function hands grep to its own binary run as ugrep, with these
+# options first, except when an argument matches its pass-through list, below.
+AGENTS_GREP_LEADING_OPTIONS = (
+    "-G", "--ignore-files", "--hidden", "-I", "--exclude-dir=.git", "--exclude-dir=.svn",
+    "--exclude-dir=.hg", "--exclude-dir=.bzr", "--exclude-dir=.jj", "--exclude-dir=.sl")
+AGENTS_GREP_PASSES_TO_SYSTEM_GREP = (
+    "-*-filter*", "-*-pager*", "-*-view*", "-*-format-open*", "-*-config*", "---*", "-@*",
+    "-*-save-config*", "-[Zz]*", "-[!-]*[Zz]*", "--null", "--null-data")
+AGENTS_GREP_REFUSAL = "exceeds complexity limits"
 
-QUOTED_SPAN = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
+GREP_SHORT_OPTIONS_TAKING_A_VALUE = "efmABCdD"
+GREP_LONG_OPTIONS_TAKING_A_VALUE = frozenset({
+    "--regexp", "--file", "--max-count", "--after-context", "--before-context", "--context",
+    "--directories", "--devices", "--include", "--exclude", "--exclude-dir", "--exclude-from",
+    "--label", "--binary-files", "--group-separator"})
 
-# grep's 1 means no match; every code above it, a timeout's 124 and a
-# signal's 128 + N included, means the search did not finish.
-FIRST_ERROR_EXIT_STATUS = 2
+PROBE_TIMEOUT_SECONDS = 15
+SSH_OPTIONS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=5")
 
-EXIT_STATUS_PROGRAM_NOT_FOUND = 127
+COUNT_LINE = re.compile(r"^(?P<path>.*):(?P<count>\d+)$")
 
-# Missing-path errors do not mean the search program is missing.
-PROGRAM_NOT_FOUND = re.compile(
-    r"(?:^|[\s:])(?P<named_before>[^\s:]+):\s*command not found\s*$"
-    r"|command not found:\s*(?P<named_after>\S+)",
-    re.IGNORECASE | re.MULTILINE)
-
-# Nonzero transcript results merge stderr into stdout; diagnostic-only output is still empty.
-# Anchor diagnostics at the start so matched text quoting errors remains a result.
+# A failed command's output holds stderr and stdout together; diagnostics are not results.
 DIAGNOSTIC_LINE = re.compile(
     r"^(?:\(eval\)(?::\w+)?:\d+"
     r"|(?:[^\s:]*/)?(?:zsh|bash|sh|dash|ksh)(?::\d+)?"
@@ -69,227 +97,215 @@ DIAGNOSTIC_LINE = re.compile(
     r"(?:command not found|No such file or directory|Permission denied"
     r"|Is a directory|cannot open|unrecognized option|invalid option"
     r"|unknown option|Connection refused|Could not resolve hostname"
-    r"|Operation timed out)"
+    r"|Operation timed out|exceeds complexity limits|error)"
     r"|^(?:fatal|usage): ", re.IGNORECASE)
 
-
-def split_diagnostics(text):
-    """Return (results, diagnostics)."""
-    results = []
-    diagnostics = []
-    for line in (text or "").splitlines():
-        (diagnostics if DIAGNOSTIC_LINE.match(line) else results).append(line)
-    return "\n".join(results), "\n".join(diagnostics)
-
-COUNT_LINE = re.compile(r"^(?P<path>.*):(?P<count>\d+)$")
-
-# Harness stderr notices are not errors from the search.
-HARNESS_NOTE_ON_STDERR = re.compile(r"^\s*Shell cwd was reset to \S+\s*$")
-
-# A swallowed status alone cannot disprove a no-match when captured stderr is empty.
-CORROBORATING_ONLY = "search-exit-status-discarded-by-a-later-stage"
-
-REGEX_ELEMENT = re.compile(r"\[[^\]]+\]|\\\+|\\\*|\\\{|\.\*|\.\+|\\d|\\w|\\s|\+|\*")
-
-SHELL_PUNCTUATION_THAT_REFUSES_A_CONTROL = re.compile(r"[|;&<>`]|\$\(")
+EXIT_CODE_LINE = re.compile(r"^Exit code (\d+)\n?")
 
 
-class ControlSearchCouldNotRun(Exception):
-    """A weakened control search, or the git call that filters what it
-    found, failed, so it is no evidence either way."""
+class ProbeFailed(Exception):
+    """A question to a machine got no answer, so its cause is unchecked."""
+
+
+class Cause(collections.namedtuple("Cause", "signal instruction")):
+    """One cause found, with what the agent does about it."""
 
 
 class Verdict:
-    """The decision about one command and its result."""
+    """The check's answer about one command and its result."""
 
-    def __init__(self, applicable, empty_kind=None, signals=None,
-                 instructions=None, control=None, reason=None,
-                 corroboration=None, control_errors=None, control_skips=None):
+    def __init__(self, applicable, causes=(), unchecked=(), reason=None):
         self.applicable = applicable
-        self.empty_kind = empty_kind
-        self.signals = signals or []
-        self.instructions = instructions or []
-        self.control = control
+        self.causes = list(causes)
+        self.unchecked = list(unchecked)
         self.reason = reason
-        self.corroboration = corroboration or []
-        self.control_errors = control_errors or []
-        self.control_skips = control_skips or []
 
     @property
     def fires(self):
-        return bool(self.signals)
+        return bool(self.causes)
+
+    @property
+    def signals(self):
+        return [cause.signal for cause in self.causes]
 
     def as_dict(self):
-        return {
-            "applicable": self.applicable,
-            "empty_kind": self.empty_kind,
-            "signals": list(self.signals),
-            "instructions": list(self.instructions),
-            "control": self.control,
-            "reason": self.reason,
-            "corroboration": list(self.corroboration),
-            "control_errors": list(self.control_errors),
-            "control_skips": list(self.control_skips),
-        }
+        return {"applicable": self.applicable, "signals": self.signals,
+                "instructions": [cause.instruction for cause in self.causes],
+                "unchecked": self.unchecked, "reason": self.reason}
 
 
+def ask(runner, argv, **keywords):
+    try:
+        return runner(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                      timeout=PROBE_TIMEOUT_SECONDS, **keywords)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ProbeFailed(f"{argv[0]} could not run: {error}") from None
 
-def split_on_top_level(text, separators):
-    """Split on separators outside quotes."""
-    # Heredocs and command substitutions are not parsed; these are not bare searches.
-    parts = []
-    current = []
-    quote = None
+
+def remote_directory_spelling(directory):
+    """Return directory as remote shell text, a leading ~ left for the remote shell."""
+    if directory == "~":
+        return '"$HOME"'
+    if directory.startswith("~/"):
+        return '"$HOME"/' + shlex.quote(directory[2:])
+    return shlex.quote(directory)
+
+
+class Machines:
+    """Answers about the machine that ran a command, or the one ssh reached.
+
+    host None is this machine. Answers are kept, so each question is asked once.
+    """
+
+    def __init__(self, runner=subprocess.run, environment=os.environ):
+        self.runner = runner
+        self.environment = environment
+        self.answers = {}
+
+    def _kept(self, key, find):
+        if key not in self.answers:
+            try:
+                self.answers[key] = find()
+            except ProbeFailed as error:
+                self.answers[key] = error
+        if isinstance(self.answers[key], ProbeFailed):
+            raise self.answers[key]
+        return self.answers[key]
+
+    def directory_entries(self, host, directory):
+        def find():
+            if host is None:
+                try:
+                    return os.listdir(directory)
+                except OSError as error:
+                    raise ProbeFailed(f"listing {directory} failed: {error}") from None
+            finished = ask(self.runner, ["ssh", *SSH_OPTIONS, host,
+                                         f"ls -A -- {remote_directory_spelling(directory)}"])
+            if finished.returncode != 0:
+                raise ProbeFailed(f"listing {directory} on {host} over ssh exited "
+                                  f"{finished.returncode}: {finished.stderr.strip()}")
+            return finished.stdout.splitlines()
+        return self._kept(("entries", host, directory), find)
+
+    def program_installed(self, host, program):
+        def find():
+            if host is None:
+                return shutil.which(program) is not None
+            finished = ask(self.runner, ["ssh", *SSH_OPTIONS, host,
+                                         f"command -v -- {shlex.quote(program)}"])
+            # command -v exits 1 for a program it cannot find; ssh's own failure is 255.
+            if finished.returncode not in (0, 1):
+                raise ProbeFailed(f"asking {host} over ssh whether {program} is installed "
+                                  f"exited {finished.returncode}: {finished.stderr.strip()}")
+            return finished.returncode == 0
+        return self._kept(("installed", host, program), find)
+
+    def agents_grep(self):
+        # The same lookup as Claude Code's grep shell function.
+        binary = self.environment.get("CLAUDE_CODE_EXECPATH") or ""
+        if not os.access(binary, os.X_OK):
+            binary = os.path.join(self.environment.get("HOME") or "/", ".local/bin/claude")
+        if not os.access(binary, os.X_OK):
+            raise ProbeFailed("the agent's grep, the claude binary run as ugrep, was not found "
+                              "at $CLAUDE_CODE_EXECPATH or ~/.local/bin/claude")
+        return binary
+
+    def agents_grep_refuses(self, options_and_patterns, directory):
+        def find():
+            finished = ask(self.runner,
+                           ["ugrep", *AGENTS_GREP_LEADING_OPTIONS, *options_and_patterns,
+                            os.devnull],
+                           executable=self.agents_grep(),
+                           # A transcript replayed on another machine names directories absent here.
+                           cwd=directory if directory and os.path.isdir(directory) else None)
+            return finished.returncode == 2 and AGENTS_GREP_REFUSAL in finished.stderr
+        return self._kept(("refuses", directory, tuple(options_and_patterns)), find)
+
+
+def plain(word):
+    return "".join(MARKED_GLOB_CHARACTERS.get(character, character) for character in word)
+
+
+def fnmatch_pattern(marked):
+    """Return an fnmatch pattern expanding only the marked glob characters."""
+    return "".join(MARKED_GLOB_CHARACTERS[character] if character in MARKED_GLOB_CHARACTERS
+                   else "[" + character + "]" if character in "*?[]" else character
+                   for character in marked)
+
+
+class Placed(collections.namedtuple("Placed", "host directory words program_index")):
+    """A simple command with the machine and directory it ran in; directory None is unknown."""
+
+    @property
+    def program(self):
+        if self.program_index is None:
+            return ""
+        return os.path.basename(plain(self.words[self.program_index]))
+
+
+def placed_commands(command, cwd, host=None):
+    """Return every simple command in command, with where it ran, ssh's remote ones included."""
+    placed = []
+    directories = {(): cwd}  # A child shell's cd does not change its parent's directory.
+    for words in shell_reader.simple_commands(command, glob_markers=GLOB_MARKERS):
+        shell = words.child_shell
+        enclosing = shell
+        while enclosing not in directories:
+            enclosing = enclosing[:-1]
+        directory = directories[enclosing]
+        index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
+        if index is not None and shell_reader.is_program(words[index], "cd"):
+            target = words[index + 1] if index + 1 < len(words) else "~"
+            if host is None:
+                target = shell_reader.shell_word_tilde_prefix_expand_as_bash_would(target)
+            target = str(target)
+            if UNRESOLVABLE_DIRECTORY.search(target) or plain(target) != target:
+                directories[shell] = None
+            elif target.startswith(("/", "~")):
+                directories[shell] = os.path.normpath(target)
+            elif directory is not None:
+                directories[shell] = os.path.normpath(os.path.join(directory, target))
+            else:
+                directories[shell] = None
+            continue
+        placed.append(Placed(host, directory, list(words), index))
+        if host is None and index is not None and shell_reader.is_program(words[index], "ssh"):
+            arguments = [plain(word) for word in words[index + 1:]]
+            remote = shell_reader.ssh_remote_command(arguments)
+            destination = ssh_destination(arguments)
+            if remote and destination:
+                placed.extend(placed_commands(remote, "~", host=destination))
+    return placed
+
+
+def ssh_destination(arguments):
+    """Return the machine ssh connects to, read as ssh_remote_command reads the options."""
     index = 0
-    while index < len(text):
-        character = text[index]
-        if quote:
-            current.append(character)
-            if character == "\\" and quote == '"' and index + 1 < len(text):
-                index += 1
-                current.append(text[index])
-            elif character == quote:
-                quote = None
+    while index < len(arguments):
+        word = arguments[index]
+        if word == "--":
             index += 1
-            continue
-        if character in "'\"":
-            quote = character
-            current.append(character)
-            index += 1
-            continue
-        matched = None
-        for separator in separators:
-            if text.startswith(separator, index):
-                matched = separator
+            break
+        if not word.startswith("-") or word == "-":
+            break
+        letters = word[1:]
+        for position, letter in enumerate(letters):
+            if letter in shell_reader.SSH_VALUE_LETTERS:
+                index += position == len(letters) - 1
                 break
-        if matched:
-            parts.append("".join(current))
-            current = []
-            index += len(matched)
-            continue
-        current.append(character)
         index += 1
-    parts.append("".join(current))
-    return parts
+    return arguments[index] if index < len(arguments) else None
 
 
-REMOTE_COMMAND = re.compile(r"""(?:^|\s)(?:'([^']*)'|"((?:[^"\\]|\\.)*)")""")
-
-
-def remote_command_of(stage):
-    """Return the remote command in an ssh stage."""
-    if stage_program(stage) != "ssh":
-        return None
-    quoted = [group for match in REMOTE_COMMAND.finditer(stage)
-              for group in match.groups() if group]
-    if not quoted:
-        return None
-    return max(quoted, key=len)
-
-
-def pipelines_of(command, _depth=0):
-    """Return local and remote Pipeline records in command order."""
-    segments = split_on_top_level(command, ["&&", "||", ";", "\n"])
-    stage_lists = []
-    for segment in segments:
-        stages = [stage.strip() for stage in split_on_top_level(segment, ["|"])
-                  if stage.strip()]
-        if stages:
-            stage_lists.append(stages)
-    pipelines = []
-    for position, stages in enumerate(stage_lists):
-        last = position == len(stage_lists) - 1
-        pipelines.append({"stages": stages, "last": last, "carrier": None,
-                          "carrier_stages": None, "carrier_index": None,
-                          "carrier_last": None})
-        if _depth:
-            continue
-        for index, stage in enumerate(stages):
-            remote = remote_command_of(stage)
-            if not remote:
-                continue
-            for inner in pipelines_of(remote, _depth=1):
-                pipelines.append({"stages": inner["stages"],
-                                  "last": inner["last"], "carrier": stage,
-                                  "carrier_stages": stages,
-                                  "carrier_index": index,
-                                  "carrier_last": last})
-    return pipelines
-
-
-def stage_program(stage):
-    """Return the program, skipping env assignments and sudo."""
-    tokens = stage.split()
-    for token in tokens:
-        if "=" in token and not token.startswith("-") and "/" not in token.split("=")[0]:
-            continue
-        if token in ("sudo", "command", "env", "nohup", "exec", "time", "then",
-                     "do", "!", "{", "("):
-            continue
-        return token.lstrip("(").rstrip(")")
-    return ""
-
-
-def search_stages_of(command, pipelines=None):
-    """Yield (pipeline index, stage index, text, program) for each search."""
-    if pipelines is None:
-        pipelines = pipelines_of(command)
-    found = []
-    for pipeline_index, pipeline in enumerate(pipelines):
-        for stage_index, stage in enumerate(pipeline["stages"]):
-            program = stage_program(stage)
-            base = os.path.basename(program)
-            if base in SEARCH_PROGRAMS:
-                found.append((pipeline_index, stage_index, stage, base))
-            elif base == "git" and re.search(
-                    # Attached patterns such as -Sneedle have no word boundary after the flag.
-                    r"\bgit\s+(?:-[^\s]+\s+)*(?:grep\b|log\b[^|]*\s(?:--grep|-S|-G))",
-                    stage):
-                found.append((pipeline_index, stage_index, stage, "git"))
-    return found
-
-
-def outside_quotes(text):
-    """Remove quoted spans so patterns are not mistaken for shell syntax."""
-    return QUOTED_SPAN.sub("", text)
-
-
-def exit_status_is_the_searchs(command, pipelines, search):
-    # A command reports its last pipeline's status; without pipefail, a pipeline reports its last stage's.
-    pipeline_index, stage_index, _stage, _program = search
-    pipeline = pipelines[pipeline_index]
-    pipefail = "pipefail" in command
-    if not pipeline["last"]:
-        return False
-    if stage_index != len(pipeline["stages"]) - 1 and not pipefail:
-        return False
-    if pipeline["carrier"] is None:
+def is_search(command):
+    program = command.program
+    if program in SEARCH_PROGRAMS:
         return True
-    return pipeline["carrier_last"] and (
-        pipeline["carrier_index"] == len(pipeline["carrier_stages"]) - 1
-        or pipefail)
-
-
-def programs_feeding_a_search(pipelines, searches):
-    """Return program names from search pipelines, including their ssh carriers."""
-    programs = set()
-    for pipeline_index, _, _, _ in searches:
-        pipeline = pipelines[pipeline_index]
-        stages = list(pipeline["stages"]) + list(pipeline["carrier_stages"] or [])
-        programs.update(os.path.basename(stage_program(stage)) for stage in stages)
-    programs.discard("")
-    return programs
-
-
-def programs_reported_not_found(output):
-    return {os.path.basename(match.group("named_before")
-                             or match.group("named_after"))
-            for match in PROGRAM_NOT_FOUND.finditer(output or "")}
-
+    return program == "git" and "grep" in command.words[command.program_index + 1:]
 
 
 def empty_shape_of(stdout):
-    """Return the empty-result shape, or None for a nonempty result."""
+    """Return the empty-result shape, or None for a result that is not empty."""
     text = (stdout or "").strip()
     if not text:
         return "no-output"
@@ -297,626 +313,233 @@ def empty_shape_of(stdout):
         return "zero-count"
     lines = [line for line in text.splitlines() if line.strip()]
     matches = [COUNT_LINE.match(line) for line in lines]
-    if matches and all(matches) and any(int(m.group("count")) == 0 for m in matches):
+    if all(matches) and all(int(match.group("count")) == 0 for match in matches):
         return "zero-count-lines"
     return None
 
 
-def zero_counted_inputs(stdout):
-    paths = []
-    for line in (stdout or "").splitlines():
-        match = COUNT_LINE.match(line.strip())
-        if match and int(match.group("count")) == 0:
-            paths.append(match.group("path"))
-    return paths
+def without_diagnostics(text):
+    return "\n".join(line for line in (text or "").splitlines()
+                     if not DIAGNOSTIC_LINE.match(line))
 
 
-
-def weaken_pattern(pattern):
-    """Yield weaker patterns, strongest first, with their names."""
-    weakenings = []
-    stripped = pattern
-    if "/" in stripped and not stripped.endswith("/"):
-        # Runtime-composed references may omit the directory.
-        last_segment = stripped.rsplit("/", 1)[1]
-        if last_segment and last_segment != stripped:
-            weakenings.append(("last path segment", last_segment))
-    unanchored = stripped
-    if unanchored.startswith("^"):
-        unanchored = unanchored[1:]
-    if unanchored.endswith("$") and not unanchored.endswith("\\$"):
-        unanchored = unanchored[:-1]
-    if unanchored != stripped and unanchored:
-        weakenings.append(("unanchored", unanchored))
-    element = REGEX_ELEMENT.search(unanchored)
-    if element and element.start() > 0:
-        tail = unanchored[element.start():]
-        if tail and tail != unanchored:
-            weakenings.append(("literal head dropped", tail))
-    return weakenings
+def machine_name(host):
+    return host if host else "this machine"
 
 
-def search_pattern_and_rest(stage):
-    """Return (pattern, tokens) for a parseable search, otherwise (None, None)."""
-    try:
-        tokens = shlex.split(stage)
-    except ValueError:
-        return None, None
-    if not tokens:
-        return None, None
-    start = 1
-    if os.path.basename(tokens[0]) == "git":
-        if len(tokens) < 2 or tokens[1] != "grep":
-            return None, None
-        start = 2
-    elif os.path.basename(tokens[0]) not in SEARCH_PROGRAMS:
-        return None, None
-    index = start
-    while index < len(tokens):
-        token = tokens[index]
-        if token == "--":
-            index += 1
-            break
-        if token in ("-e", "--regexp", "--include", "--exclude", "-f", "--file",
-                     "--glob", "-g", "-m", "--max-count", "-A", "-B", "-C",
-                     "--type", "-t"):
-            if token in ("-e", "--regexp") and index + 1 < len(tokens):
-                return tokens[index + 1], tokens
-            index += 2
+def glob_dash_name_causes(placed, machines, unchecked):
+    causes = []
+    for command in placed:
+        if command.directory is None or command.program_index is None:
             continue
-        if token.startswith("-") and token != "-":
-            index += 1
-            continue
-        return token, tokens
-    return None, None
+        for word in command.words[command.program_index + 1:]:
+            if word == "--":
+                break
+            first_component = word.split("/", 1)[0]
+            if plain(first_component) == first_component or word.startswith(("/", "~")):
+                continue
+            try:
+                entries = machines.directory_entries(command.host, command.directory)
+            except ProbeFailed as error:
+                unchecked.append(f"whether `{plain(word)}` expanded to a name beginning "
+                                 f"with -: {error}")
+                break
+            pattern = fnmatch_pattern(first_component)
+            dashed = sorted(name for name in entries
+                            if name.startswith("-") and fnmatch.fnmatchcase(name, pattern))
+            if dashed:
+                causes.append(Cause(GLOB_DASH_NAME, (
+                    f"`{plain(word)}` expanded, in {command.directory} on "
+                    f"{machine_name(command.host)}, to names beginning with -, such as "
+                    f"`{dashed[0]}`, which {command.program} read as options, not as files, "
+                    f"so the search did not read those files.\n"
+                    f"Run the search again with ./ in front of the glob, as in "
+                    f"`./{plain(word)}`, and use that result.\n"
+                    f"From now on, write ./ in front of every relative glob that names files.")))
+                break
+    return causes
 
 
-def control_refusal(stage):
-    """Return the reason a control run is refused, or None."""
-    if SHELL_PUNCTUATION_THAT_REFUSES_A_CONTROL.search(stage):
-        return "the stage carries shell punctuation"
-    try:
-        tokens = shlex.split(stage)
-    except ValueError:
-        return "the stage does not parse"
-    if not tokens:
-        return "the stage is empty"
-    program = os.path.basename(tokens[0])
-    if program == "git":
-        if len(tokens) < 2 or tokens[1] != "grep":
-            return "git runs no search here but grep"
-    elif program not in CONTROL_PROGRAMS:
-        return f"{program} is never re-run"
-    if any(OPTION_THAT_RUNS_ANOTHER_PROGRAM.match(token) for token in tokens[1:]):
-        return "an option runs another program"
-    return None
-
-
-def control_candidates(pipelines, searches):
-    """Return [(stage, pattern)] for a repeatable search, otherwise []."""
-    # Piped input and preceding commands cannot be reproduced by searching the corpus alone.
-    if len(pipelines) != 1 or len(pipelines[0]["stages"]) != 1:
-        return []
-    if not searches or searches[0][:2] != (0, 0):
-        return []
-    stage = pipelines[0]["stages"][0]
-    if control_refusal(stage):
-        return []
-    pattern, _tokens = search_pattern_and_rest(stage)
-    if not pattern:
-        return []
-    return [(stage, pattern)]
-
-
-def shell_words_marking_globs(stage):
-    """Return (word, glob pattern or None) pairs, or None if parsing fails."""
-    # shlex.split loses the quoting that determines whether the shell expands a glob.
-    words = []
-    word, pattern, globbed, in_word = [], [], False, False
-    quote = None
-    index = 0
-    while index < len(stage):
-        character = stage[index]
-        if quote == "'":
-            if character == "'":
-                quote = None
-            else:
-                word.append(character)
-                pattern.append(glob.escape(character))
-        elif quote == '"':
-            if character == '"':
-                quote = None
-            elif character == "\\" and stage[index + 1:index + 2] in \
-                    ('"', "\\", "$", "`"):
-                index += 1
-                word.append(stage[index])
-                pattern.append(glob.escape(stage[index]))
-            else:
-                word.append(character)
-                pattern.append(glob.escape(character))
-        elif character in "'\"":
-            quote = character
-            in_word = True
-        elif character == "\\" and index + 1 < len(stage):
-            index += 1
-            word.append(stage[index])
-            pattern.append(glob.escape(stage[index]))
-            in_word = True
-        elif character.isspace():
-            if in_word:
-                words.append(("".join(word),
-                              "".join(pattern) if globbed else None))
-            word, pattern, globbed, in_word = [], [], False, False
-        else:
-            word.append(character)
-            pattern.append(character)
-            in_word = True
-            globbed = globbed or character in "*?["
-        index += 1
-    if quote:
+def agents_grep_arguments(words):
+    """Return the options and patterns of a bare grep, its file names left out, or None
+    when Claude Code's grep function passes these arguments to the system grep."""
+    arguments = [plain(word) for word in words[1:]]
+    if any(fnmatch.fnmatchcase(argument, rule) for argument in arguments
+           for rule in AGENTS_GREP_PASSES_TO_SYSTEM_GREP):
         return None
-    if in_word:
-        words.append(("".join(word), "".join(pattern) if globbed else None))
-    return words
-
-
-def expand_like_the_shell(glob_pattern, corpus_root):
-    """Return matching paths relative to corpus_root, or []."""
-    if os.path.isabs(glob_pattern):
-        return sorted(glob.glob(glob_pattern))
-    expanded = sorted(glob.glob(
-        os.path.join(glob.escape(corpus_root), glob_pattern)))
-    return [os.path.relpath(path, corpus_root) for path in expanded]
-
-
-# Claude Code wraps bare grep with ugrep, skipping VCS directories, binaries, and ignored files.
-# Explicit grep paths, egrep, and fgrep still run the system programs.
-AGENTS_GREP_SKIPPED_DIRECTORIES = (".git", ".svn", ".hg", ".bzr", ".jj", ".sl")
-
-
-def as_the_agents_shell_runs_it(control_tokens):
-    """Return control argv with the skips used by the agent's grep."""
-    if control_tokens[0] != "grep":
-        return control_tokens
-    return (["grep", "-I"]
-            + [f"--exclude-dir={name}" for name in AGENTS_GREP_SKIPPED_DIRECTORIES]
-            + control_tokens[1:])
-
-
-def file_an_output_line_names(line, corpus_root):
-    """Return the file named by an output line, or None."""
-    # Try the longest path first: hyphens in filenames can also look like context separators.
-    if os.path.isfile(os.path.join(corpus_root, line)):
-        return line
-    for separator in reversed(list(re.finditer(r"[:-]", line))):
-        head = line[:separator.start()]
-        if head and os.path.isfile(os.path.join(corpus_root, head)):
-            return head
-    return None
-
-
-def path_is_at_or_below(path, directory):
-    return path == directory or path.startswith(directory.rstrip(os.sep) + os.sep)
-
-
-def gitignore_rules_ignoring(relative_paths, search_root):
-    """Return paths ignored by .gitignore files at or below search_root.
-    Raises ControlSearchCouldNotRun when git fails."""
-    # ugrep reads .gitignore rules regardless of tracked status or repository boundaries.
-    # Use an empty index and exclude global rules to match that behavior.
-    environment = {key: value for key, value in os.environ.items()
-                   if not key.startswith("GIT_")}
-    environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
-    try:
-        with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as empty:
-            initialized = subprocess.run(
-                ["git", "init", "-q", "--bare", empty],
-                env=environment, capture_output=True, text=True, timeout=60)
-            if initialized.returncode != 0:
-                raise ControlSearchCouldNotRun(
-                    f"git init --bare exited {initialized.returncode}: "
-                    f"{initialized.stderr.strip() or 'no error text'}")
-            finished = subprocess.run(
-                ["git", f"--git-dir={empty}", f"--work-tree={search_root}",
-                 "check-ignore", "--no-index", "--verbose", "--stdin", "-z"],
-                cwd=search_root, env=environment,
-                input="\0".join(relative_paths) + "\0",
-                capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.SubprocessError) as error:
-        raise ControlSearchCouldNotRun(f"git could not run: {error}") from None
-    # 0: some path is ignored; 1: none is.
-    if finished.returncode not in (0, 1):
-        raise ControlSearchCouldNotRun(
-            f"git check-ignore exited {finished.returncode}: "
-            f"{finished.stderr.strip() or 'no error text'}")
-    fields = finished.stdout.split("\0")
-    ignored = set()
-    for index in range(0, len(fields) - 3, 4):
-        source, _line, pattern, path = fields[index:index + 4]
-        if pattern.startswith("!") or os.path.isabs(source) or \
-                os.path.basename(source) != ".gitignore":
-            continue
-        ignored.add(path)
-    return ignored
-
-
-GREP_SHORT_OPTIONS_TAKING_AN_ARGUMENT = frozenset("efmABCdD")
-GREP_LONG_OPTIONS_TAKING_AN_ARGUMENT = frozenset({
-    "--regexp", "--file", "--max-count", "--after-context", "--before-context",
-    "--context", "--directories", "--devices", "--include", "--exclude",
-    "--exclude-dir", "--exclude-from", "--label", "--binary-files"})
-
-
-def grep_flags_and_file_operands(control_tokens):
-    """Return (flags, file operands) from grep argv."""
-    # Option arguments and the search pattern are not file operands, even when they name directories.
-    flags = []
-    operands = []
-    pattern_given_by_an_option = False
-    index = 1
-    while index < len(control_tokens):
-        token = control_tokens[index]
+    kept = []
+    pattern_given = False
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
         index += 1
-        if token == "--":
-            operands.extend(control_tokens[index:])
-            break
-        if token.startswith("--"):
-            name = token.split("=", 1)[0]
-            flags.append(token if "=" in token else name)
-            if name in ("--regexp", "--file"):
-                pattern_given_by_an_option = True
-            if name in GREP_LONG_OPTIONS_TAKING_AN_ARGUMENT and "=" not in token:
-                if name == "--directories" and index < len(control_tokens):
-                    flags.append(f"--directories={control_tokens[index]}")
+        if argument == "--":
+            if not pattern_given and index < len(arguments):
+                kept += ["--", arguments[index]]
+            return kept
+        if argument.startswith("--"):
+            name = argument.split("=", 1)[0]
+            kept.append(argument)
+            pattern_given = pattern_given or name in ("--regexp", "--file")
+            if name in GREP_LONG_OPTIONS_TAKING_A_VALUE and "=" not in argument \
+                    and index < len(arguments):
+                kept.append(arguments[index])
                 index += 1
             continue
-        if token.startswith("-") and token != "-":
-            for position, letter in enumerate(token[1:], start=1):
-                flags.append(letter)
-                if letter in "ef":
-                    pattern_given_by_an_option = True
-                if letter in GREP_SHORT_OPTIONS_TAKING_AN_ARGUMENT:
-                    argument = token[position + 1:]
-                    if not argument and index < len(control_tokens):
-                        argument = control_tokens[index]
+        if argument.startswith("-") and argument != "-":
+            kept.append(argument)
+            for position, letter in enumerate(argument[1:], start=1):
+                if letter in GREP_SHORT_OPTIONS_TAKING_A_VALUE:
+                    pattern_given = pattern_given or letter in "ef"
+                    if position == len(argument) - 1 and index < len(arguments):
+                        kept.append(arguments[index])
                         index += 1
-                    if letter == "d":
-                        flags.append(f"--directories={argument}")
                     break
             continue
-        operands.append(token)
-    if not pattern_given_by_an_option and operands:
-        operands = operands[1:]
-    return flags, operands
+        if not pattern_given:
+            kept.append(argument)
+            pattern_given = True
+    return kept
 
 
-def lines_the_agents_grep_could_read(lines, corpus_root, control_tokens):
-    """Return output lines from files the agent's grep could read. Raises
-    ControlSearchCouldNotRun when git cannot say which files are ignored."""
-    # ugrep applies .gitignore rules below each directory operand, even to tracked files.
-    # Without filename output, matched text that spells a path must not be filtered as that file.
-    flags, operands = grep_flags_and_file_operands(control_tokens)
-    root = os.path.abspath(corpus_root)
-    recursive = any(flag in ("r", "R", "--recursive", "--dereference-recursive",
-                             "--directories=recurse") for flag in flags)
-    directories = [operand for operand in operands
-                   if os.path.isdir(os.path.join(root, operand))]
-    if not recursive or (operands and not directories):
-        return lines
-    names_files = True
-    for flag in flags:
-        if flag in ("h", "--no-filename"):
-            names_files = False
-        elif flag in ("H", "--with-filename"):
-            names_files = True
-    if any(flag in ("l", "L", "--files-with-matches", "--files-without-match")
-           for flag in flags):
-        names_files = True
-    if not names_files:
-        return lines
-    search_roots = sorted(
-        {os.path.normpath(os.path.join(root, directory))
-         for directory in directories} or {root}, key=len, reverse=True)
-    named = {line: file_an_output_line_names(line, corpus_root)
-             for line in lines}
-    explicit_files = set(operands) - set(directories)
-    by_search_root = {}
-    for path in {path for path in named.values()
-                 if path and path not in explicit_files}:
-        found_at = os.path.normpath(os.path.join(root, path))
-        for search_root in search_roots:
-            if path_is_at_or_below(found_at, search_root):
-                # Overlapping search roots can print the same file under multiple spellings.
-                by_search_root.setdefault(search_root, {}).setdefault(
-                    os.path.relpath(found_at, search_root), set()).add(path)
-                break
-    skipped = set()
-    for search_root, paths in by_search_root.items():
-        for relative in gitignore_rules_ignoring(sorted(paths), search_root):
-            skipped.update(paths.get(relative, ()))
-    return [line for line in lines if named[line] not in skipped]
-
-
-def run_control(stage, pattern, corpus_root, zero_inputs, skipped):
-    """Run weakened searches and report the first that matches. Raises
-    ControlSearchCouldNotRun when none matched and one or more could not run,
-    because a search that failed found nothing for a reason that is not
-    absence. A weakened search that fails where the same search with the
-    agent's own pattern does not failed on the weakening, such as a pattern
-    grep rejects as a regex; it is skipped, and the reason appended to
-    `skipped`."""
-    if control_refusal(stage):
-        return None
-    tokens = shlex.split(stage)
-    if pattern not in tokens:
-        return None
-    words = shell_words_marking_globs(stage)
-    if words is None or [word for word, _ in words] != tokens:
-        return None
-    errors = []
-    agents_search_runs = None
-
-    def search_tokens(searched_pattern):
-        searched = []
-        for token, glob_pattern in words:
-            if token == pattern:
-                searched.append(searched_pattern)
-            elif glob_pattern is not None:
-                searched.extend(
-                    expand_like_the_shell(glob_pattern, corpus_root) or [token])
-            else:
-                searched.append(token)
-        return as_the_agents_shell_runs_it(searched)
-
-    for name, weaker in weaken_pattern(pattern):
-        control_tokens = search_tokens(weaker)
-        control_command = " ".join(control_tokens)
-        try:
-            finished = subprocess.run(
-                control_tokens, cwd=corpus_root, capture_output=True, text=True,
-                timeout=60)
-        except (OSError, subprocess.SubprocessError) as error:
-            errors.append(f"`{control_command}` could not run: {error}")
+def pattern_too_complex_causes(placed, machines, unchecked):
+    causes = []
+    for command in placed:
+        # Only a bare grep run by this machine's shell reaches Claude Code's grep function.
+        if command.host is not None or command.program_index is None \
+                or command.words[command.program_index] != "grep" \
+                or any(not shell_reader.ENVIRONMENT_ASSIGNMENT_PATTERN.match(word)
+                       for word in command.words[:command.program_index]):
             continue
-        control_shape = empty_shape_of(finished.stdout)
-        if control_shape is None:
-            matched = [line for line in finished.stdout.strip().splitlines()
-                       if line.strip() and line.strip() != "--"]
-            if control_tokens[0] == "grep":
-                try:
-                    matched = lines_the_agents_grep_could_read(
-                        matched, corpus_root, control_tokens)
-                except ControlSearchCouldNotRun as error:
-                    errors.append(f"`{control_command}` matched, but {error}")
-                    continue
-            if matched:
-                return {
-                    "weakening": name,
-                    "pattern": weaker,
-                    "command": control_command,
-                    "matched": matched[:5],
-                }
-        elif control_shape == "zero-count-lines" and zero_inputs:
-            # Compare files, not spellings: ugrep may print a.py where system grep prints ./a.py.
-            control_counts = {}
-            for line in finished.stdout.splitlines():
-                match = COUNT_LINE.match(line.strip())
-                if match:
-                    control_counts[os.path.normpath(match.group("path"))] = \
-                        int(match.group("count"))
-            recovered = [path for path in zero_inputs
-                         if control_counts.get(os.path.normpath(path), 0) > 0]
-            if recovered:
-                return {
-                    "weakening": name,
-                    "pattern": weaker,
-                    "command": control_command,
-                    "matched": [f"{path}: counted 0 by the original, matched by "
-                                f"the weakened search" for path in recovered[:5]],
-                }
-        # A signal's negative return code is a failure too, not a 'no match'.
-        if finished.returncode not in (0, 1):
-            failure = (f"`{control_command}` exited {finished.returncode}: "
-                       f"{finished.stderr.strip() or 'no error text'}")
-            if agents_search_runs is None:
-                agents_search_runs = search_with_the_agents_pattern_runs(
-                    search_tokens(pattern), corpus_root)
-            if agents_search_runs:
-                skipped.append(f"{failure}, while the same search with the "
-                               f"agent's own pattern `{pattern}` runs, so the "
-                               f"weakened pattern `{weaker}` is at fault")
-            else:
-                errors.append(failure)
-    if errors:
-        raise ControlSearchCouldNotRun("; ".join(errors))
-    return None
+        arguments = agents_grep_arguments(command.words[command.program_index:])
+        if not arguments:
+            continue
+        try:
+            refused = machines.agents_grep_refuses(arguments, command.directory)
+        except ProbeFailed as error:
+            unchecked.append(f"whether the agent's grep refuses the pattern of "
+                             f"`{' '.join(arguments)}`: {error}")
+            continue
+        if refused:
+            causes.append(Cause(PATTERN_TOO_COMPLEX, (
+                f"The agent's grep, which is ugrep, refuses the pattern of "
+                f"`grep {' '.join(arguments)}` with \"{AGENTS_GREP_REFUSAL}\", so that "
+                f"grep searched nothing; its 2>/dev/null or a later stage of the pipe hid "
+                f"the refusal.\n"
+                f"Run the search again with fewer or shorter bounded repeats, such as "
+                f".{{0,180}}, or with rg, and use that result.\n"
+                f"From now on, use at most one bounded repeat in a grep pattern.")))
+    return causes
 
 
-def search_with_the_agents_pattern_runs(tokens, corpus_root):
-    """Whether the search ends with an answer, 0 or 1, rather than an error."""
-    try:
-        finished = subprocess.run(tokens, cwd=corpus_root, capture_output=True,
-                                  text=True, timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return finished.returncode in (0, 1)
+def program_missing_causes(placed, machines, unchecked):
+    causes = []
+    asked = set()
+    for command in placed:
+        if not is_search(command):
+            continue
+        program = plain(command.words[command.program_index])
+        if (command.host, program) in asked:
+            continue
+        asked.add((command.host, program))
+        try:
+            installed = machines.program_installed(command.host, program)
+        except ProbeFailed as error:
+            unchecked.append(f"whether {program} is installed on "
+                             f"{machine_name(command.host)}: {error}")
+            continue
+        if not installed:
+            causes.append(Cause(PROGRAM_MISSING, (
+                f"{program} is not installed on {machine_name(command.host)}, so that search "
+                f"ran nothing; its 2>/dev/null or a later stage of the pipe hid the "
+                f"\"command not found\".\n"
+                f"Run the search again on {machine_name(command.host)} with a program "
+                f"installed there, such as grep -r, and use that result.")))
+    return causes
 
 
-def meaningful_stderr(stderr):
-    """Remove harness notices from stderr."""
-    lines = [line for line in (stderr or "").splitlines()
-             if line.strip() and not HARNESS_NOTE_ON_STDERR.match(line)]
-    return "\n".join(lines)
+def judge_command_result(command, cwd, stdout="", exit_code=0, machines=None):
+    """Decide whether the empty result of command, run in cwd, could not have found anything.
 
-
-def judge_command_result(command, exit_code=None, stdout="", stderr="",
-                         control_corpus_root=None, stderr_was_captured=True):
-    """Decide whether an empty result is evidence of absence."""
-    pipelines = pipelines_of(command)
-    searches = search_stages_of(command, pipelines)
-    if not searches:
-        return Verdict(False, reason="no search stage in the command")
-
-    streams_were_merged = not stderr_was_captured and bool(exit_code)
-    if streams_were_merged:
-        results_text, merged_diagnostics = split_diagnostics(stdout)
-    else:
-        results_text, merged_diagnostics = stdout, ""
-    empty_kind = empty_shape_of(results_text)
-    if empty_kind is None:
+    stdout is the result as the agent saw it: for a command that exited nonzero, its stdout
+    and stderr together. Raises shell_reader.ShellParserUnavailable when the command cannot
+    be read.
+    """
+    if machines is None:
+        machines = Machines()
+    results = without_diagnostics(stdout) if exit_code else stdout
+    if empty_shape_of(results) is None:
         return Verdict(False, reason="the result is not empty")
-
-    signals = []
-    instructions = []
-    combined_output = f"{stdout or ''}\n{stderr or ''}"
-
-    for pipeline_index, stage_index, stage, program in searches:
-        pipeline = pipelines[pipeline_index]
-        stages = pipeline["stages"]
-        carrier = pipeline["carrier"]
-
-        if STDERR_DISCARDED.search(outside_quotes(stage)) or (
-                carrier and STDERR_DISCARDED.search(outside_quotes(carrier))):
-            signals.append("stderr-discarded-by-the-search-stage")
-            instructions.append(
-                "Re-run without `2>/dev/null` before reporting absence: the "
-                "search's stderr was discarded, so an error and a clean "
-                "no-match printed the same nothing.")
-
-        for earlier in stages[:stage_index]:
-            if TRUNCATING_STAGE.match(earlier):
-                signals.append("truncating-stage-upstream-of-the-search")
-                instructions.append(
-                    f"Search the whole input before reporting absence: "
-                    f"`{earlier.strip()}` cut the input down ahead of the "
-                    f"search, so the search read a truncation.")
-                break
-
-        later_stages = list(stages[stage_index + 1:])
-        if carrier is not None and not later_stages:
-            # The remote search is last, so ssh carries the status the local pipeline swallows.
-            later_stages = list(
-                pipeline["carrier_stages"][pipeline["carrier_index"] + 1:])
-        swallowed = bool(later_stages)
-        if not swallowed:
-            tail = command[command.find(stage) + len(stage):]
-            if re.match(r"\s*(?:;|&&)\s*(?:echo|true|:)\b", tail) or \
-                    re.match(r"\s*\|\|\s*(?:true|:|echo)\b", tail):
-                swallowed = True
-        if swallowed and "pipefail" not in command and "PIPESTATUS" not in command:
-            signals.append("search-exit-status-discarded-by-a-later-stage")
-            instructions.append(
-                "Read the search's own exit status with `${PIPESTATUS[0]}` or "
-                "`set -o pipefail`, then re-run: a later stage replaced it, and "
-                "grep's 1 for no match and 2 for an error are now both 0.")
-
-    status_is_the_searchs = any(
-        exit_status_is_the_searchs(command, pipelines, search)
-        for search in searches)
-    if status_is_the_searchs and exit_code is not None and \
-            exit_code >= FIRST_ERROR_EXIT_STATUS:
-        signals.append("exit-status-reports-an-error-not-an-absence")
-        instructions.append(
-            f"Fix what exit status {exit_code} reports and re-run before "
-            f"reporting absence: that status means the search failed, not that "
-            f"it found nothing.")
-    if (programs_reported_not_found(combined_output)
-            & programs_feeding_a_search(pipelines, searches)) or (
-            status_is_the_searchs
-            and exit_code == EXIT_STATUS_PROGRAM_NOT_FOUND):
-        signals.append("search-program-missing-on-this-machine")
-        instructions.append(
-            "Install the program the output says was not found, then re-run: a "
-            "search whose program is missing prints the same nothing as a "
-            "search that found nothing.")
-    own_stderr = meaningful_stderr(stderr) or merged_diagnostics
-    if (exit_code == 0 or exit_code is None) and own_stderr and \
-            not (stdout or "").strip():
-        signals.append("stderr-written-while-stdout-was-empty")
-        instructions.append(
-            "Read stderr before reporting absence: this search wrote to stderr "
-            "and nothing to stdout, which is what an error looks like.")
-
-    control = None
-    control_errors = []
-    control_skips = []
-    if control_corpus_root is not None:
-        for stage, pattern in control_candidates(pipelines, searches):
-            try:
-                control = run_control(stage, pattern, control_corpus_root,
-                                      zero_counted_inputs(stdout), control_skips)
-            except ControlSearchCouldNotRun as error:
-                control_errors.append(str(error))
-                continue
-            if control:
-                signals.append("weakened-pattern-control-run-found-matches")
-                instructions.append(
-                    f"Search for `{control['pattern']}` and read what it "
-                    f"returns before reporting absence: the same search "
-                    f"weakened to that pattern matched where this one did not.")
-                break
-
-    ordered = []
-    for signal in signals:
-        if signal not in ordered:
-            ordered.append(signal)
-    seen_instructions = []
-    for instruction in instructions:
-        if instruction not in seen_instructions:
-            seen_instructions.append(instruction)
-
-    stderr_observable = (stderr_was_captured or "2>&1" in command
-                         or streams_were_merged)
-    if ordered == [CORROBORATING_ONLY] and stderr_observable and not own_stderr:
-        return Verdict(True, empty_kind=empty_kind, signals=[],
-                       corroboration=ordered,
-                       reason="the search's exit status was swallowed, but its "
-                              "stderr was empty, so it did not error",
-                       control_errors=control_errors, control_skips=control_skips)
-    return Verdict(True, empty_kind=empty_kind, signals=ordered,
-                   instructions=seen_instructions, control=control,
-                   control_errors=control_errors, control_skips=control_skips)
+    placed = placed_commands(command, cwd)
+    if not any(is_search(command) for command in placed):
+        return Verdict(False, reason="no search in the command")
+    unchecked = []
+    causes = (glob_dash_name_causes(placed, machines, unchecked)
+              + pattern_too_complex_causes(placed, machines, unchecked)
+              + program_missing_causes(placed, machines, unchecked))
+    return Verdict(True, causes=causes, unchecked=unchecked,
+                   reason=None if causes else "none of the three causes was found")
 
 
-def control_errors_lines(verdict):
-    """The lines that say a control search could not run, for a verdict
-    that did not fire: then its silence is not a clean answer."""
+UNCHECKED_NEXT_STEP = (
+    "Before you report that what you sought is absent, run the search again without "
+    "2>/dev/null and with nothing piped after it, and read what it prints on stderr and "
+    "its exit status: grep and rg exit 1 for no match, and 2 or more for an error.")
+
+
+def report_lines(verdict):
+    lines = []
     if verdict.fires:
-        return []
-    return [f"The weakened control search could not run, so this result was "
-            f"not checked against it: {error}. Fix what it names and run this "
-            f"check again." for error in verdict.control_errors]
+        lines.append(f"{PROGRAM}: the search in this command found nothing, but it could "
+                     f"not have found anything, so its empty result does not show that what "
+                     f"it sought is absent. Do not report absence from it.")
+        lines += [cause.instruction for cause in verdict.causes]
+        lines.append("If you already told someone that what you sought is absent, correct "
+                     "that once the new search has run.")
+    if verdict.unchecked:
+        lines += [f"{PROGRAM} could not check {what}." for what in verdict.unchecked]
+        lines.append(UNCHECKED_NEXT_STEP)
+    return lines
 
 
-def control_skips_lines(verdict):
-    """The lines that say a weakened control search was skipped because this
-    check's own weakening broke it; the agent's search is not at fault."""
-    if verdict.fires:
-        what_to_do = ("The verdict above stands on the signals that fired; follow "
-                      "its instructions.")
+def claude_code_post_tool_use_hook(stdin, stdout, machines=None):
+    """Read a PostToolUse or PostToolUseFailure payload for Bash; print a warning, if any."""
+    try:
+        payload = json.load(stdin)
+    except ValueError:
+        return EXIT_QUIET
+    if not isinstance(payload, dict) or payload.get("tool_name") != "Bash":
+        return EXIT_QUIET
+    command = (payload.get("tool_input") or {}).get("command") or ""
+    event = payload.get("hook_event_name") or "PostToolUse"
+    if event == "PostToolUseFailure":
+        error = payload.get("error") or ""
+        match = EXIT_CODE_LINE.match(error)
+        if not match or payload.get("is_interrupt"):
+            return EXIT_QUIET
+        exit_code, output = int(match.group(1)), error[match.end():]
     else:
-        what_to_do = ("No other signal fired, but without this control the empty "
-                      "result is not yet evidence of absence: before you report "
-                      "absence, search once with a weaker pattern of your own, "
-                      "and report absence only if that search also finds nothing.")
-    return [f"A weakened control search was skipped, so this result was not "
-            f"checked against it: {skip}. This is the check's own weakening, "
-            f"not a fault in your search. {what_to_do}"
-            for skip in verdict.control_skips]
-
-
-
-EXIT_CODE_IN_RESULT = re.compile(r"^Error: Exit code (\d+)\n?")
-NOT_AN_EXECUTION = (
-    "Error: Permission", "Error: Blocked:", "User rejected tool use",
-    "InputValidationError:", "[Request interrupted", "Error: This session is",
-    "Error: claude-",
-)
+        response = payload.get("tool_response") or {}
+        if not isinstance(response, dict) or response.get("interrupted"):
+            return EXIT_QUIET
+        exit_code, output = 0, response.get("stdout") or ""
+    cwd = payload.get("cwd") or os.getcwd()
+    try:
+        verdict = judge_command_result(command, cwd, output, exit_code, machines)
+    except shell_reader.ShellParserUnavailable as error:
+        lines = [f"{PROGRAM} could not read this command, so it did not check whether its "
+                 f"empty result could have found anything: {error}", UNCHECKED_NEXT_STEP]
+    else:
+        lines = report_lines(verdict)
+    if lines:
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": event, "additionalContext": "\n".join(lines)}}), file=stdout)
+    return EXIT_QUIET
 
 
 def bash_pairs_in_transcript(path):
-    """Yield (command, exit_code, stdout, stderr) for recorded Bash runs."""
-    # toolUseResult is a dict with separate streams on success, but a string with merged streams on failure.
+    """Yield (command, cwd, exit_code, output) for each Bash run a transcript records."""
+    # toolUseResult is a dict on success, and a string holding both streams on failure.
     commands = {}
     try:
         handle = open(path, encoding="utf-8", errors="replace")
@@ -935,274 +558,106 @@ def bash_pairs_in_transcript(path):
                 if not isinstance(block, dict):
                     continue
                 if block.get("type") == "tool_use" and block.get("name") == "Bash":
-                    commands[block.get("id")] = (block.get("input") or {}).get(
-                        "command", "")
-                elif block.get("type") == "tool_result" and \
-                        block.get("tool_use_id") in commands:
-                    command = commands.pop(block["tool_use_id"])
+                    commands[block.get("id")] = (
+                        (block.get("input") or {}).get("command", ""), record.get("cwd") or "")
+                elif block.get("type") == "tool_result" and block.get("tool_use_id") in commands:
+                    command, cwd = commands.pop(block["tool_use_id"])
                     result = record.get("toolUseResult")
                     if isinstance(result, dict):
-                        if result.get("backgroundTaskId") or \
-                                result.get("interrupted") or \
-                                result.get("timedOutAfterMs"):
+                        if result.get("backgroundTaskId") or result.get("interrupted"):
                             continue
-                        yield (command, 0, result.get("stdout") or "",
-                               result.get("stderr") or "")
+                        yield command, cwd, 0, result.get("stdout") or ""
                     elif isinstance(result, str):
-                        if result.startswith(NOT_AN_EXECUTION):
-                            continue
-                        match = EXIT_CODE_IN_RESULT.match(result)
-                        if not match:
-                            continue
-                        yield (command, int(match.group(1)),
-                               result[match.end():], "")
+                        match = re.match(r"^Error: Exit code (\d+)\n?", result)
+                        if match:
+                            yield command, cwd, int(match.group(1)), result[match.end():]
 
 
-def transcripts_under(directory):
-    # Subagent transcripts live below session directories; stopping at the top level omits their searches.
-    root = pathlib.Path(directory)
-    if not root.is_dir():
-        return []
-    return sorted(root.rglob("*.jsonl"))
-
-
-def bash_pairs_under(directories):
-    """Yield (transcript, command, exit_code, stdout, stderr) for each recorded run."""
-    for directory in directories:
-        for transcript in transcripts_under(directory):
-            for pair in bash_pairs_in_transcript(transcript):
-                yield (transcript,) + pair
-
-
-def measure_transcripts(directories, limit=None, top=10, out=sys.stdout):
-    """Print the check's funnel and signal tally over recorded runs."""
-    total = 0
-    from_subagents = 0
-    search_shaped = 0
-    empty = 0
-    control_derivable = 0
-    fired = 0
-    by_signal = {}
-    by_signal_alone = {}
-    by_command = {}
-    by_empty_kind = {}
-    examples = {}
-    pairs = bash_pairs_under(directories)
-    if limit is not None:
-        pairs = itertools.islice(pairs, limit)
-    for transcript, command, exit_code, stdout, stderr in pairs:
-        total += 1
-        if "subagents" in transcript.parts:
-            from_subagents += 1
-        if not search_stages_of(command):
+def measure_transcripts(directories, limit=None, top=10, out=sys.stdout, machines=None):
+    """Print how often the check fires over the Bash runs that transcripts record."""
+    machines = machines or Machines()
+    counts = collections.Counter()
+    by_signal = collections.Counter()
+    by_command = collections.Counter()
+    pairs = ((transcript,) + pair for directory in directories
+             for transcript in sorted(pathlib.Path(directory).rglob("*.jsonl"))
+             for pair in bash_pairs_in_transcript(transcript))
+    for transcript, command, cwd, exit_code, output in itertools.islice(pairs, limit):
+        counts["pairs"] += 1
+        try:
+            verdict = judge_command_result(command, cwd, output, exit_code, machines)
+        except shell_reader.ShellParserUnavailable:
+            counts["unreadable"] += 1
             continue
-        search_shaped += 1
-        verdict = judge_command_result(
-            command, exit_code=exit_code, stdout=stdout, stderr=stderr,
-            control_corpus_root=None, stderr_was_captured=(exit_code == 0))
         if not verdict.applicable:
             continue
-        empty += 1
-        pipelines = pipelines_of(command)
-        if control_candidates(pipelines, search_stages_of(command, pipelines)):
-            control_derivable += 1
-        if not verdict.fires:
-            continue
-        fired += 1
-        by_empty_kind[verdict.empty_kind] = by_empty_kind.get(
-            verdict.empty_kind, 0) + 1
-        for signal in verdict.signals:
-            by_signal[signal] = by_signal.get(signal, 0) + 1
-            examples.setdefault(signal, []).append(command[:200])
-        if len(verdict.signals) == 1:
-            only = verdict.signals[0]
-            by_signal_alone[only] = by_signal_alone.get(only, 0) + 1
-        head = " ".join(command.split())[:80]
-        by_command[head] = by_command.get(head, 0) + 1
-
-    print(f"{PROGRAM}: measurement over recorded Bash pairs", file=out)
-    print(f"  transcript directories : {len(directories)}", file=out)
-    print(f"  pairs replayed         : {total}", file=out)
-    print(f"    from subagents       : {from_subagents}", file=out)
-    print(f"  with a search stage    : {search_shaped}", file=out)
-    print(f"  and an empty result    : {empty}", file=out)
-    print(f"    bare enough to control: {control_derivable}", file=out)
-    print(f"  the check fired on     : {fired}", file=out)
-    if empty:
-        print(f"  firing rate over empty search results: "
-              f"{100.0 * fired / empty:.1f}%", file=out)
-    print("  empty shapes that fired:", file=out)
-    for kind, count in sorted(by_empty_kind.items(), key=lambda kv: -kv[1]):
-        print(f"    {count:6d}  {kind}", file=out)
-    print("  signals (a pair can raise several):", file=out)
-    for signal, count in sorted(by_signal.items(), key=lambda kv: -kv[1]):
-        alone = by_signal_alone.get(signal, 0)
-        print(f"    {count:6d}  ({alone} alone)  {signal}", file=out)
+        counts["empty searches"] += 1
+        counts["unchecked"] += bool(verdict.unchecked)
+        if verdict.fires:
+            counts["fired"] += 1
+            by_signal.update(set(verdict.signals))
+            by_command[" ".join(command.split())[:100]] += 1
+    print(f"{PROGRAM}: measurement over recorded Bash runs", file=out)
+    for name in ("pairs", "unreadable", "empty searches", "unchecked", "fired"):
+        print(f"  {name:16s}: {counts[name]}", file=out)
+    for signal, count in by_signal.most_common():
+        print(f"    {count:6d}  {signal}", file=out)
     print(f"  the {top} commands that fire most often:", file=out)
-    for head, count in sorted(by_command.items(), key=lambda kv: -kv[1])[:top]:
+    for head, count in by_command.most_common(top):
         print(f"    {count:6d}  {head}", file=out)
-    return {
-        "pairs": total, "from_subagents": from_subagents,
-        "search_shaped": search_shaped, "empty": empty,
-        "control_derivable": control_derivable,
-        "fired": fired, "by_signal": by_signal, "by_signal_alone": by_signal_alone,
-        "by_command": by_command, "examples": examples,
-        "by_empty_kind": by_empty_kind,
-    }
+    return counts, by_signal
 
 
-
-def default_fixtures_directory():
-    return pathlib.Path(__file__).resolve().with_name(FIXTURES_DIRECTORY_NAME)
-
-
-def load_fixtures(directory):
-    fixtures = []
-    for path in sorted(pathlib.Path(directory).glob("*.json")):
-        with open(path, encoding="utf-8") as handle:
-            fixture = json.load(handle)
-        fixture["fixture_path"] = str(path)
-        fixtures.append(fixture)
-    return fixtures
-
-
-def replay_fixtures(directory, run_control=False, checkout_root=None, out=sys.stdout):
-    """Judge fixtures and report whether each fires."""
-    fixtures = load_fixtures(directory)
-    if not fixtures:
-        print(f"{PROGRAM}: no fixtures in {directory}", file=out)
-        return [], False
-    if checkout_root is None:
-        checkout_root = pathlib.Path(__file__).resolve().parent.parent
-    results = []
-    every_one_fired = True
-    for fixture in fixtures:
-        corpus = None
-        if run_control and fixture.get("control_corpus_root"):
-            corpus = str(pathlib.Path(checkout_root) /
-                         fixture["control_corpus_root"])
-        verdict = judge_command_result(
-            fixture["command"],
-            exit_code=fixture.get("exit_code"),
-            stdout=fixture.get("stdout", ""),
-            stderr=fixture.get("stderr", ""),
-            control_corpus_root=corpus)
-        results.append((fixture, verdict))
-        fired = verdict.fires
-        if fixture.get("must_fire", True) and not fired:
-            every_one_fired = False
-        print(f"{'FIRED  ' if fired else 'SILENT '} {fixture['case']}", file=out)
-        print(f"    command: {' '.join(fixture['command'].split())[:150]}", file=out)
-        print(f"    result : exit={fixture.get('exit_code')} "
-              f"stdout={_short(fixture.get('stdout', ''))} "
-              f"stderr={_short(fixture.get('stderr', ''))}", file=out)
-        print(f"    signals: {', '.join(verdict.signals) or '(none)'}", file=out)
-        for instruction in verdict.instructions:
-            print(f"      > {instruction}", file=out)
-        if verdict.control:
-            print(f"    control: {verdict.control['command']}", file=out)
-            for line in verdict.control["matched"]:
-                print(f"      + {line}", file=out)
-        for line in control_errors_lines(verdict) + control_skips_lines(verdict):
-            print(f"    {line}", file=out)
-        print("", file=out)
-    print(f"{PROGRAM}: {sum(1 for _, v in results if v.fires)} of {len(results)} "
-          f"fixtures fired", file=out)
-    return results, every_one_fired
-
-
-def _short(text, width=60):
-    one_line = " ".join((text or "").split())
-    if len(one_line) <= width:
-        return repr(one_line)
-    return repr(one_line[:width] + "...")
-
-
-
-def main(argv=None):
+def main(argv=None, stdin=sys.stdin, stdout=sys.stdout, machines=None):
     parser = argparse.ArgumentParser(
         prog=PROGRAM,
-        description="Decide whether a search's empty result is evidence of absence.")
-    parser.add_argument("--command")
-    parser.add_argument("--exit-code", type=int)
-    parser.add_argument("--stdout-file")
-    parser.add_argument("--stderr-file")
-    parser.add_argument("--stderr-not-captured", action="store_true",
-                        help="stderr was not kept as its own stream, so an "
-                             "empty one is no proof the search did not error")
-    parser.add_argument("--run-control", action="store_true")
-    parser.add_argument("--control-corpus-root")
-    parser.add_argument("--replay-fixtures", nargs="?", const="",
-                        metavar="DIR")
-    parser.add_argument("--transcripts", action="append", default=[],
-                        metavar="DIR")
+        description="Say when a search's empty result could not have found anything.")
+    parser.add_argument("--command", help="the command that ran")
+    parser.add_argument("--cwd", help="the directory it ran in; the default is this one")
+    parser.add_argument("--exit-code", type=int, default=0)
+    parser.add_argument("--output-file", help="what the command printed; for a nonzero "
+                                              "exit, stdout and stderr together")
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--transcripts", action="append", default=[], metavar="DIR")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--top", type=int, default=10)
-    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--claude-code-post-tool-use-hook", action="store_true",
+                        help="read a PostToolUse or PostToolUseFailure payload on stdin")
     arguments = parser.parse_args(argv)
 
-    modes = [bool(arguments.command), arguments.replay_fixtures is not None,
-             bool(arguments.transcripts)]
+    modes = [arguments.command is not None, bool(arguments.transcripts),
+             arguments.claude_code_post_tool_use_hook]
     if sum(modes) != 1:
-        print(f"{PROGRAM}: give exactly one of --command, --replay-fixtures, "
-              f"--transcripts", file=sys.stderr)
+        print(f"{PROGRAM}: give exactly one of --command, --transcripts, "
+              f"--claude-code-post-tool-use-hook", file=sys.stderr)
         return EXIT_BAD_INVOCATION
-
+    if arguments.claude_code_post_tool_use_hook:
+        return claude_code_post_tool_use_hook(stdin, stdout, machines)
     if arguments.transcripts:
-        measure_transcripts(arguments.transcripts, limit=arguments.limit,
-                            top=arguments.top)
+        measure_transcripts(arguments.transcripts, arguments.limit, arguments.top, stdout,
+                            machines)
         return EXIT_QUIET
-
-    if arguments.replay_fixtures is not None:
-        directory = arguments.replay_fixtures or default_fixtures_directory()
-        if not pathlib.Path(directory).is_dir():
-            print(f"{PROGRAM}: {directory} is not a directory", file=sys.stderr)
-            return EXIT_BAD_INVOCATION
-        results, every_one_fired = replay_fixtures(
-            directory, run_control=arguments.run_control,
-            checkout_root=arguments.control_corpus_root)
-        if not every_one_fired:
-            return EXIT_FIRED
-        if any(control_errors_lines(verdict) for _, verdict in results):
-            return EXIT_CONTROL_SEARCH_COULD_NOT_RUN
-        return EXIT_QUIET
-
-    stdout = _read_or_empty(arguments.stdout_file)
-    stderr = _read_or_empty(arguments.stderr_file)
-    corpus = None
-    if arguments.run_control:
-        corpus = arguments.control_corpus_root or os.getcwd()
-    verdict = judge_command_result(
-        arguments.command, exit_code=arguments.exit_code, stdout=stdout,
-        stderr=stderr, control_corpus_root=corpus,
-        stderr_was_captured=not arguments.stderr_not_captured)
+    output = ""
+    if arguments.output_file:
+        with open(arguments.output_file, encoding="utf-8", errors="replace") as handle:
+            output = handle.read()
+    try:
+        verdict = judge_command_result(arguments.command, arguments.cwd or os.getcwd(),
+                                       output, arguments.exit_code, machines)
+    except shell_reader.ShellParserUnavailable as error:
+        print(f"{PROGRAM}: could not read the command: {error}", file=sys.stderr)
+        return EXIT_A_CAUSE_COULD_NOT_BE_CHECKED
     if arguments.json:
-        print(json.dumps(verdict.as_dict(), indent=2))
-    elif verdict.fires:
-        print(f"{PROGRAM}: this empty result is not evidence of absence.")
-        for instruction in verdict.instructions:
-            print(instruction)
-    elif control_errors_lines(verdict):
-        for line in control_errors_lines(verdict):
-            print(line)
+        print(json.dumps(verdict.as_dict(), indent=2), file=stdout)
     else:
-        print(f"{PROGRAM}: nothing to report "
-              f"({verdict.reason or 'no signal fired'}).")
-    if not arguments.json:
-        for line in control_skips_lines(verdict):
-            print(line)
+        lines = report_lines(verdict) or [
+            f"{PROGRAM}: nothing to report ({verdict.reason})."]
+        print("\n".join(lines), file=stdout)
     if verdict.fires:
         return EXIT_FIRED
-    if control_errors_lines(verdict):
-        return EXIT_CONTROL_SEARCH_COULD_NOT_RUN
+    if verdict.unchecked:
+        return EXIT_A_CAUSE_COULD_NOT_BE_CHECKED
     return EXIT_QUIET
-
-
-def _read_or_empty(path):
-    if not path:
-        return ""
-    with open(path, encoding="utf-8", errors="replace") as handle:
-        return handle.read()
 
 
 if __name__ == "__main__":
