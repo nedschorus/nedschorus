@@ -438,7 +438,7 @@ def cause_line(program: str, cause_class: str, detail: str) -> str:
 
 
 STRAY_WRITE_CHECK_SKIPPED_PHRASE = "stray writes were not checked for this run"
-STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE = "a failure to look, not a clean result"
+COLD_READ_CELL_STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE = "a failure to look, not a clean result"
 STRAY_WRITE_PHRASE = "files outside its report changed while it ran"
 FELL_BACK_PHRASE = "fell back to"
 
@@ -1109,13 +1109,13 @@ def report_stray_writes(program: str, baseline, own_report_path=None) -> None:
     if baseline is None:
         print(f"{program}: {STRAY_WRITE_CHECK_SKIPPED_PHRASE} — no pre-run "
               f"snapshot of the working tree was taken. This is "
-              f"{STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE}.", file=sys.stderr)
+              f"{COLD_READ_CELL_STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE}.", file=sys.stderr)
         return
     try:
         stray = stray_writes_since(baseline, own_report_path)
     except WriteDetectorUnavailable as error:
         print(f"{program}: {STRAY_WRITE_CHECK_SKIPPED_PHRASE} — git status "
-              f"failed ({error}). This is {STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE}.",
+              f"failed ({error}). This is {COLD_READ_CELL_STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE}.",
               file=sys.stderr)
         return
     if stray:

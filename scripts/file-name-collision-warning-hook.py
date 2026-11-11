@@ -36,7 +36,7 @@ GIT_FAILURE_TEMPLATE = (
     "{path} by running the command printed on its own line below this paragraph. If git's error "
     "above names no lock file, run that "
     "command now. "
-    + next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION + ", "
+    + next_step_lines.GIT_ERROR_NAMES_A_LOCK_FILE_LINE_OPENING_IF_CONDITION_CLAUSE_WITHOUT_ITS_INSTRUCTION_IN_TOOL_MESSAGE_TO_AGENT + ", "
     + next_step_lines.lock_file_named_by_git_error_wait_then_rerun_instruction("the command below this paragraph")
     .replace("{", "{{").replace("}", "}}")
     + ". The command "

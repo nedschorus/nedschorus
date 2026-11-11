@@ -259,7 +259,7 @@ PRAGMA_NO_MUTATE_COMMENT = re.compile(r"\s*#.*pragma: no mutate.*")
 # Each checks one rule across a whole class of the repository's files, so its recording reads
 # nearly every module; the quick mutation pass leaves it out.
 REPOSITORY_WIDE_CHECKS = (
-    "nc-systems/general-tools/tests/common-module-wording-copied-into-other-test-files-guard-for-each-wording-module-test.py",
+    "nc-systems/general-tools/tests/common-module-wording-copied-into-other-test-files-scan-of-every-tracked-test-file-fails-on-any-copy-test.py",
     "scripts/code-comments-carry-no-history-markers-test.py",
     "scripts/edited-file-path-within-checkout-root-and-git-check-ignore-defined-once-test.py",
     "scripts/every-repository-program-help-option-test.py",

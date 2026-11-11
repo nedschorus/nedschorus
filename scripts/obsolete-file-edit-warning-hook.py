@@ -674,7 +674,7 @@ def main() -> int:
             GIT_FAILURE_CAUSE_LINE.format(failure=failure),
             GIT_FAILURE_TOOL_MESSAGE_TO_AGENT_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW.format(
                 path=file_path, rerun=rerun,
-                lock_file_condition=freshness.next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION,
+                lock_file_condition=freshness.next_step_lines.GIT_ERROR_NAMES_A_LOCK_FILE_LINE_OPENING_IF_CONDITION_CLAUSE_WITHOUT_ITS_INSTRUCTION_IN_TOOL_MESSAGE_TO_AGENT,
                 wait_for_lock_file=freshness.next_step_lines
                 .lock_file_named_by_git_error_wait_then_rerun_instruction("the command below this paragraph")),
             freshness.next_step_lines

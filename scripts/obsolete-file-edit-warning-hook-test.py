@@ -132,7 +132,7 @@ GIT_FAILURE_RERUN_LINE = (
     "A later run of this hook checks only the file that run's Edit or Write touched, so check "
     "{path} by running the command printed on its own line below this paragraph. If git's error above names no lock file, run that "
     "command now. "
-    + next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION + ", "
+    + next_step_lines.GIT_ERROR_NAMES_A_LOCK_FILE_LINE_OPENING_IF_CONDITION_CLAUSE_WITHOUT_ITS_INSTRUCTION_IN_TOOL_MESSAGE_TO_AGENT + ", "
     + LOCK_FILE_WAIT_CLAUSE.replace("{", "{{").replace("}", "}}")
     + ". The command "
     "prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
@@ -633,7 +633,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     rerun_line = (agent_text(result).splitlines() + ["", ""])[1]
     check("a git failure's rerun line says to run the command now when git names no lock file, "
           "and gives the lock-file wait otherwise",
-          "names no lock file, run that command now. " + next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION
+          "names no lock file, run that command now. " + next_step_lines.GIT_ERROR_NAMES_A_LOCK_FILE_LINE_OPENING_IF_CONDITION_CLAUSE_WITHOUT_ITS_INSTRUCTION_IN_TOOL_MESSAGE_TO_AGENT
           + ", " + LOCK_FILE_WAIT_CLAUSE + "." in rerun_line, rerun_line)
     check("a git failure's rerun line says what the command prints when git fails again "
           "and points to the closing line",
