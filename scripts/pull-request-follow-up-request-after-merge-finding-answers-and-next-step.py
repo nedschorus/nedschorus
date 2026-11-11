@@ -83,7 +83,9 @@ recorded worktree with git worktree remove, unless the agent harness still
 locks it (a lock reason starting HARNESS_LOCK_REASON_START), something else
 locks it, or it holds changed or untracked files; then delete each recorded
 topic branch whose commits are all on a remote-tracking branch of origin.
-Each worktree or branch left in place is printed with what the author should
+Every git command after the worktree list runs in the main worktree, the
+first git worktree list names, so the step works from any worktree of the
+checkout, one it removes included. Each worktree or branch left in place is printed with what the author should
 do, and the exit code is 1.
 
 print-follow-up-request-block-from-merge-lane-2-reviews, run by merge-lane-2 after the merge: read every
@@ -842,8 +844,10 @@ def remove_topic_branches_and_worktrees(number):
               "nothing.")
         return 0
     again = command(number, "remove-topic-branches-and-worktrees")
-    worktrees = {worktree.path.rstrip("/"): worktree for worktree in git_output.worktree_records(
-        git(".", ["worktree", "list", "--porcelain", "-z"]))}
+    listed_worktrees = git_output.worktree_records(git(".", ["worktree", "list", "--porcelain", "-z"]))
+    # The worktree this program runs in may be one it removes; git run there after the removal fails at os.getcwd.
+    main_worktree = listed_worktrees[0].path
+    worktrees = {worktree.path.rstrip("/"): worktree for worktree in listed_worktrees}
     left_paths, left = set(), []
     for path in dict.fromkeys(record["worktree"] for record in records):
         worktree = worktrees.get(path.rstrip("/"))
@@ -883,7 +887,7 @@ def remove_topic_branches_and_worktrees(number):
                             "SendMessage.\n"
                             f"Then run: git worktree remove --force {path}")
             else:
-                git(".", ["worktree", "remove", path])
+                git(main_worktree, ["worktree", "remove", path])
                 print(f"Removed worktree {path}.")
                 continue
         left_paths.add(path)
@@ -891,18 +895,18 @@ def remove_topic_branches_and_worktrees(number):
         branch = record["branch"]
         if record["worktree"] in left_paths:
             continue
-        if not git(".", ["rev-parse", "--verify", "--quiet", "refs/heads/" + branch],
+        if not git(main_worktree, ["rev-parse", "--verify", "--quiet", "refs/heads/" + branch],
                    accepted_exit_codes=(0, 1)).strip():
             continue
-        if not git(".", ["for-each-ref", "--contains", "refs/heads/" + branch, "refs/remotes/origin/"]).strip():
-            commits = git(".", ["log", "--oneline", "refs/heads/" + branch, "--not", "--remotes=origin"]).rstrip("\n")
+        if not git(main_worktree, ["for-each-ref", "--contains", "refs/heads/" + branch, "refs/remotes/origin/"]).strip():
+            commits = git(main_worktree, ["log", "--oneline", "refs/heads/" + branch, "--not", "--remotes=origin"]).rstrip("\n")
             left.append(f"Branch {branch} holds commits on no branch of origin, so remove-topic-branches-and-worktrees left it:\n"
                         f"{commits}\n"
                         f"Read them with git log -p {branch} --not --remotes=origin, copy out any that is work to keep, "
                         "and tell merge-lane-2 about it with SendMessage.\n"
                         f"Then run: git branch -D {branch}")
             continue
-        git(".", ["branch", "-D", branch])
+        git(main_worktree, ["branch", "-D", branch])
         print(f"Deleted branch {branch}.")
     if left:
         print("\n".join(left))

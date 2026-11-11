@@ -4,7 +4,7 @@
 Each case runs the program in a scratch clone of a scratch bare origin, with the follow-up request
 saved by the program's own save_follow_up_request_and_clear_answers_when_its_findings_changed(), as the hook saves it.
 next-step, start, open, record-finding-leave-out-reason and finish run in a second worktree of the clone, as the forked subagent
-runs them; remove-topic-branches-and-worktrees runs in the clone, as the author runs it. A fake gh first on PATH stands in for
+runs them; remove-topic-branches-and-worktrees runs in the clone, as the author runs it, and once in a worktree it removes. A fake gh first on PATH stands in for
 GitHub; a pre-push hook in the clone injects a refused push.
 
 Run: python3 scripts/pull-request-follow-up-request-after-merge-finding-answers-and-next-step-test.py
@@ -1127,6 +1127,37 @@ def test_clean_up_failure():
         case.close()
 
 
+def test_clean_up_run_from_inside_a_worktree_it_removes():
+    case = Case()
+    try:
+        command = "remove-topic-branches-and-worktrees"
+        # Recorded first, so the worktree the program runs in is removed before the other one.
+        worktree = started(case)
+        other = case.subagent_worktree("worktree-other")
+        code, _, err = case.run(other, "start-topic-branch", "branch-other", "--finding-numbers", "2")
+        assert code == 0, err
+        case.worktree = worktree
+        case.commit_change()
+        git(worktree, "push", "-q", "origin", "topic-one")
+        code, _, err = case.run(worktree, "start-topic-branch", "topic-unpushed", "--finding-numbers", "1")
+        assert code == 0, err
+        case.commit_change("unpushed.txt")
+        git(worktree, "switch", "-q", "topic-one")
+        code, out, err = case.run(worktree, command)
+        branches = git(case.repository, "branch")
+        check("remove-topic-branches-and-worktrees run from inside a worktree it removes removes the other worktree "
+              "after it, deletes the pushed branch and names the unpushed one's commits",
+              code == 1 and "Traceback" not in err and not worktree.exists() and not other.exists()
+              and f"Removed worktree {worktree}." in out and f"Removed worktree {other}." in out
+              and "Deleted branch topic-one." in out and "topic-one" not in branches
+              and "Deleted branch branch-other." in out and "branch-other" not in branches
+              and "Branch topic-unpushed holds commits on no branch of origin" in out
+              and len(out.split("left it:\n")[1].split("\nRead them")[0].splitlines()) == 1
+              and "topic-unpushed" in branches, out + err)
+    finally:
+        case.close()
+
+
 def judge_text(*findings, decisions=None):
     lines = BLOCK.splitlines()
     decisions = decisions or {}
@@ -1488,7 +1519,7 @@ for test in (test_help, test_block_parsing, test_print_block, test_print_block_w
              test_open_title_and_description_file_removal_failure,
              test_leave_out_and_finish, test_three_findings, test_waiting_for_user_ruling,
              test_state_failures, test_clean_up, test_clean_up_goes_on_past_each_worktree_and_branch,
-             test_clean_up_failure, test_next_step, test_next_step_branch_choice):
+             test_clean_up_failure, test_clean_up_run_from_inside_a_worktree_it_removes, test_next_step, test_next_step_branch_choice):
     test()
 
 print(f"FAILED: {len(failures)} failed" if failures else "PASSED: 0 failed")
