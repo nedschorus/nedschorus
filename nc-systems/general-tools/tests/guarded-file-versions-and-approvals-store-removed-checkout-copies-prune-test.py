@@ -460,8 +460,9 @@ def test_git_failure_fails():
         check("and keeps that checkout's copy", copy.exists())
         check("and goes on to the end", "1 failures" in result.stdout, result.stdout)
         check("and the summary points to the failures after this run's start line",
-              f"1 failures, each named on stderr after the line "
-              f"'{result.stdout.splitlines()[0]}'" in result.stdout, result.stdout)
+              f"1 failures, each named on stderr; in a log that holds both stdout and stderr, "
+              f"they come after the line '{result.stdout.splitlines()[0]}'" in result.stdout,
+              result.stdout)
         check("the other checkout is still pruned, and named", not other.exists()
               and f"deleting {other}\n" in result.stdout,
               result.stdout)
@@ -676,7 +677,7 @@ def test_stop_message_points_past_earlier_runs_in_the_log():
         stop = [line for line in lines if " stopped: " in line]
         quoted = [start for start in starts if stop and f"after the line '{start}'" in stop[-1]]
         check("the stop message names the stopped run's own start line",
-              quoted == starts[1:], (stop, starts))
+              len(starts) == 2 and quoted == starts[1:], (stop, starts))
         after = lines[lines.index(quoted[0]) + 1:] if quoted else []
         check("and the lines after that start line name this run's deletion and not the "
               "earlier run's", f"deleting {later}" in after and f"deleting {earlier}" not in after,
