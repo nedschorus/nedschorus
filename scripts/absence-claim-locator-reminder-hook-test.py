@@ -303,6 +303,14 @@ for case_name, text in [
     ("pattern 6: that means draws a conclusion", "That means the transcript is not in the repository."),
     ("pattern 4: the search, with a first-person subject", "I cannot find the transcript after the search failed."),
     ("pattern 4: a pronoun subject with a first-person clause", "I checked, and it can't find the transcript."),
+    ("pattern 2: an artifact word heads the subject, an edited-element word is its object",
+     "The transcript for the log parser is gone."),
+    ("pattern 2: an edited-element word in a relative clause after the artifact",
+     "The file that the link points to is gone."),
+    ("pattern 6: means with no colon after it", "This failure means the transcript is not in the repository."),
+    ("pattern 6: uses in an earlier clause", "The hook uses a cache, but the transcript is not in the repository."),
+    ("pattern 6: uses after the colon", "Result: the hook uses a cache, but the transcript is not in the repository."),
+    ("pattern 4: a search tool named before the claim's own subject", "I asked the locator, and I cannot find the transcript."),
 ]:
     check(f"trigger: {case_name}", bool(hook.absence_claim_matches(text)), text)
 
@@ -342,6 +350,13 @@ for case_name, text in [
      "- The advice to give the backup search a path for the Mac's local snapshots is gone."),
     ("checks on an artifact", "- TR1's checks on `scripts/x.py` are gone;"),
     ("a removed code element heads the clause", "The file's format is gone."),
+    ("a removed code element heads the subject, a modifier follows", "The log format used here is gone."),
+    ("a removed code element heads the subject, a prepositional phrase follows", "The file lock from the old implementation is gone."),
+    ("a removed code element heads the subject, its artifact possessive", "The report's checks for this step are gone."),
+    ("a removed code element before a relative clause", "- In `x-test.py`, the case that refused resume plus adoption is gone."),
+    ("a search tool as the subject after a first-person clause", "As I said, the locator cannot find branch names."),
+    ("a search tool as the subject after a first-person verb", "We know grep and glob don't find branch names."),
+    ("a search tool as the subject of a why clause", "My notes explain why keyword search cannot find files by modification time."),
     ("pattern 13 on an edited element, read as pattern 2", "The file parser does not exist."),
     ("pattern 13 in a sentence that says where the agent looked",
      "The report says only where I looked, not that it does not exist."),
