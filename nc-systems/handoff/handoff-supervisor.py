@@ -148,6 +148,8 @@ from typing import Optional
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIRECTORY = REPOSITORY_ROOT / "scripts"
+# The launchers are not on the Mac's PATH, so a command for the user to type there names them by path.
+MAC_CHECKOUT_SCRIPTS_DIRECTORY = "/Users/el/Projects/nedschorus/scripts"
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
     "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
@@ -705,8 +707,8 @@ def ask_user_before_restart_with_no_terminal_stopping_message(agent_seat: str, h
             "before restarting, and this handoff-supervisor has no terminal to ask on, so it "
             f"stopped {agent_seat} without restarting it.\n"
             "To start it again, run its launcher from the Mac: "
-            f"`launch-claude-ubuntu {agent_seat}` for an agent-seat on ned-box, "
-            f"`launch-claude-mac {agent_seat}` for one on the Mac. The new session is not given "
+            f"`{MAC_CHECKOUT_SCRIPTS_DIRECTORY}/launch-claude-ubuntu {agent_seat}` for an agent-seat on ned-box, "
+            f"`{MAC_CHECKOUT_SCRIPTS_DIRECTORY}/launch-claude-mac {agent_seat}` for one on the Mac. The new session is not given "
             f"the session-handoff's next step, which stays in {handoff_path}.")
 
 
