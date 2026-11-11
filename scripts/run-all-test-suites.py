@@ -387,15 +387,22 @@ which the floor covers; no pass exceeded this limit measured from the suite's
 fastest pass. 1800 s is six times the longest pass seen. A suite past its limit
 has its process group killed with SIGKILL; each suite starts in a session of
 its own, so the group holds every process it started except one that starts a
-session of its own. In an nc-test-sandbox the group holds the init of the suite's
-PID namespace, whose end ends every process inside, so nothing is left; outside
-one, such a process is not reached. A suite outside an nc-test-sandbox runs
-with TMPDIR set to a directory of its own in the system temp directory, which
-the runner removes once the suite has ended, however it ended, so what a
-killed suite made through TMPDIR is not left behind; when that removal fails,
-the suite's line is followed by one naming the directory and the command that
-removes it. A runner killed with SIGKILL leaves that directory; a later run
-that uses the default --lock-file removes it once nothing in it has changed for
+session or process group of its own. In an nc-test-sandbox the group holds the init of the suite's
+PID namespace, whose end ends every process inside, so nothing is left. The
+runner also reads the tree of processes below the suite from /proc just before
+the kill and sends SIGKILL to each, so outside an nc-test-sandbox such a process
+is reached too, unless its parent ended before the kill, which leaves it outside
+the tree, or it started after the tree was read; the runner then waits up to
+TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS, 10, for each of them to end.
+A suite outside an nc-test-sandbox runs with TMPDIR set to a directory of its
+own in the system temp directory, which the runner removes once the suite has
+ended, however it ended, so what a killed suite made through TMPDIR is not
+left behind; when that removal fails, the suite's line is followed by one
+naming the directory and the command that removes it. When a process the kill
+reached still runs after that wait, the directory is kept for it, and the
+suite's line is followed by one naming the processes, the directory and the
+command that removes it. A runner killed with SIGKILL leaves that directory; a
+later run that uses the default --lock-file removes it once nothing in it has changed for
 two days, on every platform. It is reported FAIL with `TIMEOUT after
 <n>s (limit <m>s, <k> times recorded <r>s)`, `(limit <m>s, the floor, more than
 <k> times recorded <r>s)` or `(limit <m>s from no passing recording)`; its
@@ -931,6 +938,9 @@ FIRST_REPORT_LINE_LOG_DIRECTORY_MARK = "; logs in "
 TEST_CASE_LINE = re.compile(r"^\s*(?P<verdict>PASS|FAIL|ok)\b:?\s*(?P<text>.*)$")
 # A process a suite run without any sandbox leaves running can hold its output open.
 TEST_SUITE_OUTPUT_DRAIN_SECONDS = 10
+# A process sent SIGKILL ends within milliseconds unless it waits in the kernel, as on a
+# hung network file system.
+TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS = 10
 # A suite's time limit is the larger of the floor and the multiple of its last passing
 # run's seconds; see PER-SUITE TIMEOUT in the docstring for why these numbers.
 TEST_SUITE_TIMEOUT_FLOOR_SECONDS = 600
@@ -3012,11 +3022,13 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
 
     time_limit is (limit seconds, recorded seconds or None) from
     suite_timeout_and_the_recorded_seconds_it_came_from(); a suite still running at its limit
-    has its process group killed, and its result carries "timeout". Once run_stops,
+    is killed by kill_test_suite_process_group_and_descendants(), and its result carries
+    "timeout". Once run_stops,
     a list naming what stopped the run, is not empty, the suite is killed the same way,
     and its result carries "stopped by". A suite outside an nc-test-sandbox gets TMPDIR set to
     a directory of its own, removed once the suite has ended; a removal that fails is named,
-    with its command, in the result's "output_note".
+    with its command, in the result's "output_note", as is a killed process still running,
+    for which the directory is kept.
 
     With in_cgroup_scope, the suite runs in a cgroup scope of its own and its CPU seconds
     and peak memory are read from there; with nice, at low priority. Inside its
@@ -3101,6 +3113,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
     started = time.monotonic()
     copier = None
     timed_out = stopped_by = None
+    killed_but_running = []
     try:
         log = open_for_writing_without_following_symlinks(log_file, binary=True)
         try:
@@ -3144,7 +3157,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                 timed_out = time_limit
             else:
                 continue
-            kill_test_suite_process_group(process)
+            killed_but_running = kill_test_suite_process_group_and_descendants(process)
             exit_code = process.wait()
             break
         seconds = time.monotonic() - started
@@ -3160,8 +3173,20 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         # Closed only after bwrap exits: bwrap writes its exit status to this pipe last.
         if status_read is not None:
             status_read.close()
+        # Kept for processes still running, which would otherwise lose their files mid-run.
         temporary_directory_left = (None if suite_temporary_directory is None
+                                    or killed_but_running
                                     else remove_tree_or_say_why(suite_temporary_directory))
+    if killed_but_running:
+        output_note = "; ".join(filter(None, (
+            output_note,
+            f"{len(killed_but_running)} process(es) the suite started, pid(s) "
+            f"{', '.join(str(pid) for pid, _ in killed_but_running)}, still ran "
+            f"{TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS} s after they were sent SIGKILL"
+            + ("" if suite_temporary_directory is None else
+               f", so the temporary directory the suite was given, {suite_temporary_directory}, "
+               f"is kept for them; once they have ended, remove it with "
+               f"`rm -rf {shlex.quote(suite_temporary_directory)}`"))))
     if temporary_directory_left is not None:
         output_note = "; ".join(filter(None, (
             output_note,
@@ -3215,16 +3240,58 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
     return result
 
 
-def kill_test_suite_process_group(process):
-    """SIGKILL the suite's process group, which every process it started stays in unless
-    it starts a session of its own.
+def descendant_processes_with_start_ticks(pid, proc=Path("/proc")):
+    """Each running descendant of pid as (pid, start ticks), read from /proc/<pid>/task/*/children.
 
-    In an nc-test-sandbox the group holds the init of the suite's PID namespace, since bwrap
-    is not given --new-session, and the init's end ends every process in the namespace.
-    Called before the suite's first process is reaped, so its process group id is still
-    its own."""
+    A process that ends while the tree is read is left out. Where there is no /proc, as on
+    macOS, the list is empty."""
+    found = []
+    parents = [pid]
+    while parents:
+        parent = parents.pop()
+        for children_file in sorted((proc / str(parent) / "task").glob("*/children")):
+            try:
+                children = children_file.read_text().split()
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+            for child in map(int, children):
+                start_ticks = process_start_ticks(child, proc)
+                if start_ticks is not None:
+                    found.append((child, start_ticks))
+                    parents.append(child)
+    return found
+
+
+def kill_test_suite_process_group_and_descendants(process, proc=Path("/proc"), kill=os.kill,
+                                                  killpg=os.killpg, clock=time.monotonic,
+                                                  sleep=time.sleep):
+    """SIGKILL the suite's process group and every process below the suite, wait up to
+    TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS for those to end, and return the
+    (pid, start ticks) of each still running.
+
+    Every process the suite started stays in its group unless it starts a session or
+    process group of its own; such a process is reached through the tree of processes,
+    read before the kill. In an nc-test-sandbox the group also holds the init of the
+    suite's PID namespace, since bwrap is not given --new-session, and the init's end ends
+    every process in the namespace. Outside one, a process in a session or process group
+    of its own is not reached when its parent ended before the kill, so that it no longer
+    stands below the suite, or when it starts after the tree is read. Called before the
+    suite's first process is reaped, so its process group id is still its own."""
+    descendants = descendant_processes_with_start_ticks(process.pid, proc)
     with contextlib.suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGKILL)
+        killpg(process.pid, signal.SIGKILL)
+    for pid, start_ticks in descendants:
+        # The start time, so a pid another process took since the tree was read is not hit.
+        if process_alive(pid, start_ticks, proc):
+            with contextlib.suppress(ProcessLookupError):
+                kill(pid, signal.SIGKILL)
+    deadline = clock() + TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS
+    while True:
+        running = [(pid, start_ticks) for pid, start_ticks in descendants
+                   if process_alive(pid, start_ticks, proc)]
+        if not running or clock() >= deadline:
+            return running
+        sleep(0.05)
 
 
 def unescaped_strace_string(text):
@@ -4348,11 +4415,13 @@ def main(argv=None, platform=None):
         if run_stop_signals and (len(results) < len(chosen)
                                  or any(result.get("stopped by") for result in results)):
             report.line(f"{PROGRAM}: not run to the end — stopped by {run_stop_signals[0]}. "
-                        f"The process group of every suite still running was killed, which "
-                        f"in an nc-test-sandbox ends every process the suite started; outside "
-                        f"one, a process a suite started in a session of its own is not "
-                        f"reached and may still be running. The suites not yet started "
-                        f"were not run.")
+                        f"The process group of every suite still running was killed, and "
+                        f"every process below the suite, which in an nc-test-sandbox ends "
+                        f"every process the suite started; outside one, a process a suite "
+                        f"started in a session or process group of its own is not reached, and "
+                        f"may still be running, when its parent had ended before the kill or "
+                        f"it started as the kill began. The suites not yet started were not "
+                        f"run.")
             report.close()
             if run_record is not None:
                 run_record.finish()
