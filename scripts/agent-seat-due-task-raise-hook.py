@@ -151,13 +151,13 @@ the last thing the child says, which its caller reads as the answer. The
 hook stays silent when
 nc-systems/general-tools/agent-session-unattended-by-user-check-common.py
 says no user attends the agent-session; the Stop payload carries no field
-that tells the two apart.
+that tells an attended agent-session from a headless child.
 
 The project's own headless Claude callers run no project hook at all: the
 cold-read Claude cell, and the restater-judge cell through it, pass
 `--settings` with disableAllHooks; scripts/ghi-guide-agent-ask.py and
-scripts/sanity-check-adversarial-prompts.py pass `--setting-sources user`. The two
-signals cover a child started any other way.
+scripts/sanity-check-adversarial-prompts.py pass `--setting-sources user`. The attendance
+check covers a child started any other way.
 """
 
 import importlib.util
