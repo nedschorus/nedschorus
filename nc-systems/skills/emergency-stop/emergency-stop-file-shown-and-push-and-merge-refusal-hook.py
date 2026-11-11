@@ -15,13 +15,20 @@ What it shows:
   every push and merge is refused.
 - Log-store unreachable, as on a Mac whose mount of ned-box is gone:
   "emergency-stop state unknown" once per agent-session, and work continues.
-- Lifted: one line saying so, once per agent-session for each stop file.
+- Lifted: a note saying so and that held-back work resumes, once per
+  agent-session for each stop file.
 - No stop: nothing.
 
-The refusal matches `git push` and `gh pr merge` in a Bash call, read by
+The refusal matches `git push`, `gh pr merge` with -R or --repo anywhere
+before `merge`, and `gh api` with method PUT on a `pulls/<number>/merge` path,
+in a Bash call, read by
 nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py, also
 inside a `bash -c` string; a command the reader cannot read is refused too; a
-push made inside another program, or by a scheduled job, is not refused. The agent-seat is GIT_AUTHOR_NAME, which the
+push made inside another program, or by a scheduled job, is not refused.
+
+The rules the hook shows hold, word for word, the first four rules of the
+section "While a stop is in force" of .claude/skills/emergency-stop/SKILL.md;
+the hook's test fails when the two drift apart. The agent-seat is GIT_AUTHOR_NAME, which the
 launchers export; an agent-session without it is never the coordinating one.
 
 The once-per-agent-session record is a JSON file per session_id under the
@@ -53,28 +60,45 @@ MAX_FILE_CHARACTERS = 4000
 NOTE_RECORD_DIRECTORY_NAME = "nedschorus-emergency-stop-hook-notes"
 SESSION_ID_SAFE_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}")
 GIT_OPTIONS_TAKING_A_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
+GH_OPTIONS_TAKING_A_VALUE = {"-R", "--repo"}
+GH_API_METHOD_OPTIONS = {"-X", "--method"}
+GH_API_PULL_REQUEST_MERGE_PATH = re.compile(r"(^|/)pulls/[^/]+/merge/?$")
 PROGRAM_PATH = "nc-systems/skills/emergency-stop/emergency-stop-file-write-start-append-and-stop-lift.py"
 
 RULES = """EMERGENCY STOP in force: {path}
+The coordinating agent-seat is {coordinating}; it carries on with the repair.
 Every agent-seat follows these rules until the user lifts the emergency stop:
-- Finish the tool call you are in, then do no more work until the coordinating agent-seat ({coordinating}) or the user gives you work.
+- Unless you are the coordinating agent-seat, finish the tool call you are in, then do no more work until the coordinating agent-seat or the user gives you work.
 - If your own running work is what is losing or damaging work, kill your own background tasks now.
 - Push and merge nothing unless you are the coordinating agent-seat; this hook refuses `git push` and `gh pr merge` from every other agent-seat.
-- Ask the user nothing outside the repair and show no approval-walk item; an open approval-walk resumes at its `#next_to_present` item after the lift.
-- When the user tells you to lift the emergency stop, run: python3 {program} lift --words '<his words>'"""
+- Ask the user nothing outside the repair, and show no approval-walk item; an open approval-walk resumes at its `#next_to_present` item after the lift.
+- When the user tells you to lift the emergency stop, run the four lines below, with his words unchanged in place of the second line. When the command prints no line opening FAILED, re-enable the schedule, without running the job now, of every scheduled job the repair brief lists as paused, as "Lifting a stop" in .claude/skills/emergency-stop/SKILL.md says.
+python3 {program} lift --words="$(cat <<'WORDS'
+<his words>
+WORDS
+)\""""
 
 FILE_HEADING = "The emergency-stop file:"
-UNREADABLE_LINE = "The emergency-stop file {path} cannot be read: {error}. It is treated as an emergency stop in force."
+UNREADABLE_LINE = ("The emergency-stop file {path} cannot be read: {error}. It is treated as an emergency stop "
+                   "in force. Tell the user its path and this error; only he repairs or moves that file.")
 UNKNOWN_NOTE = ("emergency-stop state unknown: ned-box's log-store cannot be read ({error}). "
-                "Work continues; this note is shown once per agent-session.")
-LIFTED_NOTE = "The emergency stop {path} was lifted: {lift_line}"
+                "This hook refuses nothing while it cannot read the log-store, so carry on with your work, "
+                "and tell the user that this machine cannot reach ned-box's log-store. "
+                "This note is shown once per agent-session.")
+LIFTED_NOTE = ("The emergency stop {path} was lifted: {lift_line}\n"
+               "Its rules no longer apply: resume the work you held back, and push and merge as usual.")
 REFUSAL = ("Refused: an emergency stop is in force ({path}), and during it only the coordinating "
            "agent-seat ({coordinating}) pushes or merges; this agent-seat is {agent_seat}.\n"
-           "Leave the work committed locally; pushing resumes after the user lifts the emergency stop.\n"
-           "If the repair needs this push or merge, ask the coordinating agent-seat to make it.")
+           "Leave the work committed locally; pushing and merging resume after the user lifts the emergency stop.\n"
+           "If the repair needs this push or merge, commit it on a branch and send the coordinating agent-seat "
+           "the branch's name by SendMessage; it pushes and merges it. When no coordinating agent-seat is named, "
+           "tell the user instead.")
 UNREAD_COMMAND_LINE = "\nThe command could not be read, so it is refused in case it pushes or merges: {error}"
 FAILURE_NOTE = ("The emergency-stop hook failed, so whether an emergency stop is in force is unknown: "
-                "{error!r}. Check with: python3 {program} status")
+                "{error!r}. {what} went ahead without the hook's check.\n"
+                "Before you push or merge, run: python3 {program} status\n"
+                "If it prints InForce or Unreadable, follow .claude/skills/emergency-stop/SKILL.md.")
+WHAT_WENT_AHEAD = {"PreToolUse": "This tool call", "UserPromptSubmit": "This prompt"}
 
 
 def bash_command_pushes_or_merges(command):
@@ -90,7 +114,7 @@ def bash_command_pushes_or_merges(command):
         inner = shell_reader.shell_command_string(arguments) if Path(program).name in ("bash", "sh", "zsh") else None
         if inner is not None and bash_command_pushes_or_merges(inner):
             return True
-        if shell_reader.is_program(program, "gh") and arguments[:2] == ["pr", "merge"]:
+        if shell_reader.is_program(program, "gh") and gh_arguments_merge_a_pull_request(arguments):
             return True
         if shell_reader.is_program(program, "git"):
             position = 0
@@ -99,6 +123,40 @@ def bash_command_pushes_or_merges(command):
             if position < len(arguments) and arguments[position] == "push":
                 return True
     return False
+
+
+def gh_words_without_repository_options(arguments):
+    """arguments with every -R/--repo option and its value removed."""
+    words, position = [], 0
+    while position < len(arguments):
+        word = arguments[position]
+        if word in GH_OPTIONS_TAKING_A_VALUE:
+            position += 2
+            continue
+        if not (word.startswith("--repo=") or (word.startswith("-R") and len(word) > 2)):
+            words.append(word)
+        position += 1
+    return words
+
+
+def gh_arguments_merge_a_pull_request(arguments):
+    """Whether gh's arguments are `pr merge`, with -R or --repo anywhere, or a PUT to the REST merge endpoint."""
+    words = gh_words_without_repository_options(arguments)
+    if words[:2] == ["pr", "merge"]:
+        return True
+    if words[:1] != ["api"]:
+        return False
+    method, merge_path = None, False
+    for index, word in enumerate(words[1:], start=1):
+        if word in GH_API_METHOD_OPTIONS and index + 1 < len(words):
+            method = words[index + 1]
+        elif word.startswith("--method="):
+            method = word[len("--method="):]
+        elif word.startswith("-X") and len(word) > 2:
+            method = word[2:]
+        elif GH_API_PULL_REQUEST_MERGE_PATH.search(word):
+            merge_path = True
+    return merge_path and (method or "").upper() == "PUT"
 
 
 def note_record_path(session_id):
@@ -179,7 +237,9 @@ def main():
         output = output_for(payload, os.environ)
     except Exception as error:
         event = payload.get("hook_event_name") if isinstance(payload, dict) else None
-        print(context_output(event or "UserPromptSubmit", FAILURE_NOTE.format(error=error, program=PROGRAM_PATH)))
+        event = event if event in WHAT_WENT_AHEAD else "UserPromptSubmit"
+        print(context_output(event, FAILURE_NOTE.format(error=error, what=WHAT_WENT_AHEAD[event],
+                                                         program=PROGRAM_PATH)))
         return 0
     if output is not None:
         print(output)
