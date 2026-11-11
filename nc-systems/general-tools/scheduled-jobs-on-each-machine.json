@@ -109,14 +109,14 @@
       }
     },
     {
-      "name": "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check",
-      "program": "nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py",
+      "name": "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner",
+      "program": "nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py",
       "arguments": [],
-      "output": ".claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log",
+      "output": ".claude/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.log",
       "on": {
         "mac": {
           "scheduler": "launchd",
-          "label": "com.nedschorus.weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check",
+          "label": "com.nedschorus.uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner",
           "launchd_keys": {"StartCalendarInterval": {"Weekday": 0, "Hour": 4, "Minute": 30}}
         },
         "ned-box": {"scheduler": "cron", "schedule": "30 4 * * 0"}

@@ -107,25 +107,25 @@ MAC_CLEAN_PLIST = {
     "StandardOutPath": "/Users/el/.claude/clean-worktrees.log",
     "StandardErrorPath": "/Users/el/.claude/clean-worktrees.log",
 }
-# The weekly owner check of the work-snapshot hook in a real claude session, added after the daily jobs.
-NED_BOX_WEEKLY_LIVE_CHECK_LINE = (
+# The scheduled owner check of the work-snapshot hook in a real claude session, added after the daily jobs.
+NED_BOX_OWNER_CHECK_LINE = (
     "30 4 * * 0 /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
-    "uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py >> "
-    "/home/nedlern/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log "
+    "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py >> "
+    "/home/nedlern/.claude/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.log "
     "2>&1")
-MAC_WEEKLY_LIVE_CHECK_PLIST = {
-    "Label": "com.nedschorus.weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check",
+MAC_OWNER_CHECK_PLIST = {
+    "Label": "com.nedschorus.uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner",
     "ProgramArguments": ["/opt/homebrew/bin/python3",
                          "/Users/el/Projects/nedschorus/nc-systems/handoff/"
-                         "uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py"],
+                         "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py"],
     "EnvironmentVariables": {
         "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
                 "/usr/sbin:/sbin"},
     "StartCalendarInterval": {"Weekday": 0, "Hour": 4, "Minute": 30},
     "StandardOutPath":
-        "/Users/el/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log",
+        "/Users/el/.claude/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.log",
     "StandardErrorPath":
-        "/Users/el/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log",
+        "/Users/el/.claude/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.log",
 }
 MAC_REMOTE_CONTROL_RECONNECT_WATCHER_LINE = (
     "* * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedschorus/nc-systems/handoff/"
@@ -295,7 +295,7 @@ check("the Mac's worktree cleanup is a launchd job at 06:30, so a run missed whi
       and list(mac_clean_plist) == list(MAC_CLEAN_PLIST), mac_clean_plist)
 check("the table's jobs are the two typed by hand before this program, the worktree "
       "cleanup, ned-box's crash restart watcher, ned-box's agent-seat idle sweep, ned-box's Remote Control reconnect watcher, the "
-      "weekly owner check of the work-snapshot hook, the session dialogs refresh, the "
+      "scheduled owner check of the work-snapshot hook, the session dialogs refresh, the "
       "guarded-file store's prune, the nc-shared-database's backup and its copy to the "
       "Mac, the deletion of exited agent-sessions' temp folders, the scheduled full "
       "mutation pass, the no-sandbox test suites' run on main, and no other",
@@ -316,7 +316,7 @@ check("the table's jobs are the two typed by hand before this program, the workt
                             "tasks-open",
                             "scheduled-full-test-run-of-main",
                             "transcript-mirror-to-log-store",
-                            "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"],
+                            "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner"],
       sorted(real_jobs))
 watcher = real_jobs["handoff-agent-crash-watcher"]
 check("the crash restart watcher runs on ned-box only, every minute",
@@ -374,8 +374,8 @@ check("the no-sandbox test suites' run on main runs on ned-box alone, every 10 m
       and "nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py"
       in (REPOSITORY_ROOT / no_sandbox_suites["program"]).read_text(encoding="utf-8"),
       installer.cron_line(ned_box, no_sandbox_suites, no_sandbox_suites["on"]["ned-box"]))
-weekly_live_check_documentation = (
-    REPOSITORY_ROOT / real_jobs["weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"]
+owner_check_documentation = (
+    REPOSITORY_ROOT / real_jobs["uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner"]
     ["program"]).read_text(encoding="utf-8")
 nc_shared_database_backup_documentation = (
     REPOSITORY_ROOT / real_jobs["nc-shared-database-nightly-backup-with-integrity-check"]
@@ -391,7 +391,7 @@ check("the lines each program documents are the table's lines, and each names th
       and f"    {NED_BOX_CRASH_RESTART_WATCHER_LINE}\n" in watcher_documentation
       and f"    {NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE}\n" in remote_control_watcher_documentation
       and f"    {MAC_REMOTE_CONTROL_RECONNECT_WATCHER_LINE}\n" in remote_control_watcher_documentation
-      and f"    {NED_BOX_WEEKLY_LIVE_CHECK_LINE}\n" in weekly_live_check_documentation
+      and f"    {NED_BOX_OWNER_CHECK_LINE}\n" in owner_check_documentation
       and f"    {NED_BOX_GUARDED_FILE_PRUNE_LINE}\n" in guarded_file_prune_documentation
       and f"    {NED_BOX_NC_SHARED_DATABASE_BACKUP_LINE}\n" in nc_shared_database_backup_documentation
       and all("nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py" in text
@@ -399,7 +399,7 @@ check("the lines each program documents are the table's lines, and each names th
                            nc_shared_database_backup_copy_documentation,
                            mirror_documentation, full_test_run_documentation, clean_documentation,
                            watcher_documentation, remote_control_watcher_documentation,
-                           weekly_live_check_documentation,
+                           owner_check_documentation,
                            guarded_file_prune_documentation)))
 
 printed, errors = io.StringIO(), io.StringIO()
@@ -424,8 +424,8 @@ check("--print as ned-box prints ned-box's cron lines from the real table and ru
           "line:", NED_BOX_IDLE_SWEEP_LINE,
           "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher — "
           "cron line:", NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE,
-          "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — cron line:",
-          NED_BOX_WEEKLY_LIVE_CHECK_LINE,
+          "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner — cron line:",
+          NED_BOX_OWNER_CHECK_LINE,
           "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — cron "
           "line:", NED_BOX_GUARDED_FILE_PRUNE_LINE,
           "nc-shared-database-nightly-backup-with-integrity-check — cron line:",
@@ -439,25 +439,26 @@ with redirect_stdout(printed), redirect_stderr(errors):
 mac_printed = printed.getvalue()
 clean_heading = ("clean-worktrees — launchd job, /Users/el/Library/LaunchAgents/"
                  "com.nedschorus.clean-worktrees.plist:\n")
-weekly_heading = ("weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — launchd job, "
-                  "/Users/el/Library/LaunchAgents/com.nedschorus.weekly-uncommitted-work-snapshot-"
-                  "hook-real-claude-session-owner-check.plist:\n")
+owner_check_heading = (
+    "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner — launchd job, "
+    "/Users/el/Library/LaunchAgents/com.nedschorus.uncommitted-work-snapshot-hook-"
+    "scheduled-check-that-real-claude-session-is-recorded-as-owner.plist:\n")
 remote_control_watcher_heading = (
     "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher — cron line:\n")
-full_test_run_part, _, clean_and_weekly_part = mac_printed.partition(clean_heading)
-clean_and_watcher_part, _, weekly_and_prune_part = clean_and_weekly_part.partition(weekly_heading)
+full_test_run_part, _, clean_and_owner_check_part = mac_printed.partition(clean_heading)
+clean_and_watcher_part, _, owner_check_and_prune_part = clean_and_owner_check_part.partition(owner_check_heading)
 clean_part, _, remote_control_watcher_part = clean_and_watcher_part.partition(
     remote_control_watcher_heading)
 prune_heading = ("guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — "
                  "launchd job, /Users/el/Library/LaunchAgents/com.nedschorus.guarded-file-"
                  "versions-and-approvals-store-removed-checkout-copies-prune.plist:\n")
-weekly_part, _, prune_and_backup_copy_part = weekly_and_prune_part.partition(prune_heading)
+owner_check_part, _, prune_and_backup_copy_part = owner_check_and_prune_part.partition(prune_heading)
 backup_copy_heading = ("nc-shared-database-newest-backup-copy-to-mac — launchd job, "
                        "/Users/el/Library/LaunchAgents/com.nedschorus.nc-shared-database-"
                        "newest-backup-copy-to-mac.plist:\n")
 prune_part, _, backup_copy_part = prune_and_backup_copy_part.partition(backup_copy_heading)
 check("--print as the Mac prints the mirror's cron line, the full test run's and the worktree "
-      "cleanup's plists, the Remote Control reconnect watcher's cron line, the weekly owner check's and the guarded-file prune's plists, and the "
+      "cleanup's plists, the Remote Control reconnect watcher's cron line, the scheduled owner check's and the guarded-file prune's plists, and the "
       "nc-shared-database backup copy's plist, and runs nothing",
       exit_code == 0 and stub.commands == [] and clean_part.startswith("<?xml")
       and full_test_run_part.startswith(
@@ -468,8 +469,8 @@ check("--print as the Mac prints the mirror's cron line, the full test run's and
       == MAC_FULL_TEST_RUN_PLIST
       and plistlib.loads(clean_part.encode("utf-8")) == MAC_CLEAN_PLIST
       and remote_control_watcher_part == f"{MAC_REMOTE_CONTROL_RECONNECT_WATCHER_LINE}\n"
-      and weekly_part.startswith("<?xml")
-      and plistlib.loads(weekly_part.encode("utf-8")) == MAC_WEEKLY_LIVE_CHECK_PLIST
+      and owner_check_part.startswith("<?xml")
+      and plistlib.loads(owner_check_part.encode("utf-8")) == MAC_OWNER_CHECK_PLIST
       and prune_part.startswith("<?xml")
       and plistlib.loads(prune_part.encode("utf-8")) == MAC_GUARDED_FILE_PRUNE_PLIST
       and backup_copy_part.startswith("<?xml")
