@@ -44,7 +44,7 @@ trivial - a bit longer doesn't matter.`"``, so that the minutes keep a
 remark that rides with the answer. The reply, USER_RULING, REASON and the start
 of each text in a status line are written as code spans, so that a
 `#next_to_present` or `#approval_walk_paused` inside them is not read as the
-walk's marker. A check without it is refused, writing
+walk's marker. A check without --user-reply-as-typed is refused, writing
 nothing, and so is one that gives it with any of those three. A reply that is a
 navigation word alone, next, N, continue or go, whatever its case and any
 trailing period or exclamation mark, is refused for every answer but
