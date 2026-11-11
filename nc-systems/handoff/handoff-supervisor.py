@@ -1171,7 +1171,7 @@ def spawned_subagent_roster_from(handoff_fields: dict) -> list:
     return numbered_field_values_from(handoff_fields, SPAWNED_SUBAGENT_FIELD_PREFIX)
 
 
-def waiting_approval_walk_item_first_prompt_lines(working_directory: Path) -> tuple:
+def successor_initial_agent_instructions_line_naming_waiting_approval_walk_item(working_directory: Path) -> tuple:
     """Return the first prompt's line naming the open approval-walk's waiting item and its last page link, or no
     lines when no approval-walk is open or every one is paused; never block launch.
 
@@ -2634,7 +2634,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             branch_state_instruction = (
                 choose_branch_state_instruction_from_working_directory_push_state(
                     settings.working_directory))
-            waiting_approval_walk_item = waiting_approval_walk_item_first_prompt_lines(settings.working_directory)
+            waiting_approval_walk_item = (
+                successor_initial_agent_instructions_line_naming_waiting_approval_walk_item(settings.working_directory))
             prompt = ignition_plan.compose(
                 launch_time_git_sync_report, overview_refresh_due, memory_review_due,
                 branch_state_instruction=branch_state_instruction,

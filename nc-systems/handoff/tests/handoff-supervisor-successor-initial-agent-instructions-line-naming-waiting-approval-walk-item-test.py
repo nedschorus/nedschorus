@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Tests for the handoff-supervisor's line naming the open approval-walk's
-waiting item and its last page link in a successor's first prompt:
-waiting_approval_walk_item_first_prompt_lines on fixture walk-minutes and
-walk-documents (open, closed, paused, no `#item_page` line, a failed
+waiting item and its last page link in a successor's
+initial-agent-instructions:
+successor_initial_agent_instructions_line_naming_waiting_approval_walk_item
+on fixture walk-minutes and walk-documents (open, closed, paused, no `#item_page` line, a failed
 publish, two open walks, several waiting items, no point, an unreadable
 walk), and where the line goes in the prompts both ignition plans compose and
 in the prompt the launch site hands the successor.
 
-Run: python3 nc-systems/handoff/tests/handoff-supervisor-first-prompt-waiting-approval-walk-item-test.py
+Run: python3 nc-systems/handoff/tests/handoff-supervisor-successor-initial-agent-instructions-line-naming-waiting-approval-walk-item-test.py
 
 Prints one line per case and exits non-zero if any case fails.
 """
@@ -36,7 +37,7 @@ WALK_DOCUMENT = (
 
 
 def lines_for(root):
-    return supervisor.waiting_approval_walk_item_first_prompt_lines(root)
+    return supervisor.successor_initial_agent_instructions_line_naming_waiting_approval_walk_item(root)
 
 
 def walk_in(root, minutes, document=WALK_DOCUMENT, name=WALK):
