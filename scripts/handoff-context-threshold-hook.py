@@ -223,7 +223,7 @@ BACKGROUND_TASK_LAUNCH_KEY = "backgroundTaskId"
 
 # Claude Code writes no task-notification for a task TaskStop stops; only the TaskStop result,
 # whose toolUseResult carries this key beside task_id, records that the task ended.
-TASK_STOP_RESULT_KEY = "task_type"
+TASK_STOP_TOOL_RESULT_MARKER_KEY = "task_type"
 
 # Completion notifications use these tags across several record types.
 TASK_NOTIFICATION_PATTERN = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
@@ -441,7 +441,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                 is_spawn_candidate = SPAWNED_SUBAGENT_STATUS in line
                 is_launch_candidate = BACKGROUND_TASK_LAUNCH_KEY in line
                 is_resume_candidate = RESUMED_SUBAGENT_KEY in line
-                is_stop_candidate = TASK_STOP_RESULT_KEY in line
+                is_stop_candidate = TASK_STOP_TOOL_RESULT_MARKER_KEY in line
                 if is_spawn_candidate or is_launch_candidate or is_resume_candidate or \
                         is_stop_candidate:
                     try:
@@ -472,7 +472,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                             launched_task_age[task_id] = record_age_seconds(record, now)
                             launched_at_by_id[task_id] = record_time(record)
                     stopped_id = tool_result.get("task_id")
-                    if TASK_STOP_RESULT_KEY in tool_result and isinstance(stopped_id, str):
+                    if TASK_STOP_TOOL_RESULT_MARKER_KEY in tool_result and isinstance(stopped_id, str):
                         last_notification_is_interim[stopped_id] = False
                 if "<task-id>" in line:
                     for notification in TASK_NOTIFICATION_PATTERN.findall(line):
