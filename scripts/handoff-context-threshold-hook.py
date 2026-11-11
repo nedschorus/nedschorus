@@ -499,9 +499,10 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
     """Return the running subagents, workflows and background shell tasks on Claude Code's list.
 
     The list gives no start time and shows a Monitor as a shell task, so each listed shell task's
-    launch record is looked up in the session's transcript and its subagents' transcripts: a shell
-    task launched by the Monitor tool holds nothing, nor does one launched longer ago than the wait;
-    one whose launch no transcript records counts as within its wait. Each listed subagent and shell
+    launch record is looked up in the session's transcript and its subagents' transcripts, the
+    Workflow-tool agents' included: a shell task launched by the Monitor tool holds nothing, nor
+    does one launched longer ago than the wait; one whose launch no transcript records counts as
+    within its wait. Each listed subagent and shell
     task is dated by its launch record, for a deferral that saved no list, and so is each subagent
     off the list whose transcript launched a listed shell task; a workflow, or work whose launch no
     transcript records, has no date. An entry that is not a running subagent, workflow or
@@ -587,7 +588,7 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
     subagent_directory = session_path.with_suffix("") / "subagents"
     # An undated subagent shell task counts as within its wait, so a subagent directory that
     # cannot be listed only keeps the handoff waiting, up to the ceiling.
-    paths = [session_path, *sorted(subagent_directory.glob("*.jsonl"))]
+    paths = [session_path, *session_subagent_transcript_paths(session_path)]
     for path in paths:
         try:
             with path.open("r", encoding="utf-8", errors="replace") as handle:
@@ -612,7 +613,10 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
                     if tool_result.get(BACKGROUND_TASK_LAUNCH_KEY) in shell_ids:
                         launch_ages.setdefault(tool_result[BACKGROUND_TASK_LAUNCH_KEY],
                                                record_age_seconds(record, now))
-                        if path != session_path and path.stem.startswith(SUBAGENT_TRANSCRIPT_PREFIX):
+                        # A Workflow-tool agent's task is tied to no subagent: the workflow is
+                        # listed while its agents run, and their tasks are killed with it.
+                        if path.parent == subagent_directory \
+                                and path.stem.startswith(SUBAGENT_TRANSCRIPT_PREFIX):
                             launching_subagent_id_by_task_id.setdefault(
                                 tool_result[BACKGROUND_TASK_LAUNCH_KEY],
                                 path.stem[len(SUBAGENT_TRANSCRIPT_PREFIX):])
@@ -624,6 +628,15 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
 
 
 SUBAGENT_TRANSCRIPT_PREFIX = "agent-"
+
+
+def session_subagent_transcript_paths(session_transcript_path) -> list:
+    """Return the session's subagent transcripts, sorted: the Agent-tool subagents' beside the
+    session's, then the Workflow-tool agents', one directory per workflow run under workflows/."""
+    subagent_directory = Path(session_transcript_path).with_suffix("") / "subagents"
+    # A workflow run's directory also holds journal.jsonl, which is not a transcript.
+    return [*sorted(subagent_directory.glob("*.jsonl")),
+            *sorted(subagent_directory.glob(f"workflows/*/{SUBAGENT_TRANSCRIPT_PREFIX}*.jsonl"))]
 
 
 def subagent_transcript_path(session_transcript_path, agent_id) -> Path:
