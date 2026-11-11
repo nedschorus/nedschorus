@@ -1038,8 +1038,12 @@ def idle_worktree_verdict(worktree, branch, record, pull_requests):
             return None
     except OSError:
         return None
+    # The re-check before removal compares HEAD with this commit, the one rev-list checks: a HEAD
+    # read later, after the checks below, could be a commit made meanwhile that GitHub lacks.
+    # An unreadable HEAD reads as "unknown", which rev-list then fails on.
+    judged_head = commit_of(worktree, "HEAD")
     try:
-        if git_output.run_git(worktree, ["rev-list", "HEAD", "--not", "--remotes=origin"]).strip():
+        if git_output.run_git(worktree, ["rev-list", judged_head, "--not", "--remotes=origin"]).strip():
             return None
     except git_output.GitCommandFailed:
         return None
@@ -1068,7 +1072,7 @@ def idle_worktree_verdict(worktree, branch, record, pull_requests):
         return Verdict(False, f"{why}, but git cannot list its files ({listing_error})",
                        KEPT_NOT_CHECKABLE)
     return Verdict(True, why + removal_records_and_discarded_files_text(worktree, discarded),
-                   "", discarded=discarded, judged_head=commit_of(worktree, "HEAD"),
+                   "", discarded=discarded, judged_head=judged_head,
                    idle_judged_at=judged_at)
 
 
@@ -1892,7 +1896,7 @@ def one_named_worktree_keep_reason(worktree, branch, record, by_head_branch):
     except owner_file.WorktreeOwnerFileError as error:
         return f"its owner file could not be read: {error}", False, None, None, None
     if owner is None:
-        return ("it has no owner file, and the cleaner removes only a worktree holding one",
+        return ("it has no owner file, and a named removal removes only a worktree holding one",
                 False, None, None, None)
     keep_reason = in_progress_git_operation_keep_reason(worktree)
     if keep_reason is not None:

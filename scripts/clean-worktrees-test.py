@@ -3266,13 +3266,23 @@ with tempfile.TemporaryDirectory() as scratch:
     # worktree, so the stub's one write lands after that worktree was judged; this first run
     # removes the idle worktrees the cases above left.
     run_idle_cleanup("--remove")
-    for name, written in (("written-ignored-wt", "late-output.log"),
-                          ("written-untracked-wt", "late-notes.txt"),
-                          ("still-idle-wt", None)):
+    backdated = f"@{int(three_days_ago)}"
+    for name, written, stub_line in (
+            ("written-ignored-wt", "late-output.log", "echo late > '{wt}/late-output.log'"),
+            ("written-untracked-wt", "late-notes.txt", "echo late > '{wt}/late-notes.txt'"),
+            # Backdated, file and directory both, so only git status still sees the new file.
+            ("backdated-untracked-wt", "backdated-notes.txt",
+             "echo late > '{wt}/backdated-notes.txt' && touch -d " + backdated
+             + " '{wt}/backdated-notes.txt' '{wt}'"),
+            # A commit GitHub lacks, made after rev-list checked HEAD: no file in the worktree
+            # changes, so only the HEAD comparison sees it.
+            ("committed-late-idle-wt", None,
+             "git -C '{wt}' commit -q --allow-empty -m 'made during the vacancy check'"),
+            ("still-idle-wt", None, "")):
         worktree = age(idle_candidate(name))
         stub_directory = scratch / f"writing-lsof-{name}"
         stub_directory.mkdir()
-        write_line = f"echo late > '{worktree}/{written}'\n" if written else ""
+        write_line = stub_line.format(wt=worktree) + "\n" if stub_line else ""
         (stub_directory / "lsof").write_text(
             f"#!/bin/sh\n{write_line}printf 'p1\\nn/\\n'\n", encoding="utf-8")
         (stub_directory / "lsof").chmod(0o755)
@@ -3287,6 +3297,14 @@ with tempfile.TemporaryDirectory() as scratch:
                   (worktree / written).exists()
                   and idle_line(written_removal.stdout, name).startswith(
                       f"{name}: kept — the idle rule judged it done, but "),
+                  written_removal.stdout + written_removal.stderr)
+        elif stub_line:
+            check("--remove keeps an idle worktree whose HEAD gained a commit after the idle rule "
+                  "checked it, and says why",
+                  worktree.exists()
+                  and idle_line(written_removal.stdout, name).startswith(
+                      f"{name}: kept — the idle rule judged it done, but its HEAD changed during "
+                      f"this run"),
                   written_removal.stdout + written_removal.stderr)
         else:
             check("--remove still removes an idle worktree in which nothing was written during "

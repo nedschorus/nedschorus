@@ -45,7 +45,8 @@ Each worktree of the clone with no owner file is handled as follows:
     fits <name>.
 
 FOR THE USER. Each worktree listed for the user is named on a line of its own with the facts that
-decide whether to keep or delete it. To keep one, lock it with git worktree lock:
+decide whether to keep or delete it. To keep one, lock it with
+git worktree lock --reason <why> <worktree>:
 scripts/clean-worktrees.py removes a worktree with no owner file once nothing in it has changed for 2 days and it holds no uncommitted or untracked file. The facts are how many uncommitted, untracked or ignored files it holds, how many
 commits its HEAD has that its branch's upstream lacks, or origin/main when the branch has no
 upstream or the worktree is on a detached HEAD, and whether its branch is merged into origin/main,
