@@ -304,6 +304,25 @@ check("a local program question finds an installed program and not an absent one
       check_module.Machines().program_installed(None, "sh")
       and not check_module.Machines().program_installed(None, "no-such-program-here"))
 
+for answer, expected in ((Answer(0), False), (Answer(1), False),
+                         (Answer(2, stderr="ugrep: error at position 9\n  exceeds complexity limits"), True)):
+    runner, _ = runner_answering(answer)
+    check(f"the agent's grep exiting {answer.returncode} means refuses is {expected}",
+          check_module.Machines(runner=runner, environment={
+              "CLAUDE_CODE_EXECPATH": str(STAND_IN_AGENTS_GREP)}).agents_grep_refuses(["x"], None)
+          is expected)
+
+for failure in (Answer(-15), Answer(2, stderr="ugrep: error: invalid option -Q"), Answer(137)):
+    runner, _ = runner_answering(failure)
+    unanswered = check_module.judge_command_result(
+        "grep -oE '.{0,180}(a|b).{0,180}' notes.md", str(SCRATCH), "", 0,
+        check_module.Machines(runner=runner,
+                              environment={"CLAUDE_CODE_EXECPATH": str(STAND_IN_AGENTS_GREP)}))
+    check(f"the agent's grep exiting {failure.returncode} without its refusal leaves S2 unchecked "
+          f"and says how it exited",
+          not unanswered.fires and len(unanswered.unchecked) == 1
+          and f"exited {failure.returncode}" in unanswered.unchecked[0], unanswered.unchecked)
+
 no_agents_grep = check_module.Machines(environment={"HOME": str(SCRATCH)})
 verdict = check_module.judge_command_result(
     "grep -oE '.{0,180}(a|b).{0,180}' notes.md", str(SCRATCH), "", 0, no_agents_grep)
@@ -491,13 +510,22 @@ except check_module.MachineStateQueryGotNoAnswer as error:
     print(f"SKIP  [this machine cannot run it] the fixture's refusals checked against the "
           f"real agent's grep: {error}")
 else:
+    def real_agents_grep_answer(arguments):
+        # G033's unexpanded dash-named glob reaches ugrep as an option it rejects: no answer, not a refusal.
+        try:
+            return real_machines.agents_grep_refuses(arguments, None)
+        except check_module.MachineStateQueryGotNoAnswer:
+            return None
+
     for firing in firings:
-        refused = [arguments for command in check_module.split_into_simple_commands_with_the_machine_and_directory_each_runs_in(
+        answers = [(arguments, real_agents_grep_answer(arguments))
+                   for command in check_module.split_into_simple_commands_with_the_machine_and_directory_each_runs_in(
                        firing["command"], firing["cwd"])
-                   if (arguments := check_module.agents_grep_options_and_patterns_without_file_names(command))
-                   and real_machines.agents_grep_refuses(arguments, None)]
+                   if (arguments := check_module.agents_grep_options_and_patterns_without_file_names(command))]
+        refused = [arguments for arguments, answer in answers if answer]
+        unanswered = [arguments for arguments, answer in answers if answer is None]
         check(f"{firing['id']}: the real agent's grep refuses what the fixture records",
-              refused == firing["arguments_the_agents_grep_refuses"], refused)
+              refused == firing["arguments_the_agents_grep_refuses"], f"{refused} unanswered {unanswered}")
 
 
 if failures:

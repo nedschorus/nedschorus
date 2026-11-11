@@ -13,7 +13,7 @@ search, such as grep, rg or find, and the result is empty, and then only for the
 Each cause is a fact about the machine, which the command's output hides once the search's
 stderr is discarded, so the check asks the machine: it lists a directory, asks whether a
 program is installed, and runs the agent's ugrep with the agent's pattern on /dev/null. For
-a command ssh runs elsewhere, it asks that machine over ssh, for the first two causes.
+a command ssh runs elsewhere, it asks that machine over ssh, for the first and third causes.
 
 It does not handle: a `2>/dev/null`, a swallowed exit status or a cut input, which are not
 causes; a glob or a cd held in a variable, or one under bash -c; a remote command's
@@ -218,7 +218,14 @@ class Machines:
                            executable=self.agents_grep(),
                            # A transcript replayed on another machine names directories absent here.
                            cwd=directory if directory and os.path.isdir(directory) else None)
-            return finished.returncode == 2 and AGENTS_GREP_REFUSAL in finished.stderr
+            # ugrep exits 1 for no match and 2 for an error; any other answer says nothing.
+            if finished.returncode in (0, 1):
+                return False
+            if finished.returncode == 2 and AGENTS_GREP_REFUSAL in finished.stderr:
+                return True
+            raise MachineStateQueryGotNoAnswer(f"the agent's grep, run on the pattern {shlex.join(options_and_patterns)}, "
+                                               f"exited {finished.returncode} without its "
+                                               f"\"{AGENTS_GREP_REFUSAL}\" refusal: {finished.stderr.strip()}")
         return self._kept(("refuses", directory, tuple(options_and_patterns)), find)
 
 
