@@ -580,48 +580,31 @@ def test_new_shared_names_wait_for_the_dispatching_agent():
         case.commit_change("new-tool.txt")
         description = case.write_description()
         code, out, err = case.run(worktree, "open-pull-request", confirmed=False)
-        check("open refuses a topic branch and a file no agent has checked with exit 1, naming both, the subagent's "
-              "report heading, how to rename the branch and the command to run once they are checked, and pushes "
-              "and opens nothing",
+        check("open refuses a file no agent has checked with exit 1, naming it, the subagent's report heading and the "
+              "command to run once it is checked, leaves out the topic branch's name, and pushes and opens nothing",
               code == 1 and "REFUSED: open-pull-request pushed nothing, because" in err
-              and "  topic-one (branch)\n" in err and "  new-tool.txt (file-path)\n" in err
+              and "  new-tool.txt (file-path)\n" in err and "(branch)" not in err
               and f"the heading `{HEADING}`" in err
-              and f"run: python3 scripts/{PROGRAM.name} {NUMBER} rename-topic-branch <new topic-branch> Then run: "
+              and "Make each rename in a commit on the topic branch. Then run: "
                   f"the same open-pull-request command again, with {CONFIRMED} added\n" in err
+              and "rename-topic-branch" not in err
               and "topic-one" not in git(case.origin, "branch", "--list") and case.gh_pr_create_calls() == []
               and description.exists(), err)
         code, out, err = case.run(worktree, "rename-topic-branch", "topic-renamed")
-        check("rename-topic-branch renames the checked-out branch and records the new name in place of the old",
-              code == 0 and "Renamed topic branch topic-one to topic-renamed" in out
-              and git(worktree, "branch", "--show-current") == "topic-renamed"
-              and case.topic_branches() == [{"branch": "topic-renamed", "worktree": str(worktree)}]
-              and case.answers() == {"started": {"1": "topic-renamed", "2": "topic-renamed"}}, out + err)
-        git(worktree, "branch", "-q", "taken")
-        code, out, err = case.run(worktree, "rename-topic-branch", "taken")
-        check("rename-topic-branch fails with exit 2 on a name git refuses, recording nothing",
-              code == 2 and "rename-topic-branch <another topic-branch>" in err
-              and git(worktree, "branch", "--show-current") == "topic-renamed"
-              and case.topic_branches() == [{"branch": "topic-renamed", "worktree": str(worktree)}], err)
-        git(worktree, "switch", "-q", "taken")
-        code, out, err = case.run(worktree, "rename-topic-branch", "other")
-        check("rename-topic-branch refuses a branch start-topic-branch did not record, renaming nothing",
-              code == 1 and "which start-topic-branch did not record in it" in err
-              and git(worktree, "branch", "--list", "other") == "", err)
-        git(worktree, "switch", "-q", "topic-renamed")
+        check("there is no rename-topic-branch subcommand", code == 2 and "invalid choice" in err, err)
         git(worktree, "update-ref", "-d", "refs/remotes/origin/main")
         code, out, err = case.run(worktree, "open-pull-request", confirmed=False)
         check("open fails with exit 2 when git cannot list the new shared names, and pushes nothing",
               code == 2 and "FAILED: the new shared names of the topic branch could not be listed, so "
                             "open-pull-request pushed nothing: git rev-parse exited 128" in err
-              and "topic-renamed" not in git(case.origin, "branch", "--list") and case.gh_pr_create_calls() == [], err)
-        git(worktree, "fetch", "-q", "origin")
-        git(worktree, "push", "-q", "origin", "origin/main:refs/heads/topic-renamed")
+              and "topic-one" not in git(case.origin, "branch", "--list") and case.gh_pr_create_calls() == [], err)
         git(worktree, "fetch", "-q", "origin")
         git(worktree, "reset", "-q", "--hard", "origin/main")
         (worktree / "base.txt").write_text("changed\n")
         git(worktree, "commit", "-q", "-am", "change a file main has")
         code, out, err = case.run(worktree, "open-pull-request", confirmed=False)
-        check("open goes on without the flag when the topic branch adds no new shared name and origin has the branch",
+        check("open goes on without the flag when the topic branch adds no new shared name, though origin has no "
+              "branch of its name",
               code == 0 and f"Opened {LINK} for findings 1 and 2" in out, out + err)
     finally:
         case.close()

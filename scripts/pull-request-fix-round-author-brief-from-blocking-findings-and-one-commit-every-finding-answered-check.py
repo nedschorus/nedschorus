@@ -4,7 +4,7 @@
 Usage:
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number>
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --check [--answers FILE] [--commit REV] [--after-conflict-merge] [--confirm-dispatching-agent-checked-new-shared-names]
-  scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --move-change-to-own-pull-request-cut-new-topic-branch NEW_TOPIC_BRANCH [PATH ...] [--confirm-dispatching-agent-checked-new-shared-names]
+  scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --move-change-to-own-pull-request-cut-new-topic-branch NEW_TOPIC_BRANCH [PATH ...]
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --move-change-to-own-pull-request-finish --title TITLE --body-file FILE
 
 The round is set by merge-lane-2's latest review that requests changes, as long as every later
@@ -92,9 +92,8 @@ unless one already names the round's latest changes-requested review.
 
 --move-change-to-own-pull-request-cut-new-topic-branch and --move-change-to-own-pull-request-finish carry a
 change the round moves out of the pull request to a new topic branch, in the same worktree. The first runs on
-the round's local branch after the round's commit, with a clean worktree apart from the answers file;
-unless --confirm-dispatching-agent-checked-new-shared-names is given, it refuses there, naming NEW_TOPIC_BRANCH as a
-new shared name to check, for the reason --check refuses on the round's names; then it switches to NEW_TOPIC_BRANCH cut from origin/main and copies each PATH from the frozen-head, and only then
+the round's local branch after the round's commit, with a clean worktree apart from the answers file: it
+switches to NEW_TOPIC_BRANCH cut from origin/main and copies each PATH from the frozen-head, and only then
 records the move in MOVE_STATE_FILE_NAME in the git directory and moves the answers file there, so a failed
 switch or copy leaves nothing recorded and the answers file in place. The second refuses while an answers
 file or the description file is in the worktree, stages every change, runs the nc-test-suites as the pull
@@ -1134,7 +1133,7 @@ def local_branch_exists(branch):
     return bool(git(["branch", "--list", branch]).strip())
 
 
-def move_start(number, reviewer_login, new_branch, whole_file_paths, confirm_dispatching_agent_checked_new_shared_names=False):
+def move_start(number, reviewer_login, new_branch, whole_file_paths):
     (_url, _head, _branch, _review_link, review_id, frozen_head, _findings, _nits,
      _fix_round_number, _unrecorded_review_ids) = round_facts(number, reviewer_login)
     local_branch = LOCAL_BRANCH_NAME_FORMAT.format(number=number, review_id=review_id)
@@ -1170,12 +1169,6 @@ def move_start(number, reviewer_login, new_branch, whole_file_paths, confirm_dis
                       "branch must start with nothing but the moved change.")
     answers = root / answers_name
     set_aside = state_path.parent / ANSWERS_SET_ASIDE_DIRECTORY_NAME / answers_name
-    if not confirm_dispatching_agent_checked_new_shared_names:
-        raise Refused(new_shared_names_lister.unchecked_new_shared_names_refusal_text(
-            [("", new_shared_names_lister.KIND_BRANCH, new_branch)], f"No branch {new_branch} was made",
-            "If the report asks for another branch name, use it in place of this one.",
-            f"python3 {PROGRAM} {number} --move-change-to-own-pull-request-cut-new-topic-branch "
-            f"{shlex.join([new_branch, *whole_file_paths])} {new_shared_names_lister.CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG}"))
     git(["switch", "-q", "--no-overwrite-ignore", "-c", new_branch, "origin/main"])
     if whole_file_paths:
         git(["checkout", frozen_head, "--", *whole_file_paths])
@@ -1322,9 +1315,7 @@ def main(argv=None):
                              "because branch-conflict-check.py reported a conflict")
     parser.add_argument(new_shared_names_lister.CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG, action="store_true",
                         help="with --check: the agent that dispatched the round has checked the shared names "
-                             "the round's commit adds, and its renames are in that commit; with "
-                             "--move-change-to-own-pull-request-cut-new-topic-branch: it has checked "
-                             "NEW_TOPIC_BRANCH")
+                             "the round's commit adds, and its renames are in that commit")
     parser.add_argument("--reviewer-login", default=MERGE_LANE_2_REVIEWER_LOGIN,
                         help=f"merge-lane-2's GitHub account (default: {MERGE_LANE_2_REVIEWER_LOGIN})")
     parser.add_argument("--move-change-to-own-pull-request-cut-new-topic-branch", dest="move_start", nargs="+",
@@ -1342,7 +1333,7 @@ def main(argv=None):
     try:
         if arguments.move_start:
             move_start(arguments.number, arguments.reviewer_login, arguments.move_start[0],
-                       arguments.move_start[1:], arguments.confirm_dispatching_agent_checked_new_shared_names)
+                       arguments.move_start[1:])
         elif arguments.move_finish:
             move_finish(arguments.number, arguments.title, arguments.body_file)
         elif arguments.check:

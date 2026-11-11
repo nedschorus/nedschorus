@@ -1419,41 +1419,31 @@ def move_cases(root, _repository, _base, _frozen_head):
     code, out, err = run(root, repository, routes, *finish)
     check("move-finish: refuses when no move is under way, exit 1", code == 1 and "No move is under way" in err, err)
     (repository / "stray.txt").write_text("stray\n")
-    code, out, err = run(root, repository, routes, CONFIRMED, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
     check("move-start: refuses a worktree with changes outside the round's commit, naming them",
           code == 1 and "stray.txt" in err and git(repository, "branch", "--show-current") == LOCAL_BRANCH, err)
     (repository / "stray.txt").unlink()
-    code, out, err = run(root, repository, routes, CONFIRMED, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "missing.py")
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "missing.py")
     check("move-start: refuses a path the frozen-head does not hold",
           code == 1 and f"frozen-head {frozen_head[:12]} has no file missing.py" in err, err)
     git(repository, "switch", "-q", "topic")
-    code, out, err = run(root, repository, routes, CONFIRMED, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
     check("move-start: refuses on any branch but the round's local branch",
           code == 1 and f"runs on the round's local branch {LOCAL_BRANCH}, but this worktree is on topic" in err, err)
     git(repository, "switch", "-q", LOCAL_BRANCH)
     round_commit = git(repository, "rev-parse", "HEAD")
     git(repository, "reset", "-q", "--keep", frozen_head)
-    code, out, err = run(root, repository, routes, CONFIRMED, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
     check("move-start: refuses before the round's commit exists", code == 1 and "no commit on top of the frozen-head" in err, err)
     git(repository, "reset", "-q", "--keep", round_commit)
     state_file = repository / ".git" / "fix-round-move-to-own-pull-request.json"
     code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch",
-                         NEW_BRANCH, "moved.py")
-    check("move-start: a new topic branch no agent has checked refuses with exit 1, naming it and the command to "
-          "run once it is checked, making nothing and leaving the answers file in place",
-          code == 1 and f"No branch {NEW_BRANCH} was made" in err and f"  {NEW_BRANCH} (branch)\n" in err
-          and f"the heading `{HEADING}`" in err
-          and f"--move-change-to-own-pull-request-cut-new-topic-branch {NEW_BRANCH} moved.py {CONFIRMED}\n" in err
-          and not git(repository, "branch", "--list", NEW_BRANCH) and not state_file.exists()
-          and answers.read_text() == ANSWERS_TEXT and git(repository, "branch", "--show-current") == LOCAL_BRANCH,
-          out + err)
-    code, out, err = run(root, repository, routes, CONFIRMED, "--move-change-to-own-pull-request-cut-new-topic-branch",
                          "bad..name", "moved.py")
     check("move-start: a switch git refuses fails with exit 2, leaving nothing recorded and the answers file in place",
           code == 2 and "bad..name" in err and answers.read_text() == ANSWERS_TEXT and not state_file.exists()
           and git(repository, "branch", "--show-current") == LOCAL_BRANCH, out + err)
     git(repository, "branch", NEW_BRANCH, "origin/main")
-    code, out, err = run(root, repository, routes, CONFIRMED, "--move-change-to-own-pull-request-cut-new-topic-branch",
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch",
                          NEW_BRANCH, "moved.py")
     check("move-start: refuses a new topic branch that already exists, leaving the answers file in place",
           code == 1 and f"A local branch {NEW_BRANCH} already exists" in err
@@ -1474,7 +1464,7 @@ def move_cases(root, _repository, _base, _frozen_head):
     (repository / "ignored-here").mkdir()
     (repository / "ignored-here" / ".gitignore").write_text("*\n")
     (repository / "ignored-here" / "notes.txt").write_text("the only copy\n")
-    code, out, err = run(root, repository, routes, CONFIRMED, "--move-change-to-own-pull-request-cut-new-topic-branch",
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch",
                          NEW_BRANCH, "moved.py")
     check("move-start: a switch over an ignored file at a path origin/main tracks fails with exit 2, naming the "
           "file, leaving nothing recorded, and the file survives",
@@ -1487,7 +1477,7 @@ def move_cases(root, _repository, _base, _frozen_head):
     git(main_clone, "push", "-q", "--force", "origin", "HEAD~1:main")
     git(repository, "fetch", "-q", "origin")
 
-    code, out, err = run(root, repository, routes, CONFIRMED, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
     check("move-start: switches to the new topic branch cut from origin/main, with the named file copied whole",
           code == 0 and git(repository, "branch", "--show-current") == NEW_BRANCH
           and f"copied from the frozen-head {frozen_head[:12]}." in out
@@ -1495,7 +1485,7 @@ def move_cases(root, _repository, _base, _frozen_head):
           and (repository / "moved.py").read_text() == "moved\n"
           and (repository / "partly.txt").read_text() == PARTLY_MAIN, out + err)
     check("move-start: sets the answers file aside, out of the new topic branch's worktree", not answers.exists(), err)
-    code, out, err = run(root, repository, routes, CONFIRMED, "--move-change-to-own-pull-request-cut-new-topic-branch", "another-branch")
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", "another-branch")
     check("move-start: refuses a second move while one is under way", code == 1 and "already under way" in err, err)
     git(repository, "switch", "-q", "main")
     code, out, err = run(root, repository, routes, *finish)
@@ -1568,7 +1558,7 @@ def move_cases(root, _repository, _base, _frozen_head):
               and ("partly.txt" not in err if expected == "moved.py" else "moved.py" not in err), out + err)
         git(repository, "switch", "-q", LOCAL_BRANCH)
 
-    code, out, err = run(root, repository, routes, CONFIRMED, "--move-change-to-own-pull-request-cut-new-topic-branch", "second-moved-change-topic-branch")
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", "second-moved-change-topic-branch")
     check("move-start: a second move in the same worktree sets the answers file aside again",
           code == 0 and not answers.exists()
           and git(repository, "branch", "--show-current") == "second-moved-change-topic-branch", out + err)
@@ -1586,7 +1576,7 @@ def move_failure_after_push_cases(root, _repository, _base, _frozen_head):
         body = case_root / "description.md"
         body.write_text("Moves the timeout change.\n")
         routes = move_routes(frozen_head, body, create)
-        run(case_root, repository, routes, CONFIRMED, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+        run(case_root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
         (repository / "partly.txt").write_text(PARTLY_MOVED_ONLY)
         environment_extra = None
         if extra:
@@ -1611,7 +1601,7 @@ def move_push_failure_cases(root, _repository, _base, _frozen_head):
     body.write_text("Moves the timeout change.\n")
     routes = move_routes(frozen_head, body)
     finish = ("--move-change-to-own-pull-request-finish", "--title", "Move it", "--body-file", str(body))
-    run(root, repository, routes, CONFIRMED, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
     (repository / "partly.txt").write_text(PARTLY_MOVED_ONLY)
     origin, hidden = root / "origin.git", root / "origin-hidden.git"
     origin.rename(hidden)
@@ -1643,7 +1633,7 @@ def move_hand_commit_cases(root, _repository, _base, _frozen_head):
     body.write_text("Moves the timeout change.\n")
     routes = move_routes(frozen_head, body)
     finish = ("--move-change-to-own-pull-request-finish", "--title", "Move it", "--body-file", str(body))
-    code, out, err = run(root, repository, routes, CONFIRMED, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
     check("move-start: says to leave the hand-made part uncommitted for the finish step",
           code == 0 and "leave it uncommitted" in out, out + err)
     base = git(repository, "rev-parse", "origin/main")
@@ -1679,7 +1669,7 @@ def move_with_pre_push_hook(case_root, hook_lines, pull_request_create=None):
     (hooks / "pre-push").write_text("#!/bin/sh\n" + "".join(f"echo '{line}' >&2\n" for line in hook_lines) + "exit 0\n")
     (hooks / "pre-push").chmod(0o755)
     git(repository, "config", "core.hooksPath", str(hooks))
-    run(case_root, repository, routes, CONFIRMED, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    run(case_root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
     (repository / "partly.txt").write_text(PARTLY_MOVED_ONLY)
     return run(case_root, repository, routes, "--move-change-to-own-pull-request-finish", "--title", "Move it",
                "--body-file", str(body))
