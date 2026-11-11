@@ -95,11 +95,10 @@ both machines.
     credential directories and any path whose name matches a credential
     file name.
   - Linux: `bwrap` over the whole filesystem, with an empty tmpfs mounted
-    over each credential directory and /dev/null bound over each file
-    credential_files_found_now() finds at launch in the home and the
-    repository. bwrap takes exact paths, not patterns, so a credential file
-    outside those directories that is created after launch, or sits outside
-    the home and the repository, is not covered.
+    over each credential directory that exists. bwrap takes exact paths, not
+    patterns, so a file named like a credential outside those directories is
+    not covered on Linux; the directory list names every place such files
+    are known to sit.
 Neither sandbox cuts the network, so agy's own web tool still fetches the
 pages a document links to, which the reviewer reads (user-ruled 2026-09-29,
 items 3 and 5 of the walk what-a-cold-read-reviewer-may-read-2026-09-28;
@@ -258,9 +257,8 @@ def credential_sandbox_prefix(platform: str = sys.platform, *,
         prefix += ["--unshare-net"]
     for directory in common.credential_directories_present():
         prefix += ["--tmpfs", directory]
-    for path in (common.credential_files_found_now()
-                 + common.reviewer_program_login_files(except_program="agy",
-                                                       only_present=True)):
+    for path in common.reviewer_program_login_files(except_program="agy",
+                                                    only_present=True):
         prefix += ["--ro-bind", "/dev/null", path]
     return prefix
 

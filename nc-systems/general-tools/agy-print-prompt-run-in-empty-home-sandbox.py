@@ -40,7 +40,7 @@ the program that runs agy for cold reads. The sandbox-exec profile, built by
 `sandbox_exec_profile()` in the same file, denies reading and writing only the
 credential paths, which that function assembles from the lists in
 nc-systems/cold-read/cold-read-cell-common.py: ~/.config/nedschorus,
-~/.config/gh and ~/.ssh, Claude's and Codex's login files, and files named
+~/.config/gh, ~/.ssh, ~/.steam and ~/nedsmessenger, Claude's and Codex's login files, and files named
 *.token or .env. The
 rest of the home stays readable and writable, and agy stays on PATH, so a plain `agy`
 command starts another agy. On macOS this program blocks neither that home access nor that

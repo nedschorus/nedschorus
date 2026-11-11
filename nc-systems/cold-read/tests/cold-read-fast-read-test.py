@@ -421,8 +421,8 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     scratch_repository_fixture.install_fake_sandbox_programs(stub_directory)
     counter_path.unlink(missing_ok=True)
     claude_counter_path(counter_path).unlink(missing_ok=True)
-    # The agy cell scans HOME for credential files at launch, and the real
-    # home takes seconds to walk.
+    # A scratch HOME, so the agy cell's sandbox masks paths in it, not the
+    # real home's.
     scratch_home = repository.parent / "scratch-home"
     scratch_home.mkdir(exist_ok=True)
     environment = dict(os.environ)
