@@ -1513,10 +1513,53 @@ with tempfile.TemporaryDirectory() as workspace:
         flight = flight_of([list_entry("bunrecorded", "shell")])
         check("a shell task no transcript records counts as within its wait",
               flight.background_task_ids == ["bunrecorded"], str(flight.background_task_ids))
+        # Launch records carry milliseconds, so the clock is cut to them for an age of exactly the wait.
+        boundary_clock = clock.replace(microsecond=clock.microsecond // 1000 * 1000)
+        boundary_session = transcript_of(workspace, "background-tasks-list-launched-exactly-the-wait-ago.jsonl", [
+            usage_record(100_000, cache_read=450_000),
+            background_task_launch_record(
+                "bshellboundary", launched_at=utc_iso(boundary_clock - timedelta(seconds=wait_seconds))),
+        ])
+        flight = hook.work_in_flight_from_background_tasks(
+            [list_entry("bshellboundary", "shell")], str(boundary_session), wait_seconds,
+            now=boundary_clock)
+        check("a shell task launched exactly the wait ago still holds the handoff",
+              flight.background_task_ids == ["bshellboundary"], str(flight.background_task_ids))
+        # A line naming a listed shell task that is not its launch record must not end the reading
+        # of the transcript, or a later launch record goes unread and its task counts as undated.
+        three_hours_ago = utc_iso(clock - timedelta(hours=3))
+        mentioned_without_launch_key = transcript_of(
+            workspace, "background-tasks-list-task-mentioned-before-later-launch.jsonl", [
+                usage_record(100_000, cache_read=450_000),
+                background_task_launch_record("bshellearlier", launched_at=three_hours_ago),
+                {"type": "assistant", "message": {"role": "assistant", "content": [
+                    {"type": "text", "text": "bshellearlier is still running."}]}},
+                background_task_launch_record("bshelllater", launched_at=two_hours_ago),
+            ])
+        flight = flight_of([list_entry("bshellearlier", "shell"), list_entry("bshelllater", "shell")],
+                           transcript=mentioned_without_launch_key)
+        check("a line naming a listed shell task without a launch key leaves later launch records"
+              " read", not flight, str(flight.background_task_ids))
+        # The assistant's own tool call can quote the launch key; it carries no toolUseResult.
+        quoted_launch_key = transcript_of(
+            workspace, "background-tasks-list-launch-key-quoted-before-later-launch.jsonl", [
+                usage_record(100_000, cache_read=450_000),
+                background_task_launch_record("bshellearlier", launched_at=three_hours_ago),
+                {"type": "assistant", "message": {"role": "assistant", "content": [
+                    {"type": "tool_use", "name": "Bash", "input": {
+                        "command": "grep -c 'backgroundTaskId.*bshellearlier' session.jsonl"}}]}},
+                background_task_launch_record("bshelllater", launched_at=two_hours_ago),
+            ])
+        flight = flight_of([list_entry("bshellearlier", "shell"), list_entry("bshelllater", "shell")],
+                           transcript=quoted_launch_key)
+        check("a line quoting the launch key and a listed shell task with no toolUseResult leaves"
+              " later launch records read", not flight, str(flight.background_task_ids))
         flight = flight_of([list_entry("a1", "subagent", status="completed"),
                             list_entry("x1", "some-later-kind"), "not an entry",
-                            {"type": "subagent", "status": "running"}])
-        check("a finished entry, an unknown kind and a malformed entry hold nothing", not flight,
+                            {"type": "subagent", "status": "running"},
+                            {"id": "bnostatus", "type": "shell"}])
+        check("a finished entry, an unknown kind, malformed entries and an entry with no status"
+              " hold nothing", not flight,
               f"{flight.subagent_ids} {flight.background_task_ids} {flight.workflow_ids}")
         # With no saved list, only work launched before the deferral began holds the handoff,
         # so the list's entries must carry their launch times from the transcripts.
