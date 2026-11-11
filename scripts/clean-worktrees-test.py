@@ -985,6 +985,10 @@ with tempfile.TemporaryDirectory() as scratch:
         # A new worktree on a reused branch name, cut from the main commit an earlier closed pull
         # request on that name started from: its HEAD is an ancestor of that pull request's head.
         reused_base_wt = owned_worktree("reused-base-wt", running_session_owner)
+        # Its commit is not in the closed pull request on its branch name, whose head is a main
+        # commit its HEAD descends from.
+        diverged_wt = owned_worktree("diverged-wt", running_session_owner)
+        commit_in(diverged_wt, "diverged-work")
         seat_running_wt = owned_worktree("seat-running-wt",
                                          {"owner_kind": "agent-seat", "agent_seat": "seat-running"})
         seat_stopped_wt = owned_worktree("seat-stopped-wt",
@@ -1026,6 +1030,12 @@ with tempfile.TemporaryDirectory() as scratch:
              "headRefOid": head_of(seat_stopped_wt)},
             {"number": 7, "state": "OPEN", "headRefName": "stopped-open-wt-branch",
              "headRefOid": head_of(stopped_open_wt)},
+            # Listed before #9: a head commit missing from the clone is passed over, not the end
+            # of the search.
+            {"number": 12, "state": "CLOSED", "headRefName": "ancestor-merged-wt-branch",
+             "headRefOid": "1" * 40},
+            {"number": 13, "state": "CLOSED", "headRefName": "diverged-wt-branch",
+             "headRefOid": head_of(fresh_wt)},
             {"number": 9, "state": "MERGED", "headRefName": "ancestor-merged-wt-branch",
              "headRefOid": child_commit_of(ancestor_merged_wt, "second-of-two")},
             {"number": 10, "state": "MERGED", "headRefName": "a-name-no-worktree-has",
@@ -1085,6 +1095,11 @@ with tempfile.TemporaryDirectory() as scratch:
               "request on that name started from, is kept though its HEAD is an ancestor of that "
               "pull request's head",
               line_of(report, "reused-base-wt").startswith("reused-base-wt: kept"), report)
+        check("a worktree whose owner runs is kept, not as unreadable, when the closed pull "
+              "request on its branch does not hold its HEAD",
+              line_of(report, "diverged-wt").startswith("diverged-wt: kept — its owner")
+              and "has no merged or closed pull request holding its HEAD"
+              in line_of(report, "diverged-wt"), report)
 
         # git cannot be made to fail these two reads for real, so a stand-in run_git fails them.
         in_process = load_clean_worktrees_module()
@@ -1140,7 +1155,7 @@ with tempfile.TemporaryDirectory() as scratch:
               report)
         check("the count line gives the kept worktrees by reason, the worktrees with no owner file, "
               "the branches with no pull request and the work-snapshots present",
-              "worktree counts: 11 kept (locked 1, no owner file 0, owner running 6, open pull "
+              "worktree counts: 12 kept (locked 1, no owner file 0, owner running 7, open pull "
               "request 2, in use 0, could not be checked 2); worktrees with no owner file 0; "
               "branches with no pull request 6; work-snapshots still present 0" in report, report)
         check("a line names the kept worktrees of an agent-seat whose handoff-supervisor is not "
@@ -1164,7 +1179,7 @@ with tempfile.TemporaryDirectory() as scratch:
               not merged_wt.exists() and not closed_wt.exists()
               and not ancestor_merged_wt.exists() and not other_name_merged_wt.exists()
               and all(path.exists() for path in (
-                  fresh_wt, merged_untracked_wt, open_running_wt, reused_wt, reused_base_wt,
+                  fresh_wt, merged_untracked_wt, open_running_wt, reused_wt, reused_base_wt, diverged_wt,
                   seat_running_wt,
                   seat_stopped_wt, stopped_open_wt, unknown_wt, unreadable_owner_wt,
                   locked_owned_wt)),
