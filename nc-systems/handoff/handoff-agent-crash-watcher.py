@@ -547,7 +547,7 @@ class Watcher:
         """Write the notice's user-alert; return whether one was written."""
         title_template = FAILED_RESTART_NOTICE_KIND_TO_USER_ALERT_TITLE_TEMPLATE.get(kind)
         # A kind without a title, such as the notice written after a successful restart, gets no
-        # alert: only a failed restart needs the user.
+        # alert: that agent-seat runs, so nothing waits on the user.
         if self.user_alert_write_to_pending is None or title_template is None:
             return False
         try:
