@@ -330,7 +330,7 @@ two_globs = check_module.judge_command_result(
     "grep -l x */*.jsonl *.md", str(SCRATCH / "absent"), "", 0,
     machines_with_the_stand_in_agents_grep())
 check("a listing that fails is reported once, not once per glob in the command",
-      sum("expanded to a name" in line for line in two_globs.unchecked) == 1,
+      sum("to a name beginning with -" in line for line in two_globs.unchecked) == 1,
       two_globs.unchecked)
 
 

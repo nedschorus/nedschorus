@@ -341,8 +341,9 @@ def glob_dash_name_causes(placed, machines, unchecked):
             try:
                 entries = machines.directory_entries(command.host, command.directory)
             except MachineStateQueryGotNoAnswer as error:
-                unchecked.append(f"whether `{plain(word)}` expanded to a name beginning "
-                                 f"with -: {error}")
+                unchecked.append(f"whether `{plain(word)}` expanded, in "
+                                 f"{command.directory}, the directory the command ran in, "
+                                 f"to a name beginning with -: {error}")
                 break
             pattern = fnmatch_pattern(first_component)
             dashed = sorted(name for name in entries
@@ -354,7 +355,8 @@ def glob_dash_name_causes(placed, machines, unchecked):
                     f"`{dashed[0]}`, which {command.program} read as options, not as files, "
                     f"so the search did not read those files.\n"
                     f"Run the search again with ./ in front of the glob, as in "
-                    f"`./{plain(word)}`, and use that result.\n"
+                    f"`./{plain(word)}`, "
+                    f"{REPORT_FROM_THE_NEW_SEARCH}.\n"
                     f"From now on, write ./ in front of every relative glob that names files.")))
                 break
     return causes
@@ -427,9 +429,9 @@ def pattern_too_complex_causes(placed, machines, unchecked):
                 f"`grep {' '.join(arguments)}` with \"{AGENTS_GREP_REFUSAL}\", so that "
                 f"grep searched nothing; its 2>/dev/null or a later stage of the pipe hid "
                 f"the refusal.\n"
-                f"Run the search again with fewer or shorter bounded repeats, such as "
-                f".{{0,180}}, or with rg, and use that result.\n"
-                f"From now on, use at most one bounded repeat in a grep pattern.")))
+                f"Run the search again with rg, or with a grep pattern that holds no bounded "
+                f"repeat such as .{{0,180}}, {REPORT_FROM_THE_NEW_SEARCH}.\n"
+                f"From now on, search with rg when a pattern needs a bounded repeat.")))
     return causes
 
 
@@ -455,7 +457,7 @@ def program_missing_causes(placed, machines, unchecked):
                 f"ran nothing; its 2>/dev/null or a later stage of the pipe hid the "
                 f"\"command not found\".\n"
                 f"Run the search again on {machine_name(command.host)} with a program "
-                f"installed there, such as grep -r, and use that result.")))
+                f"installed there, such as grep -r, {REPORT_FROM_THE_NEW_SEARCH}.")))
     return causes
 
 
@@ -482,10 +484,17 @@ def judge_command_result(command, cwd, stdout="", exit_code=0, machines=None):
                    reason=None if causes else "none of the three causes was found")
 
 
+REPORT_FROM_THE_NEW_SEARCH = (
+    "and report from that search instead: what it finds, or, if it finds nothing, that "
+    "what you sought is absent")
+
 UNCHECKED_NEXT_STEP = (
-    "Before you report that what you sought is absent, run the search again without "
-    "2>/dev/null and with nothing piped after it, and read what it prints on stderr and "
-    "its exit status: grep and rg exit 1 for no match, and 2 or more for an error.")
+    "Before you report that what you sought is absent, run the search by itself, in the "
+    "directory it ran in, with no 2>/dev/null and nothing piped after it, and read its "
+    "stderr and its exit status.\n"
+    "If it exits 1 and prints nothing on stderr, it found no match, and you may report "
+    "that what you sought is absent.\n"
+    "If it exits 2 or more, or prints an error, fix what the error names and run it again.")
 
 
 def report_lines(verdict):
