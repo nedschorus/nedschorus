@@ -365,10 +365,13 @@ class GitHubConditionChecker:
     for several agent-seats reads the entries its own calls appended.
     """
 
+    # The budget's clock; the test replaces it so its budget cases do not depend on machine speed.
+    clock = staticmethod(time.monotonic)
+
     def __init__(self, checks: dict, now_epoch: float):
         self.checks = checks
         self.now_epoch = now_epoch
-        self.started = time.monotonic()
+        self.started = self.clock()
         self.changed = False
         self.gh_failures = []
 
@@ -386,7 +389,7 @@ class GitHubConditionChecker:
                 and 0 <= self.now_epoch - cached["checked_at_epoch"]
                 < CONDITION_RECHECK_INTERVAL_SECONDS):
             return cached
-        remaining = GH_CALLS_TOTAL_BUDGET_SECONDS - (time.monotonic() - self.started)
+        remaining = GH_CALLS_TOTAL_BUDGET_SECONDS - (self.clock() - self.started)
         if remaining <= 0:
             # Out of budget: not met this run, and not recorded, so the next
             # run checks it.
