@@ -712,6 +712,10 @@ class ReviewerRunEndedByResultLine(subprocess.CompletedProcess):
 REPORT_WAIT_POLL_SECONDS = 0.1
 AGENT_BINARY_KILLED_AFTER_FINAL_RESULT_LINE_PHRASE = "printed its result line but had not exited"
 AGENT_BINARY_EXITED_WITHOUT_FINAL_RESULT_LINE_PHRASE = "exited 0 without printing its result line"
+# A process outside the reviewer's group can hold its pipes open for as long as it lives, and
+# killing the group cannot reach it, so the run stops waiting for the pipes to close after this.
+REVIEWER_PIPES_CLOSE_WAIT_SECONDS = 30.0
+REVIEWER_PIPES_STILL_OPEN_PHRASE = "were still held open by a process outside its process group"
 
 
 def report_is_written(report) -> bool:
@@ -738,7 +742,15 @@ def run_reviewer_program_in_own_process_group_until_timeout(
     the program to exit, then sends SIGKILL to its process group. The result
     then carries the response text as its stdout, and the program's own exit
     code when it exited by itself, else the line's; it is a
-    ReviewerRunEndedByResultLine when the program had to be killed."""
+    ReviewerRunEndedByResultLine when the program had to be killed. The
+    group is sent SIGKILL whether or not the report was written, and whether
+    or not the program had exited, so no process it started outlives the run.
+    A run with no such line that exits 0 returns empty stdout, with what the
+    program printed moved to stderr, because that stdout is raw stream events
+    and not an answer a caller could take for a review. In this mode the
+    runner waits at most REVIEWER_PIPES_CLOSE_WAIT_SECONDS for the program's
+    pipes to close once the run has ended; a process outside the group that
+    holds them past that loses what it printed after, and stderr says so."""
     # The reviewer's own session puts it outside the group the grid stops, so
     # SIGTERM must reach the except BaseException handler below that stops
     # the reviewer's group.
@@ -796,12 +808,22 @@ def run_reviewer_program_until_its_result_line(
         process.stdin.write(stdin_text)
     process.stdin.close()
 
-    def completed(result_class, returncode, stdout):
+    def completed(result_class, returncode, stdout, pipes_close_by=None):
         # stderr carries agy's AGY_ERROR and login lines, which callers parse,
-        # so it is read to its end before the result is built.
+        # so it is read to its end before the result is built, unless a
+        # process outside the group still holds it at pipes_close_by.
+        if pipes_close_by is None:
+            pipes_close_by = time.monotonic() + REVIEWER_PIPES_CLOSE_WAIT_SECONDS
         for reader in readers:
-            reader.join()
-        return result_class(command, returncode, stdout, "".join(stderr_parts))
+            reader.join(max(0.0, pipes_close_by - time.monotonic()))
+        stderr_text = "".join(stderr_parts)
+        if any(reader.is_alive() for reader in readers):
+            stderr_text += (
+                f"The reviewer program's stdout and stderr {REVIEWER_PIPES_STILL_OPEN_PHRASE} "
+                f"{REVIEWER_PIPES_CLOSE_WAIT_SECONDS:g} seconds after its run ended, so the cell "
+                "stopped waiting for them; anything printed after that, and its stderr if the "
+                "stderr pipe was the one held, is missing here.\n")
+        return result_class(command, returncode, stdout, stderr_text)
 
     result_line_or_stdout_closed.wait(max(0.0, deadline - time.monotonic()))
     if run_ends:
@@ -812,22 +834,28 @@ def run_reviewer_program_until_its_result_line(
             time.sleep(REPORT_WAIT_POLL_SECONDS)
         exited_by_itself = process.poll() is not None
         # SIGKILL, because agy ignores SIGTERM; also ends children left behind by an exited leader.
-        # Repeated until the pipes close: a child whose fork was under way
+        # Repeated while the pipes stay open: a child whose fork was under way
         # when the first SIGKILL landed survives it on macOS and holds them.
-        # Once the group is empty, a holder outside it makes killpg fail.
+        # killpg fails once the group is empty, and is not sent again then,
+        # because a new group could take the same id.
+        pipes_close_by = time.monotonic() + REVIEWER_PIPES_CLOSE_WAIT_SECONDS
+        group_may_have_members = True
         while True:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+            if group_may_have_members:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    group_may_have_members = False
             process.wait()
             for reader in readers:
                 reader.join(REPORT_WAIT_POLL_SECONDS)
-            if not any(reader.is_alive() for reader in readers):
+            if (not any(reader.is_alive() for reader in readers)
+                    or time.monotonic() >= pipes_close_by):
                 break
         if exited_by_itself:
-            return completed(subprocess.CompletedProcess, process.returncode, response_text)
-        return completed(ReviewerRunEndedByResultLine, exit_code, response_text)
+            return completed(subprocess.CompletedProcess, process.returncode, response_text,
+                             pipes_close_by)
+        return completed(ReviewerRunEndedByResultLine, exit_code, response_text, pipes_close_by)
     try:
         if not result_line_or_stdout_closed.is_set():
             raise subprocess.TimeoutExpired(command, timeout_seconds)
@@ -841,8 +869,9 @@ def run_reviewer_program_until_its_result_line(
         # for a review.
         stderr_parts.append(
             f"The reviewer program {AGENT_BINARY_EXITED_WITHOUT_FINAL_RESULT_LINE_PHRASE}, "
-            "so the cell has no answer of its own to recover a report from; "
-            f"its stdout was:\n{''.join(stdout_lines)}\n")
+            "so there is no answer from the reviewer to recover a report from: unless it "
+            "wrote its report file, this attempt fails as no-report and the cell goes on to "
+            f"the next model in its chain, if any. Its stdout was:\n{''.join(stdout_lines)}\n")
         return completed(subprocess.CompletedProcess, 0, "")
     return completed(subprocess.CompletedProcess, process.returncode, "".join(stdout_lines))
 

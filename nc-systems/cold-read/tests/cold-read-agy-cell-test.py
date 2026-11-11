@@ -991,6 +991,66 @@ with tempfile.TemporaryDirectory() as scratch:
           f"descriptors on the record directory: {agy_descriptor_count}; exit {result.returncode}; "
           f"stderr={result.stderr[-2000:]!r}")
 
+    # --- A pipe holder outside the group does not keep the run waiting -----
+    # The runner is called directly, with its wait for the pipes cut to one
+    # second, so a holder that outlives that wait shows the bound in seconds.
+    holder_pid_file = scratch / "outside-group-pipe-holder-pids"
+
+    def reviewer_leaving_outside_holder(result_line):
+        # Starts a child in a session of its own that holds stdout and stderr
+        # for 60 s, optionally prints a result line, then exits 0.
+        return [sys.executable, "-c", (
+            "import subprocess, sys\n"
+            "holder = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],"
+            " start_new_session=True)\n"
+            f"open({str(holder_pid_file)!r}, 'a').write('%d\\n' % holder.pid)\n"
+            f"sys.stdout.write({result_line!r}); sys.stdout.flush()\n")]
+
+    def result_line_parser(line):
+        return (0, "the answer") if line.startswith("RESULT") else None
+
+    saved_pipes_close_wait = cell_common.REVIEWER_PIPES_CLOSE_WAIT_SECONDS
+    real_killpg = cell_common.os.killpg
+    failed_killpg_calls = []
+
+    def counting_killpg(process_group, signal_number):
+        try:
+            real_killpg(process_group, signal_number)
+        except (ProcessLookupError, PermissionError):
+            failed_killpg_calls.append(process_group)
+            raise
+
+    saved_sigterm_handler = signal.getsignal(signal.SIGTERM)
+    cell_common.REVIEWER_PIPES_CLOSE_WAIT_SECONDS = 1.0
+    cell_common.os.killpg = counting_killpg
+    try:
+        started = time.monotonic()
+        result = cell_common.run_reviewer_program_in_own_process_group_until_timeout(
+            reviewer_leaving_outside_holder(""), None, None, 2.0, result_line_parser)
+        elapsed = time.monotonic() - started
+        check("a run with no result line whose pipes a process outside its group holds ends "
+              "soon after its deadline, saying the pipes were still held",
+              result.returncode is None and elapsed < 15
+              and cell_common.REVIEWER_PIPES_STILL_OPEN_PHRASE in result.stderr,
+              f"exit {result.returncode}; {elapsed:.1f} s; stderr={result.stderr!r}")
+        failed_killpg_calls.clear()
+        started = time.monotonic()
+        result = cell_common.run_reviewer_program_in_own_process_group_until_timeout(
+            reviewer_leaving_outside_holder("RESULT\n"), None, None, 30.0, result_line_parser)
+        elapsed = time.monotonic() - started
+        check("after the result line, a process outside the group holding the pipes keeps the "
+              "kill loop going only until the wait for the pipes ends",
+              result.returncode == 0 and result.stdout == "the answer" and elapsed < 15
+              and cell_common.REVIEWER_PIPES_STILL_OPEN_PHRASE in result.stderr,
+              f"exit {result.returncode}; {elapsed:.1f} s; stderr={result.stderr!r}")
+        check("once killing the emptied group fails, the group is not killed again",
+              len(failed_killpg_calls) <= 1, repr(failed_killpg_calls))
+    finally:
+        cell_common.REVIEWER_PIPES_CLOSE_WAIT_SECONDS = saved_pipes_close_wait
+        cell_common.os.killpg = real_killpg
+        signal.signal(signal.SIGTERM, saved_sigterm_handler)
+        kill_left_over_processes(pids_written_to(holder_pid_file))
+
     # --- No sandbox program on PATH: refused, agy never started ------------
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "no-sandbox")
