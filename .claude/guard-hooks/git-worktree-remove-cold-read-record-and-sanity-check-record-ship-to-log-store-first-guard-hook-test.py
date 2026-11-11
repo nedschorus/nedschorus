@@ -799,6 +799,19 @@ try:
                   "out in full, as an absolute path with no variable, in a command that does not change directory."
                   in reason,
               (code, output, waiter_starts))
+    for label, command, force in (("without -f", "git worktree remove /a/nowhere", ""),
+                                  ("with -f", "git worktree remove -f /a/nowhere", " -f")):
+        waiter_starts.clear()
+        code, output = run_hook(payload_for(command, checkout))
+        reason = refusal(output) or ""
+        check(f"a removal whose written-out path names no worktree, {label}, is refused while a record is being "
+              f"written, telling the agent to copy the path from git worktree list, not to write it out again",
+              code == 0 and reason.startswith(unresolved_refusal_start)
+              and "the path /a/nowhere names no worktree the hook can find" in reason
+              and f"Record {being_written} (worktree {worktree})\n" in reason and waiter_starts == []
+              and reason.endswith(hook.PATH_NAMES_NO_WORKTREE_RUN_AGAIN_INSTRUCTION_TEMPLATE.format(force=force))
+              and "written out in full" not in reason,
+              (code, output, waiter_starts))
     code, output = run_hook(payload_for(f"cd .. && git worktree remove {other_worktree}", checkout))
     check("an absolute path after cd still names its worktree, and another worktree's removal is let through",
           code == 0 and output is None, (code, output))
