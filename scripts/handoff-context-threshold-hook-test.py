@@ -868,6 +868,45 @@ with tempfile.TemporaryDirectory() as workspace:
           "background command never notified",
           flight.subagent_ids == [], str(flight.subagent_ids))
 
+    # An interim notification queued before the TaskStop can be delivered after it; the stop holds.
+    interim_copy_after_stop = transcript_of(workspace, "subagent-stopped-interim-copy-after.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record("a01d1eb8fe1e4066a"),
+        task_stop_record("a01d1eb8fe1e4066a", "local_agent"),
+        *notification_records(
+            "<task-notification>\n<task-id>a01d1eb8fe1e4066a</task-id>\n<status>completed"
+            "</status>\n<note>This agent stopped with background work of its own still running; "
+            "the result below may be interim.</note>\n<result>12 of 15 deleted.</result>\n"
+            "</task-notification>"),
+    ])
+    copy_subagent_own = hook.subagent_transcript_path(interim_copy_after_stop, "a01d1eb8fe1e4066a")
+    copy_subagent_own.parent.mkdir(parents=True, exist_ok=True)
+    transcript_of(copy_subagent_own.parent, copy_subagent_own.name,
+                  [background_task_launch_record("bdrdn0t9k")])
+    flight = hook.work_in_flight(str(interim_copy_after_stop), float("inf"), now=grid_at_13_minutes)
+    check("an interim notification delivered after a TaskStop does not put the stopped subagent "
+          "back in flight",
+          flight.subagent_ids == [], str(flight.subagent_ids))
+    resumed_after_stop_then_interim = transcript_of(
+        workspace, "subagent-stopped-resumed-then-interim.jsonl", [
+            usage_record(100_000, cache_read=450_000),
+            subagent_spawn_record("a01d1eb8fe1e4066a"),
+            task_stop_record("a01d1eb8fe1e4066a", "local_agent"),
+            subagent_resume_record("a01d1eb8fe1e4066a"),
+            *notification_records(
+                "<task-notification>\n<task-id>a01d1eb8fe1e4066a</task-id>\n<status>completed"
+                "</status>\n<note>This agent stopped with background work of its own still "
+                "running; the result below may be interim.</note>\n<result>Waiting.</result>\n"
+                "</task-notification>"),
+        ])
+    resumed_own = hook.subagent_transcript_path(resumed_after_stop_then_interim, "a01d1eb8fe1e4066a")
+    resumed_own.parent.mkdir(parents=True, exist_ok=True)
+    transcript_of(resumed_own.parent, resumed_own.name, [background_task_launch_record("bdrdn0t9k")])
+    flight = hook.work_in_flight(str(resumed_after_stop_then_interim), float("inf"),
+                                 now=grid_at_13_minutes)
+    check("an interim notification after a resume that followed a TaskStop counts again",
+          flight.subagent_ids == ["a01d1eb8fe1e4066a"], str(flight.subagent_ids))
+
     # A cut-off stop record, unlike a cut-off launch, is skipped: missing it only leaves the task
     # counted as running.
     stop_cut_off = Path(workspace) / "background-task-stop-cut-off.jsonl"
