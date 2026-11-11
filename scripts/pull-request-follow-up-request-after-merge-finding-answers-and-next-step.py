@@ -922,8 +922,8 @@ def gh_api_pages(path):
     try:
         return [item for page in json.loads(output) for item in page]
     except (ValueError, TypeError) as error:
-        raise StepFailed(f"gh api {path} exited 0 but printed output that is not the JSON list of result pages "
-                         f"--paginate --slurp prints: {error}") from None
+        raise StepFailed(f"gh api {path} exited 0, but its output is not the JSON list of result pages that "
+                         f"--paginate --slurp prints. The JSON decode error: {error}") from None
 
 
 def merge_lane_2_reviews_and_their_comments(number, posting, account):
@@ -987,7 +987,7 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
                 f"finding, write the block by hand at the end of {MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR}: "
                 "the line "
                 f"{FOLLOW_UP_REQUEST_LINE_START} pull request {number}, then one line for each such finding, numbered "
-                "from 1, such as: 1. fix-next: <path>:<line>: <the finding on one line>\n"
+                "from 1, such as: 1. fix-next: `<path>:<line>`: <the finding on one line>\n"
                 "If merge-lane-2's reviews hold no such finding, write no block.")
         category, text, _nit = marked
         finding = (category, comment["path"], " ".join(text.split()))
@@ -1007,7 +1007,7 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
         raise StepFailed(f"the block built from {account}'s reviews does not read back as itself, so the hook "
                          f"{FOLLOW_UP_REQUEST_BLOCK_SAVE_HOOK_PATH}, which saves the block from merge-lane-2's message for the author, would "
                          f"save something else: the block reads back as {read_back!r}.\n"
-                         f"Do not paste the block; write the block by hand at the end of {MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR}.")
+                         f"The block was not printed; write it by hand at the end of {MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR}.")
     print(block, end="")
 
 

@@ -1435,8 +1435,8 @@ def test_print_block():
           code == 2 and out == "" and err.startswith("FAILED: gh api exited 1: HTTP 502\n"), err)
     code, out, err = print_block("not json", [])
     check(f"{PRINT_BLOCK} reports gh output that is not a list of pages as FAILED with exit 2",
-          code == 2 and err.startswith(f"FAILED: gh api pulls/{NUMBER}/reviews exited 0 but printed output that is not "
-                                       "the JSON list of result pages --paginate --slurp prints: "), err)
+          code == 2 and err.startswith(f"FAILED: gh api pulls/{NUMBER}/reviews exited 0, but its output is not "
+                                       "the JSON list of result pages that --paginate --slurp prints. The JSON decode error: "), err)
     code, out, err = print_block([{"id": 1}], [])
     check(f"{PRINT_BLOCK} reports a review without its expected fields as FAILED with exit 2",
           code == 2 and err.startswith(f"FAILED: GitHub's reviews of pull request {NUMBER} were not in the "
@@ -1445,7 +1445,7 @@ def test_print_block():
                                  read_back=lambda text: [])
     check(f"{PRINT_BLOCK} prints nothing and fails with exit 2 when its block does not read back as itself",
           code == 2 and out == "" and f"does not read back as itself, so the hook {program.FOLLOW_UP_REQUEST_BLOCK_SAVE_HOOK_PATH}, " in err
-          and f"Do not paste the block; write the block by hand at the end of {program.MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR}.\n" in err, err)
+          and f"The block was not printed; write it by hand at the end of {program.MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR}.\n" in err, err)
     check("the save hook the read-back failure names is in this repository",
           (PROGRAM.parent.parent / program.FOLLOW_UP_REQUEST_BLOCK_SAVE_HOOK_PATH).is_file(), program.FOLLOW_UP_REQUEST_BLOCK_SAVE_HOOK_PATH)
     code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "**fix-next** Rename it.")],
