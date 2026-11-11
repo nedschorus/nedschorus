@@ -155,6 +155,8 @@ def run_multi_line_next_step_cases(workspace: Path):
           "END-OF-NEXT-STEP" in refused.stderr, refused.stderr)
     check("the terminator refusal writes nothing",
           not (workspace / "terminatorcase-handoff.md").exists())
+    check("the terminator refusal's last stdout line is the nothing-written verdict",
+          last_stdout_line(refused) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, refused.stdout)
 
     # The refusal is on an EXACT line match, matching the reader. An indented
     # lookalike is ordinary content and must be written, not refused.
@@ -343,7 +345,8 @@ def check_cannot_tell(result, workspace: Path, situation: str):
           last_stdout_line(result) == writer.HANDOFF_WRITTEN_CANNOT_TELL_WHETHER_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE,
           result.stdout)
     check(f"{situation}, the agent is told to stop, not to wait or to keep working",
-          "Stop working now, so that" in result.stderr
+          "stop working now, so that" in result.stderr
+          and result.stderr.index("First tell the user") < result.stderr.index("stop working now")
           and "Stop working now and wait" not in result.stdout
           and "keep working" not in result.stdout, result.stdout + result.stderr)
     check(f"{situation}, the agent is told not to rerun", "Do not rerun" in result.stderr,
@@ -532,6 +535,8 @@ def run_agent_name_and_claim_cases(workspace: Path):
     check("the refusal teaches the fix", "--claim" in foreign.stderr, foreign.stderr)
     check("and, with no supervised name here, says what else --claim waives",
           "also waives" in foreign.stderr, foreign.stderr)
+    check("the foreign-directory refusal's last stdout line is the nothing-written verdict",
+          last_stdout_line(foreign) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, foreign.stdout)
     check("nothing was written on the refusal",
           (handoffs / "seat-one-handoff.md").read_text(encoding="utf-8") == first_body)
 
@@ -608,6 +613,8 @@ def run_seat_name_the_supervisor_does_not_answer_to_cases(workspace: Path):
     check("the refusal says why it matters -- the handoff would never be read",
           "never reincarnated" in refused.stderr, refused.stderr)
     check("the refusal teaches both exits", "--claim" in refused.stderr, refused.stderr)
+    check("the unwatched-name refusal's last stdout line is the nothing-written verdict",
+          last_stdout_line(refused) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, refused.stdout)
     check("nothing was written on the refusal",
           stray.read_text(encoding="utf-8") == stray_body)
 
