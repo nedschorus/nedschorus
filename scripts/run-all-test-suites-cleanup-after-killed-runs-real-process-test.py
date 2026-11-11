@@ -459,6 +459,7 @@ else:
             command, environment = run_command_and_environment(
                 root, repo, "g", suite_watches_this_test=False)
             helper = start_helper(command, environment, root / "runner.pid")
+            runner_pid = runner_ticks = None
             try:
                 suite_log = module.log_path_for(root / "logs-g", sandboxed_suite)
                 started = wait_until(lambda: suite_log.exists()
@@ -480,6 +481,10 @@ else:
                       (started, runner_pid, runner_ticks, records))
             finally:
                 (repo / "stop").write_text("stop\n")
+                # The stop file may not reach the sandboxed suite through its overlay, and a
+                # runner that outlived its starter would wait on that suite for ever.
+                if runner_ticks is not None and module.process_alive(runner_pid, runner_ticks):
+                    signal_own_descendant(runner_pid, runner_ticks, signal.SIGKILL)
                 reap_ended_children()
 
 print()

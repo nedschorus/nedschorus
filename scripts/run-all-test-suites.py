@@ -3246,7 +3246,7 @@ def descendant_processes_with_start_ticks(pid, proc=Path("/proc")):
     parents = [pid]
     while parents:
         parent = parents.pop()
-        for children_file in (proc / str(parent) / "task").glob("*/children"):
+        for children_file in sorted((proc / str(parent) / "task").glob("*/children")):
             try:
                 children = children_file.read_text().split()
             except (FileNotFoundError, ProcessLookupError):
@@ -4416,8 +4416,9 @@ def main(argv=None, platform=None):
                         f"every process below the suite, which in an nc-test-sandbox ends "
                         f"every process the suite started; outside one, a process a suite "
                         f"started in a session or process group of its own is not reached, and "
-                        f"may still be running, when its parent had ended before the kill. The "
-                        f"suites not yet started were not run.")
+                        f"may still be running, when its parent had ended before the kill or "
+                        f"it started as the kill began. The suites not yet started were not "
+                        f"run.")
             report.close()
             if run_record is not None:
                 run_record.finish()

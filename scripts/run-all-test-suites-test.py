@@ -3302,14 +3302,14 @@ class ProcWhereOneThreadEndsAsItsChildrenAreRead(type(pathlib.Path())):
     """The kernel answers ESRCH to a read of the children of a thread that has just ended."""
 
     def read_text(self, *arguments, **keywords):
-        if self.name == "children" and self.parent.name == "152":
+        if self.name == "children" and self.parent.name == "120":
             raise ProcessLookupError(3, "No such process")
         return super().read_text(*arguments, **keywords)
 
 
 with tempfile.TemporaryDirectory() as scratch:
     proc = fake_proc(pathlib.Path(scratch), {
-        100: (10, {100: [101, 102], 150: [105], 152: [106]}),
+        100: (10, {100: [101, 102], 120: [106], 150: [105]}),
         101: (11, {101: [103]}),
         103: (13, {103: []}),
         105: (15, {105: []}),
