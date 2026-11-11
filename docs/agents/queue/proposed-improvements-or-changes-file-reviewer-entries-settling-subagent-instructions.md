@@ -18,7 +18,7 @@ Change the file only with `scripts/proposed-improvements-or-changes-file-entry-s
 
 ## 1. Read every file of the GHI-MD first
 
-Read every proposed-improvements-or-changes-file of the GHI-MD before you act, not only the one you were given, and run the program's `show` subcommand on each. The GHI-MD's name is the part of the given file's name before `-proposed-improvements-or-changes-`. The files are those in the log-store directory above whose names start with that name, with or without its leading issue number and hyphen, followed by `-proposed-improvements-or-changes-`. List them with `ls` on ned-box, through `ssh nedlern@ned-box ls <directory>` when you are elsewhere.
+Read every proposed-improvements-or-changes-file of the GHI-MD before you act, not only the one you were given, and run the program's `show` subcommand on each. The GHI-MD's name is the part of the given file's name before `-proposed-improvements-or-changes-`. The files are those in the log-store directory above whose names start with that name, with or without its leading GHI number and hyphen, followed by `-proposed-improvements-or-changes-`. List them with `ls` on ned-box, through `ssh nedlern@ned-box ls <directory>` when you are elsewhere.
 
 Work through every open entry in them before you report, even when one of them goes to the user.
 
