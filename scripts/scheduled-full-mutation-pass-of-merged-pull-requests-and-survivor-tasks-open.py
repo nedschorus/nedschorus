@@ -830,12 +830,12 @@ def survivor_task_rechecked_write(task_file, diff_files, surviving_diff_files, m
     return "rewritten to list only the surviving mutants"
 
 
-def merge_untestable_task_subject(merge):
+def untestable_merge_job_failure_task_subject(merge):
     return (f"Nightly full mutation pass skipped merge {merge[:12]}, untestable: a suite fails "
             f"on its unchanged code")
 
 
-def merge_untestable_recorded(arguments, state, state_file, merge, parent, merge_subject,
+def untestable_merge_recorded(arguments, state, state_file, merge, parent, merge_subject,
                               exit_code, stderr, record, record_citation):
     """Open the job failure task for a merge the mutation testing program found a suite failing
     on with no mutant applied, then record the merge in the state as untestable and as the last
@@ -845,7 +845,7 @@ def merge_untestable_recorded(arguments, state, state_file, merge, parent, merge
               for line in stderr.splitlines()
               if line.startswith(mutation_testing.SUITE_FAILS_ON_UNMUTATED_HEAD_LINE_PREFIX)]
     named = ", ".join(suites)
-    subject = merge_untestable_task_subject(merge)
+    subject = untestable_merge_job_failure_task_subject(merge)
     description = (
         f"The scheduled full mutation pass on ned-box could not mutation-test merge {merge} "
         f"({merge_subject}): on that merge's unchanged code, the suite(s) {named} fail, so the "
@@ -936,7 +936,7 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
                 f"then; mark this task completed once a run records the merge as tested or "
                 f"carries it on with new mutants judged."))
     if exit_code == mutation_testing.EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD:
-        merge_untestable_recorded(arguments, state, state_file, merge, parent, merge_subject,
+        untestable_merge_recorded(arguments, state, state_file, merge, parent, merge_subject,
                                   exit_code, stderr, record, record_citation)
         return False, None
     if exit_code not in MUTATION_TESTING_EXITS_WITH_A_VERDICT:

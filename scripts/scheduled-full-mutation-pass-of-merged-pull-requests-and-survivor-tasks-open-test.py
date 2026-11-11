@@ -355,7 +355,8 @@ def run_untestable_merge_cases():
               (completed.returncode, completed.stderr, heads, fixture.state_json()))
         check("an untestable merge opens one job failure task naming the merge, the failing "
               "suite and a later commit's run with the merge's own parent as --base",
-              [task["subject"] for task in tasks] == [job.merge_untestable_task_subject(untestable)]
+              [task["subject"] for task in tasks]
+              == [job.untestable_merge_job_failure_task_subject(untestable)]
               and untestable in tasks[0]["description"]
               and failing_suite in tasks[0]["description"]
               and f"--base {start}" in tasks[0]["description"]
@@ -367,7 +368,7 @@ def run_untestable_merge_cases():
               f"code the suite(s) {failing_suite} fail" in record
               and f"JOB FAILURE TASK: opened task #{tasks[0]['id'] if tasks else ''} on "
                   f"{job.JOB_FAILURE_TASK_AGENT_SEAT}'s task list, "
-                  f"{job.merge_untestable_task_subject(untestable)}" in record
+                  f"{job.untestable_merge_job_failure_task_subject(untestable)}" in record
               and "merges tested: 2 of 2, 1 of them recorded as untestable" in record,
               record)
         calls_before = len(fixture.calls())
