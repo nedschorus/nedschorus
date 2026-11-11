@@ -80,6 +80,9 @@ def load(path, name):
 
 
 snapshots = load(REPOSITORY_ROOT / MODULE_RELATIVE, "uncommitted_work_snapshots")
+first_prompt_list = load(
+    SYSTEM_DIRECTORY / "agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py",
+    "agent_seat_worktrees_and_branches_with_no_pull_request_first_prompt_list")
 
 failures = []
 SKIPPED = []
@@ -1028,6 +1031,11 @@ def test_restore_a_subset():
               and f"\nRestore commit: {restore_commit}\n" in task.get("description", "")
               and ref in task.get("description", "") and str(target) in task.get("description", ""),
               f"restore opens the restored branch's task, naming its restore commit, {where}", task)
+        holding = first_prompt_list.tasks_holding("seat-five", restore_task_list())
+        check(holding.holders(branch) and holding.holders(target)
+              and not holding.unreadable,
+              f"the first prompt's list reads the task restore opens as holding its branch and "
+              f"worktree, so it does not list them, {where}", task)
         check((restore_task_list() / ".highwatermark").read_text() == next(iter(new_tasks), ""),
               "restore raises the task list's .highwatermark to the new task's id")
         check(f"branch: {branch}" in lines and f"worktree: {target}" in lines
@@ -1343,9 +1351,10 @@ def test_restore_task_and_ref_deletion_failures():
     check(code == 1 and target.is_dir() and snapshots.current_ref_value(main, ref) is None
           and any(line.startswith("FAILED: the task could not be opened") for line in lines)
           and f"subject: Restored branch {branch}: open its pull request or delete it" in lines
-          and any(line.startswith("Restore commit: ") for line in lines),
+          and any(line.startswith("Restore commit: ") for line in lines)
+          and f"metadata: {json.dumps({'branches': [branch, str(target)]})}" in lines,
           "a task restore cannot open keeps the branch, still deletes the ref, and prints the "
-          "task's subject and description for TaskCreate", lines)
+          "task's subject, description and metadata for TaskCreate", lines)
     main = new_clone()
     ref, _worktree = leftover_snapshot(main, "ref-deletion-fails", {"new.txt": "work\n"}, "9-6")
     lock = Path(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir")) / f"{ref}.lock"
