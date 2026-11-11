@@ -407,8 +407,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # pushed-branch advice sends it to scripts/branch-conflict-check.py's report.
     check("a pushed branch is told how to clear a conflict with main, byte for byte",
           "To learn whether the branch conflicts with main, run python3 "
-          "scripts/branch-conflict-check.py in this checkout, and if it reports a "
-          "conflict, do what its report says." in agent_text(result),
+          "scripts/branch-conflict-check.py in this checkout. If it prints `VERDICT: "
+          "CONFLICT`, do what its report says. If it exits 2, it has no answer: do what "
+          "its lines say, then run it again." in agent_text(result),
           agent_text(result))
     check("the pushed head's status says how a conflict is cleared, byte for byte",
           "(frozen: a fix is a new commit on top, never an amend; for a conflict with "
