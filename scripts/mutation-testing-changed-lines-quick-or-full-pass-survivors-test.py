@@ -2280,30 +2280,61 @@ def run_cases():
 
     # ------------------------------------------------------------------
     # A baseline that ran out of time is reported as a timeout, not as
-    # failing suites; any other killed baseline still fails.
+    # failing suites, and exits 2; a baseline whose suite runner, run to
+    # its end, names a suite failing by its own exit exits 3 naming it;
+    # any other killed baseline exits 2 and still says the suites fail.
     # ------------------------------------------------------------------
     baseline_item = {"job_id": "baseline", "mutations": []}
-    for case_name, plan, flags, wanted, unwanted in [
+    runner = load_test_suite_runner()
+    survivors_module = load_script_module()
+    suite_fails_line = (f"{survivors_module.SUITE_FAILS_ON_UNMUTATED_HEAD_LINE_PREFIX}"
+                        f"scripts/thing-test.py\n")
+    for case_name, plan, flags, wanted_exit, wanted, unwanted in [
         ("a baseline killed with cosmic-ray's timeout output exits 2, says the suites ran out "
          "of time, gives the limit and says to raise --mutant-timeout-seconds",
          {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output("timeout")]]},
-         ("--mutant-timeout-seconds", "45"),
+         ("--mutant-timeout-seconds", "45"), survivors_module.EXIT_COULD_NOT_RUN,
          ["ran out of time on the unmutated head", "the limit of 45 s on one run of them",
           "Run this again with --mutant-timeout-seconds larger than 45."], ["fail"]),
         ("a baseline killed with the suite runner's TIMEOUT line exits 2 naming the suite and "
          "its own limit",
          {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
              runner_output_with_suites_timed_out([("scripts/thing-test.py", 1800)]))]]},
-         (), ["on the unmutated head, scripts/thing-test.py ran past its own limit of 1800 s",
-              "a larger --mutant-timeout-seconds does not raise it",
-              "--only-suites-named scripts/thing-test.py\n"], ["fail"]),
-        ("a baseline killed with any other output still says the suites fail",
+         (), survivors_module.EXIT_COULD_NOT_RUN,
+         ["on the unmutated head, scripts/thing-test.py ran past its own limit of 1800 s",
+          "a larger --mutant-timeout-seconds does not raise it",
+          "--only-suites-named scripts/thing-test.py\n"], ["fail"]),
+        ("a baseline killed with the suite runner's FAIL line for a suite's own exit exits 3 "
+         "and names that suite on a line of its own",
          {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
-             "FAIL scripts/thing-test.py exit 1 (0.2s)\n")]]},
-         (), ["fail on the unmutated head"], ["ran out of time", "ran past its own limit"]),
-        ("a failing baseline whose result cannot be dumped still says the suites fail",
+             runner_output_with_a_suite_failed_with_exit_code("scripts/thing-test.py", 1))]]},
+         (), survivors_module.EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD,
+         ["fails on the unmutated head", suite_fails_line, "give that commit as --head"],
+         ["ran out of time", "ran past its own limit"]),
+        ("a baseline killed with a suite's FAIL line from a suite runner not run to the end "
+         "exits 2, naming no suite as failing",
+         {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
+             runner_output_with_a_suite_failed_with_exit_code("scripts/thing-test.py", 1)
+             + f"{runner.NOT_RUN_TO_THE_END_LINE_PREFIX}: stopped\n")]]},
+         (), survivors_module.EXIT_COULD_NOT_RUN, ["fail on the unmutated head"],
+         ["suite fails on unmutated head", "ran out of time"]),
+        ("a baseline killed with an nc-test-sandbox that did not start exits 2, naming no "
+         "suite as failing",
+         {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
+             runner_output_with_test_sandbox_not_started("scripts/thing-test.py"))]]},
+         (), survivors_module.EXIT_COULD_NOT_RUN, ["fail on the unmutated head"],
+         ["suite fails on unmutated head", "ran out of time"]),
+        ("a baseline killed with output that names no failing suite exits 2 and still says "
+         "the suites fail",
+         {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
+             "Traceback (most recent call last): the suite runner crashed\n")]]},
+         (), survivors_module.EXIT_COULD_NOT_RUN, ["fail on the unmutated head"],
+         ["suite fails on unmutated head", "ran out of time", "ran past its own limit"]),
+        ("a failing baseline whose result cannot be dumped exits 2 and still says the suites "
+         "fail",
          {"baseline_exit": 1, "baseline_dump_exit": 4},
-         (), ["fail on the unmutated head"], ["ran out of time", "ran past its own limit"]),
+         (), survivors_module.EXIT_COULD_NOT_RUN, ["fail on the unmutated head"],
+         ["suite fails on unmutated head", "ran out of time", "ran past its own limit"]),
     ]:
         with tempfile.TemporaryDirectory() as scratch_name:
             repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
@@ -2311,7 +2342,7 @@ def run_cases():
             completed = run_script(repository, control, "--head", head, "--base", base,
                                    "--cosmic-ray-venv", str(venv), *flags)
             check(case_name,
-                  completed.returncode == 2
+                  completed.returncode == wanted_exit
                   and all(text in completed.stderr for text in wanted)
                   and not any(text in completed.stderr.lower() for text in unwanted)
                   and [c["arguments"][0] for c in calls(control)] == ["baseline", "dump"],
@@ -2325,8 +2356,8 @@ def run_cases():
         ("the test command runs the sibling suite through the suite runner, which passes it",
          "import sys\nsys.exit(0)\n", 0, 0, "PASS scripts/thing-test.py"),
         ("a suite that fails on the unmutated head, run through the suite runner, makes the "
-         "baseline fail",
-         "import sys\nsys.exit(1)\n", 2, 1, "FAIL scripts/thing-test.py exit 1"),
+         "baseline fail and the script exit 3",
+         "import sys\nsys.exit(1)\n", 3, 1, "FAIL scripts/thing-test.py exit 1"),
     ]:
         with tempfile.TemporaryDirectory() as scratch_name:
             repository, base, head = scratch_repository(scratch_name, {

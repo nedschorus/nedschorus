@@ -317,6 +317,89 @@ def run_every_exit_but_0_6_7_9_opens_a_job_failure_task_cases():
           (sorted(exits), opened_for_exit))
 
 
+def run_untestable_merge_cases():
+    """A merge the mutation testing program finds a suite failing on, with no mutant applied."""
+    failing_suite = "scripts/thing-test.py"
+    untestable_step = {
+        "exit": job.mutation_testing.EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD,
+        "stderr": (f"mutation-testing: not run — a suite for scripts/thing.py fails on the "
+                   f"unmutated head, so no mutant can be judged:\n"
+                   f"{job.mutation_testing.SUITE_FAILS_ON_UNMUTATED_HEAD_LINE_PREFIX}"
+                   f"{failing_suite}\nMake the suite pass at the head, then run this again.")}
+
+    # The untestable merge is recorded, its task opened, and the merge after it tested in the
+    # same run, from a state file an earlier version wrote without untestable_merges.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        alpha_list = fixture.seat("alpha")
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        untestable = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                                    author="alpha")
+        after = fixture.commit("scripts/other.py", "def triple(x):\n    return x * 3\n",
+                               author="alpha")
+        completed = fixture.run({untestable: untestable_step,
+                                 after: {"json": verdict(survived=[survivor()])}})
+        record = fixture.records()[-1].read_text() if fixture.records() else ""
+        tasks = job_failure_tasks(fixture)
+        heads = [call[call.index("--head") + 1] for call in fixture.calls()]
+        check("a merge whose suite fails on its unchanged code is recorded as untestable with "
+              "that suite, and the run goes on to test the next merge and exits 0",
+              completed.returncode == job.EXIT_ALL_DONE
+              and heads == [untestable, after]
+              and fixture.state_json()["last_tested_main_commit"] == after
+              and fixture.state_json()[job.UNTESTABLE_MERGES_STATE_KEY]
+              == {untestable: [failing_suite]}
+              and task_files(alpha_list) == ["1.json"],
+              (completed.returncode, completed.stderr, heads, fixture.state_json()))
+        check("an untestable merge opens one job failure task naming the merge, the failing "
+              "suite and a later commit's run with the merge's own parent as --base",
+              [task["subject"] for task in tasks]
+              == [job.untestable_merge_job_failure_task_subject(untestable)]
+              and untestable in tasks[0]["description"]
+              and failing_suite in tasks[0]["description"]
+              and f"--base {start}" in tasks[0]["description"]
+              and f"--head <that commit>" in tasks[0]["description"],
+              tasks)
+        check("the record names the untestable merge, its failing suite and its task, and "
+              "counts it among the merges tested",
+              f"UNTESTABLE: merge {untestable[:12]} (change scripts/thing.py): on its unchanged "
+              f"code the suite(s) {failing_suite} fail" in record
+              and f"JOB FAILURE TASK: opened task #{tasks[0]['id'] if tasks else ''} on "
+                  f"{job.JOB_FAILURE_TASK_AGENT_SEAT}'s task list, "
+                  f"{job.untestable_merge_job_failure_task_subject(untestable)}" in record
+              and "merges tested: 2 of 2, 1 of them recorded as untestable" in record,
+              record)
+        calls_before = len(fixture.calls())
+        completed = fixture.run({"recheck": {"exit": 1}})
+        check("the next run does not try the untestable merge again",
+              completed.returncode == job.EXIT_ALL_DONE
+              and not any("--recorded-mutant-killed-check" not in call
+                          for call in fixture.calls()[calls_before:]),
+              (completed.returncode, fixture.calls()[calls_before:]))
+
+    # The task cannot be opened: a failed step, the state left as it was.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        untestable = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n")
+        after = fixture.commit("scripts/other.py", "def triple(x):\n    return x * 3\n")
+        completed = fixture.run({untestable: untestable_step})
+        heads = [call[call.index("--head") + 1] for call in fixture.calls()]
+        check("an untestable merge whose job failure task cannot be opened stops the run at "
+              "that merge, exit 4, with the state not advanced and no merge recorded as "
+              "untestable",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and heads == [untestable]
+              and f"merge {untestable[:12]} (change scripts/thing.py): a suite fails on its "
+                  f"unchanged code ({failing_suite}), so it is untestable, but its job failure "
+                  f"task could not be opened" in completed.stderr
+              and fixture.state_json() == {"last_tested_main_commit": start, "tasks_opened": {}},
+              (completed.returncode, completed.stderr, heads, fixture.state_json()))
+
+
 def run_carry_on_and_job_failure_task_cases():
     # A merge past the limit with no mutant judged: carried on, not recorded as tested, and
     # one job failure task, not a second on the next run.
@@ -796,6 +879,11 @@ def run_cases():
          "It printed:\n    mutation-testing: git worktree add failed (exit 128): Preparing "
          "worktree (detached HEAD 557f938)\n    error: unable to write file README: No space "
          "left on device\n    fatal: Could not reset index file to revision 'HEAD'.\n"),
+        # Above EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD, as when a signal stopped it.
+        ("the mutation testing program exits 143",
+         {"exit": 143, "stderr": "stopped"}, None,
+         "exited 143 without saying whether each mutant was killed. The next run tries this "
+         "merge again."),
         ("the mutation testing program writes no JSON file",
          {"exit": 0}, None, "but its JSON file"),
         ("the JSON file lacks a key",
@@ -824,6 +912,7 @@ def run_cases():
                   in completed.stderr and not crash_tasks, (completed.stderr, crash_tasks))
 
     run_carry_on_and_job_failure_task_cases()
+    run_untestable_merge_cases()
 
     # No task list for the survivor at all: the merge is not recorded as tested.
     with tempfile.TemporaryDirectory() as scratch:

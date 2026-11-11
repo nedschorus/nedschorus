@@ -66,7 +66,7 @@ or Linux without bwrap), each of the runner's runs takes the machine's lock,
 and the runner exits 3 without running a suite while another test run holds it.
 On a mutant, that refusal judges no suite, so the mutant is printed as ERRORED
 with the runner's refusal and the script goes on to the next mutant; on the
-unmutated head it stops the script with exit 2, as a failing suite there does.
+unmutated head it stops the script with exit 2.
 When bwrap is on PATH but cannot start, the script exits 2 before making the
 worktree.
 
@@ -148,7 +148,13 @@ ceiling (MEMORY CEILING in the runner's docstring), as a mutant that allocates
 without end does, is killed: it fails that suite in seconds, and the rest of
 the machine keeps its memory. On the unmutated head either a suite's own time limit or the limit on
 one run of the suites stops the script with exit 2 and a message saying the suites ran out of time, with the limit,
-and, for a suite's own limit, the suite.
+and, for a suite's own limit, the suite. A suite that fails there by its own
+exit or signal, in a run of the suite runner that ran to its end, stops the
+script with EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD, 3, and standard error names
+each such suite on a line of its own opening with
+SUITE_FAILS_ON_UNMUTATED_HEAD_LINE_PREFIX. Any other baseline that fails,
+such as one whose result cosmic-ray could not dump, or whose suite runner
+judged no suite, exits 2.
 
 --survived-and-errored-mutants-json-file, when given, names a file this
 script writes after its SUMMARY line, as one JSON object: "head" and
@@ -156,8 +162,8 @@ script writes after its SUMMARY line, as one JSON object: "head" and
 of mutants with "module_path", "line", "operator", "diff" and "reason", where
 "line" is the line that must end with a `# pragma: no mutate` comment to skip
 that mutant; and "files_with_no_suite", a list of paths. A file that cannot be
-written exits 2. A run that exits 2 because it could not run prints no SUMMARY
-line and writes no such file.
+written exits 2. A run that exits 2 or 3 because it could not run prints no
+SUMMARY line and writes no such file.
 
 THE RECORDED MUTANT KILLED CHECK, --recorded-mutant-killed-check DIFF_FILE
 [DIFF_FILE ...], judges mutants a full mutation pass recorded: each DIFF_FILE
@@ -208,14 +214,16 @@ refusal printed. The scratch worktree is removed whatever happens.
 
 Exit codes, for a quick or full mutation pass (the recorded mutant killed
 check exits as its own paragraph says: 0 every mutant was killed or no longer
-exists, 1 one survived, 2 one could not be judged or the check could not run):
+exists, 1 one survived, 2 one could not be judged or the check could not run,
+a suite failing without a mutant included; never 3):
 0 every mutant was killed, 1 a mutant survived, errored or was
 not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
 a git step failed, the nc-head-commit is already in the base, the worktree could
 not be made, a changed file the quick mutation pass reads is not valid Python,
-the JSON file could not be written, or a suite fails, runs out of time or
-cannot be launched on the
-unmutated head), 143 or 129 stopped by SIGTERM or SIGHUP (128 plus the signal
+the JSON file could not be written, or a suite runs out of time, cannot be
+launched, or fails without the suite runner naming it on the unmutated head),
+3 a suite fails by its own exit or signal on the unmutated head, which
+standard error names, so no mutant was judged, 143 or 129 stopped by SIGTERM or SIGHUP (128 plus the signal
 number), after removing the scratch worktree, git's record of it included,
 and the scratch directory.
 """
@@ -244,6 +252,7 @@ PROGRAM = "mutation-testing-changed-lines-quick-or-full-pass-survivors"
 EXIT_EVERY_MUTANT_KILLED = 0
 EXIT_SURVIVORS_OR_UNTESTED_FILES = 1
 EXIT_COULD_NOT_RUN = 2
+EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD = 3
 
 COSMIC_RAY_TOOLS = ("cosmic-ray", "cr-filter-git", "cr-filter-pragma", "cr-filter-lines")
 
@@ -293,6 +302,9 @@ COSMIC_RAY_SESSION_PENDING_MUTANTS_COUNT_SQL_QUERY = (
 COSMIC_RAY_ONE_WORK_ITEM_MUTATE_AND_TEST_FLAG = "--cosmic-ray-one-work-item-mutate-and-test"
 
 TEST_SUITE_RUNNER_PATH = Path(__file__).resolve().with_name("run-all-test-suites.py")
+# The scheduled full mutation pass reads the suites that fail on the unmutated head from the lines
+# opening so.
+SUITE_FAILS_ON_UNMUTATED_HEAD_LINE_PREFIX = "SUITE FAILS ON UNMUTATED HEAD  "
 TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_PREFIX = f"{PROGRAM}-test-suite-runner-logs-"
 # The scheduled full mutation pass quotes this script's last line; it skips a line opening so.
 TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX = (
@@ -324,6 +336,11 @@ def load_test_suite_runner():
 
 class CouldNotRun(Exception):
     """A step failed; the message says which and what to do."""
+
+
+class SuiteFailsOnUnmutatedHead(CouldNotRun):
+    """The suite runner, run to its end on the unmutated head, judged a suite failing by the
+    suite's own exit or signal."""
 
 
 def run(command, cwd, environment=None):
@@ -880,13 +897,29 @@ def cosmic_ray_session_kept_to_resume_has_pending_mutants_or_is_unreadable(sessi
         return True
 
 
+def suites_failed_by_their_own_exit_or_signal(outputs, runner):
+    """Each suite, once, in the order first printed, that the suite runner judged failing by
+    the suite's own exit or signal in an output of a run it ran to its end."""
+    failed = {}
+    for output in outputs:
+        if runner.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(
+                output):
+            for line in output.splitlines():
+                match = runner.SUITE_FAILED_LINE.match(line)
+                if match:
+                    failed.setdefault(match["suite"], None)
+    return list(failed)
+
+
 def baseline_refusal(path, suites, baseline, baseline_results, mutant_timeout_seconds,
                      runner):
-    """The message for a baseline cosmic-ray exited nonzero on: a timeout, or failing suites."""
+    """The CouldNotRun to raise for a baseline cosmic-ray exited nonzero on: a timeout, or
+    failing suites, as SuiteFailsOnUnmutatedHead when the suite runner names a suite failing
+    by its own exit or signal."""
     outputs = [result.get("output") or "" for _, result in baseline_results
                if result and result.get("test_outcome") == "killed"]
     if any(is_recorded_output_of_a_run_stopped_at_mutant_timeout(output) for output in outputs):
-        return (f"{PROGRAM}: not run — the suites for {path} ran out of time on the unmutated "
+        return CouldNotRun(f"{PROGRAM}: not run — the suites for {path} ran out of time on the unmutated "
                 f"head: they had not ended when the limit of "
                 f"{mutant_timeout_seconds:g} s on one run of them passed, so no mutant "
                 f"can be judged. Suites: {' '.join(suites)}\n"
@@ -896,7 +929,7 @@ def baseline_refusal(path, suites, baseline, baseline_results, mutant_timeout_se
         "\n".join(outputs))
     if timed_out:
         suites_timed_out = " ".join(shlex.quote(suite) for suite, _ in timed_out)
-        return (f"{PROGRAM}: not run — on the unmutated head, {suite_timeouts_described(timed_out)}"
+        return CouldNotRun(f"{PROGRAM}: not run — on the unmutated head, {suite_timeouts_described(timed_out)}"
                 f" in scripts/run-all-test-suites.py, so no mutant of {path} can be judged. A "
                 f"suite's own limit comes from its last passing run (PER-SUITE TIMEOUT in that "
                 f"file's docstring); a larger --mutant-timeout-seconds does not raise it.\n"
@@ -905,9 +938,17 @@ def baseline_refusal(path, suites, baseline, baseline_results, mutant_timeout_se
                 f"If it passes there, it only ran slowly on a busy machine: run this again.\n"
                 f"If it times out there too, the head makes it hang: fix that before mutation "
                 f"testing.")
-    return (f"{PROGRAM}: not run — the suites for {path} fail on the unmutated "
-            f"head, so no mutant can be judged: "
-            f"{' '.join(suites)}\n{(baseline.stderr or baseline.stdout).strip()}")
+    said = (baseline.stderr or baseline.stdout).strip()
+    failing = suites_failed_by_their_own_exit_or_signal(outputs, runner)
+    if not failing:
+        return CouldNotRun(f"{PROGRAM}: not run — the suites for {path} fail on the unmutated "
+                           f"head, so no mutant can be judged: {' '.join(suites)}\n{said}")
+    return SuiteFailsOnUnmutatedHead(
+        f"{PROGRAM}: not run — a suite for {path} fails on the unmutated head, so no mutant "
+        f"can be judged:\n"
+        + "".join(f"{SUITE_FAILS_ON_UNMUTATED_HEAD_LINE_PREFIX}{suite}\n" for suite in failing)
+        + f"Make the suite pass at the head, then run this again; or, when a later commit "
+        f"already makes it pass, give that commit as --head with the same --base.\n{said}")
 
 
 def cosmic_ray_session_not_kept_refusal(path, session_file, error):
@@ -968,8 +1009,8 @@ def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_
         dumped = run([*cosmic_ray, "dump", str(baseline_session)], worktree, environment)
         baseline_results = ([json.loads(line) for line in dumped.stdout.splitlines()
                              if line.strip()] if dumped.returncode == 0 else [])
-        raise CouldNotRun(baseline_refusal(path, suites, baseline, baseline_results,
-                                           mutant_timeout_seconds, runner))
+        raise baseline_refusal(path, suites, baseline, baseline_results,
+                               mutant_timeout_seconds, runner)
     # cosmic-ray's baseline exits 0 unless the suites failed, so a suite it
     # could not launch at all passes it; only a survived baseline means they ran.
     baseline_results = [json.loads(line) for line in run_or_raise(
@@ -1763,6 +1804,9 @@ def quick_or_full_mutation_pass_or_recorded_mutant_killed_check(
             finally:
                 for each in worktrees:
                     remove_worktree(checkout, each, environment)
+    except SuiteFailsOnUnmutatedHead as failure:
+        print(str(failure), file=sys.stderr)
+        return EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD
     except CouldNotRun as failure:
         print(str(failure), file=sys.stderr)
         return EXIT_COULD_NOT_RUN
