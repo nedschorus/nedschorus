@@ -58,7 +58,7 @@ SEARCH_PROGRAMS = frozenset({
     "grep", "egrep", "fgrep", "zgrep", "rg", "ugrep", "ag", "ack", "fd", "find"})
 
 GLOB_DASH_NAME = "glob-expanded-to-a-name-beginning-with-dash"
-PATTERN_TOO_COMPLEX = "pattern-the-agents-grep-refuses-as-too-complex"
+PATTERN_TOO_COMPLEX = "agents-grep-refused-the-search-pattern-as-too-complex"
 PROGRAM_MISSING = "search-program-missing-on-the-machine-that-ran-it"
 
 # Private-use characters mark the glob characters the shell would expand.
@@ -103,7 +103,7 @@ DIAGNOSTIC_LINE = re.compile(
 EXIT_CODE_LINE = re.compile(r"^Exit code (\d+)\n?")
 
 
-class ProbeFailed(Exception):
+class MachineStateQueryGotNoAnswer(Exception):
     """A question to a machine got no answer, so its cause is unchecked."""
 
 
@@ -139,7 +139,7 @@ def ask(runner, argv, **keywords):
         return runner(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL,
                       timeout=PROBE_TIMEOUT_SECONDS, **keywords)
     except (OSError, subprocess.SubprocessError) as error:
-        raise ProbeFailed(f"{argv[0]} could not run: {error}") from None
+        raise MachineStateQueryGotNoAnswer(f"{argv[0]} could not run: {error}") from None
 
 
 def remote_directory_spelling(directory):
@@ -166,9 +166,9 @@ class Machines:
         if key not in self.answers:
             try:
                 self.answers[key] = find()
-            except ProbeFailed as error:
+            except MachineStateQueryGotNoAnswer as error:
                 self.answers[key] = error
-        if isinstance(self.answers[key], ProbeFailed):
+        if isinstance(self.answers[key], MachineStateQueryGotNoAnswer):
             raise self.answers[key]
         return self.answers[key]
 
@@ -178,11 +178,11 @@ class Machines:
                 try:
                     return os.listdir(directory)
                 except OSError as error:
-                    raise ProbeFailed(f"listing {directory} failed: {error}") from None
+                    raise MachineStateQueryGotNoAnswer(f"listing {directory} failed: {error}") from None
             finished = ask(self.runner, ["ssh", *SSH_OPTIONS, host,
                                          f"ls -A -- {remote_directory_spelling(directory)}"])
             if finished.returncode != 0:
-                raise ProbeFailed(f"listing {directory} on {host} over ssh exited "
+                raise MachineStateQueryGotNoAnswer(f"listing {directory} on {host} over ssh exited "
                                   f"{finished.returncode}: {finished.stderr.strip()}")
             return finished.stdout.splitlines()
         return self._kept(("entries", host, directory), find)
@@ -195,7 +195,7 @@ class Machines:
                                          f"command -v -- {shlex.quote(program)}"])
             # command -v exits 1 for a program it cannot find; ssh's own failure is 255.
             if finished.returncode not in (0, 1):
-                raise ProbeFailed(f"asking {host} over ssh whether {program} is installed "
+                raise MachineStateQueryGotNoAnswer(f"asking {host} over ssh whether {program} is installed "
                                   f"exited {finished.returncode}: {finished.stderr.strip()}")
             return finished.returncode == 0
         return self._kept(("installed", host, program), find)
@@ -206,7 +206,7 @@ class Machines:
         if not os.access(binary, os.X_OK):
             binary = os.path.join(self.environment.get("HOME") or "/", ".local/bin/claude")
         if not os.access(binary, os.X_OK):
-            raise ProbeFailed("the agent's grep, the claude binary run as ugrep, was not found "
+            raise MachineStateQueryGotNoAnswer("the agent's grep, the claude binary run as ugrep, was not found "
                               "at $CLAUDE_CODE_EXECPATH or ~/.local/bin/claude")
         return binary
 
@@ -243,7 +243,7 @@ class Placed(collections.namedtuple("Placed", "host directory words program_inde
         return os.path.basename(plain(self.words[self.program_index]))
 
 
-def placed_commands(command, cwd, host=None):
+def split_into_simple_commands_with_the_machine_and_directory_each_runs_in(command, cwd, host=None):
     """Return every simple command in command, with where it ran, ssh's remote ones included."""
     placed = []
     directories = {(): cwd}  # A child shell's cd does not change its parent's directory.
@@ -274,7 +274,7 @@ def placed_commands(command, cwd, host=None):
             remote = shell_reader.ssh_remote_command(arguments)
             destination = ssh_destination(arguments)
             if remote and destination:
-                placed.extend(placed_commands(remote, "~", host=destination))
+                placed.extend(split_into_simple_commands_with_the_machine_and_directory_each_runs_in(remote, "~", host=destination))
     return placed
 
 
@@ -340,7 +340,7 @@ def glob_dash_name_causes(placed, machines, unchecked):
                 continue
             try:
                 entries = machines.directory_entries(command.host, command.directory)
-            except ProbeFailed as error:
+            except MachineStateQueryGotNoAnswer as error:
                 unchecked.append(f"whether `{plain(word)}` expanded to a name beginning "
                                  f"with -: {error}")
                 break
@@ -360,7 +360,7 @@ def glob_dash_name_causes(placed, machines, unchecked):
     return causes
 
 
-def agents_grep_arguments(command):
+def agents_grep_options_and_patterns_without_file_names(command):
     """Return the options and patterns of a grep that Claude Code's grep function hands to
     ugrep, its file names left out; or None for any other command."""
     # Only a bare grep run by this machine's shell reaches the function; a wrapper such as
@@ -412,12 +412,12 @@ def agents_grep_arguments(command):
 def pattern_too_complex_causes(placed, machines, unchecked):
     causes = []
     for command in placed:
-        arguments = agents_grep_arguments(command)
+        arguments = agents_grep_options_and_patterns_without_file_names(command)
         if not arguments:
             continue
         try:
             refused = machines.agents_grep_refuses(arguments, command.directory)
-        except ProbeFailed as error:
+        except MachineStateQueryGotNoAnswer as error:
             unchecked.append(f"whether the agent's grep refuses the pattern of "
                              f"`{' '.join(arguments)}`: {error}")
             continue
@@ -445,7 +445,7 @@ def program_missing_causes(placed, machines, unchecked):
         asked.add((command.host, program))
         try:
             installed = machines.program_installed(command.host, program)
-        except ProbeFailed as error:
+        except MachineStateQueryGotNoAnswer as error:
             unchecked.append(f"whether {program} is installed on "
                              f"{machine_name(command.host)}: {error}")
             continue
@@ -471,7 +471,7 @@ def judge_command_result(command, cwd, stdout="", exit_code=0, machines=None):
     results = without_diagnostics(stdout) if exit_code else stdout
     if empty_shape_of(results) is None:
         return Verdict(False, reason="the result is not empty")
-    placed = placed_commands(command, cwd)
+    placed = split_into_simple_commands_with_the_machine_and_directory_each_runs_in(command, cwd)
     if not any(is_search(command) for command in placed):
         return Verdict(False, reason="no search in the command")
     unchecked = []
@@ -503,7 +503,7 @@ def report_lines(verdict):
     return lines
 
 
-def claude_code_post_tool_use_hook(stdin, stdout, machines=None):
+def unvalidated_negative_result_warning_post_tool_use_hook(stdin, stdout, machines=None):
     """Read a PostToolUse or PostToolUseFailure payload for Bash; print a warning, if any."""
     try:
         payload = json.load(stdin)
@@ -622,18 +622,18 @@ def main(argv=None, stdin=sys.stdin, stdout=sys.stdout, machines=None):
     parser.add_argument("--transcripts", action="append", default=[], metavar="DIR")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--top", type=int, default=10)
-    parser.add_argument("--claude-code-post-tool-use-hook", action="store_true",
+    parser.add_argument("--run-as-claude-code-post-tool-use-hook", action="store_true",
                         help="read a PostToolUse or PostToolUseFailure payload on stdin")
     arguments = parser.parse_args(argv)
 
     modes = [arguments.command is not None, bool(arguments.transcripts),
-             arguments.claude_code_post_tool_use_hook]
+             arguments.run_as_claude_code_post_tool_use_hook]
     if sum(modes) != 1:
         print(f"{PROGRAM}: give exactly one of --command, --transcripts, "
-              f"--claude-code-post-tool-use-hook", file=sys.stderr)
+              f"--run-as-claude-code-post-tool-use-hook", file=sys.stderr)
         return EXIT_BAD_INVOCATION
-    if arguments.claude_code_post_tool_use_hook:
-        return claude_code_post_tool_use_hook(stdin, stdout, machines)
+    if arguments.run_as_claude_code_post_tool_use_hook:
+        return unvalidated_negative_result_warning_post_tool_use_hook(stdin, stdout, machines)
     if arguments.transcripts:
         measure_transcripts(arguments.transcripts, arguments.limit, arguments.top, stdout,
                             machines)

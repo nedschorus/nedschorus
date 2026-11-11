@@ -25,7 +25,7 @@ import tempfile
 
 CHECK_SCRIPT = pathlib.Path(__file__).resolve().with_name("unvalidated-negative-result-check.py")
 FIXTURE = CHECK_SCRIPT.with_name("unvalidated-negative-result-check-fixtures") \
-    / "empty-search-check-firings-sorted-2026-10-01.json"
+    / "firings-classified-by-hand-as-real-self-caught-or-noise-2026-10-01.json"
 
 SCRATCH = pathlib.Path(tempfile.mkdtemp(prefix="unvalidated-negative-result-check-test-"))
 atexit.register(shutil.rmtree, SCRATCH, ignore_errors=True)
@@ -204,7 +204,7 @@ for near_miss in ("grep -oE '.{0,80}link-type' notes.md",
     check(f"S2 stays silent: {near_miss}", not judge(near_miss).fires,
           judge(near_miss).signals)
 check("S2 leaves the file names out of the probe",
-      check_module.agents_grep_arguments(check_module.Placed(
+      check_module.agents_grep_options_and_patterns_without_file_names(check_module.Placed(
           None, "/work", ["grep", "-rn", "--include", "*.md", "-A", "2", "needle", "docs",
                           "notes.md"], 0))
       == ["-rn", "--include", "*.md", "-A", "2", "needle"])
@@ -270,24 +270,29 @@ for answer, expected in ((Answer(0, "/usr/bin/rg\n"), True), (Answer(1), False))
 for what, ask_it in (
         ("a remote listing", lambda m: m.directory_entries("h", "/d")),
         ("a remote program question", lambda m: m.program_installed("h", "rg"))):
-    for failure in (Answer(255, stderr="ssh: connect to host h: refused"),
-                    subprocess.TimeoutExpired("ssh", 15), OSError("no ssh")):
+    for failure in (Answer(255, stderr="connect to host h: refused"),
+                    Answer(-15, stderr="killed by a signal"),
+                    subprocess.TimeoutExpired("x", 15), OSError("no such file")):
         runner, calls = runner_answering(failure)
         machines = check_module.Machines(runner=runner)
         raised = []
         for _ in range(2):
             try:
                 ask_it(machines)
-            except check_module.ProbeFailed as error:
+            except check_module.MachineStateQueryGotNoAnswer as error:
                 raised.append(str(error))
-        check(f"{what} that fails ({type(failure).__name__}) raises ProbeFailed, once asked",
-              len(raised) == 2 and len(calls) == 1, f"{raised} {calls}")
+        named = (f"exited {failure.returncode}" in raised[0] if isinstance(failure, Answer)
+                 else raised[0].startswith("ssh could not run")) if raised else False
+        check(f"{what} that fails ({type(failure).__name__} "
+              f"{getattr(failure, 'returncode', '')}) raises MachineStateQueryGotNoAnswer, "
+              f"once asked, saying how it failed",
+              len(raised) == 2 and len(calls) == 1 and named, f"{raised} {calls}")
 
 try:
     check_module.Machines().directory_entries(None, str(SCRATCH / "absent"))
-    check("a local listing of a missing directory raises ProbeFailed", False)
-except check_module.ProbeFailed:
-    check("a local listing of a missing directory raises ProbeFailed", True)
+    check("a local listing of a missing directory raises MachineStateQueryGotNoAnswer", False)
+except check_module.MachineStateQueryGotNoAnswer:
+    check("a local listing of a missing directory raises MachineStateQueryGotNoAnswer", True)
 
 dash_directory = SCRATCH / "projects"
 (dash_directory / "-Users-el-agents-x").mkdir(parents=True)
@@ -321,6 +326,27 @@ failed_listing = check_module.judge_command_result(
 check("a listing that fails leaves S1 unchecked and says which glob",
       not failed_listing.fires and len(failed_listing.unchecked) == 1
       and "`*/*.jsonl`" in failed_listing.unchecked[0], failed_listing.unchecked)
+two_globs = check_module.judge_command_result(
+    "grep -l x */*.jsonl *.md", str(SCRATCH / "absent"), "", 0,
+    machines_with_the_stand_in_agents_grep())
+check("a listing that fails is reported once, not once per glob in the command",
+      sum("expanded to a name" in line for line in two_globs.unchecked) == 1,
+      two_globs.unchecked)
+
+
+class LocalFdMissing(check_module.Machines):
+    def program_installed(self, host, program):
+        if host is None:
+            return program != "fd"
+        return super().program_installed(host, program)
+
+
+runner, _ = runner_answering(Answer(255, stderr="refused"))
+after_failed_ssh = check_module.judge_command_result(
+    "ssh h 'rg x docs'; fd y docs", "/work", "", 0, LocalFdMissing(runner=runner))
+check("a program question that fails does not stop the check asking about the next",
+      after_failed_ssh.signals == [PROGRAM_MISSING] and len(after_failed_ssh.unchecked) == 1,
+      f"{after_failed_ssh.signals} {after_failed_ssh.unchecked}")
 runner, _ = runner_answering(Answer(255, stderr="refused"))
 failed_ssh = check_module.judge_command_result(
     "ssh h 'rg x docs'", "/work", "", 0, check_module.Machines(runner=runner))
@@ -333,7 +359,7 @@ check("an ssh that fails leaves S3 unchecked and says which program",
 
 def hook(payload, machines=None):
     out = io.StringIO()
-    code = check_module.claude_code_post_tool_use_hook(
+    code = check_module.unvalidated_negative_result_warning_post_tool_use_hook(
         io.StringIO(payload if isinstance(payload, str) else json.dumps(payload)), out,
         machines or MachinesOfTheDay())
     return code, out.getvalue()
@@ -440,6 +466,20 @@ code, out = run_main("--transcripts", str(SCRATCH / "transcripts"))
 check("the measurement counts recorded runs and the ones that fire",
       code == 0 and "pairs           : 2" in out and "fired           : 1" in out
       and GLOB_DASH_NAME in out, out)
+check_module.shell_reader.simple_commands = unreadable
+try:
+    code, out = run_main("--transcripts", str(SCRATCH / "transcripts"))
+finally:
+    check_module.shell_reader.simple_commands = real_simple_commands
+check("the measurement counts each run the shell reader cannot read as unreadable",
+      code == 0 and "unreadable      : 2" in out and "fired           : 0" in out, out)
+check_module.shell_reader.simple_commands = unreadable
+try:
+    code, out = run_main("--command", "grep -l x docs", "--cwd", "/work")
+finally:
+    check_module.shell_reader.simple_commands = real_simple_commands
+check("a command the shell reader cannot read exits 3 on the command line",
+      code == 3, f"{code} {out!r}")
 
 
 # --------------------------------------- the record against the real agent's grep
@@ -447,14 +487,14 @@ check("the measurement counts recorded runs and the ones that fire",
 try:
     real_machines = check_module.Machines()
     real_machines.agents_grep()
-except check_module.ProbeFailed as error:
+except check_module.MachineStateQueryGotNoAnswer as error:
     print(f"SKIP  [this machine cannot run it] the fixture's refusals checked against the "
           f"real agent's grep: {error}")
 else:
     for firing in firings:
-        refused = [arguments for command in check_module.placed_commands(
+        refused = [arguments for command in check_module.split_into_simple_commands_with_the_machine_and_directory_each_runs_in(
                        firing["command"], firing["cwd"])
-                   if (arguments := check_module.agents_grep_arguments(command))
+                   if (arguments := check_module.agents_grep_options_and_patterns_without_file_names(command))
                    and real_machines.agents_grep_refuses(arguments, None)]
         check(f"{firing['id']}: the real agent's grep refuses what the fixture records",
               refused == firing["arguments_the_agents_grep_refuses"], refused)
