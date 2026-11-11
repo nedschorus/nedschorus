@@ -42,7 +42,7 @@ Exit codes: 0 made; 1 git or the owner file failed; 2 bad invocation, or refused
 anything was made.
 
 The messages follow
-docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 """
 
 import importlib.util

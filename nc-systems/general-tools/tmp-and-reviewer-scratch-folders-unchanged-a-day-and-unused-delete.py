@@ -62,7 +62,7 @@ import sys
 import time
 from pathlib import Path
 
-# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 GENERAL_TOOLS = Path(__file__).resolve().parent
 REPOSITORY_ROOT = GENERAL_TOOLS.parents[1]
 DEFAULT_TMP_PLACE = Path("/tmp")
