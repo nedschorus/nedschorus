@@ -1705,6 +1705,13 @@ def run_cases():
               and f"bin/pip install cosmic-ray=={job.mutation_testing.COSMIC_RAY_VERSION}" in completed.stderr,
               f"rc={completed.returncode} err={completed.stderr}")
 
+    # With no --cosmic-ray-venv, the nightly job uses the venv the quick pass uses, so the two
+    # share one install of cosmic-ray.
+    arguments = job.parse_arguments([])
+    check("no --cosmic-ray-venv: the venv is the quick pass's default venv",
+          arguments.cosmic_ray_venv == job.mutation_testing.DEFAULT_COSMIC_RAY_VENV,
+          (arguments.cosmic_ray_venv, job.mutation_testing.DEFAULT_COSMIC_RAY_VENV))
+
     # A fetch that fails.
     with tempfile.TemporaryDirectory() as scratch:
         fixture = Fixture(scratch)
