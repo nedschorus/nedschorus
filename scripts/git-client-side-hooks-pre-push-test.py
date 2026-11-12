@@ -1453,10 +1453,10 @@ def run_open_pull_request_branch_cases(scratch):
           "what failed and to tell the user",
           was_refused(result) and "it forces an update to branch clean on origin, and "
           + lookup_failed + "gh pr list exited with status 4: " + FAKE_GH_LOGGED_OUT in result.stderr
-          and "Tell the user this whole message, and do not push clean again until he answers."
-          in result.stderr
+          and "Unless merge-lane-2 asked you for this push: tell the user this whole message, "
+          "and do not push clean again until he answers.\nIf merge-lane-2 asked you for this "
+          "push: run it again with CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE=1" in result.stderr
           and "Run gh auth status" not in result.stderr
-          and "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE=1" in result.stderr
           and scenario.origin_ref("clean") == pushed, result.describe())
     result = scenario.push("origin", "--delete", "conflicting")
     check("open pull request check: when gh is logged out, a deletion is refused",
