@@ -1348,6 +1348,10 @@ with tempfile.TemporaryDirectory() as scratch:
           and kept_list(root / "recordings") is None
           and any(line.startswith("inputs recorded by python-audit-hook, kept in")
                   for line in lines(hook_alone.stdout)), hook_alone.stdout)
+    check("a run that runs every suite says nothing of the suites' missing lists of files only "
+          "strace saw, since only a selective run reads them",
+          not any("have no list of the files only strace saw" in line
+                  for line in lines(hook_alone.stdout)), hook_alone.stdout)
 
     traced = run(root, "--record-inputs-with-strace", environment_extra=fake,
                  driver=FAKE_STRACE_DRIVER)
@@ -1505,6 +1509,62 @@ with tempfile.TemporaryDirectory() as scratch:
         (store / f"{name}-test.py.files-only-strace-saw.json").write_text(body)
         check(f"a list that is {name.replace('-', ' ')} is not used",
               module.load_files_only_strace_saw(store, f"{name}-test.py") is None, name)
+
+for exit_code, skipped, marked, kept in (
+        (0, 0, 0, True), (-signal.SIGKILL, 0, 0, False), (1, 0, 0, False), (0, 1, 0, False),
+        (0, 2, 2, True)):
+    check(f"a run that exited {exit_code} and skipped {skipped} case(s), {marked} of them marked "
+          f"as ones this machine cannot run, {'keeps' if kept else 'does not keep'} its list of "
+          f"files only strace saw",
+          module.recorded_run_passed_and_skipped_only_cases_this_machine_cannot_run(
+              {"exit": exit_code, "skipped_cases": skipped,
+               "skipped_cases_this_machine_cannot_run": marked}) is kept)
+
+
+class SelectionCheckout:
+    """The checkout selection_reason compares a recording against: differ maps each path that
+    differs to its status, and hashes_now each file to its blob hash."""
+
+    def __init__(self, differ, hashes_now):
+        self.differ = differ
+        self.hashes_now = hashes_now
+        self.entries_then = self.entries_now = {}
+        self.fingerprint_now = "fingerprint"
+
+    def there_then(self, path):
+        return False
+
+    def there_now(self, path):
+        return False
+
+
+def selection_reason_for(reads, differ, files_only_strace_saw=None, hashes_now=None):
+    recording = {"format": module.RECORDED_INPUTS_FORMAT_VERSION, "exit": 0, "skipped_cases": 0,
+                 "skipped_cases_this_machine_cannot_run": 0, "reads": reads, "looked_for": {},
+                 "lists": {}, "git_commands_on_the_checkout": []}
+    return module.selection_reason("a-test.py", recording,
+                                   SelectionCheckout(differ, hashes_now or {}), "0" * 40,
+                                   files_only_strace_saw)[1]
+
+
+THREE_DIFFER = {"one.txt": "M", "two.txt": "M", "three.txt": "M"}
+for paths, more in ((["one.txt", "two.txt"], " and 1 more"),
+                    (["one.txt", "two.txt", "three.txt"], " and 2 more")):
+    reason = selection_reason_for({path: "blob" for path in paths}, THREE_DIFFER)
+    check(f"a suite that reads {len(paths)} files that differ names the first and counts the rest",
+          reason == f"it reads one.txt, which differs{more}", reason)
+    reason = selection_reason_for(
+        {}, THREE_DIFFER, {"recorded_at": "2026-11-04T00:00:00Z", "files_only_strace_saw": paths})
+    check(f"a suite that reads {len(paths)} files that differ, seen only by strace, names the "
+          f"first on the list and counts the rest",
+          reason == f"it reads one.txt, which differs{more}, as only the strace run of "
+                    f"2026-11-04T00:00:00Z saw", reason)
+    reason = selection_reason_for({path: "recorded blob" for path in paths}, {},
+                                  hashes_now={path: "another blob" for path in paths})
+    check(f"a recording that read another copy of {len(paths)} files than the checkout holds "
+          f"names the first and counts the rest",
+          reason == f"its recording read another copy of one.txt{more} than the checkout holds, "
+                    f"so what it reads here is unknown", reason)
 
 # --- Saving recordings while runs in other checkouts save them too -----------
 # A sitecustomize.py on the program's PYTHONPATH holds each run at a barrier
