@@ -157,10 +157,9 @@ HANDOFF_DEFERRED_MARKER_NOT_DELETED = (
     "without waiting for an answer."
 )
 
-WAIT_LIMIT_TABLE_SENTENCE = (
-    "Each kind's wait-limit is in BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND in "
-    "scripts/handoff-context-threshold-hook.py."
-)
+WAIT_LIMIT_TABLE_LOCATION = (
+    "BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND in scripts/handoff-context-threshold-hook.py")
+WAIT_LIMIT_TABLE_SENTENCE = f"Each kind's wait-limit is in {WAIT_LIMIT_TABLE_LOCATION}."
 
 HANDOFF_DEFERRED_NOTICE = (
     "Context at {share} — handoff deferred while {running} run, because a "
@@ -239,11 +238,12 @@ _WATCHER = (r"(?:bash[ \t]+|python3(?:[ \t]+-u)?[ \t]+)?(?:" + _WORD + r"/)?"
             + r"""(?:[ \t]*\|[ \t]*(?:grep[ \t]+-v[ \t]+(?:'[^']*'|"[^"`$\\]*")|tail[ \t]+-n?[ \t]*\d+))*""")
 _LOOP_CONDITION_CHECK = r"(?:![ \t]+)?(?:grep|pgrep|kill[ \t]+-0|test|\[|true|:)" + _ARGUMENTS + _REDIRECTIONS
 _DEADLINE = r"\$\(date[ \t]+\+%s\)"
+WAIT_LIMIT_TABLE_WAITING_TASK_KIND_NAME = "waiting-task"
 BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND = (
     ("nc-mutation-testing", (r".*(?:mutation|mutmut|mutant).*",), 105.0),
     ("test-suite", (r".*(?:run-all-test-suites\.py|pytest|-test\.py\b|_test\.py\b|unittest"
                     r"|head-tests-with-retry|head-test-run|test-suite|run-suites).*",), 90.0),
-    ("waiting-task", tuple(_COMMAND_PREFIX + shape + _TO_THE_END for shape in (
+    (WAIT_LIMIT_TABLE_WAITING_TASK_KIND_NAME, tuple(_COMMAND_PREFIX + shape + _TO_THE_END for shape in (
         r"sleep[ \t]+" + _WORD,
         r"gh[ \t]+pr[ \t]+checks(?=[^\n;&|]*--watch)" + _ARGUMENTS,
         r"gh[ \t]+run[ \t]+watch" + _ARGUMENTS,
@@ -257,19 +257,20 @@ BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND = (
 )
 # Allows a slow cold-read-full-run with one cell relaunch.
 BACKGROUND_TASK_WAIT_LIMIT_MINUTES_WHEN_NO_KIND_MATCHES = 75.0
+BACKGROUND_TASK_KIND_WHEN_NO_KIND_MATCHES = "no kind in the table matched"
 _COMPILED_WAIT_LIMIT_KINDS = [
-    ([re.compile(pattern, re.I | re.S) for pattern in patterns], minutes)
-    for _kind, patterns, minutes in BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND]
+    (kind, [re.compile(pattern, re.I | re.S) for pattern in patterns], minutes)
+    for kind, patterns, minutes in BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND]
 
 
-def background_task_kind_wait_limit_seconds_from_command(command) -> float:
-    """Return the wait-limit, in seconds, of the first kind with a pattern that matches the whole
+def background_task_kind_and_wait_limit_minutes_from_command(command) -> tuple:
+    """Return (kind, wait-limit in minutes) of the first kind with a pattern that matches the whole
     command; a command no pattern matches, or None for an unknown command, gets the no-match limit."""
     if isinstance(command, str):
-        for patterns, minutes in _COMPILED_WAIT_LIMIT_KINDS:
+        for kind, patterns, minutes in _COMPILED_WAIT_LIMIT_KINDS:
             if any(pattern.fullmatch(command) for pattern in patterns):
-                return minutes * 60
-    return BACKGROUND_TASK_WAIT_LIMIT_MINUTES_WHEN_NO_KIND_MATCHES * 60
+                return kind, minutes
+    return BACKGROUND_TASK_KIND_WHEN_NO_KIND_MATCHES, BACKGROUND_TASK_WAIT_LIMIT_MINUTES_WHEN_NO_KIND_MATCHES
 
 
 def background_task_still_within_wait(age_seconds, wait_limit_seconds) -> bool:
@@ -653,7 +654,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
 
     def still_within_wait(task_id):
         wait_limit_seconds = (
-            background_task_kind_wait_limit_seconds_from_command(launched_task_command[task_id])
+            background_task_kind_and_wait_limit_minutes_from_command(launched_task_command[task_id])[1] * 60
             if background_task_wait_seconds is None else background_task_wait_seconds)
         return background_task_still_within_wait(launched_task_age[task_id], wait_limit_seconds)
 
@@ -709,7 +710,7 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
 
     def still_within_wait(task_id):
         wait_limit_seconds = (
-            background_task_kind_wait_limit_seconds_from_command(command_by_id.get(task_id))
+            background_task_kind_and_wait_limit_minutes_from_command(command_by_id.get(task_id))[1] * 60
             if background_task_wait_seconds is None else background_task_wait_seconds)
         return background_task_still_within_wait(launch_ages.get(task_id), wait_limit_seconds)
 

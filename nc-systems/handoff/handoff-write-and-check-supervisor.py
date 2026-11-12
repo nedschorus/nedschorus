@@ -157,6 +157,7 @@ BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
     supervisor.BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
 COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
     supervisor.COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
+BACKGROUND_TASK_PAST_WAIT_LIMIT_FIELD_PREFIX = supervisor.BACKGROUND_TASK_PAST_WAIT_LIMIT_FIELD_PREFIX
 
 # An interim task-notification carries <status>completed</status>, so it gets an event of its own.
 WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT = "waiting on its own background work"
@@ -529,10 +530,90 @@ def handoff_deferral_fields_for_this_session(handoff_directory: Path, working_di
     return lines, "handoff-deferral: " + ("; ".join(parts) or "nothing to record")
 
 
+def background_tasks_past_wait_limit_still_running(transcript_path: Path, deferral_began_at=None,
+                                                    now=None) -> list:
+    """Return [(task id, description, command, kind, wait-limit minutes, minutes run)] for the
+    background Bash tasks with no completion notification that are past their kind's wait-limit at
+    now, in launch order, leaving out waiting-tasks and the tasks launched at or after
+    deferral_began_at, which the handoff-deferral did not wait for and its own fields list.
+
+    A task whose launch record has no readable time is left out: it cannot be shown to be past its
+    wait-limit. Raises threshold_hook.TranscriptCouldNotBeFullyRead when a launch record cannot be
+    read.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    flight = threshold_hook.work_in_flight(str(transcript_path), float("inf"), now=now,
+                                           should_read_subagent_own_transcripts=False)
+    candidates = [task_id for task_id in flight.background_task_ids
+                  if flight.launched_at_by_id.get(task_id) is not None
+                  and (deferral_began_at is None or flight.launched_at_by_id[task_id] < deferral_began_at)]
+    launches = background_task_launches_by_id(transcript_path, candidates)
+    past = []
+    for task_id in candidates:
+        description, command = launches[task_id]
+        kind, wait_limit_minutes = threshold_hook.background_task_kind_and_wait_limit_minutes_from_command(command)
+        seconds_run = (now - flight.launched_at_by_id[task_id]).total_seconds()
+        if kind == threshold_hook.WAIT_LIMIT_TABLE_WAITING_TASK_KIND_NAME or threshold_hook.background_task_still_within_wait(
+                seconds_run, wait_limit_minutes * 60):
+            continue
+        past.append((task_id, description, command, kind, wait_limit_minutes, seconds_run / 60))
+    return past
+
+
+def background_task_past_wait_limit_field_lines(past_tasks) -> list:
+    """Render each background task past its wait-limit as a numbered field."""
+    lines = []
+    for ordinal, (task_id, description, command, kind, wait_limit_minutes, minutes_run) in enumerate(
+            past_tasks, start=1):
+        described = f' "{description}"' if description else ""
+        lines.append(f"{BACKGROUND_TASK_PAST_WAIT_LIMIT_FIELD_PREFIX}{ordinal}: {task_id}{described} "
+                     f"command: {json.dumps(command)}; kind: {kind}; wait-limit: "
+                     f"{wait_limit_minutes:g} minutes; ran: {minutes_run:.0f} minutes; wait-limit table: "
+                     f"{threshold_hook.WAIT_LIMIT_TABLE_LOCATION}")
+    return lines
+
+
+def background_task_past_wait_limit_fields_for_this_session(handoff_directory: Path,
+                                                            working_directory: Path, now=None):
+    """Return (field lines, console status) for the background tasks past their wait-limit.
+
+    Never raises: what cannot be read is named in the status, which tells the agent to add it to
+    the next step by hand.
+    """
+    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not session_id:
+        return [], ("background tasks past their wait-limit: not listed, because "
+                    "CLAUDE_CODE_SESSION_ID is unset and this script cannot find this session's "
+                    "transcript without it. Name in the next step each background task, other than "
+                    "a waiting-task, still running past its kind's wait-limit, with its command, "
+                    f"its kind, its wait-limit and how long it ran, from {threshold_hook.WAIT_LIMIT_TABLE_LOCATION}, "
+                    "and run this script again.")
+    try:
+        marker = deferred_marker_files.handoff_deferral_record_read_from_marker_or_moved_at_fire(
+            handoff_directory, session_id)
+    except deferred_marker_files.HandoffDeferredMarkerUnreadable:
+        # The handoff-deferral status reports this; without the start time no task is left out.
+        marker = None
+    try:
+        transcript_path = find_session_transcript(session_id, working_directory)
+        if transcript_path is None:
+            raise LookupError(f"no single transcript found for session {session_id} under {PROJECTS_ROOT}")
+        past_tasks = background_tasks_past_wait_limit_still_running(
+            transcript_path, marker.deferral_began_at if marker is not None else None, now=now)
+    except Exception as error:  # noqa: BLE001 - these fields never block a handoff
+        return [], (f"background tasks past their wait-limit: not listed ({type(error).__name__}: "
+                    f"{error}). Find them in this session's dialog, and run this script again with "
+                    "a next step that names each, with its command, its kind, its wait-limit and "
+                    f"how long it ran, from {threshold_hook.WAIT_LIMIT_TABLE_LOCATION}.")
+    return (background_task_past_wait_limit_field_lines(past_tasks),
+            f"background tasks past their wait-limit: {len(past_tasks)} recorded")
+
+
 def write_handoff_file(handoff_path: Path, next_step: str, counter: int,
                        ask_user_before_restart: bool,
                        seat_directory: Path, spawned_subagent_lines=(), verbatim_lines=(),
-                       handoff_deferral_lines=()) -> None:
+                       handoff_deferral_lines=(), background_task_past_wait_limit_lines=()) -> None:
     """Write the handoff atomically so readers cannot see a partial file."""
     lines = [
         f"{field_names.WRITTEN_AT_FIELD}: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
@@ -552,6 +633,7 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int,
 
     lines.extend(spawned_subagent_lines)
     lines.extend(handoff_deferral_lines)
+    lines.extend(background_task_past_wait_limit_lines)
 
     # Write the block last so field-like content cannot shadow actual fields.
     if verbatim_lines:
@@ -964,15 +1046,19 @@ def write_handoff_and_report_supervisor(argv) -> int:
     spawned_subagent_lines, roster_report = spawned_subagent_roster_for_this_session(seat_directory)
     handoff_deferral_lines, handoff_deferral_report = handoff_deferral_fields_for_this_session(
         handoff_directory, seat_directory)
+    past_wait_limit_lines, past_wait_limit_report = background_task_past_wait_limit_fields_for_this_session(
+        handoff_directory, seat_directory)
     prune_report = prune_completed_tasks(next_step_text)
     write_handoff_file(handoff_path, next_step, counter, arguments.ask_user_before_restart, seat_directory,
                        spawned_subagent_lines=spawned_subagent_lines,
                        verbatim_lines=verbatim_lines,
-                       handoff_deferral_lines=handoff_deferral_lines)
+                       handoff_deferral_lines=handoff_deferral_lines,
+                       background_task_past_wait_limit_lines=past_wait_limit_lines)
     # Flushed at once: the supervisor may end this session soon after the handoff file appears.
     print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (session-handoff-sequence-number {counter})", flush=True)  # pragma: no mutate, the next line's print flushes the same buffer at once, so flush=False changes no output
     print(f"handoff-write-and-check-supervisor: {roster_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {handoff_deferral_report}", flush=True)
+    print(f"handoff-write-and-check-supervisor: {past_wait_limit_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {prune_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {run_branch_protection_audit()}")
 

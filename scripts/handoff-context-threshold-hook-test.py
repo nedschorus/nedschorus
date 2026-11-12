@@ -881,7 +881,7 @@ with tempfile.TemporaryDirectory() as workspace:
             ("while read -r line; do echo \"$line\" >> out.txt; done < in.txt", 75),
             ("python3 nc-systems/cold-read/cold-read-grid.py --target docs/x.md", 75),
             (None, 75)):
-        seconds = hook.background_task_kind_wait_limit_seconds_from_command(command)
+        seconds = hook.background_task_kind_and_wait_limit_minutes_from_command(command)[1] * 60
         check(f"the wait-limit of {command!r} is {expected_minutes} minutes",
               seconds == expected_minutes * 60, seconds)
 
@@ -908,11 +908,11 @@ with tempfile.TemporaryDirectory() as workspace:
     work = "./work.sh"
     for shape in waiting_task_shapes:
         check(f"the waiting-task shape {shape!r} alone has a wait-limit of 0",
-              hook.background_task_kind_wait_limit_seconds_from_command(shape) == 0,
-              hook.background_task_kind_wait_limit_seconds_from_command(shape))
+              hook.background_task_kind_and_wait_limit_minutes_from_command(shape)[1] * 60 == 0,
+              hook.background_task_kind_and_wait_limit_minutes_from_command(shape)[1] * 60)
         for separator in ("; ", ";", " && ", " || ", " | ", " & ", "\n"):
             for command in (shape + separator + work, work + separator + shape):
-                seconds = hook.background_task_kind_wait_limit_seconds_from_command(command)
+                seconds = hook.background_task_kind_and_wait_limit_minutes_from_command(command)[1] * 60
                 check(f"work beside a wait, {command!r}, has the no-match wait-limit",
                       seconds == 75 * 60, seconds)
     for command in (
@@ -940,14 +940,14 @@ with tempfile.TemporaryDirectory() as workspace:
             "3220 abc t > $H/merge-3220.log 2>&1; while true; do bash $H/loop/watch-and-merge-provisional-ghi-md-edits.sh; done",
             "python3 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py 3220 abc t "
             "> x 2>&1; while true; do bash h/loop/watch-and-merge-provisional-ghi-md-edits.sh; done"):
-        seconds = hook.background_task_kind_wait_limit_seconds_from_command(command)
+        seconds = hook.background_task_kind_and_wait_limit_minutes_from_command(command)[1] * 60
         check(f"work inside or around a wait, {command!r}, has the no-match wait-limit",
               seconds == 75 * 60, seconds)
     # A variable name the pattern could split many ways made a failed match take minutes.
     # Five repetitions take about 9 s when that returns, so this case fails by name, not by timeout.
     many_variables = "export A=$CLAUDE_PROJECT_DIR/a; " * 5 + work
     started = time.monotonic()
-    seconds = hook.background_task_kind_wait_limit_seconds_from_command(many_variables)
+    seconds = hook.background_task_kind_and_wait_limit_minutes_from_command(many_variables)[1] * 60
     check("a command of many variables that matches no kind is read within a second",
           seconds == 75 * 60 and time.monotonic() - started < 1, time.monotonic() - started)
 
