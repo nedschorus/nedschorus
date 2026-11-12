@@ -43,13 +43,17 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
      changed that it lacks — named, grouped by why they matter, computed from
      `git diff --name-only --no-renames HEAD...origin/main`, never assumed —
      and to leave the branch alone and cut its next topic from origin/main.
-  5b. If HEAD is detached and behind, and holds no commits of its own, no
-     uncommitted tracked change and no operation in progress, fast-forwards
-     it to origin/main: an agent-seat's own checkout sits detached while its
-     work happens in other worktrees, and CLAUDE.md, the skills and the hooks
-     load from it. Otherwise it is not moved, and the agent is told why and
-     what to do, once per update of main; a refusal git gives for anything
-     but an untracked file is also a user line, once per distinct error.
+  5b. If HEAD is detached and behind, and the checkout is an agent-home, which
+     the file AGENT_HOME_MARKER_FILE_NAME in its own git directory marks, and
+     it holds no commits of its own, no uncommitted tracked change and no
+     operation in progress, fast-forwards it to origin/main: CLAUDE.md, the
+     skills and the hooks load from an agent-home. An agent-home that holds
+     any of those is not moved, and the agent is told why and what to do,
+     once per update of main; a refusal git gives for anything but an
+     untracked file is also a user line, once per distinct error. Any other
+     detached checkout is left where it is and nothing is told, because it
+     is detached at that commit on purpose: a pull request's review worktree
+     pinned at the commit under review has the same shape as an agent-home.
   5c. A move of a checkout with no commits of its own (a never-pushed branch
      with 0 own commits that rebased, or a detached HEAD that moved) is told
      only when main changed a standing instruction the agent may hold in its
@@ -251,7 +255,9 @@ PUSHED_HISTORY_ADVICE = (
     "scripts/branch-conflict-check.py run in its checkout reports, do what that "
     "report says."
 )
-# A detached HEAD with no work of its own is moved forward by this hook; these
+# Written by the launchers and the agent-home migration; read by the pre-commit hook too.
+AGENT_HOME_MARKER_FILE_NAME = "agent-home-marker"
+# An agent-home with no work of its own is moved forward by this hook; these
 # are what the agent is told after a move (A) or when it could not be made (B).
 # CLAUDE.md, the skills and the hooks load from the checkout, so a stale one
 # runs the agent under stale instructions.
@@ -275,10 +281,8 @@ DETACHED_OPERATION_IN_PROGRESS_LINE = (
 )
 DETACHED_WORK_OF_ITS_OWN_LINE = (
     "It holds work of its own.\n"
-    "If this checkout is an agent-home, git refuses commits in it: carry that work to a "
-    "worktree of your own on an nc-topic-branch, as the refusal of `git commit` here says how.\n"
-    "Otherwise run `git switch -c <branch name>` to put that work on a branch, and commit any "
-    "uncommitted changes there; from then on the hook's rules for a branch apply."
+    "This checkout is an agent-home, so git refuses commits in it: carry that work to a "
+    "worktree of your own on an nc-topic-branch, as the refusal of `git commit` here says how."
 )
 DETACHED_FAST_FORWARD_REFUSED_LINES = (
     "Git refused the fast-forward: {error}\n"
@@ -1031,8 +1035,8 @@ def in_progress_operation(git_dir: Path, marker: str) -> str:
 
 
 def move_detached_checkout_forward(checkout: Path, git_dir: Path, ahead: int):
-    """Fast-forward a detached HEAD to origin/main when it holds no work of its
-    own and no operation is in progress, or say why not.
+    """Fast-forward an agent-home's detached HEAD to origin/main when it holds
+    no work of its own and no operation is in progress, or say why not.
 
     Returns (outcome, reasons, condition_lines, error): "moved"; "blocked" with
     every condition that holds and its lines, the in-progress line alone while an
@@ -1419,8 +1423,9 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
          not reported to the user at all.
       2. Drift is counted. If none, every "already said" key is cleared.
       3. A never-pushed branch is REBASED onto origin/main here, and the agent
-         told what moved. A detached HEAD with nothing of its own is
-         fast-forwarded, and the agent told what moved. A pushed branch is
+         told what moved. An agent-home's detached HEAD with nothing of its
+         own is fast-forwarded, and the agent told what moved; any other
+         detached HEAD is left alone, silently. A pushed branch is
          never moved; the agent is TOLD, once per update of main, which files
          are stale and to leave it.
     """
@@ -1546,10 +1551,9 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
             # the next turn end drift_facts counts 0 behind and returns
             # early; and were main to advance meanwhile, head_state answers
             # "detached", not "unpushed", so this branch is not taken either.
-            # While main is still nothing is said
-            # on either channel; once main advances the agent is told about
-            # its detached HEAD once per main tip. The user channel stays
-            # empty either way.
+            # Nothing more is said on either channel: step 3b leaves a
+            # detached HEAD alone, silently, unless the checkout is an
+            # agent-home, which is then told about it once per main tip.
             stamp["last_action"] = "rebase failed AND could not abort"
             report(f"catch-up: {branch} was left mid-rebase — the rebase onto origin/main "
                    f"failed and `git rebase --abort` did not restore it ({detail}); "
@@ -1586,9 +1590,13 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
         save_stamp_with_queued_notes(stamp_path, stamp)
         return
 
-    # 3b. Detached: moved forward when it holds nothing of its own. A move is
-    # ALWAYS told, since files changed under the agent; a block is told once
-    # per update of main, and attempted every turn end.
+    # 3b. Detached: an agent-home is moved forward when it holds nothing of its
+    # own. A move is ALWAYS told, since files changed under the agent; a block
+    # is told once per update of main, and attempted every turn end.
+    if state_key == "detached" and not (git_dir / AGENT_HOME_MARKER_FILE_NAME).exists():
+        stamp["last_action"] = "detached HEAD left alone: not an agent-home"
+        save_stamp_with_queued_notes(stamp_path, stamp)
+        return
     if state_key == "detached":
         outcome, reasons, lines, error = move_detached_checkout_forward(
             checkout, git_dir, parts["ahead"])
