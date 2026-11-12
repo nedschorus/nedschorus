@@ -736,10 +736,10 @@ check("the newest spend across subagent transcripts, whatever their order, is th
 # --- the task list is read as the due-task hook reads it ------------------------------------
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant("Done."), turn_end()])
-machine.task("alpha", "1", metadata={"waits_on": [{"pr_merged": 50}]})
+machine.task("alpha", "1", metadata={"prerequisites": [{"pr_merged": 50}]})
 machine.gh_responses.write_text(json.dumps({"pr:50": {"state": "OPEN"}}))
 code, verdicts, _ = machine.run()
-check("a task still under the old waits_on key, unmet, is held: rule 4, no wake",
+check("a task whose prerequisites are unmet is held: rule 4, no wake",
       code == 0 and verdicts["alpha"]["rule"] == 4, verdicts["alpha"])
 (machine.tasks / "nedschorus-alpha-tasks" / "2.json").write_text("{not json")
 code, verdicts, _ = machine.run()
