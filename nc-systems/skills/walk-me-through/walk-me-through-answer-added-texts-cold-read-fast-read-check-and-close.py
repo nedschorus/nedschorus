@@ -126,13 +126,19 @@ another weak one, or a fix that matches its design from one that does not;
 the agent judges those.
 
 `--not-asked none` settles an item of none of those kinds, only when its
-`#case_against` line rates the case against none. It needs a touches line,
+`#case_against` line rates the case against none or weak. It needs a touches line,
 which may be empty for a change that touches no file, such as doing nothing;
-it refuses a touched file that is not in the checkout, and one the instruction-file guard,
-.claude/guard-hooks/instruction-file-guard.py, protects, because an item that
-adds words the user has not approved to such a file is shown to him; the
-guard's own functions decide which files those are. The minutes write the
-answer as `not asked, case against none`.
+an item without that line comes to the user. It refuses a touched file that is
+not in the checkout. Rated none, it refuses a touched file the instruction-file
+guard, .claude/guard-hooks/instruction-file-guard.py, protects, because an item
+that adds words the user has not approved to such a file is shown to him.
+Rated weak, it refuses only a touched Markdown file, a `.md` file, the guard
+protects, because the user reviews the English agents follow and lets other code,
+hooks included, settle; the agent judges what code cannot, that the case
+against names only cost and that the change neither widens an agent's
+permissions nor turns off a guard. The guard's own functions decide which files
+it protects. The minutes write the answer as `not asked, case against none`,
+or, rated weak, `not asked, case against weak, cost only`.
 
 `--now-over-later-already-decided` is --already-decided with the citation
 supplied by the program, NOW_OVER_LATER_USER_RULING_CITATION, the user-ruling
@@ -431,6 +437,8 @@ CASE_AGAINST_HASHTAG = " #case_against_{rating}"
 NOT_ASKED_RATINGS = ("none", "weak")
 NOT_ASKED_KINDS = (1, 2, 3, 4, 5, 6)
 NOT_ASKED_RATED_NONE = "none"
+NOT_ASKED_RATED_WEAK = "weak"
+NOT_ASKED_WEAK_COST_ONLY_LABEL = "case against weak, cost only"
 INSTRUCTION_FILE_GUARD_FILE = REPOSITORY_TOP / ".claude" / "guard-hooks" / "instruction-file-guard.py"
 OPTION_NUMBERS = (2, 3)
 EVIDENCE_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*(#not_asked_(?:touches|test|source|unused|rename|glossary_term|hashtag_marker))"
@@ -602,7 +610,8 @@ _PART_VALUE = r"part \d+ " + _one_of(f"{word} {outcome}" for word, outcome in OU
 PLACEHOLDER_VALUES = {
     "answered": _one_of([APPROVED, DISAPPROVED] + [f"{APPROVED} option {number}" for number in OPTION_NUMBERS]
                         + [f"not asked, kind {kind}" for kind in NOT_ASKED_KINDS]
-                        + [f"not asked, case against {NOT_ASKED_RATED_NONE}"]),
+                        + [f"not asked, case against {NOT_ASKED_RATED_NONE}",
+                           f"not asked, {NOT_ASKED_WEAK_COST_ONLY_LABEL}"]),
     "outcome": _one_of(OUTCOMES.values()),
     "parts": rf"{_PART_VALUE}(?:, {_PART_VALUE})*",
     "ruling": ".+",
@@ -802,7 +811,11 @@ NOT_ASKED_RATING_PROBLEM = ("- its `#case_against` line rates the case against {
                             "or weak with a case against that names only cost, settles without the user.")
 NOT_ASKED_NO_LINE_PROBLEM = "- it has no `{marker}` line; {why}"
 NOT_ASKED_NOT_RATED_NONE_PROBLEM = ("- its `#case_against` line rates the case against {rating}; an item of none of "
-                                    "the kinds settles without the user only when its case against is rated none.")
+                                    "the kinds settles without the user only when its case against is rated none, "
+                                    "or weak with a case against that names only cost.")
+NOT_ASKED_WEAK_GUARDED_MARKDOWN_PROBLEM = (
+    "- `{marker}` names {path}, a Markdown file the instruction-file guard protects; an item of none of the kinds "
+    "whose case against is rated weak is shown to the user when it changes such a file.")
 NOT_ASKED_GUARDED_FILE_PROBLEM = ("- `{marker}` names {path}, which the instruction-file guard protects; an item "
                                   "that adds words the user has not approved to such a file is shown to him, and "
                                   "one whose words a ruling of his gives settles as kind 1.")
@@ -847,6 +860,10 @@ NOT_ASKED_JUDGEMENT_LINES = (
     "present {item} to the user and run check with the flag for his answer, as `--help` lists it; that writes a new "
     "answer line, and close records only the last one, so this line is then set aside.",
 )
+# Code cannot see these in a change, so an item of no kind rated weak leaves them to the agent.
+NOT_ASKED_WEAK_JUDGEMENT_LINE = (
+    "{item} is of none of the kinds and its case against is rated weak: if its change widens an agent's "
+    "permissions, as a settings change can, or turns off a guard, do not run close: present {item} to the user.")
 GIT_GREP_FAILED = ("`git grep` failed with exit {code} in {top} while checking {item}'s evidence: {error}\n"
                    "Run `python3 {program} check --not-asked {kind}` again once; if it fails the same way, "
                    "present {item} to the user and run check with the flag for his answer, as `--help` lists it.")
@@ -1353,9 +1370,12 @@ def not_asked_kind(value):
     raise argparse.ArgumentTypeError(f"`{value}` is not a kind: give {kinds} or none")
 
 
-def not_asked_label(kind):
-    """How the minutes and messages name a --not-asked value: `kind 3`, or `case against none`."""
-    return "case against none" if kind == NOT_ASKED_RATED_NONE else f"kind {kind}"
+def not_asked_label(kind, rating=None):
+    """How the minutes and messages name a --not-asked value: `kind 3`, `case against none`, or, for `none` on an
+    item rated weak, `case against weak, cost only`."""
+    if kind != NOT_ASKED_RATED_NONE:
+        return f"kind {kind}"
+    return NOT_ASKED_WEAK_COST_ONLY_LABEL if rating == NOT_ASKED_RATED_WEAK else "case against none"
 
 
 def guarded_paths(top, paths):
@@ -1365,7 +1385,7 @@ def guarded_paths(top, paths):
         guard.is_protected, guard.is_reusable_prompt, guard.is_reviewed_document))]
 
 
-def answered_word(arguments, walk_finder):
+def answered_word(arguments, walk_finder, rating=None):
     """The answer as the walk-minutes write it: approved, disapproved, approved option N, or each part's word,
     as in `part 1 approved #approved_obvious, part 2 disapproved`."""
     if arguments.part_answer:
@@ -1379,7 +1399,7 @@ def answered_word(arguments, walk_finder):
     if arguments.option is not None:
         return f"{APPROVED} option {arguments.option}"
     if arguments.not_asked is not None:
-        return f"not asked, {not_asked_label(arguments.not_asked)}"
+        return f"not asked, {not_asked_label(arguments.not_asked, rating)}"
     if arguments.already_decided is not None:
         return ALREADY_DECIDED_PREFIX + walk_finder.text_wrapped_as_markdown_code_span(arguments.already_decided)
     if arguments.moved_on is not None:
@@ -1533,7 +1553,7 @@ def not_asked_problems(kind, rating, lines, marks, top, item):
     problems = []
     found = evidence(lines)
     if kind == NOT_ASKED_RATED_NONE:
-        if rating != NOT_ASKED_RATED_NONE:
+        if rating not in NOT_ASKED_RATINGS:
             problems.append(NOT_ASKED_NOT_RATED_NONE_PROBLEM.format(rating=rating))
         # An empty touches line is a change that touches no file; only a missing line is refused.
         if TOUCHES not in found:
@@ -1543,7 +1563,10 @@ def not_asked_problems(kind, rating, lines, marks, top, item):
             if not (top / path).exists():
                 problems.append(NOT_ASKED_MISSING_PATH_PROBLEM.format(marker=TOUCHES, path=path, top=top))
         for path in guarded_paths(top, touched):
-            problems.append(NOT_ASKED_GUARDED_FILE_PROBLEM.format(marker=TOUCHES, path=path))
+            if rating != NOT_ASKED_RATED_WEAK:
+                problems.append(NOT_ASKED_GUARDED_FILE_PROBLEM.format(marker=TOUCHES, path=path))
+            elif path.endswith(".md"):
+                problems.append(NOT_ASKED_WEAK_GUARDED_MARKDOWN_PROBLEM.format(marker=TOUCHES, path=path))
         return problems
     if rating not in NOT_ASKED_RATINGS:
         problems.append(NOT_ASKED_RATING_PROBLEM.format(rating=rating))
@@ -1712,7 +1735,7 @@ def check(arguments):
         problems = not_asked_problems(arguments.not_asked, rating, lines, marks, top, item)
         if problems:
             raise Failure(NOT_ASKED_REFUSED.format(item=item, kind=arguments.not_asked,
-                                                   label=not_asked_label(arguments.not_asked),
+                                                   label=not_asked_label(arguments.not_asked, rating),
                                                    problems="\n".join(problems),
                                                    document=document, program=Path(__file__).resolve()))
     texts = proposed_texts(marks, marks_the_answer_adds(arguments))
@@ -1748,7 +1771,7 @@ def check(arguments):
     now = datetime.datetime.now().astimezone()
     not_asked = arguments.not_asked is not None or arguments.already_decided is not None
     answer_minutes = CHECK_NOT_ASKED_MINUTES if not_asked else CHECK_MINUTES
-    append_to_minutes(minutes, [answer_minutes.format(item=item, answered=answered_word(arguments, walk_finder),
+    append_to_minutes(minutes, [answer_minutes.format(item=item, answered=answered_word(arguments, walk_finder, rating),
                                                       hashtag=answer_hashtag(arguments), rating=rated,
                                                       words=in_his_words, date_and_time=minutes_time(now))]
                       + [STATUS_LINE_PREFIX + status for status in statuses])
@@ -1756,8 +1779,10 @@ def check(arguments):
     if had_to_be_run:
         output += [line.format(document=document, item=item) for line in CHECK_JUDGEMENT_LINES]
     if arguments.not_asked is not None:
-        output += [line.format(item=item, label=not_asked_label(arguments.not_asked))
+        output += [line.format(item=item, label=not_asked_label(arguments.not_asked, rating))
                    for line in NOT_ASKED_JUDGEMENT_LINES]
+        if arguments.not_asked == NOT_ASKED_RATED_NONE and rating == NOT_ASKED_RATED_WEAK:
+            output.append(NOT_ASKED_WEAK_JUDGEMENT_LINE.format(item=item))
     output.append(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
     log = arguments.counts_log or (log_store_records.parent / COUNTS_LOG_FILE_NAME if log_store_records else None)
     try:
