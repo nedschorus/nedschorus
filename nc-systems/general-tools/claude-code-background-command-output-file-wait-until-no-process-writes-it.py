@@ -8,23 +8,28 @@ process does. A loop on `pgrep -f <pattern>` cannot tell this, because the
 pattern also matches the command line of the shell running the loop.
 
 Run: python3 <this file> <output file> [--time-limit-seconds N]
+N is 110, the constant DEFAULT_TIME_LIMIT_SECONDS below, when it is not given.
 
 Exits 0 once no process holds the file open for writing. Exits 1 when the time
 limit runs out while a process still does, which may be up to one poll
-interval early, since a sleep that would reach the limit is not begun;
-running the same command again keeps waiting. Exits 2, saying why, when the file does not exist, when no
-writer is seen at the first look, when the time limit runs out during the
-first look, or when the writers cannot be listed. No
-writer at the first look is never read as "finished": the command may have
+interval (5 seconds) early, since a sleep that would reach the limit is not
+begun, and also when an lsof look after the first is cut short by the limit;
+running the same command again keeps waiting, unless the command has ended in
+between, when the rerun sees no writer at its first look and exits 2. Exits 2,
+saying why, when the file does not exist, when no writer is seen at the first
+look, when the time limit cuts the first look short, or when the writers cannot
+be listed: /proc cannot be read, an fdinfo file has no flags line, or lsof
+fails. No writer at the first look is never read as "finished": the command may have
 ended already, or its processes may be hidden from this program, as a process
 in another process namespace is.
 
 Writers are found through /proc/<pid>/fd and /proc/<pid>/fdinfo on Linux, and
-through lsof on macOS. No look starts after the time limit, and each lsof
-look is cut to the time that remains; a /proc look is not cut, as it takes
-well under a second. A process that exits during a scan, or whose open files
-this program may not read, is skipped, so a writer owned by another user is
-not seen. A process that opens the file anew after every writer has exited is
+through lsof on macOS. No look starts after the time limit, even when a sleep
+overruns it, and each lsof look is cut to the time that remains; a /proc look
+is not cut, as it takes well under a second. A single process that exits
+during a scan, or whose open files this program may not read, is skipped
+rather than counted as the writers not being listable, so a writer owned by
+another user is not seen. A process that opens the file anew after every writer has exited is
 not waited for. The program only reads: it sends no signal and changes no file.
 """
 
@@ -156,8 +161,12 @@ def wait_until_no_process_writes(path, time_limit_seconds, list_writers,
             if deadline - clock() <= POLL_SECONDS:
                 return time_limit_reached(path, time_limit_seconds, writers)
             sleep(POLL_SECONDS)
+            # A sleep can overrun the time asked for, as on a loaded machine.
+            seconds_left = deadline - clock()
+            if seconds_left <= 0:
+                return time_limit_reached(path, time_limit_seconds, writers)
             try:
-                writers = list_writers(path, deadline - clock())
+                writers = list_writers(path, seconds_left)
             except WritersLookTimeLimitReached:
                 return time_limit_reached(path, time_limit_seconds, writers)
     except WritersCannotBeListed as error:

@@ -251,6 +251,9 @@ def answers_file(root, text):
     return str(path)
 
 
+# The flag the agent passes once the agent that dispatched it has checked the new shared names.
+CONFIRMED = "--confirm-dispatching-agent-checked-new-shared-names"
+HEADING = "New shared names: send these to the new-name-propose-and-check-fresh-agent subagent"
 GOOD_ANSWERS = "1. Fixed: the error is raised,\n   and a case covers it.\n2. Added the timeout case.\n"
 
 
@@ -317,6 +320,10 @@ def brief_cases(root, repository, base, frozen_head):
           and "If the push itself fails, do not retry it by force or rewrite the branch: tell "
           "merge-lane-2 with SendMessage what git printed." in out, out)
 
+    check("brief: tells the author to do what a final report holding new shared names asks, before removing the worktree",
+          f"as it does when it lists new shared names under the heading `{HEADING}`: do what that line says "
+          "before the removal below." in out
+          and out.index(f"`{HEADING}`") > out.index("For the author, when the subagent has finished"), out)
     check("brief: tells the author to dispatch the subagent in a worktree of its own",
           "subagent_type: \"fork\") with isolation: \"worktree\"" in out and "a git worktree of its own" in out, out)
     local_branch = f"fix-round-pull-request-{NUMBER}-review-11"
@@ -831,7 +838,13 @@ def check_cases(root, repository, base, frozen_head):
           code == 1 and ANSWERS_NAME in err and "git rm --cached" in err, out + err)
     git(repository, "rm", "-q", "--cached", ANSWERS_NAME)
     git(repository, "commit", "-q", "--amend", "--no-edit")
+    # origin/main was deleted above, so the new shared names cannot be listed.
     code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews), "--check")
+    check("check: a round's commit whose new shared names git cannot list fails with exit 2, before any suite runs",
+          code == 2 and "the new shared names the round's commit adds could not be listed: git rev-parse exited 128"
+          in err and "Not pushed yet" not in out, out + err)
+    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews), "--check",
+                         CONFIRMED)
     check("check: the same fix without the answers file passes", code == 0 and "Not pushed yet" in out,
           out + err)
     git(repository, "reset", "-q", "--hard", unignored_head)
@@ -1263,9 +1276,14 @@ def moved_into_body_cases(root, repository, base, frozen_head):
                            review_id=21),
               **comments_route(20, [comment("run.py", "**Blocks.** the reviewer's finding.", line=40, comment_id=31)])}
     code, out, err = run(root, repository, routes)
-    check("a Block merge-lane-2's review moved into its body refuses the brief, naming it, though the other "
-          "reviews' Blocks match the stated count",
-          code == 1 and "setup.py:3" in err and "setup.py:9" not in err and "Blocking findings" not in out, err + out)
+    grading_url = grading["html_url"]
+    check("a Block merge-lane-2's review moved into its body is briefed with its whole text and the review's "
+          "link, and the reviewer's Block it graded fix-next is not",
+          code == 0 and "Blocking findings (1)" in out
+          and f"1. setup.py:3 ({grading_url})\n**Blocks** setup.py drops the exit code.\nSecond line of the finding." in out
+          and "setup.py:9" not in out.split("Blocking findings (1)")[1].split("For the author")[0]
+          and "the reviewer's finding" not in out.split("Blocking findings (1)")[1].split("For the author")[0],
+          err + out)
 
     moved_fix_next = dict(routes, **{REVIEWS: {"stdout": lines([reviewer, dict(grading, body=grading_body.replace(
         "**Blocks** setup.py", "**fix-next** setup.py"))])}})
@@ -1405,6 +1423,15 @@ def move_cases(root, _repository, _base, _frozen_head):
 
     code, out, err = run(root, repository, routes, *finish)
     check("move-finish: refuses when no move is under way, exit 1", code == 1 and "No move is under way" in err, err)
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-finish", "--title", "Move it")
+    check("move-finish: --title without --body-file is a usage error, exit 2",
+          code == 2 and "needs --title and --body-file" in err, err)
+    # A name that sorts before the answers file's, so only an exact match on the answers file's name lets it through.
+    (repository / "a-stray.txt").write_text("stray\n")
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    check("move-start: refuses a change outside the round's commit whose name sorts before the answers file's",
+          code == 1 and "a-stray.txt" in err, out + err)
+    (repository / "a-stray.txt").unlink()
     (repository / "stray.txt").write_text("stray\n")
     code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
     check("move-start: refuses a worktree with changes outside the round's commit, naming them",
@@ -1413,6 +1440,13 @@ def move_cases(root, _repository, _base, _frozen_head):
     code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "missing.py")
     check("move-start: refuses a path the frozen-head does not hold",
           code == 1 and f"frozen-head {frozen_head[:12]} has no file missing.py" in err, err)
+    # topic, below, sorts after the branch move-start runs on; this branch sorts before it, and sits at the
+    # frozen-head, so a move-start that let it through refuses for having no commit on top of the frozen-head.
+    git(repository, "switch", "-q", "-c", "a-branch-that-sorts-first", frozen_head)
+    code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
+    check("move-start: refuses on a branch whose name sorts before the branch it runs on",
+          code == 1 and "but this worktree is on a-branch-that-sorts-first" in err, err)
+    git(repository, "switch", "-q", "-")
     git(repository, "switch", "-q", "topic")
     code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", NEW_BRANCH, "moved.py")
     check("move-start: refuses on any branch but the round's local branch",
@@ -1479,6 +1513,14 @@ def move_cases(root, _repository, _base, _frozen_head):
     check("move-finish: refuses on any branch but the one --move-change-to-own-pull-request-cut-new-topic-branch made",
           code == 1 and f"runs on {NEW_BRANCH}, which --move-change-to-own-pull-request-cut-new-topic-branch made, but this worktree is on main" in err, err)
     git(repository, "switch", "-q", NEW_BRANCH)
+    # main sorts before the new topic branch's name; this branch, at the same commit so the copied file stays staged,
+    # sorts after it.
+    git(repository, "switch", "-q", "-c", "z-branch-that-sorts-after-the-new-topic-branch")
+    code, out, err = run(root, repository, routes, *finish)
+    check("move-finish: refuses on a branch whose name sorts after the one it made",
+          code == 1 and f"runs on {NEW_BRANCH}, which --move-change-to-own-pull-request-cut-new-topic-branch made, but "
+                        "this worktree is on z-branch-that-sorts-after-the-new-topic-branch" in err, err)
+    git(repository, "switch", "-q", NEW_BRANCH)
     (repository / "partly.txt").write_text(PARTLY_MOVED_ONLY)
 
     answers.write_text("a new answers file\n")
@@ -1527,7 +1569,7 @@ def move_cases(root, _repository, _base, _frozen_head):
     corrupt_entry = answers_file(root, "1. Fixed.\n2. Moved to pull request #42\n")
     code, out, err = run(root, repository, corrupt_routes, "--check", "--answers", corrupt_entry)
     check("check: a moved pull request's patch git cannot parse fails with exit 2, not a pass",
-          code == 2 and "on pull request 42's patch" in err and "PASS" not in out, out + err)
+          code == 2 and "on pull request 42's patch: error: corrupt patch at line 5" in err and "PASS" not in out, out + err)
     moved_entry = answers_file(root, "1. Fixed.\n2. Moved to pull request #41\n")
     for name, moved_kept_here, partly_text, expected in (
             ("a whole moved file", True, PARTLY_KEPT_ONLY, "moved.py"),
@@ -1545,9 +1587,12 @@ def move_cases(root, _repository, _base, _frozen_head):
               and ("partly.txt" not in err if expected == "moved.py" else "moved.py" not in err), out + err)
         git(repository, "switch", "-q", LOCAL_BRANCH)
 
+    # The second move needs an answers file to set aside, and the rounds above can leave none in the worktree.
+    answers.write_text(ANSWERS_TEXT)
     code, out, err = run(root, repository, routes, "--move-change-to-own-pull-request-cut-new-topic-branch", "second-moved-change-topic-branch")
     check("move-start: a second move in the same worktree sets the answers file aside again",
           code == 0 and not answers.exists()
+          and (repository / ".git" / "fix-round-answers-set-aside" / ANSWERS_NAME).read_text() == ANSWERS_TEXT
           and git(repository, "branch", "--show-current") == "second-moved-change-topic-branch", out + err)
     code, out, err = run(root, repository, routes, *finish)
     check("move-finish: refuses a new topic branch that holds no change", code == 1 and "nothing to move" in err, err)
@@ -1595,7 +1640,7 @@ def move_push_failure_cases(root, _repository, _base, _frozen_head):
     code, out, err = run(root, repository, routes, *finish)
     commit = git(repository, "rev-parse", "HEAD")
     check("move-finish: a failed push exits 2, naming the commit made and the push still to do, never 'pushed'",
-          code == 2 and f"committed on {NEW_BRANCH} as {commit[:12]}" in err
+          code == 2 and f"committed on {NEW_BRANCH} as {commit[:12]}. Still to do" in err
           and f"push {NEW_BRANCH} with git push origin {NEW_BRANCH}" in err and "Do these by hand" in err
           and "resumes at the push" not in err
           and "is pushed" not in err and git(repository, "branch", "--show-current") == NEW_BRANCH, out + err)
@@ -1603,7 +1648,7 @@ def move_push_failure_cases(root, _repository, _base, _frozen_head):
     base = git(repository, "rev-parse", "origin/main")
     code, out, err = run(root, repository, routes, *finish)
     check("move-finish: a second run refuses the commit an earlier run made, naming the reset that undoes it",
-          code == 1 and f"already holds commit {commit[:12]}" in err and f"git reset --soft {base}" in err
+          code == 1 and f"already holds commit {commit[:12]} beside" in err and f"git reset --soft {base}" in err
           and not git(repository, "ls-remote", "origin", NEW_BRANCH), out + err)
     git(repository, "commit", "-q", "--amend", "--no-edit", "--allow-empty")
     git(repository, "reset", "-q", "--soft", base)
@@ -1684,6 +1729,13 @@ def move_pre_push_hook_output_cases(root, _repository, _base, _frozen_head):
               code == 0 and "Moved to https://github.com/o/r/pull/41" in out
               and "printed the lines below on stderr during the push" in out
               and all(line in out for line in lines), out + err)
+    lines_before_url_root = root / "lines-before-url"
+    lines_before_url_root.mkdir()
+    code, out, err = move_with_pre_push_hook(
+        lines_before_url_root, (), {"stdout": "a line gh prints before the URL\nhttps://github.com/o/r/pull/41\n"})
+    check("move-finish: when gh pr create prints lines before the pull request's URL, the success line names "
+          "the URL, its last line",
+          code == 0 and "Moved to https://github.com/o/r/pull/41;" in out, out + err)
     silent_root = root / "silent"
     silent_root.mkdir()
     code, out, err = move_with_pre_push_hook(silent_root, ())
@@ -1698,6 +1750,63 @@ def move_pre_push_hook_output_cases(root, _repository, _base, _frozen_head):
           "lines labelled in the failure report",
           code == 2 and "Do these by hand" in err and PRE_PUSH_CONFLICT_CHECK_SKIP_LINE in err
           and "printed the lines below on stderr during the push" in err, out + err)
+
+
+def load_program():
+    specification = importlib.util.spec_from_file_location("fix_round_program", PROGRAM)
+    program = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(program)
+    return program
+
+
+def run_in_process_with_failing_subprocess(directory, command_prefix, failure, call):
+    """Runs call() in directory with every subprocess.run whose command starts with command_prefix raising failure;
+    returns what call() raised, or None."""
+    original_run, original_directory = subprocess.run, os.getcwd()
+
+    def failing_run(command, *arguments, **options):
+        if list(command[:len(command_prefix)]) == command_prefix:
+            raise failure(command, options)
+        return original_run(command, *arguments, **options)
+
+    subprocess.run = failing_run
+    os.chdir(directory)
+    try:
+        call()
+    except Exception as error:
+        return error
+    finally:
+        subprocess.run = original_run
+        os.chdir(original_directory)
+    return None
+
+
+def moved_change_git_apply_cannot_start_case(_root, repository, _base, frozen_head):
+    program = load_program()
+    program.gh = lambda arguments: "diff --git a/hook.py b/hook.py\n--- a/hook.py\n+++ b/hook.py\n"
+    raised = run_in_process_with_failing_subprocess(
+        repository, ["git", "apply"], lambda command, options: OSError("git apply could not start"),
+        lambda: program.files_whose_moved_change_is_still_here("41", frozen_head))
+    check("check: a git apply that cannot start raises StepFailed naming the command",
+          isinstance(raised, program.StepFailed) and "did not run: git apply could not start" in str(raised),
+          repr(raised))
+
+
+def move_push_time_limit_case(root, _repository, _base, _frozen_head):
+    repository, frozen_head = move_repository(root)
+    body = root / "description.md"
+    body.write_text("Moves the timeout change.\n")
+    run(root, repository, move_routes(frozen_head, body), "--move-change-to-own-pull-request-cut-new-topic-branch",
+        NEW_BRANCH, "moved.py")
+    (repository / "partly.txt").write_text(PARTLY_MOVED_ONLY)
+    program = load_program()
+    program.push_time_limit_seconds = lambda: 5
+    raised = run_in_process_with_failing_subprocess(
+        repository, ["git", "push"], lambda command, options: subprocess.TimeoutExpired(command, options["timeout"]),
+        lambda: program.move_finish(NUMBER, "Move it", str(body)))
+    check("move-finish: a push past its time limit raises StepFailed naming the limit and the push still to do",
+          isinstance(raised, program.StepFailed) and f"git push origin {NEW_BRANCH} ran past 5 seconds" in str(raised)
+          and f"Still to do, in order: push {NEW_BRANCH}" in str(raised), repr(raised))
 
 
 def runner_calls(root):
@@ -1718,8 +1827,9 @@ def suite_cases(root, repository, _base, _frozen_head):
     environment = {"FAKE_RUNNER_CALLS": str(root / "runner-calls.jsonl")}
 
     def check_with_head(head, extra=None):
+        # The round's new file c-test.py is a new shared name, which the dispatching agent has checked.
         return run(root, repository, routes_for(head, reviews), "--check", "--answers", answers,
-                   environment_extra=dict(environment, **(extra or {})))
+                   CONFIRMED, environment_extra=dict(environment, **(extra or {})))
 
     code, out, err = check_with_head(frozen_head)
     check("suites: a round with no commit runs no suite", code == 0 and runner_calls(root) == [], out + err)
@@ -1727,6 +1837,16 @@ def suite_cases(root, repository, _base, _frozen_head):
     (repository / "c-test.py").write_text("suite\n")
     git(repository, "add", "c-test.py")
     broken = commit_file(repository, "failing-suites.txt", "a-test.py b-test.py c-test.py\n", "round breaks two")
+    code, out, err = run(root, repository, routes_for(frozen_head, reviews), "--check", "--answers", answers,
+                         environment_extra=environment)
+    check("names: a round's commit adding a shared name no agent has checked refuses with exit 1, before any "
+          "suite runs, naming it, the subagent's report heading and the command to run once it is checked",
+          code == 1 and runner_calls(root) == [] and "  c-test.py (file-path)\n" in err
+          and f"the heading `{HEADING}`" in err
+          and f"Then run: the same check command again, with {CONFIRMED} added\n" in err
+          and "Not pushed yet" not in out, out + err)
+    check("names: a name the frozen-head already holds, though origin/main does not, is not listed",
+          "failing-suites.txt" not in err and "a-test.py" not in err, err)
     code, out, err = check_with_head(frozen_head)
     calls = runner_calls(root)
     check("suites: a suite failing at the round's commit and passing at the frozen-head refuses, naming it, "
@@ -1767,8 +1887,10 @@ def suite_cases(root, repository, _base, _frozen_head):
           code == 2 and "did not judge every suite: it printed\n  run-all-test-suites: not run to the end" in err
           and "Not pushed yet" not in out, out + err)
     runner_calls(root)
-    code, out, err = check_with_head(fixed)
-    check("suites: after the push the message for merge-lane-2 names that suite, and no suite runs",
+    code, out, err = run(root, repository, routes_for(fixed, reviews), "--check", "--answers", answers,
+                         environment_extra=environment)
+    check("suites: after the push the message for merge-lane-2 names that suite, and no suite runs, and the "
+          "new shared names are not listed again",
           code == 0 and "nc-test-suites that fail at the frozen-head too, so not because of this round: "
           "a-test.py." in out and runner_calls(root) == [], out + err)
 
@@ -2106,5 +2228,7 @@ case("rounds on one head", rounds_on_one_head_cases)
 case("stated count position", stated_count_position_cases)
 case("moved into body", moved_into_body_cases)
 case("replaces", replaces_cases)
+case("move push time limit", move_push_time_limit_case)
+case("moved change git apply cannot start", moved_change_git_apply_cannot_start_case)
 print(f"{'FAILED' if failures else 'PASSED'}: {len(failures)} failed")
 sys.exit(1 if failures else 0)

@@ -413,8 +413,7 @@ def git_failure_next_step_lines(rerun: str, text_the_failure_line_contains: str)
     """
     program = str(pathlib.Path(__file__).resolve())
     return next_step_lines.git_failure_next_step_lines(
-        rerun, program, text_the_failure_line_contains=text_the_failure_line_contains,
-        include_the_misspelt_branch_commit_or_path_line=True) + "\n"
+        rerun, program, text_the_failure_line_contains=text_the_failure_line_contains) + "\n"
 
 
 # The line a cell prints when its first launch produced no report and the

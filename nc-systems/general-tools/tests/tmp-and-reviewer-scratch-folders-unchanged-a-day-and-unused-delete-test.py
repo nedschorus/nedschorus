@@ -131,7 +131,11 @@ def run_tmp_place_cases():
     s.process(500, cwd=f"{by_cwd}/checkout-1 (deleted)")
     s.process(501, fds=[by_fd / "checkout-1" / "deep" / "file"])
     s.process(502, maps=[by_map / "checkout-1" / "deep" / "file"])
-    s.sockets(by_socket / "merge-lane-2")
+    by_unnormalized_socket = s.folder("tmux-1001")
+    by_socket_through_link = s.folder("tmux-1002")
+    by_double_slash_socket = s.folder("tmux-1003")
+    s.sockets(by_socket / "merge-lane-2", f"{s.tmp}//tmux-1001/./default",
+              f"{s.tmp}/tmux-1002/link/../../default", f"/{s.tmp}/tmux-1003/default")
     # A process whose open files cannot be read is passed over, not a failure.
     s.process(503)
     (s.proc / "503" / "fd").chmod(0)
@@ -139,6 +143,7 @@ def run_tmp_place_cases():
     target.mkdir()
     age(target)
     os.symlink(target, s.tmp / "linked")
+    age(s.tmp / "linked")
     a_file = s.tmp / "a-file"
     a_file.write_text("x")
     age(a_file)
@@ -161,8 +166,14 @@ def run_tmp_place_cases():
     check("a folder holding a file a process has open is kept", by_fd.is_dir())
     check("a folder holding a file a process has mapped into memory is kept", by_map.is_dir())
     check("a folder holding a bound unix socket, such as tmux's, is kept", by_socket.is_dir())
+    check("a folder holding a unix socket bound under a path with // or /./ in it is kept",
+          by_unnormalized_socket.is_dir())
+    check("a folder holding a unix socket bound through a symbolic link followed by .. is kept",
+          by_socket_through_link.is_dir())
+    check("a folder holding a unix socket bound under a path starting with exactly two slashes is kept",
+          by_double_slash_socket.is_dir())
     check("the summary counts the deleted and the in-use folders",
-          "throwaway folders deleted: 3;" in result.stdout and "kept because a process uses them: 4;" in result.stdout,
+          "throwaway folders deleted: 3;" in result.stdout and "kept because a process uses them: 7;" in result.stdout,
           result.stdout)
     check("a symbolic link is not followed and not deleted", (s.tmp / "linked").is_symlink() and target.is_dir())
     check("a file is not deleted", a_file.is_file())
@@ -344,6 +355,33 @@ def run_unreadable_cases():
         program.os.scandir = scandir
     check("an entry that disappears between the listing and its stat is passed over, not a failure",
           folder.is_dir() and result["failures"] == [] and result["deleted"] == 0, str(result))
+
+    s = Scene()
+    unstatable, after = s.folder("pymp-a1b2c3d4"), s.folder("pymp-a1b2c3d5")
+
+    class EntryWhoseStatIsRefused:
+        def __init__(self, entry):
+            self.entry, self.name, self.path = entry, entry.name, entry.path
+
+        def is_dir(self, follow_symlinks):
+            return self.entry.is_dir(follow_symlinks=follow_symlinks)
+
+        def stat(self, follow_symlinks):
+            if self.path == str(unstatable):
+                raise PermissionError(13, "Permission denied", self.path)
+            return self.entry.stat(follow_symlinks=follow_symlinks)
+
+    # program.os is os, which os.walk also lists with, so only the two places' listings are wrapped.
+    program.os.scandir = lambda place: ([EntryWhoseStatIsRefused(entry) for entry in scandir(place)]
+                                        if place in (s.tmp, s.reviewers) else scandir(place))
+    try:
+        result = s.sweep()
+    finally:
+        program.os.scandir = scandir
+    check("an entry whose stat fails for another reason is kept, named as a failure, and the others go on",
+          unstatable.is_dir() and not after.exists()
+          and result["failures"] == [f"{unstatable} was kept: it could not be checked: Permission denied"],
+          str(result))
 
     s = Scene()
     s.gh("[]", 1)

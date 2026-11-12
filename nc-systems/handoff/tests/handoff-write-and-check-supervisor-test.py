@@ -1107,6 +1107,62 @@ def run_spawned_subagent_roster_cases(workspace: Path):
           and stopped_then_resumed_roster[0]["last_event"] == "resumed",
           str(stopped_then_resumed_roster))
 
+    resumed_then_stopped_path = workspace / "roster-resume-then-task-stop.jsonl"
+    resumed_then_stopped_path.write_text("\n".join(json.dumps(record) for record in [
+        incident_spawn, *delivered(final_body, "2026-10-27T21:45:00.000Z"),
+        resume_record(incident_agent, "2026-10-27T21:47:00.000Z"),
+        {"type": "user", "timestamp": "2026-10-27T21:50:00.000Z",
+         "message": {"role": "user", "content": [{
+             "tool_use_id": "toolu_stop", "type": "tool_result",
+             "content": json.dumps(stop_result)}]},
+         "toolUseResult": stop_result, "sessionId": FIXTURE_SESSION_ID},
+    ]) + "\n", encoding="utf-8")
+    resumed_then_stopped_roster = writer.spawned_subagent_roster(resumed_then_stopped_path)
+    check("a subagent a TaskStop stopped after a resume is not still working",
+          writer.still_working_subagent_entries(resumed_then_stopped_roster) == []
+          and resumed_then_stopped_roster[0]["last_event"] == "stopped",
+          str(resumed_then_stopped_roster))
+    interim_copy_after_stop_path = workspace / "roster-interim-copy-after-task-stop.jsonl"
+    interim_copy_after_stop_path.write_text(
+        stopped_path.read_text(encoding="utf-8")
+        + "\n".join(json.dumps(record)
+                    for record in delivered(interim_body, "2026-10-27T21:51:00.000Z")) + "\n",
+        encoding="utf-8")
+    interim_copy_roster = writer.spawned_subagent_roster(interim_copy_after_stop_path)
+    check("an interim notification delivered after a TaskStop leaves the subagent stopped",
+          writer.still_working_subagent_entries(interim_copy_roster) == []
+          and interim_copy_roster[0]["last_event"] == "stopped"
+          and interim_copy_roster[0]["last_event_at"] == "2026-10-27T21:50:00Z",
+          str(interim_copy_roster))
+    echo_then_interim_copy_path = workspace / "roster-final-echo-then-interim-copy-after-task-stop.jsonl"
+    echo_then_interim_copy_path.write_text(
+        stopped_path.read_text(encoding="utf-8")
+        + "\n".join(json.dumps(record) for record in [
+            *delivered(final_body, "2026-10-27T21:50:30.000Z"),
+            *delivered(interim_body, "2026-10-27T21:51:00.000Z")]) + "\n",
+        encoding="utf-8")
+    echo_then_interim_roster = writer.spawned_subagent_roster(echo_then_interim_copy_path)
+    check("an interim copy after a TaskStop and a final-notification echo leaves the subagent "
+          "not working",
+          writer.still_working_subagent_entries(echo_then_interim_roster) == [],
+          str(echo_then_interim_roster))
+    resumed_final_then_interim_path = workspace / "roster-task-stop-resume-final-then-interim.jsonl"
+    resumed_final_then_interim_path.write_text(
+        stopped_path.read_text(encoding="utf-8")
+        + "\n".join(json.dumps(record) for record in [
+            resume_record(incident_agent, "2026-10-27T21:55:00.000Z"),
+            *delivered(final_body, "2026-10-27T21:58:00.000Z"),
+            *delivered(interim_body, "2026-10-27T22:01:00.000Z")]) + "\n",
+        encoding="utf-8")
+    resumed_final_then_interim_roster = writer.spawned_subagent_roster(
+        resumed_final_then_interim_path)
+    check("a resume lifts a TaskStop, so a later interim notification counts the subagent "
+          "as working again",
+          [entry["agent_id"]
+           for entry in writer.still_working_subagent_entries(resumed_final_then_interim_roster)]
+          == [incident_agent],
+          str(resumed_final_then_interim_roster))
+
     # An empty transcript is not an error: a session may spawn nothing.
     empty_path = workspace / "roster-empty.jsonl"
     empty_path.write_text("", encoding="utf-8")
@@ -1782,6 +1838,23 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
         PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
     check("over ssh, the remedy names only the copy sha256sum could not read, not a readable copy whose name it contains",
           f"`ls -l` on 11.json in {fixture.store_list_directory}" in line and "1.json," not in line, line)
+
+    # rsync reaches the store over ssh but cannot write there, so it exits 23 after connecting.
+    fixture = PruneFixture(workspace, "remote-store-unwritable")
+    fixture.task("1.json", task_bytes(1, "completed"), stored=False)
+    stubs = stub_ssh_directory(fixture.root / "remote-store-unwritable-stubs", RUN_REMOTE_COMMAND_HERE_SSH_STUB)
+    fixture.store_list_directory.chmod(0o555)
+    try:
+        line = prune_line(fixture.run(
+            "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
+            PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+    finally:
+        fixture.store_list_directory.chmod(0o755)
+    check("over ssh, an rsync that cannot write the store keeps every completed task",
+          fixture.present("1.json") and "kept every completed task" in line and "exited 23" in line, line)
+    check("over ssh, an rsync that cannot write the store gets the log-store remedy, not the ssh remedy",
+          "could not be written or read" in line and f"`ls -ld {fixture.store_list_directory}`" in line
+          and "ssh stubhost true" not in line, line)
 
     stubs = stub_ssh_directory(workspace / "prune-silent-stubs", "sleep 5\n")
     original_path, original_timeout = os.environ.get("PATH", ""), writer.LOG_STORE_TASK_FILE_COPIES_HASH_SSH_TIMEOUT_SECONDS

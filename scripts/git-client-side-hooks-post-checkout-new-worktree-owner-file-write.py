@@ -36,7 +36,7 @@ records in ~/.claude/handoffs/ yet, so that worktree gets no owner file.
 When the owner file cannot be written, or a subagent's worktree has no `claude` process
 among this program's parents, it prints why on stderr, where the maker of the worktree sees
 it, and the worktree is left with no owner file, so the cleaner keeps it until someone writes
-one. It always exits 0, because the hook's exit status becomes git's.
+one, or until nothing in it has changed for 2 days and it holds no uncommitted or untracked file. It always exits 0, because the hook's exit status becomes git's.
 """
 
 import importlib.util
@@ -60,8 +60,9 @@ owner_file = load_module("worktree_owner_file_read_and_write",
 
 OWNER_FILE_NOT_WRITTEN_MESSAGE = (
     "post-checkout: the owner file of the new worktree {worktree} was not written: {reason}\n"
-    "scripts/clean-worktrees.py never removes a worktree with no owner file, so this worktree "
-    "stays on disk once its work is done.\n"
+    "scripts/clean-worktrees.py removes a worktree with no owner file only once nothing in it "
+    "has changed for 2 days and it holds no uncommitted or untracked file, so this worktree "
+    "stays on disk after its work is done.\n"
     "If you made this worktree for your agent-seat's own work, run "
     "`python3 scripts/worktree-owner-file-read-and-write.py write --agent-seat <your agent-seat> "
     "--worktree {worktree}` once the cause is fixed.\n"

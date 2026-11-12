@@ -32,7 +32,9 @@ Usage:
       under <clone>/.claude/worktrees/, made from the work-snapshot's parent
       and given an owner file naming the agent-seat GIT_AUTHOR_NAME names;
       opens a task naming the branch on the task list
-      ~/.claude/tasks/<CLAUDE_CODE_TASK_LIST_ID>; deletes the ref
+      ~/.claude/tasks/<CLAUDE_CODE_TASK_LIST_ID>, holding the branch and the
+      worktree in the `branches` field of its metadata, so the first prompt's
+      list of leftover worktrees and branches leaves them out; deletes the ref
   uncommitted-work-snapshots.py discard REF [--repo PATH]
       deletes the ref and prints its list entry
   Both refuse, changing nothing, when the ref does not exist; restore also
@@ -50,7 +52,6 @@ import hashlib
 import importlib.util
 import json
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -88,9 +89,11 @@ RESTORE_COMMIT_MESSAGE_TEMPLATE = "Restore work from {ref}"
 # scripts/clean-worktrees.py finds the tasks restore opens by these two.
 RESTORED_BRANCH_TASK_SUBJECT_PREFIX = "Restored branch "
 RESTORED_BRANCH_TASK_DESCRIPTION_RESTORE_COMMIT_LINE_PREFIX = "Restore commit: "
+# The key the first prompt's list reads, TASK_HELD_BRANCHES_METADATA_KEY of
+# agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py; that program loads
+# scripts/clean-worktrees.py, which loads this module, so the key cannot be imported from it.
+TASK_HELD_BRANCHES_METADATA_KEY = "branches"
 TASK_LIST_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
-TASK_FILE_NAME_PATTERN = re.compile(r"[1-9][0-9]*\.json")
-TASK_HIGH_WATER_MARK_FILE_NAME = ".highwatermark"
 
 EXIT_DONE = 0
 EXIT_STEP_FAILED = 1
@@ -108,6 +111,12 @@ _git_machine_readable_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
 _git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
+_agent_seat_task_list_spec = importlib.util.spec_from_file_location(
+    "agent_seat_task_list_new_pending_task_write_common",
+    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+    / "agent-seat-task-list-new-pending-task-write-common.py")
+agent_seat_task_list = importlib.util.module_from_spec(_agent_seat_task_list_spec)
+_agent_seat_task_list_spec.loader.exec_module(agent_seat_task_list)
 
 
 def run_git(directory, *arguments, environment=None, input_text=None):
@@ -751,48 +760,6 @@ def restored_branch_task_description(snapshot, kept, worktree, restore_commit):
     ])
 
 
-def agent_seat_task_list_new_pending_task_write(list_directory, subject, description):
-    """Write a new pending task into the Claude Code task list; return its id. Raises OSError.
-
-    The id is one more than the highest of the list's task ids and its .highwatermark, as
-    Claude Code numbers a new task; the file is linked into place only where no file of that
-    name exists, so a task Claude Code creates at the same moment is not overwritten. It creates
-    the list directory, which an agent-session that has made no task yet lacks; the function of
-    the same name in scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-
-    tasks-open.py raises there instead.
-    """
-    list_directory = Path(list_directory)
-    list_directory.mkdir(parents=True, exist_ok=True)
-    highest = 0
-    for path in list_directory.iterdir():
-        if TASK_FILE_NAME_PATTERN.fullmatch(path.name):
-            highest = max(highest, int(path.stem))
-    mark_path = list_directory / TASK_HIGH_WATER_MARK_FILE_NAME
-    mark = mark_path.read_text(encoding="utf-8").strip() if mark_path.is_file() else ""
-    if mark.isdigit():
-        highest = max(highest, int(mark))
-    task_id = highest + 1
-    with tempfile.NamedTemporaryFile("w", dir=list_directory, prefix=".task-", suffix=".partial",
-                                     delete=False, encoding="utf-8") as partial:
-        partial_path = Path(partial.name)
-    try:
-        while True:
-            partial_path.write_text(json.dumps({
-                "id": str(task_id), "subject": subject, "description": description,
-                "status": "pending", "blocks": [], "blockedBy": []}, indent=2), encoding="utf-8")
-            try:
-                os.link(partial_path, list_directory / f"{task_id}.json")
-                break
-            except FileExistsError:
-                task_id += 1
-    finally:
-        partial_path.unlink(missing_ok=True)
-    mark_partial = list_directory / (TASK_HIGH_WATER_MARK_FILE_NAME + ".partial")
-    mark_partial.write_text(str(task_id), encoding="utf-8")
-    os.replace(mark_partial, mark_path)
-    return task_id
-
-
 def work_snapshot_of_ref(repo, ref, out):
     """The work-snapshot ref names, or None after printing why there is none."""
     if not ref.startswith(WORK_SNAPSHOT_REF_PREFIX):
@@ -936,17 +903,22 @@ def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
     exit_code = EXIT_DONE
     subject = restored_branch_task_subject(branch)
     description = restored_branch_task_description(snapshot, keep, worktree, restore_commit)
+    metadata = {TASK_HELD_BRANCHES_METADATA_KEY: [branch, str(worktree)]}
     task_list = Path.home() / ".claude" / "tasks" / environment[TASK_LIST_ENVIRONMENT_VARIABLE]
     try:
-        task_id = agent_seat_task_list_new_pending_task_write(task_list, subject, description)
+        # An agent-seat that has made no task yet has no task list directory.
+        task_list.mkdir(parents=True, exist_ok=True)
+        task_id = agent_seat_task_list.agent_seat_task_list_new_pending_task_write(
+            task_list, subject, description, metadata)
     except OSError as error:
         task_id = None
         exit_code = EXIT_STEP_FAILED
         out(f"FAILED: the task could not be opened in {task_list} ({type(error).__name__}: {error}). "
             f"The branch and the worktree hold the work, so the ref is still deleted.\n"
             f"Create the task with Claude Code's TaskCreate tool, with exactly this subject and "
-            f"description, so that scripts/clean-worktrees.py closes it:\n"
-            f"subject: {subject}\ndescription:\n{description}")
+            f"description, so that scripts/clean-worktrees.py closes it, and with this metadata, "
+            f"so that the first prompt's list leaves the branch and the worktree out:\n"
+            f"subject: {subject}\ndescription:\n{description}\nmetadata: {json.dumps(metadata)}")
     deleted = run_git(repo, "update-ref", "-d", ref, snapshot["commit"])
     if deleted.returncode:
         exit_code = EXIT_STEP_FAILED

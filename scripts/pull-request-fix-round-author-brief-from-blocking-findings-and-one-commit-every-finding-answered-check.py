@@ -3,7 +3,7 @@
 
 Usage:
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number>
-  scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --check [--answers FILE] [--commit REV] [--after-conflict-merge]
+  scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --check [--answers FILE] [--commit REV] [--after-conflict-merge] [--confirm-dispatching-agent-checked-new-shared-names]
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --move-change-to-own-pull-request-cut-new-topic-branch NEW_TOPIC_BRANCH [PATH ...]
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --move-change-to-own-pull-request-finish --title TITLE --body-file FILE
 
@@ -20,7 +20,9 @@ and the round's reviews, because nothing else on GitHub tells that round's revie
 of a later round on the same head. The round's number counts merge-lane-2's changes-requested
 reviews, taking as one those of the same commit that no round record tells apart. The blocking
 findings are the round's reviews' inline comments whose body starts with a match of
-BLOCKING_MARKER_PATTERN; the bodies' free text is never parsed for findings. A review states a
+BLOCKING_MARKER_PATTERN, and, in a review merge-lane-2's account posted, each such comment the
+posting program moved into the body under OUTSIDE_THE_DIFF_HEADING, briefed with the review's
+link; the bodies' other free text is never parsed for findings. A review states a
 **Blocking: N** count only when merge-lane-2's account posted it and its body starts with the
 lines merge-lane-pull-request-reviewer-review-post-and-read-back.py writes, matched by
 BLOCKING_COUNT_PATTERN: the verdict REQUEST_CHANGES, a blank line, and the count alone on its
@@ -57,8 +59,9 @@ in place of the brief, since a fix-round would check and push the pull request b
 cannot answer, fail; else print the brief: the frozen-head, ADVISOR_FIX_ROUND_INSTRUCTION when the
 round's number is ADVISOR_FIX_ROUND_NUMBER and on no other, each blocking finding word for word, then
 each nit word for word, numbered on from the blocking findings, to fix in the same round, how to
-dispatch the fix-round subagent in a git worktree of its own and push from it, the round's rules,
-and the --check command to finish with, which the subagent runs in its own worktree.
+dispatch the fix-round subagent in a git worktree of its own and push from it, what the author does
+when the subagent hands back new shared names, the round's rules, and the --check command to finish
+with, which the subagent runs in its own worktree.
 
 With --check, run in the worktree or checkout that holds the round's commit: the commits from the frozen-head to --commit (default
 HEAD) must be none, or one non-merge commit, or with --after-conflict-merge a merge of origin/main
@@ -71,7 +74,13 @@ whose moved part was undone but whose patch context the kept part changed is not
 the worktree or checkout --check runs in, and --check refuses when the checked commit's tree holds
 an answers file the frozen-head's tree does not, since a branch cut before .gitignore named the file does not leave it out of
 commits. It prints the files the fix commit changes that no blocking
-finding or nit names. While GitHub's head is still the frozen-head and the round has a commit, it runs
+finding or nit names. While GitHub's head is still the frozen-head and the round has a commit, it first
+lists the shared names the round adds, read by the new-shared-names lister from the worktree's files that
+the frozen-head to the checked commit changes, leaving out names the frozen-head's tree holds; unless
+--confirm-dispatching-agent-checked-new-shared-names is given, it refuses while that list is not empty, printing the
+names and SUBAGENT_REPORT_HEADING_ABOVE_NEW_SHARED_NAMES_FOR_DISPATCHING_AGENT_TO_CHECK, since a forked subagent cannot start the
+naming fresh-agent and must hand the names to the agent that dispatched it before the push, so that
+the renames go into the round's one commit; it fails when git cannot list them. Then it runs
 the nc-test-suites, as the pull request ready command runs them, in a scratch worktree of the checked
 commit; each suite that fails there is run again in a scratch worktree of the frozen-head, with that
 checkout's own runner, recording nothing. It refuses when a suite fails at the checked commit and not
@@ -103,6 +112,7 @@ skipped a check; the agent reads the printed lines and does what they say.
 
 Exit codes: 0 brief or replace steps printed, round passes or move step done; 1 the review or the round breaks
 a rule, said on stderr; 2 gh, git or the answers file could not be read, the conflict check could not answer,
+the new shared names could not be listed,
 or the suite runner stopped before judging every suite, said on stderr.
 """
 
@@ -135,6 +145,11 @@ _test_suite_runner_spec = importlib.util.spec_from_file_location(
 test_suite_runner = importlib.util.module_from_spec(_test_suite_runner_spec)
 _test_suite_runner_spec.loader.exec_module(test_suite_runner)
 
+_lister_spec = importlib.util.spec_from_file_location(
+    "new_shared_names_in_changed_files_list", Path(__file__).resolve().parent / "new-shared-names-in-changed-files-list.py")
+new_shared_names_lister = importlib.util.module_from_spec(_lister_spec)
+_lister_spec.loader.exec_module(new_shared_names_lister)
+
 REPLACES_READER_FILE_NAME = "pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py"
 _replaces_reader_spec = importlib.util.spec_from_file_location(
     "pull_request_description_replaces_line_replaced_pull_request_chain_reader_common",
@@ -153,9 +168,10 @@ BLOCKING_COUNT_PATTERN = re.compile(r"\AREQUEST_CHANGES\n\n\*\*Blocking: (\d+)\*
 # BLOCKING_MARKER_PATTERN must never match it, or a nit would block.
 NIT_MARK = "**fix-in-maintenance, nit** "
 # merge-lane-pull-request-reviewer-review-post-and-read-back.py moves each comment GitHub would refuse,
-# on a line outside the diff, into its review's body under this heading, one line each.
+# on a line outside the diff, into its review's body under this heading, one comment each.
 OUTSIDE_THE_DIFF_HEADING = "Comments on lines outside this pull request's diff:"
 OUTSIDE_THE_DIFF_LINE_PATTERN = re.compile(r"^- `(?P<path>[^`]+):(?P<line>\d+)`: (?P<body>.*)$")
+OUTSIDE_THE_DIFF_CONTINUATION_INDENT = "  "
 ROUND_RECORD_FORMAT = ("Fix-round answered without a commit: frozen-head {frozen_head}, reviews {review_ids}.\n"
                        "Posted by {program} --check. A changes-requested review of the same head posted "
                        "after this comment starts a new fix-round.")
@@ -211,8 +227,13 @@ WORKTREE_DISPATCH_INSTRUCTION = (
     "For the author: dispatch the fix-round subagent with the Agent tool, as a fork (subagent_type: "
     "\"fork\") with isolation: \"worktree\" and run_in_background: true, so that it works in a git "
     "worktree of its own and its commit cannot pick up edits you make in your checkout while it "
-    "works. Give it this whole brief, and tell it that the two paragraphs starting \"For the "
+    "works. Give it this whole brief, and tell it that the paragraphs starting \"For the "
     "author\", indented lines included, are yours, not its.")
+AUTHOR_INSTRUCTION_WHEN_FIX_ROUND_SUBAGENT_HANDS_BACK_NEW_SHARED_NAMES_TO_CHECK = (
+    "For the author, when the subagent's final report ends with a line for the agent that dispatched it, "
+    "as it does when it lists new shared names under the heading "
+    f"`{new_shared_names_lister.SUBAGENT_REPORT_HEADING_ABOVE_NEW_SHARED_NAMES_FOR_DISPATCHING_AGENT_TO_CHECK}`: do what that line says "
+    "before the removal below.")
 # The review's id keeps two rounds on the same frozen-head apart: git will not switch a second
 # worktree to a branch an earlier round's worktree still has checked out, and the agent harness
 # may keep that worktree locked.
@@ -493,21 +514,40 @@ def stated_blocking_count(review, reviewer_login):
     return int(stated.group(1)) if stated else None
 
 
-def blocks_moved_into_review_body(review):
-    """The `path:line` of each blocking finding the review's body lists under OUTSIDE_THE_DIFF_HEADING."""
-    lines = (review.get("body") or "").split("\n")
+def outside_the_diff_comments_read_back_from_review_body(body):
+    """The comments merge-lane-pull-request-reviewer-review-post-and-read-back.py moved into a posted
+    review body, each a dict of path, line and body. A comment starts at a line matching
+    OUTSIDE_THE_DIFF_LINE_PATTERN after OUTSIDE_THE_DIFF_HEADING; each indented line after it continues
+    it, with OUTSIDE_THE_DIFF_CONTINUATION_INDENT removed."""
+    lines = body.split("\n")
     if OUTSIDE_THE_DIFF_HEADING not in lines:
         return []
-    moved = [OUTSIDE_THE_DIFF_LINE_PATTERN.match(line) for line in lines[lines.index(OUTSIDE_THE_DIFF_HEADING) + 1:]]
-    return [f"{match.group('path')}:{match.group('line')}" for match in moved
-            if match and BLOCKING_MARKER_PATTERN.match(match.group("body").lstrip())]
+    comments = []
+    for line in lines[lines.index(OUTSIDE_THE_DIFF_HEADING) + 1:]:
+        match = OUTSIDE_THE_DIFF_LINE_PATTERN.match(line)
+        if match:
+            comments.append({"path": match.group("path"), "line": int(match.group("line")),
+                             "body": match.group("body")})
+        elif comments and line.startswith(OUTSIDE_THE_DIFF_CONTINUATION_INDENT):
+            comments[-1]["body"] += "\n" + line[len(OUTSIDE_THE_DIFF_CONTINUATION_INDENT):]
+    return comments
+
+
+def blocks_moved_into_review_body(review, reviewer_login):
+    """The blocking findings a merge-lane-2 review's body lists under OUTSIDE_THE_DIFF_HEADING, each
+    shaped like an inline comment and linked to the review, since GitHub gives it no link of its own."""
+    if (review.get("user") or {}).get("login") != reviewer_login:
+        return []
+    moved = outside_the_diff_comments_read_back_from_review_body(review.get("body") or "")
+    return [{**comment, "html_url": review.get("html_url")} for comment in marked(moved)]
 
 
 def blocking_findings(number, anchor, reviews, reviewer_login=MERGE_LANE_2_REVIEWER_LOGIN):
     comments_by_review = [gh_json_lines(["api", "--paginate",
                                          f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews/{review['id']}/comments",
                                          "--jq", ".[]"]) for review in reviews]
-    marked_by_review = [marked(comments) for comments in comments_by_review]
+    marked_by_review = [marked(comments) + blocks_moved_into_review_body(review, reviewer_login)
+                        for review, comments in zip(reviews, comments_by_review)]
     # A merge-lane-2 review with its own marks and a stated count was posted from categorized
     # findings, so it grades every finding of the round, and another reviewer's Blocks it graded
     # below must-fix-now does not block. merge-lane-2's own marks in its other reviews of the
@@ -535,14 +575,6 @@ def blocking_findings(number, anchor, reviews, reviewer_login=MERGE_LANE_2_REVIE
         stated = stated_blocking_count(review, reviewer_login)
         if stated is None:
             continue
-        # The brief lists inline comments only, and a review with no inline Block of its own is counted
-        # below against the other reviews' Blocks, which can match its count by chance.
-        moved = blocks_moved_into_review_body(review)
-        if moved:
-            raise Refused(f"The review {review.get('html_url')} says **Blocking: {stated}**, and its body lists "
-                          f"{len(moved)} blocking finding(s) under \"{OUTSIDE_THE_DIFF_HEADING}\", which this "
-                          f"program cannot brief: {', '.join(moved)}.\n"
-                          + ask + ", and that the review's body holds blocking findings outside the diff.")
         own = without_reposts(marked_by_review[index])
         counted = own or findings
         if stated != len(counted):
@@ -666,6 +698,7 @@ def print_brief(number, reviewer_login):
         "",
         WORKTREE_DISPATCH_INSTRUCTION,
         WORKTREE_REMOVAL_INSTRUCTION.format(local_branch=local_branch),
+        AUTHOR_INSTRUCTION_WHEN_FIX_ROUND_SUBAGENT_HANDS_BACK_NEW_SHARED_NAMES_TO_CHECK,
         "",
         "For the subagent, the rules of the round, in order, run in your own worktree:",
         f"0. Make a local branch at the frozen-head and switch to it: git fetch origin && git switch -C {local_branch} {frozen_head}",
@@ -694,7 +727,8 @@ def print_brief(number, reviewer_login):
         "answers file or the unpushed commit as it says (git commit --amend is allowed before the "
         "push; first stage each changed file with git add <path>, never the answers file) and run the "
         "check again. Before the push, the check runs the nc-test-suites, which can "
-        "take many minutes, and refuses when one fails because of the round's change.",
+        "take many minutes, and refuses when one fails because of the round's change. Before the suites, "
+        "it refuses when the round's commit adds shared names no agent has checked; do what it prints.",
         f"7. When it passes with a commit not yet pushed, push once, with: git push origin HEAD:{shlex.quote(branch)}",
         "   Then run the same check command "
         "again. When it passes and prints a message for merge-lane-2, which it does at once if you "
@@ -832,7 +866,7 @@ def files_whose_moved_change_is_still_here(named, commit):
             if completed.returncode not in (0, 1):
                 raise StepFailed(f"git {' '.join(check)} exited {completed.returncode} on pull request "
                                  f"{named}'s patch: {completed.stderr.strip()}")
-            if completed.returncode == 0:
+            if completed.returncode == 0:  # pragma: no mutate, returncode is 0 or 1 here, so `<=` matches only 0 as `==` does
                 still_here.append(piece.splitlines()[0].removeprefix("diff --git "))
     return still_here
 
@@ -999,7 +1033,22 @@ def suites_failing_at_frozen_head_too_recorded_for(commit):
     return record["suites"] if record["commit"] == commit else []
 
 
-def check_round(number, reviewer_login, answers_path, commit_name, after_conflict_merge):
+def refuse_new_shared_names_the_dispatching_agent_has_not_checked(number, frozen_head, commit):
+    try:
+        names = new_shared_names_lister.new_shared_names_in_files_changed_since(Path.cwd(), frozen_head, commit)
+    except new_shared_names_lister.GitFailure as failure:
+        raise StepFailed(f"the new shared names the round's commit adds could not be listed: {failure}") from None
+    if names:
+        raise Refused(new_shared_names_lister.unchecked_new_shared_names_refusal_text(
+            names, "The check stopped before the nc-test-suites, and nothing may be pushed yet",
+            "Make every rename in the round's one commit: stage each changed file with git add <path>, never the "
+            "answers file, and run git commit --amend.",
+            "the same check command again, with "
+            f"{new_shared_names_lister.CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG} added"))
+
+
+def check_round(number, reviewer_login, answers_path, commit_name, after_conflict_merge,
+                confirm_dispatching_agent_checked_new_shared_names=False):
     (url, head, _branch, review_link, _review_id, frozen_head, blocking, nits,
      _fix_round_number, unrecorded_review_ids) = round_facts(number, reviewer_login)
     findings = blocking + nits
@@ -1023,6 +1072,8 @@ def check_round(number, reviewer_login, answers_path, commit_name, after_conflic
                       "Check --commit names what you pushed; if someone else pushed, tell "
                       "merge-lane-2 with SendMessage.")
     if head == frozen_head and commit != frozen_head:
+        if not confirm_dispatching_agent_checked_new_shared_names:
+            refuse_new_shared_names_the_dispatching_agent_has_not_checked(number, frozen_head, commit)
         broken, failing_at_frozen_head_too = suites_the_round_broke_and_suites_failing_at_frozen_head_too(
             frozen_head, commit)
         if broken:
@@ -1171,7 +1222,7 @@ def move_finish(number, title, body_file):
         raise Refused(f"An answers file {answers} is in this worktree, so the commit would carry it to "
                       f"{new_branch}.\n"
                       f"Move it to {set_aside} and run this again; it comes back when the move ends.")
-    if git(["rev-list", "--count", "origin/main..HEAD"]).strip() != "0":
+    if git(["rev-list", "--count", "origin/main..HEAD"]).strip() != "0":  # pragma: no mutate, a count has no leading zero, so `>` matches every count but "0" as `!=` does, and so does `is not`, as CPython keeps one "0" string
         head = git(["rev-parse", "HEAD"]).strip()
         base = git(["merge-base", "HEAD", "origin/main"]).strip()
         raise Refused(f"{new_branch} already holds commit {head[:12]} beside origin/main, and this step must make "
@@ -1276,6 +1327,9 @@ def main(argv=None):
     parser.add_argument("--after-conflict-merge", action="store_true",
                         help="with --check: the round starts with a merge of origin/main, made "
                              "because branch-conflict-check.py reported a conflict")
+    parser.add_argument(new_shared_names_lister.CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG, action="store_true",
+                        help="with --check: the agent that dispatched the round has checked the shared names "
+                             "the round's commit adds, and its renames are in that commit")
     parser.add_argument("--reviewer-login", default=MERGE_LANE_2_REVIEWER_LOGIN,
                         help=f"merge-lane-2's GitHub account (default: {MERGE_LANE_2_REVIEWER_LOGIN})")
     parser.add_argument("--move-change-to-own-pull-request-cut-new-topic-branch", dest="move_start", nargs="+",
@@ -1298,7 +1352,8 @@ def main(argv=None):
             move_finish(arguments.number, arguments.title, arguments.body_file)
         elif arguments.check:
             check_round(arguments.number, arguments.reviewer_login, arguments.answers,
-                        arguments.commit, arguments.after_conflict_merge)
+                        arguments.commit, arguments.after_conflict_merge,
+                        arguments.confirm_dispatching_agent_checked_new_shared_names)
         else:
             print_brief(arguments.number, arguments.reviewer_login)
     except Refused as refusal:

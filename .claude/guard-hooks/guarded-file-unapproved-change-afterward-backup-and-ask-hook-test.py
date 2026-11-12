@@ -1042,6 +1042,10 @@ def cases(scratch):
     message = world.run()
     check("a file listed again unchanged after git stopped listing it is not asked about",
           message == "", message)
+    state = json.loads(state_file_of_checkout(world).read_text())
+    check("and its first-run version stays deferred: still recorded, and nothing in the store",
+          state.get("first_run_versions") == {str(claude): world.key(claude)}
+          and world.versions(claude) == [], (state, world.versions(claude)))
     claude.write_text("project v2\n")
     edited = world.key(claude)
     message = world.run()
@@ -1050,7 +1054,36 @@ def cases(scratch):
           result.returncode == 0 and claude.is_file() and claude.read_text() == "project v1\n",
           (message, result.stderr, claude.is_file() and claude.read_text()))
 
-    # -- the first run's commit pruned after a rebase does not stop later runs
+    # -- a file git lists again changed, its id sorting below or above the first run's version,
+    # gets that version approved first and is asked about, also when a file listed before it
+    # has no first-run version
+    for direction, wanted in [("below", lambda committed: lambda key: key < committed),
+                              ("above", lambda committed: lambda key: key > committed)]:
+        world = fresh(scratch, f"unlisted-then-relisted-changed-{direction}-after-unstored-first-run")
+        claude = world.repo / "CLAUDE.md"
+        committed = world.key(claude)
+        exclude = world.repo / ".git" / "info" / "exclude"
+        exclude.parent.mkdir(exist_ok=True)
+        exclude.write_text("/CLAUDE.md\n")
+        world.git("rm", "-q", "--cached", "CLAUDE.md")
+        world.run()
+        claude.write_bytes(text_whose_blob_id("project, changed while unlisted", wanted(committed)))
+        # Listed before CLAUDE.md, and new since the first run, so it has no first-run version.
+        skill = world.repo / ".claude" / "skills" / "a.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("a skill\n")
+        exclude.write_text("")
+        world.git("reset", "-q", "--", "CLAUDE.md")
+        message = world.run()
+        state = json.loads(state_file_of_checkout(world).read_text())
+        check(f"a file listed again changed, its id {direction} the first run's version, is "
+              "asked about",
+              f"{claude}, version {world.key(claude)}" in message, message)
+        check(f"and, its id {direction} the first run's version, that version is approved first "
+              "and its entry dropped",
+              world.store_file(claude, "approved").split()[:1] == [committed]
+              and state.get("first_run_versions") == {},
+              (world.store_file(claude, "approved"), state))
     world = World(Path(scratch) / "first-run-commit-pruned")
     claude = world.repo / "CLAUDE.md"
     committed = world.key(claude)
@@ -1126,6 +1159,36 @@ def cases(scratch):
               "did not run" in message and first_run_commit in message
               and state.get("base_commit") == first_run_commit
               and "first_run_versions" not in state, (message, state))
+    # A state written when the checkout had no commit names none, and nothing is looked up.
+    world = fresh(scratch, "old-state-with-no-first-run-commit")
+    state_file = old_state(world, None)
+    message = world.run()
+    state = json.loads(state_file.read_text())
+    check("an old state that names no first-run commit is carried over to no first-run versions",
+          message == "" and "base_commit" not in state
+          and state.get("first_run_versions") == {}, (message, state))
+    # A file whose recorded version is no longer the commit's, with an id below or above it,
+    # no longer holds the first run's version.
+    world = World(Path(scratch) / "old-state-files-changed-since-first-run-commit")
+    skill = world.repo / ".claude" / "skills" / "a.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("a skill\n")
+    world.git("add", ".")
+    world.git("commit", "-qm", "a skill")
+    world.run()
+    first_run_commit = world.git("rev-parse", "HEAD").stdout.strip()
+    claude = world.repo / "CLAUDE.md"
+    claude.write_bytes(text_whose_blob_id("project, changed since the first run",
+                                          lambda key, committed=world.key(claude): key < committed))
+    skill.write_bytes(text_whose_blob_id("a skill, changed since the first run",
+                                         lambda key, committed=world.key(skill): key > committed))
+    world.run()
+    state_file = old_state(world, first_run_commit)
+    world.run()
+    state = json.loads(state_file.read_text())
+    check("an old state's files whose recorded versions, with ids below and above, differ from "
+          "the first-run commit's carry over to no first-run versions",
+          "base_commit" not in state and state.get("first_run_versions") == {}, state)
 
     # -- a first-run version git has since pruned is reported and kept, not dropped
     world = World(Path(scratch) / "first-run-version-pruned")
@@ -1182,6 +1245,39 @@ def cases(scratch):
         check(f"{name}: and drops its entry", state.get("first_run_versions") == {}, state)
         check(f"{name}: and does not approve it",
               rebased_away not in world.store_file(claude, "approved").split(),
+              world.store_file(claude, "approved"))
+
+    # -- a lost first-run version, reported or approved over, does not stop the first-run
+    # version of a file listed after it from being approved first
+    for approved_over in (False, True):
+        name = "first-run-version-pruned-" + ("approved-over-" if approved_over else "") + "then-next"
+        world = World(Path(scratch) / name)
+        claude = world.repo / "CLAUDE.md"
+        committed = world.key(claude)
+        # Listed before CLAUDE.md.
+        skill = world.repo / ".claude" / "skills" / "a.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("a skill\n")
+        world.git("add", ".")
+        world.git("commit", "-qm", "a skill")
+        skill.write_text("a skill, rebased away\n")
+        world.git("commit", "-qam", "dropped by the rebase")
+        world.run()
+        world.git("reset", "-q", "--hard", "HEAD~1")
+        (world.repo / ".git" / "ORIG_HEAD").unlink(missing_ok=True)
+        world.git("reflog", "expire", "--expire=now", "--expire-unreachable=now", "--all")
+        world.git("gc", "-q", "--prune=now")
+        if approved_over:
+            world.run()
+            world.marker('The user said "y"')
+            result = world.command("--approve", skill, world.key(skill))
+            check(f"{name}: the skill's version after the lost one is approved",
+                  result.returncode == 0, result.stderr)
+            skill.write_text("a skill v3\n")
+        claude.write_text("project v2\n")
+        world.run()
+        check(f"{name}: CLAUDE.md's first-run version is approved first",
+              world.store_file(claude, "approved").split()[:1] == [committed],
               world.store_file(claude, "approved"))
 
     # -- a version a run saw unapproved is not approved by a rename after the file went back to it
@@ -1308,6 +1404,7 @@ def cases(scratch):
     # -- the Mac's store over a stand-in mount
     mac_cases(scratch)
     durable_ref_cases(scratch)
+    reflog_copy_and_saved_state_cases(scratch)
 
     # -- a failing tool call
     world = fresh(scratch, "failure-event")
@@ -1759,10 +1856,24 @@ def cases(scratch):
     world.run()
     state = next((world.repo / ".git").glob("*-state.json"))
     before = (state.stat().st_ino, state.stat().st_mtime_ns)
+    outside = next((world.scratch / "cache").glob("*-state.json"))
+    outside_before = (outside.stat().st_ino, outside.stat().st_mtime_ns)
     message = world.run()
     check("a run with nothing to do does not rewrite the checkout's state file",
           message == "" and (state.stat().st_ino, state.stat().st_mtime_ns) == before,
           (message, before, state.stat()))
+    check("nor the outside state file",
+          (outside.stat().st_ino, outside.stat().st_mtime_ns) == outside_before,
+          (outside_before, outside.stat()))
+    # Decisions dropped, as a change to the instruction-file guard drops them, are decided again
+    # and saved, though nothing else is to do.
+    checkout_state = json.loads(state.read_text())
+    checkout_state["guarded"].pop("")
+    state.write_text(json.dumps(checkout_state))
+    message = world.run()
+    check("a run with nothing to do but decisions to make again saves them",
+          message == "" and "" in json.loads(state.read_text())["guarded"],
+          (message, state.read_text()))
 
     # -- git's own work after a first run made while a merge was stopped, in a checkout with no
     # guarded file yet, is not asked about
@@ -1931,6 +2042,200 @@ def store_listing(store):
     """Every path in the store with its size and modification time."""
     return sorted((str(path), path.stat().st_size, path.stat().st_mtime_ns)
                   for path in Path(store).rglob("*"))
+
+
+def state_file_of_checkout(world):
+    return next((world.repo / ".git").glob("*-state.json"))
+
+
+def copy_in_this_process(world, hook, path, copy_hash, data):
+    """Store.copy of the loaded hook module in the world's environment; the error it raised, or
+    None."""
+    saved_environment = dict(os.environ)
+    try:
+        os.environ.update(world.environment())
+        hook.Store(world.machine).copy(str(path), copy_hash, data)
+    except Exception as error:
+        return error
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_environment)
+    return None
+
+
+def reflog_copy_and_saved_state_cases(scratch):
+    # -- the agent's own commit is found when reflog entries repeat within one second
+    world = fresh(scratch, "same-second-reflog")
+    claude = world.repo / "CLAUDE.md"
+    world.extra_environment = {"GIT_COMMITTER_DATE": "1700000000 +0000"}
+    world.git("checkout", "-q", "-b", "topic")
+    world.run()
+    claude.write_text("project v2, committed and merged in one second\n")
+    world.git("commit", "-qam", "edit CLAUDE.md")
+    world.git("checkout", "-q", "main")
+    world.git("checkout", "-q", "topic")
+    world.git("checkout", "-q", "main")
+    world.git("merge", "-q", "--ff-only", "topic")
+    message = world.run()
+    check("an edit committed, switched away from and merged within one second is asked about",
+          str(claude) in message and "has not approved" in message, message)
+
+    # -- a reflog line that repeats, when the stored index no longer finds it, approves nothing
+    world = fresh(scratch, "repeated-reflog-line")
+    claude = world.repo / "CLAUDE.md"
+    world.extra_environment = {"GIT_COMMITTER_DATE": "1700000000 +0000"}
+    world.git("branch", "x")
+    world.git("checkout", "-q", "x")
+    world.run()
+    state = json.loads(state_file_of_checkout(world).read_text())
+    lines = (world.repo / ".git" / "logs" / "HEAD").read_text().splitlines()
+    check("the stored reflog position keeps the [commit, time] an earlier hook reads, then the "
+          "index and the whole line",
+          state["reflog"] == lines[-1].split()[1:2] + lines[-1].split("\t")[0].split()[-2:-1]
+          + [len(lines) - 1, lines[-1]], (state["reflog"], lines))
+    state["reflog"][2] = -1  # as if expiry had moved the stored entry
+    state_file_of_checkout(world).write_text(json.dumps(state))
+    world.git("checkout", "-q", "-b", "topic")
+    claude.write_text("project v2, behind a repeated reflog line\n")
+    world.git("commit", "-qam", "edit CLAUDE.md")
+    world.git("checkout", "-q", "main")
+    world.git("checkout", "-q", "x")  # the same line as the stored one
+    world.git("checkout", "-q", "main")
+    world.git("merge", "-q", "--ff-only", "topic")
+    message = world.run()
+    check("when the stored reflog line occurs twice, the change is asked about, not approved as "
+          "git's own work", str(claude) in message and "has not approved" in message, message)
+    hook = load_hook_in_this_process()
+    entries = [["c1", "5", "checkout: x", "a c1 t 5 +0000\tcheckout: x"],
+               ["c2", "5", "commit: y", "c1 c2 t 5 +0000\tcommit: y"],
+               ["c1", "5", "checkout: x", "a c1 t 5 +0000\tcheckout: x"]]
+    check("a stored line that two entries hold leaves the window unknown, even at an index that "
+          "finds one of them, since expiry can move a later equal line there",
+          hook.entries_after(entries, ["c1", "5", 7, entries[0][3]]) is None
+          and hook.entries_after(entries, ["c1", "5", 0, entries[0][3]]) is None
+          and hook.entries_after(entries, ["c1", "5", 2, entries[2][3]]) is None,
+          [hook.entries_after(entries, ["c1", "5", index, entries[0][3]]) for index in (7, 0, 2)])
+    check("a stored line that one entry holds is found wherever expiry has moved it",
+          hook.entries_after(entries, ["c2", "5", 9, entries[1][3]]) == entries[2:],
+          hook.entries_after(entries, ["c2", "5", 9, entries[1][3]]))
+    check("a stored line no entry holds leaves the window unknown, rather than guessing it from "
+          "times, which would leave out a commit made in the stored entry's second",
+          hook.entries_after(entries, ["c0", "4", 0, "a c0 t 4 +0000\tcommit: gone"]) is None
+          and hook.entries_after(entries, ["c0", "4"]) is None
+          and hook.entries_after([], ["c0", "4", 0, "a c0 t 4 +0000\tcommit: gone"]) is None,
+          hook.entries_after(entries, ["c0", "4", 0, "a c0 t 4 +0000\tcommit: gone"]))
+
+    # -- a reflog position stored by the earlier version of this hook is still read
+    world = fresh(scratch, "earlier-reflog-position")
+    claude = world.repo / "CLAUDE.md"
+    # Each entry gets a time of its own, so the [commit, time] pair names one entry.
+    world.extra_environment = {"GIT_COMMITTER_DATE": "1700000001 +0000"}
+    world.git("checkout", "-q", "-b", "other")
+    claude.write_text("project on other\n")
+    world.extra_environment = {"GIT_COMMITTER_DATE": "1700000002 +0000"}
+    world.git("commit", "-qam", "other's CLAUDE.md")
+    world.extra_environment = {"GIT_COMMITTER_DATE": "1700000003 +0000"}
+    world.git("checkout", "-q", "main")
+    world.run()
+    world.extra_environment = {"GIT_COMMITTER_DATE": "1700000004 +0000"}
+    state = json.loads(state_file_of_checkout(world).read_text())
+    newest = (world.repo / ".git" / "logs" / "HEAD").read_text().splitlines()[-1].split("\t")[0]
+    state["reflog"] = [newest.split()[1], newest.split()[-2]]
+    state_file_of_checkout(world).write_text(json.dumps(state))
+    world.git("checkout", "-q", "other")
+    message = world.run()
+    check("with a [commit, time] reflog position from the earlier hook, a branch switch is not "
+          "asked about", message == "", message)
+
+    # -- a change of stat data alone is saved, so the file is not hashed again
+    world = fresh(scratch, "touch-saved")
+    claude = world.repo / "CLAUDE.md"
+    os.utime(claude, ns=(1_000_000_000, 1_000_000_000))
+    message = world.run()
+    stored = json.loads(state_file_of_checkout(world).read_text())["files"][str(claude)]
+    check("a change of stat data alone is saved in the state file",
+          message == "" and stored[1] == claude.stat().st_mtime_ns, (message, stored))
+
+    # -- a copy another run wrote again while this run replaced it is reported, not kept
+    world = fresh(scratch, "copy-rewritten")
+    claude = world.repo / "CLAUDE.md"
+    hook = load_hook_in_this_process()
+    data = b"project v2\n"
+    copy_hash = hook.blob_hash(data)
+    directory = world.store / str(claude).lstrip("/")
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / copy_hash).write_bytes(b"part")
+    unlink = os.unlink
+    try:
+        os.unlink = lambda *arguments, **keywords: None  # another run puts the part back at once
+        raised = copy_in_this_process(world, hook, claude, copy_hash, data)
+    finally:
+        os.unlink = unlink
+    check("a copy that still does not match its hash after a second attempt is reported",
+          isinstance(raised, hook.StoreUnreachable), repr(raised))
+    raised = copy_in_this_process(world, hook, claude, copy_hash, data)
+    check("and once nothing writes it again, the second attempt replaces it",
+          raised is None and (directory / copy_hash).read_bytes() == data, repr(raised))
+
+    # -- a line-ending filter: the copy keeps git's blob id as its name and its own bytes
+    world = fresh(scratch, "line-ending-filter")
+    claude = world.repo / "CLAUDE.md"
+    (world.repo / ".gitattributes").write_text("CLAUDE.md text\n")
+    world.git("add", ".gitattributes")
+    world.git("commit", "-qm", "attributes")
+    world.run()
+    claude.write_bytes(b"project v2\r\n")
+    world.run(tool="Edit", file_path=claude)
+    approved_key = world.key(claude)
+    check("with a line-ending filter, the copy is named by git's blob id, which differs from the "
+          "hash of the bytes it holds",
+          approved_key in world.versions(claude)
+          and approved_key != blob_id(b"project v2\r\n")
+          and (world.store / str(claude).lstrip("/") / approved_key).read_bytes()
+          == b"project v2\r\n", (approved_key, world.versions(claude)))
+    hook = load_hook_in_this_process()
+    copy = world.store / str(claude).lstrip("/") / approved_key
+    before = copy.stat().st_ino
+    raised = copy_in_this_process(world, hook, claude, approved_key, b"project v2\r\n")
+    check("and copying the same version again keeps the copy rather than replacing it",
+          raised is None and copy.stat().st_ino == before, repr(raised))
+    claude.write_bytes(b"project v3\r\n")
+    message = world.run()
+    check("and the change's diff is shown against the approved copy",
+          "-project v2" in message and "+project v3" in message, message)
+    key = message.split(f"{claude}, version ", 1)[1].split(".", 1)[0] if message else ""
+    result = world.command("--restore", claude, key)
+    check("and --restore puts back the approved version's own bytes",
+          result.returncode == 0 and claude.read_bytes() == b"project v2\r\n",
+          (message[:200], result.stderr, claude.read_bytes()))
+
+    # -- the copy --restore alone keeps under a line-ending filter can be read back
+    claude.write_bytes(b"project v4\r\n")
+    message = world.run()
+    declined = message.split(f"{claude}, version ", 1)[1].split(".", 1)[0] if message else ""
+    directory = world.store / str(claude).lstrip("/")
+    # As when the run that saw the version kept no copy of it, so logged no hash of its bytes.
+    (directory / declined).unlink(missing_ok=True)
+    rewritten = []
+    for body in hook.valid_line_bodies((directory / "log").read_bytes()):
+        fields = body.split("\t")
+        if fields[0] == "seen" and len(fields) > 7 and fields[4] == declined:
+            body = "\t".join(fields[:7])
+        rewritten.append(hook.checked_line(body))
+    (directory / "log").write_bytes(b"".join(rewritten))
+    result = world.command("--restore", claude, declined)
+    saved_environment = dict(os.environ)
+    try:
+        os.environ.update(world.environment())
+        store = hook.Store(world.machine)
+        read_back = store.copied_version(str(claude), declined, store.log(str(claude)))
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_environment)
+    check("a declined version that only --restore copied, under a line-ending filter, is read "
+          "back from its copy rather than judged damaged",
+          result.returncode == 0 and read_back == b"project v4\r\n",
+          (declined, result.stderr, read_back))
 
 
 def durable_ref_cases(scratch):

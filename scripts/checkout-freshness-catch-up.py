@@ -233,7 +233,8 @@ LEAVE_IT_ADVICE = (
     "This branch is pushed, so its review may be running. Do not rebase or "
     "amend it. A fix for this topic is a new commit on top, pushed once. To learn "
     "whether the branch conflicts with main, run python3 scripts/branch-conflict-check.py "
-    "in this checkout, and if it reports a conflict, do what its report says. "
+    "in this checkout. If it prints `VERDICT: CONFLICT`, do what its report says. If it "
+    "exits 2, it has no answer: do what its lines say, then run it again. "
     "Start your next topic with `git checkout -b <name> origin/main`."
 )
 # A branch whose own commits are already on a remote branch, under another
@@ -306,8 +307,7 @@ GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES = (
     "{program} printed, git's error included."
 )
 GIT_FAILED_RERUN_NEXT_STEP_LINES = next_step_lines.git_failure_next_step_lines(
-    "{rerun}", text_the_failure_line_contains="because a git command failed",
-    include_the_misspelt_branch_commit_or_path_line=False)
+    "{rerun}", text_the_failure_line_contains="because a git command failed")
 
 
 def git_failed_text(prefix: str, what: str, error, next_steps: str, rerun: str = None) -> str:

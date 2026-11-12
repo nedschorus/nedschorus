@@ -97,9 +97,10 @@ holds; otherwise it says nothing about it:
   - no walk-minutes there has an unclosed `#next_to_present` line, paused
     or not, as the walk-me-through finder module reads it;
   - neither the handoff hook's asked marker nor its deferred marker exists
-    for the session, and the share of the context window the transcript
-    records is below the reincarnation threshold, read with the handoff
-    hook's own reader and its DEFAULT_THRESHOLD_USED_PERCENTAGE: Claude Code
+    for the session, and the context used plus the tokens compactions
+    dropped, as a share of the context window, is below the reincarnation
+    threshold, read with the handoff hook's own reader and its
+    DEFAULT_THRESHOLD_USED_PERCENTAGE: Claude Code
     runs the hooks of one Stop group in parallel, so at the stop that first
     reaches the threshold the asked marker may not be written yet;
   - the payload's background_tasks list, read with the handoff hook's
@@ -365,10 +366,13 @@ class GitHubConditionChecker:
     for several agent-seats reads the entries its own calls appended.
     """
 
+    # The budget's clock; the test replaces it so its budget cases do not depend on machine speed.
+    clock = staticmethod(time.monotonic)
+
     def __init__(self, checks: dict, now_epoch: float):
         self.checks = checks
         self.now_epoch = now_epoch
-        self.started = time.monotonic()
+        self.started = self.clock()
         self.changed = False
         self.gh_failures = []
 
@@ -386,7 +390,7 @@ class GitHubConditionChecker:
                 and 0 <= self.now_epoch - cached["checked_at_epoch"]
                 < CONDITION_RECHECK_INTERVAL_SECONDS):
             return cached
-        remaining = GH_CALLS_TOTAL_BUDGET_SECONDS - (time.monotonic() - self.started)
+        remaining = GH_CALLS_TOTAL_BUDGET_SECONDS - (self.clock() - self.started)
         if remaining <= 0:
             # Out of budget: not met this run, and not recorded, so the next
             # run checks it.
@@ -710,7 +714,8 @@ def next_action_prompt_lines(payload: dict, tasks: dict, directory: Path, state:
     if (handoff.handoff_asked_marker_path(session_id).exists()
             or handoff.deferred_marker_path(session_id).exists()):
         return None
-    used_percentage = handoff.context_used_percentage_from_transcript(str(transcript))
+    used_percentage = handoff.context_used_plus_compaction_dropped_percentage_from_transcript(
+        str(transcript))
     if used_percentage is not None and used_percentage >= handoff.DEFAULT_THRESHOLD_USED_PERCENTAGE:
         return None
     background_tasks = payload.get(handoff.BACKGROUND_TASKS_PAYLOAD_KEY)

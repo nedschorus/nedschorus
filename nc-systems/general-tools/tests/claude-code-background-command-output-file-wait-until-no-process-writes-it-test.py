@@ -165,6 +165,15 @@ check("with no more than one poll interval left, the wait neither sleeps nor loo
       "naming the writers of the last look",
       sleeps == [] and given == [10] and code == wait.EXIT_TIME_LIMIT_REACHED and "process 7 still has" in message,
       (sleeps, given, code, message))
+sleeps = []
+list_writers, given = lister_answering({7})
+clock_values = iter([100.0, 101.0, 111.0])
+code, message = wait.wait_until_no_process_writes(
+    str(output_file), 10, list_writers, clock=lambda: next(clock_values), sleep=sleeps.append)
+check("a sleep that overruns the time limit starts no look after it, and exits 1 naming the writers of "
+      "the last look",
+      sleeps == [wait.POLL_SECONDS] and given == [10] and code == wait.EXIT_TIME_LIMIT_REACHED
+      and "process 7 still has" in message, (sleeps, given, code, message))
 list_writers, given = lister_answering({7}, wait.WritersLookTimeLimitReached("lsof had not listed them"))
 clock_values = iter([100.0, 101.0, 107.0])
 code, message = wait.wait_until_no_process_writes(

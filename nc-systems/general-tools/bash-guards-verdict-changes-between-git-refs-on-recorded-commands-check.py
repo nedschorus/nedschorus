@@ -8,7 +8,7 @@ adds, a Bash hook in the head's .claude/settings.json but not the base's, is rea
 and each recorded command it refuses blocks the merge until the reviewer accepts the refusal.
 
 Usage:
-  python3 nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py \\
+  python3 nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py \\
       --base-ref origin/main --head-ref <commit or branch>
 
 Steps:
@@ -116,25 +116,29 @@ REFUSED_COMMANDS_PRINTED_PER_GROUP = 3
 REFUSAL_GROUPS_FILE_NAME = "added-guard-refusal-groups.json"
 REFUSAL_RIGHT_LINES_FILE_NAME = "added-guard-refusal-right-lines.txt"
 SCRATCH_OR_RUN_LOG_DIRECTORY_NOT_REMOVED_MESSAGE = (
-    "REPLAY FAILED: the paths listed below could not be removed, so this Bash guards replay exits 2; any verdicts "
-    "it printed above stand. Each path is in the replay's scratch directory, made under TMPDIR, or, after a replay that "
+    "REPLAY FAILED: the paths listed below could not be removed, so "
+    "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check exits 2; any verdicts it printed above "
+    "stand. Each path is in the replay's scratch directory, made under TMPDIR, or, after a replay that "
     "found nothing to report, in its run log directory.\n"
     "Remove each listed path with rm -rf <path>, because nothing else removes it, and the disk it is on can "
     "fill.\n  ")
 REGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE = (
     "{checkout} already exists, and git lists it as a worktree of {repository}, most likely one an earlier replay "
-    "in this --scratch-directory could not remove; so this Bash guards replay adds no worktree there, leaves the "
-    "path as it is, and exits 2 before it replays any recorded command.\n"
+    "in this --scratch-directory could not remove; so "
+    "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check adds no worktree there, leaves the path "
+    "as it is, and exits 2 before it replays any recorded command.\n"
     "Remove it with {remove_command}, then run the replay again with "
     "the same arguments. A replay's worktree holds only the commit it read, so removing it loses no work.")
 UNREGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE = (
     "{checkout} already exists, and git does not list it as a worktree of {repository}, so it is no worktree an "
-    "earlier replay left, and it may hold someone's files; this Bash guards replay adds no worktree there, leaves "
-    "the path as it is, and exits 2 before it replays any recorded command.\n"
+    "earlier replay left, and it may hold someone's files; "
+    "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check adds no worktree there, leaves the path "
+    "as it is, and exits 2 before it replays any recorded command.\n"
     "Run the replay again with the same arguments, except a --scratch-directory that does not exist yet.")
 CHECKOUTS_NOT_REMOVED_MESSAGE = (
-    "REPLAY FAILED: these worktrees could not be removed, so this Bash guards replay exits 2; any verdicts it "
-    "printed above stand.\n"
+    "REPLAY FAILED: these worktrees could not be removed, so "
+    "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check exits 2; any verdicts it printed above "
+    "stand.\n"
     "Run the command each line ends with, which removes that line's worktree; if the command fails, its own error "
     "says why.\n  ")
 DEFAULT_LOG_STORE_RUNS_DIRECTORY = (
@@ -524,6 +528,23 @@ def fixed_clock():
     return 1000.0
 
 
+SEARCH_FILE_CLOCK_SECONDS_PER_READ = 0.001
+
+
+def search_file_clock():
+    """Return a clock for one search-file reading that advances SEARCH_FILE_CLOCK_SECONDS_PER_READ each time it is read.
+
+    The guard's glob-expansion budget is measured in seconds, so on the wall clock a loaded machine spends it on
+    one ref's reading and not the other's. On this clock the budget is a count of clock reads, the same at both refs.
+    """
+    reads = [0]
+
+    def clock():
+        reads[0] += 1
+        return reads[0] * SEARCH_FILE_CLOCK_SECONDS_PER_READ
+    return clock
+
+
 def is_failed_reading(verdict):
     return isinstance(verdict, str) and (verdict.startswith("EXCEPTION") or verdict == "TIMEOUT")
 
@@ -556,7 +577,7 @@ def read_pkill_pattern_kill(guard, command, working_directory, search_file_direc
 
 
 def read_search_file(guard, command, working_directory, search_file_directory):
-    reason = guard.analyze_command_text(command, search_file_directory, time.monotonic)
+    reason = guard.analyze_command_text(command, search_file_directory, search_file_clock())
     return "refused" if reason else "passed", reason
 
 
@@ -709,7 +730,7 @@ def search_file_main_outcome(guard, command, working_directory):
     payload = json.dumps({"tool_name": "Bash", "cwd": working_directory, "tool_input": {"command": command}})
     printed = io.StringIO()
     with contextlib.redirect_stdout(printed):
-        exit_status = guard.main(stdin=io.StringIO(payload))
+        exit_status = guard.main(stdin=io.StringIO(payload), clock=search_file_clock())
     text = printed.getvalue().strip()
     if not text:
         return ["silent", exit_status], None
@@ -1186,8 +1207,8 @@ def run_log_directory_made(runs_directory):
         return Path(tempfile.mkdtemp(prefix=time.strftime("%Y-%m-%dT%H%M%SZ-", time.gmtime()), dir=runs_directory))
     except OSError as error:
         raise ReplayFailed(
-            f"this Bash guards replay made no run log directory, the directory that keeps the step logs and "
-            f"differences files a reviewer reads after a changed verdict or a failed replay, because it could not "
+            f"bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check made no run log directory, the "
+            f"directory that keeps the step logs and differences files a reviewer reads after a changed verdict or a failed replay, because it could not "
             f"make one under {runs_directory}: {error}.\n"
             f"On ned-box, where the log-store is, check that {runs_directory} can be written to, then run the "
             f"replay again.\n"

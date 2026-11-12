@@ -834,6 +834,18 @@ check("two paths given to one removal leave the hook unable to tell",
 check("a removal naming no worktree leaves the hook unable to tell, never removing none",
       hook.worktrees_removed_or_unresolved_reason("git worktree remove /a/nowhere", "/", worktrees)
       == (None, "the path /a/nowhere names no worktree the hook can find from the command's directory"))
+unshipped = [(Path("/s/ship.py"), Path("/a/b/one"), Path("/a/b/one/cold-read-records/r"), "FAILED: no space")]
+for label, unresolved, instruction in (
+        ("a written-out path that names no worktree",
+         hook.PATH_NAMES_NO_WORKTREE_REASON_TEMPLATE.format(argument="/a/nowhere"),
+         hook.PATH_NAMES_NO_WORKTREE_RUN_AGAIN_INSTRUCTION_TEMPLATE.format(force=" -f")),
+        ("a path holding a variable", "the path holds a variable, a glob or a substitution",
+         hook.GIT_WORKTREE_REMOVE_PATH_WRITTEN_OUT_RUN_AGAIN_INSTRUCTION_TEMPLATE.format(force=" -f"))):
+    reason = hook.shipment_failed_refusal(unshipped, unresolved, " -f")
+    check(f"the shipment-failed refusal of a removal the hook cannot place, for {label}, gives that reason's "
+          f"run-again instruction",
+          unresolved in reason and instruction in reason
+          and ("written out in full" in reason) == ("written out in full" in instruction), reason)
 check("a removal naming no path in the command text, as through xargs, leaves the hook unable to tell",
       hook.worktrees_removed_or_unresolved_reason("echo /a/b/two | xargs git worktree remove", "/", worktrees)
       == (None, "`worktree remove` names no path in the command text, so the path reaches git only when "
@@ -886,6 +898,15 @@ def alerts_naming(worktree):
             if str(worktree) in alert["title"]]
 
 
+def waiter_ended(worktree):
+    """True once the worktree's waiter has logged the line it writes last: its removal, or its user-alert.
+
+    Git deletes the worktree before the waiter logs the removal, so a gone worktree does not mean the waiter
+    has ended."""
+    return any(line.partition(" ")[2].startswith(("removed: ", "user-alert written: "))
+               for path in waiter_logs_of(worktree) for line in path.read_text().splitlines())
+
+
 def waited_until(condition, seconds=60):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -926,7 +947,7 @@ try:
 finally:
     writer.communicate("")
 check("once the writer finishes, the waiter removes the worktree",
-      waited_until(lambda: not finishes_worktree.exists()),
+      waited_until(lambda: waiter_ended(finishes_worktree)) and not finishes_worktree.exists(),
       [path.read_text() for path in waiter_logs_of(finishes_worktree)])
 check("the record the writer finished is in the log-store whole, with the file it wrote last",
       (STORE / "cold-read-records" / finishes_record.name / "written-last.md").is_file()
@@ -941,7 +962,7 @@ _, killed_worktree, killed_record, writer, reason = deferred_removal_case("defer
 writer.kill()
 writer.wait()
 check("after a writer is killed early, the waiter removes the worktree",
-      waited_until(lambda: not killed_worktree.exists()), [path.read_text() for path in waiter_logs_of(killed_worktree)])
+      waited_until(lambda: waiter_ended(killed_worktree)) and not killed_worktree.exists(),[path.read_text() for path in waiter_logs_of(killed_worktree)])
 log_text = "".join(path.read_text() for path in waiter_logs_of(killed_worktree))
 check("the killed writer's record was shipped by the waiter, after the writer did not ship it",
       (STORE / "cold-read-records" / killed_record.name / "fast-read.md").is_file()
@@ -968,8 +989,8 @@ try:
 finally:
     second_writer.communicate("")
 check("once the second writer finishes, the waiter removes the worktree, with both records in the log-store whole",
-      waited_until(lambda: not second_worktree.exists())
-      and (STORE / "cold-read-records" / second_record.name / "written-last.md").is_file()
+      waited_until(lambda: waiter_ended(second_worktree)) and not second_worktree.exists()
+      and(STORE / "cold-read-records" / second_record.name / "written-last.md").is_file()
       and (STORE / "cold-read-records" / second_first_record.name / "written-last.md").is_file(),
       [path.read_text() for path in waiter_logs_of(second_worktree)])
 
@@ -1001,14 +1022,14 @@ try:
 finally:
     writer.communicate("")
 check("the waiter that process started removes the worktree once the writer finishes",
-      waited_until(lambda: not detached_worktree.exists()),
+      waited_until(lambda: waiter_ended(detached_worktree)) and not detached_worktree.exists(),
       [path.read_text() for path in waiter_logs_of(detached_worktree)])
 
 # Git refuses the removal: the worktree holds untracked files and the command gave no -f.
 _, refused_worktree, refused_record, writer, reason = deferred_removal_case("deferred-git-refuses", "")
 writer.communicate("")
 check("when git refuses the deferred removal, the waiter writes a user-alert",
-      waited_until(lambda: alerts_naming(refused_worktree) != []),
+      waited_until(lambda: waiter_ended(refused_worktree)) and alerts_naming(refused_worktree) != [],
       [path.read_text() for path in waiter_logs_of(refused_worktree)])
 alert = (alerts_naming(refused_worktree) or [{}])[0]
 check("the user-alert names the worktree, its Record line, the git command that failed and the log",

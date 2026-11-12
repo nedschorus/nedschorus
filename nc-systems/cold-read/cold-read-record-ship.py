@@ -332,8 +332,8 @@ in the nedschorus repository, which this machine also clones:
 - `seats/` -- a seat's shared files, shipped by
   `scripts/seat-shared-file-ship.py`
 - `analysis/` -- analyses, placed by hand
-- `daily-full-test-runs/` -- each machine's daily run of every nc-test-suite on
-  main, written by `scripts/daily-full-test-run-of-main.py`
+- `scheduled-full-test-runs-of-main/` -- each machine's scheduled run of every nc-test-suite on
+  main, written by `scripts/scheduled-full-test-run-of-main.py`
 - `pull-request-head-test-runs/` -- each machine's test log of a pull request's
   head, one per commit, written by `scripts/pull-request-head-test-run.py`
 - `daily-memory-review-marks/` -- the daily memory review's started and done
@@ -354,9 +354,9 @@ in the nedschorus repository, which this machine also clones:
   of which versions the user approved, written by
   `.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`
 - `bash-guards-replay-changed-verdict-or-failed-run-log-directories/` -- the
-  Bash guards replay's step logs and differences files, one directory per
-  replay that exited 1 or 2, written by
-  `nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py`
+  step logs and differences files of each invocation that exited 1 or 2, one
+  directory per invocation, written by
+  `nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py`
 - `clean-worktrees-removed-worktrees-and-deleted-branches-log/` -- each
   machine's log of every worktree `scripts/clean-worktrees.py --remove`
   removed and every branch it deleted, one line each, written by that program

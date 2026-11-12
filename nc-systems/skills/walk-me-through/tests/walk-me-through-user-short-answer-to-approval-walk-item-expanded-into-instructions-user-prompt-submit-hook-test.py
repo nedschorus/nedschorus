@@ -392,7 +392,8 @@ def test_lines_inside_code_are_neither_an_items_start_nor_its_recommendation():
     for shape, hidden in (("a ``` fence", "```\nItem 6 of 9: an example\nRecommendation: hidden.\n```"),
                           ("a ~~~ fence", "~~~\nItem 6 of 9: an example\nRecommendation: hidden.\n~~~"),
                           ("an indented code block", "    Item 6 of 9: an example\n    Recommendation: hidden."),
-                          ("an HTML comment", "<!-- A drafter's note.\nItem 6 of 9: an example\nRecommendation: hidden.\n-->")):
+                          ("an HTML comment", "<!-- A drafter's note.\nItem 6 of 9: an example\nRecommendation: hidden.\n-->"),
+                          ("an HTML comment inside a <div> block", "<div>\n<!-- A drafter's note.\nItem 6 of 9: an example\nRecommendation: hidden.\n-->\n</div>")):
         # The hidden recommendation comes last, since the last recommendation of an item is the one read.
         document = WALK_DOCUMENT.replace(
             "Item 5 of 9 fixes a path. Recommendation: fix the path.\n",

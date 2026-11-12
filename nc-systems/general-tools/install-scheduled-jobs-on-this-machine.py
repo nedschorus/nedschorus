@@ -16,8 +16,10 @@ Usage:
                 says. A job already installed as the table says is left alone.
   --start-once  with --install: after installing, ask launchd to run each
                 selected launchd job once, now.
-  --remove      take the named jobs off this machine. Needs --job, so that
-                --remove never takes off every job of the table at once.
+  --remove      take the named jobs off this machine: delete a cron job's line
+                from the crontab; boot a launchd job out of the login session
+                and delete its plist. Needs --job, so a bare --remove cannot
+                take off every job.
   --remove-not-in-table
                 take off this machine every job --check reports NOT IN THE
                 TABLE. Takes no --job. Exits 1 when it leaves a line KEPT.
@@ -26,7 +28,7 @@ Usage:
                 table places on this machine.
 
 WHY THIS EXISTS (user-ruled 2026-10-01, Mac session
-8db2e753-65d6-4e89-bc4d-063f2a20e951). The Mac's daily full test run was about
+8db2e753-65d6-4e89-bc4d-063f2a20e951). The Mac's scheduled full test run was about
 to be installed as a plist typed by hand, as ned-box's cron line for it had
 been the day before and as the transcript mirror's cron lines were on both
 machines. Asked for his word on the hand install, the user answered "why not
@@ -77,10 +79,9 @@ a later pull request: its launchd half fits `launchd_keys` as it stands, and
 its ned-box half needs a third scheduler, a systemd user unit, added to
 SCHEDULERS here.
 
-The Mac's daily full test run is launchd and not cron because a launchd
+The Mac's scheduled full test run is launchd and not cron because a launchd
 calendar job missed while the Mac sleeps starts at the next wake, and a cron
-line is skipped (user-ruled, his "y" at 2026-10-01T04:38:17Z, item 11 of the
-walk open-questions-concerns-and-recommendations-2026-09-30). The Mac's
+line is skipped. The Mac's
 transcript mirror stays cron: scripts/transcript-mirror-to-log-store.py
 records why.
 
@@ -153,7 +154,8 @@ that could not be read, or a shell parser that could not be installed; or for
 a crontab line it could not read.
 
 Every option of main() beyond argv is a seam for
-tests/install-scheduled-jobs-on-this-machine-test.py, which installs nothing
+nc-systems/general-tools/tests/install-scheduled-jobs-on-this-machine-test.py,
+which installs nothing
 real: a stand-in for subprocess.run answers `crontab`, `plutil` and
 `launchctl`, and the table, the home directory and the LaunchAgents directory
 are temporary.

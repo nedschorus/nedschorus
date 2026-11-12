@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Request a handoff before context runs out.
 
-It asks for the /handoff skill once the context used reaches --threshold-used-percentage.
-Below --ceiling-used-percentage it defers instead, saving the work it waits for in
+It counts the context used plus the tokens the session's compactions dropped, and asks for the
+/handoff skill once that count reaches --threshold-used-percentage of the context window.
+Below --ceiling-used-percentage, by the same count, it defers instead, saving the work it waits for in
 <session>-handoff-deferred in ~/.claude/handoffs/, while Claude Code's background_tasks list
 shows a running subagent, workflow or background shell task younger than its kind's wait-limit,
 from BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND, or while a
@@ -97,6 +98,12 @@ FIRST_TAIL_READ_BYTES = 256 * 1024
 
 # Messages below follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 # Keep the procedure in the skill so hook instructions cannot drift from it.
+# The count can pass 100% of the window, so a compacted session's message gives both shares.
+SHARE_WITH_COMPACTION_DROPPED = (
+    "{used_percentage:.0f}% ({used_plus_dropped_percentage:.0f}% counting the "
+    "tokens its compactions dropped)"
+)
+
 HANDOFF_INSTRUCTION = (
     "This session has used {share} of its context window, which has "
     "reached the reincarnation threshold. Run the /handoff skill now."
@@ -281,7 +288,7 @@ BACKGROUND_TASK_LAUNCH_KEY = "backgroundTaskId"
 
 # Claude Code writes no task-notification for a task TaskStop stops; only the TaskStop result,
 # whose toolUseResult carries this key beside task_id, records that the task ended.
-TASK_STOP_RESULT_KEY = "task_type"
+TASK_STOP_TOOL_RESULT_MARKER_KEY = "task_type"
 
 # Only the assistant record of a Bash call run in the background carries this input key.
 BACKGROUND_BASH_CALL_KEY = '"run_in_background"'
@@ -416,6 +423,37 @@ def context_used_percentage_from_transcript(transcript_path: str):
     return 100.0 * used_tokens / window
 
 
+COMPACTION_RECORD_SUBTYPE = "compact_boundary"
+
+
+def compaction_dropped_tokens_from_transcript(transcript_path: str) -> int:
+    """Return the tokens all of the session's compactions dropped; 0 when it has none."""
+    dropped_tokens = 0
+    # Bytes that are not UTF-8 are read past: raising on them would stop the hook at every Stop.
+    with Path(transcript_path).expanduser().open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if COMPACTION_RECORD_SUBTYPE not in line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # Claude Code keeps the running total on each compaction record, so the newest one counts.
+            if isinstance(record, dict) and record.get("subtype") == COMPACTION_RECORD_SUBTYPE:
+                dropped_tokens = record["compactMetadata"]["cumulativeDroppedTokens"]
+    return dropped_tokens
+
+
+def context_used_plus_compaction_dropped_percentage_from_transcript(transcript_path: str):
+    """Return the context used plus the tokens compactions dropped, as a percentage of the context
+    window: the count the threshold and the ceiling are measured by. None when unavailable."""
+    reading = context_used_tokens_window_and_model_from_transcript(transcript_path)
+    if reading is None:
+        return None
+    used_tokens, window, _model = reading
+    return 100.0 * (used_tokens + compaction_dropped_tokens_from_transcript(transcript_path)) / window
+
+
 USED_TOKEN_FIELDS = ("input_tokens", "cache_read_input_tokens",
                      "cache_creation_input_tokens")
 USAGE_ITERATIONS_FIELD = "iterations"
@@ -528,6 +566,8 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
     # The last notification, TaskStop or resume for a task-id decides: an interim notification
     # leaves its subagent running, and a resume clears the entry so the subagent counts again.
     last_notification_is_interim = {}
+    # Task-ids a TaskStop ended and no resume has restarted since.
+    stopped_ids = set()
     try:
         decoding_errors = "strict" if should_raise_on_undecodable_bytes else "replace"
         with path.open("r", encoding="utf-8", errors=decoding_errors) as handle:
@@ -535,7 +575,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
                 is_spawn_candidate = SPAWNED_SUBAGENT_STATUS in line
                 is_launch_candidate = BACKGROUND_TASK_LAUNCH_KEY in line
                 is_resume_candidate = RESUMED_SUBAGENT_KEY in line
-                is_stop_candidate = TASK_STOP_RESULT_KEY in line
+                is_stop_candidate = TASK_STOP_TOOL_RESULT_MARKER_KEY in line
                 if is_spawn_candidate or is_launch_candidate or is_resume_candidate or \
                         is_stop_candidate:
                     try:
@@ -558,9 +598,10 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
                         if agent_id and agent_id not in spawned_ids:
                             spawned_ids.append(agent_id)
                             launched_at_by_id[agent_id] = record_time(record)
-                    # A resume clears the subagent's last notification, so it counts as in flight
-                    # again; a record without the key pops None, which is never a key.
+                    # A resume clears the subagent's last notification and its stop, so it counts
+                    # as in flight again; a record without the key uses None, which is never a key.
                     last_notification_is_interim.pop(tool_result.get(RESUMED_SUBAGENT_KEY), None)
+                    stopped_ids.discard(tool_result.get(RESUMED_SUBAGENT_KEY))
                     if is_launch_candidate:
                         task_id = tool_result.get(BACKGROUND_TASK_LAUNCH_KEY)
                         if task_id and task_id not in launched_task_age:
@@ -570,8 +611,9 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
                                 tool_result_tool_use_id(record))
                             launched_at_by_id[task_id] = record_time(record)
                     stopped_id = tool_result.get("task_id")
-                    if TASK_STOP_RESULT_KEY in tool_result and isinstance(stopped_id, str):
+                    if TASK_STOP_TOOL_RESULT_MARKER_KEY in tool_result and isinstance(stopped_id, str):
                         last_notification_is_interim[stopped_id] = False
+                        stopped_ids.add(stopped_id)
                 if BACKGROUND_BASH_CALL_KEY in line:
                     background_command_by_tool_use_id.update(
                         background_bash_commands_by_tool_use_id_from_line(line))
@@ -579,6 +621,9 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
                     for notification in TASK_NOTIFICATION_PATTERN.findall(line):
                         interim = interim_recognizer.task_notification_is_interim(notification)
                         for task_id in TASK_NOTIFICATION_TASK_ID_PATTERN.findall(notification):
+                            # An interim notice queued before a TaskStop can arrive after it.
+                            if interim and task_id in stopped_ids:
+                                continue
                             last_notification_is_interim[task_id] = interim
     except (OSError, UnicodeDecodeError) as problem:
         raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
@@ -859,12 +904,13 @@ def main(argv=None) -> int:
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--threshold-used-percentage", type=float,
                         default=DEFAULT_THRESHOLD_USED_PERCENTAGE,
-                        help="the share of the context window, in percent, at which the hook "
-                             "asks for the /handoff skill: the reincarnation threshold")
+                        help="the share of the context window, in percent, that the context used "
+                             "plus the tokens compactions dropped must reach for the hook to ask "
+                             "for the /handoff skill: the reincarnation threshold")
     parser.add_argument(
         "--ceiling-used-percentage", type=float, default=65.0,
-        help="the share of the context window, in percent, at or above which the handoff fires "
-             "even with work in flight",
+        help="the share of the context window, in percent, at or above which the context used "
+             "plus the tokens compactions dropped fires the handoff even with work in flight",
     )
     arguments = parser.parse_args(argv)
 
@@ -885,8 +931,11 @@ def main(argv=None) -> int:
     if reading is None:
         return 0
     used_tokens, window, model = reading
-    used = 100.0 * used_tokens / window
-    share = f"{used:.0f}%"
+    dropped_tokens = compaction_dropped_tokens_from_transcript(transcript_path)
+    used = 100.0 * (used_tokens + dropped_tokens) / window
+    share = (SHARE_WITH_COMPACTION_DROPPED.format(
+                 used_percentage=100.0 * used_tokens / window, used_plus_dropped_percentage=used)
+             if dropped_tokens else f"{used:.0f}%")
     # A compaction can drop the share below the threshold after a deferral; the deferred marker
     # records that the threshold was passed, so the handoff its notice promised still comes.
     if used < arguments.threshold_used_percentage and not deferred_marker_path(session_id).exists():

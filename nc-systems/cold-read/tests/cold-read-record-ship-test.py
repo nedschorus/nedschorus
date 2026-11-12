@@ -166,7 +166,7 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           all(f"- `{kind}/` -- " in readme_text
               for kind in ("cold-read-records", "sanity-check-records", "walk",
                            "agent-session-files-by-machine", "session-dialogs", "seats", "analysis",
-                           "daily-full-test-runs", "pull-request-head-test-runs",
+                           "scheduled-full-test-runs-of-main", "pull-request-head-test-runs",
                            "daily-memory-review-marks",
                            "handoff-agent-seat-died-without-session-handoff-restart-watcher",
                            "uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-checks")),
