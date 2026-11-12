@@ -382,8 +382,10 @@ def glob_dash_name_causes(placed, machines, unchecked):
 
 def agents_grep_options_and_patterns_without_file_names(command, machines, unchecked):
     """Return the options and patterns of a grep that Claude Code's grep function hands to
-    ugrep, its file names left out; or None for any other command. A word whose expansion
-    could not be checked stays in, with one line in unchecked."""
+    ugrep, its file names left out; or None for any other command. A word before -- that
+    begins with - stays in when its expansion could not be checked: with one line in
+    unchecked when the directory the command ran in could not be listed, and with none when
+    that directory is not known."""
     # Only a bare grep run by this machine's shell reaches the function; a wrapper such as
     # xargs or timeout runs the system grep.
     if command.host is not None or command.program_index is None \
@@ -399,9 +401,12 @@ def agents_grep_options_and_patterns_without_file_names(command, machines, unche
     # A word that begins with - and holds an unquoted glob character names files only when
     # the shell expanded it, and glob_dash_name_causes judges those names; one that matched
     # nothing reached grep as written, as an option or an option's value such as
-    # --include=*.md.
-    arguments = [argument for word, argument in zip(words, arguments)
-                 if not (argument.startswith("-") and plain(word) != word
+    # --include=*.md. After -- every word is a pattern or a file name, whatever it begins
+    # with, and the loop below keeps at most the first.
+    options_end = arguments.index("--") if "--" in arguments else len(arguments)
+    arguments = [argument for position, (word, argument) in enumerate(zip(words, arguments))
+                 if not (position < options_end
+                         and argument.startswith("-") and plain(word) != word
                          and command.directory is not None
                          and dash_names_a_word_expanded_to(command, word, machines, unchecked))]
     kept = []
