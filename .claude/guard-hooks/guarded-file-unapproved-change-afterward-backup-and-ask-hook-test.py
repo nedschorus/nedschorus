@@ -1523,11 +1523,18 @@ def cases(scratch):
           and f"Put back the approved version" in result.stdout
           and f"Failed on {second}" in result.stdout and "not every file" in result.stderr,
           (result.returncode, result.stdout, result.stderr))
-    check("when a file cannot be put back, --restore warns that it may be only part way restored "
-          "and that the git commit --only command for it would commit the part-restored file",
-          "a file that failed may be only part way restored" in result.stderr
-          and "For a file that failed, do not run the git commit --only command" in result.stderr
-          and "it would commit the part-restored file" in result.stderr, result.stderr)
+    check("when a file cannot be put back, --restore says what a failed file may hold and that "
+          "the git commit --only command from the asking message would commit the declined "
+          "version",
+          "A file that failed is either unchanged, still holding the version the user declined, "
+          "or fully put back, or deleted when it has no approved version, with no log line "
+          "recording it" in result.stderr
+          and "<its path>.<process id>.restore" in result.stderr
+          and "For a file that failed, do not run git commit --only -m \"Put back the approved "
+          "<file name>\" -- <path>, the command this hook's message asking about the change "
+          "gave" in result.stderr
+          and "the file may still hold the declined version, and the command would commit it"
+          in result.stderr, result.stderr)
 
     # -- a guarded file that cannot be read is reported, never kept as an empty version
     world = World(Path(scratch) / "unreadable-first-run")

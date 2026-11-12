@@ -199,12 +199,17 @@ REMEDY_MAC = ("check that ned-box is up and that the Mac has mounted ned-box's h
 REFUSED = "{program_name} {mode}: refused, nothing was changed: {reason}"
 COMMAND_FAILED = ("{program_name} {mode} failed: {reason}. Tell the user, with this message; run "
                   "the command again once the cause is fixed.")
-RESTORE_INCOMPLETE = ("{program_name} --restore: not every file was put back; the lines above "
-                      "say what was done to each, and a file that failed may be only part way "
-                      "restored. Tell the user which files failed and why.\n"
-                      "For a file that failed, do not run the git commit --only command that this "
-                      "hook's messages give for a declined version in a commit: it would commit "
-                      "the part-restored file.")
+RESTORE_INCOMPLETE = ("{program_name} --restore: not every file was put back; the lines this "
+                      "command printed to standard output say what was done to each. A file that "
+                      "failed is either unchanged, still holding the version the user declined, "
+                      "or fully put back, or deleted when it has no approved version, with no log "
+                      "line recording it; a failed write may also leave a file named "
+                      "<its path>.<process id>.restore beside it. Tell the user which files "
+                      "failed and why.\n"
+                      "For a file that failed, do not run git commit --only -m \"Put back the "
+                      "approved <file name>\" -- <path>, the command this hook's message asking "
+                      "about the change gave for a declined version in a commit: the file may "
+                      "still hold the declined version, and the command would commit it.")
 MARKER_SURVIVED = (
     "{program_name} --approve: the approval above is recorded, but its marker {marker} could not "
     "be deleted: {reason}. While the marker exists, a later --approve would spend the user's "
@@ -1636,7 +1641,7 @@ def restore(pairs):
                 log_line(store, path, "restored", "command-line", "", key, restored)
             except OSError as error:
                 failed.append(path)
-                lines.append(f"Failed on {path}, which may be only part way restored: {error}")
+                lines.append(f"Failed on {path}: {error}")
                 continue
             lines.append(message)
         return lines, failed
