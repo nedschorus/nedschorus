@@ -5,7 +5,8 @@ The check reads a Bash command and its result. It speaks only when the command h
 search, such as grep, rg or find, and the result is empty, and then only for these causes:
 
 - An unquoted relative glob expanded to a name beginning with -, in the directory the
-  command had cd'd into, before any --: the program read that name as an option.
+  command had cd'd into, before the -- that ends the options: the program read that name
+  as an option.
 - The agent's grep, which is ugrep, refuses the pattern of a bare grep with "exceeds
   complexity limits".
 - A search program is not installed on the machine that ran it.
@@ -352,14 +353,43 @@ def dash_names_a_word_expanded_to(command, word, machines, unchecked):
                   if name.startswith("-") and fnmatch.fnmatchcase(name, pattern))
 
 
+GREP_PROGRAMS = frozenset({"grep", "egrep", "fgrep", "zgrep", "ugrep"})
+
+
+def grep_arguments_options_end_position_skipping_option_values(arguments):
+    """Return where grep's options end in arguments: the position of the -- that grep reads
+    as their end, an option's value skipped, or len(arguments) when there is none."""
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        index += 1
+        if argument == "--":
+            return index - 1
+        if argument.startswith("--"):
+            if argument.split("=", 1)[0] in GREP_LONG_OPTIONS_TAKING_A_VALUE \
+                    and "=" not in argument:
+                index += 1
+        elif argument.startswith("-") and argument != "-":
+            for position, letter in enumerate(argument[1:], start=1):
+                if letter in GREP_SHORT_OPTIONS_TAKING_A_VALUE:
+                    index += position == len(argument) - 1
+                    break
+    return len(arguments)
+
+
 def glob_dash_name_causes(placed, machines, unchecked):
     causes = []
     for command in placed:
         if command.directory is None or command.program_index is None:
             continue
-        for word in command.words[command.program_index + 1:]:
-            if word == "--":
-                break
+        words = command.words[command.program_index + 1:]
+        arguments = [plain(word) for word in words]
+        # Only grep's options that take a value are known; another program's options end at
+        # its first --.
+        options_end = (grep_arguments_options_end_position_skipping_option_values(arguments)
+                       if command.program in GREP_PROGRAMS
+                       else arguments.index("--") if "--" in arguments else len(arguments))
+        for word in words[:options_end]:
             first_component = word.split("/", 1)[0]
             if plain(first_component) == first_component or word.startswith(("/", "~")):
                 continue
@@ -401,9 +431,9 @@ def agents_grep_options_and_patterns_without_file_names(command, machines, unche
     # A word that begins with - and holds an unquoted glob character names files only when
     # the shell expanded it, and glob_dash_name_causes judges those names; one that matched
     # nothing reached grep as written, as an option or an option's value such as
-    # --include=*.md. After -- every word is a pattern or a file name, whatever it begins
-    # with, and the loop below keeps at most the first.
-    options_end = arguments.index("--") if "--" in arguments else len(arguments)
+    # --include=*.md. After the -- that ends the options every word is a pattern or a file
+    # name, whatever it begins with, and the loop below keeps at most the first.
+    options_end = grep_arguments_options_end_position_skipping_option_values(arguments)
     arguments = [argument for position, (word, argument) in enumerate(zip(words, arguments))
                  if not (position < options_end
                          and argument.startswith("-") and plain(word) != word
@@ -444,7 +474,10 @@ def agents_grep_options_and_patterns_without_file_names(command, machines, unche
     return kept
 
 
-def pattern_too_complex_causes(placed, machines, unchecked):
+def pattern_too_complex_causes(placed, machines, unchecked, output=""):
+    # A refusal the agent saw is not hidden, and the warning says it was.
+    if AGENTS_GREP_REFUSAL in (output or ""):
+        return []
     causes = []
     for command in placed:
         arguments = agents_grep_options_and_patterns_without_file_names(
@@ -455,12 +488,12 @@ def pattern_too_complex_causes(placed, machines, unchecked):
             refused = machines.agents_grep_refuses(arguments, command.directory)
         except MachineStateQueryGotNoAnswer as error:
             unchecked.append(f"whether the agent's grep refuses the pattern of "
-                             f"`{' '.join(arguments)}`: {error}")
+                             f"`{shlex.join(arguments)}`: {error}")
             continue
         if refused:
             causes.append(Cause(PATTERN_TOO_COMPLEX, (
                 f"The agent's grep, which is ugrep, refuses the pattern of "
-                f"`grep {' '.join(arguments)}` with \"{AGENTS_GREP_REFUSAL}\", so that "
+                f"`grep {shlex.join(arguments)}` with \"{AGENTS_GREP_REFUSAL}\", so that "
                 f"grep searched nothing; its 2>/dev/null or a later stage of the pipe hid "
                 f"the refusal.\n"
                 f"Run the search again with rg, or with a grep pattern that holds no bounded "
@@ -469,14 +502,21 @@ def pattern_too_complex_causes(placed, machines, unchecked):
     return causes
 
 
-def program_missing_causes(placed, machines, unchecked):
+def not_found_error_shown(output, program):
+    """Whether output holds the shell's "not found" line for program, which the agent saw."""
+    name = os.path.basename(program)
+    return any("not found" in line and re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w.-])", line)
+               for line in (output or "").splitlines())
+
+
+def program_missing_causes(placed, machines, unchecked, output=""):
     causes = []
     asked = set()
     for command in placed:
         if not is_search(command):
             continue
         program = plain(command.words[command.program_index])
-        if (command.host, program) in asked:
+        if (command.host, program) in asked or not_found_error_shown(output, program):
             continue
         asked.add((command.host, program))
         try:
@@ -512,8 +552,8 @@ def judge_command_result(command, cwd, stdout="", exit_code=0, machines=None):
         return Verdict(False, reason="no search in the command")
     unchecked = []
     causes = (glob_dash_name_causes(placed, machines, unchecked)
-              + pattern_too_complex_causes(placed, machines, unchecked)
-              + program_missing_causes(placed, machines, unchecked))
+              + pattern_too_complex_causes(placed, machines, unchecked, stdout)
+              + program_missing_causes(placed, machines, unchecked, stdout))
     return Verdict(True, causes=causes, unchecked=unchecked,
                    reason=None if causes else "none of the three causes was found")
 
