@@ -130,7 +130,7 @@ try:
     with scratch_home() as home, home_environment(home):
         errors = io.StringIO()
         with contextlib.redirect_stderr(errors):
-            exit_code = program.main()
+            exit_code = program.main([])
         alerts = pending_alerts(home)
         check("when the walk fails, a user-alert says so and the exit is 1",
               exit_code == 1 and len(alerts) == 1 and alerts[0]["title"] == program.FAILED_TITLE
@@ -146,7 +146,7 @@ try:
         with scratch_home() as home, home_environment(home):
             errors = io.StringIO()
             with contextlib.redirect_stderr(errors):
-                exit_code = program.main()
+                exit_code = program.main([])
             check("when the walk fails and the user-alert saying so cannot be written, both errors are printed "
                   "and the exit is 1",
                   exit_code == 1 and "Input/output error" in errors.getvalue()

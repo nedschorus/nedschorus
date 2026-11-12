@@ -25,6 +25,7 @@ Exit status: 0 when nothing was found or the alert was written. 1 when the walk 
 a failed walk is itself reported in a user-alert, and when that write fails too the error is printed only,
 to the cron log above. The program changes nothing but the user-alerts directory.
 """
+import argparse
 import fnmatch
 import importlib.util
 import os
@@ -80,7 +81,8 @@ def credential_files_outside_denied_directories(home):
     return sorted(found)
 
 
-def main():
+def main(argv=None):
+    argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args(argv)
     home = Path.home()
     try:
         found = credential_files_outside_denied_directories(home)
