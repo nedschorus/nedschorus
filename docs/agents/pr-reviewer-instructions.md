@@ -25,3 +25,7 @@ A defect is a flaw in a program, or in agent-instructions, that makes or would m
 9. When a `#root_cause_not_fixed` line says the cause was not found, check that its `#follow_up` link is for a GHI that looks for the cause. If it is not, report a finding that blocks the merge.
 10. If a `#root_cause` line names no root cause, or one the change does not resolve, and you cannot show where a cause is in the code, report a finding that does not block. Do the same when you only suspect a deeper cause and cannot say where it is, and when the cause you can show is in agent-instructions or a design: name that file as where the cause sits, and say nothing about its English.
 11. When your prompt lists merged pull requests whose `#root_cause_not_fixed` line links to a GHI this pull request closes, or to this pull request, look at each case fix or workaround they added that is still in the code. For each one this change makes useless, this pull request removes it, or this pull request's `#root_cause` line links, after `#follow_up`, an open GHI for removing it. If neither, report a finding that blocks the merge. `scripts/merge-gate.sh` reads `#follow_up` only on `#root_cause_not_fixed` lines, so check yourself that the GHI is open.
+
+## What is not a finding
+
+- A missing test for a failure of a critical component, as `docs/nedschorus-wiki/nedschorus-project-architecture-overview.md` lists them, such as git killed by a signal or GitHub not answering in the middle of a command. The project stops and waits for such a part to work again, so code needs no test for it.
