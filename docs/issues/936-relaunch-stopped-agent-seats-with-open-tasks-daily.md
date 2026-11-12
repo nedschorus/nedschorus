@@ -1,8 +1,8 @@
 ---
-issue: "[Relaunch stopped agent-seats with open tasks daily](https://github.com/nedschorus/nedschorus/issues/936)"
+issue: "[Relaunch stopped agent-seats with open tasks as a maintenance-job](https://github.com/nedschorus/nedschorus/issues/936)"
 ---
 
-# Relaunch stopped agent-seats with open tasks daily
+# Relaunch stopped agent-seats with open tasks as a maintenance-job
 
 Once a day, a scheduled job finds every agent-seat whose task list still holds open tasks while no agent-session of that agent-seat is running, and relaunches each one, supervised, so the work on its list is picked up.
 
