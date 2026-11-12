@@ -1,9 +1,9 @@
 ---
-issue: "[The Bash guards replay reads a stored file of distinct recorded command pairs, reuses main's readings and reads many commands in each new process](https://github.com/nedschorus/nedschorus/issues/1571)"
+issue: "[`nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py` reads a stored file of distinct recorded command pairs, reuses main's readings and reads many commands in each new process](https://github.com/nedschorus/nedschorus/issues/1571)"
 kind: design
 ---
 
-# The Bash guards replay reads a stored file of distinct recorded command pairs, reuses main's readings and reads many commands in each new process
+# `nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py` reads a stored file of distinct recorded command pairs, reuses main's readings and reads many commands in each new process
 
 `nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py` collects every Bash command recorded in both machines' transcripts and reads each one, with the working directory it ran in, through every Bash guard at two refs, main and a pull request's head commit, in three modes at each ref. This GHI makes that check a test suite that blocks the merge, cheap enough to cover every pair recorded up to the last time a guard pull request refreshed the check: a new test suite reads a stored pairs file in the log-store instead of the transcripts, and compares the pull request's readings with a baseline of main's readings committed to the repository, so main is not read again for each pull request. The replay script stays, for runs by hand and for writing the baseline. A job in the daily step of GHI [Daily maintenance in one daily step, starting with a daily check of every wiki page](https://github.com/nedschorus/nedschorus/issues/1058) adds each day's new pairs to the stored pairs file.
 
