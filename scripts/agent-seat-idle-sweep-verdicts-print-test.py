@@ -18,6 +18,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 PROGRAM = Path(__file__).with_name("agent-seat-idle-sweep-verdicts-print.py")
@@ -157,6 +158,9 @@ _scratch_directory_common_spec.loader.exec_module(_scratch_directory_common)
 SUITE_ROOT = _scratch_directory_common.scratch_directory_after_removing_ones_killed_runs_left(
     "agent-seat-idle-sweep-verdicts-print-test-")
 
+# Set in the copy of this suite the SIGTERM case starts, which waits to be stopped.
+STOPPED_BY_SIGTERM_RUN_VARIABLE = "AGENT_SEAT_IDLE_SWEEP_VERDICTS_PRINT_TEST_WAITS_FOR_SIGTERM"
+
 
 def stopped_by_sigterm(*_):
     raise SystemExit(1)  # So the finally below removes SUITE_ROOT.
@@ -164,6 +168,9 @@ def stopped_by_sigterm(*_):
 
 signal.signal(signal.SIGTERM, stopped_by_sigterm)
 try:
+    if os.environ.get(STOPPED_BY_SIGTERM_RUN_VARIABLE):
+        print(SUITE_ROOT, flush=True)
+        time.sleep(60)
     ANNOUNCED = "I'm starting the PR 1633 work now."
     IDLE_TURN = [user("go"), assistant(ANNOUNCED), turn_end()]
 
@@ -877,6 +884,22 @@ try:
         problems = fields.verdict_field_problems(broken)
         check(f"the fields module finds: {expected}",
               any(problem.startswith(expected) for problem in problems), problems)
+
+    stopped_temp = Path(tempfile.mkdtemp(dir=str(SUITE_ROOT)))
+    stopped = subprocess.Popen([sys.executable, __file__], stdout=subprocess.PIPE, text=True,
+                               env={**os.environ, STOPPED_BY_SIGTERM_RUN_VARIABLE: "1",
+                                    "TMPDIR": str(stopped_temp)})
+    stopped_root = Path(stopped.stdout.readline().strip())
+    root_made = stopped_root.is_dir()
+    stopped.send_signal(signal.SIGTERM)
+    try:
+        stopped.communicate(timeout=30)
+    except subprocess.TimeoutExpired:
+        stopped.kill()
+        stopped.communicate()
+    check("a run of this suite stopped by SIGTERM exits 1 and removes its scratch directory",
+          root_made and stopped.returncode == 1 and not stopped_root.exists(),
+          (stopped.returncode, stopped_root, root_made))
 finally:
     shutil.rmtree(SUITE_ROOT, ignore_errors=True)
 print()
