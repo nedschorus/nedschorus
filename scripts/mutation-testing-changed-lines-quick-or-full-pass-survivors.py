@@ -996,7 +996,7 @@ def cosmic_ray_session_kept_to_resume_has_pending_mutants_or_is_unreadable(sessi
         connection = sqlite3.connect(f"{session.as_uri()}?mode=ro", uri=True)
         try:
             with_no_result = connection.execute(
-                COSMIC_RAY_SESSION_PENDING_MUTANTS_COUNT_SQL_QUERY).fetchone()[0]
+                COSMIC_RAY_SESSION_PENDING_MUTANTS_COUNT_SQL_QUERY).fetchone()[0]  # pragma: no mutate, the query selects one column, COUNT(*), so its last column is its first
             return with_no_result > 0
         finally:
             connection.close()
