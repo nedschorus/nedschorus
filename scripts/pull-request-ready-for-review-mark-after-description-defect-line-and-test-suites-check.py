@@ -225,8 +225,7 @@ def check_and_mark_ready(number, runner, output):
             f"test files that are not in {name}'s pushed commits. {NOTHING_CHANGED_LINE}\n"
             "The changes, as git status --porcelain lists them:\n"
             + "".join(f"  {line.strip()}\n" for line in changed)
-            + "If the changes belong in the pull request: commit them, run the test suites and "
-            "the mutation pass that CLAUDE.md asks for before a push, push with git push origin "
+            + "If the changes belong in the pull request: commit them, push with git push origin "
             f"HEAD:{shlex.quote(pull_request['headRefName'])}, then run this again.\n"
             "If they do not: set them aside with git stash push -u -m <a name no entry in git "
             "stash list has>, then run this again. Keep them stashed until this command has "
@@ -274,8 +273,7 @@ def check_and_mark_ready(number, runner, output):
         raise StepFailed(
             f"the test suites exited with status {status}, {stays_a_draft} The failing suites "
             "are named above.\n"
-            "Fix the cause of each suite's failure and commit the fix. Before you push it, run "
-            "the mutation pass that CLAUDE.md asks for before a push; then push, and run this "
+            "Fix the cause of each suite's failure and commit the fix; then push, and run this "
             "again, which runs the test suites again.\n"
             "If git or a pre-push hook refuses the push: do what its message says, push again, then "
             "run this again; if it names nothing to do, tell the user, or the agent that dispatched you, "

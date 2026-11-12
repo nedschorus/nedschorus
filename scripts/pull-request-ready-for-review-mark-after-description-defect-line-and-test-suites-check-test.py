@@ -233,8 +233,7 @@ def main():
              ["this checkout has 1 uncommitted change(s), so the test suites would test files "
               f"that are not in #77 ({URL})'s pushed commits.",
               "The changes, as git status --porcelain lists them:\n  M scripts/example.py\n",
-              "If the changes belong in the pull request: commit them, run the test suites and "
-              "the mutation pass that CLAUDE.md asks for before a push, push with git push origin "
+              "If the changes belong in the pull request: commit them, push with git push origin "
               f"HEAD:{BRANCH}, then run this again.",
               "If they do not: set them aside with git stash push -u -m <a name no entry in git "
               "stash list has>, then run this again. Keep them stashed until this command has "
@@ -286,8 +285,7 @@ def main():
              ["view", "rev-parse", "status", "suites"],
              ["the test suites exited with status 1, so #77",
               "The failing suites are named above.",
-              "Fix the cause of each suite's failure and commit the fix. Before you push it, "
-              "run the mutation pass that CLAUDE.md asks for before a push; then push, and run "
+              "Fix the cause of each suite's failure and commit the fix; then push, and run "
               "this again, which runs the test suites again.",
               "If git or a pre-push hook refuses the push: do what its message says, push again, "
               "then run this again; if it names nothing to do, tell the user, or the agent that "
