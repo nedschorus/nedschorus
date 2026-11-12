@@ -166,6 +166,15 @@
       "on": {
         "ned-box": {"scheduler": "cron", "schedule": "30 7 * * *"}
       }
+    },
+    {
+      "name": "merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge",
+      "program": "scripts/merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.py",
+      "arguments": [],
+      "output": ".claude/merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "*/5 * * * *"}
+      }
     }
   ]
 }
