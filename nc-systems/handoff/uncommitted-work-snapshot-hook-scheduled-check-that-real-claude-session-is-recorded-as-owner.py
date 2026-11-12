@@ -23,8 +23,10 @@ WHAT ONE RUN DOES, in order.
   1. Makes a scratch clone holding the hook and the four modules it needs:
      nc-systems/handoff/uncommitted-work-snapshots.py and
      scripts/worktree-owner-file-read-and-write.py, which the hook loads, and
-     the two nc-systems/general-tools/ modules the first of those loads. The
-     clone has one commit and sits in a temporary directory.
+     nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py
+     and nc-systems/general-tools/agent-seat-task-list-new-pending-task-write-common.py,
+     which the first of those loads. The clone has one commit and sits in a
+     temporary directory.
   2. Runs `claude -p` on Haiku from that clone, with the hook registered for
      Bash calls through --settings, and asks it to run one shell command that
      writes the file live-check.txt.
