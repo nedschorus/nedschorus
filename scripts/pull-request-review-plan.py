@@ -220,7 +220,7 @@ DIFF_HUNK_HEADER_PATTERN = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))?
 REGISTERED_HOOK_PATH_PATTERN = re.compile(r'\$CLAUDE_PROJECT_DIR"?/([^"\s]+)')
 MARKDOWN_SECTION_HEADING_PATTERN = re.compile(r"^##\s")
 COLD_READ_RECORD_PATH_IN_DESCRIPTION_PATTERN = re.compile(
-    r"(/[^\s`'\"<>()\[\],]*/" + cold_read_record_names.RECORDS_DIRECTORY_NAME + r"/[^\s/`'\"<>()\[\],;:]+)")
+    r"(/[^\s`'\"<>()\[\],;:]*/" + cold_read_record_names.RECORDS_DIRECTORY_NAME + r"/[^\s/`'\"<>()\[\],;:]+)")
 COMPONENTS_SECTION_HEADING_PATTERN = re.compile(r"^##\s+Components\s*$")
 BACKTICKED_TEXT_PATTERN = re.compile(r"`([^`]+)`")
 # A component path is relative to the repository; this leaves out
