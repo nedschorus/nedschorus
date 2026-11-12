@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for scripts/walk-files-ship.py: the per-file rules (add-only by name,
+"""Tests for nc-systems/skills/walk-me-through/walk-files-ship.py: the per-file rules (add-only by name,
 the minutes and the dispositions replaced, a walk text the walk only added to
 replaced, fail loudly), the five paths built
 without a glob, the
@@ -15,7 +15,7 @@ named by a stand-in host. Nothing here touches ned-box or the log-store.
 The walk lives in a scratch directory, docs/walk/ being gitignored, which is
 what the path form of the argument is for.
 
-Run: python3 scripts/walk-files-ship-test.py   (exit 0 = all passed)
+Run: python3 nc-systems/skills/walk-me-through/tests/walk-files-ship-test.py   (exit 0 = all passed)
 """
 
 import contextlib
@@ -32,8 +32,8 @@ import shlex
 import tempfile
 import traceback
 
-SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
-SHIP = SCRIPTS_DIR / "walk-files-ship.py"
+SHIPPER_DIR = pathlib.Path(__file__).resolve().parents[1]
+SHIP = SHIPPER_DIR / "walk-files-ship.py"
 DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 RULED_RECORDS_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records"
 RULED_WALK_PATH = "/home/nedlern/nedschorus-logs/walk"
@@ -192,7 +192,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           result.stderr)
 
     # --- The note's rerun command runs as printed ---------------------------
-    # Started by a relative program path from scripts/, with the walk reached
+    # Started by a relative program path from its own directory, with the walk reached
     # through a symlinked directory, the printed command must still run from
     # any other working directory.
     import re
@@ -202,7 +202,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
     relative_env[DESTINATION_VARIABLE] = local_destination
     relative = subprocess.run(
         [sys.executable, SHIP.name, str(linked_walks / f"{WALK}.md")],
-        capture_output=True, text=True, check=False, env=relative_env, cwd=SCRIPTS_DIR)
+        capture_output=True, text=True, check=False, env=relative_env, cwd=SHIPPER_DIR)
     printed = re.search(r"once every such file is renamed, run `([^`]+)` again",
                         relative.stderr)
     # The shell runs the printed command, as an agent would, so a program path
@@ -211,7 +211,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
                                    text=True, check=False, env=relative_env, cwd=scratch)
                     if printed else None)
     check("the not-shipped note's rerun command, printed by a run started as "
-          "`python3 walk-files-ship.py` from scripts/ on a symlinked walk directory, "
+          "`python3 walk-files-ship.py` from its own directory on a symlinked walk directory, "
           "runs from another working directory and ships the walk",
           printed is not None and rerun_result.returncode == 0
           and f"minutes at {store_walk}/{WALK}-minutes.md" in rerun_result.stdout,
@@ -828,7 +828,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           "this program, and none of the walk files' endings",
           "- `walk/` -- " in module.shipper.STORE_README
           and "walk-me-through skill" in module.shipper.STORE_README
-          and "scripts/walk-files-ship.py" in module.shipper.STORE_README
+          and "nc-systems/skills/walk-me-through/walk-files-ship.py" in module.shipper.STORE_README
           and not any(ending in module.shipper.STORE_README
                       for ending in ("-draft.md", "-cold-read-fast-read.md", "-suggestions.md",
                                      "-minutes.md", "-dispositions.md")),
@@ -1074,7 +1074,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-partial-ssh-") as 
         return subprocess.CompletedProcess([], 255, "Disk quota exceeded (injected)", "injected: ssh exit 255\n"), None, None
 
     def rerun_sentence(module, walks, walk):
-        return (f"`{module.REPO_ROOT}/scripts/walk-files-ship.py "
+        return (f"`{module.REPO_ROOT}/nc-systems/skills/walk-me-through/walk-files-ship.py "
                 f"{walks}/{walk}.md`")
 
     def ship_in_process():
@@ -1336,7 +1336,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
                                 f"staging directory {store}/{staging_marker}")
                 and one_line(line) and names_the_directory_and_its_deletion(line, store)
                 and "Deleting it loses nothing" in line
-                and line.endswith(f"`. Then rerun: `{left.REPO_ROOT}/scripts/walk-files-ship.py "
+                and line.endswith(f"`. Then rerun: `{left.REPO_ROOT}/nc-systems/skills/walk-me-through/walk-files-ship.py "
                                   f"{walks}/{LEFT_WALK}.md`\n"))
 
     # A shipment whose files all land, then whose staging directory stays.
@@ -1483,7 +1483,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
     named_line = rerun_line_for(pathlib.Path(str(left.WALK_DIRECTORY)))
     check("a walk found under docs/walk/ by its name is rerun by its name",
           named_line == (f"FAILED: named-walk-2026-10-31 — rsync exit 23 during the copy. "
-                         f"Rerun: `{left.REPO_ROOT}/scripts/walk-files-ship.py "
+                         f"Rerun: `{left.REPO_ROOT}/nc-systems/skills/walk-me-through/walk-files-ship.py "
                          f"named-walk-2026-10-31`"), named_line)
     below_line = rerun_line_for(left.WALK_DIRECTORY / "older")
     check("a walk in a directory below docs/walk/ is rerun by the path to its walk-document",

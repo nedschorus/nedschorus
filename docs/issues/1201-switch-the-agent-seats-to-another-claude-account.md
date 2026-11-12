@@ -78,4 +78,4 @@ The item gave these numbers, from the analysis `nedlern@ned-box:/home/nedlern/ne
 
 ## Next action
 
-Put the questions above to the user. From his answers, write the design of the switch in this GHI-MD, then give it the /cold-read that the ghi-write skill requires before an edit-GHI.
+Put the eight questions above to the user in an approval-walk, which agent-instructions-editor runs, because the user's ruling under § What the user decided came from its approval-walk. From his answers, write the design of the switch in this GHI-MD, then give it the /cold-read that the ghi-write skill requires before an edit-GHI.

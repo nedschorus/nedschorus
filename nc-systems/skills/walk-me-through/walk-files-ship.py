@@ -2,8 +2,8 @@
 """Ship one walk's files to the log-store's `walk/` kind on ned-box.
 
 Usage:
-  scripts/walk-files-ship.py <walk name>
-  scripts/walk-files-ship.py docs/walk/<walk name>-minutes.md    (any one of its files)
+  nc-systems/skills/walk-me-through/walk-files-ship.py <walk name>
+  nc-systems/skills/walk-me-through/walk-files-ship.py docs/walk/<walk name>-minutes.md    (any one of its files)
 
 WHY. A walk-me-through walk writes its files into docs/walk/, which is
 gitignored, so neither Git nor anything else preserves them there. The
@@ -247,7 +247,7 @@ import sys
 import tempfile
 import typing
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 PROGRAM = "walk-files-ship"
 WALK_DIRECTORY = REPO_ROOT / "docs" / "walk"
 WALK_KIND_DIRECTORY = "walk"
@@ -277,7 +277,7 @@ WALK_FILE_ROLES = (
 # A walk started before the skill named the fast read's report
 # <name>-cold-read-fast-read.md holds it as <name>-suggestions.md. The skill no
 # longer names this ending, so it stays out of WALK_FILE_ROLES, which
-# scripts/walk-file-endings-match-the-skill-test.py holds to the skill.
+# nc-systems/skills/walk-me-through/tests/walk-file-endings-match-the-skill-test.py holds to the skill.
 APPROVAL_WALK_COLD_READ_FAST_READ_REPORT_FILE_SUFFIX_IN_WALKS_STARTED_BEFORE_ITS_RENAME = "-suggestions"
 # Every file this program ships, in the order it lists them; the suffixes are
 # also what walk_name_and_directory strips from a path.
@@ -606,7 +606,7 @@ def walk_files_ship_rerun_command(name: str, directory: pathlib.Path) -> str:
     # named topic-minutes whenever topic-minutes-minutes.md also exists.
     walk_argument = (name if directory == WALK_DIRECTORY and not name.startswith("-")
                      else str(directory / walk_file_name(name, WALK_TEXT_ROLE_SUFFIX)))
-    return (f"{shlex.quote(str(REPO_ROOT / 'scripts' / 'walk-files-ship.py'))} "
+    return (f"{shlex.quote(str(REPO_ROOT / 'nc-systems' / 'skills' / 'walk-me-through' / 'walk-files-ship.py'))} "
             f"{shlex.quote(walk_argument)}")
 
 
@@ -679,7 +679,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
               f"For any other file, one whose role's name is already taken included: "
               f"tell the user, in one sentence for each such "
               f"file, with its name in place of <file name>: \"<file name> is "
-              f"not named as a walk's file is, so scripts/walk-files-ship.py did not ship it; the "
+              f"not named as a walk's file is, so nc-systems/skills/walk-me-through/walk-files-ship.py did not ship it; the "
               f"log-store has no copy of it; it is in {directory} on "
               f"{os.uname().nodename}.\" A subagent passes those sentences to the "
               f"agent that dispatched it instead.",

@@ -1,84 +1,44 @@
 # Proposed improvements or changes: nedschorus-handoff-architecture-overview.md (overview claim check, 2026-11-12)
 
-Assertions of the overview that the claim check against commit 96ef56fa75d404e4243d5ecaa799571a8f8d2ea2 found contradicted or unsupported and ranked fix later: loose, incomplete or badly worded, but no agent would act wrongly on them. Its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/7c17c266f4c6ec2951c4e0d0da3a1336c1f1547d-2026-11-12T05-01-04-583568Z.md. Regular maintenance fixes them in the overview.
+Assertions of the overview that the claim check against commit 1b6fb19aeab73778f234b7552b2f7dfec1ef2cef found contradicted or unsupported and ranked fix later: loose, incomplete or badly worded, but no agent would act wrongly on them. Its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/fd86d56b9bc675e893af7a8f405bbde8898a40f5-2026-11-12T05-18-38-382372Z.md. Regular maintenance fixes them in the overview.
 
 ## E1 — possible problem: an assertion of the overview is contradicted
 
-Claim: The reference-checkout leftovers-saving back-on-main program is "run by an agent-seat on its own machine when the reference-checkout will not fast-forward to main".
+Claim: The back-on-main program saves the reference-checkout's leftovers to a branch it pushes, "and only then puts the checkout back on main".
 Goes wrong when: a reader takes the assertion as exact.
 The claim check's evidence:
-> The handoff-supervisor also runs it, in-process, at a session-handoff. The component sentence leaves that caller out.
-> - nc-systems/handoff/handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py:9 `neither, the handoff-supervisor runs this program's put_reference_checkout_back_on_main itself and,`
-> - nc-systems/handoff/handoff-supervisor.py:2387 `reference_checkout_back_on_main.put_reference_checkout_back_on_main(`
+> - nc-systems/handoff/handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py:27-29 "then runs `git switch --no-overwrite-ignore -C main origin/main`, which puts the local main at origin/main and checks it out, whether or not every push succeeded"
+> - nc-systems/handoff/handoff-supervisor.py:2288-2290 "once the checkout is on main, which it can be even after a failed push, so a leftovers branch the program could not push stays only in that checkout"
+> - The leftovers are saved on a local branch before the switch, and the switch does not wait for the push to succeed. "Only then" overstates the order.
 State: open
 
 ## E2 — possible problem: an assertion of the overview is contradicted
 
-Claim: When the restart fails, the notice names "the reference-checkout leftovers-saving back-on-main program when the handoff-supervisor runs from the reference-checkout and the replacement itself did not fail ..., and the restart program otherwise".
+Claim: The agent-seat's task list under `~/.claude/tasks/` is "written by Claude Code"; the writer script removes completed tasks; the log-store copy is "written by `transcript-mirror-to-log-store.py`".
 Goes wrong when: a reader takes the assertion as exact.
 The claim check's evidence:
-> In the code, the handoff-supervisor first runs the back-on-main program itself. It names that program only when its own run failed. When that run succeeded but the checkout is still not on main, it names the restart program.
-> - nc-systems/handoff/handoff-supervisor.py:2382 `if report and REPOSITORY_ROOT == REFERENCE_CHECKOUT:`
-> - nc-systems/handoff/handoff-supervisor.py:2389-2394 (only on `StepFailed` is `back_on_main_program_failure_output` passed)
-> - nc-systems/handoff/handoff-supervisor.py:2398-2400 `report = launch_time_git_sync_of_own_checkout_first_line_if_not_on_main()` / `return handoff_supervisor_not_restarted_notice_and_console_line(report, settings.agent)` (this notice names the restart program, :2325-2328)
+> - nc-systems/handoff/handoff-agent-crash-watcher.py:1101-1104 `task_list = task_lists_directory / f"nedschorus-{agent_seat}-tasks"` ... `agent_seat_task_list_new_pending_task_write(` (the crash watcher writes tasks to agent-seat task lists).
+> - nc-systems/handoff/uncommitted-work-snapshots.py:34 "opens a task naming the branch on the task list ~/.claude/tasks/<CLAUDE_CODE_TASK_LIST_ID>"
+> - scripts/clean-worktrees.py:221-230 (marks restore tasks completed in every task list)
+> - nc-systems/handoff/handoff-write-and-check-supervisor.py:616-618 "Copy the named task files into the log-store's copy of the list ... The mirror runs on a timer" (the writer also writes the log-store copy)
+> - The lists of writers are incomplete. No one would act wrongly on them.
 State: open
 
 ## E3 — possible problem: an assertion of the overview is contradicted
 
-Claim: The list of writers of `worktree-owner.json`.
+Claim: The reference-checkout is fast-forwarded by both launchers, by every supervisor running from it at a qualifying session-handoff, and by the restart program. It is "put back on main by the reference-checkout leftovers-saving back-on-main program, which pushes any leftovers in it to a `reference-checkout-leftovers-<date>` branch first".
 Goes wrong when: a reader takes the assertion as exact.
 The claim check's evidence:
-> The list leaves out `uncommitted-work-snapshots.py restore`, which writes an owner file into the worktree it makes.
-> - nc-systems/handoff/uncommitted-work-snapshots.py:872 `owners.worktree_owner_file_write(worktree, owners.OWNER_AGENT_SEAT, agent_seat)`
-> - nc-systems/handoff/uncommitted-work-snapshots.py:32-33 `... given an owner file naming the agent-seat GIT_AUTHOR_NAME names;`
+> - Fast-forwarders are supported: launch-claude-ubuntu:335, launch-claude-mac:288, handoff-supervisor.py:2357, restart program:19.
+> - nc-systems/handoff/handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py:27-29 "...checks it out, whether or not every push succeeded". The leftovers are committed to a local branch first; the push is attempted, not guaranteed, before the switch.
 State: open
 
 ## E4 — possible problem: an assertion of the overview is contradicted
 
-Claim: The readers of transcripts under `~/.claude/projects/` are "the extractor, the threshold hook, the post-compaction hook, the writer script, `agent-seat-transcript-worth-resuming-common.py`, the agent-crash-watcher and the Remote Control reconnect watcher".
+Claim: Entry points: "The install scripts: a person. The `list` command of `uncommitted-work-snapshots.py`: a person, or an agent its initial-agent-instructions send there. The `write` and `show` commands of `worktree-owner-file-read-and-write.py`: a person or a program that makes a worktree."
 Goes wrong when: a reader takes the assertion as exact.
 The claim check's evidence:
-> The restart program also reads a seat's transcripts, in its step 7.
-> - nc-systems/handoff/handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout.py:43-44 `- step 7: waits up to 5 minutes from step 6's start for a new transcript in the agent-seat's project folder under ~/.claude/projects to hold a reply from the successor.`
-State: open
-
-## E5 — possible problem: an assertion of the overview is contradicted
-
-Claim: The task list under `~/.claude/tasks/` is "written by Claude Code, and on ned-box by the agent-crash-watcher; completed tasks removed by the writer script".
-Goes wrong when: a reader takes the assertion as exact.
-The claim check's evidence:
-> Two more programs write it: `uncommitted-work-snapshots.py restore` opens a task, and `clean-worktrees.py --remove` marks restore tasks completed.
-> - nc-systems/handoff/uncommitted-work-snapshots.py:911 `task_id = agent_seat_task_list.agent_seat_task_list_new_pending_task_write(`
-> - scripts/clean-worktrees.py:221-230 `Last, it closes the tasks that uncommitted-work-snapshots.py restore opens, in every task list on the machine ... marks the task completed`
-State: open
-
-## E6 — possible problem: an assertion of the overview is contradicted
-
-Claim: The reference-checkout is "fast-forwarded to main by launch-claude-ubuntu ..., by launch-claude-mac ..., by every handoff-supervisor that runs from it, and by the restart program".
-Goes wrong when: a reader takes the assertion as exact.
-The claim check's evidence:
-> The `checkout-freshness-catch-up.py` Stop hook fast-forwards it mid-session too, and this row leaves it out.
-> - scripts/launch-claude-mac:283-286 `Launch-time freshness: fast-forward the machine's reference checkout to origin/main ... The mid-session half runs as a Stop hook (scripts/checkout-freshness-catch-up.py)`
-> - .claude/settings.json:83
-State: open
-
-## E7 — possible problem: an assertion of the overview is contradicted
-
-Claim: Entry point: the back-on-main program is started by "an agent-seat whose initial-agent-instructions name it, because its handoff-supervisor did not restart itself on main's code".
-Goes wrong when: a reader takes the assertion as exact.
-The claim check's evidence:
-> The handoff-supervisor is also a caller: it runs the program's `put_reference_checkout_back_on_main` itself at a session-handoff, before any notice names the program.
-> - nc-systems/handoff/handoff-supervisor.py:2386-2388 `reference_checkout_back_on_main.put_reference_checkout_back_on_main(REFERENCE_CHECKOUT, datetime.now().date())`
-> - nc-systems/handoff/handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py:9
-State: open
-
-## E8 — possible problem: an assertion of the overview is contradicted
-
-Claim: Entry point: the install scripts are run by a person; the `list` command of `uncommitted-work-snapshots.py` by a person or an agent its initial-agent-instructions send there; the owner-file `write` and `show` commands by a person or a program that makes a worktree.
-Goes wrong when: a reader takes the assertion as exact.
-The claim check's evidence:
-> The initial-agent-instructions mainly send agents to the module's `restore` and `discard` commands, and Entry points does not list them. Every listed work-snapshot entry ends with one of them.
-> - nc-systems/handoff/uncommitted-work-snapshots.py:636 ``parts.append(f"handle it with: `{entry_command_text(repo, snapshot)}`")``
-> - nc-systems/handoff/uncommitted-work-snapshots.py:613-615 (`discard` / `restore ... --keep`)
-> - nc-systems/handoff/uncommitted-work-snapshots.py:1098-1108 (the restore and discard commands in main)
+> - nc-systems/handoff/uncommitted-work-snapshots.py:15-17 "lists an agent-seat's lost work in the first prompt of every agent-session it starts, each entry ending with the restore or discard command that handles it"
+> - nc-systems/handoff/uncommitted-work-snapshots.py:29, 38 (`restore` and `discard`)
+> - The `restore` and `discard` commands are entry points that an agent the initial-agent-instructions send there runs. The section omits them, so it is incomplete. What it does say is true.
 State: open

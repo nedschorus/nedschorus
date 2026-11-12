@@ -54,7 +54,7 @@ MORE_THAN_ONE_WALK_MESSAGE = (
     "{minutes}\n"
     "Close each of them that has no item the user has yet to answer. To close one, add the line "
     "`#next_to_present none, closed` as the last line of its walk-minutes, then run, from the checkout that holds "
-    "{walk_directory}: python3 scripts/walk-files-ship.py <name>, <name> being its walk-minutes file name without "
+    "{walk_directory}: python3 nc-systems/skills/walk-me-through/walk-files-ship.py <name>, <name> being its walk-minutes file name without "
     "-minutes.md.\n"
     "If more than one still has items the user has yet to answer: keep the one your last message to him showed an "
     "item of, or else the one whose walk-minutes changed last; move the others' unanswered items into its "

@@ -27,8 +27,8 @@ with every suite whose recorded inputs read that file (the recordings
 scripts/run-all-test-suites.py keeps), plus the file's sibling
 `<name>-test.py` or `<name>-test.sh` when there is one.
 
-THE QUICK MUTATION PASS, run before a push, mutates only the changed lines
-that are failure-handling code: the changed lines inside an `except` clause,
+THE QUICK MUTATION PASS mutates only the changed lines that are
+failure-handling code: the changed lines inside an `except` clause,
 or inside an `if` statement, `while` loop or conditional expression whose test
 reads an exit code (a name or attribute named `returncode`, or ending in
 `exit_code` or `exit_status`), each such clause or statement counted from its
@@ -1556,7 +1556,7 @@ def parse_arguments(argv):
     which_pass = parser.add_mutually_exclusive_group(required=True)
     which_pass.add_argument(QUICK_MUTATION_PASS_COMMAND_LINE_FLAG, action="store_true",
                             help="mutate only the changed failure-handling code, without the "
-                                 "repository-wide checks; the pass to run before a push")
+                                 "repository-wide checks")
     which_pass.add_argument(FULL_MUTATION_PASS_COMMAND_LINE_FLAG, action="store_true",
                             help="mutate every changed line, with every suite that reads the "
                                  "file; the pass the daily maintenance-job runs")
