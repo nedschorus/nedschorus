@@ -75,10 +75,10 @@ again lacks its subagent turns, and when it failed as the dialog was
 written, the dialog lacks them; either way the two hold different turns, so
 no hit in it is dated by turn, and a FAILED line says why. A line the dialog built again does not hold as often, or one
 whose turn's record has no time, is dated by the session's last activity, the
-last timestamp in its transcript, and the hit says so. A walk file's agent-seat is
-the one its header says ran the approval-walk. A session's agent-seat is read
-from its project-key, the transcript folder Claude Code names after the
-session's directory.
+last timestamp in its transcript, and the hit says so. A walk file's hit names
+no agent-seat: walk-files-ship.py ships every walk's files flat into walk/ and
+records none. A session's agent-seat is read from its project-key, the
+transcript folder Claude Code names after the session's directory.
 
 FILTERS. --kind limits the search to the kinds named. --seat keeps sessions
 whose project-key contains SUBSTRING, and --machine those of one machine;
@@ -233,9 +233,7 @@ MACHINES = ("ned-box", "mac")
 DEFAULT_LIMIT = 30
 EXCERPT_CHARACTERS = 300
 CONTEXT_CHARACTERS = 200
-WALK_HEADER_LINES = 10
 DATE_IN_NAME = re.compile(r"\d{4}-\d{2}-\d{2}")
-WALK_HEADER_SEAT = re.compile(r"\brun by ([A-Za-z0-9][A-Za-z0-9-]*) on\b")
 SEAT_IN_PROJECT_KEY = re.compile(r"-agents-(.+?)(?:--claude-worktrees-.*|-worktrees-.*)?$")
 MODIFICATION_TIME_MARGIN_SECONDS = 2
 TRANSCRIPT_TAIL_BYTES = 64 * 1024
@@ -383,17 +381,6 @@ def session_last_activity(transcript):
         return ""
 
 
-def walk_seat(path, failures):
-    try:
-        with path.open(errors="replace") as handle:
-            header = "".join(handle.readline() for _ in range(WALK_HEADER_LINES))
-    except OSError as error:
-        failures.append(f"could not read the header of {path} for its agent-seat: {error}")
-        return ""
-    match = WALK_HEADER_SEAT.search(header)
-    return match.group(1) if match else ""
-
-
 def excerpt(text, start):
     """About EXCERPT_CHARACTERS of one line of text around position `start`."""
     begin = max(0, start - EXCERPT_CHARACTERS // 3)
@@ -425,7 +412,7 @@ class RipgrepMissing(Exception):
     pass
 
 
-def file_facts(path, root, failures):
+def file_facts(path, root):
     """The kind, machine, agent-seat and, where its name holds one, the date of one file's hits.
 
     None for a file in session-dialogs/ that is not a session dialog.
@@ -443,8 +430,6 @@ def file_facts(path, root, failures):
     else:
         named = DATE_IN_NAME.search(str(path.relative_to(root / kind)))
         facts["date"] = named.group(0) if named else None
-        if kind == "walk":
-            facts["seat"] = walk_seat(path, failures)
     return facts
 
 
@@ -493,7 +478,7 @@ def file_hits(root, kinds, pattern, context, failures):
     facts_by_file = {}
     for path_text, number, shown, text in matches:
         if path_text not in facts_by_file:
-            facts_by_file[path_text] = file_facts(Path(path_text), root, failures)
+            facts_by_file[path_text] = file_facts(Path(path_text), root)
         if facts_by_file[path_text] is None:
             continue
         nearby = lines_by_file[path_text]
