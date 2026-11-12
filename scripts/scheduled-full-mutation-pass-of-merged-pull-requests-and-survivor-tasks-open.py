@@ -19,7 +19,9 @@ TERMS. A mutant's key is the SHA-256 of a JSON list of its file path, cosmic-ray
 operator and diff. A mutant's diff file holds its diff, as
 scheduled-full-mutation-pass-runs-of-merged-pull-requests/surviving-mutant-diffs/<key>.diff
 under --log-store-root, which is where
---recorded-mutant-killed-check reads it from. A survivor task is a task this
+the --recorded-mutant-killed-check of
+scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py, the
+mutation testing program, reads it from. A survivor task is a task this
 program opens for the surviving mutants of one line; its subject starts
 `Surviving mutants in <file>:<line>: ` (`Surviving mutant in` in a task an
 earlier version opened). The task's owner is the agent-seat whose task list
@@ -131,8 +133,9 @@ schedule of the form `<minute> <hour> * * *`: a run still going when cron
 starts the next one would make that one exit
 EXIT_ANOTHER_RUN_HOLDS_THE_LOCK. From that time on the second pass starts on
 no further merge. The mutation testing program is sent SIGTERM when it is
-still going after --merge-timeout-seconds or, when sooner, half of those 30
-minutes after that time; the merge then keeps its place under
+still going after --merge-timeout-seconds or, when sooner, once half of
+--second-pass-stops-starting-mutants-seconds-before-next-scheduled-run has
+passed since that time; the merge then keeps its place under
 merges_with_mutants_not_run, and the run exits
 EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN. After each merge the second pass opens the
 survivor tasks of the mutants it ran, as step 7 does, and writes the merge's
@@ -143,7 +146,8 @@ last_tested_main_commit. No merge is dropped from merges_with_mutants_not_run
 for being old.
 
 CARRYING A MERGE ON. Each merge's cosmic-ray sessions are kept in
-COSMIC_RAY_SESSIONS_KEPT_FOR_UNFINISHED_MERGES_DIRECTORY_NAME/<merge> under
+cosmic-ray-sessions-kept-for-unfinished-merges/<merge>
+(COSMIC_RAY_SESSIONS_KEPT_FOR_UNFINISHED_MERGES_DIRECTORY_NAME) under
 --state-directory. A run of the mutation testing program still going after
 --merge-timeout-seconds is sent SIGTERM, on which that program removes its
 scratch worktrees; in the first pass, the merge is not recorded as tested, the
@@ -222,6 +226,9 @@ the state. A task with no mutant left is marked completed, with a line saying
 why at the end of its description. A task with fewer mutants left, or whose
 description does not give the command for exactly the mutants left or does
 not end with SURVIVOR_TASK_DESCRIPTION_LAST_LINE_LEAVE_TASK_OPEN_FOR_NIGHTLY_RECHECK,
+"Leave this task open: the nightly mutation pass completes it once no mutant
+it lists survives on main, or the line is gone or ends with a `# pragma: no
+mutate` comment.",
 as in a task an earlier version opened, is rewritten to list only them; its
 other keys, status included, are kept. A mutant the program could not judge
 stays listed. A run of the program still going after
@@ -232,7 +239,7 @@ EXIT_SURVIVOR_TASK_MUTANTS_NOT_JUDGED_TASK_LEFT_AS_IT_WAS. Each rechecked
 mutant adds about 30 seconds to the run.
 
 JOB FAILURE TASKS. The run opens a task on the task list of the agent-seat
-JOB_FAILURE_TASK_AGENT_SEAT names, saying what failed and what to do, for each
+JOB_FAILURE_TASK_AGENT_SEAT names, fleet-restart-at-login, saying what failed and what to do, for each
 failure of the run itself: a step that failed, as above; a merge recorded
 as untestable, opened as AN UNTESTABLE MERGE above says; a merge carried on
 in the first pass with no mutant judged beyond those its kept sessions held
@@ -247,10 +254,13 @@ names the merge; an untestable merge's task also names the failing suites,
 and asks for the merge's changed lines to be mutation-tested at a later main
 commit where they pass.
 Each of the other three kinds has one task with a fixed subject:
-SURVIVOR_TASKS_NOT_RECHECKED_TASK_SUBJECT, whose description names the
-survivor tasks not rechecked; RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT, whose
-description gives the error; and
-MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT, whose
+SURVIVOR_TASKS_NOT_RECHECKED_TASK_SUBJECT, "Nightly full mutation pass:
+survivor tasks left as they were, because their recheck gave no verdicts",
+whose description names the survivor tasks not rechecked;
+RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT, "Nightly full mutation pass: a run's
+record was not written", whose description gives the error; and
+MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT, "Nightly full
+mutation pass: merges still untested three days after they merged", whose
 description gives the untested merges' count and the oldest. Each run rewrites
 the description of such a task while it is open. While a task with the same
 subject is open on that list, no second one is opened, and the record names
@@ -290,7 +300,7 @@ user's systemd, which outlives the shell, with its output in the same log:
 
     systemd-run --user --unit=scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open-by-hand --collect -p StandardOutput=append:/home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log -p StandardError=append:/home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py
 
-The cron line:
+The cron line, at 00:30 in ned-box's local time, America/Los_Angeles (Pacific):
 
     30 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py >> /home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log 2>&1
 
@@ -302,9 +312,10 @@ EXIT_RECORD_NOT_WRITTEN (5) the record could not be written;
 EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6) another run holds the lock;
 EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR (7) no step failed, but a
 mutant a survivor task an earlier run opened held was reported at step 4:
-its task's file is gone or cannot be read, or its task, not marked completed,
-no longer lists it, and no other open task or two or more name it; or its
-task is marked completed and two or more other open tasks name it;
+its task's file is gone or cannot be read, and no other open task or two or
+more name it; or its task, not marked completed, no longer lists it, and two
+or more other open tasks name it; or its task is marked completed and two or
+more other open tasks name it;
 EXIT_SURVIVOR_TASK_MUTANTS_NOT_JUDGED_TASK_LEFT_AS_IT_WAS (8) no step failed
 and no task was lost, but the recheck gave no verdicts for a survivor task;
 EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN (9) none of those, but a merge ran past the
