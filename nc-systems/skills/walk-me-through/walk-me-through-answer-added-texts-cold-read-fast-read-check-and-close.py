@@ -814,8 +814,8 @@ NOT_ASKED_NOT_RATED_NONE_PROBLEM = ("- its `#case_against` line rates the case a
                                     "the kinds settles without the user only when its case against is rated none, "
                                     "or weak with a case against that names only cost.")
 NOT_ASKED_WEAK_GUARDED_MARKDOWN_PROBLEM = (
-    "- `{marker}` names {path}, a Markdown file the instruction-file guard protects; an item of none of the kinds "
-    "whose case against is rated weak is shown to the user when it changes such a file.")
+    "- `{marker}` names {path}, a Markdown file the instruction-file guard protects; this item is of none of the "
+    "kinds and rated weak, and it changes such a file, so it is shown to the user.")
 NOT_ASKED_GUARDED_FILE_PROBLEM = ("- `{marker}` names {path}, which the instruction-file guard protects; an item "
                                   "that adds words the user has not approved to such a file is shown to him, and "
                                   "one whose words a ruling of his gives settles as kind 1.")

@@ -2659,10 +2659,12 @@ def test_an_item_of_no_kind_rated_weak_settles_and_the_agent_is_told_to_judge_pe
           and WEAK_COST_ONLY_SETTLED in result.stdout and PERMISSIONS_JUDGEMENT in result.stdout,
           described(result) + minutes)
     closed = case.run("close")
-    check("close records the item settled as weak and cost only as accepted",
+    check("close records the item settled as weak and cost only as accepted, and moves on past it",
           closed.returncode == 0
           and "\nitem 1 of 3: not asked, case against weak, cost only; every text the change adds has had a fast "
-              "read. <accepted>\n" in case.minutes.read_text(), described(closed) + case.minutes.read_text())
+              "read. <accepted>\n" in case.minutes.read_text()
+          and int(re.search(r"#next_to_present item (\d+) of 3$", case.minutes.read_text().rstrip())[1]) > 1,
+          described(closed) + case.minutes.read_text())
     case = rated_none_case()
     result = case.run("check", "--not-asked", "none")
     check("an item of no kind rated none is not given the weak item's permissions and guards line",
@@ -2689,9 +2691,9 @@ def test_an_item_of_no_kind_rated_weak_settles_when_it_touches_guarded_code_but_
         check(f"an item of no kind rated weak that touches {path}, guarded Markdown, is refused",
               result.returncode == 1
               and "cannot be settled without asking the user as case against weak, cost only, because:" in result.stderr
-              and f"`#not_asked_touches` names {path}, a Markdown file the instruction-file guard protects; an item "
-                  "of none of the kinds whose case against is rated weak is shown to the user when it changes such "
-                  "a file." in result.stderr
+              and f"`#not_asked_touches` names {path}, a Markdown file the instruction-file guard protects; this item "
+                  "is of none of the kinds and rated weak, and it changes such a file, so it is shown to the user."
+                  in result.stderr
               and "which the instruction-file guard protects;" not in result.stderr
               and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))
     case = rated_none_case(touches="", rating=WEAK_COST_ONLY)
