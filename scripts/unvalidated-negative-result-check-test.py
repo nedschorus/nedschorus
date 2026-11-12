@@ -205,6 +205,13 @@ for near_miss in ("grep -oE '.{0,80}link-type' notes.md",
                   "ssh nedlern@ned-box \"grep -oE '.{0,180}(a|b).{0,180}' notes.md\""):
     check(f"S2 stays silent: {near_miss}", not judge(near_miss).fires,
           judge(near_miss).signals)
+check("S2 stays silent when the agent saw the refusal on one line",
+      not judge("grep -oE '.{0,180}(a|b).{0,180}' notes.md", exit_code=2,
+                output="ugrep: error at position 9: exceeds complexity limits\n").fires)
+check("S2's warning quotes the grep as the shell needs, so it can be run again as written",
+      "`grep -oE '.{0,180}(a|b).{0,180}'`"
+      in judge("grep -oE '.{0,180}(a|b).{0,180}' notes.md").causes[0].instruction,
+      judge("grep -oE '.{0,180}(a|b).{0,180}' notes.md").causes[0].instruction)
 check("S2 leaves the file names out of the probe",
       check_module.agents_grep_options_and_patterns_without_file_names(check_module.Placed(
           None, "/work", ["grep", "-rn", "--include", "*.md", "-A", "2", "needle", "docs",
@@ -275,6 +282,33 @@ check("the probe asks about no word after --, where a word can only be a pattern
       and after_double_dash_machines.asked == [],
       f"{after_double_dash_probes} unchecked {after_double_dash_unchecked} "
       f"asked {after_double_dash_machines.asked}")
+
+
+class MachinesWhoseDirectoryHoldsDashX(MachinesOfTheDay):
+    def directory_entries(self, host, directory):
+        self.asked.append(("entries", host, directory))
+        return ["-x", "notes.md"]
+
+
+double_dash_value_machines = MachinesWhoseDirectoryHoldsDashX()
+double_dash_value_probes = probes_of("grep -e -- -x*", machines=double_dash_value_machines)
+check("a -- that is -e's value does not end the options: the probe asks whether -x* expanded, "
+      "and leaves it out when it did",
+      double_dash_value_probes == [["-e", "--"]]
+      and ("entries", None, "/work") in double_dash_value_machines.asked,
+      f"{double_dash_value_probes} asked {double_dash_value_machines.asked}")
+check("S1 reads a dash-led glob after a -- that is -e's value",
+      judge("grep -e -- -x*", machines=MachinesWhoseDirectoryHoldsDashX()).signals
+      == [GLOB_DASH_NAME])
+check("S1 still stops at the -- that ends grep's options",
+      not judge("grep -e needle -- -x*", machines=MachinesWhoseDirectoryHoldsDashX()).fires)
+for arguments, expected in ((["-e", "--", "-x*"], 3), (["--regexp", "--", "--", "-x*"], 2),
+                            (["-A2", "--", "-x*"], 1), (["-A", "--", "-x*"], 3),
+                            (["--include=--", "--", "-x*"], 1), (["-", "--"], 1),
+                            (["needle", "file"], 2)):
+    check(f"grep's options end at {expected} in {arguments}",
+          check_module.grep_arguments_options_end_position_skipping_option_values(arguments) == expected,
+          check_module.grep_arguments_options_end_position_skipping_option_values(arguments))
 unknown_directory_unchecked = []
 unknown_directory_machines = MachinesOfTheDay()
 unknown_directory_probes = probes_of('cd "$D" && grep -l needle -r -Users-el-agents-*/',
@@ -312,6 +346,14 @@ missing_fd = MachinesOfTheDay(missing={(None, "fd")})
 check("S3 fires on a search program missing on this machine",
       judge("fd needle docs", machines=missing_fd).signals == [PROGRAM_MISSING])
 check("S3 stays silent when the program is installed", not judge("fd needle docs").fires)
+for shown in ("bash: line 1: fd: command not found", "zsh: command not found: fd",
+              "sh: 1: fd: not found"):
+    check(f"S3 stays silent when the agent saw the error: {shown}",
+          not judge("fd needle docs", output=shown + "\n", exit_code=127,
+                    machines=MachinesOfTheDay(missing={(None, "fd")})).fires)
+check("S3 still fires when the error shown names another program",
+      judge("fd needle docs", output="bash: line 1: fdx: command not found\n", exit_code=127,
+            machines=MachinesOfTheDay(missing={(None, "fd")})).signals == [PROGRAM_MISSING])
 check("S3 asks once per program and machine",
       judge("rg a docs; rg b docs", machines=MachinesOfTheDay(
           missing={(None, "rg")})).signals == [PROGRAM_MISSING])
