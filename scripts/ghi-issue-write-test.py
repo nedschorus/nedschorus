@@ -5057,10 +5057,16 @@ def run_push_time_limit_cases(scratch: Path):
                   f"{tool.push_time_limit_seconds({}):.0f} seconds, longer "
                   "than the pre-push hook's own limit")
               and "so the push did not finish." in text
-              and "Rerun the same command; a rerun is safe: it reads origin "
-                  "first, and if the branch got there, it opens the pull "
-                  "request for it instead of pushing again." in text
-              and "tell the user the push hangs" in text
+              and "Rerun the same command; a rerun is safe because it reads "
+                  "origin first.\n" in text
+              and "If the branch reached origin, the rerun opens the pull "
+                  "request for it instead of pushing again.\n" in text
+              and "If the branch did not reach origin, the rerun pushes it "
+                  "again, which runs the pre-push hook again.\n" in text
+              and "If the rerun's push is again stopped by this time limit, "
+                  "tell the user the push hangs, with this message.\n" in text
+              and text.endswith("If the rerun fails in any other way, do "
+                                "what its own message says.")
               and recorder.commands() == ["git push --quiet"],
               text + "\n" + str(recorder.commands()))
     except subprocess.TimeoutExpired:
