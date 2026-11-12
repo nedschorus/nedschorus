@@ -875,6 +875,24 @@ def test_an_item_under_a_shared_heading_is_shown_by_its_own_opening_or_item_n_of
     case.reply(f"## Item 3 of 10: its name\n\n{lead_in}\n\n{closing}")
     check_blocked("an item shown under its own heading does not show its unit's lines before the first item's opening",
                   case.run(model="yes"), f'"{lead_in}"')
+    case = Case(minutes="#next_to_present item 3 of 10", document=document)
+    case.reply(f"## Items 2 and 3 of 10: the poem page?\n\n{item_3_question}\n\n{closing}")
+    check_silent("the shared heading alone shows each item of its unit, with no opening or own heading shown",
+                 case.run(model="yes"))
+    withdrawn_question = "Should the poem page move to the archive?"
+    case = Case(minutes="#next_to_present item 3 of 10",
+                document=document.replace("the poem page?\n\n", f"the poem page?\n\n#### Withdrawn version\n\n"
+                                                                  f"{withdrawn_question}\n\n", 1))
+    case.reply(f"## Items 2 and 3 of 10: the poem page?\n\n{withdrawn_question}\n\n{item_3_opening}\n\n{closing}")
+    check_blocked("a Withdrawn version before a shared unit's first opening is not shown by the shared heading",
+                  case.run(model="yes"), f'"{withdrawn_question}"')
+    case = Case(minutes="#next_to_present item 3 of 10",
+                document=document.replace("the poem page?\n\n", "the poem page?\n\n#new The new text: both items "
+                                                                  "keep the poem page?\n\n", 1))
+    case.reply(f"## Items 2 and 3 of 10: the poem page?\n\nIf you approve, the new text: both items keep the poem "
+               f"page?\n\n{item_3_opening}\n\n{closing}")
+    check_silent("a `#new` line before a shared unit's first opening passes shown after `If you approve, the new text:`",
+                 case.run(model="yes"))
     without_openings = (f"# The poem page: approval-walk\n\n## Items 2 and 3 of 10: the poem page\n\n"
                         f"Should I keep the poem page in the wiki?\n\n{ANSWER_LINE}\n\n{item_3_question}\n\n"
                         f"{ANSWER_LINE}\n")
