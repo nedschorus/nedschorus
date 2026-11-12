@@ -2,7 +2,7 @@
 """Once a week, run the work-snapshot hook under a real claude session and check that it found that session.
 
 Usage:
-  nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py
+  nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py
       [--claude-program PATH] [--record-directory DIR] [--timeout-seconds N]
 
   --claude-program    the program run as claude; default, `claude` on PATH, else
@@ -30,7 +30,7 @@ WHAT ONE RUN DOES, in order.
      file; that its owner key names the process this program started as
      claude; and that its transcript trailer names claude's session id.
   4. Writes the record, the day's lines below, to the log-store:
-     nedlern@ned-box:/home/nedlern/nedschorus-logs/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-checks/<machine>/<YYYY-MM-DD>.txt,
+     nedlern@ned-box:/home/nedlern/nedschorus-logs/uncommitted-work-snapshot-hook-scheduled-checks-that-real-claude-session-is-recorded-as-owner/<machine>/<YYYY-MM-DD>.txt,
      where <machine> is ned-box or mac and the date is in America/Los_Angeles;
      from the Mac it is written over ssh.
   5. Prints the record and its citation, removes the scratch clone, and exits
@@ -48,7 +48,7 @@ schedule is made.
 
   ned-box: one cron line.
 
-    30 4 * * 0 /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py >> /home/nedlern/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log 2>&1
+    30 4 * * 0 /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py >> /home/nedlern/.claude/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.log 2>&1
 
   the Mac: a launchd job at the same time; a run missed while the Mac
   sleeps starts at the next wake.
@@ -70,7 +70,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-PROGRAM = "uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check"
+PROGRAM = "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner"
 SYSTEM_DIRECTORY = Path(__file__).resolve().parent
 REPOSITORY_ROOT = SYSTEM_DIRECTORY.parent.parent
 MODULE_RELATIVE = Path("nc-systems/handoff/uncommitted-work-snapshots.py")
@@ -87,7 +87,7 @@ LIVE_CHECK_MODEL = "haiku"
 LIVE_CHECK_AGENT_SEAT = PROGRAM
 DEFAULT_TIMEOUT_SECONDS = 300
 LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
-RECORDS_KIND_DIRECTORY_NAME = "uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-checks"
+RECORDS_KIND_DIRECTORY_NAME = "uncommitted-work-snapshot-hook-scheduled-checks-that-real-claude-session-is-recorded-as-owner"
 RECORD_WRITE_TIMEOUT_SECONDS = 60
 EXIT_PASSED, EXIT_CHECK_FAILED, EXIT_RECORD_NOT_WRITTEN = 0, 1, 2
 

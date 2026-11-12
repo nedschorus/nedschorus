@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py.
+"""Tests for nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py.
 
 Each case runs the check with --claude-program naming a fake claude, a Python
 script that does what one outcome of a real session would do, and with
@@ -11,7 +11,7 @@ itself with a copy of this Python interpreter named claude. In the failing
 cases the fake writes the work-snapshot itself, through the scratch clone's
 copy of the module, with whatever owner, file or transcript the case needs.
 
-Run: python3 nc-systems/handoff/tests/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check-test.py
+Run: python3 nc-systems/handoff/tests/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner-test.py
 """
 
 import contextlib
@@ -31,7 +31,7 @@ from pathlib import Path
 
 SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
 REPOSITORY_ROOT = SYSTEM_DIRECTORY.parent.parent
-CHECK = SYSTEM_DIRECTORY / "uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py"
+CHECK = SYSTEM_DIRECTORY / "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py"
 
 _fixture_spec = importlib.util.spec_from_file_location(
     "git_redirecting_environment_removal_test_fixture",
@@ -40,7 +40,7 @@ _fixture = importlib.util.module_from_spec(_fixture_spec)
 _fixture_spec.loader.exec_module(_fixture)
 _fixture.remove_git_redirecting_environment_variables_from_this_process()
 
-SCRATCH = Path(tempfile.mkdtemp(prefix="real-claude-session-weekly-owner-check-test-"))
+SCRATCH = Path(tempfile.mkdtemp(prefix="scheduled-check-that-real-claude-session-is-recorded-as-owner-test-"))
 GLOBAL_CONFIG = SCRATCH / "gitconfig"
 GLOBAL_CONFIG.write_text("[init]\n\tdefaultBranch = main\n")
 os.environ.update(GIT_CONFIG_GLOBAL=str(GLOBAL_CONFIG), GIT_CONFIG_NOSYSTEM="1")
@@ -122,9 +122,9 @@ os.environ.update(FAKE_CLAUDE_PROCESS_ID_FILE=str(FAKE_CLAUDE_PROCESS_ID_FILE),
                   FAKE_CLAUDE_ARGUMENTS_FILE=str(FAKE_CLAUDE_ARGUMENTS_FILE),
                   FAKE_CLAUDE_PYTHON_NAMED_CLAUDE=str(PYTHON_NAMED_CLAUDE))
 
-_check_spec = importlib.util.spec_from_file_location("weekly_owner_check", CHECK)
-weekly_owner_check = importlib.util.module_from_spec(_check_spec)
-_check_spec.loader.exec_module(weekly_owner_check)
+_check_spec = importlib.util.spec_from_file_location("owner_check", CHECK)
+owner_check = importlib.util.module_from_spec(_check_spec)
+_check_spec.loader.exec_module(owner_check)
 
 failures = []
 
@@ -169,7 +169,7 @@ def test_a_session_that_finds_itself_passes():
     seen = json.loads(FAKE_CLAUDE_ARGUMENTS_FILE.read_text())
     arguments = seen["arguments"]
     check(arguments[:4] == ["-p", "--strict-mcp-config", "--permission-mode", "dontAsk"]
-          and arguments[6] == weekly_owner_check.LIVE_CHECK_PROMPT
+          and arguments[6] == owner_check.LIVE_CHECK_PROMPT
           and arguments[arguments.index("--model") + 1] == "haiku"
           and arguments[arguments.index("--allowedTools") + 1] == "Bash"
           and "--no-session-persistence" in arguments,
@@ -183,7 +183,7 @@ def test_a_session_that_finds_itself_passes():
     hook_path = Path(shlex.split(entries[0]["hooks"][0]["command"])[-1])
     check(len(entries) == 1 and entries[0]["matcher"] == "Bash"
           and hook_path.resolve()
-          == Path(seen["clone"]).resolve() / weekly_owner_check.HOOK_RELATIVE,
+          == Path(seen["clone"]).resolve() / owner_check.HOOK_RELATIVE,
           "the settings register the scratch clone's hook after each Bash call", entries)
 
 
@@ -295,18 +295,18 @@ def test_an_interruption_after_claude_was_reaped_still_propagates():
     def start_a_claude_that_exits_at_once(program, clone):
         return ReapedThenInterrupted([sys.executable, "-c", "pass"], start_new_session=True)
 
-    real = weekly_owner_check.start_claude
+    real = owner_check.start_claude
     records = SCRATCH / "records-interrupted-after-reaping"
     propagated = False
     try:
-        weekly_owner_check.start_claude = start_a_claude_that_exits_at_once
+        owner_check.start_claude = start_a_claude_that_exits_at_once
         with contextlib.redirect_stdout(io.StringIO()):
-            weekly_owner_check.main(
+            owner_check.main(
                 ["--claude-program", "claude", "--record-directory", str(records)])
     except KeyboardInterrupt:
         propagated = True
     finally:
-        weekly_owner_check.start_claude = real
+        owner_check.start_claude = real
     written = list(records.glob("*.txt")) if records.is_dir() else []
     check(propagated and not written,
           "an interruption that arrives after claude and its group are gone still ends the "
@@ -315,10 +315,10 @@ def test_an_interruption_after_claude_was_reaped_still_propagates():
 
 
 def test_the_record_goes_to_the_log_store_by_default():
-    mark = weekly_owner_check.mark
+    mark = owner_check.mark
     real = mark.this_machine_is_ned_box, mark.run_on_ned_box_or_here
     now = datetime(2026, 10, 12, 18, 0, tzinfo=timezone.utc)
-    store = f"/home/nedlern/nedschorus-logs/{weekly_owner_check.RECORDS_KIND_DIRECTORY_NAME}"
+    store = f"/home/nedlern/nedschorus-logs/{owner_check.RECORDS_KIND_DIRECTORY_NAME}"
     try:
         for on_ned_box, machine, ssh_target in ((True, "ned-box", None),
                                                 (False, "mac", "nedlern@ned-box")):
@@ -327,7 +327,7 @@ def test_the_record_goes_to_the_log_store_by_default():
             mark.run_on_ned_box_or_here = (
                 lambda command, target, timeout, stdin_text=None:
                 calls.append((command, target, stdin_text)))
-            citation = weekly_owner_check.write_record("the record\n", None, now)
+            citation = owner_check.write_record("the record\n", None, now)
             path = f"{store}/{machine}/2026-10-12.txt"
             check(citation == f"nedlern@ned-box:{path}" and len(calls) == 1
                   and calls[0][1] == ssh_target and calls[0][2] == "the record\n"
@@ -361,12 +361,12 @@ def test_a_scratch_clone_that_cannot_be_made_fails():
 
 def test_the_scratch_clone_holds_the_owner_file_module_the_hook_loads():
     clone = SCRATCH / "scratch-clone-module-check"
-    weekly_owner_check.make_scratch_clone(clone)
-    hook_text = (REPOSITORY_ROOT / weekly_owner_check.HOOK_RELATIVE).read_text()
+    owner_check.make_scratch_clone(clone)
+    hook_text = (REPOSITORY_ROOT / owner_check.HOOK_RELATIVE).read_text()
     check("worktree-owner-file-read-and-write.py" in hook_text
           and (clone / "scripts" / "worktree-owner-file-read-and-write.py").is_file(),
           "the scratch clone holds scripts/worktree-owner-file-read-and-write.py, which the hook "
-          "loads, so the weekly check does not pass over a FileNotFoundError",
+          "loads, so the scheduled check does not pass over a FileNotFoundError",
           str(sorted(path.relative_to(clone).as_posix() for path in clone.rglob("*.py"))))
 
 
@@ -380,16 +380,16 @@ def test_a_check_that_cannot_run_fails():
 def test_an_error_after_claude_started_is_not_reported_as_a_failed_start():
     def raise_process_lookup_error(process, timeout_seconds):
         raise ProcessLookupError("no such process group")
-    real = weekly_owner_check.start_claude, weekly_owner_check.wait_for_claude
+    real = owner_check.start_claude, owner_check.wait_for_claude
     records = SCRATCH / "records-error-after-start"
     try:
-        weekly_owner_check.start_claude = lambda program, clone: object()
-        weekly_owner_check.wait_for_claude = raise_process_lookup_error
+        owner_check.start_claude = lambda program, clone: object()
+        owner_check.wait_for_claude = raise_process_lookup_error
         with contextlib.redirect_stdout(io.StringIO()):
-            exit_code = weekly_owner_check.main(
+            exit_code = owner_check.main(
                 ["--claude-program", "claude", "--record-directory", str(records)])
     finally:
-        weekly_owner_check.start_claude, weekly_owner_check.wait_for_claude = real
+        owner_check.start_claude, owner_check.wait_for_claude = real
     written = list(records.glob("*.txt"))
     record = written[0].read_text() if written else ""
     check(exit_code == 1
