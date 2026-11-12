@@ -17,7 +17,7 @@ The trace, with every measurement and its source, is at nedlern@ned-box:/home/ne
 - ned-box has 59.6G of RAM and no swap. `/tmp` is a tmpfs, which keeps its files in RAM. It holds 21G: 12G of agent-session scratchpads, 4.8G in 34 replay-check scratch directories the check left behind, and 3.1G in 562 `run-all-test-suites-*` log directories. Without swap, none of those 21G can be reclaimed, and killing a pane frees none of them.
 - Each replay-check run reads 17.5G of transcripts and starts 8 worker processes. It does not go through the free-memory admission that `scripts/run-all-test-suites.py` (class `MachineWideTestSuiteAdmission`) and mutation testing use.
 - That admission counts page cache as free memory, and does not count the tmpfs's pages as used.
-- systemd-oomd kills the scope with the most reclaimable memory. That is a long-lived agent-seat, not the process that applied the pressure.
+- systemd-oomd kills the scope with the most reclaim activity, as oomd.conf(5) on ned-box (`man oomd.conf`, under `DefaultMemoryPressureLimit=`) says. That is a long-lived agent-seat, not the process that applied the pressure.
 - timeshift runs as root from `/etc/cron.d/timeshift-hourly`, in rsync mode, and keeps 24 hourly snapshots; changing it needs root. No step under What to do covers timeshift yet.
 
 ## Why it matters
