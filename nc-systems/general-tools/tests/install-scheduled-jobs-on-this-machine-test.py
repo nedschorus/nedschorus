@@ -143,11 +143,22 @@ NED_BOX_TEMP_FOLDERS_DELETE_LINE = (
     "claude-code-temp-folders-of-exited-agent-sessions-delete.py "
     "--then-tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete >> "
     "/home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1")
+# The daily search for credential files no cold-read-cell is denied, on ned-box alone.
+NED_BOX_CREDENTIAL_FILES_CHECK_LINE = (
+    "45 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/cold-read/"
+    "cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.py >> "
+    "/home/nedlern/.claude/cold-read-cell-credential-files-outside-denied-directories-daily-check-"
+    "user-alert-write.log 2>&1")
 # The no-sandbox test suites' run on main in a quiet gap, on ned-box alone.
 NED_BOX_NO_SANDBOX_SUITES_LINE = (
     "*/10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
     "no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py >> "
     "/home/nedlern/.claude/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.log 2>&1")
+# The GHI-MD edit pull requests' check, approval and merge, on ned-box alone.
+NED_BOX_GHI_MD_EDIT_PULL_REQUESTS_MERGE_LINE = (
+    "*/5 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.py >> "
+    "/home/nedlern/.claude/merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.log 2>&1")
 # The scheduled full mutation pass of merged pull requests, on ned-box alone.
 NED_BOX_SCHEDULED_FULL_MUTATION_PASS_LINE = (
     "30 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
@@ -298,17 +309,22 @@ check("the table's jobs are the two typed by hand before this program, the workt
       "scheduled owner check of the work-snapshot hook, the session dialogs refresh, the "
       "guarded-file store's prune, the nc-shared-database's backup and its copy to the "
       "Mac, the deletion of exited agent-sessions' temp folders, the scheduled full "
-      "mutation pass, the no-sandbox test suites' run on main, and no other",
+      "mutation pass, the no-sandbox test suites' run on main, the GHI-MD edit pull "
+      "requests' check, approval and merge, the daily search for credential files no "
+      "cold-read-cell is denied, and no other",
       sorted(real_jobs) == ["agent-seat-idle-sweep-headless-judge-wake-messages-send-and-"
                             "user-alerts-write",
                             "claude-code-temp-folders-of-exited-agent-sessions-delete",
                             "clean-worktrees",
+                            "cold-read-cell-credential-files-outside-denied-directories-daily-"
+                            "check-user-alert-write",
                             "guarded-file-versions-and-approvals-store-removed-checkout-"
                             "copies-prune",
                             "handoff-agent-crash-watcher",
                             "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-"
                             "tmux-typing-watcher",
                             "log-store-session-dialogs-refresh",
+                            "merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge",
                             "nc-shared-database-newest-backup-copy-to-mac",
                             "nc-shared-database-nightly-backup-with-integrity-check",
                             "no-sandbox-test-suites-run-on-main-in-a-quiet-gap",
@@ -353,6 +369,18 @@ check("the temp-folder deletion runs on ned-box alone, at 07:30, and its program
       and f"    {NED_BOX_TEMP_FOLDERS_DELETE_LINE}\n"
       in (REPOSITORY_ROOT / temp_folders_delete["program"]).read_text(encoding="utf-8"),
       installer.cron_line(ned_box, temp_folders_delete, temp_folders_delete["on"]["ned-box"]))
+credential_files_check = real_jobs[
+    "cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write"]
+check("the daily search for credential files no cold-read-cell is denied runs on ned-box alone, at "
+      "07:45, and its program documents the table's line and names this installer",
+      list(credential_files_check["on"]) == ["ned-box"]
+      and installer.cron_line(ned_box, credential_files_check, credential_files_check["on"]["ned-box"])
+      == NED_BOX_CREDENTIAL_FILES_CHECK_LINE
+      and f"    {NED_BOX_CREDENTIAL_FILES_CHECK_LINE}\n"
+      in (REPOSITORY_ROOT / credential_files_check["program"]).read_text(encoding="utf-8")
+      and "nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py"
+      in (REPOSITORY_ROOT / credential_files_check["program"]).read_text(encoding="utf-8"),
+      installer.cron_line(ned_box, credential_files_check, credential_files_check["on"]["ned-box"]))
 full_mutation_pass = real_jobs[
     "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open"]
 check("the scheduled full mutation pass runs on ned-box alone, at 00:30, and its program "
@@ -374,6 +402,19 @@ check("the no-sandbox test suites' run on main runs on ned-box alone, every 10 m
       and "nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py"
       in (REPOSITORY_ROOT / no_sandbox_suites["program"]).read_text(encoding="utf-8"),
       installer.cron_line(ned_box, no_sandbox_suites, no_sandbox_suites["on"]["ned-box"]))
+ghi_md_edit_pull_requests_merge = real_jobs["merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge"]
+check("the GHI-MD edit pull requests' check, approval and merge runs on ned-box alone, every 5 "
+      "minutes, and its program documents the table's line and names this installer",
+      list(ghi_md_edit_pull_requests_merge["on"]) == ["ned-box"]
+      and installer.cron_line(ned_box, ghi_md_edit_pull_requests_merge,
+                              ghi_md_edit_pull_requests_merge["on"]["ned-box"])
+      == NED_BOX_GHI_MD_EDIT_PULL_REQUESTS_MERGE_LINE
+      and f"    {NED_BOX_GHI_MD_EDIT_PULL_REQUESTS_MERGE_LINE}\n"
+      in (REPOSITORY_ROOT / ghi_md_edit_pull_requests_merge["program"]).read_text(encoding="utf-8")
+      and "nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py"
+      in (REPOSITORY_ROOT / ghi_md_edit_pull_requests_merge["program"]).read_text(encoding="utf-8"),
+      installer.cron_line(ned_box, ghi_md_edit_pull_requests_merge,
+                          ghi_md_edit_pull_requests_merge["on"]["ned-box"]))
 owner_check_documentation = (
     REPOSITORY_ROOT / real_jobs["uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner"]
     ["program"]).read_text(encoding="utf-8")
@@ -431,7 +472,11 @@ check("--print as ned-box prints ned-box's cron lines from the real table and ru
           "nc-shared-database-nightly-backup-with-integrity-check — cron line:",
           NED_BOX_NC_SHARED_DATABASE_BACKUP_LINE,
           "claude-code-temp-folders-of-exited-agent-sessions-delete — cron line:",
-          NED_BOX_TEMP_FOLDERS_DELETE_LINE],
+          NED_BOX_TEMP_FOLDERS_DELETE_LINE,
+          "merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-"
+          "merge — cron line:", NED_BOX_GHI_MD_EDIT_PULL_REQUESTS_MERGE_LINE,
+          "cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write"
+          " — cron line:", NED_BOX_CREDENTIAL_FILES_CHECK_LINE],
       (exit_code, printed.getvalue(), errors.getvalue()))
 printed, errors = io.StringIO(), io.StringIO()
 with redirect_stdout(printed), redirect_stderr(errors):

@@ -2409,7 +2409,7 @@ time.sleep(300)
         does in-process: what a real run does, with the roots in scratch.
 
         The codex profile's credential list comes back empty, so on Linux the
-        real home is not walked for credential files. Three environment
+        real home is not walked for credential files. Environment
         variables, each naming a file, hold the run at one moment so a case
         can send its signal there: DRIVER_HOLD_CODEX_RELAUNCH holds a codex
         cell's second launch while its profile is built, after run_cell has
@@ -2427,7 +2427,9 @@ time.sleep(300)
         DRIVER_HOLD_MAIN_THREAD_ONCE_EVERY_CELL_ENDED holds the main thread
         in its wait for the cells once no cell is left to wait for, before the
         run counts the saved reports, until that file exists (`<file>.held`
-        again).
+        again). DRIVER_HOLD_STOP_HANDLER holds the stop signal's handler
+        before it sets RUN_STOPPED, as a busy machine may delay the main
+        thread, until that file exists (`<file>.held` again).
         DRIVER_PROBE_VERSIONS, set to any
         value, leaves the CLI version cache empty, so a cell probes the
         stand-in's `--version` as a real run does."""
@@ -2451,6 +2453,13 @@ def held_until(path):
     while not pathlib.Path(path).exists() and time.monotonic() < deadline:
         time.sleep(0.02)
 
+stop_handler_hold = os.environ.get("DRIVER_HOLD_STOP_HANDLER")
+if stop_handler_hold:
+    stop_run = module.stop_run_on_signal
+    def stop_handler_held(*arguments):
+        held_until(stop_handler_hold)
+        return stop_run(*arguments)
+    module.stop_run_on_signal = stop_handler_held
 relaunch_hold = os.environ.get("DRIVER_HOLD_CODEX_RELAUNCH")
 if relaunch_hold:
     profile = module.common.codex_credential_denying_permission_profile_arguments
@@ -2653,25 +2662,52 @@ sys.exit(module.main())
                 end_stand_ins(recorded)
 
     # Case 45: SIGINT sent to the runner's whole process group, as Ctrl-C at a
-    # terminal sends it. Each agent-binary dies of the signal itself. The
-    # runner used to take that for a failed launch: it printed RETRYING, ran
-    # the codex cell again and went on to the claude chain's second model,
-    # then waited for those launches. A stopped run launches nothing more.
+    # terminal sends it. The agent-binaries are in sessions of their own, so
+    # the signal reaches the runner alone. The handler is held before it sets
+    # RUN_STOPPED, as a busy machine may delay the main thread: an
+    # agent-binary in the runner's group died of the signal in that gap, and
+    # its cell printed RETRYING, ran the codex cell again and went on to the
+    # claude chain's second model. A stopped run launches nothing more.
     with tempfile.TemporaryDirectory() as scratch:
         base = pathlib.Path(scratch).resolve()
         repo = scratch_repository_with_design(base)
         programs, recorded = stand_in_agent_binaries(base)
+        stop_handler_hold = base / "stop-handler-hold"
+        environment = runner_process_environment(programs, recorded)
+        environment["DRIVER_HOLD_STOP_HANDLER"] = str(stop_handler_hold)
         process = subprocess.Popen(
             [sys.executable, "-B", str(runner_driver(base, repo)),
              "--target", "docs/design.md", "--adversarial-prompt", "cut"],
-            env=runner_process_environment(programs, recorded),
+            env=environment,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             start_new_session=True)
         try:
             started = wait_until(
                 lambda: len(recorded_process_ids(recorded, "claude")) == 1
                 and len(recorded_process_ids(recorded, "codex")) == 1)
+            first_launches = [launch for name in ("claude", "codex")
+                              for launch, _child in recorded_process_ids(recorded, name)]
+            in_runner_group = [launch for launch in first_launches
+                               if os.getpgid(launch) == process.pid]
             os.killpg(process.pid, signal.SIGINT)
+            handler_held = wait_until(
+                lambda: stop_handler_hold.with_name(stop_handler_hold.name + ".held").exists())
+            # Bounded, so a fixed runner costs these seconds; a loaded machine
+            # can only make a broken runner pass here, never a fixed one fail.
+            acted_while_held = wait_until(
+                lambda: len(recorded_process_ids(recorded, "claude")) > 1
+                or len(recorded_process_ids(recorded, "codex")) > 1
+                or not all(process_is_running(launch) for launch in first_launches),
+                3.0)
+            stop_handler_hold.write_text("", encoding="utf-8")
+            check("SIGINT to the whole process group does not reach the "
+                  "agent-binaries: each is in a session of its own, and none ended "
+                  "or was launched again while the handler had not yet run",
+                  started and handler_held and in_runner_group == []
+                  and not acted_while_held,
+                  f"started {started}, handler held {handler_held}, launches in the "
+                  f"runner's group {in_runner_group}, an agent-binary ended or was "
+                  f"launched again {acted_while_held}")
             try:
                 out, err = process.communicate(timeout=20)
                 ended_by_itself = True
@@ -3546,6 +3582,25 @@ sys.exit(module.main())
     check("a version probe that returns while the run is stopped is not cached",
           probed == "unknown" and "codex" not in runner_probe.CLI_VERSION_CACHE,
           f"probed {probed!r}, cache {runner_probe.CLI_VERSION_CACHE!r}")
+
+    # The version probe starts in a session of its own, as an agent-binary's
+    # launch does, so a stop signal sent to the runner's process group cannot
+    # end the probe and leave "unknown" cached as the version.
+    runner_session = load_runner()
+    real_session_run = runner_session.subprocess.run
+    probe_keywords = []
+    try:
+        def recording_run(*a, **k):
+            probe_keywords.append(k)
+            return subprocess.CompletedProcess(a[0], 0, stdout="codex 1.2.3\n", stderr=None)
+        runner_session.subprocess.run = recording_run
+        session_probed = runner_session.runtime_cli_version("codex")
+    finally:
+        runner_session.subprocess.run = real_session_run
+    check("the version probe starts in a session of its own",
+          len(probe_keywords) == 1 and probe_keywords[0].get("start_new_session") is True
+          and session_probed == "codex-1.2.3",
+          f"probe keywords {probe_keywords!r}, probed {session_probed!r}")
 
     # Git failures the runner reads. A directory whose .git file names no git
     # directory makes every git command in it exit 128, as a broken review

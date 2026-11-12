@@ -19,7 +19,9 @@ TERMS. A mutant's key is the SHA-256 of a JSON list of its file path, cosmic-ray
 operator and diff. A mutant's diff file holds its diff, as
 scheduled-full-mutation-pass-runs-of-merged-pull-requests/surviving-mutant-diffs/<key>.diff
 under --log-store-root, which is where
---recorded-mutant-killed-check reads it from. A survivor task is a task this
+the --recorded-mutant-killed-check of
+scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py, the
+mutation testing program, reads it from. A survivor task is a task this
 program opens for the surviving mutants of one line; its subject starts
 `Surviving mutants in <file>:<line>: ` (`Surviving mutant in` in a task an
 earlier version opened). The task's owner is the agent-seat whose task list
@@ -45,12 +47,15 @@ WHAT ONE RUN DOES, in order.
   3. Reads the state file. With no state file, it writes one naming
      origin/main and tests nothing: the merges after that commit are tested
      from the next run on.
-  4. Checks that each survivor task the state names still lists each of its
-     mutants: the task file is still on its owner's task list, not marked
-     completed, and its description still names each mutant's diff file. A
-     mutant whose task no longer holds it, because the task is marked
-     completed, or its file is gone or cannot be read, or its description no
-     longer names the diff file, goes one of three ways:
+  4. Checks that each survivor task the state names still holds each of its
+     mutants: the task file is still on its owner's task list and not marked
+     completed. A task whose description no longer names a mutant's diff file,
+     as after an agent rewrites the description, still holds the mutant unless
+     exactly one other open task names the diff file, and the recheck writes
+     the description again. A mutant whose task no longer holds it, because
+     the task is marked completed, or its file is gone or cannot be read, or
+     its description no longer names the diff file while another open task
+     does, goes one of three ways:
      - Moved: when exactly one other task on the same list, not marked
        completed, names its diff file, the state alone is changed to name that
        task, as when an agent moves the mutants of several survivor tasks into
@@ -59,9 +64,10 @@ WHAT ONE RUN DOES, in order.
      - Finished: when its task is marked completed and no task not marked
        completed names its diff file, the state stops naming it.
      - Reported once: in every other case, which is one of these:
-       - its task's file is gone or cannot be read, or its task is not marked
-         completed but no longer names the diff file, and no other open task
+       - its task's file is gone or cannot be read, and no other open task
          names the diff file, or two or more do;
+       - its task is not marked completed but no longer names the diff file,
+         and two or more other open tasks do;
        - its task is marked completed and two or more other open tasks name
          the diff file.
      Reporting it goes like this:
@@ -127,8 +133,9 @@ schedule of the form `<minute> <hour> * * *`: a run still going when cron
 starts the next one would make that one exit
 EXIT_ANOTHER_RUN_HOLDS_THE_LOCK. From that time on the second pass starts on
 no further merge. The mutation testing program is sent SIGTERM when it is
-still going after --merge-timeout-seconds or, when sooner, half of those 30
-minutes after that time; the merge then keeps its place under
+still going after --merge-timeout-seconds or, when sooner, once half of
+--second-pass-stops-starting-mutants-seconds-before-next-scheduled-run has
+passed since that time; the merge then keeps its place under
 merges_with_mutants_not_run, and the run exits
 EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN. After each merge the second pass opens the
 survivor tasks of the mutants it ran, as step 7 does, and writes the merge's
@@ -139,7 +146,8 @@ last_tested_main_commit. No merge is dropped from merges_with_mutants_not_run
 for being old.
 
 CARRYING A MERGE ON. Each merge's cosmic-ray sessions are kept in
-COSMIC_RAY_SESSIONS_KEPT_FOR_UNFINISHED_MERGES_DIRECTORY_NAME/<merge> under
+cosmic-ray-sessions-kept-for-unfinished-merges/<merge>
+(COSMIC_RAY_SESSIONS_KEPT_FOR_UNFINISHED_MERGES_DIRECTORY_NAME) under
 --state-directory. A run of the mutation testing program still going after
 --merge-timeout-seconds is sent SIGTERM, on which that program removes its
 scratch worktrees; in the first pass, the merge is not recorded as tested, the
@@ -205,8 +213,8 @@ whose owner's list holds a survivor task for it not marked completed gets no
 second task: that task is rewritten to list its mutants the state names and
 the line's new ones, with one command for them all, and the state names that
 task for each. A task Claude Code rewrites at the same moment as this
-program can lose either rewrite; step 4 of the next run then reports each
-mutant the task no longer lists.
+program can lose either rewrite; the next run's recheck then lists again each
+mutant the state gives the task.
 
 THE RECHECK runs, for each survivor task the state names, the mutation
 testing program's --recorded-mutant-killed-check with every diff file the
@@ -218,6 +226,9 @@ the state. A task with no mutant left is marked completed, with a line saying
 why at the end of its description. A task with fewer mutants left, or whose
 description does not give the command for exactly the mutants left or does
 not end with SURVIVOR_TASK_DESCRIPTION_LAST_LINE_LEAVE_TASK_OPEN_FOR_NIGHTLY_RECHECK,
+"Leave this task open: the nightly mutation pass completes it once no mutant
+it lists survives on main, or the line is gone or ends with a `# pragma: no
+mutate` comment.",
 as in a task an earlier version opened, is rewritten to list only them; its
 other keys, status included, are kept. A mutant the program could not judge
 stays listed. A run of the program still going after
@@ -228,7 +239,7 @@ EXIT_SURVIVOR_TASK_MUTANTS_NOT_JUDGED_TASK_LEFT_AS_IT_WAS. Each rechecked
 mutant adds about 30 seconds to the run.
 
 JOB FAILURE TASKS. The run opens a task on the task list of the agent-seat
-JOB_FAILURE_TASK_AGENT_SEAT names, saying what failed and what to do, for each
+JOB_FAILURE_TASK_AGENT_SEAT names, fleet-restart-at-login, saying what failed and what to do, for each
 failure of the run itself: a step that failed, as above; a merge recorded
 as untestable, opened as AN UNTESTABLE MERGE above says; a merge carried on
 in the first pass with no mutant judged beyond those its kept sessions held
@@ -243,10 +254,13 @@ names the merge; an untestable merge's task also names the failing suites,
 and asks for the merge's changed lines to be mutation-tested at a later main
 commit where they pass.
 Each of the other three kinds has one task with a fixed subject:
-SURVIVOR_TASKS_NOT_RECHECKED_TASK_SUBJECT, whose description names the
-survivor tasks not rechecked; RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT, whose
-description gives the error; and
-MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT, whose
+SURVIVOR_TASKS_NOT_RECHECKED_TASK_SUBJECT, "Nightly full mutation pass:
+survivor tasks left as they were, because their recheck gave no verdicts",
+whose description names the survivor tasks not rechecked;
+RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT, "Nightly full mutation pass: a run's
+record was not written", whose description gives the error; and
+MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT, "Nightly full
+mutation pass: merges still untested three days after they merged", whose
 description gives the untested merges' count and the oldest. Each run rewrites
 the description of such a task while it is open. While a task with the same
 subject is open on that list, no second one is opened, and the record names
@@ -286,7 +300,7 @@ user's systemd, which outlives the shell, with its output in the same log:
 
     systemd-run --user --unit=scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open-by-hand --collect -p StandardOutput=append:/home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log -p StandardError=append:/home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py
 
-The cron line:
+The cron line, at 00:30 in ned-box's local time, America/Los_Angeles (Pacific):
 
     30 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py >> /home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log 2>&1
 
@@ -298,9 +312,10 @@ EXIT_RECORD_NOT_WRITTEN (5) the record could not be written;
 EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6) another run holds the lock;
 EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR (7) no step failed, but a
 mutant a survivor task an earlier run opened held was reported at step 4:
-its task's file is gone or cannot be read, or its task, not marked completed,
-no longer lists it, and no other open task or two or more name it; or its
-task is marked completed and two or more other open tasks name it;
+its task's file is gone or cannot be read, and no other open task or two or
+more name it; or its task, not marked completed, no longer lists it, and two
+or more other open tasks name it; or its task is marked completed and two or
+more other open tasks name it;
 EXIT_SURVIVOR_TASK_MUTANTS_NOT_JUDGED_TASK_LEFT_AS_IT_WAS (8) no step failed
 and no task was lost, but the recheck gave no verdicts for a survivor task;
 EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN (9) none of those, but a merge ran past the
@@ -555,24 +570,28 @@ def task_ids_on_list_open_naming_mutant(list_directory, key):
 
 def lost_tasks_reported(state, arguments, record):
     """Drop from the state in memory each task that is completed or no longer holds its mutant,
-    and re-point a mutant to the one other open task on its owner's list that names it.
+    and re-point a mutant to the one other open task on its owner's list that names it. An open
+    task whose description no longer names its mutant keeps the mutant while no other open task
+    names it.
 
-    Return one line per task that no longer holds its mutant, is not completed, and has no
-    single open task on the list naming the mutant, and per completed task whose mutant more
-    than one open task names; the caller writes the state. Raises OSError when another task
+    Return one line per task whose file is gone or is not a task and that has no single open
+    task on the list naming the mutant, and per task, open or completed, whose mutant more than
+    one other open task names; the caller writes the state. Raises OSError when another task
     file on the list cannot be read."""
     lost = []
     for key, given in list(state["tasks_opened"].items()):
         list_directory = arguments.task_lists_directory / f"nedschorus-{given['agent_seat']}-tasks"
         task_file = list_directory / f"{given['task_id']}.json"
         completed = False
+        open_task = False
         try:
             task = task_file_read(task_file)
         except OSError as error:
             why = f"the task file cannot be read ({type(error).__name__}: {error})"
         else:
             completed = task is not None and task.get("status") == "completed"
-            if not completed and task_names_mutant(task, key):
+            open_task = task is not None and not completed
+            if open_task and task_names_mutant(task, key):
                 continue
             why = ("it is marked completed" if completed
                    else "its description no longer names the mutant's diff file")
@@ -588,6 +607,10 @@ def lost_tasks_reported(state, arguments, record):
                           f"task #{naming[0]} on {given['agent_seat']}'s task list, not task "
                           f"#{given['task_id']} ({why})")
             state["tasks_opened"][key] = dict(given, task_id=naming[0])
+            continue
+        if open_task and not naming:
+            # The state, not the description, records which task holds the mutant: agents
+            # rewrite descriptions, and the recheck lists the state's mutants in it again.
             continue
         lost.append(f"task #{given['task_id']} on {given['agent_seat']}'s task list "
                     f"({task_file}) no longer holds the surviving mutant "

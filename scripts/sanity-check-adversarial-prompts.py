@@ -257,7 +257,10 @@ Running a sanity-check, and reading its output:
   the run stopped, so every agent-binary is in the process table the handler
   then reads. The one later start is the `--version` probe of a cell saving
   its report, for the report's provenance line; it reads the version and
-  exits. A signal that arrives after every cell has finished, each having
+  exits. Each agent-binary and probe starts in a session of its own, so a
+  signal sent to the runner's process group reaches the runner alone and the
+  runner does the stopping; a SIGKILL sent to that group therefore leaves
+  the agents running, as a SIGKILL to the runner alone does. A signal that arrives after every cell has finished, each having
   saved its report or said why it could not, stopped nothing: the runner
   finishes the run's closing steps, prints what a finished run prints, with
   no `STOPPED:` line, and ends by the signal. A cell still running when the
@@ -718,13 +721,21 @@ def run_agent_binary_unless_run_stopped(command: list, input: str = None,
     its pipes, and the run waited for that child with every stop signal
     ignored, its review copy left behind. The wait after the start is outside the
     lock and is subprocess.run's own: on a timeout the agent-binary is killed
-    and TimeoutExpired raised with the streams it had written."""
+    and TimeoutExpired raised with the streams it had written.
+
+    The agent-binary starts in a session of its own, so a stop signal sent to
+    the runner's process group, as Ctrl-C at a terminal sends it, reaches the
+    runner alone, and stop_run_on_signal stops the agent-binary after it has
+    set RUN_STOPPED. In the runner's group the agent-binary could die of that
+    signal first, and its cell's thread, seeing RUN_STOPPED still unset,
+    printed RETRYING and could relaunch it or start the claude chain's next
+    model."""
     with AGENT_BINARY_LAUNCH_LOCK:
         if RUN_STOPPED.is_set():
             return None
         if input is not None:
             popen_keywords["stdin"] = subprocess.PIPE
-        process = subprocess.Popen(command, **popen_keywords)
+        process = subprocess.Popen(command, start_new_session=True, **popen_keywords)
     with process:
         try:
             stdout, stderr = process.communicate(input, timeout=timeout)
@@ -990,6 +1001,10 @@ def runtime_cli_version(runtime: str) -> str:
             completed = subprocess.run(
                 [binary, "--version"], stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, text=True, check=False, timeout=60,
+                # As an agent-binary's launch does, so a stop signal sent to
+                # the process group cannot end the probe before RUN_STOPPED
+                # is set and have "unknown" cached as the version.
+                start_new_session=True,
             )
             lines = (completed.stdout or "").strip().splitlines()
             measured = (
