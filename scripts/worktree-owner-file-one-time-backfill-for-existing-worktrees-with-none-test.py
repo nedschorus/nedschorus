@@ -343,6 +343,12 @@ def run_cases(root):
     check("a --repo that is not a git repository is refused with exit 2",
           not_a_repository.returncode == 2 and "is not a git repository" in not_a_repository.stderr,
           not_a_repository.stderr)
+    repo_without_path = subprocess.run(
+        [sys.executable, str(PROGRAM), "--repo"],
+        env=environment, capture_output=True, text=True, check=False)
+    check("a --repo given last, with no path after it, is refused with exit 2 and the usage",
+          repo_without_path.returncode == 2 and "Usage:" in repo_without_path.stderr,
+          repo_without_path.stderr)
 
 
 if __name__ == "__main__":
