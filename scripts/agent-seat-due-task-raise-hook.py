@@ -18,12 +18,34 @@ written.
 
 WHAT MAKES A TASK DUE. One optional key in a task's `metadata`:
 
-  prerequisites  a non-empty list of conditions on the repository
-                 nedschorus/nedschorus, each {"pr_merged": <number>} or
-                 {"issue_closed": <number>}. Met means every condition is
-                 met. An empty list is never met: "every one of nothing"
-                 would raise a task nobody set a prerequisite on. A list
-                 with any entry this hook cannot read is never met.
+  prerequisites  a non-empty list of conditions, each {"pr_merged": <number>}
+                 or {"issue_closed": <number>} on the repository
+                 nedschorus/nedschorus, or
+                 {"approval_walk_item_decided": {"approval_walk_minutes_file_path":
+                 <absolute path of a docs/walk/<name>-minutes.md file>,
+                 "approval_walk_item_heading":
+                 <the item's heading in the walk-document>}}. Met means every
+                 condition is met. An empty list is never met: "every one of
+                 nothing" would raise a task nobody set a prerequisite on. A
+                 list this hook cannot read is never met, and the hook names
+                 its fault to the agent once, as RAISED ONCE says, so the task
+                 is not held in silence for good.
+
+APPROVAL-WALK ITEMS. An item is named by its heading, because its number and
+count can change while the walk runs. The walk-document is the walk-minutes'
+path with `-minutes.md` replaced by `.md`. Its item headings are compared with
+the given heading as the answer program's heading_title reads both, so a
+running count, a deferred note, backticks, spaces and case do not matter. The
+item is decided when the answer program's minutes_record counts its number as
+decided: approved, disapproved, already decided or moved on, but not deferred
+or held. An item whose sub-steps, as 3.1 and 3.2 are of 3, are all decided is
+decided too, because the walk decides such an item only through them. A
+walk-minutes file that does not exist is not decided, since the walk may not
+have written it yet; nor is an item not yet numbered. A walk-document that
+does not exist, or that holds no item with the heading, or more than one, is
+a fault the hook names as it names an unreadable list: the walk-document
+holds the item before its heading can be named, so its absence means a wrong
+path. The files are read on this machine only, with no cache.
 
 An open task (status pending or in_progress) is raised when its
 prerequisites are met, and only when every task in its blockedBy is
@@ -42,7 +64,9 @@ a task without raising it, because nothing it waited on was done.
 RAISED ONCE. The hook records, per task, the prerequisites list it raised
 the task for, or for a task raised because its blockers completed, its
 blockedBy list, and does not raise the task again for the same value;
-changing either lets the task be raised again. The Stop hook's
+changing either lets the task be raised again. A prerequisites list the
+hook cannot read, or whose approval-walk item it cannot find, is named to the
+agent once per value of the list, recorded the same way. The Stop hook's
 additionalContext continues the conversation, so a hook that said the same
 thing at every turn boundary would never let the agent stop. The record is
 written atomically BEFORE anything is printed, and no raise is printed if the
@@ -119,8 +143,9 @@ which Claude Code delivers to the model as non-error feedback while the
 conversation continues. No `decision` field and no `systemMessage`: the text
 is for the agent. The text is one instruction per due task, then, when any
 task was raised, the instruction for a task that cannot be acted on yet,
-then the next-action prompt's lines, then one line per condition gh could
-not answer at this stop. Nothing to raise and no next-action prompt:
+then two lines per prerequisites list the hook cannot use, then the
+next-action prompt's lines, then one line per condition gh could not answer
+at this stop. Nothing to raise or name and no next-action prompt:
 nothing printed, exit 0. A fault, such as a payload
 that is not a JSON object, a state file that cannot be written, a condition
 gh could not answer at a stop with nothing else to print, or any exception:
@@ -204,13 +229,30 @@ CONDITION_KINDS = {
     "issue_closed": ("issue", "CLOSED", "GHI", "closed"),
 }
 
+APPROVAL_WALK_ITEM_KIND = "approval_walk_item_decided"
+WALK_MINUTES_FIELD = "approval_walk_minutes_file_path"
+ITEM_HEADING_FIELD = "approval_walk_item_heading"
+WALK_MINUTES_SUFFIX = "-minutes.md"
 PREREQUISITES_KEY = "prerequisites"
+PREREQUISITES_PROBLEM_RECORD_KEY = "prerequisites_problem"
+PREREQUISITE_FORMS = (
+    '{"pr_merged": <number>}, {"issue_closed": <number>} or {"' + APPROVAL_WALK_ITEM_KIND
+    + '": {"' + WALK_MINUTES_FIELD + '": "<absolute path of the walk-minutes file>", "'
+    + ITEM_HEADING_FIELD + '": "<the item\'s heading in the walk-document>"}}')
 
 DEFER_INSTRUCTION = (
     "If a task above cannot be acted on yet, record what it now waits on with TaskUpdate "
-    "instead: a pull request or a GHI in a new metadata.prerequisites, or a task with "
-    "addBlockedBy."
+    "instead: a pull request, a GHI or an approval-walk item in a new "
+    "metadata.prerequisites, or a task with addBlockedBy."
 )
+PREREQUISITES_PROBLEM_LINE_TEMPLATE = (
+    'Task {task_id} "{subject}" is never raised as its metadata.prerequisites stand, because '
+    "{problem}.")
+PREREQUISITES_CORRECTION_INSTRUCTION = (
+    'Correct the task with TaskUpdate, giving its metadata a "prerequisites" list whose entries '
+    "are each one of " + PREREQUISITE_FORMS + '; if the task waits on no pull request, GHI or '
+    'approval-walk item, set "prerequisites" to null, and record any task on your own task list '
+    "it waits on with addBlockedBy.")
 
 
 def single_line(text) -> str:
@@ -280,21 +322,101 @@ def is_held_by_blockers(task: dict, tasks: dict, directory: Path) -> bool:
     return any(blocker_holds(blocker, tasks, directory) for blocker in blocked_by)
 
 
-def parse_prerequisites(value) -> "list | None":
-    """The prerequisites list as [(kind, number), ...], or None if any entry is unreadable."""
-    if not isinstance(value, list) or not value:
-        return None
+class UnreadablePrerequisites(ValueError):
+    """A prerequisites list this hook cannot use; the argument says why, as a clause."""
+
+
+def parse_prerequisites(value) -> list:
+    """The prerequisites list as [(kind, number or approval-walk item object), ...].
+
+    Raises UnreadablePrerequisites naming the first entry it cannot read."""
+    if not isinstance(value, list):
+        raise UnreadablePrerequisites(f"it is {json.dumps(value)}, not a list")
+    if not value:
+        raise UnreadablePrerequisites("it is an empty list, which names nothing to wait on")
     conditions = []
     for entry in value:
+        shown = json.dumps(entry, ensure_ascii=False)
         if not isinstance(entry, dict) or len(entry) != 1:
-            return None
-        (kind, number), = entry.items()
-        if kind not in CONDITION_KINDS:
-            return None
-        if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
-            return None
-        conditions.append((kind, number))
+            raise UnreadablePrerequisites(f"its entry {shown} is not an object with one key")
+        (kind, condition), = entry.items()
+        if kind == APPROVAL_WALK_ITEM_KIND:
+            if (not isinstance(condition, dict)
+                    or set(condition) != {WALK_MINUTES_FIELD, ITEM_HEADING_FIELD}
+                    or not isinstance(condition[WALK_MINUTES_FIELD], str)
+                    or not os.path.isabs(condition[WALK_MINUTES_FIELD])
+                    or not condition[WALK_MINUTES_FIELD].endswith(WALK_MINUTES_SUFFIX)
+                    or not isinstance(condition[ITEM_HEADING_FIELD], str)
+                    or not condition[ITEM_HEADING_FIELD].strip()):
+                raise UnreadablePrerequisites(
+                    f'its entry {shown} does not give "{WALK_MINUTES_FIELD}" as the absolute path '
+                    f'of a file whose name ends {WALK_MINUTES_SUFFIX} and "{ITEM_HEADING_FIELD}" '
+                    f"as the item's heading, and no other key")
+        elif kind not in CONDITION_KINDS:
+            raise UnreadablePrerequisites(
+                f'its entry {shown} names the kind "{kind}", which this hook does not know')
+        elif isinstance(condition, bool) or not isinstance(condition, int) or condition <= 0:
+            raise UnreadablePrerequisites(f"its entry {shown} does not give a positive whole number")
+        conditions.append((kind, condition))
     return conditions
+
+
+_walk_modules = []
+
+
+def walk_finder_and_answer_program():
+    """The walk-me-through finder module and answer program, loaded on first use only."""
+    if not _walk_modules:
+        _walk_modules.extend((
+            _load_module_by_path(
+                "walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
+                WALK_FINDER_FILE),
+            _load_module_by_path(
+                "walk_me_through_answer_added_texts_cold_read_fast_read_check_and_close",
+                WALK_ANSWER_PROGRAM_FILE)))
+    return _walk_modules
+
+
+def approval_walk_item_decided_or_problem(condition: dict) -> dict:
+    """{"met": bool}, with "problem", a clause saying why, when the item cannot be found."""
+    walk_finder, answer_program = walk_finder_and_answer_program()
+    minutes = Path(condition[WALK_MINUTES_FIELD])
+    document = minutes.with_name(minutes.name[:-len(WALK_MINUTES_SUFFIX)] + ".md")
+    heading = condition[ITEM_HEADING_FIELD]
+    try:
+        document_text = document.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        # The walk-document holds the item before anyone can name its heading, so a missing one
+        # means a wrong path, which would otherwise hold the task in silence for good.
+        return {"met": False, "problem": f"the walk-document {document}, which the walk-minutes "
+                                         f"path {minutes} names, does not exist"}
+    parser = walk_finder.markdown_parser()
+    lines = document_text.split("\n")
+    title = answer_program.heading_title(walk_finder, heading)
+    units = walk_finder.item_unit_spans(document_text, parser)
+    matching = [unit for unit in units
+                if answer_program.heading_title(walk_finder, lines[unit[3]]) == title]
+    if len(matching) != 1:
+        found = "no item heading" if not matching else f"{len(matching)} item headings"
+        return {"met": False, "problem": f'the walk-document {document} holds {found} that reads '
+                                         f'"{single_line(heading)}" once its running count is left out'}
+    numbers = matching[0][0]
+    if not numbers or not minutes.exists():
+        return {"met": False}
+    decided, _ = answer_program.minutes_record(
+        walk_finder, minutes.read_text(encoding="utf-8"), parser)
+
+    def decided_through_itself_or_sub_steps(number):
+        sub_steps = [other for unit in units for other in unit[0] if other.startswith(number + ".")]
+        return number in decided or (bool(sub_steps) and all(step in decided for step in sub_steps))
+
+    return {"met": all(decided_through_itself_or_sub_steps(number) for number in numbers)}
+
+
+def condition_answer(kind: str, condition, checker) -> dict:
+    if kind == APPROVAL_WALK_ITEM_KIND:
+        return approval_walk_item_decided_or_problem(condition)
+    return checker.answer(kind, condition)
 
 
 def condition_key(kind: str, number: int) -> str:
@@ -424,7 +546,10 @@ class GitHubConditionChecker:
         return result
 
 
-def condition_citation(kind: str, number: int, answer: dict) -> str:
+def condition_citation(kind: str, number, answer: dict) -> str:
+    if kind == APPROVAL_WALK_ITEM_KIND:
+        return (f'the approval-walk item "{single_line(number[ITEM_HEADING_FIELD])}" is decided '
+                f"in {number[WALK_MINUTES_FIELD]}")
     _, _, id_type, met_word = CONDITION_KINDS[kind]
     title = answer.get("title")
     url = answer.get("url")
@@ -455,14 +580,16 @@ def raise_line(task: dict, met_citations, done_blockers=None) -> str:
 
 
 def due_task_lines(tasks: dict, directory: Path, state: dict,
-                   checker: "GitHubConditionChecker") -> "tuple[list, bool]":
-    """The raise lines, and whether the state changed apart from `checker`'s cache.
+                   checker: "GitHubConditionChecker") -> "tuple[list, list, bool]":
+    """The raise lines, the lines naming prerequisites the hook cannot use, and whether the
+    state changed apart from `checker`'s cache.
 
-    Mutates `state` to record every raise it returns, and to prune entries
+    Mutates `state` to record every raise and every named fault it returns, and to prune entries
     for tasks and conditions that no longer need them.
     """
     raised = state["raised"]
     lines = []
+    problem_lines = []
     state_changed = False
     conditions_still_named = set()
 
@@ -479,9 +606,16 @@ def due_task_lines(tasks: dict, directory: Path, state: dict,
         new_record = dict(record)
 
         prerequisites_value = metadata.get(PREREQUISITES_KEY)
-        conditions = parse_prerequisites(prerequisites_value)
+        problem = None
+        conditions = None
+        if prerequisites_value is not None:
+            try:
+                conditions = parse_prerequisites(prerequisites_value)
+            except UnreadablePrerequisites as unreadable:
+                problem = str(unreadable)
         if conditions is not None:
-            conditions_still_named.update(condition_key(k, n) for k, n in conditions)
+            conditions_still_named.update(condition_key(k, n) for k, n in conditions
+                                          if k in CONDITION_KINDS)
 
         prerequisite_citations = None
         done_blockers = None
@@ -493,8 +627,10 @@ def due_task_lines(tasks: dict, directory: Path, state: dict,
                 recorded = record.get(PREREQUISITES_KEY)
                 already_raised_for_prerequisites = recorded == prerequisites_record
                 if not already_raised_for_prerequisites:
-                    answers = [(kind, number, checker.answer(kind, number))
+                    answers = [(kind, number, condition_answer(kind, number, checker))
                                for kind, number in conditions]
+                    problem = next((answer["problem"] for _, _, answer in answers
+                                    if "problem" in answer), None)
                     if all(answer.get("met") is True for _, _, answer in answers):
                         prerequisite_citations = [
                             condition_citation(kind, number, answer)
@@ -508,6 +644,18 @@ def due_task_lines(tasks: dict, directory: Path, state: dict,
                 new_record["blocked_by"] = blockers
             if prerequisite_citations is not None or done_blockers is not None:
                 lines.append(raise_line(task, prerequisite_citations, done_blockers))
+        # Kept while the list is unchanged, so a stop that does not look at the list, such as one
+        # where a blocker holds the task, does not name the same fault again later.
+        problem_record = canonical_prerequisites(prerequisites_value)
+        if problem is not None and record.get(PREREQUISITES_PROBLEM_RECORD_KEY) != problem_record:
+            new_record[PREREQUISITES_PROBLEM_RECORD_KEY] = problem_record
+            problem_lines += [
+                PREREQUISITES_PROBLEM_LINE_TEMPLATE.format(
+                    task_id=task["id"], subject=single_line(task.get("subject", "")),
+                    problem=problem),
+                PREREQUISITES_CORRECTION_INSTRUCTION]
+        elif problem is None and record.get(PREREQUISITES_PROBLEM_RECORD_KEY) != problem_record:
+            new_record.pop(PREREQUISITES_PROBLEM_RECORD_KEY, None)
 
         if new_record != record:
             if new_record:
@@ -524,11 +672,13 @@ def due_task_lines(tasks: dict, directory: Path, state: dict,
         if key not in conditions_still_named:
             del state["checks"][key]
             state_changed = True
-    return lines, state_changed
+    return lines, problem_lines, state_changed
 
 
 WALK_FINDER_FILE = (_HOOK_DIRECTORY.parent / "nc-systems" / "skills" / "walk-me-through"
                     / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py")
+WALK_ANSWER_PROGRAM_FILE = WALK_FINDER_FILE.with_name(
+    "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py")
 HANDOFF_THRESHOLD_HOOK_FILE = _HOOK_DIRECTORY / "handoff-context-threshold-hook.py"
 TRANSCRIPT_RECORDS_FILE = _HOOK_DIRECTORY / "claude-code-session-transcript-records-read-backward-common.py"
 NEXT_ACTION_STATE_KEY = "next_action_prompt"
@@ -556,9 +706,10 @@ NEXT_ACTION_UNHELD_TASKS_HEADER = (
     "Your open tasks that no recorded prerequisite or blocker holds back; which of them are "
     "ready, and which need the user, is yours to judge:")
 NEXT_ACTION_HELD_TASKS_LINE = (
-    "{count} more open task(s) are not listed: each waits on a blocker task or a prerequisite "
-    "pull request or GHI that is not done, or on a pull request or GHI whose state this hook "
-    "could not read from GitHub at this stop.")
+    "{count} more open task(s) are not listed: each waits on a blocker task, a pull request or "
+    "GHI that is not done, an approval-walk item not yet decided, or a pull request or GHI whose "
+    "state this hook could not read from GitHub at this stop; or its metadata.prerequisites "
+    "cannot be used, as this hook said when it first found them.")
 NEXT_ACTION_OPEN_ITEMS_HEADER = (
     "Lines your walk-minutes mark <open>; each is a loose-end unless a task, GHI, pull request "
     "or later walk now holds it:")
@@ -615,9 +766,13 @@ def unheld_and_held_tasks(tasks: dict, directory: Path, checker) -> "tuple[list,
         metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
         prerequisites_value = metadata.get(PREREQUISITES_KEY)
         if prerequisites_value is not None:
-            conditions = parse_prerequisites(prerequisites_value)
+            try:
+                conditions = parse_prerequisites(prerequisites_value)
+            except UnreadablePrerequisites:
+                conditions = None  # due_task_lines names it to the agent
             if conditions is None or not all(
-                    checker.answer(kind, number).get("met") is True for kind, number in conditions):
+                    condition_answer(kind, number, checker).get("met") is True
+                    for kind, number in conditions):
                 held += 1
                 continue
         unheld.append(task_id)
@@ -720,7 +875,7 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
     state = read_state(state_path)
     # One checker for the whole run, so its GitHub budget bounds every gh call the run makes.
     checker = GitHubConditionChecker(state["checks"], now.timestamp())
-    lines, state_changed = due_task_lines(tasks, directory, state, checker)
+    lines, problem_lines, state_changed = due_task_lines(tasks, directory, state, checker)
     next_action_lines = []
     if not lines:
         try:
@@ -753,7 +908,7 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
             raise HookFault(f"the state file {state_path} could not be written, and {outcome}. "
                             f"Make {state_path.parent} a directory this user can write to: "
                             f"{error}") from error
-    if not lines and not next_action_lines:
+    if not lines and not problem_lines and not next_action_lines:
         if gh_failure_lines:
             raise HookFault(" ".join(gh_failure_lines))
         return None
@@ -761,8 +916,8 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
     return json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "Stop",
-            "additionalContext": "\n".join(lines + defer_lines + next_action_lines
-                                           + gh_failure_lines),
+            "additionalContext": "\n".join(lines + defer_lines + problem_lines
+                                           + next_action_lines + gh_failure_lines),
         }
     }, ensure_ascii=False)
 
