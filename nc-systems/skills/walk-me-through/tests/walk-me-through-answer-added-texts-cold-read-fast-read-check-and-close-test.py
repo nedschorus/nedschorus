@@ -2573,14 +2573,18 @@ Nothing to decide.
 """
 
 
-def rated_none_case(next_to_present="item 1 of 3", touches=None):
+def rated_none_case(next_to_present="item 1 of 3", touches=None, rating=None, files=()):
     document = RATED_NONE_DOCUMENT
     if touches is not None:
         document = document.replace("#not_asked_touches tools/counter.py\n\n#case_against none.",
                                     f"{touches}#case_against none.", 1)
+    if rating is not None:
+        document = document.replace("#case_against none.\n\nRecommendation: print it.",
+                                    f"#case_against {rating}\n\nRecommendation: print it.", 1)
     case = Case(next_to_present=next_to_present, document=document)
-    (case.checkout / "tools").mkdir()
-    (case.checkout / "tools" / "counter.py").write_text("count = 0\n")
+    for path in ("tools/counter.py",) + tuple(files):
+        (case.checkout / path).parent.mkdir(parents=True, exist_ok=True)
+        (case.checkout / path).write_text("count = 0\n")
     return case
 
 
@@ -2617,10 +2621,12 @@ def refused_as_rated_none(case, *problems):
             and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))
 
 
-def test_an_item_of_no_kind_settles_only_when_rated_none_and_touching_no_guarded_file():
-    check("an item of no kind rated weak is refused",
-          *refused_as_rated_none(rated_none_case("item 2 of 3"), "rates the case against weak; an item of none of "
-                                 "the kinds settles without the user only when its case against is rated none"))
+def test_an_item_of_no_kind_is_refused_when_rated_above_weak_or_rated_none_and_touching_a_guarded_file():
+    check("an item of no kind rated medium is refused",
+          *refused_as_rated_none(rated_none_case(rating="medium: the option changes what users see."),
+                                 "rates the case against medium; an item of none of the kinds settles without the "
+                                 "user only when its case against is rated none, or weak with a case against that "
+                                 "names only cost"))
     check("an item of no kind with no touches line is refused",
           *refused_as_rated_none(rated_none_case(touches=""), "it has no `#not_asked_touches` line"))
     for word in ("CLAUDE.md:12", "tools/counter.py.", "tools/missing.py"):
@@ -2632,6 +2638,70 @@ def test_an_item_of_no_kind_settles_only_when_rated_none_and_touching_no_guarded
         check(f"an item of no kind that touches {path}, which the instruction-file guard protects, is refused",
               *refused_as_rated_none(rated_none_case(touches=f"#not_asked_touches tools/counter.py {path}\n\n"),
                                      f"`#not_asked_touches` names {path}, which the instruction-file guard protects"))
+
+
+WEAK_COST_ONLY = "weak: the option costs a few lines of code."
+WEAK_COST_ONLY_SETTLED = "item 1 of 3 is recorded as settled without asking the user, case against weak, cost only;"
+PERMISSIONS_JUDGEMENT = ("item 1 of 3 is of none of the kinds and its case against is rated weak: if its change "
+                         "widens an agent's permissions, as a settings change can, or turns off a guard, do not run "
+                         "close: present item 1 of 3 to the user.")
+
+
+def test_an_item_of_no_kind_rated_weak_settles_and_the_agent_is_told_to_judge_permissions_and_guards():
+    case = rated_none_case(rating=WEAK_COST_ONLY)
+    result = case.run("check", "--not-asked", "none")
+    minutes = case.minutes.read_text()
+    check("an item of no kind rated weak is settled: the minutes say not asked, case against weak, cost only",
+          result.returncode == 0
+          and re.search(r"\nitem 1 of 3: settled without asking the user, not asked, case against weak, cost only "
+                        r"#case_against_weak \(\d{4}-\d\d-\d\d \d\d:\d\dZ\), which makes its change\. Fast reads:\n",
+                        minutes) is not None
+          and WEAK_COST_ONLY_SETTLED in result.stdout and PERMISSIONS_JUDGEMENT in result.stdout,
+          described(result) + minutes)
+    closed = case.run("close")
+    check("close records the item settled as weak and cost only as accepted",
+          closed.returncode == 0
+          and "\nitem 1 of 3: not asked, case against weak, cost only; every text the change adds has had a fast "
+              "read. <accepted>\n" in case.minutes.read_text(), described(closed) + case.minutes.read_text())
+    case = rated_none_case()
+    result = case.run("check", "--not-asked", "none")
+    check("an item of no kind rated none is not given the weak item's permissions and guards line",
+          result.returncode == 0 and PERMISSIONS_JUDGEMENT not in result.stdout, described(result))
+
+
+def test_an_item_of_no_kind_rated_weak_settles_when_it_touches_guarded_code_but_not_guarded_markdown():
+    for path in (".claude/guard-hooks/poem-guard.py", ".claude/settings.json"):
+        case = rated_none_case(touches=f"#not_asked_touches tools/counter.py {path}\n\n", rating=WEAK_COST_ONLY,
+                               files=(path,))
+        result = case.run("check", "--not-asked", "none")
+        check(f"an item of no kind rated weak that touches {path}, guarded but not Markdown, is settled",
+              result.returncode == 0 and WEAK_COST_ONLY_SETTLED in result.stdout, described(result))
+        case = rated_none_case(touches=f"#not_asked_touches tools/counter.py {path}\n\n", files=(path,))
+        check(f"an item of no kind rated none that touches {path} is still refused",
+              *refused_as_rated_none(case, f"`#not_asked_touches` names {path}, which the instruction-file guard "
+                                     "protects"))
+    for path in ("CLAUDE.md", ".claude/skills/poems/SKILL.md", "docs/nedschorus-wiki/poems.md",
+                 "docs/poems-instructions.md"):
+        case = rated_none_case(touches=f"#not_asked_touches tools/counter.py {path}\n\n", rating=WEAK_COST_ONLY,
+                               files=(path,))
+        before = case.minutes.read_text()
+        result = case.run("check", "--not-asked", "none")
+        check(f"an item of no kind rated weak that touches {path}, guarded Markdown, is refused",
+              result.returncode == 1
+              and "cannot be settled without asking the user as case against weak, cost only, because:" in result.stderr
+              and f"`#not_asked_touches` names {path}, a Markdown file the instruction-file guard protects; an item "
+                  "of none of the kinds whose case against is rated weak is shown to the user when it changes such "
+                  "a file." in result.stderr
+              and "which the instruction-file guard protects;" not in result.stderr
+              and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))
+    case = rated_none_case(touches="", rating=WEAK_COST_ONLY)
+    before = case.minutes.read_text()
+    result = case.run("check", "--not-asked", "none")
+    check("an item of no kind rated weak with no touches line is refused, so it comes to the user",
+          result.returncode == 1
+          and "cannot be settled without asking the user as case against weak, cost only, because:" in result.stderr
+          and "it has no `#not_asked_touches` line" in result.stderr
+          and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))
 
 
 def test_an_item_of_no_kind_with_an_empty_touches_line_settles_as_a_change_that_touches_no_file():
