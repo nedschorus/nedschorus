@@ -28,9 +28,15 @@ and at its nc-head-commit, and passes it when all of these hold:
   - its other headings, as a CommonMark parser finds them, are the merge
     base's, one for one, so the pull request adds, removes and changes no
     other heading;
+  - its link reference definitions, such as "[x]: https://example.com", as
+    the CommonMark parser finds them, are the merge base's, one for one,
+    because a definition renders as nothing and can change where other
+    links in the file point;
   - with the section under that heading taken out of both texts, they are
-    the same, and the section at the nc-head-commit holds every line of the
-    merge base's section, when there is one, in order. The section
+    the same; when the merge base has the section, it starts at the same
+    place in what is left, so the pull request does not move it; and the
+    section at the nc-head-commit holds every line of the merge base's
+    section, in order. The section
     runs from the heading to the next heading, without the blank lines
     that end it and with the blank lines just before it;
   - the text at the nc-head-commit differs from the text at the merge base.
@@ -260,27 +266,36 @@ def changed_file_problem(files):
 
 
 def provisional_section(parser, text, where):
-    """Return (lines, headings other than the provisional one, section's first line, line after its end), or a problem string.
+    """Return (lines, headings other than the provisional one, link reference definitions, section's first line, line after its end), or a problem string.
 
     The section's first line is None when the text has no provisional heading; each heading is
-    its tag, its nesting level and its source lines."""
+    its tag, its nesting level and its source lines; each definition is its label, its link and
+    its title, in the order of the file."""
     lines = text.split("\n")
+    environment = {}
     headings = [(token.tag, token.level, "\n".join(lines[token.map[0]:token.map[1]]), token.map[0])
-                for token in parser.parse(text) if token.type == "heading_open"]
+                for token in parser.parse(text, environment) if token.type == "heading_open"]
+    # markdown-it-py keeps the first definition of a label in "references" and each later one,
+    # which no link uses, in "duplicate_refs".
+    definitions = [(definition["map"][0], label, definition["href"], definition["title"])
+                   for label, definition in environment.get("references", {}).items()]
+    definitions += [(definition["map"][0], definition["label"], definition["href"],
+                     definition["title"]) for definition in environment.get("duplicate_refs", [])]
+    definitions = [definition[1:] for definition in sorted(definitions)]
     provisional = [heading for heading in headings if heading[2] == PROVISIONAL_HEADING]
     if len(provisional) > 1 or (where == "nc-head-commit" and not provisional):
         return (f"the file at the {where} has the heading \"{PROVISIONAL_HEADING}\" "
                 f"{len(provisional)} times, not once")
     others = [heading[:3] for heading in headings if heading[2] != PROVISIONAL_HEADING]
     if not provisional:
-        return lines, others, None, None
+        return lines, others, definitions, None, None
     start = provisional[0][3]
     end = next((heading[3] for heading in headings if heading[3] > start), len(lines))
     while end > start + 1 and not lines[end - 1].strip(" \t"):
         end -= 1
     while start > 0 and not lines[start - 1].strip(" \t"):
         start -= 1
-    return lines, others, start, end
+    return lines, others, definitions, start, end
 
 
 def provisional_additions_only_problem(parser, base_text, head_text):
@@ -300,7 +315,8 @@ def provisional_additions_only_problem(parser, base_text, head_text):
     head = provisional_section(parser, head_text, "nc-head-commit")
     if isinstance(head, str):
         return head
-    (base_lines, base_headings, base_start, base_end), (head_lines, head_headings, start, end) = base, head
+    ((base_lines, base_headings, base_definitions, base_start, base_end),
+     (head_lines, head_headings, head_definitions, start, end)) = base, head
     if base_headings != head_headings:
         first = next(index for index in range(max(len(base_headings), len(head_headings)))
                      if base_headings[index:index + 1] != head_headings[index:index + 1])
@@ -308,6 +324,14 @@ def provisional_additions_only_problem(parser, base_text, head_text):
                 f"heading {first + 1} is {(base_headings[first:first + 1] or ['none'])[0]!r} at the "
                 f"merge base and {(head_headings[first:first + 1] or ['none'])[0]!r} at the "
                 f"nc-head-commit")
+    if base_definitions != head_definitions:
+        first = next(index for index in range(max(len(base_definitions), len(head_definitions)))
+                     if base_definitions[index:index + 1] != head_definitions[index:index + 1])
+        return (f"it adds, removes or changes a Markdown link reference definition, such as "
+                f"\"[x]: https://example.com\", which renders as nothing and can change where "
+                f"other links in the file point: definition {first + 1} is "
+                f"{(base_definitions[first:first + 1] or ['none'])[0]!r} at the merge base and "
+                f"{(head_definitions[first:first + 1] or ['none'])[0]!r} at the nc-head-commit")
     base_section = base_lines[base_start:base_end] if base_start is not None else []
     base_outside = (base_lines[:base_start] + base_lines[base_end:] if base_start is not None
                     else base_lines)
@@ -320,6 +344,14 @@ def provisional_additions_only_problem(parser, base_text, head_text):
                 f"differs is {(base_outside[first:first + 1] or ['none'])[0][:120]!r} at the merge "
                 f"base and {(head_outside[first:first + 1] or ['none'])[0][:120]!r} at the "
                 f"nc-head-commit")
+    # The text outside the section is the same in both, so the section starts at the same place
+    # in it exactly when it starts on the same line.
+    if base_start is not None and base_start != start:
+        base_heading = base_lines.index(PROVISIONAL_HEADING, base_start) + 1
+        head_heading = head_lines.index(PROVISIONAL_HEADING, start) + 1
+        return (f"it moves the section \"{PROVISIONAL_HEADING}\", whose heading is on line "
+                f"{base_heading} of the file at the merge base and on line {head_heading} at the "
+                f"nc-head-commit, instead of only adding lines to it")
     head_section = iter(head_lines[start:end])
     if not all(line in head_section for line in base_section):
         return (f"it removes or changes a line of the section \"{PROVISIONAL_HEADING}\" instead "
@@ -334,8 +366,9 @@ def approval_body(path, section_is_new):
         section = f"adding lines to its existing \"{PROVISIONAL_HEADING[3:]}\" section"
     return (f"Approved by merge-lane-2's scheduled job {PROGRAM}. Prose tier: the pull request "
             f"changes only {path} (checked against the file at the merge base and at the "
-            f"nc-head-commit with a CommonMark parser: one file, no other text or heading "
-            f"changed), {section}, the form the user's task-to-GHI sweep asks for. No independent "
+            f"nc-head-commit with a CommonMark parser: one file, no other text, heading or link "
+            f"reference definition changed, the section not moved), {section}, the form the "
+            f"user's task-to-GHI sweep asks for. No independent "
             f"reviewer: prose under docs/ is silent to reviewers under CLAUDE.md's review-scope "
             f"rule.")
 
