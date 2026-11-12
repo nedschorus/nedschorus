@@ -3583,6 +3583,25 @@ sys.exit(module.main())
           probed == "unknown" and "codex" not in runner_probe.CLI_VERSION_CACHE,
           f"probed {probed!r}, cache {runner_probe.CLI_VERSION_CACHE!r}")
 
+    # The version probe starts in a session of its own, as an agent-binary's
+    # launch does, so a stop signal sent to the runner's process group cannot
+    # end the probe and leave "unknown" cached as the version.
+    runner_session = load_runner()
+    real_session_run = runner_session.subprocess.run
+    probe_keywords = []
+    try:
+        def recording_run(*a, **k):
+            probe_keywords.append(k)
+            return subprocess.CompletedProcess(a[0], 0, stdout="codex 1.2.3\n", stderr=None)
+        runner_session.subprocess.run = recording_run
+        session_probed = runner_session.runtime_cli_version("codex")
+    finally:
+        runner_session.subprocess.run = real_session_run
+    check("the version probe starts in a session of its own",
+          len(probe_keywords) == 1 and probe_keywords[0].get("start_new_session") is True
+          and session_probed == "codex-1.2.3",
+          f"probe keywords {probe_keywords!r}, probed {session_probed!r}")
+
     # Git failures the runner reads. A directory whose .git file names no git
     # directory makes every git command in it exit 128, as a broken review
     # copy would; each reader must raise, never answer from git's empty
