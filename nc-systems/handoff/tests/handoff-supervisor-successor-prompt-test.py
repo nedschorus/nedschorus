@@ -1486,6 +1486,25 @@ def run_overview_refresh_hierarchy_cases(workspace: Path):
           repr(due))
     project_checked = git_in(["rev-parse", "HEAD"], repository).stdout.strip()
     commit({project: overview("The project", "It does everything.", project_checked)}, "the project refreshed")
+    git_in(["rm", "--quiet", "-r", "nc-systems/cold-read"], repository)
+    git_in(["commit", "--quiet", "-m", "the system is removed"], repository)
+    main = publish()
+    project_line = due_lines().get("overview refresh due: project", "")
+    check("a directory removed from nc-systems/ makes the project overview due, naming it",
+          f"{project_checked}..{main}, nc-systems/ lost cold-read — " in project_line, repr(project_line))
+    project_checked = git_in(["rev-parse", "HEAD"], repository).stdout.strip()
+    commit({project: overview("The project", "It does everything.", project_checked)}, "the project refreshed")
+    tools_checked = git_in(["rev-parse", "HEAD"], repository).stdout.strip()
+    commit({tools: overview("General tools", "Tools.", tools_checked)}, "the system refreshed")
+    git_in(["rm", "--quiet", wiki + "nedschorus-general-tools-explain-architecture-overview.md"], repository)
+    git_in(["commit", "--quiet", "-m", "a subsystem's overview is removed"], repository)
+    publish()
+    system_line = due_lines().get("overview refresh due: general-tools", "")
+    check("removing a subsystem's overview makes its system's overview due",
+          system_line.startswith("overview refresh due: general-tools — 1 commit(s) under nc-systems/general-tools/ "
+                                 "or adding or removing one of its subsystems' overviews"), repr(system_line))
+    project_checked = git_in(["rev-parse", "HEAD"], repository).stdout.strip()
+    commit({project: overview("The project", "It does everything.", project_checked)}, "the project refreshed")
     commit({tools: overview("General tools", "Tools, and more.", added),
             walk: overview("Walk", "Walks far.", added)}, "two Purposes change")
     main = publish()

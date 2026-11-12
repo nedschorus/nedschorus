@@ -1503,10 +1503,12 @@ def project_overview_refresh_due_reason_and_commit_listing_command(checked_commi
     """Return why the project overview is due and the command listing the commits, or None.
 
     It is due when a directory directly under nc-systems/ is added or removed, or a system's overview changes its Purpose."""
-    systems_then = {directory.rsplit("/", 1)[-1] for directory in overview_check_git_output(
-        ["ls-tree", "-d", "--name-only", checked_commit, "nc-systems/"], working_directory).splitlines()}
-    added = sorted(set(system_names) - systems_then)
-    removed = sorted(systems_then - set(system_names))
+    # Both sides read alike, so a directory the name pattern passes over is neither added nor removed.
+    systems_then, systems_now = ({directory.rsplit("/", 1)[-1] for directory in overview_check_git_output(
+        ["ls-tree", "-d", "--name-only", commit, "nc-systems/"], working_directory).splitlines()}
+        for commit in (checked_commit, main_commit_full))
+    added = sorted(systems_now - systems_then)
+    removed = sorted(systems_then - systems_now)
     wiki_files_by_commit = {commit: set(overview_check_git_output(
         ["ls-tree", "--name-only", commit, "docs/nedschorus-wiki/"], working_directory).splitlines())
         for commit in (checked_commit, main_commit_full)}
