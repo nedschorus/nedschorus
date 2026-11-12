@@ -1143,6 +1143,35 @@ found = reader.simple_commands("cat ${output:-<(tmux send-keys -t a b)} ${x:-`da
 check("a process substitution or backtick in a ${name:-...} default is read",
       [list(f) for f in found][:2] == [["tmux", "send-keys", "-t", "a", "b"], ["date"]]
       and all(f.child_shell for f in found[:2]), [(list(f), f.child_shell) for f in found])
+# Each expected list is what bash ran, logged by a command_not_found_handle, minus the echo.
+for command, expected in [
+    ("echo ${v:-`xb $(xc)`}", [["xc"], ["xb", "$(xc)"]]),
+    ("echo ${v:=`xb $(xc)`}", [["xc"], ["xb", "$(xc)"]]),
+    ("echo ${v:+`xb $(xc)`}", [["xc"], ["xb", "$(xc)"]]),
+    ("echo ${v#`xb $(xc)`}", [["xc"], ["xb", "$(xc)"]]),
+    ("echo ${v/x/`xb $(xc)`}", [["xc"], ["xb", "$(xc)"]]),
+    ("echo ${v:-${w:-`xb $(xc)`}}", [["xc"], ["xb", "$(xc)"]]),
+    ("echo ${v:-<(xb $(xc))}", [["xc"], ["xb", "$(xc)"]]),
+    # Inside double quotes the single quotes are text, so the backticks run.
+    ("echo \"${v:-'`xb $(xc)`'}\"", [["xc"], ["xb", "$(xc)"]]),
+    ("echo ${v:-'`xb`'}", []),
+    ("echo \"${v:-<(xb)}\"", []),
+    # Inside ${ } a # after a blank starts no comment.
+    ("echo ${v:-a #$(xc) `xb`}", [["xc"], ["xb"]]),
+    # tree-sitter-bash reads this ${ } as an ERROR node.
+    ("echo ${v:-`xa \\`xb $(xc)\\``}; xe", [["xc"], ["xb", "$(xc)"], ["xa", "`xb $(xc)`"], ["xe"]]),
+    # A heredoc body is read as if double-quoted.
+    ("cat <<E\n${v:-'`xb`'} ${v:-<(xc)} ${v:-a #`xd`}\nE", [["xb"], ["xd"], ["cat"]]),
+    ("cat <<E\n${v:-`xb $(xc)`} ${w:-`xd`}\nE", [["xc"], ["xb", "$(xc)"], ["xd"], ["cat"]]),
+]:
+    found = [list(f) for f in reader.simple_commands(command) if f[:1] != ["echo"]]
+    check(f"{command!r} runs the commands bash runs inside its ${{ }}", found == expected, found)
+found = [list(f) for f in reader.simple_commands("echo ${v:-`xb $(xc)`}")]
+check("the echo that the text inside ${ } is read again with is not a command",
+      found == [["xc"], ["xb", "$(xc)"], ["echo", "${v:-`xb $(xc)`}"]], found)
+found = reader.simple_commands("echo ${v:-`xa`} ${w:-`xb`}")
+check("commands read again inside two ${ } run in different child shells",
+      found[0].child_shell != found[1].child_shell, [(list(f), f.child_shell) for f in found])
 
 # --- what bash rejects, and depth ---
 check("a line bash rejects for an unclosed quote yields no command after the quote",
