@@ -228,12 +228,6 @@ def run_unit_cases():
           result("VERDICT 2 supported: a\nCOUNTS supported=1 contradicted=0 unsupported=0\n").startswith("malformed: the VERDICT lines"))
     check("no VERDICT line is malformed", result("I could not check it.\n") == "malformed: no VERDICT line")
     check("a missing COUNTS line is malformed", result("VERDICT 1 supported: a\n") == "malformed: 0 COUNTS lines, not one")
-    check("the how-to page matches the template, so callers must check nc-systems/<system>",
-          claim_check.nc_architecture_overview_described_system_name_from_page_path(
-              "docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md") == "how-to-write-an")
-    check("a proposed-improvements file beside an overview is not an overview path",
-          claim_check.nc_architecture_overview_described_system_name_from_page_path(
-              "docs/nedschorus-wiki/nedschorus-handoff-architecture-overview-proposed-improvements-or-changes-x.md") is None)
 
 
 def last_stdout_line(result):
@@ -619,6 +613,16 @@ def run_program_cases(fixture):
                             env=fixture.environment, capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
     check("a path with no nc-systems/<system> directory is refused as not an overview",
           result.returncode == 1 and "is not an nc-architecture-overview" in result.stderr, result.stderr)
+    fixture.write("nc-systems/example/part/tool.py", "y = 1\n")
+    fixture.commit("a subsystem")
+    for level, path in (("the project overview", "docs/nedschorus-wiki/nedschorus-project-architecture-overview.md"),
+                        ("a subsystem's overview", "docs/nedschorus-wiki/nedschorus-example-part-architecture-overview.md")):
+        result = subprocess.run([sys.executable, str(PROGRAM), "--overview", path,
+                                 "--report-directory", str(fixture.reports)], cwd=fixture.repository,
+                                env=fixture.environment, capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
+        check(f"{level} is taken for an overview, and refused only because it is not committed",
+              result.returncode == 1 and "is not an nc-architecture-overview" not in result.stderr
+              and f"{path} is not in" in result.stderr, result.stderr)
 
     fixture.commit_overview(checked_against=False)
     result = fixture.run()

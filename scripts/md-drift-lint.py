@@ -32,10 +32,10 @@ Checks, per file type:
           JSON that parsers resolve silently: the second value wins and an
           edit to the first does nothing)
 
-An nc-architecture-overview, a file at the path
+An nc-architecture-overview, a file at a path
 scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py
-gives for a system with a directory under nc-systems/, gets the overview
-checks of docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md
+gives for the project, or for a system or subsystem with a directory under
+nc-systems/, gets the overview checks of docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md
 too, when this script is run (a program that calls lint_markdown() gets them
 only by asking):
         - a component written "`<path>`, a `<event>` hook", or with a name
@@ -50,9 +50,10 @@ only by asking):
           "## Planned work" is written
           "- GHI [<title>](https://github.com/nedschorus/nedschorus/issues/<number>)",
           and the GHI is open on GitHub with that title
-        and, as a note that is not a finding, each program (.py, .sh, or a
-        file starting "#!") under nc-systems/<system>/, outside tests/, whose
-        file name the overview does not contain.
+        and, for a system's or subsystem's overview, as a note that is not a
+        finding, each program (.py, .sh, or a file starting "#!") under its
+        directory, outside tests/ and outside any subsystem that has an
+        overview of its own, whose file name the overview does not contain.
 
 Usage:
   scripts/md-drift-lint.py FILE [FILE ...]
@@ -88,9 +89,7 @@ def _load_architecture_overview_path_reader():
     return module
 
 
-ARCHITECTURE_OVERVIEW_PATH = re.compile(
-    re.escape(_load_architecture_overview_path_reader().PATH_TEMPLATE).replace(
-        re.escape("{system}"), r"(?P<system>[^/]+)"))
+architecture_overview_path_reader = _load_architecture_overview_path_reader()
 
 PATH_EXTENSIONS = (".py", ".md", ".json", ".sh", ".toml", ".yml", ".yaml", ".txt", ".jsonl")
 
@@ -375,17 +374,15 @@ def check_markdown_links(line: str, md_path: Path, repo_root: Path):
             yield f"link target does not exist: {bare}"
 
 
-def architecture_overview_system(path: Path, repo_root: Path):
-    """Return the system an nc-architecture-overview at path describes, or None."""
+def architecture_overview_level_and_code_directory(path: Path, repo_root: Path):
+    """Return (level, code directory) for an nc-architecture-overview at path,
+    as architecture_overview_level_and_described_code_directory_from_path() gives them, or None."""
     try:
         relative = path.resolve().relative_to(repo_root.resolve()).as_posix()
     except ValueError:
         return None
-    match = ARCHITECTURE_OVERVIEW_PATH.fullmatch(relative)
-    # The template alone also matches nedschorus-how-to-write-an-architecture-overview.md.
-    if match is None or not (repo_root / "nc-systems" / match.group("system")).is_dir():
-        return None
-    return match.group("system")
+    return architecture_overview_path_reader.architecture_overview_level_and_described_code_directory_from_path(
+        relative, lambda directory: (repo_root / directory).is_dir())
 
 
 HOOK_COMPONENT = re.compile(
@@ -553,18 +550,29 @@ def is_program(path: Path) -> bool:
 
 
 def architecture_overview_unnamed_programs(path: Path, repo_root: Path):
-    """Return the programs under the overview's nc-systems/<system>/, outside
-    tests/, whose file name the overview does not contain."""
-    system = architecture_overview_system(path, repo_root)
-    if system is None:
+    """Return the programs under a system's or subsystem's overview's directory,
+    outside tests/ and outside subsystems with an overview of their own, whose
+    file name the overview does not contain."""
+    level_and_code_directory = architecture_overview_level_and_code_directory(path, repo_root)
+    if level_and_code_directory is None or level_and_code_directory[1] is None:
         return []
-    system_directory = repo_root / "nc-systems" / system
+    level, code_directory = level_and_code_directory
+    system_directory = repo_root / code_directory
+    # The system's overview gives such a subsystem one sentence and a link, not its files.
+    subsystems_with_overviews = set()
+    if level == "system":
+        system = system_directory.name
+        subsystems_with_overviews = {
+            subsystem.name for subsystem in system_directory.iterdir()
+            if subsystem.is_dir() and (repo_root / architecture_overview_path_reader.SUBSYSTEM_ARCHITECTURE_OVERVIEW_PATH_TEMPLATE.format(
+                system=system, subsystem=subsystem.name)).is_file()}
     text = path.read_text(encoding="utf-8")
     unnamed = []
     for candidate in sorted(system_directory.rglob("*")):
         parts = candidate.relative_to(system_directory).parts
         if (not candidate.is_file() or "tests" in parts[:-1]
-                or "__pycache__" in parts or not is_program(candidate)):
+                or "__pycache__" in parts or not is_program(candidate)
+                or parts[0] in subsystems_with_overviews):
             continue
         # The lookbehind keeps handoff-supervisor.py from naming supervisor.py.
         if not re.search(rf"(?<![\w.-]){re.escape(candidate.name)}(?![\w-])", text):
@@ -610,7 +618,7 @@ def lint_markdown(path: Path, repo_root: Path, architecture_overview_checks=Fals
         return
     lines = path.read_text(encoding="utf-8").splitlines()
     overview = (architecture_overview_checks
-                and architecture_overview_system(path, repo_root) is not None)
+                and architecture_overview_level_and_code_directory(path, repo_root) is not None)
     for line_number, line in lines_outside_fenced_code_blocks(lines):
         if any(marker in line for marker in HISTORY_MARKERS + FOREIGN_ROOT_MARKERS):
             checks = (check_dates(line),)

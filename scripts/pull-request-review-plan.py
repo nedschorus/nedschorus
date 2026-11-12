@@ -92,8 +92,9 @@ prompt and one the plan lists with no old text, such as a prompt moved into
 another string.
 
 Rule 4: a pull request that adds or changes an nc-architecture-overview, a
-file at the path scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py
-gives for a directory under nc-systems/ at the head, is refused, with exit 1
+file at a path scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py
+gives for the project, or for a system or subsystem whose directory under
+nc-systems/ is at the head, is refused, with exit 1
 and no plan, until the newest claim-check report for the overview's text at
 the head says every claim is supported, or that no must-fix claim remains.
 nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py
@@ -102,8 +103,8 @@ writes the reports, keyed by the overview's blob, under
 overview-write-architecture-overview-claim-check-reports by default.
 
 The code an overview describes is every path its Components section names in
-backticks, whatever the path's extension, and every file under
-nc-systems/<system>/ other than a .md file. Rule 4 also refuses such a pull
+backticks, whatever the path's extension, and every file under the system's
+or subsystem's directory other than a .md file. Rule 4 also refuses such a pull
 request in either of these cases:
   1. The commit the overview's **Checked against:** line names is on
      origin/main, and the pull request changes code the overview describes.
@@ -868,17 +869,18 @@ def merged_tree_against_origin_main(repository, head):
     return {"tree": None, "conflicting_paths": [], "error": first_output_line(result.stderr)}
 
 
-def changed_architecture_overview_paths_and_systems(repository, head, changed_files):
-    """(path, system) for each nc-architecture-overview the pull request adds or
-    changes whose system has a directory under nc-systems/ at head."""
+def changed_architecture_overview_paths_and_code_directories(repository, head, changed_files):
+    """(path, code directory) for each nc-architecture-overview the pull request
+    adds or changes, as at head; the project overview's code directory is None."""
     overviews = []
     for entry in changed_files:
-        system = overview_claim_check.nc_architecture_overview_described_system_name_from_page_path(entry["path"])
-        if entry["status"] == "D" or system is None:
+        if entry["status"] == "D":
             continue
-        if not git_result_or_refuse(repository, "ls-tree", "-d", "--name-only", head, f"nc-systems/{system}").stdout.strip():
-            continue
-        overviews.append((entry["path"], system))
+        level_and_code_directory = overview_path_reader.architecture_overview_level_and_described_code_directory_from_path(
+            entry["path"], lambda directory: bool(git_result_or_refuse(
+                repository, "ls-tree", "-d", "--name-only", head, directory).stdout.strip()))
+        if level_and_code_directory is not None:
+            overviews.append((entry["path"], level_and_code_directory[1]))
     return overviews
 
 
@@ -895,8 +897,9 @@ def architecture_overview_component_paths(overview_text):
     return paths
 
 
-def path_is_architecture_overview_described_code(path, system, component_paths):
-    if path.startswith(f"nc-systems/{system}/") and not path.endswith(".md"):
+def path_is_architecture_overview_described_code(path, code_directory, component_paths):
+    # The project overview has no directory of its own: its components are the systems' overviews.
+    if code_directory is not None and path.startswith(f"{code_directory}/") and not path.endswith(".md"):
         return True
     return any(path == component or path.startswith(component + "/") for component in component_paths)
 
@@ -906,7 +909,7 @@ def architecture_overview_checked_against_commit_problems(repository, head, chan
     its **Checked against:** commit does not hold the code the overview
     describes at head; an empty list lets the plan go on."""
     problems = []
-    for path, system in changed_architecture_overview_paths_and_systems(repository, head, changed_files):
+    for path, code_directory in changed_architecture_overview_paths_and_code_directories(repository, head, changed_files):
         text = required_git_output(repository, "show", f"{head}:{path}")
         named = overview_path_reader.checked_against_commit(text)
         # An overview with no such line is refused by the claim check, which names the fix.
@@ -917,7 +920,7 @@ def architecture_overview_checked_against_commit_problems(repository, head, chan
         if named_is_present and commit_is_ancestor_of(repository, named, "refs/remotes/origin/main"):
             # Main's own commits after the named one are a refresh's concern; only this pull request's are checked.
             changed_here = sorted(entry["path"] for entry in changed_files
-                                  if path_is_architecture_overview_described_code(entry["path"], system, component_paths))
+                                  if path_is_architecture_overview_described_code(entry["path"], code_directory, component_paths))
             if changed_here:
                 problems.append({"path": path, "named": named, "named_is_on_main": True, "later_changed_paths": changed_here})
             continue
@@ -928,7 +931,7 @@ def architecture_overview_checked_against_commit_problems(repository, head, chan
         changed_since = git_result_or_refuse(repository, "diff", "--no-renames", "--name-only", "-z",
                                              named, head).stdout.split("\0")
         later = sorted(changed for changed in changed_since
-                       if changed and path_is_architecture_overview_described_code(changed, system, component_paths))
+                       if changed and path_is_architecture_overview_described_code(changed, code_directory, component_paths))
         if later:
             problems.append({"path": path, "named": named, "named_is_on_main": False, "later_changed_paths": later})
     return problems
@@ -968,7 +971,7 @@ def architecture_overview_claim_check_shortfalls(repository, head, changed_files
     shows a must-fix claim remaining, or is missing or malformed; an empty list
     lets the plan go on."""
     shortfalls = []
-    for path, _system in changed_architecture_overview_paths_and_systems(repository, head, changed_files):
+    for path, _code_directory in changed_architecture_overview_paths_and_code_directories(repository, head, changed_files):
         blob = required_git_output(repository, "rev-parse", f"{head}:{path}")
         newest = overview_claim_check.find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob(report_directory, path, blob)
         if newest is None or newest[1] not in (

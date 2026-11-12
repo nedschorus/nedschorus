@@ -127,9 +127,6 @@ LOG_STORE_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedschor
 OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_REPORT_DIRECTORY = LOG_STORE_DIRECTORY / "overview-write-architecture-overview-claim-check-reports"
 HOW_TO_PAGE = "docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md"
 
-ARCHITECTURE_OVERVIEW_PATH = re.compile(
-    re.escape(overview_path_reader.PATH_TEMPLATE).replace(re.escape("{system}"), r"(?P<system>[^/]+)"))
-
 # The fresh-agent checks claims against code; a weaker model misses confident errors, the defect this check exists for.
 FRESH_AGENT_MODEL = "claude-opus-5-5"
 FRESH_AGENT_EFFORT = "high"
@@ -253,15 +250,6 @@ class RefusingArgumentParser(argparse.ArgumentParser):
 
     def error(self, message):
         raise ClaimCheckRefusal(f"{message}\nTo see the arguments: run this with --help.")
-
-
-def nc_architecture_overview_described_system_name_from_page_path(path):
-    """Return the <system> of a path the page gives for an overview, or None.
-
-    The template alone also matches the how-to page itself; a caller checks
-    that nc-systems/<system> exists at the revision it reads."""
-    match = ARCHITECTURE_OVERVIEW_PATH.fullmatch(path)
-    return match.group("system") if match else None
 
 
 def overview_write_architecture_overview_claim_check_report_directory_for_overview(report_directory, overview_path):
@@ -490,13 +478,16 @@ def check_overview_claims(arguments):
                                 "To check an overview: run this from a checkout of this repository.")
     repository = Path(top_level.stdout.strip())
     overview_path = arguments.overview
-    system = nc_architecture_overview_described_system_name_from_page_path(overview_path)
     revision = run_git(repository, "rev-parse", "--verify", f"{arguments.revision}^{{commit}}").stdout.strip()
-    if system is None or not run_git(repository, "ls-tree", "-d", "--name-only", revision,
-                                     f"nc-systems/{system}").stdout.strip():
+    if overview_path_reader.architecture_overview_level_and_described_code_directory_from_path(
+            overview_path, lambda directory: bool(run_git(repository, "ls-tree", "-d", "--name-only", revision,
+                                                          directory).stdout.strip())) is None:
         raise ClaimCheckRefusal(
             f"{overview_path} is not an nc-architecture-overview at {revision[:12]}: an overview is at "
-            f"{overview_path_reader.PATH_TEMPLATE}, where nc-systems/<system> is a directory.\n"
+            f"{overview_path_reader.PROJECT_ARCHITECTURE_OVERVIEW_PATH}, at {overview_path_reader.PATH_TEMPLATE}, "
+            "where nc-systems/<system> is a directory, or at "
+            f"{overview_path_reader.SUBSYSTEM_ARCHITECTURE_OVERVIEW_PATH_TEMPLATE}, where nc-systems/<system>/<subsystem> "
+            "is a directory.\n"
             "To check an overview: pass its path, relative to the top of the checkout, with --overview.")
     blob = run_git(repository, "rev-parse", "--verify", "--quiet", f"{revision}:{overview_path}", check=False)
     if blob.returncode:

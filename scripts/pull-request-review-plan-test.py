@@ -1405,6 +1405,36 @@ def run_architecture_overview_checked_against_commit_cases(fixture):
     check("a later commit adding a program under nc-systems/<system>/ that the overview does not list is refused",
           refused_for_checked_against(result) and "nc-systems/example/unlisted-program.py." in result.stderr, result.stderr)
 
+    subsystem_overview_path = "docs/nedschorus-wiki/nedschorus-example-part-architecture-overview.md"
+    fixture.reset_fixture_to_base()
+    code_commit = change_and_commit("nc-systems/example/part/part-program.py", 'print("first")\n')
+    write_overview_with_report(code_commit, path=subsystem_overview_path)
+    fixture.configure_github_answers(fixture.commit_fixture_changes("the subsystem's overview"))
+    change_and_commit("nc-systems/example/unlisted-program.py", 'print("new")\n')
+    result = fixture.run_review_plan(*flag)
+    check("a subsystem's overview is not refused for a later change in its system outside the subsystem's directory",
+          result.returncode == 0, result.stderr)
+    change_and_commit("nc-systems/example/part/part-program.py", 'print("second")\n')
+    result = fixture.run_review_plan(*flag)
+    check("a subsystem's overview is refused for a later change in the subsystem's directory",
+          refused_for_checked_against(result, subsystem_overview_path)
+          and "nc-systems/example/part/part-program.py." in result.stderr, result.stderr)
+
+    project_overview_path = "docs/nedschorus-wiki/nedschorus-project-architecture-overview.md"
+    fixture.reset_fixture_to_base()
+    code_commit = change_and_commit("nc-systems/example/unlisted-program.py", 'print("first")\n')
+    write_overview_with_report(code_commit, path=project_overview_path)
+    fixture.configure_github_answers(fixture.commit_fixture_changes("the project overview"))
+    change_and_commit("nc-systems/example/unlisted-program.py", 'print("second")\n')
+    result = fixture.run_review_plan(*flag)
+    check("the project overview is not refused for a later change under nc-systems/ that its Components section does not name",
+          result.returncode == 0, result.stderr)
+    change_and_commit("scripts/example-program.py", "VALUE = 'later'\n")
+    result = fixture.run_review_plan(*flag)
+    check("the project overview is refused for a later change to a path its Components section names",
+          refused_for_checked_against(result, project_overview_path)
+          and "scripts/example-program.py." in result.stderr, result.stderr)
+
     fixture.reset_fixture_to_base()
     side_commit = change_and_commit("nc-systems/example/parent-program.py", 'print("side")\n')
     fixture.git_command("checkout", "-q", "--detach", fixture.base_head)

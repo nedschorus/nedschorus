@@ -765,6 +765,39 @@ with tempfile.TemporaryDirectory() as overview_workspace:
                       "nc-systems/demo/unnamed-program.py",
                       "nc-systems/demo/unnamed-runner.bash"], str(unnamed))
 
+    # The hierarchy: the project overview, and a subsystem's overview, get the
+    # overview checks too; a subsystem with its own overview drops out of its
+    # system's note, and its own overview's note covers it instead.
+    unregistered = "- `scripts/unregistered-hook.py`, a `Stop` hook: does a thing.\n"
+    unregistered_finding = ["hook scripts/unregistered-hook.py is not registered under "
+                            "Stop in .claude/settings.json"]
+    project_name = "docs/nedschorus-wiki/nedschorus-project-architecture-overview.md"
+    findings = problems_for(unregistered, root, project_name)
+    check("the project overview gets the overview checks, with no nc-systems/project",
+          findings == unregistered_finding, str(findings))
+    check("the project overview gets no note of unnamed programs",
+          lint.architecture_overview_unnamed_programs(root / project_name, root) == [])
+    for name in ("covered-part", "uncovered-part"):
+        (system / name).mkdir()
+        (system / name / f"{name}-program.py").write_text("", encoding="utf-8")
+    subsystem_name = "docs/nedschorus-wiki/nedschorus-demo-covered-part-architecture-overview.md"
+    findings = problems_for(unregistered, root, subsystem_name)
+    check("a subsystem's overview gets the overview checks",
+          findings == unregistered_finding, str(findings))
+    unnamed = lint.architecture_overview_unnamed_programs(root / subsystem_name, root)
+    check("a subsystem's overview's note lists only the programs in the subsystem's directory",
+          unnamed == ["nc-systems/demo/covered-part/covered-part-program.py"], str(unnamed))
+    unnamed = lint.architecture_overview_unnamed_programs(overview, root)
+    check("a system's overview's note leaves out a subsystem with an overview of its own, "
+          "and keeps one without",
+          "nc-systems/demo/uncovered-part/uncovered-part-program.py" in unnamed
+          and not any("covered-part/" in program and "uncovered" not in program for program in unnamed),
+          str(unnamed))
+    findings = problems_for(unregistered, root,
+                            "docs/nedschorus-wiki/nedschorus-demo-absent-part-architecture-overview.md")
+    check("an overview-shaped name with no directory behind it gets no overview checks",
+          findings == [], str(findings))
+
 with tempfile.TemporaryDirectory() as unsettled_workspace:
     unsettled_root = Path(unsettled_workspace)
     overview_repository(unsettled_root)
