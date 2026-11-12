@@ -922,6 +922,7 @@ with tempfile.TemporaryDirectory() as workspace:
             f"until grep -q done out.txt; do sleep 5; done; {work}",
             f"until grep -q done out.txt && {work}; do sleep 5; done",
             f"end=$(( $(date +%s) + 1200 )); while [ $(date +%s) -lt $end ]; do bash {waiter}; {work}; done",
+            f"end=$(( $(date +%s) + 1200 )); while [ $(date +%s) -lt $end ]; do {work}; bash {waiter}; done",
             f"bash {waiter} 2>&1 | {work}",
             f"{work};{waiter}",
             f"X=$({work}); sleep 5",
@@ -943,7 +944,8 @@ with tempfile.TemporaryDirectory() as workspace:
         check(f"work inside or around a wait, {command!r}, has the no-match wait-limit",
               seconds == 75 * 60, seconds)
     # A variable name the pattern could split many ways made a failed match take minutes.
-    many_variables = "export A=$CLAUDE_PROJECT_DIR/a; " * 12 + work
+    # Five repetitions take about 9 s when that returns, so this case fails by name, not by timeout.
+    many_variables = "export A=$CLAUDE_PROJECT_DIR/a; " * 5 + work
     started = time.monotonic()
     seconds = hook.background_task_kind_wait_limit_seconds_from_command(many_variables)
     check("a command of many variables that matches no kind is read within a second",
