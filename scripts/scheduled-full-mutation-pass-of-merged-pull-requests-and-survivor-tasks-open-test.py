@@ -960,6 +960,24 @@ def run_first_pass_and_second_pass_cases():
               f"rc={completed.returncode} tasks={job_failure_tasks(fixture)} "
               f"err={completed.stderr}")
 
+        # The second pass drops test_one_merge's task, so only a direct call shows whether a
+        # second pass merge past the limit that judged nothing new gives one.
+        state_with_both_waiting()
+        fixture.plan_file.write_text(json.dumps({f"{newer} second pass": {"sleep": 30}}))
+        arguments = job.parse_arguments(fixture.options())
+        arguments.clone = arguments.clone.resolve()
+        os.environ[PLAN_VARIABLE] = str(fixture.plan_file)
+        try:
+            with tempfile.TemporaryDirectory() as second_pass_scratch:
+                result = job.test_one_merge(
+                    arguments, fixture.state_json(), fixture.state / job.STATE_FILE_NAME, newer,
+                    [], "the record", Path(second_pass_scratch), 100.0, 1.0)
+        finally:
+            del os.environ[PLAN_VARIABLE]
+        check("a second pass merge past the limit that judged no new mutant is carried on with "
+              "no job failure task, unlike the same merge in the first pass",
+              result == (True, None), result)
+
         state_with_both_waiting()
         completed = fixture.run(
             {}, "--scheduled-jobs-on-each-machine-json-file",

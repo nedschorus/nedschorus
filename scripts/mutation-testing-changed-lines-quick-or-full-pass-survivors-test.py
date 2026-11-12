@@ -1598,12 +1598,14 @@ def run_parallel_mutant_workers_case_with_real_cosmic_ray():
 
 
 def mutants_with_a_result_in_kept_sessions(sessions):
-    """(file, operator, line) of each mutant with a result, other than one a filter skipped."""
+    """(file, operator, line, occurrence, column) of each mutant with a result, other than one
+    a filter skipped; two mutants of one operator on one line differ only by occurrence."""
     found = set()
     for session in sorted(Path(sessions).glob("*.sqlite")):
         connection = sqlite3.connect(session)
         found |= set(connection.execute(
-            "SELECT module_path, operator_name, start_pos_row FROM mutation_specs JOIN "
+            "SELECT module_path, operator_name, start_pos_row, occurrence, start_pos_col "
+            "FROM mutation_specs JOIN "
             "work_results USING (job_id) WHERE worker_outcome != 'SKIPPED'"))
         connection.close()
     return found
@@ -1732,7 +1734,7 @@ def run_mutants_run_at_most_and_no_mutant_started_after_unix_time_cases():
               steps[:9] == ["init", "cr-filter-git", "cr-filter-pragma"] * 3
               and sorted(steps[9:]) == sorted(["dump"] + ["baseline", "dump", "python", "dump"] * 2)
               and " ".join(steps[9:]).count("baseline dump python dump") == 2
-              and len(first_two) == 2 and len({path for path, _, _ in first_two}) == 2,
+              and len(first_two) == 2 and len({path for path, *_ in first_two}) == 2,
               f"rc={completed.returncode} steps={steps} ran={first_two} err={completed.stderr}")
         check("the workers are given the job id of each chosen mutant, one for each of the two "
               "files, and no time after which no mutant starts",
@@ -1765,7 +1767,7 @@ def run_mutants_run_at_most_and_no_mutant_started_after_unix_time_cases():
               "run, shared among the three files",
               completed.returncode == 1 and len(asked_for) == 3 and first_two < five
               and len(five) == 5
-              and sorted(sum(1 for path, _, _ in five if path == each)
+              and sorted(sum(1 for path, *_ in five if path == each)
                          for each in init_sessions) == [1, 2, 2]
               and written["mutants_not_run_count"] == 3,
               f"rc={completed.returncode} asked_for={asked_for} five={five} "
@@ -1872,7 +1874,7 @@ def run_mutants_run_at_most_case_with_real_cosmic_ray():
         check("with the real cosmic-ray: at most 2 mutants judges one mutant of each of the two "
               "files; the same number again judges no other; 3 judges one more; and a run with "
               "no number judges the rest, none twice",
-              len(judged[0]) == 2 and len({path for path, _, _ in judged[0]}) == 2
+              len(judged[0]) == 2 and len({path for path, *_ in judged[0]}) == 2
               and judged[1] == judged[0] and len(judged[2]) == 3 and judged[0] < judged[2]
               and judged[2] < judged[3] and " 0 not run" in summaries[3][0]
               and " 0 errored" in summaries[3][0], (judged, summaries))
