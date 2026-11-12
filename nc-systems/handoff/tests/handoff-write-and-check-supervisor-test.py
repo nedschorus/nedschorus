@@ -1853,8 +1853,23 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
     check("over ssh, an rsync that cannot write the store keeps every completed task",
           fixture.present("1.json") and "kept every completed task" in line and "exited 23" in line, line)
     check("over ssh, an rsync that cannot write the store gets the log-store remedy, not the ssh remedy",
-          "could not be written or read" in line and f"`ls -ld {fixture.store_list_directory}`" in line
+          "could not be updated" in line and f"`ls -ld {fixture.store_list_directory}`" in line
           and "ssh stubhost true" not in line, line)
+
+    # rsync exits 3 and 11 after connecting too, and need the same remedy as 23.
+    for exit_code in (3, 11):
+        fixture = PruneFixture(workspace, f"remote-rsync-exit-{exit_code}")
+        fixture.task("1.json", task_bytes(1, "completed"), stored=False)
+        stubs = stub_ssh_directory(fixture.root / f"remote-rsync-exit-{exit_code}-stubs", RUN_REMOTE_COMMAND_HERE_SSH_STUB)
+        (stubs / "rsync").write_text(f"#!/bin/sh\nexit {exit_code}\n", encoding="utf-8")
+        (stubs / "rsync").chmod(0o755)
+        line = prune_line(fixture.run(
+            "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
+            PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+        check(f"over ssh, an rsync that exits {exit_code} keeps every completed task and gets the log-store remedy, "
+              "not the ssh remedy",
+              fixture.present("1.json") and f"exited {exit_code}" in line and "could not be updated" in line
+              and f"`ls -ld {fixture.store_list_directory}`" in line and "ssh stubhost true" not in line, line)
 
     stubs = stub_ssh_directory(workspace / "prune-silent-stubs", "sleep 5\n")
     original_path, original_timeout = os.environ.get("PATH", ""), writer.LOG_STORE_TASK_FILE_COPIES_HASH_SSH_TIMEOUT_SECONDS

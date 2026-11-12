@@ -787,9 +787,9 @@ def prune_completed_tasks_unguarded(next_step_text: str) -> str:
             failed, remedy = "read", (f"On ned-box, run `ls -l` on {copies} in "
                                       f"{store_list_directory} and make each a file nedlern can read")
         else:
-            failed, remedy = "written or read", (
-                "rsync's message names the file that did not transfer. On ned-box, run "
-                f"`ls -ld {store_list_directory}` and `df -h {store_list_directory}` to check that nedlern "
+            failed, remedy = "updated", (
+                "rsync's message, in the parentheses, says what failed. Check on ned-box yourself, with "
+                f"`ls -ld {store_list_directory}` and `df -h {store_list_directory}`, that nedlern "
                 "can write there and the disk has room")
         return (f"kept every completed task in {list_name}, because ned-box answered but the "
                 f"log-store copy at {store_text} could not be {failed} ({error}). {remedy}; the next "
