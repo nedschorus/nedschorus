@@ -640,6 +640,31 @@ def run_cases_on_ned_box(workspace: Path):
             raised = True
         check(f"pull_request_head_test_run_test_log_split_into_records refuses a test log that is not whole "
               f"records: {text[-40:]!r}", raised)
+    # CPython shares one int object for each value up to 256, so only a longer log tells
+    # the loop's `at < len(lines)` from an identity test.
+    passing_record_line_count = record_of_the_passing_run.count("\n")
+    copies_past_256_lines = 256 // passing_record_line_count + 1
+    check("pull_request_head_test_run_test_log_split_into_records reads a test log of more than "
+          "256 lines to its end",
+          len(program.pull_request_head_test_run_test_log_split_into_records(
+              record_of_the_passing_run * copies_past_256_lines)) == copies_past_256_lines)
+    long_last_line = "y" * 250
+    not_ending_with_exit_code_record = record_of_the_passing_run.rsplit("\n", 2)[0] + "\n" + long_last_line + "\n"
+    for second_record, expected_parts in (
+            (zero_line_record, [f"line {passing_record_line_count + 1} says it has 0 lines"]),
+            (not_ending_with_exit_code_record,
+             [f"line {passing_record_line_count + 1} does not end",
+              f"line {2 * passing_record_line_count} is {long_last_line[:200]!r}"])):
+        try:
+            program.pull_request_head_test_run_test_log_split_into_records(
+                record_of_the_passing_run + second_record)
+            message = ""
+        except program.PullRequestHeadTestRunTestLogNotWholeRecordsError as error:
+            message = str(error)
+        check(f"a refusal of a test log's second record names the record's first line and, for a "
+              f"record that does not end with its exit code line, its last line's number and first "
+              f"200 characters: {expected_parts}",
+              all(part in message for part in expected_parts), message)
 
     # --- The two ways a later run used to replace an earlier result ---------------
     # A run told to select from the head itself selects no suite and passes.
