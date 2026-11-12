@@ -65,15 +65,16 @@ The description names a record by an absolute path that ends
 /cold-read-records/<record name>, as in
 nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/<record name>;
 the program drops any text before the path's first slash and reads the path on
-this machine. A string's new text as the agent reads it, the text its
-cold-read-fast-read target file would hold, matches when it equals a file under the record's target/
-directory once each run of whitespace in both is made one space and the ends
+the machine it runs on, so a record kept on ned-box is used only when the
+program runs on ned-box. A string's new text as the agent reads it, the text its
+cold-read-fast-read target file would hold, matches when it equals the contents
+of a file under the record's target/ directory once each run of whitespace in both is made one space and the ends
 are stripped; a text that is only part of such a file does not match. A
 record is used only when it holds its cold-read-fast-read report, because a
 read that failed leaves target/ and no report. A named record that is not a
 directory, holds no report or no target file, or cannot be read is listed in
-the plan with the reason, and its strings keep their commands.
-A target that cannot be
+the plan with the reason, and its strings keep their commands; such a record
+does not change the exit code. A target that cannot be
 written is marked in the plan, which leaves its message with no
 cold-read-fast-read command, so the program exits 3 after printing the plan.
 A string the collector's kind calls a prompt, text a program hands an agent as
@@ -219,7 +220,7 @@ DIFF_HUNK_HEADER_PATTERN = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))?
 REGISTERED_HOOK_PATH_PATTERN = re.compile(r'\$CLAUDE_PROJECT_DIR"?/([^"\s]+)')
 MARKDOWN_SECTION_HEADING_PATTERN = re.compile(r"^##\s")
 COLD_READ_RECORD_PATH_IN_DESCRIPTION_PATTERN = re.compile(
-    r"(/[^\s`'\"<>()\[\]]*/" + cold_read_record_names.RECORDS_DIRECTORY_NAME + r"/[^\s/`'\"<>()\[\],;:]+)")
+    r"(/[^\s`'\"<>()\[\],]*/" + cold_read_record_names.RECORDS_DIRECTORY_NAME + r"/[^\s/`'\"<>()\[\],;:]+)")
 COMPONENTS_SECTION_HEADING_PATTERN = re.compile(r"^##\s+Components\s*$")
 BACKTICKED_TEXT_PATTERN = re.compile(r"`([^`]+)`")
 # A component path is relative to the repository; this leaves out
@@ -699,10 +700,10 @@ def named_cold_read_records_with_target_texts(description):
     for path in dict.fromkeys(match.rstrip(".")
                               for match in COLD_READ_RECORD_PATH_IN_DESCRIPTION_PATTERN.findall(description or "")):
         record = Path(path)
-        report = cold_read_record_names.cold_read_record_file_path_prefixed_name_else_name_before_prefix(
-            record, cold_read_record_names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
         target_texts, problem = set(), None
         try:
+            report = cold_read_record_names.cold_read_record_file_path_prefixed_name_else_name_before_prefix(
+                record, cold_read_record_names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
             if not record.is_dir():
                 problem = "it is not a directory on this machine"
             elif not report.is_file():
