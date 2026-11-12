@@ -71,6 +71,14 @@ check("an f-string as additionalContext is reported with its placeholders and it
       [(entry["text"], entry["label"]) for entry in found]
       == [("f'hello {name}'", '"additionalContext" value in main()')], found)
 
+found = entries('def main(name, path):\n'
+                '    print(f"hello {name}")\n'
+                '    print("see " + path + " now")\n'
+                '    print("braces {as written}")\n')
+check("placeholder_value_source_code_texts holds an f-string's fields and a + chain's non-literal operands, "
+      "and is empty for a plain string literal",
+      [entry["placeholder_value_source_code_texts"] for entry in found] == [("{name}",), ("{path}",), ()], found)
+
 found = entries('X_MESSAGE = "suffix text"\noutput = {"additionalContext": X_MESSAGE}\n')
 check("a name with a message suffix used as additionalContext is reported once, at its assignment",
       [entry["label"] for entry in found] == ["X_MESSAGE ="], found)
