@@ -1347,6 +1347,20 @@ def case_follow_up_open_issue_printed_for_the_author(gate):
             and run.stdout.endswith(f"\n  {FOLLOW_UP_LINK} from the line `{NOT_FIXED_WITH_FOLLOW_UP}`\n")), run.summary()
 
 
+def case_follow_up_two_open_issues_printed_in_order_owner_in_capitals(gate):
+    first_link = "https://github.com/Nedschorus/nedschorus/issues/1154"
+    second_link = "https://github.com/nedschorus/nedschorus/issues/2078"
+    first = f"#root_cause_not_fixed the harness drops the variable. #follow_up {first_link}"
+    second = f"#root_cause_not_fixed a second cause stays. #follow_up {second_link}"
+    run = description_with_lines_run(
+        gate, [first, second],
+        [link_route("open issue", "repos/Nedschorus/nedschorus/issues/1154"),
+         link_route("open issue", "repos/nedschorus/nedschorus/issues/2078")])
+    return (passed_pinned_to(run, BASE_PR, BASE_APPROVAL["commit_id"])
+            and run.stdout.endswith(f"\n  {first_link} from the line `{first}`\n"
+                                    f"  {second_link} from the line `{second}`\n")), run.summary()
+
+
 def case_follow_up_open_issue_in_another_repository_not_printed(gate):
     return follow_up_passes_without_open_issues(
         gate, ["#root_cause_not_fixed the harness drops the variable. #follow_up "
@@ -1718,6 +1732,8 @@ CASES = [
      case_follow_up_link_states_that_pass),
     ("H8 a #follow_up link to an open issue in this repository is printed after the merge command",
      case_follow_up_open_issue_printed_for_the_author),
+    ("H8 two open issues, one linked with its owner in capitals, are both printed in order",
+     case_follow_up_two_open_issues_printed_in_order_owner_in_capitals),
     ("H8 a #follow_up link to an open issue in another repository passes and is not printed",
      case_follow_up_open_issue_in_another_repository_not_printed),
     ("H2 captured PR 1360's not-fixed line without #follow_up refuses",
@@ -1922,6 +1938,13 @@ MUTATIONS = [
      [('[ "$(tr \'[:upper:]\' \'[:lower:]\' <<<"$link_repo")" != "$REPO" ] || open_follow_up_issues',
        'false || open_follow_up_issues')],
      [case_follow_up_open_issue_in_another_repository_not_printed]),
+    ("an open issue's repository compared in its own letter case",
+     [("\"$(tr '[:upper:]' '[:lower:]' <<<\"$link_repo\")\" != \"$REPO\" ] || open_follow_up_issues",
+       '"$link_repo" != "$REPO" ] || open_follow_up_issues')],
+     [case_follow_up_two_open_issues_printed_in_order_owner_in_capitals]),
+    ("each open issue replacing the one before",
+     [('|| open_follow_up_issues+=', '|| open_follow_up_issues=')],
+     [case_follow_up_two_open_issues_printed_in_order_owner_in_capitals]),
     ("the open follow-up issues never printed",
      [('[ -z "$open_follow_up_issues" ] || printf', 'true || printf')],
      [case_follow_up_open_issue_printed_for_the_author]),
