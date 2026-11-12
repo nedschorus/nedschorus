@@ -45,7 +45,9 @@ makes a tool call after the nudge that opened the wait or has nothing to do (rul
 case only when no rule 2 message was sent on the wait, stops at a usage limit (rule 1), starts a
 new agent-session, or spends tokens after the user was told. So an agent-seat that answers each
 rule 3 or rule 5 message with a tool call and goes idle again is nudged again, and never
-escalated; one that answers a rule 2 message with a tool call and a fresh promise is escalated.
+escalated; one that answers a rule 2 message with a tool call and a fresh promise is escalated,
+because a tool call that ended a promise wait would let an agent-seat that makes a fresh promise
+at each rule 2 message be nudged again forever and never escalated.
 
 How it fails, and what the user sees: a headless agent-session that fails, is stopped, answers
 JSON code cannot use, or sends to the wrong entry or the wrong text; a message missing from the
