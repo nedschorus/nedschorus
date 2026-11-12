@@ -196,7 +196,7 @@ def read_review_file(path, account):
             f"has the verdict {verdict!r}; only {' and '.join(POSTED_VERDICTS)} are posted")
     if not isinstance(body, str) or not body.strip():
         raise ReviewFileUnusable("has no \"body\" text")
-    categorized = account == MERGE_LANE_ACCOUNT
+    categorized = account == MERGE_LANE_ACCOUNT  # pragma: no mutate, --github-account allows only mac-claude and ned-review-merge, and mac-claude sorts before ned-review-merge, so >= gives what == gives
     keys = {"path", "line", "body", "finding_category"} if categorized else {"path", "line", "body"}
     if not isinstance(comments, list) or not all(
             isinstance(comment, dict) and (set(comment) == keys or categorized and set(comment) == keys | {"nit"})
@@ -239,8 +239,8 @@ def read_review_file(path, account):
                 f"{review_comment_opening_mark_for_finding_category(marked[0], marked[2]).strip()}, the bold "
                 f"opening that names the finding's category; this program writes that mark from the comment's "
                 f"\"finding_category\" and \"nit\", so remove the mark from the start of its \"body\"")
-    if verdict == "REQUEST_CHANGES" and not any(
-            comment["finding_category"] == BLOCKING_CATEGORY for comment in comments):
+    if verdict == "REQUEST_CHANGES" and not any(  # pragma: no mutate, the verdict is APPROVE or REQUEST_CHANGES by now, and APPROVE sorts first, so >= gives what == gives
+            comment["finding_category"] == BLOCKING_CATEGORY for comment in comments):  # pragma: no mutate, every category is one of FINDING_CATEGORIES by now, and the other three sort before must-fix-now, so >= gives what == gives
         raise ReviewFileUnusable(
             f"has the verdict 'REQUEST_CHANGES' but no comment whose \"finding_category\" is "
             f"{BLOCKING_CATEGORY}; this program posts REQUEST_CHANGES only for a must-fix-now "
@@ -254,7 +254,7 @@ def review_comment_opening_mark_for_finding_category(category, nit=False):
     """The mark a comment of this finding_category opens with when posted, the nit mark for a nit."""
     if nit:
         return fix_round.NIT_MARK
-    if category == BLOCKING_CATEGORY:
+    if category == BLOCKING_CATEGORY:  # pragma: no mutate, every caller passes one of FINDING_CATEGORIES, and the other three sort before must-fix-now, so >= gives what == gives
         return BLOCKING_MARK
     return NON_BLOCKING_CATEGORY_MARK_FORMAT.format(category=category)
 
@@ -333,7 +333,7 @@ def with_outside_comments_in_body(body, comments, lines):
 
 def read_token(account):
     """Return the account's token, or raise GhFailed naming why it cannot be used."""
-    if account == MERGE_LANE_ACCOUNT:
+    if account == MERGE_LANE_ACCOUNT:  # pragma: no mutate, --github-account allows only mac-claude and ned-review-merge, and mac-claude sorts before ned-review-merge, so >= gives what == gives
         try:
             return common.read_merge_account_token()
         except common.MergeAccountTokenUnusable as error:
@@ -401,7 +401,7 @@ def main(argv=None):
     except ReviewFileUnusable as error:
         # merge-lane-2 writes its own file, so no reviewer's run is to blame and it can fix the file.
         print(NOT_POSTED.format(reason=f"the review file {arguments.review_file} {error}")
-              if account == MERGE_LANE_ACCOUNT
+              if account == MERGE_LANE_ACCOUNT  # pragma: no mutate, --github-account allows only mac-claude and ned-review-merge, and mac-claude sorts before ned-review-merge, so >= gives what == gives
               else REVIEW_FILE_UNUSABLE.format(path=arguments.review_file, reason=error),
               file=sys.stderr)
         return EXIT_NOT_POSTED
@@ -424,12 +424,13 @@ def main(argv=None):
         print(NOT_POSTED.format(reason=f"reading the pull request's diff failed: {reason_of(error)}"),
               file=sys.stderr)
         return EXIT_NOT_POSTED
-    if account == MERGE_LANE_ACCOUNT:
+    if account == MERGE_LANE_ACCOUNT:  # pragma: no mutate, --github-account allows only mac-claude and ned-review-merge, and mac-claude sorts before ned-review-merge, so >= gives what == gives
         verdict, body, comments = with_finding_category_marks(body, comments)
     body, inline_comments = with_outside_comments_in_body(body, comments, lines)
     moved_count = len(comments) - len(inline_comments)
     comments = inline_comments
-    event = (verdict if account == MERGE_LANE_ACCOUNT or author == MERGE_LANE_ACCOUNT
+    event = (verdict if account == MERGE_LANE_ACCOUNT  # pragma: no mutate, --github-account allows only mac-claude and ned-review-merge, and mac-claude sorts before ned-review-merge, so >= gives what == gives
+             or author == MERGE_LANE_ACCOUNT
              else "COMMENT")
     review_id = None
     try:
