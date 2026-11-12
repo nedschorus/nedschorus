@@ -353,8 +353,8 @@ def branch_entries(repo, branches, by_head_branch, by_head_commit, deleted,
             deletion_failure = (f"; every commit is on origin/main as a cherry-picked copy, but "
                                 f"`git branch -D` exited {result.returncode}: "
                                 f"{' '.join(result.stderr.split())[:200] or 'no error text'}")
-        count = git_lines(repo, "rev-list", "--count", f"{ORIGIN_MAIN}..{tip}")[0]
-        subject = git_lines(repo, "log", "-1", "--format=%s", tip)[0]
+        count = git_lines(repo, "rev-list", "--count", f"{ORIGIN_MAIN}..{tip}")[0]  # pragma: no mutate, --count prints one line, so [-1] picks the same line as [0]
+        subject = git_lines(repo, "log", "-1", "--format=%s", tip)[0]  # pragma: no mutate, %s prints the subject on one line, so [-1] picks the same line as [0]
         command = delete_command_text(
             repo, clean_worktrees_module().FORCE_DELETE_BRANCH_FLAG, branch)
         entries.append(f"branch {branch}; {count} commit(s) not on origin/main, the newest "
