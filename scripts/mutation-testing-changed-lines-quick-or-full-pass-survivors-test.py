@@ -86,7 +86,21 @@ with (control / "calls.log").open("a") as log:
                           "cwd": os.getcwd(), "head": head,
                           "session_attended": os.environ.get("CLAUDE_CODE_SESSION_ATTENDED")}}) + "\\n")
 if tool == "python":
-    worktrees = arguments[4:]
+    worktrees = arguments[6:]
+    if plan.get("init_sessions"):
+        # As the parallel workers do: a result for each mutant asked for. A mutant that has a
+        # result already cannot be given a second, so running one twice fails this tool.
+        import sqlite3
+        connection = sqlite3.connect(arguments[3])
+        asked_for = ([row[0] for row in connection.execute(
+            "SELECT job_id FROM work_items WHERE job_id NOT IN (SELECT job_id FROM work_results)")]
+            if arguments[4] == "all" else arguments[4].split(","))
+        for job_id in asked_for:
+            connection.execute("INSERT INTO work_results (job_id, worker_outcome, output, "
+                               "test_outcome, diff) VALUES (?, 'NORMAL', ?, 'KILLED', NULL)",
+                               (job_id, plan["killed_output"]))
+        connection.commit()
+        connection.close()
     (control / "parallel-workers.json").write_text(json.dumps([
         [worktree, subprocess.run(["git", "-C", worktree, "rev-parse", "HEAD"],
                                   capture_output=True, text=True).stdout.strip()]
@@ -122,6 +136,32 @@ if command == "baseline":
         (control / "plan.json").write_text(json.dumps(plan))
         sys.exit(0 if completed.returncode == 0 else 1)
     sys.exit(plan.get("baseline_exit", 0))
+if command == "init" and plan.get("init_sessions"):
+    # A session as cosmic-ray 8.7.0 makes it: a random job_id for each mutant at every init,
+    # and a SKIPPED result for a mutant a filter skipped.
+    import sqlite3, uuid
+    config_text = pathlib.Path(arguments[1]).read_text()
+    module_path = json.loads(re.search(r"^module-path = (.*)$", config_text,
+                                       re.MULTILINE).group(1))
+    connection = sqlite3.connect(arguments[2])
+    connection.executescript(
+        "CREATE TABLE work_items (job_id TEXT PRIMARY KEY);"
+        "CREATE TABLE mutation_specs (module_path, operator_name, operator_args, occurrence, "
+        "start_pos_row, start_pos_col, end_pos_row, end_pos_col, definition_name, "
+        "job_id TEXT PRIMARY KEY);"
+        "CREATE TABLE work_results (job_id TEXT PRIMARY KEY, worker_outcome, output, "
+        "test_outcome, diff);")
+    for operator, line, skipped_by_a_filter in plan["init_sessions"][module_path]:
+        job_id = uuid.uuid4().hex
+        connection.execute("INSERT INTO work_items VALUES (?)", (job_id,))
+        connection.execute("INSERT INTO mutation_specs VALUES (?, ?, '{{}}', 0, ?, 4, ?, 9, NULL, ?)",
+                           (module_path, operator, line, line, job_id))
+        if skipped_by_a_filter:
+            connection.execute("INSERT INTO work_results (job_id, worker_outcome) "
+                               "VALUES (?, 'SKIPPED')", (job_id,))
+    connection.commit()
+    connection.close()
+    sys.exit(0)
 if command == "init":
     pathlib.Path(arguments[2]).write_text("session")
     if plan.get("init_makes_kept_session_a_directory"):
@@ -140,6 +180,22 @@ if command == "dump":
         lines = plan.get("baseline_dump", [[{{"job_id": "baseline", "mutations": []}},
                                              {{"worker_outcome": "normal", "output": "",
                                               "test_outcome": "survived", "diff": None}}]])
+    elif plan.get("init_sessions"):
+        import sqlite3
+        connection = sqlite3.connect(arguments[1])
+        lines = []
+        for job_id, module_path, operator, line in connection.execute(
+                "SELECT job_id, module_path, operator_name, start_pos_row FROM mutation_specs"):
+            row = connection.execute("SELECT worker_outcome, output, test_outcome, diff FROM "
+                                     "work_results WHERE job_id = ?", (job_id,)).fetchone()
+            lines.append([
+                {{"job_id": job_id, "mutations": [{{
+                    "module_path": module_path, "operator_name": operator, "occurrence": 0,
+                    "start_pos": [line, 4], "end_pos": [line, 9], "operator_args": {{}}}}]}},
+                None if row is None else {{
+                    "worker_outcome": row[0].lower(), "output": row[1],
+                    "test_outcome": row[2].lower() if row[2] else None, "diff": row[3]}}])
+        connection.close()
     else:
         lines = plan.get("dump", [])
         for _, result in lines:
@@ -1394,6 +1450,8 @@ def mutate_and_test(mutations, test_command, timeout):
         print("not JSON")
     if operator == "slow":
         time.sleep(2)
+    if operator == "runs-15-seconds":
+        time.sleep(15)
     return WorkResult(worker_outcome=WorkerOutcome.NORMAL,
                       output=f"{os.getcwd()} {test_command} {timeout}",
                       test_outcome=TestOutcome.KILLED, diff=f"diff of {operator}")
@@ -1401,8 +1459,9 @@ def mutate_and_test(mutations, test_command, timeout):
 }
 
 
-def run_parallel_mutant_workers_with_fake_cosmic_ray_package(scratch_name, operators,
-                                                             worktree_names):
+def run_parallel_mutant_workers_with_fake_cosmic_ray_package(
+        scratch_name, operators, worktree_names, job_ids_to_run="all",
+        no_mutant_started_after="never"):
     """Run the parallel workers on a fake session whose work items have these operators; return
     (the run, the session as it was left, the worktrees)."""
     scratch = Path(scratch_name)
@@ -1425,7 +1484,8 @@ def run_parallel_mutant_workers_with_fake_cosmic_ray_package(scratch_name, opera
     completed = subprocess.run(
         [sys.executable, str(SCRIPT),
          load_script_module().COSMIC_RAY_SESSION_PENDING_MUTANTS_RUN_BY_PARALLEL_WORKERS_FLAG,
-         str(config), str(session), *map(str, worktrees)],
+         str(config), str(session), job_ids_to_run, no_mutant_started_after,
+         *map(str, worktrees)],
         capture_output=True, text=True, check=False, timeout=120,
         env={**os.environ, "PYTHONPATH": str(scratch / "site")})
     return completed, json.loads(session.read_text()), worktrees
@@ -1474,6 +1534,30 @@ def run_parallel_mutant_workers_cases_with_fake_cosmic_ray_package():
                   and "job-1" not in session["results"]
                   and ("job-0" in session["results"]) == started,
                   f"rc={completed.returncode} err={completed.stderr} session={session}")
+    with tempfile.TemporaryDirectory() as scratch_name:
+        completed, session, _ = run_parallel_mutant_workers_with_fake_cosmic_ray_package(
+            scratch_name, ["first", "second", "third", "fourth"], ["one", "two"],
+            job_ids_to_run="job-1,job-3")
+        check("given job ids, the parallel workers run those mutants only, the others left "
+              "with no result, and exit 0",
+              completed.returncode == 0 and sorted(session["results"]) == ["job-1", "job-3"],
+              f"rc={completed.returncode} err={completed.stderr} session={session}")
+    for case_name, operators, stop_after_seconds, wanted in [
+            ("a time already come: no mutant is started", ["first", "second"], 0, 0),
+            ("a time not yet come: every mutant is run", ["first", "second"], 600, 2),
+            # One worker and two mutants of 15 seconds each: the first, started within the 10
+            # seconds even on a busy machine, is running at the time.
+            ("a time that comes while a mutant runs: that mutant is judged, and the next is "
+             "not started", ["runs-15-seconds", "runs-15-seconds"], 10, 1)]:
+        with tempfile.TemporaryDirectory() as scratch_name:
+            completed, session, _ = run_parallel_mutant_workers_with_fake_cosmic_ray_package(
+                scratch_name, operators, ["one"],
+                no_mutant_started_after=repr(time.time() + stop_after_seconds))
+            check(f"the parallel workers given the time after which no mutant starts, "
+                  f"{case_name}; exit 0, with no mutant reported as without a worker's result",
+                  completed.returncode == 0 and len(session["results"]) == wanted
+                  and completed.stderr == "",
+                  f"rc={completed.returncode} err={completed.stderr} session={session}")
 
 
 def run_parallel_mutant_workers_case_with_real_cosmic_ray():
@@ -1510,6 +1594,287 @@ def run_parallel_mutant_workers_case_with_real_cosmic_ray():
               results[0][:3] == results[1][:3] and results[0][1]
               and " 0 errored, 0 not run" in results[0][1][0]
               and len(worktrees_of(repository)) == 1, results)
+
+
+def mutants_with_a_result_in_kept_sessions(sessions):
+    """(file, operator, line) of each mutant with a result, other than one a filter skipped."""
+    found = set()
+    for session in sorted(Path(sessions).glob("*.sqlite")):
+        connection = sqlite3.connect(session)
+        found |= set(connection.execute(
+            "SELECT module_path, operator_name, start_pos_row FROM mutation_specs JOIN "
+            "work_results USING (job_id) WHERE worker_outcome != 'SKIPPED'"))
+        connection.close()
+    return found
+
+
+def run_mutants_run_at_most_and_no_mutant_started_after_unix_time_cases():
+    script = load_script_module()
+    at_most_flag = script.MUTANTS_RUN_AT_MOST_SHARED_EVENLY_AMONG_CHANGED_FILES_FLAG
+    stop_flag = script.NO_MUTANT_STARTED_AFTER_UNIX_TIME_FLAG
+    workers_flag = script.PARALLEL_MUTANT_WORKERS_FLAG
+    kept_flag = script.COSMIC_RAY_SESSIONS_DIRECTORY_KEPT_TO_RESUME_FLAG
+    chosen = script.mutants_chosen_one_per_file_in_turn_in_order_seeded_by_head
+
+    # ------------------------------------------------------------------
+    # Which mutants are chosen.
+    # ------------------------------------------------------------------
+    twenty_files = {f"scripts/file-{number}.py": [("operator", line) for line in range(3)]
+                    for number in range(20)}
+    twelve = chosen(twenty_files, "head-a", 12)
+    check("more files than mutants to choose: one mutant from each of 12 different files",
+          len(twelve) == 12 and len({path for path, _ in twelve}) == 12
+          and all(mutant in twenty_files[path] for path, mutant in twelve), twelve)
+    few = {"scripts/one.py": [("a", 1)], "scripts/two.py": [("a", 1), ("b", 2)]}
+    check("fewer mutants than the number to choose: every mutant is chosen, each once",
+          sorted(chosen(few, "head-a", 12))
+          == [("scripts/one.py", ("a", 1)), ("scripts/two.py", ("a", 1)),
+              ("scripts/two.py", ("b", 2))], chosen(few, "head-a", 12))
+    long_and_short = {"scripts/long.py": [("a", line) for line in range(100)],
+                      "scripts/short.py": [("a", line) for line in range(10)]}
+    shares = [path for path, _ in chosen(long_and_short, "head-a", 12)]
+    check("a file of 10 mutants and a file of 100 are given 6 each of 12, in turn: the share "
+          "is per file, not per mutant",
+          shares.count("scripts/short.py") == 6 and shares.count("scripts/long.py") == 6
+          and all(shares[index] != shares[index + 1] for index in range(0, 12, 2)), shares)
+    one_short = {"scripts/long.py": [("a", line) for line in range(100)],
+                 "scripts/short.py": [("a", 1)]}
+    shares = [path for path, _ in chosen(one_short, "head-a", 6)]
+    check("a file with no mutant left gives its turns to the others",
+          shares.count("scripts/short.py") == 1 and shares.count("scripts/long.py") == 5
+          and len(set(chosen(one_short, "head-a", 6))) == 6, shares)
+    reordered = {path: list(reversed(twenty_files[path])) for path in reversed(twenty_files)}
+    check("the same head chooses the same mutants in the same order, whatever order the files "
+          "and their mutants are given in",
+          chosen(twenty_files, "head-a", 12) == twelve
+          and chosen(reordered, "head-a", 12) == twelve, chosen(reordered, "head-a", 12))
+    check("another head chooses in another order", chosen(twenty_files, "head-b", 12) != twelve)
+    check("a larger number chooses the same mutants first and then others, and 0 chooses none",
+          chosen(twenty_files, "head-a", 30)[:12] == twelve
+          and len(set(chosen(twenty_files, "head-a", 30))) == 30
+          and chosen(twenty_files, "head-a", 0) == [], chosen(twenty_files, "head-a", 30))
+    in_order = {"scripts/only.py": [("a", line) for line in range(50)]}
+    check("the mutants of one file are chosen in a shuffled order, not the order they have in "
+          "the file",
+          chosen(in_order, "head-a", 50) != sorted(chosen(in_order, "head-a", 50))
+          and chosen(in_order, "head-a", 50) != sorted(chosen(in_order, "head-a", 50),
+                                                         reverse=True))
+    check("the files take their turns in a shuffled order, not the order of their names",
+          [path for path, _ in chosen(twenty_files, "head-a", 20)] != sorted(twenty_files)
+          and [path for path, _ in chosen(twenty_files, "head-a", 20)]
+          != sorted(twenty_files, reverse=True))
+    same_mutants = {"scripts/a.py": [("a", line) for line in range(30)],
+                    "scripts/b.py": [("a", line) for line in range(30)]}
+    by_file = {path: [mutant for each, mutant in chosen(same_mutants, "head-a", 60)
+                      if each == path] for path in same_mutants}
+    check("two files with the same mutants have them chosen in different orders",
+          by_file["scripts/a.py"] != by_file["scripts/b.py"], by_file)
+
+    # ------------------------------------------------------------------
+    # Bad invocations.
+    # ------------------------------------------------------------------
+    for flag, value in ((at_most_flag, "12"), (stop_flag, "1.5")):
+        for case_name, others in [
+                ("the quick pass", ["--quick-mutation-pass", "--cosmic-ray-venv", "/nowhere",
+                                    workers_flag, "1", kept_flag, "/nowhere"]),
+                ("no parallel workers", ["--full-mutation-pass", kept_flag, "/nowhere"]),
+                ("no kept sessions", ["--full-mutation-pass", "--cosmic-ray-venv", "/nowhere",
+                                      workers_flag, "1"])]:
+            completed = subprocess.run([sys.executable, str(SCRIPT), *others, "--head", "a",
+                                        "--base", "b", flag, value],
+                                       capture_output=True, text=True, check=False)
+            check(f"{flag} with {case_name} exits 2 and says what it needs",
+                  completed.returncode == 2
+                  and f"{flag} needs --full-mutation-pass, --parallel-mutant-workers"
+                  in completed.stderr, completed.stderr)
+
+    # ------------------------------------------------------------------
+    # A full pass that runs some mutants and keeps the rest for a later run.
+    # ------------------------------------------------------------------
+    head_files = {}
+    for name in ("a", "b", "c"):
+        head_files[f"scripts/{name}.py"] = "def double(x):\n    return x + x\n"
+        head_files[f"scripts/{name}-test.py"] = "import sys\nsys.exit(0)\n"
+    # Eight mutants no filter skipped: three in a.py, three in b.py and two in c.py.
+    init_sessions = {
+        "scripts/a.py": [["core/One", 2, False], ["core/Two", 2, False], ["core/Three", 2, False]],
+        "scripts/b.py": [["core/One", 2, False], ["core/Two", 2, False], ["core/Three", 2, False]],
+        "scripts/c.py": [["core/One", 2, False], ["core/Two", 2, False], ["core/Three", 2, True]]}
+    plan = {"init_sessions": init_sessions, "killed_output": SUITE_FAILED_RUNNER_OUTPUT}
+
+    def steps_of(control):
+        return [c["tool"] if c["tool"].startswith("cr-filter") or c["tool"] == "python"
+                else c["arguments"][0] for c in calls(control)]
+
+    def run_limited(repository, control, base, head, venv, sessions, *flags):
+        (control / "calls.log").write_text("")
+        json_file = control / "mutants.json"
+        json_file.unlink(missing_ok=True)
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv), workers_flag, "1", kept_flag,
+                               str(sessions), "--survived-and-errored-mutants-json-file",
+                               str(json_file), *flags)
+        return completed, (json.loads(json_file.read_text()) if json_file.exists() else None)
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, head_files)
+        venv, control = fake_venv(scratch_name, plan)
+        sessions = Path(scratch_name) / "sessions"
+        completed, written = run_limited(repository, control, base, head, venv, sessions,
+                                         at_most_flag, "2")
+        steps = steps_of(control)
+        first_two = mutants_with_a_result_in_kept_sessions(sessions)
+        ran = [c["arguments"] for c in calls(control) if c["tool"] == "python"]
+        check("at most 2 mutants of three files: every file's session is made and filtered "
+              "before any baseline, then only two files get a baseline and one mutant each, and "
+              "every session is dumped",
+              steps[:9] == ["init", "cr-filter-git", "cr-filter-pragma"] * 3
+              and sorted(steps[9:]) == sorted(["dump"] + ["baseline", "dump", "python", "dump"] * 2)
+              and " ".join(steps[9:]).count("baseline dump python dump") == 2
+              and len(first_two) == 2 and len({path for path, _, _ in first_two}) == 2,
+              f"rc={completed.returncode} steps={steps} ran={first_two} err={completed.stderr}")
+        check("the workers are given the job id of each chosen mutant, one for each of the two "
+              "files, and no time after which no mutant starts",
+              len(ran) == 2 and all(len(arguments[4]) == 32 and arguments[5] == "never"
+                                    for arguments in ran), ran)
+        check("the mutants left with no result are counted as not run in the SUMMARY line and "
+              "the JSON file, and make the exit 1; RESUMED is not printed",
+              completed.returncode == 1
+              and "SUMMARY: 2 mutants on changed lines of 3 file(s): 2 killed, 0 survived, "
+                  "0 errored, 6 not run" in completed.stdout
+              and written is not None and written["mutants_not_run_count"] == 6
+              and "RESUMED" not in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} json={written}")
+
+        completed, written = run_limited(repository, control, base, head, venv, sessions,
+                                         at_most_flag, "2")
+        check("the same number again, with the sessions kept: the same mutants are chosen, they "
+              "have a result, so no session is made and neither a baseline nor a mutant runs",
+              steps_of(control) == ["dump"] * 3
+              and mutants_with_a_result_in_kept_sessions(sessions) == first_two
+              and written["mutants_not_run_count"] == 6,
+              f"steps={steps_of(control)} out={completed.stdout} err={completed.stderr}")
+
+        completed, written = run_limited(repository, control, base, head, venv, sessions,
+                                         at_most_flag, "5")
+        five = mutants_with_a_result_in_kept_sessions(sessions)
+        asked_for = [job_id for c in calls(control) if c["tool"] == "python"
+                     for job_id in c["arguments"][4].split(",")]
+        check("a larger number runs other mutants, never one that has a result: 3 more are "
+              "run, shared among the three files",
+              completed.returncode == 1 and len(asked_for) == 3 and first_two < five
+              and len(five) == 5
+              and sorted(sum(1 for path, _, _ in five if path == each)
+                         for each in init_sessions) == [1, 2, 2]
+              and written["mutants_not_run_count"] == 3,
+              f"rc={completed.returncode} asked_for={asked_for} five={five} "
+              f"err={completed.stderr}")
+
+        future = repr(time.time() + 3600)
+        completed, written = run_limited(repository, control, base, head, venv, sessions,
+                                         stop_flag, future)
+        ran = [c["arguments"] for c in calls(control) if c["tool"] == "python"]
+        every = mutants_with_a_result_in_kept_sessions(sessions)
+        check("with a time after which no mutant starts that has not come, and no number: every "
+              "mutant with no result is run, the workers given that time, and the exit is 0",
+              completed.returncode == 0 and len(every) == 8 and five < every
+              and ran and all(arguments[4:6] == ["all", future] for arguments in ran)
+              and written["mutants_not_run_count"] == 0,
+              f"rc={completed.returncode} ran={ran} every={every} err={completed.stderr}")
+        completed, written = run_limited(repository, control, base, head, venv, sessions,
+                                         stop_flag, future)
+        check("a file whose every mutant has a result prints RESUMED, and gets no baseline",
+              completed.returncode == 0 and completed.stdout.count("RESUMED  ") == 3
+              and steps_of(control) == ["dump"] * 3,
+              f"rc={completed.returncode} steps={steps_of(control)} out={completed.stdout}")
+
+        # The sessions made anew have new job ids for the same mutants.
+        for session in sessions.glob("*.sqlite"):
+            session.unlink()
+        completed, _ = run_limited(repository, control, base, head, venv, sessions,
+                                   at_most_flag, "2")
+        check("with the sessions made anew, which gives every mutant a new job id, the same "
+              "head has the same two mutants chosen",
+              mutants_with_a_result_in_kept_sessions(sessions) == first_two,
+              (mutants_with_a_result_in_kept_sessions(sessions), first_two))
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, head_files)
+        venv, control = fake_venv(scratch_name, plan)
+        sessions = Path(scratch_name) / "sessions"
+        completed, written = run_limited(repository, control, base, head, venv, sessions,
+                                         stop_flag, repr(time.time() - 1))
+        check("with a time after which no mutant starts that has come: every session is made, "
+              "no baseline and no mutant runs, every mutant is counted as not run, the JSON "
+              "file is written, and the exit is 1",
+              completed.returncode == 1
+              and steps_of(control) == ["init", "cr-filter-git", "cr-filter-pragma"] * 3
+              + ["dump"] * 3
+              and "0 killed, 0 survived, 0 errored, 8 not run" in completed.stdout
+              and written is not None and written["mutants_not_run_count"] == 8,
+              f"rc={completed.returncode} steps={steps_of(control)} out={completed.stdout} "
+              f"err={completed.stderr}")
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, head_files)
+        # No init_sessions: this fake's init writes a session that is no sqlite file.
+        venv, control = fake_venv(scratch_name, {"dump": []})
+        sessions = Path(scratch_name) / "sessions"
+        completed, written = run_limited(repository, control, base, head, venv, sessions,
+                                         at_most_flag, "2")
+        check("a session that cannot be read, when mutants must be chosen: exit 2, saying which "
+              "session and to delete it, no baseline run, and the worktree removed",
+              completed.returncode == 2 and written is None
+              and "cannot be read (DatabaseError: file is not a database), so the mutants to "
+                  "run cannot be chosen" in completed.stderr
+              and "Delete that session file" in completed.stderr
+              and "baseline" not in steps_of(control) and len(worktrees_of(repository)) == 1,
+              f"rc={completed.returncode} steps={steps_of(control)} err={completed.stderr}")
+
+
+def run_mutants_run_at_most_case_with_real_cosmic_ray():
+    venv = Path.home() / ".local" / "share" / "nedschorus" / "cosmic-ray-venv"
+    if not (venv / "bin" / "cosmic-ray").is_file():
+        print(f"SKIP  [this machine cannot run it] at most so many mutants run with the real "
+              f"cosmic-ray: no cosmic-ray venv at {venv}")
+        return
+    script = load_script_module()
+    suite = ("import importlib.util, pathlib\n"
+             "spec = importlib.util.spec_from_file_location('thing', "
+             "pathlib.Path(__file__).with_name('{name}.py'))\n"
+             "module = importlib.util.module_from_spec(spec)\n"
+             "spec.loader.exec_module(module)\n"
+             "assert module.double(3) == 6\nprint('all cases passed')\n")
+    head_files = {"scripts/thing.py": "def double(x):\n    return x + x\n",
+                  "scripts/thing-test.py": suite.format(name="thing"),
+                  "scripts/other.py": "def double(x):\n    return x * 2\n",
+                  "scripts/other-test.py": suite.format(name="other")}
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, head_files)
+        control = Path(scratch_name) / "control"
+        control.mkdir()
+        sessions = Path(scratch_name) / "sessions"
+        judged = []
+        summaries = []
+        # One worker: this case's suites take the machine lock, which a second worker's would be
+        # refused.
+        for flags in (["2"], ["2"], ["3"], None):
+            limit = [] if flags is None else [
+                script.MUTANTS_RUN_AT_MOST_SHARED_EVENLY_AMONG_CHANGED_FILES_FLAG, *flags]
+            completed = run_script(
+                repository, control, "--head", head, "--base", base, "--cosmic-ray-venv",
+                str(venv), "--parallel-mutant-workers", "1",
+                script.COSMIC_RAY_SESSIONS_DIRECTORY_KEPT_TO_RESUME_FLAG, str(sessions), *limit)
+            judged.append(mutants_with_a_result_in_kept_sessions(sessions))
+            summaries.append([line for line in completed.stdout.splitlines()
+                              if line.startswith("SUMMARY:")] or completed.stderr)
+        check("with the real cosmic-ray: at most 2 mutants judges one mutant of each of the two "
+              "files; the same number again judges no other; 3 judges one more; and a run with "
+              "no number judges the rest, none twice",
+              len(judged[0]) == 2 and len({path for path, _, _ in judged[0]}) == 2
+              and judged[1] == judged[0] and len(judged[2]) == 3 and judged[0] < judged[2]
+              and judged[2] < judged[3] and " 0 not run" in summaries[3][0]
+              and " 0 errored" in summaries[3][0], (judged, summaries))
 
 
 def in_test_sandboxes_through_a_fake_bwrap(scratch_name):
@@ -2795,6 +3160,8 @@ def run_cases():
     run_parallel_mutants_and_kept_sessions_cases()
     run_parallel_mutant_workers_cases_with_fake_cosmic_ray_package()
     run_parallel_mutant_workers_case_with_real_cosmic_ray()
+    run_mutants_run_at_most_and_no_mutant_started_after_unix_time_cases()
+    run_mutants_run_at_most_case_with_real_cosmic_ray()
 
     # ------------------------------------------------------------------
     # Bad invocations.
