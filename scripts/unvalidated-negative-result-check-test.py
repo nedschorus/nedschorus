@@ -208,6 +208,36 @@ for near_miss in ("grep -oE '.{0,80}link-type' notes.md",
 check("S2 stays silent when the agent saw the refusal on one line",
       not judge("grep -oE '.{0,180}(a|b).{0,180}' notes.md", exit_code=2,
                 output="ugrep: error at position 9: exceeds complexity limits\n").fires)
+refused_grep = "grep -oE '.{0,180}(a|b).{0,180}'"
+hidden_and_shown = judge(f"{refused_grep} notes.md 2>/dev/null; {refused_grep} other.md",
+                         exit_code=2,
+                         output="ugrep: error at position 9: exceeds complexity limits\n")
+check("S2 still warns of a grep whose own 2>/dev/null hid its refusal, when another grep's "
+      "refusal was shown",
+      hidden_and_shown.signals == [PATTERN_TOO_COMPLEX] and len(hidden_and_shown.causes) == 1
+      and "notes.md" not in hidden_and_shown.causes[0].instruction,
+      f"{hidden_and_shown.signals} {[cause.instruction for cause in hidden_and_shown.causes]}")
+shown_after_stdout_and_stderr_sent_away = judge(
+    f"{refused_grep} notes.md >/dev/null 2>&1; {refused_grep} other.md", exit_code=2,
+    output="ugrep: error at position 9: exceeds complexity limits\n")
+check("S2 still warns of a grep whose >/dev/null 2>&1 hid its refusal, when another grep's "
+      "refusal was shown",
+      shown_after_stdout_and_stderr_sent_away.signals == [PATTERN_TOO_COMPLEX]
+      and len(shown_after_stdout_and_stderr_sent_away.causes) == 1,
+      f"{shown_after_stdout_and_stderr_sent_away.signals}")
+check("S2 stays silent for a grep whose 2>/dev/null 2>&1 left its shown refusal on the screen",
+      not judge(f"{refused_grep} notes.md 2>/dev/null 2>&1", exit_code=2,
+                output="ugrep: error at position 9: exceeds complexity limits\n").fires)
+for redirect, sent_away in (("2>/dev/null", True), ("2>>log", True), ("&>/dev/null", True),
+                            ("&>>log", True), (">&/dev/null", True), ("2>&-", True),
+                            ("2>&1", False), (">&2", False), ("1>&2", False), (">out", False),
+                            ("", False), (">/dev/null 2>&1", True), ("2>&1 >/dev/null", False),
+                            ("2>/dev/null 2>&1", False), ("2>&2", False),
+                            ("2>/dev/stdout", False), ("2>/dev/null >&2", True)):
+    command = check_module.split_into_simple_commands_with_the_machine_and_directory_each_runs_in(
+        f"grep needle notes.md {redirect}", "/work")[0]
+    check(f"`{redirect}` sends stderr away: {sent_away}",
+          check_module.does_command_own_redirect_send_stderr_elsewhere_than_stdout(command) == sent_away)
 check("S2's warning quotes the grep as the shell needs, so it can be run again as written",
       "`grep -oE '.{0,180}(a|b).{0,180}'`"
       in judge("grep -oE '.{0,180}(a|b).{0,180}' notes.md").causes[0].instruction,
@@ -215,7 +245,7 @@ check("S2's warning quotes the grep as the shell needs, so it can be run again a
 check("S2 leaves the file names out of the probe",
       check_module.agents_grep_options_and_patterns_without_file_names(check_module.Placed(
           None, "/work", ["grep", "-rn", "--include", "*.md", "-A", "2", "needle", "docs",
-                          "notes.md"], 0), MachinesOfTheDay(), [])
+                          "notes.md"], 0, ()), MachinesOfTheDay(), [])
       == ["-rn", "--include", "*.md", "-A", "2", "needle"])
 
 
@@ -302,13 +332,29 @@ check("S1 reads a dash-led glob after a -- that is -e's value",
       == [GLOB_DASH_NAME])
 check("S1 still stops at the -- that ends grep's options",
       not judge("grep -e needle -- -x*", machines=MachinesWhoseDirectoryHoldsDashX()).fires)
-for arguments, expected in ((["-e", "--", "-x*"], 3), (["--regexp", "--", "--", "-x*"], 2),
-                            (["-A2", "--", "-x*"], 1), (["-A", "--", "-x*"], 3),
-                            (["--include=--", "--", "-x*"], 1), (["-", "--"], 1),
-                            (["needle", "file"], 2)):
-    check(f"grep's options end at {expected} in {arguments}",
-          check_module.grep_arguments_options_end_position_skipping_option_values(arguments) == expected,
-          check_module.grep_arguments_options_end_position_skipping_option_values(arguments))
+for arguments, expected in ((["-e", "--", "-x*"], (3, {1})),
+                            (["--regexp", "--", "--", "-x*"], (2, {1})),
+                            (["-A2", "--", "-x*"], (1, set())), (["-A", "--", "-x*"], (3, {1})),
+                            (["--include=--", "--", "-x*"], (1, set())), (["-", "--"], (1, set())),
+                            (["needle", "file"], (2, set())), (["-e"], (1, set())),
+                            (["-e", "--", "-e", "-x*", "notes.md"], (5, {1, 3}))):
+    found = check_module.grep_arguments_options_end_and_option_value_positions(arguments)
+    check(f"grep's options end, and its option values sit, at {expected} in {arguments}",
+          found == expected, found)
+value_glob_machines = MachinesWhoseDirectoryHoldsDashX()
+value_glob = "grep -e -- -e -x* notes.md"
+check("S1 skips a dash-led glob that is an option's value, which grep reads as the pattern",
+      not judge(value_glob, machines=MachinesWhoseDirectoryHoldsDashX()).fires,
+      judge(value_glob, machines=MachinesWhoseDirectoryHoldsDashX()).signals)
+check("the probe keeps a dash-led glob that is an option's value, and asks no listing for it",
+      probes_of(value_glob, machines=value_glob_machines) == [["-e", "--", "-e", "-x*"]]
+      and value_glob_machines.asked == [],
+      f"{probes_of(value_glob, machines=MachinesWhoseDirectoryHoldsDashX())} "
+      f"asked {value_glob_machines.asked}")
+check("S1 ends another program's options at its first --, though grep would read that -- as "
+      "-A's value",
+      not judge("ls -A -- -x* | grep needle", machines=MachinesWhoseDirectoryHoldsDashX()).fires,
+      judge("ls -A -- -x* | grep needle", machines=MachinesWhoseDirectoryHoldsDashX()).signals)
 unknown_directory_unchecked = []
 unknown_directory_machines = MachinesOfTheDay()
 unknown_directory_probes = probes_of('cd "$D" && grep -l needle -r -Users-el-agents-*/',
@@ -351,9 +397,10 @@ for shown in ("bash: line 1: fd: command not found", "zsh: command not found: fd
     check(f"S3 stays silent when the agent saw the error: {shown}",
           not judge("fd needle docs", output=shown + "\n", exit_code=127,
                     machines=MachinesOfTheDay(missing={(None, "fd")})).fires)
-check("S3 still fires when the error shown names another program",
-      judge("fd needle docs", output="bash: line 1: fdx: command not found\n", exit_code=127,
-            machines=MachinesOfTheDay(missing={(None, "fd")})).signals == [PROGRAM_MISSING])
+for shown in ("bash: line 1: fdx: command not found", "sh: 1: fdx: not found"):
+    check(f"S3 still fires when the error shown names another program: {shown}",
+          judge("fd needle docs", output=shown + "\n", exit_code=127,
+                machines=MachinesOfTheDay(missing={(None, "fd")})).signals == [PROGRAM_MISSING])
 check("S3 asks once per program and machine",
       judge("rg a docs; rg b docs", machines=MachinesOfTheDay(
           missing={(None, "rg")})).signals == [PROGRAM_MISSING])
