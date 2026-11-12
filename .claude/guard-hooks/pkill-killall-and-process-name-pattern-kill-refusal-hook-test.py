@@ -188,7 +188,7 @@ check("the loop condition refusal names the wait program, which exists, with an 
 token = f"pgrep-self-match-reproduction-{os.getpid()}"
 self_matching_loop = f'n=0; while pgrep -f "{token}" >/dev/null && [ "$n" -lt 3 ]; do n=$((n+1)); done; echo "$n"'
 if shutil.which("pgrep") is None:
-    print("SKIP  the self-match reproduction needs pgrep [this machine cannot run it]")
+    print("SKIP  [this machine cannot run it] the self-match reproduction: pgrep is not on PATH")
 else:
     looped = subprocess.run(["bash", "-c", self_matching_loop], capture_output=True, text=True, timeout=60)
     check("reproduced: pgrep -f in a loop condition matches the loop's own shell, so the loop runs to its "
