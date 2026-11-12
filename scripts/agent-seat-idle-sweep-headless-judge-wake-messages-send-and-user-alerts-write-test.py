@@ -741,6 +741,34 @@ for case, answer in (("send with no message", judged(True, "  ")),
           and not machine.events("wait_step") and machine.events("judge_answer")[0]["send"] is False,
           machine.events())
 
+# --- one cause of a headless failure, met again the same day with other text from claude --------
+def usage_limit_exit(uuid, duration_ms):
+    """claude at a usage limit, as on ned-box on 2026-11-12: exit 1 after a result event whose
+    reset time, ids and duration differ from one invocation to the next."""
+    return {"exit": 1, "result": {
+        "subtype": "success", "is_error": True, "api_error_status": 429,
+        "api_error": "usage_limit_reached",
+        "result": "You've hit your weekly limit · resets Nov 16, 8pm (America/Los_Angeles)",
+        "duration_ms": duration_ms, "uuid": uuid}}
+
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.task("alpha", "1")
+machine.script(usage_limit_exit("34551553-ce2f-4bed-88d6-09449375602d", 394))
+machine.run(0)
+machine.script(usage_limit_exit("c28e3474-6909-42c5-a3e7-fc096dd93dfe", 402))
+code, _ = machine.run(16)
+problems = [event["problem"] for event in machine.events("headless_failed")]
+check("one usage limit failing the judge twice in a day, with different text from claude each "
+      "time: both failures logged, one user-alert",
+      code == 1 and len(problems) == 2 and problems[0] != problems[1]
+      and len(machine.alerts()) == 1, (code, problems, machine.alerts()))
+machine.script({"exit": 1, "stderr": "Invalid API key · Please run /login"})
+machine.run(32)
+check("another cause the same day for the same agent-seat: a second user-alert",
+      len(machine.events("headless_failed")) == 3 and len(machine.alerts()) == 2, machine.alerts())
+
 # --- delivery while the agent-seat is busy ----------------------------------------------------------
 machine = Machine()
 machine.seat("alpha", DONE_TURN)

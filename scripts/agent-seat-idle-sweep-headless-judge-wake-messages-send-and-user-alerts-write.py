@@ -53,7 +53,9 @@ How it fails, and what the user sees: a headless agent-session that fails, is st
 JSON code cannot use, or sends to the wrong entry or the wrong text; a message missing from the
 agent-seat's transcript; and a read failure slice 1 reports for the same agent-seat with the same
 text at every run for 2 minutes or more, each become a user-alert, written once, and the invocation
-exits 1; the 2 minutes are counted from the failure's first run and go on through an invocation the
+exits 1; a failed headless agent-session is alerted once a day for each agent-seat and cause, such
+as the headless agent-session itself stopping at a usage limit, however claude's text for that
+cause varies; the 2 minutes are counted from the failure's first run and go on through an invocation the
 lock made skip, since only a run that does not meet the failure ends them. A read failure seen once only, such as the last line of a transcript
 Claude Code is still writing, is logged and not alerted; a run that does not meet it again logs its end, so that it
 coming back later is dated from its return. Any other failure, such as an unwritable log, prints a
@@ -122,6 +124,9 @@ NUDGE, ESCALATE, TELL_USER = "nudge", "escalate", "tell_user"
 PROMISE = "promise"
 LIMIT_WAKE, ACCOUNT_NOTICE = "limit_wake", "account_notice"
 
+# Kinds of headless failure that run_headless does not name, for headless_failed's key.
+SENDS_WRONG = "the sender's SendMessage calls were not the sends code asked for"
+JUDGE_ANSWER_UNUSABLE = "the judge's answer could not be used"
 DO_NOT_REPLY_SENTENCE = "Do not reply to this message: its sender has exited, so a reply fails."
 ESCALATION_TEXT = ("You've given this {minutes} minutes, please check; if not sure, hand off. At "
                    "{nudge_time} the idle sweep wrote this, which you have not acted on:\n\n"
@@ -393,6 +398,7 @@ def seconds_between(earlier, later):
 class HeadlessOutcome:
     def __init__(self):
         self.error = None          # why the headless agent-session failed, or None
+        self.error_kind = None     # the error's cause, worded by code alone: a user-alert's key
         self.answer = None         # its --json-schema answer
         self.sends = []            # [{"to", "message", "succeeded", "result"}]
 
@@ -418,6 +424,7 @@ def run_headless(prompt, schema, tools, working_directory, timeout_seconds):
                                    start_new_session=True)
     except OSError as error:
         outcome.error = f"could not start claude: {error}"
+        outcome.error_kind = "could not start claude"
         return outcome
     try:
         stdout, stderr = process.communicate(prompt, timeout=timeout_seconds)
@@ -425,6 +432,7 @@ def run_headless(prompt, schema, tools, working_directory, timeout_seconds):
         os.killpg(process.pid, signal.SIGKILL)
         stdout, stderr = process.communicate()
         outcome.error = f"stopped after {timeout_seconds} seconds"
+        outcome.error_kind = "stopped at its time limit"
     calls, result = {}, None
     for line in stdout.splitlines():
         try:
@@ -451,14 +459,19 @@ def run_headless(prompt, schema, tools, working_directory, timeout_seconds):
     outcome.sends = list(calls.values())
     if outcome.error:
         return outcome
+    # Such as "usage_limit_reached": the result's text holds a reset time, so it cannot name the cause.
+    api_error = f": {result['api_error']}" if result and result.get("api_error") else ""
     if process.returncode != 0:
         outcome.error = f"claude exited {process.returncode}: {(stderr or stdout)[-500:].strip()}"
+        outcome.error_kind = f"claude exited {process.returncode}{api_error}"
     elif result is None:
         outcome.error = f"claude gave no result event: {stdout[-500:]!r}"
+        outcome.error_kind = "claude gave no result event"
     elif result.get("is_error") or result.get("subtype") != "success":
         outcome.error = f"claude reported an error: {str(result.get('result'))[:500]}"
+        outcome.error_kind = f"claude reported an error{api_error}"
     elif not isinstance(result.get("structured_output"), dict):
-        outcome.error = "claude gave no JSON answer"
+        outcome.error = outcome.error_kind = "claude gave no JSON answer"
     else:
         outcome.answer = result["structured_output"]
     return outcome
@@ -517,12 +530,13 @@ class Sweep:
         print(f"user-alert {alert_id}: {title}", flush=True)
         return alert_id
 
-    def headless_failed(self, seat, purpose, problem):
+    def headless_failed(self, seat, purpose, problem, kind):
+        """problem is the failure's full text; kind names its cause in words code alone chose, so
+        that a cause met at every invocation, such as a usage limit, gives one user-alert a day."""
         self.failed = True
         self.record({"event": "headless_failed", "agent_seat": seat, "purpose": purpose,
                      "problem": problem})
-        # One user-alert a day for each distinct failure, such as claude being logged out.
-        self.alert(f"headless-failed:{seat}:{purpose}:{problem}:{self.now.date()}",
+        self.alert(f"headless-failed:{seat}:{kind}:{self.now.date()}",
                    f"The idle sweep's headless agent-session for {seat} failed",
                    f"The idle sweep started a headless agent-session to {purpose} for the "
                    f"agent-seat {seat}, and it failed: {problem}",
@@ -552,7 +566,8 @@ class Sweep:
         text, outcome, started_at = self.send_wake_message([seat], text)
         problems = [outcome.error] if outcome.error else send_problems(outcome, [seat], text)
         if problems:
-            self.headless_failed(seat, f"send its {step} message", "; ".join(problems))
+            self.headless_failed(seat, f"send its {step} message", "; ".join(problems),
+                                 outcome.error_kind or SENDS_WRONG)
             return False
         self.message_sent(seat, verdict, text, step, started_at)
         return True
@@ -589,12 +604,14 @@ class Sweep:
             return
         text, outcome, started_at = self.send_wake_message(seats, text)
         if outcome.error:
-            self.headless_failed(", ".join(seats), "send the account-change notice", outcome.error)
+            self.headless_failed(", ".join(seats), "send the account-change notice", outcome.error,
+                                 outcome.error_kind)
             return
         wrong = [problem for problem in send_problems(outcome, seats, text)
                  if not problem.startswith("no SendMessage")]
         if wrong:
-            self.headless_failed(", ".join(seats), "send the account-change notice", "; ".join(wrong))
+            self.headless_failed(", ".join(seats), "send the account-change notice", "; ".join(wrong),
+                                 SENDS_WRONG)
         # The delivery check looks in every listed agent-seat's transcript, sent to or not.
         for seat in seats:
             self.message_sent(seat, verdicts[seat], text, ACCOUNT_NOTICE, started_at)
@@ -797,7 +814,8 @@ class Sweep:
                      "send": not problem and answer["send"], "reason": answer.get("reason"),
                      "failed": bool(problem)})
         if problem:
-            self.headless_failed(seat, "judge whether it could act now", problem)
+            self.headless_failed(seat, "judge whether it could act now", problem,
+                                 outcome.error_kind or JUDGE_ANSWER_UNUSABLE)
             return
         if answer["send"]:
             self.start_wait(seat, verdict, stretch, answer["message"], 5)
@@ -832,7 +850,8 @@ class Sweep:
                 self.record({"event": "sentence_checked", "agent_seat": seat,
                              "record_uuid": item["record_uuid"], "sentence": item["sentence"]})
             if problem:
-                self.headless_failed(seat, "judge whether its promises are backed", problem)
+                self.headless_failed(seat, "judge whether its promises are backed", problem,
+                                     outcome.error_kind or JUDGE_ANSWER_UNUSABLE)
                 return "failed", None
             for answer in outcome.answer["sentences"]:
                 backed[answer["index"]] = answer["backed"]
