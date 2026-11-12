@@ -654,6 +654,15 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook_for_session(str(workspace / ".claude" / "hooks" / "a-guard.py"), session_id)
     check("hook code stays protected", result.returncode == 2, str(result.returncode))
 
+# Stdin that is not JSON crashes the guard: the call goes ahead, and the agent and the user are told.
+result = subprocess.run([sys.executable, str(SCRIPT_PATH)], input="not json",
+                        capture_output=True, text=True, check=False)
+notice = json.loads(result.stdout) if result.returncode == 0 and result.stdout else {}
+check("stdin that is not JSON lets the call go ahead and tells the agent and the user",
+      "JSONDecodeError" in notice.get("systemMessage", "")
+      and "JSONDecodeError" in notice.get("hookSpecificOutput", {}).get("additionalContext", ""),
+      (result.returncode, result.stdout, result.stderr))
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

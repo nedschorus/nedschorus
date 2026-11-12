@@ -1924,6 +1924,16 @@ except r.ShellParserUnavailable as error:
               own_lines in context and "undo what the command did" not in context, context)
 
     unreadable = reader.ShellCommandUnreadable("ValueError: injected")
+    for label, failure, cause_words in (
+            ("the parser is missing", error, "tree-sitter-bash is missing"),
+            ("the reader failed", unreadable, "the shell command reader failed on it")):
+        user_notice = json.loads(reader.parser_unavailable_hook_output(
+            "The force-push guard", failure, NEXT_STEPS, {})).get("systemMessage", "")
+        check(f"when {label}, the user is told which guard let a command through unchecked, why, "
+              f"and that the agent was told",
+              user_notice.startswith("The force-push guard let a command through unchecked on ")
+              and cause_words in user_notice and failure.install_output in user_notice
+              and "The agent has been told" in user_notice, user_notice)
     attended = context_of(reader.parser_unavailable_hook_output(
         "The force-push guard", unreadable, NEXT_STEPS, {}))
     unattended = context_of(reader.parser_unavailable_hook_output(
