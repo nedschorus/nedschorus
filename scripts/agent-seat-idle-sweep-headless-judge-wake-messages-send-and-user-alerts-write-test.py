@@ -293,10 +293,10 @@ code, _ = machine.run(31.5)
 check("idle again 15 minutes after the escalation: the user is told, and no message is sent",
       not machine.claude_calls() and len(machine.alerts()) == 2
       and "after a nudge and an escalation" in machine.alerts()[1]["title"], machine.alerts())
-check("a text-only reply keeps the wait, and the user-alert counts the minutes from the reply, "
-      "the start of the current idle stretch, not from the first idle moment",
+check("a text-only reply keeps the wait, and the user-alert counts the minutes from when the "
+      "agent-seat first went idle, not from the reply",
       len(machine.alerts()) == 2 and machine.alerts()[1]["title"].startswith(
-          "alpha has been idle 15 minutes after"), machine.alerts())
+          "alpha has been idle 41 minutes after"), machine.alerts())
 code, _ = machine.run(40)
 check("after telling the user, nothing more while the agent-seat spends no tokens",
       not machine.claude_calls() and len(machine.alerts()) == 2, machine.alerts())
@@ -493,6 +493,23 @@ machine.run(16)
 check("rule 2: the second promise did not put off the escalation",
       [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
       machine.events("wait_step"))
+
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.script(sent_ok())
+machine.run(0)
+machine.append("alpha", cross_session("You promised", at(0.5)),
+               assistant(tool=("Bash", {"command": "ls"}), when=at(0.8)),
+               assistant(SECOND_PROMISE, at(1)), turn_end(at(1)))
+machine.script(sent_ok())
+machine.run(7)
+machine.script(sent_ok())
+machine.run(16)
+check("rule 2: a tool call and a fresh promise in answer to the message do not end the wait, "
+      "and the escalation is sent",
+      not machine.events("wait_ended")
+      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
+      (machine.events("wait_step"), machine.events("wait_ended")))
 
 # A promise sent on a wait a rule 5 or rule 3 message opened keeps that wait going through rule 4.
 for opener in ("rule 5", "rule 3"):

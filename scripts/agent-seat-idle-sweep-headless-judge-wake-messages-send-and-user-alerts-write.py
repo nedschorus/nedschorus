@@ -25,8 +25,7 @@ Each invocation, under a lock that keeps two from overlapping:
    decide whether to message it, and write the message. A message starts a wait, unless a wait is
    already open: 15 minutes later, if the agent-seat is idle, code sends the escalation, which
    quotes the message that opened the wait, and 15 minutes after that writes the user a
-   user-alert, once. The minutes both state are counted from the agent-seat's last token spent,
-   the start of its current idle stretch.
+   user-alert, once.
 
 Every message to an agent-seat goes through Sweep.send_wake_message, which ends it with
 DO_NOT_REPLY_SENTENCE: the headless agent-session that sends it has exited by the time the
@@ -42,10 +41,11 @@ What it does not handle: it runs only on ned-box and reads only ned-box's agent-
 invocation runs its headless agent-sessions one after another, so a slow judge delays every other
 agent-seat's step, and the lock makes the next minute's invocation skip, until it ends. A wait
 does not end when the agent-seat only replies to a message in text; it ends when the agent-seat
-makes a tool call after the nudge that opened the wait, has nothing to do (rule 4) and no rule 2
-message was sent on the wait, stops at a usage limit (rule 1), starts a new agent-session, or
-spends tokens after the user was told. So an agent-seat that answers each message with a tool
-call and goes idle again is nudged again, and never escalated.
+makes a tool call after the nudge that opened the wait or has nothing to do (rule 4), in either
+case only when no rule 2 message was sent on the wait, stops at a usage limit (rule 1), starts a
+new agent-session, or spends tokens after the user was told. So an agent-seat that answers each
+rule 3 or rule 5 message with a tool call and goes idle again is nudged again, and never
+escalated; one that answers a rule 2 message with a tool call and a fresh promise is escalated.
 
 How it fails, and what the user sees: a headless agent-session that fails, is stopped, answers
 JSON code cannot use, or sends to the wrong entry or the wrong text; a message missing from the
@@ -680,8 +680,10 @@ class Sweep:
                 self.end_wait(seat, "a usage limit")
             self.usage_limit(seat, verdict)
             return
+        # A tool call does not settle a promise a rule 2 message named, as rule 4 below does not.
         worked_at = verdict.get(fields.LAST_TOOL_CALL_AT)
-        if wait and worked_at and parse_time(worked_at) > parse_time(wait[NUDGE]):
+        if (wait and PROMISE not in wait and worked_at
+                and parse_time(worked_at) > parse_time(wait[NUDGE])):
             self.end_wait(seat, "it made a tool call after the nudge")
             wait = None
         if wait and TELL_USER in wait and stretch and parse_time(stretch) > parse_time(wait[TELL_USER]):
@@ -701,7 +703,7 @@ class Sweep:
             self.end_wait(seat, "nothing to do")
             wait = None
         if wait:
-            self.due_step(seat, verdict, wait, stretch)
+            self.due_step(seat, verdict, wait)
         if promise_text:
             # A promise given in answer to a message goes on the open wait, so that repeated
             # promises cannot put off its escalation and the user-alert.
@@ -721,12 +723,12 @@ class Sweep:
                      "session_id": verdict[fields.SESSION_ID], "first_idle_at": stretch,
                      "text": step_text})
 
-    def due_step(self, seat, verdict, wait, stretch):
+    def due_step(self, seat, verdict, wait):
         """The step of an open wait that is due: the escalation 15 minutes after the nudge, then
         the user-alert 15 minutes after the escalation; after that, none."""
         if TELL_USER in wait:
             return
-        minutes = int(seconds_between(stretch or wait[NUDGE], self.now) // 60)
+        minutes = int(seconds_between(wait["first_idle_at"] or wait[NUDGE], self.now) // 60)
         if ESCALATE in wait:
             if seconds_between(wait[ESCALATE], self.now) >= WAIT_STEP_SECONDS:
                 self.record({"event": "wait_step", "agent_seat": seat, "step": TELL_USER})
