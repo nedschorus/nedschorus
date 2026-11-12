@@ -108,15 +108,15 @@ FAKE_CLAUDE_CHILD_PROCESS_ID_FILE = SCRATCH / "fake-claude-child-process-id"
 FAKE_CLAUDE_ARGUMENTS_FILE = SCRATCH / "fake-claude-arguments.json"
 
 
-_interpreter_image_spec = importlib.util.spec_from_file_location(
-    "interpreter_image_of_this_process_test_fixture",
-    REPOSITORY_ROOT / "scripts" / "interpreter-image-of-this-process-test-fixture.py")
-_interpreter_image = importlib.util.module_from_spec(_interpreter_image_spec)
-_interpreter_image_spec.loader.exec_module(_interpreter_image)
+_running_python_executable_fixture_spec = importlib.util.spec_from_file_location(
+    "running_python_executable_file_path_for_copy_named_claude_test_fixture",
+    REPOSITORY_ROOT / "scripts" / "running-python-executable-file-path-for-copy-named-claude-test-fixture.py")
+_running_python_executable_fixture = importlib.util.module_from_spec(_running_python_executable_fixture_spec)
+_running_python_executable_fixture_spec.loader.exec_module(_running_python_executable_fixture)
 
 PYTHON_NAMED_CLAUDE = SCRATCH / "python-named-claude" / "claude"
 PYTHON_NAMED_CLAUDE.parent.mkdir()
-shutil.copy2(_interpreter_image.interpreter_image_of_this_process(), PYTHON_NAMED_CLAUDE)
+shutil.copy2(_running_python_executable_fixture.running_python_executable_file_path(), PYTHON_NAMED_CLAUDE)
 os.environ.update(FAKE_CLAUDE_PROCESS_ID_FILE=str(FAKE_CLAUDE_PROCESS_ID_FILE),
                   FAKE_CLAUDE_CHILD_PROCESS_ID_FILE=str(FAKE_CLAUDE_CHILD_PROCESS_ID_FILE),
                   FAKE_CLAUDE_ARGUMENTS_FILE=str(FAKE_CLAUDE_ARGUMENTS_FILE),

@@ -40,8 +40,8 @@ _git_environment_fixture = load_module("git_redirecting_environment_removal_test
                                        REPO_ROOT / "scripts" / "git-redirecting-environment-removal-test-fixture.py")
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 owner_file = load_module("worktree_owner_file_read_and_write", REPO_ROOT / "scripts" / "worktree-owner-file-read-and-write.py")
-interpreter_image = load_module("interpreter_image_of_this_process_test_fixture",
-                                REPO_ROOT / "scripts" / "interpreter-image-of-this-process-test-fixture.py")
+running_python_executable_fixture = load_module("running_python_executable_file_path_for_copy_named_claude_test_fixture",
+                                                REPO_ROOT / "scripts" / "running-python-executable-file-path-for-copy-named-claude-test-fixture.py")
 
 failures = []
 
@@ -73,7 +73,7 @@ def run_hook(hook_input, cwd, environment):
     claude = Path(environment["HOME"]).parent / "bin" / "claude"
     if not claude.exists():
         claude.parent.mkdir()
-        shutil.copy2(interpreter_image.interpreter_image_of_this_process(), claude)
+        shutil.copy2(running_python_executable_fixture.running_python_executable_file_path(), claude)
     completed = subprocess.run([str(claude), str(HOOK)], input=text, cwd=cwd, env=environment,
                                capture_output=True, text=True, check=False)
     return completed.returncode, completed.stdout, completed.stderr
