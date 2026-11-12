@@ -431,7 +431,7 @@ with tempfile.TemporaryDirectory() as scratch:
             cwd=str(occupied_wt), stdin=subprocess.PIPE,
         )
     else:
-        print("SKIP  occupied cases: lsof is not installed on this machine")
+        print("SKIP  [this machine cannot run it] occupied cases: lsof is not installed on this machine")
 
     try:
         # --- The report classifies every worktree ---------------------------

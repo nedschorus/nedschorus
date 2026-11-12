@@ -59,7 +59,7 @@ check("a file that does not exist exits 2, saying so",
       code == wait.EXIT_CANNOT_WAIT and "does not exist" in message, (code, message))
 
 if not os.path.isdir("/proc/self/fd"):
-    print("SKIP  the cases on real processes need /proc [this machine cannot run it]")
+    print("SKIP  [this machine cannot run it] the cases on real processes: they need /proc")
 else:
     linux = wait.linux_processes_writing_file
     with open(output_file) as read_only:
