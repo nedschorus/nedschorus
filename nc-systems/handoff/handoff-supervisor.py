@@ -381,6 +381,7 @@ BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
     "background-task-started-during-handoff-deferral-")
 COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
     "cold-read-full-run-command-refused-during-handoff-deferral-")
+BACKGROUND_TASK_PAST_WAIT_LIMIT_FIELD_PREFIX = "background-task-past-wait-limit-"
 WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 
 # The prompt goes on to the next step; a stop must hold that back too.
@@ -572,6 +573,14 @@ BACKGROUND_TASKS_STARTED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
     "The session you are replacing started {task_count} background Bash task(s) during its "
     "handoff-deferral that were still running when it ended, so they were stopped: "
     "{joined_tasks}. Run again any whose result you still need."
+)
+
+BACKGROUND_TASKS_PAST_WAIT_LIMIT_SENTENCE_TEMPLATE = (
+    "The session you are replacing had {task_count} background Bash task(s), none of them a "
+    "waiting-task, still running past its kind's wait-limit when it ended, so they were stopped: "
+    "{joined_tasks}. Run each again, then look first for a way to make it faster, such as removing "
+    "repeated work or running its steps in parallel, and raise its kind's wait-limit in the "
+    "wait-limit table only when you find none."
 )
 
 COLD_READ_FULL_RUN_COMMANDS_REFUSED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
@@ -1197,6 +1206,11 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     if late_tasks:
         lines.append(BACKGROUND_TASKS_STARTED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE.format(
             task_count=len(late_tasks), joined_tasks="; ".join(late_tasks)))
+    past_wait_limit_tasks = numbered_field_values_from(
+        handoff_fields, BACKGROUND_TASK_PAST_WAIT_LIMIT_FIELD_PREFIX)
+    if past_wait_limit_tasks:
+        lines.append(BACKGROUND_TASKS_PAST_WAIT_LIMIT_SENTENCE_TEMPLATE.format(
+            task_count=len(past_wait_limit_tasks), joined_tasks="; ".join(past_wait_limit_tasks)))
     refused_commands = numbered_field_values_from(
         handoff_fields, COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
     if refused_commands:

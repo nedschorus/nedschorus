@@ -2028,9 +2028,17 @@ def run_handoff_deferral_fields_cases(workspace: Path):
           == 'blate00001 "Fast read started during the deferral" command: '
              + json.dumps("python3 nc-systems/cold-read/cold-read-fast-read.py --target a.md"),
           body)
-    check("a background task started before the deferral, or one that finished, is not listed",
-          "bearly0001" not in body and "blate00002" not in body
+    late_field_values = " ".join(value for key, value in fields.items()
+                                 if key.startswith("background-task-started-during-handoff-deferral-"))
+    check("a background task started before the deferral, or one that finished, is not listed as "
+          "started during the deferral",
+          "bearly0001" not in late_field_values and "blate00002" not in body
           and "background-task-started-during-handoff-deferral-3" not in body, body)
+    check("a task the deferral did not wait for is not also listed as past its wait-limit, and the "
+          "task it waited for is",
+          "blate00001" not in fields.get("background-task-past-wait-limit-1", "")
+          and fields.get("background-task-past-wait-limit-1", "").startswith("bearly0001 ")
+          and "background-task-past-wait-limit-2" not in body, body)
     check("a background task launched at the moment the deferral began is listed, with what its "
           "Bash call ran and nothing from other blocks",
           fields.get("background-task-started-during-handoff-deferral-2")
@@ -2114,6 +2122,89 @@ def run_handoff_deferral_fields_cases(workspace: Path):
         missing_ok=True)
     clear()
     run_threshold_hook_defer_then_fire_then_writer_case(workspace)
+
+
+def run_background_task_past_wait_limit_cases(workspace: Path):
+    """A background task other than a waiting-task still running past its kind's wait-limit when
+    the session-handoff is written is listed with its command, kind, wait-limit, run time and the
+    wait-limit table's location, and the successor's first prompt carries all five."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)
+
+    def ago(minutes):
+        return (now - timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    suite_command = "python3 scripts/run-all-test-suites.py"
+    records = [
+        *background_bash_launch_records("bsuite0097", "Test suites", suite_command, ago(97)),
+        *background_bash_launch_records("bsuite0090", "At its limit", "pytest -q", ago(90)),
+        *background_bash_launch_records("bsuite0089", "Under its limit", "pytest -q", ago(89)),
+        *background_bash_launch_records("bwaits0200", "Waiting", "sleep 600", ago(200)),
+        *background_bash_launch_records("bnokind086", "Matches no kind", "python3 early.py", ago(86)),
+        *background_bash_launch_records("bdone00200", "Finished", "pytest -q", ago(200)),
+        background_bash_completion_record("bdone00200", ago(100)),
+        *background_bash_launch_records("bundated01", "Undated", "pytest -q", "not a time"),
+        *background_bash_launch_records("blater0080", "Launched in the deferral", "python3 late.py", ago(80)),
+    ]
+    transcript = workspace / "past-wait-limit.jsonl"
+    transcript.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    past = writer.background_tasks_past_wait_limit_still_running(
+        transcript, deferral_began_at=now - timedelta(minutes=85), now=now)
+    check("only the tasks past their kind's wait-limit are listed, leaving out a waiting-task, one "
+          "under its limit, a finished one, an undated one and one launched during the deferral",
+          [task[0] for task in past] == ["bsuite0097", "bsuite0090", "bnokind086"], past)
+    check("a task past its wait-limit carries its description, command, kind, wait-limit and run time",
+          past[:1] == [("bsuite0097", "Test suites", suite_command, "test-suite", 90.0, 97.0)], past)
+    check("a command no kind matches is named so, with the no-match wait-limit",
+          past[2][3:5] == (writer.threshold_hook.BACKGROUND_TASK_KIND_WHEN_NO_KIND_MATCHES, 75.0), past)
+    check("with no handoff-deferral, a task launched at any time is listed",
+          "blater0080" in [task[0] for task in writer.background_tasks_past_wait_limit_still_running(
+              transcript, now=now)])
+
+    # The writer, run as the agent runs it, on a transcript stamped by the real clock.
+    home = workspace / "past-wait-limit-home"
+    projects = home / ".claude" / "projects" / "-fixture-project"
+    projects.mkdir(parents=True, exist_ok=True)
+    handoffs = workspace / "past-wait-limit-handoffs"
+    handoffs.mkdir(parents=True, exist_ok=True)
+    session_id = "00000000-0000-4000-8000-0000000a0097"
+    real_now = datetime.now(timezone.utc)
+    (projects / f"{session_id}.jsonl").write_text("".join(
+        json.dumps(record) + "\n" for record in background_bash_launch_records(
+            "bsuite0097", "Test suites", suite_command,
+            (real_now - timedelta(minutes=97)).strftime("%Y-%m-%dT%H:%M:%S.000Z"))), encoding="utf-8")
+    written = run_writer(handoffs, "carry on\n", "--agent", "pastwaitlimitcase",
+                         environment_overrides={"HOME": str(home), "CLAUDE_CODE_SESSION_ID": session_id})
+    fields = writer.supervisor.parse_handoff_file(handoffs / "pastwaitlimitcase-handoff.md")
+    expected_field = ('bsuite0097 "Test suites" command: ' + json.dumps(suite_command)
+                      + "; kind: test-suite; wait-limit: 90 minutes; ran: 97 minutes; wait-limit table: "
+                      + "BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND in scripts/handoff-context-threshold-hook.py")
+    check("the session-handoff lists a test suite past its wait-limit with every field",
+          fields.get("background-task-past-wait-limit-1") == expected_field,
+          handoff_text(handoffs, "pastwaitlimitcase"))
+    check("the writer reports the tasks past their wait-limit it recorded",
+          "background tasks past their wait-limit: 1 recorded" in written.stdout, written.stdout)
+    prompt = writer.supervisor.build_ignition_prompt(Path("/x/dialog.md"), fields)
+    check("the successor's first prompt carries the task's five fields and asks for a speed-up "
+          "before a raised wait-limit",
+          expected_field in prompt and "Run each again, then look first for a way to make it faster"
+          in prompt and "raise its kind's wait-limit in the wait-limit table only when you find none"
+          in prompt, prompt[:1200])
+
+    lost = run_writer(handoffs, "carry on\n", "--agent", "pastwaitlimitlostcase",
+                      environment_overrides={"HOME": str(home),
+                                             "CLAUDE_CODE_SESSION_ID": "00000000-0000-0000-0000-0000000a0dea"})
+    check("a transcript that cannot be found is reported, with what to do, and the handoff is written",
+          (handoffs / "pastwaitlimitlostcase-handoff.md").is_file()
+          and "background tasks past their wait-limit: not listed (LookupError: no single transcript found"
+          in lost.stdout and "run this script again" in lost.stdout, lost.stdout)
+
+    with mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": ""}):
+        no_session_lines, no_session_status = writer.background_task_past_wait_limit_fields_for_this_session(
+            handoffs, workspace)
+    check("with no session id, nothing is listed and the status says to name the tasks in the next step",
+          no_session_lines == [] and "CLAUDE_CODE_SESSION_ID is unset" in no_session_status
+          and "Name in the next step each background task" in no_session_status, no_session_status)
 
 
 THRESHOLD_HOOK_SCRIPT = SYSTEM_DIRECTORY.parent.parent / "scripts" / "handoff-context-threshold-hook.py"
@@ -2230,6 +2321,7 @@ with tempfile.TemporaryDirectory() as temporary_directory_name:
     run_completed_task_prune_cases(temporary_directory)
     run_completed_task_prune_remote_store_cases(temporary_directory)
     run_handoff_deferral_fields_cases(temporary_directory)
+    run_background_task_past_wait_limit_cases(temporary_directory)
 
 print()
 if failures:
