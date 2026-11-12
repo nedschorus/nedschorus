@@ -95,7 +95,7 @@ DIAGNOSTIC_LINE = re.compile(
     r"|(?:[^\s:]*/)?(?:zsh|bash|sh|dash|ksh)(?::\d+)?"
     r"|[^\s:]+: line \d+"
     r"|(?:[^\s:]*/)?[^\s:/.\d][^\s:/.]*):\s[^\n]*?"
-    r"(?:command not found|No such file or directory|Permission denied"
+    r"(?:not found|No such file or directory|Permission denied"
     r"|Is a directory|cannot open|unrecognized option|invalid option"
     r"|unknown option|Connection refused|Could not resolve hostname"
     r"|Operation timed out|exceeds complexity limits|error)"
@@ -241,8 +241,9 @@ def fnmatch_pattern(marked):
                    for character in marked)
 
 
-class Placed(collections.namedtuple("Placed", "host directory words program_index")):
-    """A simple command with the machine and directory it ran in; directory None is unknown."""
+class Placed(collections.namedtuple("Placed", "host directory words program_index redirects")):
+    """A simple command with the machine and directory it ran in; directory None is unknown.
+    redirects holds only the command's own, not those of a { } or ( ) around it."""
 
     @property
     def program(self):
@@ -276,7 +277,7 @@ def split_into_simple_commands_with_the_machine_and_directory_each_runs_in(comma
             else:
                 directories[shell] = None
             continue
-        placed.append(Placed(host, directory, list(words), index))
+        placed.append(Placed(host, directory, list(words), index, tuple(words.redirects)))
         if host is None and index is not None and shell_reader.is_program(words[index], "ssh"):
             arguments = [plain(word) for word in words[index + 1:]]
             remote = shell_reader.ssh_remote_command(arguments)
@@ -356,25 +357,29 @@ def dash_names_a_word_expanded_to(command, word, machines, unchecked):
 GREP_PROGRAMS = frozenset({"grep", "egrep", "fgrep", "zgrep", "ugrep"})
 
 
-def grep_arguments_options_end_position_skipping_option_values(arguments):
-    """Return where grep's options end in arguments: the position of the -- that grep reads
-    as their end, an option's value skipped, or len(arguments) when there is none."""
+def grep_arguments_options_end_and_option_value_positions(arguments):
+    """Return where grep's options end in arguments, and the positions before it of the
+    words grep reads as an option's value. The end is the position of the -- that grep reads
+    as their end, or len(arguments) when there is none."""
+    values = set()
     index = 0
     while index < len(arguments):
         argument = arguments[index]
         index += 1
         if argument == "--":
-            return index - 1
+            return index - 1, frozenset(values)
         if argument.startswith("--"):
-            if argument.split("=", 1)[0] in GREP_LONG_OPTIONS_TAKING_A_VALUE \
-                    and "=" not in argument:
+            if argument in GREP_LONG_OPTIONS_TAKING_A_VALUE:
+                values.add(index)
                 index += 1
         elif argument.startswith("-") and argument != "-":
             for position, letter in enumerate(argument[1:], start=1):
                 if letter in GREP_SHORT_OPTIONS_TAKING_A_VALUE:
-                    index += position == len(argument) - 1
+                    if position == len(argument) - 1:
+                        values.add(index)
+                        index += 1
                     break
-    return len(arguments)
+    return len(arguments), frozenset(value for value in values if value < len(arguments))
 
 
 def glob_dash_name_causes(placed, machines, unchecked):
@@ -386,10 +391,13 @@ def glob_dash_name_causes(placed, machines, unchecked):
         arguments = [plain(word) for word in words]
         # Only grep's options that take a value are known; another program's options end at
         # its first --.
-        options_end = (grep_arguments_options_end_position_skipping_option_values(arguments)
-                       if command.program in GREP_PROGRAMS
-                       else arguments.index("--") if "--" in arguments else len(arguments))
-        for word in words[:options_end]:
+        options_end, option_values = (
+            grep_arguments_options_end_and_option_value_positions(arguments)
+            if command.program in GREP_PROGRAMS
+            else (arguments.index("--") if "--" in arguments else len(arguments), frozenset()))
+        for position, word in enumerate(words[:options_end]):
+            if position in option_values:
+                continue
             first_component = word.split("/", 1)[0]
             if plain(first_component) == first_component or word.startswith(("/", "~")):
                 continue
@@ -433,9 +441,9 @@ def agents_grep_options_and_patterns_without_file_names(command, machines, unche
     # nothing reached grep as written, as an option or an option's value such as
     # --include=*.md. After the -- that ends the options every word is a pattern or a file
     # name, whatever it begins with, and the loop below keeps at most the first.
-    options_end = grep_arguments_options_end_position_skipping_option_values(arguments)
+    options_end, option_values = grep_arguments_options_end_and_option_value_positions(arguments)
     arguments = [argument for position, (word, argument) in enumerate(zip(words, arguments))
-                 if not (position < options_end
+                 if not (position < options_end and position not in option_values
                          and argument.startswith("-") and plain(word) != word
                          and command.directory is not None
                          and dash_names_a_word_expanded_to(command, word, machines, unchecked))]
@@ -474,12 +482,23 @@ def agents_grep_options_and_patterns_without_file_names(command, machines, unche
     return kept
 
 
+def stderr_sent_away_by_own_redirect(command):
+    """Whether the command's own redirect sends its stderr anywhere but its stdout."""
+    # >&2 copies stdout onto stderr; only >& with a file name moves stderr too.
+    return any(operator.startswith("&>")
+               or operator.startswith("2>") and (operator, target) != ("2>&", "1")
+               or operator == ">&" and not target.isdigit()
+               for operator, target in command.redirects)
+
+
 def pattern_too_complex_causes(placed, machines, unchecked, output=""):
-    # A refusal the agent saw is not hidden, and the warning says it was.
-    if AGENTS_GREP_REFUSAL in (output or ""):
-        return []
+    # A refusal the agent saw is not hidden, and the warning says it was. A refusal shown is
+    # taken for that of each grep whose own redirect let it through.
+    refusal_shown = AGENTS_GREP_REFUSAL in (output or "")
     causes = []
     for command in placed:
+        if refusal_shown and not stderr_sent_away_by_own_redirect(command):
+            continue
         arguments = agents_grep_options_and_patterns_without_file_names(
             command, machines, unchecked)
         if not arguments:
