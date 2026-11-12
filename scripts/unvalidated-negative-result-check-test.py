@@ -265,6 +265,28 @@ check("the probe asks whether a word expanded only for a word that begins with -
       unlisted_probes == [["-c", "-x*", "/tmp/n*.md"]] and len(unlisted_unchecked) == 1
       and "`-x*`" in unlisted_unchecked[0],
       f"{unlisted_probes} unchecked {unlisted_unchecked}")
+after_double_dash_unchecked = []
+after_double_dash_machines = MachinesWhoseDirectoryCannotBeListed()
+after_double_dash_probes = probes_of("grep -e needle -- -x*", machines=after_double_dash_machines,
+                                     unchecked=after_double_dash_unchecked)
+check("the probe asks about no word after --, where a word can only be a pattern or a file "
+      "name",
+      after_double_dash_probes == [["-e", "needle"]] and after_double_dash_unchecked == []
+      and after_double_dash_machines.asked == [],
+      f"{after_double_dash_probes} unchecked {after_double_dash_unchecked} "
+      f"asked {after_double_dash_machines.asked}")
+unknown_directory_unchecked = []
+unknown_directory_machines = MachinesOfTheDay()
+unknown_directory_probes = probes_of('cd "$D" && grep -l needle -r -Users-el-agents-*/',
+                                     cwd=PROJECTS, machines=unknown_directory_machines,
+                                     unchecked=unknown_directory_unchecked)
+check("a dash-led unquoted glob of a grep run in a directory that is not known stays in the "
+      "probe, with no listing asked and no line in unchecked",
+      unknown_directory_probes == [["-l", "needle", "-r", "-Users-el-agents-*/"]]
+      and unknown_directory_unchecked == []
+      and not [asked for asked in unknown_directory_machines.asked if asked[0] == "entries"],
+      f"{unknown_directory_probes} unchecked {unknown_directory_unchecked} "
+      f"asked {unknown_directory_machines.asked}")
 
 
 class MachinesWhoseGrepRejectsUnknownOptions(MachinesOfTheDay):
