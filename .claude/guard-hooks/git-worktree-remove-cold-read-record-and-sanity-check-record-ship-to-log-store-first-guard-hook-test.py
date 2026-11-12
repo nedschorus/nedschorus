@@ -1056,7 +1056,7 @@ check("a log that cannot be written starts no waiter, and says why",
 
 
 # The waiter's other failures, injected in-process through its main.
-def waiter_run(worktree, *options, runner=subprocess.run, injected_hook=hook):
+def waiter_run(worktree, *options, runner=subprocess.run, injected_hook=hook, clock=time.monotonic, sleep=time.sleep):
     """Run the waiter's main in-process on worktree; return (exit code, its log, the alerts this run wrote)."""
     alerts_before = alerts_naming(worktree)
     log_output = io.StringIO()
@@ -1064,7 +1064,7 @@ def waiter_run(worktree, *options, runner=subprocess.run, injected_hook=hook):
         code = waiter.main(["--worktree", str(worktree), "--git-directory", str(worktree),
                             "--ned-box-home", str(SCRATCH_NED_BOX_HOME), "--poll-seconds", "0.05",
                             "--writer-own-shipment-grace-seconds", "0", *options],
-                           runner=runner, hook=injected_hook)
+                           runner=runner, hook=injected_hook, clock=clock, sleep=sleep)
     return code, log_output.getvalue(), [alert for alert in alerts_naming(worktree) if alert not in alerts_before]
 
 
@@ -1080,6 +1080,28 @@ check("a record still being written when the time limit runs out leaves the work
       code == 1 and failing_worktree.is_dir() and len(alerts) == 1
       and waiter.WAITER_TIME_LIMIT_RAN_OUT_USER_ALERT_FAILURE_SENTENCE in alerts[0]["alert_text"]
       and f"Record {failing_record} (worktree {failing_worktree})\n" in alerts[0]["alert_text"], (code, log_text))
+
+# The default limit, on a clock that only the waiter's own sleeps move: 30-second polls land on 49.5 and 50 minutes.
+simulated = {"now": 0.0, "slept_at": []}
+
+
+def simulated_sleep(seconds):
+    simulated["slept_at"].append(simulated["now"])
+    simulated["now"] += seconds
+
+
+writer, held = record_writer_started(failing_record)
+try:
+    code, log_text, alerts = waiter_run(failing_worktree, "--record", str(failing_record), "--poll-seconds", "30",
+                                        clock=lambda: simulated["now"], sleep=simulated_sleep)
+finally:
+    writer.communicate("")
+check("with the default time limit, a record still being written is still waited for at 49.5 minutes and the "
+      "waiter gives up at 50, leaving the worktree and writing a user-alert",
+      code == 1 and failing_worktree.is_dir() and len(alerts) == 1
+      and waiter.WAITER_TIME_LIMIT_RAN_OUT_USER_ALERT_FAILURE_SENTENCE in alerts[0]["alert_text"]
+      and max(simulated["slept_at"]) == 49.5 * 60 and simulated["now"] == 50 * 60,
+      (code, simulated["now"], simulated["slept_at"][-3:], log_text))
 
 
 def shipper_failing_runner(argv, **keywords):
