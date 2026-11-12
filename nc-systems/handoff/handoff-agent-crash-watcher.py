@@ -181,6 +181,9 @@ RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS = 3
 # recover-crashed-seats.py's AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER.
 AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER = "STARTED OUTSIDE THE USER'S SYSTEMD MANAGER"
 
+# recover-crashed-seats.py's SEAT_ALREADY_RUNNING_REPORT_MARKER.
+SEAT_ALREADY_RUNNING_REPORT_MARKER = "ALREADY RUNNING"
+
 # How a notice hands its problem on: the user sits at his Mac, whose windows onto
 # ned-box's agent-seats are where he types to them.
 PASTE_THIS_NOTICE_INTO_A_NED_BOX_AGENT_SEAT = (
@@ -921,7 +924,7 @@ class Watcher:
             return
         exit_code, output = self.recover(seat)
         if (exit_code in (0, RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS)
-                and "ALREADY RUNNING" not in output):
+                and SEAT_ALREADY_RUNNING_REPORT_MARKER not in output):
             # Recovery exits 0 or 3 only once the seat's supervisor survived its settle: a sighting.
             self.mark_seen_running(record, self.now)
             self.record_recovery_attempt(record, died_at, "restarted")

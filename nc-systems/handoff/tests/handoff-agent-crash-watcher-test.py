@@ -412,6 +412,9 @@ def run_decision_cases(root: Path):
           and not harness.state["seats"]["merge-lane-2"].get("recovery_attempts"),
           repr(harness.state))
 
+    check("the watcher's already-running marker is recovery's",
+          watcher_module.SEAT_ALREADY_RUNNING_REPORT_MARKER
+          == recovery_module.SEAT_ALREADY_RUNNING_REPORT_MARKER)
     check("the watcher's started-outside-the-user-systemd-manager marker is recovery's",
           watcher_module.AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER
           == recovery_module.AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER)
