@@ -341,10 +341,10 @@ in the nedschorus repository, which this machine also clones:
 - `handoff-agent-seat-died-without-session-handoff-restart-watcher/` -- each decision of ned-box's
   crash watcher and the notices it showed the user, written by
   `nc-systems/handoff/handoff-agent-crash-watcher.py`
-- `uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-checks/` -- each
-  machine's weekly check that the work-snapshot hook finds a real claude
+- `uncommitted-work-snapshot-hook-scheduled-checks-that-real-claude-session-is-recorded-as-owner/` -- each
+  machine's scheduled check that the work-snapshot hook finds a real claude
   session, written by
-  `nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py`
+  `nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py`
 - `ghi-guide-agent-proposed-improvements-or-changes/` -- ghi-guide-agent's ruling questions
   about GHI-MDs, each a proposed-improvements-or-changes-file settled in
   place, written by `scripts/ghi-issue-write.py`
