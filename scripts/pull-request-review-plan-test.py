@@ -998,6 +998,29 @@ def run_named_cold_read_record_cases(fixture):
     check("a fix round's delta string gets its named record's path too",
           len(delta) == 1 and delta[0]["cold_read_record"] == matching and delta[0]["fast_read_command"] is None, delta)
 
+    second = write_named_cold_read_record(records_directory, "second-message-2026-11-11", "Second message\n")
+    adjacent = review_plan_module.named_cold_read_records_with_target_texts(f"Records: {matching},{second}.")
+    check("two record paths joined by a comma and no space are read as two records",
+          [record["path"] for record in adjacent] == [matching, second]
+          and all(record["problem"] is None for record in adjacent), adjacent)
+
+    names = review_plan_module.cold_read_record_names
+    saved_lookup = names.cold_read_record_file_path_prefixed_name_else_name_before_prefix
+
+    def lookup_denied(record_dir, name):
+        raise PermissionError(13, "Permission denied", str(record_dir))
+    names.cold_read_record_file_path_prefixed_name_else_name_before_prefix = lookup_denied
+    try:
+        try:
+            denied = review_plan_module.named_cold_read_records_with_target_texts(f"Record: {matching}")
+        except OSError as escaped:
+            denied = [{"escaped": f"{type(escaped).__name__}: {escaped}"}]
+    finally:
+        names.cold_read_record_file_path_prefixed_name_else_name_before_prefix = saved_lookup
+    check("a named record whose report lookup raises an OSError is listed with the reason instead of ending the run",
+          len(denied) == 1 and denied[0].get("target_texts") == set()
+          and (denied[0].get("problem") or "").startswith("it could not be read: PermissionError: "), denied)
+
 
 def run_repository_and_output_cases(fixture):
     fixture.reset_fixture_to_base()
