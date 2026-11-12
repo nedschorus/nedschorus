@@ -3,7 +3,7 @@
 
 Not a test file, and not a program a seat runs: a suite that needs a process named `claude`, such
 as one whose code looks for its nearest `claude` parent process, loads it and copies
-interpreter_image_of_this_process() to a file named claude. Its name ends `-test-fixture.py`
+running_python_executable_file_path() to a file named claude. Its name ends `-test-fixture.py`
 rather than `-test.py` so scripts/run-all-test-suites.py, which finds suites with
 `git ls-files -- '*-test.py'`, does not run it as a suite of its own.
 
@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 
-def interpreter_image_of_this_process():
+def running_python_executable_file_path():
     """The executable file this process runs: /proc/self/exe on Linux, `ps -o comm=` elsewhere.
 
     Raises RuntimeError when ps reports a name that is not a full path, and
