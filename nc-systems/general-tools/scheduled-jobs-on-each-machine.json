@@ -175,6 +175,15 @@
       "on": {
         "ned-box": {"scheduler": "cron", "schedule": "*/5 * * * *"}
       }
+    },
+    {
+      "name": "cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write",
+      "program": "nc-systems/cold-read/cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.py",
+      "arguments": [],
+      "output": ".claude/cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "45 7 * * *"}
+      }
     }
   ]
 }
