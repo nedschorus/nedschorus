@@ -199,6 +199,17 @@ try:
     check("the judge is handed the tool calls from the judged sentence's turn on, inputs cut short",
           calls is not None and [call["name"] for call in calls] == ["Bash"]
           and len(calls[0]["input"]) == fields.TOOL_CALL_INPUT_CHARACTERS_KEPT, calls)
+    # {"command": "<n x>"} is n + 15 characters of JSON.
+    for command_length, expected_input_length in ((1485, 1500), (1486, 1500)):
+        machine = Machine()
+        machine.seat("alpha", [user("go"), assistant(ANNOUNCED),
+                               assistant(tool=("Bash", {"command": "x" * command_length})), turn_end()])
+        _, verdicts, _ = machine.run()
+        calls = verdicts["alpha"].get("tool_calls_since_start_of_earliest_turn_with_sentence_to_judge")
+        check(f"a tool call input of {command_length + 15} characters of JSON is handed to the judge "
+              f"as {expected_input_length}",
+              calls is not None and [len(call["input"]) for call in calls] == [expected_input_length],
+              calls)
 
     # --- rule 2: a promise after an event, unbacked, then backed by a task with prerequisites ---
     PROMISE = "I'll report when PR 927 merges."
