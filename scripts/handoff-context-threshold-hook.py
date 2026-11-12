@@ -5,7 +5,8 @@ It counts the context used plus the tokens the session's compactions dropped, an
 /handoff skill once that count reaches --threshold-used-percentage of the context window.
 Below --ceiling-used-percentage, by the same count, it defers instead, saving the work it waits for in
 <session>-handoff-deferred in ~/.claude/handoffs/, while Claude Code's background_tasks list
-shows a running subagent, workflow or background shell task within its wait, or while a
+shows a running subagent, workflow or background shell task younger than its kind's wait-limit,
+from BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND, or while a
 transcript it reads launch records from cannot be read, since it then cannot tell what runs.
 With no background_tasks list it counts nothing as running.
 
@@ -156,14 +157,20 @@ HANDOFF_DEFERRED_MARKER_NOT_DELETED = (
     "without waiting for an answer."
 )
 
+WAIT_LIMIT_TABLE_SENTENCE = (
+    "Each kind's wait-limit is in BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND in "
+    "scripts/handoff-context-threshold-hook.py."
+)
+
 HANDOFF_DEFERRED_NOTICE = (
     "Context at {share} — handoff deferred while {running} run, because a "
     "handoff now would stop them.\n"
     "Do not run the /handoff skill now; carry on with your work, and a later "
     "system message will tell you when to run it. That message comes once "
     "the work running now has finished ({awaited}), with a background task, "
-    "though not a subagent, counted as finished {wait_minutes:g} minutes after "
-    "its launch even if it still runs, or once this session's context reaches the {ceiling:g}% ceiling. "
+    "though not a subagent, counted as finished once it is as old as its kind's "
+    "wait-limit even if it still runs, or once this session's context reaches the {ceiling:g}% ceiling. "
+    + WAIT_LIMIT_TABLE_SENTENCE + " "
     "Work you start from now on does not delay that message, and when the "
     "handoff comes, it stops whatever is still running.\n"
     + NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION
@@ -176,9 +183,10 @@ HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE = (
     "system message will tell you when to run it. That message comes once "
     "the hook can read the whole transcript and finds that the work started "
     "before now has finished, with a background task, though not a subagent, "
-    "counted as finished {wait_minutes:g} minutes after its launch even if it "
+    "counted as finished once it is as old as its kind's wait-limit even if it "
     "still runs, or once "
-    "this session's context reaches the {ceiling:g}% ceiling. Work you start "
+    "this session's context reaches the {ceiling:g}% ceiling. "
+    + WAIT_LIMIT_TABLE_SENTENCE + " Work you start "
     "from now on does not delay that message, and when the handoff comes, it "
     "stops whatever is still running.\n"
     + NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION
@@ -210,8 +218,65 @@ def awaited_phrase(flight: WorkInFlight) -> str:
     return ", ".join(parts)
 
 
-# Allow a slow cold-read cell plus one retry; the context ceiling still bounds deferral.
-DEFAULT_BACKGROUND_TASK_WAIT_MINUTES = 75.0
+# A background Bash task holds the session-handoff while younger than its kind's wait-limit; past
+# it the task is presumed stuck or open-ended. The first kind with a pattern that matches the whole
+# command (re.fullmatch, ignoring case) is the task's kind. Work kinds come before waiting-task and
+# match a name anywhere, so a command that both does work and waits keeps the work's limit.
+# A waiting-task pattern spells out one whole command, because any work beside the wait would get 0
+# and be killed by the handoff: each operand is one _WORD, which cannot hold a backtick,
+# a command substitution or an unquoted separator. A variable name is read whole, or a failed
+# match backtracks over every way to split it.
+_WORD = r"""(?:[^\s;&|<>()`$'"\\]|\$\w+(?!\w)|\$\{\w+\}|'[^']*'|"(?:[^"`$\\]|\$\w+(?!\w)|\$\{\w+\})*")+"""
+_ARGUMENTS = r"(?:[ \t]+" + _WORD + r")*"
+_REDIRECTIONS = r"(?:[ \t]*(?:\d?>&\d|(?:\d?>>?|&>|<)[ \t]*" + _WORD + r"))*"
+_COMMAND_END = r"[ \t]*(?:;|\n)\s*"
+_COMMAND_PREFIX = r"\s*(?:(?:(?:cd|export)[ \t]+" + _WORD + r"|[A-Za-z_]\w*=(?:" + _WORD + r")?)[ \t]*(?:&&|;|\n)\s*)*"
+_TO_THE_END = _REDIRECTIONS + r"[ \t]*;?\s*"
+_WATCHER = (r"(?:bash[ \t]+|python3(?:[ \t]+-u)?[ \t]+)?(?:" + _WORD + r"/)?"
+            r"(?:watch-and-merge-provisional[\w.-]*|wait-review-runs[\w.-]*"
+            r"|wait-for-next-pull-request-event[\w.-]*|watch-open-pull-requests-nbd\.py)"
+            + _ARGUMENTS + _REDIRECTIONS
+            + r"""(?:[ \t]*\|[ \t]*(?:grep[ \t]+-v[ \t]+(?:'[^']*'|"[^"`$\\]*")|tail[ \t]+-n?[ \t]*\d+))*""")
+_LOOP_CONDITION_CHECK = r"(?:![ \t]+)?(?:grep|pgrep|kill[ \t]+-0|test|\[|true|:)" + _ARGUMENTS + _REDIRECTIONS
+_DEADLINE = r"\$\(date[ \t]+\+%s\)"
+BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND = (
+    ("nc-mutation-testing", (r".*(?:mutation|mutmut|mutant).*",), 105.0),
+    ("test-suite", (r".*(?:run-all-test-suites\.py|pytest|-test\.py\b|_test\.py\b|unittest"
+                    r"|head-tests-with-retry|head-test-run|test-suite|run-suites).*",), 90.0),
+    ("waiting-task", tuple(_COMMAND_PREFIX + shape + _TO_THE_END for shape in (
+        r"sleep[ \t]+" + _WORD,
+        r"gh[ \t]+pr[ \t]+checks(?=[^\n;&|]*--watch)" + _ARGUMENTS,
+        r"gh[ \t]+run[ \t]+watch" + _ARGUMENTS,
+        _WATCHER,
+        r"(?:until|while)[ \t]+" + _LOOP_CONDITION_CHECK
+        + r"(?:[ \t]*(?:&&|\|\|)[ \t]*" + _LOOP_CONDITION_CHECK + r")*"
+        + _COMMAND_END + r"do\s+sleep[ \t]+" + _WORD + _COMMAND_END + r"done",
+        r"end=\$\(\([ \t]*" + _DEADLINE + r"[ \t]*\+[ \t]*\d+[ \t]*\)\)" + _COMMAND_END
+        + r"while[ \t]+\[[ \t]+" + _DEADLINE + r"[ \t]+-lt[ \t]+\$end[ \t]+\]" + _COMMAND_END
+        + r"do\s+" + _WATCHER + _COMMAND_END + r"done")), 0.0),
+)
+# Allows a slow cold-read-full-run with one cell relaunch.
+BACKGROUND_TASK_WAIT_LIMIT_MINUTES_WHEN_NO_KIND_MATCHES = 75.0
+_COMPILED_WAIT_LIMIT_KINDS = [
+    ([re.compile(pattern, re.I | re.S) for pattern in patterns], minutes)
+    for _kind, patterns, minutes in BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND]
+
+
+def background_task_kind_wait_limit_seconds_from_command(command) -> float:
+    """Return the wait-limit, in seconds, of the first kind with a pattern that matches the whole
+    command; a command no pattern matches, or None for an unknown command, gets the no-match limit."""
+    if isinstance(command, str):
+        for patterns, minutes in _COMPILED_WAIT_LIMIT_KINDS:
+            if any(pattern.fullmatch(command) for pattern in patterns):
+                return minutes * 60
+    return BACKGROUND_TASK_WAIT_LIMIT_MINUTES_WHEN_NO_KIND_MATCHES * 60
+
+
+def background_task_still_within_wait(age_seconds, wait_limit_seconds) -> bool:
+    """A task with no readable launch time counts as within its wait, unless its limit is 0."""
+    if wait_limit_seconds <= 0:
+        return False
+    return age_seconds is None or age_seconds < wait_limit_seconds
 
 # Covers a subagent just woken by its own background task, before it has launched or written more.
 SUBAGENT_OWN_TRANSCRIPT_RECENT_WRITE_SECONDS = 5 * 60
@@ -245,9 +310,41 @@ BACKGROUND_TASK_LAUNCH_KEY = "backgroundTaskId"
 # whose toolUseResult carries this key beside task_id, records that the task ended.
 TASK_STOP_TOOL_RESULT_MARKER_KEY = "task_type"
 
+# Only the assistant record of a Bash call run in the background carries this input key.
+BACKGROUND_BASH_CALL_KEY = '"run_in_background"'
+
 # Completion notifications use these tags across several record types.
 TASK_NOTIFICATION_PATTERN = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
 TASK_NOTIFICATION_TASK_ID_PATTERN = re.compile(r"<task-id>([^<]+)</task-id>")
+
+
+def background_bash_commands_by_tool_use_id_from_line(line: str) -> dict:
+    """Return {tool_use id: command} for the Bash calls run in the background in this transcript
+    line; a line that does not parse gives none, so its task gets the no-match wait-limit."""
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        return {}
+    message = record.get("message") if isinstance(record, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    commands = {}
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        tool_input = block.get("input")
+        if isinstance(tool_input, dict) and tool_input.get("run_in_background") is True:
+            commands[block.get("id")] = tool_input.get("command")
+    return commands
+
+
+def tool_result_tool_use_id(record):
+    """Return the tool_use id the record's first tool_result answers, or None."""
+    message = record.get("message") if isinstance(record, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    for block in content if isinstance(content, list) else []:
+        if isinstance(block, dict) and block.get("type") == "tool_result":
+            return block.get("tool_use_id")
+    return None
 
 
 def claude_version_or_why_unread() -> str:
@@ -457,7 +554,7 @@ def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
                           should_read_subagent_own_transcripts=False).subagent_ids
 
 
-def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
+def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
                    now=None, should_read_subagent_own_transcripts=True,
                    should_raise_on_undecodable_bytes=False) -> WorkInFlight:
     """Return running subagents and background tasks in launch order.
@@ -469,6 +566,8 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
     counts it from the notices alone.
     should_raise_on_undecodable_bytes=True raises TranscriptCouldNotBeFullyRead on bytes that are
     not UTF-8 anywhere in the file, instead of reading past them.
+    background_task_wait_seconds=None gives each background task its kind's wait-limit, from the
+    command of the Bash call that launched it; a number gives every task that wait instead.
     """
     # Scan the whole transcript: a running task may have launched hours before the tail.
     # Unreadable candidates raise; treating an incomplete scan as empty could kill running work.
@@ -481,6 +580,8 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
     spawned_ids = []
     launched_task_ids = []
     launched_task_age = {}
+    launched_task_command = {}
+    background_command_by_tool_use_id = {}
     launched_at_by_id = {}
     # The last notification, TaskStop or resume for a task-id decides: an interim notification
     # leaves its subagent running, and a resume clears the entry so the subagent counts again.
@@ -526,11 +627,16 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                         if task_id and task_id not in launched_task_age:
                             launched_task_ids.append(task_id)
                             launched_task_age[task_id] = record_age_seconds(record, now)
+                            launched_task_command[task_id] = background_command_by_tool_use_id.get(
+                                tool_result_tool_use_id(record))
                             launched_at_by_id[task_id] = record_time(record)
                     stopped_id = tool_result.get("task_id")
                     if TASK_STOP_TOOL_RESULT_MARKER_KEY in tool_result and isinstance(stopped_id, str):
                         last_notification_is_interim[stopped_id] = False
                         stopped_ids.add(stopped_id)
+                if BACKGROUND_BASH_CALL_KEY in line:
+                    background_command_by_tool_use_id.update(
+                        background_bash_commands_by_tool_use_id_from_line(line))
                 if "<task-id>" in line:
                     for notification in TASK_NOTIFICATION_PATTERN.findall(line):
                         interim = interim_recognizer.task_notification_is_interim(notification)
@@ -546,8 +652,10 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                     if not interim}
 
     def still_within_wait(task_id):
-        age = launched_task_age[task_id]
-        return age is None or age <= background_task_wait_seconds
+        wait_limit_seconds = (
+            background_task_kind_wait_limit_seconds_from_command(launched_task_command[task_id])
+            if background_task_wait_seconds is None else background_task_wait_seconds)
+        return background_task_still_within_wait(launched_task_age[task_id], wait_limit_seconds)
 
     def subagent_still_in_flight(agent_id):
         if agent_id in finished_ids:
@@ -568,15 +676,16 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
 
 
 def work_in_flight_from_background_tasks(background_tasks: list, transcript_path: str,
-                                        background_task_wait_seconds: float,
+                                        background_task_wait_seconds=None,
                                         now=None) -> WorkInFlight:
     """Return the running subagents, workflows and background shell tasks on Claude Code's list.
 
     The list gives no start time and shows a Monitor as a shell task, so each listed shell task's
     launch record is looked up in the session's transcript and its subagents' transcripts, the
     Workflow-tool agents' included: a shell task launched by the Monitor tool holds nothing, nor
-    does one launched longer ago than the wait; one whose launch no transcript records counts as
-    within its wait. Each listed subagent and shell
+    does one at least as old as its wait; one whose launch no transcript records counts as
+    within its wait, unless its wait is 0. background_task_wait_seconds=None gives each shell task
+    its kind's wait-limit, from the list entry's command; a number gives every task that wait. Each listed subagent and shell
     task is dated by its launch record, for a deferral that saved no list, and so is each subagent
     off the list whose transcript launched a listed shell task; a workflow, or work whose launch no
     transcript records, has no date. An entry that is not a running subagent, workflow or
@@ -596,9 +705,13 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
     launch_ages, monitor_ids, launching_subagent_id_by_task_id = (
         shell_task_launch_ages_and_monitor_ids(transcript_path, shell_ids, now))
 
+    command_by_id = {entry["id"]: entry.get("command") for entry in running}
+
     def still_within_wait(task_id):
-        age = launch_ages.get(task_id)
-        return age is None or age <= background_task_wait_seconds
+        wait_limit_seconds = (
+            background_task_kind_wait_limit_seconds_from_command(command_by_id.get(task_id))
+            if background_task_wait_seconds is None else background_task_wait_seconds)
+        return background_task_still_within_wait(launch_ages.get(task_id), wait_limit_seconds)
 
     subagent_ids = ids_of(SUBAGENT_TASK_TYPE)
     launching_subagent_ids_off_the_list = sorted(
@@ -720,7 +833,7 @@ def subagent_transcript_path(session_transcript_path, agent_id) -> Path:
 
 
 def subagent_own_transcript_shows_work_in_flight(subagent_path: Path,
-                                                 background_task_wait_seconds: float,
+                                                 background_task_wait_seconds,
                                                  now) -> bool:
     """Return True while the subagent's own transcript was written within the recent-write
     window, or shows a background task of its own still within its wait.
@@ -789,12 +902,10 @@ def defer(session_id, used, share, flight, arguments, unreadable_marker_problem=
     lines = [
         HANDOFF_DEFERRED_NOTICE.format(
             share=share, running=running_phrase(flight), awaited=awaited_phrase(flight),
-            wait_minutes=arguments.background_task_wait_minutes,
             ceiling=arguments.ceiling_used_percentage)
         if count_is_known
         else HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE.format(
-            share=share, wait_minutes=arguments.background_task_wait_minutes,
-            ceiling=arguments.ceiling_used_percentage)
+            share=share, ceiling=arguments.ceiling_used_percentage)
     ]
     try:
         handoff_deferred_marker_and_refused_commands_files_common.handoff_deferred_marker_write(HANDOFF_DIRECTORY, session_id, marker_record)
@@ -820,12 +931,6 @@ def main(argv=None) -> int:
         "--ceiling-used-percentage", type=float, default=65.0,
         help="the share of the context window, in percent, at or above which the context used "
              "plus the tokens compactions dropped fires the handoff even with work in flight",
-    )
-    parser.add_argument(
-        "--background-task-wait-minutes", type=float,
-        default=DEFAULT_BACKGROUND_TASK_WAIT_MINUTES,
-        help="a background Bash task older than this no longer holds the handoff: "
-             "it is presumed stuck or open-ended",
     )
     arguments = parser.parse_args(argv)
 
@@ -866,9 +971,7 @@ def main(argv=None) -> int:
         # An incomplete scan is not an all-clear; defer only as far as the context ceiling.
         try:
             flight = (WorkInFlight([], []) if background_tasks_list_is_missing
-                      else work_in_flight_from_background_tasks(
-                          background_tasks, transcript_path,
-                          arguments.background_task_wait_minutes * 60))
+                      else work_in_flight_from_background_tasks(background_tasks, transcript_path))
             count_is_known = True
         except TranscriptCouldNotBeFullyRead:
             flight = None

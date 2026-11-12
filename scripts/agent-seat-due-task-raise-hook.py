@@ -672,8 +672,7 @@ def next_action_prompt_lines(payload: dict, tasks: dict, directory: Path, state:
     background_tasks = payload.get(handoff.BACKGROUND_TASKS_PAYLOAD_KEY)
     try:
         if isinstance(background_tasks, list) and handoff.work_in_flight_from_background_tasks(
-                background_tasks, str(transcript),
-                handoff.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60, now=now):
+                background_tasks, str(transcript), now=now):
             return None
     except handoff.TranscriptCouldNotBeFullyRead:
         return None  # running work that cannot be counted is not idleness
