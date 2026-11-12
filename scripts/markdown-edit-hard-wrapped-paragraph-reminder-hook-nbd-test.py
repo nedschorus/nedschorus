@@ -387,6 +387,14 @@ kept_newline = added_lines_or_fault("Drop me.\nThe first half\nand the second ha
                                     "\nThe first half\nand the second half.\n")
 check("an Edit with an empty newString that left the following newline, as Claude Code 2.1.185 did, "
       "adds only the emptied line", kept_newline == [0], kept_newline)
+both_forms = added_lines_or_fault("a\nb\nZ a\nb", "a\nb", "", "Z a\nb", replace_all=True)
+check("a replace_all Edit with an empty newString, where both texts Claude Code may have removed "
+      "give the file's line count and different added lines, is a check not made",
+      isinstance(both_forms, str) and "tool_response.oldString removed alone or removed together with the newline that followed it, and the two readings change different lines" in both_forms, both_forms)
+both_forms_agree = added_lines_or_fault("\na\na", "\na", "", "", replace_all=True)
+check("a replace_all Edit with an empty newString, where both texts Claude Code may have removed "
+      "give the file's line count and the same added lines, is read", both_forms_agree == [],
+      both_forms_agree)
 adjacent = added_lines_or_fault("Filler.\np\np\np\nThe first half\n", "p\n", "",
                                 "Filler.\nThe first half\n", replace_all=True)
 check("a replace_all Edit deleting adjacent identical lines adds no line, though each deleted "
@@ -416,9 +424,45 @@ finally:
     hook.difflib.SequenceMatcher = _real_sequence_matcher
 check("a span of 600 repeated lines against 600 is not line-diffed, and its every new line counts "
       "as added", bounded == list(range(1, 601)), bounded if isinstance(bounded, str) else len(bounded))
+many_spans_original = ("x\n" * 350 + "\n") * 40
+many_spans_after = ("x\nz\n" * 350 + "\n") * 40
+diffed_spans = []
+
+
+class SequenceMatcherCountingSpans(_real_sequence_matcher):
+    def __init__(self, isjunk, before_span, after_span, **keywords):
+        diffed_spans.append(len(before_span) * len(after_span))
+        super().__init__(isjunk, before_span, after_span, **keywords)
+
+
+hook.difflib.SequenceMatcher = SequenceMatcherCountingSpans
+try:
+    many_spans = added_lines_or_fault(many_spans_original, "x\n", "x\nz\n", many_spans_after,
+                                      replace_all=True)
+finally:
+    hook.difflib.SequenceMatcher = _real_sequence_matcher
+# Each block of 350 lines is one span of 351 lines against 701; the last block's first line is an
+# unchanged x, which only an undiffed span counts as added.
+last_block_first_line = 39 * 701
+check("a replace_all Edit of 40 spans, each within LINE_DIFF_MAXIMUM_LINE_PAIRS, line-diffs only "
+      "as many as fit in the bound across the whole Edit",
+      0 < len(diffed_spans) < 40 and sum(diffed_spans) <= hook.LINE_DIFF_MAXIMUM_LINE_PAIRS,
+      diffed_spans)
+check("a replace_all Edit's first span, within the bound, counts only its z lines as added, and its "
+      "last span, past it, counts its every new line",
+      isinstance(many_spans, list) and [line for line in many_spans if line < 701] == list(range(1, 700, 2))
+      and last_block_first_line in many_spans,
+      many_spans if isinstance(many_spans, str) else len(many_spans))
 small = added_lines_or_fault("Top.\nx\nx\nEnd.\n", "x\nx", "x\nz", "Top.\nx\nz\nEnd.\n")
 check("a span within LINE_DIFF_MAXIMUM_LINE_PAIRS is line-diffed, so only its changed line counts as added",
       small == [2], small)
+_real_line_diff_maximum_line_pairs = hook.LINE_DIFF_MAXIMUM_LINE_PAIRS
+hook.LINE_DIFF_MAXIMUM_LINE_PAIRS = 4
+try:
+    at_bound = added_lines_or_fault("Top.\nx\nx\nEnd.\n", "x\nx", "x\nz", "Top.\nx\nz\nEnd.\n")
+finally:
+    hook.LINE_DIFF_MAXIMUM_LINE_PAIRS = _real_line_diff_maximum_line_pairs
+check("a span of exactly LINE_DIFF_MAXIMUM_LINE_PAIRS line pairs is line-diffed", at_bound == [2], at_bound)
 
 # ---------------------------------------------------------------------------
 # The hook, run as a subprocess against a scratch repository.
@@ -656,7 +700,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         check("an Edit whose payload has no originalFile is reported as a check not made, exit 1",
               result.returncode == 1 and result.stdout == ""
               and "lacks tool_response's originalFile" in result.stderr
-              and "the Edit itself succeeded." in result.stderr,
+              and "the Edit itself succeeded and need not be redone.\n" in result.stderr
+              and "If the Edit wrote a paragraph across several lines, join that paragraph into one line yourself." in result.stderr,
               result.stdout + result.stderr)
         payload = payload_for(checkout, "Edit", edited_file, {"old_string": "x", "new_string": "y"})
         payload["tool_response"] = {"originalFile": BROKEN_TEXT, "oldString": "absent",
@@ -727,7 +772,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           result.returncode == 1 and result.stdout.strip() == ""
           and "git check-ignore -q -- notes.md in" in result.stderr
           and "failed (exit 128" in result.stderr
-          and "the Write itself succeeded." in result.stderr,
+          and "the Write itself succeeded and need not be redone.\n" in result.stderr
+              and "If the Write wrote a paragraph across several lines, join that paragraph into one line yourself." in result.stderr,
           f"exit {result.returncode}: {result.stdout + result.stderr}")
 
     # git missing from PATH: the hook runs by absolute path, so only git is absent.

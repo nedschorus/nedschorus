@@ -407,16 +407,19 @@ check("no cold-read program keeps its own copy of these names",
 
 # The module must actually define everything it is credited with, or the
 # check above passes by finding nothing anywhere.
-module_tree = ast.parse(NAMES_MODULE.read_text(), filename=str(NAMES_MODULE))
-defined = set()
-for node in ast.walk(module_tree):
-    if isinstance(node, ast.FunctionDef):
-        defined.add(node.name)
-    elif isinstance(node, ast.Assign):
-        defined.update(target.id for target in node.targets
-                       if isinstance(target, ast.Name))
-    elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-        defined.add(node.target.id)
+def defined_names(module_text):
+    defined = set()
+    for node in ast.walk(ast.parse(module_text)):
+        if isinstance(node, ast.FunctionDef):
+            defined.add(node.name)
+        elif isinstance(node, ast.Assign):
+            defined.update(target.id for target in node.targets
+                           if isinstance(target, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            defined.add(node.target.id)
+    return defined
+
+
 def owned_names_missing_failure_detail(missing):
     return "\n".join([
         f"{NAMES_MODULE_RELATIVE_PATH} is missing {missing}, which OWNED_NAMES in "
@@ -431,11 +434,19 @@ def owned_names_missing_failure_detail(missing):
         RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
 
 
-missing = sorted(OWNED_NAMES - defined)
+def every_owned_name_defined_case(module_text):
+    """(passed, detail) of the case that the module defines every owned name,
+    given the module's text, so a planted module prints the real message."""
+    missing = sorted(OWNED_NAMES - defined_names(module_text))
+    return not missing, owned_names_missing_failure_detail(missing)
+
+
 check("the shared module defines every name it owns",
-      not missing, owned_names_missing_failure_detail(missing))
+      *every_owned_name_defined_case(NAMES_MODULE.read_text()))
+one_name_dropped_passed, one_name_dropped_detail = every_owned_name_defined_case(
+    "".join(f"{name} = None\n" for name in sorted(OWNED_NAMES - {"fresh_record_directory"})))
 check("a name the module no longer defines fails with the rule and one fix per cause",
-      owned_names_missing_failure_detail(["fresh_record_directory"]).split("\n") == [
+      not one_name_dropped_passed and one_name_dropped_detail.split("\n") == [
           "nc-systems/cold-read/cold-read-record-names-common.py is missing "
           "['fresh_record_directory'], which OWNED_NAMES in "
           "nc-systems/cold-read/tests/cold-read-record-names-common-test.py lists as defined only "
@@ -448,7 +459,7 @@ check("a name the module no longer defines fails with the rule and one fix per c
           "If your change renamed or deleted one of those names by mistake, put its definition "
           "back in the module.",
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
-      owned_names_missing_failure_detail(["fresh_record_directory"]))
+      one_name_dropped_detail)
 
 # Every program that binds an owned name must have loaded the module under
 # some name of its own, or the check above cannot tell a reference from a
@@ -475,18 +486,21 @@ COMMAND_LINE_ENTRY_POINT_FAILURE_DETAIL = "\n".join([
     RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
 
 
-def looks_runnable(module_text):
-    return "__main__" in module_text
+def no_entry_point_case(module_text):
+    """(passed, detail) of the case that the module has no command-line entry
+    point, given the module's text."""
+    return "__main__" not in module_text, COMMAND_LINE_ENTRY_POINT_FAILURE_DETAIL
 
 
 check("the shared module has no command-line entry point",
-      not looks_runnable(NAMES_MODULE.read_text()), COMMAND_LINE_ENTRY_POINT_FAILURE_DETAIL)
+      *no_entry_point_case(NAMES_MODULE.read_text()))
+runnable_passed, runnable_detail = no_entry_point_case(
+    'def f():\n    pass\n\nif __name__ == "__main__":\n    f()\n')
 check("a module given a __main__ block fails the entry-point case",
-      looks_runnable('def f():\n    pass\n\nif __name__ == "__main__":\n    f()\n'),
-      "the planted __main__ block was not seen")
+      not runnable_passed, "the planted __main__ block was not seen")
 check("the entry-point failure says what was found, why the module stays import-only, and one "
       "fix per cause",
-      COMMAND_LINE_ENTRY_POINT_FAILURE_DETAIL.split("\n") == [
+      runnable_detail.split("\n") == [
           'nc-systems/cold-read/cold-read-record-names-common.py contains the text "__main__"; '
           "the module is kept to definitions the cold-read programs import, with no command-line "
           "use of its own.",
@@ -494,7 +508,7 @@ check("the entry-point failure says what was found, why the module stays import-
           "file of its own.",
           'If "__main__" appears only in a comment or a docstring, reword that text.',
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
-      COMMAND_LINE_ENTRY_POINT_FAILURE_DETAIL)
+      runnable_detail)
 
 # A record written before the cold-read- prefix still holds its files under
 # their old names, and every reader finds them through the one lookup.

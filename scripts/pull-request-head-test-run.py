@@ -64,11 +64,11 @@ def module_loaded_by_path(module_name: str, path: Path):
 
 
 try:
-    daily_full_test_run_of_main = module_loaded_by_path(
-        "daily_full_test_run_of_main",
-        Path(__file__).resolve().with_name("daily-full-test-run-of-main.py"))
-    handoff_user_review_of_agent_memory_stores_mark = daily_full_test_run_of_main.handoff_user_review_of_agent_memory_stores_mark
-    run_all_test_suites = daily_full_test_run_of_main.run_all_test_suites
+    scheduled_full_test_run_of_main = module_loaded_by_path(
+        "scheduled_full_test_run_of_main",
+        Path(__file__).resolve().with_name("scheduled-full-test-run-of-main.py"))
+    handoff_user_review_of_agent_memory_stores_mark = scheduled_full_test_run_of_main.handoff_user_review_of_agent_memory_stores_mark
+    run_all_test_suites = scheduled_full_test_run_of_main.run_all_test_suites
     EXIT_CHECKOUT_REFUSED = run_all_test_suites.EXIT_COULD_NOT_RUN
     git_output = module_loaded_by_path(
         "git_machine_readable_output_runner_and_parser_common",
@@ -148,16 +148,24 @@ def pull_request_head_test_run_test_log_split_into_records(text: str) -> list:
             raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
                 f"line {at + 1} should begin a record and does not: {lines[at][:200]!r}")
         count = int(first_line.group(2))
-        record = lines[at:at + count]
-        if len(record) != count or not record[-1].startswith(
-                PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX):
+        if count == 0:
             raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
-                f"the record that begins at line {at + 1} is not {count} lines ending with "
-                f"its exit code")
+                f"the record that begins at line {at + 1} says it has 0 lines, but that count "
+                f"includes the record's first line, so it is at least 1")
+        record = lines[at:at + count]
+        if len(record) != count:
+            raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
+                f"the record that begins at line {at + 1} says it has {count} lines, but the test "
+                f"log ends after {len(record)} lines")
+        if not record[-1].startswith(PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX):
+            raise PullRequestHeadTestRunTestLogNotWholeRecordsError(
+                f"the record that begins at line {at + 1} does not end with its "
+                f"{PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX!r} line: line "
+                f"{at + count} is {record[-1][:200]!r}")
         records.append((first_line.group(1), record))
         at += count
     if not records:
-        raise PullRequestHeadTestRunTestLogNotWholeRecordsError("the test log holds no record")
+        raise PullRequestHeadTestRunTestLogNotWholeRecordsError("the test log is empty")
     return records
 
 
@@ -170,14 +178,14 @@ def pull_request_head_test_run_record_passed_on_commit_check(record: list, commi
 
 def commit_named_for_the_record(checkout: Path, commit: str) -> str:
     """Format a commit hash and subject, falling back to the hash when unavailable."""
-    subject = daily_full_test_run_of_main.git(checkout, "log", "-1", "--format=%s", commit)
+    subject = scheduled_full_test_run_of_main.git(checkout, "log", "-1", "--format=%s", commit)
     if subject.returncode != 0:
         return f"commit {commit}"
     return f'commit {commit} ("{subject.stdout.strip()}")'
 
 
 def runner_named_for_the_record(runner: Path) -> str:
-    resolved = daily_full_test_run_of_main.git(
+    resolved = scheduled_full_test_run_of_main.git(
         runner.parent, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
     if resolved.returncode != 0 or not resolved.stdout.strip():
         return f"{runner}, in no git checkout"
@@ -186,10 +194,10 @@ def runner_named_for_the_record(runner: Path) -> str:
 
 def first_tracked_file_that_differs(checkout: Path):
     """Return (first differing tracked file or None, git status failure or None)."""
-    changed = daily_full_test_run_of_main.git(
+    changed = scheduled_full_test_run_of_main.git(
         checkout, "status", "--porcelain", "-z", "--untracked-files=no")
     if changed.returncode != 0:
-        return None, daily_full_test_run_of_main.first_stderr_line_or_no_detail(
+        return None, scheduled_full_test_run_of_main.first_stderr_line_or_no_detail(
             changed.stderr)
     entries = git_output.status_entries(changed.stdout)
     if entries:
@@ -206,7 +214,7 @@ def why_the_run_is_no_verdict_on_the_head(checkout: Path, head: str, completed) 
             and f" at {head} ({RUNNER_STATE_WHEN_TRACKED_FILES_MATCH}); " in first_line):
         reasons.append(f"the runner's first line does not say it tested {head} with "
                        f"tracked files matching that commit")
-    resolved = daily_full_test_run_of_main.git(
+    resolved = scheduled_full_test_run_of_main.git(
         checkout, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
     head_after_the_run = resolved.stdout.strip()
     if resolved.returncode != 0 or not head_after_the_run:
@@ -253,7 +261,7 @@ def parse_arguments(argv):
     parser.add_argument("--since", metavar="COMMIT")
     parser.add_argument(
         "--log-store-root",
-        default=daily_full_test_run_of_main.DAILY_FULL_TEST_RUN_DEFAULT_LOG_STORE_ROOT)
+        default=scheduled_full_test_run_of_main.SCHEDULED_FULL_TEST_RUN_DEFAULT_LOG_STORE_ROOT)
     parser.add_argument("--test-suite-runner-program")
     parser.add_argument("--temporary-directory")
     parser.add_argument("--recorded-inputs-directory")
@@ -263,15 +271,15 @@ def parse_arguments(argv):
 def main(argv=None, now=None, monotonic=time.monotonic) -> int:
     arguments = parse_arguments(argv)
     now = now or datetime.now(timezone.utc)
-    daily = daily_full_test_run_of_main
+    scheduled_run = scheduled_full_test_run_of_main
     mark = handoff_user_review_of_agent_memory_stores_mark
     on_ned_box = mark.this_machine_is_ned_box()
-    machine = (daily.DAILY_FULL_TEST_RUN_MACHINE_NAME_ON_NED_BOX if on_ned_box
-               else daily.DAILY_FULL_TEST_RUN_MACHINE_NAME_ELSEWHERE)
+    machine = (scheduled_run.SCHEDULED_FULL_TEST_RUN_MACHINE_NAME_ON_NED_BOX if on_ned_box
+               else scheduled_run.SCHEDULED_FULL_TEST_RUN_MACHINE_NAME_ELSEWHERE)
     checkout = Path(arguments.checkout).resolve()
     run_started = monotonic()
 
-    resolved = daily.git(checkout, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    resolved = scheduled_run.git(checkout, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
     if resolved.returncode != 0 or not resolved.stdout.strip():
         write_to_stderr(f"{PROGRAM}: not run — git cannot resolve HEAD to a commit in {checkout}.\n"
                         f"Pass --checkout the top directory of a checkout at the commit to test.")
@@ -293,7 +301,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
     since = None
     since_for_the_record = "not resolved"
     if arguments.since:
-        given = daily.git(checkout, "rev-parse", "--verify", "--quiet",
+        given = scheduled_run.git(checkout, "rev-parse", "--verify", "--quiet",
                           f"{arguments.since}^{{commit}}")
         if given.returncode != 0 or not given.stdout.strip():
             steps_failed.append((
@@ -305,12 +313,12 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
             since_for_the_record = (f"{commit_named_for_the_record(checkout, since)}, given "
                                     f"as --since")
     else:
-        merge_base = daily.git(checkout, "merge-base", head, MAIN_AS_THE_CLONE_HAS_IT)
+        merge_base = scheduled_run.git(checkout, "merge-base", head, MAIN_AS_THE_CLONE_HAS_IT)
         if merge_base.returncode != 0 or not merge_base.stdout.strip():
             steps_failed.append((
                 f"not run — git finds no merge base of {head} and "
                 f"{MAIN_AS_THE_CLONE_HAS_IT} in {checkout}: "
-                f"{daily.first_stderr_line_or_no_detail(merge_base.stderr)}",
+                f"{scheduled_run.first_stderr_line_or_no_detail(merge_base.stderr)}",
                 "Pass --since the commit the selection starts from, then run this again."))
         else:
             since = merge_base.stdout.strip()
@@ -343,9 +351,9 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
             command += ["--recorded-inputs-directory", arguments.recorded_inputs_directory]
         try:
             completed, seconds_waiting_for_lock, lock_never_released = (
-                daily.run_test_suite_runner_waiting_for_the_machine_lock(
+                scheduled_run.run_test_suite_runner_waiting_for_the_machine_lock(
                     command, checkout, monotonic, stream_to=stream_for_the_runners_output()))
-        except daily.RunnerOutputCopyFailed as failure:
+        except scheduled_run.RunnerOutputCopyFailed as failure:
             completed, lock_never_released, copy_failure = failure.completed, False, failure.reason
         if copy_failure is not None:
             steps_failed.append((
@@ -357,7 +365,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
                 f"such as a file or a terminal that stays open: {this_command}"))
         if lock_never_released:
             steps_failed.append(
-                daily.lock_never_taken_step_failed(completed, seconds_waiting_for_lock))
+                scheduled_run.lock_never_taken_step_failed(completed, seconds_waiting_for_lock))
         elif completed.returncode < 0:
             steps_failed.append((
                 f"{run_all_test_suites.PROGRAM} was "
@@ -365,7 +373,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
                 "Run this again."))
         elif (completed.returncode in (run_all_test_suites.EXIT_ALL_PASSED,
                                        run_all_test_suites.EXIT_SOME_FAILED)
-              and daily.runner_summary_line(completed) is None):
+              and scheduled_run.runner_summary_line(completed) is None):
             steps_failed.append((
                 f"{run_all_test_suites.PROGRAM} exited {completed.returncode} and printed "
                 f"no {run_all_test_suites.SUMMARY_LINE_PREFIX} line, which is no verdict",
@@ -381,7 +389,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
                     "Run this again on a checkout that nothing else changes while the run "
                     "lasts, such as a detached worktree at the commit to test."))
 
-    summary = daily.runner_summary_line(completed) if completed is not None else None
+    summary = scheduled_run.runner_summary_line(completed) if completed is not None else None
     record_lines = [
         f"{PULL_REQUEST_HEAD_TEST_RUN_RECORD_HEAD_LINE_PREFIX}{commit_named_for_the_record(checkout, head)}",
         f"selecting since: {since_for_the_record}",
@@ -403,13 +411,13 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
         record_lines.append(f"runner exit code: {completed.returncode}")
     record_lines.append(
         f"seconds waiting for the machine's lock: {seconds_waiting_for_lock:.0f}")
-    admission_wait = daily.runner_output_line_on_seconds_suites_waited_for_admission(completed)
+    admission_wait = scheduled_run.runner_output_line_on_seconds_suites_waited_for_admission(completed)
     if admission_wait is not None:
         record_lines.append(admission_wait)
     record_lines.append(f"wall-clock seconds: {monotonic() - run_started:.0f}")
     record_lines.append(f"logs: {logs} on {machine}")
     exit_code_once_the_record_is_written = (
-        daily.EXIT_STEP_OF_THIS_PROGRAM_FAILED if steps_failed else completed.returncode)
+        scheduled_run.EXIT_STEP_OF_THIS_PROGRAM_FAILED if steps_failed else completed.returncode)
     record_lines.append(
         f"{PULL_REQUEST_HEAD_TEST_RUN_RECORD_EXIT_CODE_LINE_PREFIX}{exit_code_once_the_record_is_written}")
     # Count the complete record, including this header, so quoted runner output cannot impersonate records.
@@ -431,13 +439,13 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
               f"not be written ({type(error).__name__}: {error}).\n"
               f"Tell the user what the line above says.\n"
               f"Fix what the error names, then run this again.")
-        return daily.EXIT_RECORD_NOT_WRITTEN
+        return scheduled_run.EXIT_RECORD_NOT_WRITTEN
     write_command = write_record_command(
         arguments.log_store_root, machine, file_name,
         bytes_of_text_sent_to_a_command(record + "\n"))
     try:
         mark.run_on_ned_box_or_here(
-            write_command, ssh_target, daily.DAILY_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS,
+            write_command, ssh_target, scheduled_run.SCHEDULED_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS,
             stdin_text=record + "\n")
     except mark.DailyMemoryReviewReadOrWriteFailed as error:
         # The saved retry input is UTF-8; count its bytes rather than the subprocess locale encoding.
@@ -457,13 +465,13 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
                   f"Remove the partial record from the end of {citation} by hand.\n"
                   f"Once it is removed, write the record by running on this machine: "
                   f"{append_by_hand}")
-            return daily.EXIT_RECORD_NOT_WRITTEN
+            return scheduled_run.EXIT_RECORD_NOT_WRITTEN
         when = ("When ned-box answers ssh again" if ssh_target
                 else "When the cause is fixed")
         write_to_stderr(f"{PROGRAM}: the record was not written to {citation} ({error}).\n"
                         f"Tell the user what the line above says, and the remedy in the line below.\n"
                         f"{when}, write the record by running on this machine: {append_by_hand}")
-        return daily.EXIT_RECORD_NOT_WRITTEN
+        return scheduled_run.EXIT_RECORD_NOT_WRITTEN
 
     if summary is not None and verdict_is_on_the_head:
         print(f"{summary}; {OUTPUT_COPY_FAILED_SUMMARY_SUFFIX}" if copy_failure else summary)

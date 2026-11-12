@@ -114,6 +114,9 @@ def tmux_argv_sets_mouse_mode_and_pbcopy(tmux_argv):
 class MacLaunchSandbox:
     """A per-case sandbox: recording stubs, throwaway HOME and cwd."""
 
+    agent_home_is_a_checkout = True
+    agent_home_git_directory_unreadable = False
+
     def __init__(self, root: Path):
         self.home = root / "home"
         self.home.mkdir(parents=True)
@@ -174,7 +177,23 @@ class MacLaunchSandbox:
                    '  esac\n'
                    'done\n'
                    'exit 0\n')
-        write_stub(self.stubs, "git", record + "exit 0\n")
+        # LCM_AGENT_HOME_NOT_A_CHECKOUT makes the agent-home fail git's
+        # checkout test, so the launcher makes it a worktree; the stub then
+        # records each `git worktree add`'s arguments and names
+        # LCM_AGENT_HOME_GIT_DIRECTORY as the new agent-home's git directory,
+        # or fails to when LCM_AGENT_HOME_GIT_DIRECTORY_UNREADABLE is set.
+        write_stub(self.stubs, "git",
+                   record +
+                   'case "$*" in\n'
+                   '  *"rev-parse --show-toplevel"*) [ -z "${LCM_AGENT_HOME_NOT_A_CHECKOUT:-}" ] || exit 1 ;;\n'
+                   '  *"rev-parse --absolute-git-dir"*) '
+                   '[ -z "${LCM_AGENT_HOME_GIT_DIRECTORY_UNREADABLE:-}" ] || exit 128; '
+                   'echo "$LCM_AGENT_HOME_GIT_DIRECTORY" ;;\n'
+                   f'  *"worktree add"*) printf \'%s\\n\' "$*" >> "{self.captures}/git-worktree-add-arguments.txt" ;;\n'
+                   'esac\n'
+                   'exit 0\n')
+        self.agent_home_git_directory = root / "agent-home-git-directory"
+        self.agent_home_git_directory.mkdir()
         write_stub(self.stubs, "claude", record +
                    '[ "${1:-}" = "update" ] || exit 0\n'
                    f'echo update >> "{self.captures}/claude-updates.txt"\n')
@@ -257,7 +276,12 @@ class MacLaunchSandbox:
             "NEDSCHORUS_AGENTS_ROOT": agents_root,
             "HOME": str(self.home),
             "SHELL": str(self.stubs / "record-shell"),
-            "PATH": f"{self.stubs}:/usr/bin:/bin:/usr/sbin:/sbin"}
+            "PATH": f"{self.stubs}:/usr/bin:/bin:/usr/sbin:/sbin",
+            "LCM_AGENT_HOME_GIT_DIRECTORY": str(self.agent_home_git_directory)}
+        if not self.agent_home_is_a_checkout:
+            environment["LCM_AGENT_HOME_NOT_A_CHECKOUT"] = "1"
+        if self.agent_home_git_directory_unreadable:
+            environment["LCM_AGENT_HOME_GIT_DIRECTORY_UNREADABLE"] = "1"
         if extra_arguments is not None:
             environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = extra_arguments
         if update_timeout_seconds is not None:
@@ -487,18 +511,19 @@ def main() -> int:
 
         sandbox = MacLaunchSandbox(root / "update-lock-bound")
         with AnotherUpdateHoldsTheLock(sandbox.update_lock_path()):
-            started = time.monotonic()
             result = sandbox.run(str(root / "update-lock-bound-agents"),
                                  update_timeout_seconds=30)
-            elapsed = time.monotonic() - started
         check("update lock: a held lock skips this update immediately",
               sandbox.claude_updates() == [], sandbox.claude_updates())
         check("update lock: the skip is reported in exactly one line",
               "Another claude update is running; this launch uses the claude already installed.\n"
               == result.stderr, result.stderr[:400])
-        check("update lock: the skipped launch still completes, without hanging",
-              result.returncode == 0 and sandbox.tmux_argv() and elapsed < 15,
-              (result.returncode, f"{elapsed:.1f}s", result.stderr[:300]))
+        # The skip line above is the marker that the lock was tried without
+        # waiting; handoff-supervisor-session-launch-and-seat-lock-test.py counts
+        # the helper's lock attempts.
+        check("update lock: the skipped launch still completes",
+              result.returncode == 0 and sandbox.tmux_argv(),
+              (result.returncode, result.stderr[:300]))
 
         with AnotherUpdateHoldsTheLock(sandbox.update_lock_path()):
             result = subprocess.run(
@@ -933,6 +958,12 @@ def main() -> int:
                   (sandbox.invoked_commands()[:200],
                    sorted(str(p) for p in sandbox.workdir.iterdir())))
 
+        # The timed-out outcome and the killed command are what show the
+        # helper's timeout fired; elapsed time is only a backstop, at
+        # least ten times the timeout so a busy machine cannot fail it.
+        helper_timeout_seconds = 2
+        helper_timeout_backstop_seconds = 15 * helper_timeout_seconds
+
         # --- the pseudo-terminal helper itself. A command that fills the
         # stderr pipe before it writes to or closes the terminal must not
         # hang the helper, and a command that never closes the terminal must
@@ -968,14 +999,15 @@ def main() -> int:
         try:
             run_with_stdout_on_terminal(
                 [sys.executable, "-c", "import time; time.sleep(600)"],
-                str(root), dict(os.environ), timeout_seconds=2)
+                str(root), dict(os.environ),
+                timeout_seconds=helper_timeout_seconds)
             timed_out = False
         except subprocess.TimeoutExpired:
             timed_out = True
         elapsed = time.monotonic() - started
         check("pseudo-terminal helper: a command that never closes the "
               "terminal is stopped at the timeout",
-              timed_out and elapsed < 15,
+              timed_out and elapsed < helper_timeout_backstop_seconds,
               (timed_out, f"{elapsed:.1f}s"))
 
         # --- the pseudo-terminal helper: a command that closes its terminal
@@ -989,7 +1021,8 @@ def main() -> int:
                  "import os, sys, time; "
                  f"open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
                  "os.close(1); os.close(2); time.sleep(600)"],
-                str(root), dict(os.environ), timeout_seconds=2)
+                str(root), dict(os.environ),
+                timeout_seconds=helper_timeout_seconds)
             closed_streams_timed_out = False
         except subprocess.TimeoutExpired:
             closed_streams_timed_out = True
@@ -1006,7 +1039,7 @@ def main() -> int:
         check("pseudo-terminal helper: a command that closes both streams "
               "and keeps running is stopped at the timeout and does not "
               "survive",
-              closed_streams_timed_out and elapsed < 15
+              closed_streams_timed_out and elapsed < helper_timeout_backstop_seconds
               and pid_file.is_file() and not closed_streams_command_survived,
               (closed_streams_timed_out, f"{elapsed:.1f}s",
                pid_file.is_file(), closed_streams_command_survived))
@@ -1044,6 +1077,34 @@ def main() -> int:
                   and sandbox.tmux_argv(),
                   (result.returncode, repr(result.stdout[-300:]),
                    result.stderr[:300]))
+
+        # --- a new agent-home: made detached at origin/main and marked ----
+        sandbox = MacLaunchSandbox(root / "new-agent-home")
+        sandbox.agent_home_is_a_checkout = False
+        result = sandbox.run("~/agents", seat_name="seat-n")
+        arguments_capture = sandbox.captures / "git-worktree-add-arguments.txt"
+        worktree_add_arguments = (arguments_capture.read_text(encoding="utf-8")
+                                  if arguments_capture.is_file() else "")
+        check("new agent-home: made on a detached HEAD at origin/main, on no seat-branch",
+              worktree_add_arguments.strip().endswith(
+                  f"worktree add --detach {sandbox.home}/agents/seat-n origin/main")
+              and worktree_add_arguments.count("worktree add") == 1,
+              (worktree_add_arguments, result.stderr[:300]))
+        check("new agent-home: marked with agent-home-marker in its git directory",
+              (sandbox.agent_home_git_directory / "agent-home-marker").is_file(),
+              list(sandbox.agent_home_git_directory.iterdir()))
+
+        sandbox = MacLaunchSandbox(root / "new-agent-home-marker-not-written")
+        sandbox.agent_home_is_a_checkout = False
+        sandbox.agent_home_git_directory_unreadable = True
+        result = sandbox.run("~/agents", seat_name="seat-n2")
+        check("new agent-home whose git directory cannot be read: says the marker was not "
+              "written and the launch goes on",
+              "launch-claude-mac: could not write agent-home-marker into the git directory of "
+              in result.stderr
+              and not (sandbox.agent_home_git_directory / "agent-home-marker").exists()
+              and result.returncode == 0 and sandbox.tmux_argv(),
+              (result.returncode, result.stderr[-600:]))
 
     print()
     if failures:

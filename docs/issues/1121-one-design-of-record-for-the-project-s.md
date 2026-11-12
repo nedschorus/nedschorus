@@ -20,7 +20,7 @@ Because nothing states the whole, the pieces disagree, and agents act on the dis
 - `CLAUDE.md` says merge-lane-2 tests a pull request's head commit merged onto main, while merge-lane-2 tests the head as it stands;
 - the first prompt the supervisor builds for a seat (`BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION` in `nc-systems/handoff/handoff-supervisor.py`, which, with `BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION`, replaced `BRANCH_STATE_INSTRUCTION` and is given only when the branch has never been pushed) tells an agent to rebase a never-pushed branch, which the Stop hook already does;
 - "frozen" means "has an open pull request" to `.claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py` and "pushed" to the freshness hook;
-- worktrees under agent-homes and in scratchpads are never removed, while `docs/nedschorus-wiki/nedschorus-fleet-git-worktree-working-model.md` (R21) and `docs/nedschorus-wiki/nedschorus-fleet-machine-paths-and-checkouts.md` describe every session worktree as removed once merged;
+- worktrees under agent-homes and in scratchpads are never removed, while `docs/nedschorus-wiki/nedschorus-fleet-git-worktree-working-model.md` (R21) and `docs/nedschorus-wiki/nedschorus-mac-and-ned-box-machine-setup.md` describe every session worktree as removed once merged;
 - a subagent's worktree gets no freshness check, because no hook runs when a subagent stops;
 - several documents describe behaviour the code no longer has.
 

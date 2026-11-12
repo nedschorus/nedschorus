@@ -47,12 +47,16 @@ with the design:
      sanity-check record, keeps its whole name and gains the -N, because a
      date-first name may end in digits of its own. This is
      judged on the inventory taken before the copy, not again in the placing
-     step, for the reason NO LOCK gives below. The cold-read programs choose
-     a record name free both in their checkout and in the store
-     (cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason), so this refusal is
-     met only when the store could not be listed when the name was chosen,
-     a directory was named by hand, or a file was removed from the local
-     directory after it shipped and it then had something new to ship.
+     step, for the reason NO LOCK gives below. The cold-read programs claim
+     a record name in their checkout and in the store, each by a plain
+     mkdir that fails when the name exists
+     (cold_read_record_directory_created_atomically_free_in_checkout_and_claimed_in_log_store_and_log_store_claim_failure_reason_or_none),
+     so this refusal is met only when the store could not be reached to claim
+     the name, a directory was named by hand, or a file was removed from the
+     local directory after it shipped and it then had something new to ship.
+     The claim leaves an empty record directory in the store until the
+     record ships; an empty store directory holds no file, so shipping into
+     it is an ordinary first shipment.
   3. FAIL LOUDLY. When ned-box cannot be reached the run prints a line
      opening FAILED and exits non-zero; the cold-read-record stays on disk,
      unshipped, for a later run; a shipment that stops after its copy has
@@ -87,7 +91,7 @@ with the design:
      differ is overwritten, and the sha256 of the copy it displaced is
      announced on its own stderr line: a triage shipped three times leaves a
      trace of each displaced version rather than one silent overwrite.
-     This is what scripts/walk-files-ship.py already does for a walk's minutes
+     This is what nc-systems/skills/walk-me-through/walk-files-ship.py already does for a walk's minutes
      and dispositions -- same digest announcement, same stderr form -- ruled by
      the user on 2026-09-18 at item 5 of the walk
      skill-sentences-and-shipper-questions-2026-09-18 and landed in PR
@@ -109,7 +113,7 @@ with the design:
      machines on one day rule 2 was written for -- and that read's triage
      belongs beside that read's own reports, under the -2 name the refusal
      asks for. Landing it here would file one read's rulings with another
-     read's reports. scripts/walk-files-ship.py ships a walk's remaining
+     read's reports. nc-systems/skills/walk-me-through/walk-files-ship.py ships a walk's remaining
      files through such a refusal because a reopened walk's second run exists
      to deliver the minutes and there is only ever one walk of that name; a
      record's -2 rename gives the second read a directory of its own, and
@@ -290,7 +294,7 @@ EXIT_BAD_INVOCATION = 64
 
 # The note at the door of the log-store, written into it by this program.
 #
-# AGENT-FACING TEXT, so it says what the store is, how to cite a file in it,
+# TOOL-MESSAGE-TO-AGENT TEXT, so it says what the store is, how to cite a file in it,
 # which program or skill owns each kind, and what to edit to change this file,
 # with a reason wherever the reason helps the reader act. It cites no ruling
 # and no date: a ruling or a date says only who decided and when, which does
@@ -319,7 +323,7 @@ in the nedschorus repository, which this machine also clones:
 - `sanity-check-records/` -- the /sanity-check skill's records, shipped by
   `scripts/sanity-check-record-ship.py`
 - `walk/` -- approval-walk files, named by the walk-me-through skill, shipped
-  by `scripts/walk-files-ship.py`
+  by `nc-systems/skills/walk-me-through/walk-files-ship.py`
 - `agent-session-files-by-machine/` -- each machine's session transcripts, handoffs,
   task lists, seat-briefs and global CLAUDE.md, mirrored by
   `scripts/transcript-mirror-to-log-store.py`
@@ -328,8 +332,8 @@ in the nedschorus repository, which this machine also clones:
 - `seats/` -- a seat's shared files, shipped by
   `scripts/seat-shared-file-ship.py`
 - `analysis/` -- analyses, placed by hand
-- `daily-full-test-runs/` -- each machine's daily run of every nc-test-suite on
-  main, written by `scripts/daily-full-test-run-of-main.py`
+- `scheduled-full-test-runs-of-main/` -- each machine's scheduled run of every nc-test-suite on
+  main, written by `scripts/scheduled-full-test-run-of-main.py`
 - `pull-request-head-test-runs/` -- each machine's test log of a pull request's
   head, one per commit, written by `scripts/pull-request-head-test-run.py`
 - `daily-memory-review-marks/` -- the daily memory review's started and done
@@ -337,10 +341,10 @@ in the nedschorus repository, which this machine also clones:
 - `handoff-agent-seat-died-without-session-handoff-restart-watcher/` -- each decision of ned-box's
   crash watcher and the notices it showed the user, written by
   `nc-systems/handoff/handoff-agent-crash-watcher.py`
-- `uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-checks/` -- each
-  machine's weekly check that the work-snapshot hook finds a real claude
+- `uncommitted-work-snapshot-hook-scheduled-checks-that-real-claude-session-is-recorded-as-owner/` -- each
+  machine's scheduled check that the work-snapshot hook finds a real claude
   session, written by
-  `nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py`
+  `nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py`
 - `ghi-guide-agent-proposed-improvements-or-changes/` -- ghi-guide-agent's ruling questions
   about GHI-MDs, each a proposed-improvements-or-changes-file settled in
   place, written by `scripts/ghi-issue-write.py`
@@ -348,14 +352,18 @@ in the nedschorus repository, which this machine also clones:
   version of a guarded file, with its git blob id and the time it was seen, a
   copy of each version its checkout's branch HEAD did not hold, and the record
   of which versions the user approved, written by
-  `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`
+  `.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`
 - `bash-guards-replay-changed-verdict-or-failed-run-log-directories/` -- the
-  Bash guards replay's step logs and differences files, one directory per
-  replay that exited 1 or 2, written by
-  `nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py`
+  step logs and differences files of each invocation that exited 1 or 2, one
+  directory per invocation, written by
+  `nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py`
 - `clean-worktrees-removed-worktrees-and-deleted-branches-log/` -- each
   machine's log of every worktree `scripts/clean-worktrees.py --remove`
   removed and every branch it deleted, one line each, written by that program
+- `git-worktree-remove-deferred-until-cold-read-record-and-sanity-check-record-being-written-locks-release-then-ship-to-log-store-waiter-run-logs/`
+  -- one log per run of the waiter that removes a worktree once no record in
+  it is being written, written by
+  `nc-systems/general-tools/git-worktree-remove-deferred-until-cold-read-record-and-sanity-check-record-being-written-locks-release-then-ship-to-log-store-waiter.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file
@@ -404,7 +412,10 @@ def citation_host_for_this_machine():
 
 def log_store_listed_record_directory_names_or_listing_failure_reason(host, records_path: pathlib.PurePosixPath) -> tuple:
     """(the names of the record directories the store holds, None), or
-    (None, why they could not be listed). A store not yet made holds none."""
+    (None, why they could not be listed). A store not yet made holds none.
+    Only a refusal's rename instruction lists the store; a new record's name
+    is claimed instead, by
+    log_store_record_directory_name_claimed_by_mkdir_or_taken_or_claim_failure_reason."""
     if host is None:
         directory = pathlib.Path(records_path)
         if not directory.is_dir():
@@ -413,26 +424,80 @@ def log_store_listed_record_directory_names_or_listing_failure_reason(host, reco
             return {entry.name for entry in directory.iterdir() if entry.is_dir()}, None
         except OSError as error:
             return None, f"listing {directory} failed: {error}"
+    # No -exec: a process per record costs tens of seconds on a store this
+    # size. No -printf: a test runs this script with the Mac's find, which
+    # lacks it, so the path is cut here.
     script = (f"if [ -d {shlex.quote(str(records_path))} ]; then find "
-              f"{shlex.quote(str(records_path))} -mindepth 1 -maxdepth 1 -type d "
-              f"-exec basename {{}} \\; ; fi")
+              f"{shlex.quote(str(records_path))} -mindepth 1 -maxdepth 1 -type d; fi")
     listed = subprocess.run(SSH_COMMAND + [host, script],
                             capture_output=True, text=True, check=False)
     if listed.returncode != 0:
         return None, (f"listing {host}:{records_path} exited {listed.returncode}: "
                       f"{one_line(listed.stderr)}")
-    return set(listed.stdout.splitlines()), None
+    return {line.rpartition("/")[2] for line in listed.stdout.splitlines()}, None
 
 
-def cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(base: pathlib.Path) -> tuple:
-    """(base, base-2, base-3 ... whichever is first free on disk and in the
-    log-store this machine ships to, now created by a claim no concurrent run
-    can share, None), or, when the store could not be listed, (the first free
-    on disk, created, why the store could not be listed) for the caller to
-    print; shipping then refuses a name another read holds in the store."""
-    names, unlisted = log_store_listed_record_directory_names_or_listing_failure_reason(*destination_for_this_machine())
-    return record_names.cold_read_record_directory_at_first_free_name_created_atomically(
-        base, names_taken_in_log_store=names or set()), unlisted
+# The exit code of the store claim's script when the name is already in the store.
+LOG_STORE_RECORD_DIRECTORY_NAME_TAKEN_EXIT_CODE = 3
+
+
+def log_store_record_directory_name_claimed_by_mkdir_or_taken_or_claim_failure_reason(
+        host, records_path: pathlib.PurePosixPath, name: str) -> tuple:
+    """(True, None) when this call created records_path/name in the store,
+    (False, None) when the store already held that name, as a directory or
+    as anything else, or (False, why the claim could not be made). The
+    records directory is made first when the store has none."""
+    if host is None:
+        directory = pathlib.Path(records_path)
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            return False, f"making {directory} failed: {error}"
+        try:
+            (directory / name).mkdir()
+        except FileExistsError:
+            return False, None
+        except OSError as error:
+            return False, f"claiming {directory / name} failed: {error}"
+        return True, None
+    directory = shlex.quote(str(records_path))
+    claimed = shlex.quote(str(records_path / name))
+    script = (f"mkdir -p -- {directory} || exit 1\n"
+              f"if error=$(mkdir -- {claimed} 2>&1); then exit 0; fi\n"
+              f"if [ -e {claimed} ] || [ -L {claimed} ]; then "
+              f"exit {LOG_STORE_RECORD_DIRECTORY_NAME_TAKEN_EXIT_CODE}; fi\n"
+              "printf '%s\\n' \"$error\" >&2\n"
+              "exit 1\n")
+    completed = subprocess.run(SSH_COMMAND + [host, script],
+                               capture_output=True, text=True, check=False)
+    if completed.returncode == 0:
+        return True, None
+    if completed.returncode == LOG_STORE_RECORD_DIRECTORY_NAME_TAKEN_EXIT_CODE:
+        return False, None
+    return False, (f"claiming {host}:{records_path / name} exited {completed.returncode}: "
+                   f"{one_line(completed.stderr)}")
+
+
+def cold_read_record_directory_created_atomically_free_in_checkout_and_claimed_in_log_store_and_log_store_claim_failure_reason_or_none(
+        base: pathlib.Path, host, records_path: pathlib.PurePosixPath) -> tuple:
+    """(base, base-2, base-3 ... whichever is first both created in the
+    checkout and claimed in the store at host:records_path, None), or, when
+    the store could not be reached to claim it, (the name then being tried,
+    free on disk and created, why the claim failed) for the caller to print;
+    shipping then
+    refuses a name another read holds in the store. Each name is claimed by
+    a plain mkdir, which fails when the name exists, so no concurrent run
+    can share it and the store is never listed."""
+    taken_in_log_store = set()
+    while True:
+        record_directory = record_names.cold_read_record_directory_at_first_free_name_created_atomically(
+            base, names_taken_in_log_store=taken_in_log_store)
+        claimed, unclaimed = log_store_record_directory_name_claimed_by_mkdir_or_taken_or_claim_failure_reason(
+            host, records_path, record_directory.name)
+        if claimed or unclaimed is not None:
+            return record_directory, unclaimed
+        record_directory.rmdir()
+        taken_in_log_store.add(record_directory.name)
 
 
 # Each record directory this process holds the being-written lock on, with the lock's file descriptor.
@@ -440,12 +505,14 @@ _RECORD_DIRECTORY_BEING_WRITTEN_LOCK_DESCRIPTORS = {}
 
 
 def record_directory_being_written_lock_take(record_dir: pathlib.Path) -> None:
-    """Hold record_dir's being-written lock until
+    """Hold record_dir's being-written lock, shared, until
     record_directory_being_written_lock_release, or until this process exits.
     Called right after the directory is created, before anything is written
-    into it, so no shipment sees a file the writer may still rewrite."""
+    into it, so no shipment sees a file the writer may still rewrite. Every
+    writer holds the lock shared, so a cell run directly into the directory
+    holds it too, and the record stays held until the last writer exits."""
     descriptor = os.open(record_dir, os.O_RDONLY)
-    fcntl.flock(descriptor, fcntl.LOCK_EX)
+    fcntl.flock(descriptor, fcntl.LOCK_SH)
     _RECORD_DIRECTORY_BEING_WRITTEN_LOCK_DESCRIPTORS[pathlib.Path(record_dir).resolve()] = descriptor
 
 
@@ -458,10 +525,11 @@ def record_directory_being_written_lock_release(record_dir: pathlib.Path) -> Non
 
 
 def record_directory_being_written_lock_is_held_by_any_process(record_dir: pathlib.Path) -> bool:
-    """True while any process holds record_dir's being-written lock, this one included."""
+    """True while any process holds record_dir's being-written lock, shared or exclusive, this one included."""
     descriptor = os.open(record_dir, os.O_RDONLY)
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        # Exclusive, since every writer holds the lock shared.
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         return True
     finally:
@@ -469,12 +537,11 @@ def record_directory_being_written_lock_is_held_by_any_process(record_dir: pathl
     return False
 
 
-def log_store_listing_failed_record_name_may_collide_warning_line(program: str, record_dir: pathlib.Path, reason: str) -> str:
-    """The stderr line a program prints when it named record_dir without the store's names."""
+def log_store_claim_failed_so_record_name_may_collide_warning_line(program: str, record_dir: pathlib.Path, reason: str) -> str:
+    """The stderr line a program prints when it named record_dir without claiming the name in the store."""
     return (f"{program}: the record name {record_dir.name} is free in this checkout, but "
-            f"it was checked against this checkout only: the log-store's names could not "
-            f"be read ({reason}), so a read from another checkout may already hold "
-            f"{record_dir.name} there.\n"
+            f"it could not be claimed in the log-store ({reason}), so a read from another "
+            f"checkout may already hold {record_dir.name} there.\n"
             f"This run goes ahead: of all it does, only shipping the record needs the "
             f"log-store.\n"
             f"If shipping this record prints a line that opens REFUSED and names another "
@@ -875,7 +942,7 @@ def link_staged_files_never_over_existing(host, staging_dir: pathlib.PurePosixPa
 
     A link is never made over an existing file: a name already taken is left
     as it is, and placing goes on past it, so the caller judges each file by
-    the digest read back. This is scripts/walk-files-ship.py's add-only
+    the digest read back. This is nc-systems/skills/walk-me-through/walk-files-ship.py's add-only
     placing, which refuses a walk's files one by one while the rest still
     ship; a cold-read-record is placed by place_staged_files instead.
 
@@ -1004,7 +1071,7 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
                               replacements: list):
     """Rename staged files over the store's, for the files a shipper REPLACES
     by design: the walk's minutes and dispositions, a walk text the walk only
-    added to (scripts/walk-files-ship.py) and a seat's own files
+    added to (nc-systems/skills/walk-me-through/walk-files-ship.py) and a seat's own files
     (scripts/seat-shared-file-ship.py). Returns the process and
     {store relative path: StagedReplacement}, or None, as store_inventory
     returns for an unreachable host, when the host is unreachable or a step
@@ -1019,7 +1086,7 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
     which is how the walk text's APPENDED TO rule is held to the stored copy
     it was tested against. A path that must not exist makes it conditional
     too: it runs only while that path is absent, which is how the walk text
-    is held to being the store's latest copy (scripts/walk-files-ship.py's
+    is held to being the store's latest copy (nc-systems/skills/walk-me-through/walk-files-ship.py's
     REVISED COPIES). None for both replaces whatever is there.
 
     WHY A RENAME OF A STAGED COPY, AND NOT rsync STRAIGHT ONTO THE NAME. A

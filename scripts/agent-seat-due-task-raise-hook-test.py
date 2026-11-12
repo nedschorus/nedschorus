@@ -50,17 +50,6 @@ STOP_PAYLOAD = json.dumps({
 DEFER_LINE = ("If a task above cannot be acted on yet, record what it now waits on with "
               "TaskUpdate instead: a pull request or a GHI in a new metadata.prerequisites, "
               "or a task with addBlockedBy.")
-WAITS_ON_CHANGE = ("metadata.waits_on is the old name of metadata.prerequisites: set "
-                   "metadata.prerequisites to the same list, unless metadata.prerequisites "
-                   "already holds what the task waits on, then set metadata.waits_on to null")
-DUE_UTC_CHANGE = ("metadata.due_utc held a due time, which no hook reads any more: set "
-                  "metadata.due_utc to null, and if the task waits on a pull request or a GHI, "
-                  "record it in metadata.prerequisites, or on a task, with addBlockedBy")
-
-
-def old_keys_text(task_id, subject, *changes):
-    return (f'Task {task_id} "{subject}" still carries an old metadata key; change it with '
-            f"TaskUpdate: {'; and '.join(changes)}.")
 
 GH_STAND_IN = """#!{python}
 import json, os, sys, time
@@ -246,10 +235,9 @@ check("in_progress task met: raised", "Act on task 20 " in text, text)
 check("completed task met: never raised", "task 21 " not in text, text)
 
 seat = Seat()
-seat.task("22", status="completed", metadata={"prerequisites": [{"pr_merged": 5}],
-                                               "due_utc": "2020-01-01T00:00:00Z"})
+seat.task("22", status="completed", metadata={"prerequisites": [{"pr_merged": 5}]})
 seat.respond({"pr:5": {"state": "MERGED", "title": "T", "url": "https://x/5"}})
-check("completed task with met prerequisites and an old key: silent", silent(seat.run()))
+check("completed task with met prerequisites: silent", silent(seat.run()))
 check("completed task: gh never asked", seat.gh_calls() == [], seat.gh_calls())
 
 # --- blockedBy ----------------------------------------------------------------
@@ -569,95 +557,6 @@ seat.task("116", metadata={"prerequisites": []}, blocked_by=["117"])
 seat.task("117", status="completed")
 check("unreadable prerequisites, blockers completed: never raised", silent(seat.run()))
 
-# --- the old keys: waits_on still read, both named until changed -----------------
-seat = Seat()
-seat.task("100", metadata={"waits_on": [{"pr_merged": MERGED_PR}]}, subject="Old list")
-result = seat.run()
-check("waits_on alone and met: raised, then the line naming the old key, exact text",
-      result.returncode == 0 and context_of(result) == (
-          f'Act on task 100 "Old list" now: its prerequisites are met: PR "Merged" '
-          f"(https://x/{MERGED_PR}) is merged.\n{DEFER_LINE}\n"
-          + old_keys_text("100", "Old list", WAITS_ON_CHANGE)),
-      repr(context_of(result)))
-check("waits_on alone: raised and named once, then silent", silent(seat.run()))
-check("waits_on alone: recorded under the new key",
-      "prerequisites" in json.loads(seat.state_path.read_text())["raised"]["100"]
-      and "waits_on" not in json.loads(seat.state_path.read_text())["raised"]["100"],
-      seat.state_path.read_text())
-seat.task("100", metadata={"prerequisites": [{"pr_merged": MERGED_PR}]}, subject="Old list")
-check("the list moved to prerequisites unchanged: silent", silent(seat.run()))
-check("the list moved: the old-key record is cleared",
-      "old_keys" not in json.loads(seat.state_path.read_text())["raised"]["100"],
-      seat.state_path.read_text())
-
-seat = Seat()
-seat.state_path.parent.mkdir(parents=True)
-seat.state_path.write_text(json.dumps({"raised": {"101": {
-    "waits_on": hook.canonical_prerequisites([{"pr_merged": MERGED_PR}])}}, "checks": {}}))
-seat.task("101", metadata={"prerequisites": [{"pr_merged": MERGED_PR}]})
-check("a raise recorded under waits_on counts for the same list under prerequisites: silent",
-      silent(seat.run()) and seat.gh_calls() == [], seat.gh_calls())
-
-seat = Seat()
-seat.task("102", metadata={"prerequisites": [{"pr_merged": 301}],
-                           "waits_on": [{"pr_merged": MERGED_PR}]}, subject="Both lists")
-seat.respond({"pr:301": {"state": "OPEN", "title": "T", "url": "https://x/301"}})
-result = seat.run()
-check("prerequisites and waits_on both: prerequisites decides, waits_on is only named",
-      result.returncode == 0
-      and context_of(result) == old_keys_text("102", "Both lists", WAITS_ON_CHANGE)
-      and [call["argv"][2] for call in seat.gh_calls()] == ["301"],
-      (repr(context_of(result)), seat.gh_calls()))
-
-seat = Seat()
-seat.task("103", metadata={"due_utc": "2020-01-01T00:00:00Z"}, subject="Old due time")
-result = seat.run()
-check("due_utc alone: named with the exact text, exit 0, no raise and no defer line",
-      result.returncode == 0 and result.stderr == ""
-      and context_of(result) == old_keys_text("103", "Old due time", DUE_UTC_CHANGE),
-      (repr(context_of(result)), result.stderr))
-check("due_utc alone: named once, then silent", silent(seat.run()))
-seat.task("103", metadata={"due_utc": "2021-01-01T00:00:00Z"}, subject="Old due time")
-check("due_utc changed: named again",
-      context_of(seat.run()) == old_keys_text("103", "Old due time", DUE_UTC_CHANGE))
-seat.task("103", metadata={}, subject="Old due time")
-check("due_utc removed: silent", silent(seat.run()))
-check("due_utc removed: no record left for the task",
-      "103" not in json.loads(seat.state_path.read_text())["raised"],
-      seat.state_path.read_text())
-
-seat = Seat()
-seat.task("104", metadata={"due_utc": "2020-01-01T00:00:00Z", "waits_on": [{"pr_merged": 302}]},
-          subject="Both old keys", blocked_by=["105"])
-seat.task("105", status="in_progress")
-result = seat.run()
-check("both old keys, held by blockedBy: named in one line, gh not asked",
-      context_of(result) == old_keys_text("104", "Both old keys", WAITS_ON_CHANGE, DUE_UTC_CHANGE)
-      and seat.gh_calls() == [], (repr(context_of(result)), seat.gh_calls()))
-
-seat = Seat()
-seat.task("106", metadata={"due_utc": "2020-01-01T00:00:00Z"}, subject="Old due time")
-seat.task("42", metadata={"prerequisites": [{"pr_merged": 103}]})
-seat.respond({"pr:103": "fail"})
-result = seat.run()
-check("an old key named and gh failing, nothing raised: exit 0, the name, then the gh failure",
-      result.returncode == 0 and context_of(result) == (
-          old_keys_text("106", "Old due time", DUE_UTC_CHANGE) + "\n" + GH_FAILURE_103
-          + " If gh's error says PR 103 does not exist, correct the metadata.prerequisites "
-          "that names it with TaskUpdate. If it says gh is not logged in or its credentials "
-          "are bad, ask the user to run `gh auth login` on this machine."),
-      (repr(context_of(result)), result.stderr))
-
-seat = Seat()
-seat.task("107", metadata={"due_utc": "2020-01-01T00:00:00Z"})
-seat.state_path.parent.parent.mkdir(parents=True)
-seat.state_path.parent.write_text("a file where the state directory should be")
-result = seat.run()
-check("state cannot be written with an old key to name: reported, saying it went unnamed",
-      reported(result, "no task was due at this stop, so none went unraised, and 1 task(s) "
-                       "still carrying an old key were not named; that stop names them"),
-      result)
-
 # --- malformed input ----------------------------------------------------------------
 seat = Seat()
 (seat.task_directory / "60.json").write_text("{ this is not json")
@@ -743,8 +642,7 @@ check("state cannot be written with nothing due: reported, saying no task went u
 
 # --- task files are never written ------------------------------------------------
 seat = Seat()
-seat.task("80", metadata={"prerequisites": [{"pr_merged": 120}],
-                          "due_utc": "2020-01-01T00:00:00Z"}, blocked_by=["81"])
+seat.task("80", metadata={"prerequisites": [{"pr_merged": 120}]}, blocked_by=["81"])
 seat.task("81", status="completed")
 seat.respond({"pr:120": {"state": "MERGED", "title": "T", "url": "https://x/120"}})
 before = {path.name: path.read_bytes() for path in seat.task_directory.iterdir()}
@@ -802,10 +700,14 @@ class IdleSeat(Seat):
     def minutes(self, name, text):
         (self.walk_directory / f"{name}-minutes.md").write_text(text)
 
-    def stop(self, session_id="idle-session"):
-        return self.run(stdin_text=json.dumps({
+    def stop(self, session_id="idle-session", background_tasks=()):
+        """background_tasks=None sends no list, as a claude that predates the list would."""
+        payload = {
             "session_id": session_id, "transcript_path": str(self.transcript),
-            "cwd": str(self.checkout), "hook_event_name": "Stop", "stop_hook_active": False}))
+            "cwd": str(self.checkout), "hook_event_name": "Stop", "stop_hook_active": False}
+        if background_tasks is not None:
+            payload["background_tasks"] = list(background_tasks)
+        return self.run(stdin_text=json.dumps(payload))
 
 
 seat = IdleSeat()
@@ -907,6 +809,15 @@ check("next-action: context used below the reincarnation threshold still gets th
       (context_of(seat.stop()) or "").startswith(NEXT_ACTION_FIRST_LINE))
 
 seat = IdleSeat()
+seat.append({"type": "system", "subtype": "compact_boundary",
+             "compactMetadata": {"cumulativeDroppedTokens": 10_000}})
+seat.append(usage_record(60_000))
+result = seat.stop()
+check("next-action: silent once the context used plus the tokens compactions dropped reaches the "
+      "reincarnation threshold, as the handoff hook counts it",
+      silent(result) and not seat.state_path.exists(), result)
+
+seat = IdleSeat()
 shutil.rmtree(seat.task_directory)
 result = seat.stop()
 check("next-action: a task list whose directory does not exist yet still gets the prompt, "
@@ -929,17 +840,26 @@ seat.state_path.write_text(json.dumps({"raised": {"3": {"prerequisites": hook.ca
 gh_calls_made = []
 
 
+# The budget is read off a fake clock that only the fake gh moves, 0.2 seconds a call, so the
+# cases do not depend on how fast the machine runs the rest of the hook. The fake gh also
+# sleeps for real longer than the whole budget, as a loaded machine would.
+fake_clock_seconds = [0.0]
+
+
 def slow_timing_out_gh(command, *arguments, **keywords):
     if command[0] != "gh":
         return real_subprocess_run(command, *arguments, **keywords)
     gh_calls_made.append(command[3])
-    time.sleep(0.2)
+    time.sleep(0.35)
+    fake_clock_seconds[0] += 0.2
     raise subprocess.TimeoutExpired(command, keywords.get("timeout"))
 
 
 real_budget = hook.GH_CALLS_TOTAL_BUDGET_SECONDS
+real_clock = hook.GitHubConditionChecker.clock
 real_home = os.environ.get("HOME")
 hook.subprocess.run = slow_timing_out_gh
+hook.GitHubConditionChecker.clock = staticmethod(lambda: fake_clock_seconds[0])
 hook.GH_CALLS_TOTAL_BUDGET_SECONDS = 0.3
 os.environ["HOME"] = str(seat.home)  # the handoff module finds its markers under Path.home()
 try:
@@ -950,6 +870,7 @@ try:
         seat.home, hook.datetime.now(hook.timezone.utc))
 finally:
     hook.subprocess.run = real_subprocess_run
+    hook.GitHubConditionChecker.clock = real_clock
     hook.GH_CALLS_TOTAL_BUDGET_SECONDS = real_budget
     if real_home is None:
         os.environ.pop("HOME", None)
@@ -970,14 +891,28 @@ check("one GitHub budget for the whole run: each condition gh could not answer i
 
 
 seat = IdleSeat()
+check("next-action: silent while the background_tasks list holds a running subagent",
+      silent(seat.stop(background_tasks=[{"id": "a1", "type": "subagent",
+                                          "status": "running"}])))
+
+# The transcript shows a subagent launched and never finished; only the list counts.
+seat = IdleSeat()
 seat.append({"type": "user", "timestamp": "2026-11-02T00:00:01Z",
              "toolUseResult": {"status": "async_launched", "agentId": "a1"}})
-check("next-action: silent while a subagent runs", silent(seat.stop()))
+text = context_of(seat.stop()) or ""
+check("next-action: an empty background_tasks list gets the prompt, whatever the transcript "
+      "shows", text.startswith(NEXT_ACTION_FIRST_LINE), text)
+seat = IdleSeat()
+seat.append({"type": "user", "timestamp": "2026-11-02T00:00:01Z",
+             "toolUseResult": {"status": "async_launched", "agentId": "a1"}})
+text = context_of(seat.stop(background_tasks=None)) or ""
+check("next-action: a payload without the background_tasks list counts no work running and "
+      "gets the prompt", text.startswith(NEXT_ACTION_FIRST_LINE), text)
 
 seat = IdleSeat()
 with seat.transcript.open("a") as handle:
-    handle.write('{"toolUseResult": {"status": "async_launched", broken\n')
-result = seat.stop()
+    handle.write('{"toolUseResult": {"backgroundTaskId": "b1", broken\n')
+result = seat.stop(background_tasks=[{"id": "b1", "type": "shell", "status": "running"}])
 check("next-action: silent, with no fault, when the work in flight cannot be counted",
       silent(result) and not seat.state_path.exists(), result)
 

@@ -63,10 +63,15 @@ _python_libraries_pinned_requirements_install_if_missing_then_import_spec = impo
 python_libraries_pinned_requirements_install_if_missing_then_import_common = importlib.util.module_from_spec(_python_libraries_pinned_requirements_install_if_missing_then_import_spec)
 _python_libraries_pinned_requirements_install_if_missing_then_import_spec.loader.exec_module(python_libraries_pinned_requirements_install_if_missing_then_import_common)
 _failed_command_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
-    Path(__file__).resolve().with_name("failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py"))
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().with_name("failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py"))
 _failed_command_lines = importlib.util.module_from_spec(_failed_command_lines_spec)
 _failed_command_lines_spec.loader.exec_module(_failed_command_lines)
+_attendance_check_spec = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().with_name("agent-session-unattended-by-user-check-common.py"))
+_attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
+_attendance_check_spec.loader.exec_module(_attendance_check)
 
 REQUIREMENTS_FILE = python_libraries_pinned_requirements_install_if_missing_then_import_common.PINNED_REQUIREMENTS_FILE
 # The Bash guards run in parallel with a 30-second hook timeout; a cached wheel installs in about a second.
@@ -196,8 +201,12 @@ class SimpleCommand(list):
     command whose child_shell starts with another's runs inside it, so it sees
     that shell's cd but its own cd does not leak out. redirects holds
     (operator, target) pairs, heredocs the heredocs fed to this command or to
-    the pipeline that starts on its heredoc line.
+    the pipeline that starts on its heredoc line. in_while_or_until_loop_condition
+    is True for a command in the condition of a while or until loop, including
+    one inside a substitution there, and False for one in the loop's body.
     """
+
+    in_while_or_until_loop_condition = False
 
     def __init__(self, words, child_shell, redirects, heredocs):
         super().__init__(words)
@@ -481,8 +490,7 @@ def parser():
 
 
 def _session_unattended(environment):
-    return bool(environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
-                or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0")
+    return _attendance_check.agent_session_unattended_by_user(environment)
 
 
 @contextlib.contextmanager
@@ -492,8 +500,8 @@ def agent_session_attendance_environment_variables_temporarily_set_for_test(atte
     A test of a message that names whom to tell sets both, so it reads the same in any
     agent-session it runs in.
     """
-    values = {"CLAUDE_CODE_SESSION_ATTENDED": attended,
-              "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": reincarnation_owned_by_caller}
+    values = {_attendance_check.SESSION_ATTENDED_VARIABLE: attended,
+              _attendance_check.REINCARNATION_OWNED_BY_CALLER_VARIABLE: reincarnation_owned_by_caller}
     saved = {name: os.environ.get(name) for name in values}
 
     def put(settings):
@@ -1022,6 +1030,15 @@ class _Collector:
         if kind in SEQUENCE_NODE_TYPES or kind in SIMPLE_COMMAND_NODE_TYPES:
             self.sequence(node, child_shell, heredocs)
             return
+        if kind == "while_statement":
+            # tree-sitter-bash reads an until loop as a while_statement too.
+            for index, child in enumerate(node.children):
+                first = len(self.commands)
+                self.visit(child, child_shell, heredocs)
+                if node.field_name_for_child(index) == "condition":
+                    for command in self.commands[first:]:
+                        command.in_while_or_until_loop_condition = True
+            return
         if kind == "expansion":
             for child in node.children:
                 if child.type == "word" and any(mark in _text(child) for mark in ("`", "<(", ">(")):
@@ -1041,17 +1058,19 @@ class _Collector:
         substitution is a child shell of its own, apart from every other body's.
         """
         for command in _heredoc_body_substitution_commands(taken.body, self.glob_markers):
-            identity = tuple(shell.placed(
+            command.child_shell = tuple(shell.placed(
                 lambda offset: -1 - offset - taken.number * BODY_IDENTITY_STRIDE)
                 for shell in command.child_shell)
-            self.commands.append(SimpleCommand(list(command), child_shell + identity,
-                                               command.redirects, command.heredocs))
+            self.adopt([command], child_shell)
 
     def adopt(self, commands, child_shell):
-        """Add commands read from a second parse, inside the child shell they run in."""
+        """Add commands read from a second parse, inside the child shell they run in.
+
+        Each command is moved, not rebuilt, so every attribute the second parse gave it stays.
+        """
         for command in commands:
-            self.commands.append(SimpleCommand(list(command), child_shell + command.child_shell,
-                                               command.redirects, command.heredocs))
+            command.child_shell = child_shell + command.child_shell
+            self.commands.append(command)
 
     def follows_process_id(self, node):
         return _follows_process_id(self.source, node.start_byte)
@@ -1644,8 +1663,8 @@ _new_process_runner = subprocess.run
 def _use_a_new_process(runner=subprocess.run):
     """Read every later command in a new process, started and answered through runner.
 
-    runner is called as subprocess.run is; the Bash guards replay passes one that answers from a
-    process it keeps running, started with
+    runner is called as subprocess.run is; nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py passes
+    one that answers from a process it keeps running, started with
     NEW_PROCESS_READ_ONE_REQUEST_PER_LINE_UNTIL_INPUT_CLOSES_FLAG.
     """
     global _read_in_a_new_process, _new_process_runner

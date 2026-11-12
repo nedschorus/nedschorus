@@ -57,7 +57,7 @@ _shipper_spec = importlib.util.spec_from_file_location(
 record_shipper = importlib.util.module_from_spec(_shipper_spec)
 _shipper_spec.loader.exec_module(record_shipper)
 
-daily = program.daily_full_test_run_of_main
+scheduled_run = program.scheduled_full_test_run_of_main
 
 failures = []
 
@@ -420,9 +420,9 @@ class Fixture:
         fake_ssh = self.fake_ssh_directory(scratch, ssh_body)
         clock = [0.0]
 
-        saved_bound = daily.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS
+        saved_bound = scheduled_run.SCHEDULED_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS
         if lock_wait_bound_seconds is not None:
-            daily.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = lock_wait_bound_seconds
+            scheduled_run.SCHEDULED_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = lock_wait_bound_seconds
         saved_gethostname = socket.gethostname
         socket.gethostname = lambda: hostname
         saved_getpid = os.getpid
@@ -450,7 +450,7 @@ class Fixture:
             os.environ.pop(STAND_IN_RUNNER_BEHAVIOUR_FILE_VARIABLE, None)
             os.getpid = saved_getpid
             socket.gethostname = saved_gethostname
-            daily.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = saved_bound
+            scheduled_run.SCHEDULED_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = saved_bound
         ssh_calls_file = scratch / "ssh-calls"
         ssh_calls = (ssh_calls_file.read_text(encoding="utf-8").splitlines()
                      if ssh_calls_file.exists() else [])
@@ -625,9 +625,14 @@ def run_cases_on_ned_box(workspace: Path):
           and not program.pull_request_head_test_run_record_passed_on_commit_check(read_back[0][1], fixture.merge_base)
           and not program.pull_request_head_test_run_record_passed_on_commit_check(read_back[1][1], fixture.head),
           repr(read_back))
+    zero_line_record = re.sub(r"a record of \d+ lines", "a record of 0 lines",
+                              record_of_the_passing_run, count=1)
+    torn_inside_the_next_first_line = (record_of_the_passing_run
+                                       + record_of_the_failing_run.split("\n", 1)[0][:40])
     for text in ("", record_of_the_passing_run[:-1],
                  record_of_the_passing_run.rsplit("\n", 2)[0] + "\n",
-                 "a line that begins no record\n"):
+                 "a line that begins no record\n", zero_line_record,
+                 torn_inside_the_next_first_line):
         try:
             program.pull_request_head_test_run_test_log_split_into_records(text)
             raised = False
@@ -804,10 +809,10 @@ def run_cases_on_ned_box(workspace: Path):
           and result.stderr.endswith(
               "\nRun this again after the run holding that lock has finished.\n")
           and result.stdout == citation_line, repr(result))
-    check("the bound is the daily run's: an hour",
-          daily.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS == 3600)
+    check("the bound is the scheduled run's: an hour",
+          scheduled_run.SCHEDULED_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS == 3600)
 
-    # The daily run's function starts the runner without passing it any descriptor.
+    # The scheduled run's function starts the runner without passing it any descriptor.
     runs_of_the_runner = []
     subprocess_run = subprocess.run
 
@@ -832,7 +837,7 @@ def run_cases_on_ned_box(workspace: Path):
     finally:
         subprocess.run = subprocess_run
         subprocess.Popen = subprocess_popen
-    check("the daily run's function starts the runner with no descriptor to hold, since "
+    check("the scheduled run's function starts the runner with no descriptor to hold, since "
           "this program takes no lock",
           result.code == 0 and len(result.runner_calls) == 1 and len(runs_of_the_runner) == 1
           and tuple(runs_of_the_runner[0].get("pass_fds", ())) == (),
@@ -1062,12 +1067,12 @@ def run_cases_on_ned_box(workspace: Path):
             command, 0, stdout=f"{fixture.runner_first_line()}\n{PASSING_SUMMARY_LINE}\n",
             stderr=""), 0, False)
 
-    saved_function = daily.run_test_suite_runner_waiting_for_the_machine_lock
-    daily.run_test_suite_runner_waiting_for_the_machine_lock = runner_that_is_not_started
+    saved_function = scheduled_run.run_test_suite_runner_waiting_for_the_machine_lock
+    scheduled_run.run_test_suite_runner_waiting_for_the_machine_lock = runner_that_is_not_started
     try:
         result = fixture.run(runner_program=None)
     finally:
-        daily.run_test_suite_runner_waiting_for_the_machine_lock = saved_function
+        scheduled_run.run_test_suite_runner_waiting_for_the_machine_lock = saved_function
     record_lines = (fixture.record("ned-box") or "").splitlines()
     runner_beside_the_program = SCRIPT_PATH.with_name("run-all-test-suites.py")
     check("with no --test-suite-runner-program the runner is the "
@@ -1082,18 +1087,18 @@ def run_cases_on_ned_box(workspace: Path):
                   for line in record_lines), f"{commands_run!r}\n{result!r}")
 
     def runner_whose_output_could_not_be_copied(command, run_from, monotonic, stream_to=None):
-        raise daily.RunnerOutputCopyFailed(
+        raise scheduled_run.RunnerOutputCopyFailed(
             "OSError: [Errno 32] Broken pipe",
             subprocess.CompletedProcess(
                 command, 0, stdout=f"{fixture.runner_first_line()}\n{PASSING_SUMMARY_LINE}\n",
                 stderr=""))
 
-    daily.run_test_suite_runner_waiting_for_the_machine_lock = (
+    scheduled_run.run_test_suite_runner_waiting_for_the_machine_lock = (
         runner_whose_output_could_not_be_copied)
     try:
         result = fixture.run(runner_program=None)
     finally:
-        daily.run_test_suite_runner_waiting_for_the_machine_lock = saved_function
+        scheduled_run.run_test_suite_runner_waiting_for_the_machine_lock = saved_function
     record_lines = (fixture.record("ned-box") or "").splitlines()
     check("when writing the runner's output to stderr fails, the run gives no verdict "
           "even though the runner passed: exit 4, and the record says the copy failed and "
@@ -1866,7 +1871,7 @@ def run_cases_as_a_program(workspace: Path):
     copies = scratch / "copies" / "scripts"
     copies.mkdir(parents=True)
     shutil.copy(SCRIPT_PATH, copies / SCRIPT_PATH.name)
-    (copies / "daily-full-test-run-of-main.py").write_text(
+    (copies / "scheduled-full-test-run-of-main.py").write_text(
         'raise RuntimeError("a module that does not load")\n', encoding="utf-8")
     not_loaded = subprocess.run(
         [sys.executable, str(copies / SCRIPT_PATH.name), *fixture.arguments()],

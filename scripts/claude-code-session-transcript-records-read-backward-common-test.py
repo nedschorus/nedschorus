@@ -48,7 +48,7 @@ bare_number = load("bare_number_citation_in_markdown_and_agent_reply_warning_hoo
                    SCRIPTS / "bare-number-citation-in-markdown-and-agent-reply-warning-hook.py")
 walk = load("walk_me_through_current_item_stop_hook",
             REPOSITORY_TOP / "nc-systems" / "skills" / "walk-me-through"
-            / "walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py")
+            / "walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py")
 
 failures = []
 

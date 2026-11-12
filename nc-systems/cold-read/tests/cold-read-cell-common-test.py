@@ -305,6 +305,28 @@ if "dump_record_directory_descriptor_count" in step:
             continue
         count += (opened.st_dev, opened.st_ino) == (record_directory.st_dev, record_directory.st_ino)
     pathlib.Path(step["dump_record_directory_descriptor_count"]).write_text(str(count), encoding="utf-8")
+if "signal_file" in step:
+    # Tells the case this reviewer is running, so it can order two cells' steps.
+    pathlib.Path(step["signal_file"]).write_text("running", encoding="utf-8")
+if "wait_for_file" in step:
+    # Waits, at most 60 seconds, until the case creates this file.
+    import time
+    waited_until = time.monotonic() + 60
+    while not pathlib.Path(step["wait_for_file"]).exists() and time.monotonic() < waited_until:
+        time.sleep(0.05)
+if "dump_record_directory_lock_held" in step:
+    # What the shipper's lock test sees while the reviewer runs: "held" when any process holds the
+    # record's being-written lock, shared or exclusive, so a shipment now would print FAILED and copy nothing.
+    import fcntl
+    probe = os.open(report_path.parent, os.O_RDONLY)
+    try:
+        fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held = "free"
+    except BlockingIOError:
+        held = "held"
+    finally:
+        os.close(probe)
+    pathlib.Path(step["dump_record_directory_lock_held"]).write_text(held, encoding="utf-8")
 if "stderr" in step:
     sys.stderr.write(step["stderr"])
 if "stdout" in step:
@@ -323,6 +345,15 @@ def check(case_name, condition, detail=""):
     else:
         print(f"FAIL  {case_name}: {detail}")
         failures.append(case_name)
+
+
+def wait_for_path(path, seconds=60):
+    """Wait until path exists; raise when it does not within seconds, so a stuck case fails loudly."""
+    waited_until = time.monotonic() + seconds
+    while not path.exists():
+        if time.monotonic() > waited_until:
+            raise TimeoutError(f"{path} did not appear within {seconds} seconds")
+        time.sleep(0.05)
 
 
 def stray_write_warning(stderr_text):
@@ -369,7 +400,8 @@ def dirty_the_target(repository):
 
 
 def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
-                      runtime="claude", environment_overrides=None, cell="defect-hunt", pass_fds=()):
+                      runtime="claude", environment_overrides=None, cell="defect-hunt", pass_fds=(),
+                      background=False):
     """One cell launcher, run against a stub standing in for its runtime.
 
     The stub is installed under the runtime's own name, because that is how
@@ -383,8 +415,8 @@ def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
     stub = stub_directory / runtime
     stub.write_text(STUB_MODEL_RUNTIME, encoding="utf-8")
     stub.chmod(0o755)
-    # The Codex cell scans HOME for credential files at launch, and the real
-    # home takes seconds to walk. A case that checks the scan gives its own.
+    # A scratch HOME, so the Codex cell's credential profile names paths in
+    # it, not the real home's. A case that checks the profile gives its own.
     scratch_home = repository.parent / "scratch-home"
     scratch_home.mkdir(exist_ok=True)
     environment = dict(os.environ)
@@ -393,21 +425,24 @@ def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
     environment["COLD_READ_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["COLD_READ_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
     environment.update(environment_overrides or {})
-    return subprocess.run(
-        [sys.executable, str(repository / "nc-systems" / "cold-read" / f"cold-read-{runtime}-cell.py"),
-         "--cell", cell, "--tier", "second-strongest-model",
-         "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
-         *arguments],
-        capture_output=True, text=True, check=False, env=environment, cwd=repository,
-        pass_fds=pass_fds,
-    )
+    command = [sys.executable, str(repository / "nc-systems" / "cold-read" / f"cold-read-{runtime}-cell.py"),
+               "--cell", cell, "--tier", "second-strongest-model",
+               "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
+               *arguments]
+    if background:
+        # The case waits on the returned process and reads its streams with communicate().
+        return subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                env=environment, cwd=repository, pass_fds=pass_fds)
+    return subprocess.run(command, capture_output=True, text=True, check=False, env=environment,
+                          cwd=repository, pass_fds=pass_fds)
 
 
 def run_claude_cell(repository, stub_directory, plan, report_path, *arguments,
-                    environment_overrides=None, cell="defect-hunt", pass_fds=()):
+                    environment_overrides=None, cell="defect-hunt", pass_fds=(), background=False):
     return run_cell_launcher(repository, stub_directory, plan, report_path,
                              *arguments, runtime="claude",
-                             environment_overrides=environment_overrides, cell=cell, pass_fds=pass_fds)
+                             environment_overrides=environment_overrides, cell=cell, pass_fds=pass_fds,
+                             background=background)
 
 
 def run_codex_cell(repository, stub_directory, plan, report_path, *arguments,
@@ -540,6 +575,125 @@ with tempfile.TemporaryDirectory() as scratch:
           f"descriptors on the record directory: {reviewer_descriptor_count}; exit {result.returncode}; "
           f"stderr={result.stderr[-2000:]!r}")
 
+    # A cell run directly, by no program holding the record's lock, holds the lock itself while its
+    # reviewer writes, so no shipment copies the record half-written.
+    report = repository / "cold-read-records" / "run-direct-lock" / "claude-defect-hunt-second-strongest-model.md"
+    report.parent.mkdir(parents=True)
+    lock_held_file = scratch / "direct-cell-record-directory-lock-held"
+    descriptor_count_file.unlink(missing_ok=True)
+    result = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one finding\n",
+               "dump_record_directory_lock_held": str(lock_held_file),
+               "dump_record_directory_descriptor_count": str(descriptor_count_file)}},
+        report,
+    )
+    lock_seen = lock_held_file.read_text(encoding="utf-8") if lock_held_file.exists() else "not written"
+    reviewer_descriptor_count = (descriptor_count_file.read_text(encoding="utf-8")
+                                 if descriptor_count_file.exists() else "not written")
+    check("a cell run directly holds its record's being-written lock while its reviewer writes",
+          lock_seen == "held" and reviewer_descriptor_count == "1" and result.returncode == 0,
+          f"lock {lock_seen}; descriptors {reviewer_descriptor_count}; exit {result.returncode}; "
+          f"stderr={result.stderr[-2000:]!r}")
+    check("a cell run directly leaves its record's lock free once it exits",
+          not shipper_module.record_directory_being_written_lock_is_held_by_any_process(report.parent))
+
+    # Two cells run directly on one record directory both hold its lock, so when the first exits
+    # while the second's reviewer still writes, the record stays held until the second exits too.
+    record_directory = repository / "cold-read-records" / "run-two-direct-cells"
+    record_directory.mkdir(parents=True)
+    first_running, first_may_exit = scratch / "first-direct-cell-running", scratch / "first-direct-cell-may-exit"
+    second_running, second_may_probe = scratch / "second-direct-cell-running", scratch / "second-direct-cell-may-probe"
+    lock_held_file = scratch / "second-direct-cell-record-directory-lock-held"
+    first_stderr = second_stderr = ""
+    first = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: first\n", "signal_file": str(first_running),
+               "wait_for_file": str(first_may_exit)}},
+        record_directory / "claude-defect-hunt-second-strongest-model.md", background=True)
+    second = None
+    try:
+        wait_for_path(first_running)
+        second = run_claude_cell(
+            repository, stubs,
+            {"*": {"report": "STUB REVIEW: second\n", "signal_file": str(second_running),
+                   "wait_for_file": str(second_may_probe),
+                   "dump_record_directory_lock_held": str(lock_held_file)}},
+            record_directory / "claude-defect-hunt-second-direct-run.md", background=True)
+        wait_for_path(second_running)
+        first_may_exit.write_text("go", encoding="utf-8")
+        _, first_stderr = first.communicate(timeout=120)
+        second_may_probe.write_text("go", encoding="utf-8")
+        _, second_stderr = second.communicate(timeout=120)
+    finally:
+        for process in (first, second):
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.communicate()
+    lock_seen = lock_held_file.read_text(encoding="utf-8") if lock_held_file.exists() else "not written"
+    check("a second cell run directly on one record keeps its lock held after the first exits",
+          lock_seen == "held" and first.returncode == 0 and second.returncode == 0,
+          f"lock {lock_seen}; exits {first.returncode}, {second.returncode}; "
+          f"stderr={first_stderr[-1000:]!r} {second_stderr[-1000:]!r}")
+    check("the record's lock is free once both cells run directly have exited",
+          not shipper_module.record_directory_being_written_lock_is_held_by_any_process(record_directory))
+
+    # The shipper's own probe sees a cell run directly as a writer: it asks for the lock exclusively,
+    # so a shared hold makes it answer held.
+    record_directory = repository / "cold-read-records" / "run-direct-cell-shipper-probe"
+    record_directory.mkdir(parents=True)
+    running, may_exit = scratch / "probed-direct-cell-running", scratch / "probed-direct-cell-may-exit"
+    cell = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one finding\n", "signal_file": str(running),
+               "wait_for_file": str(may_exit)}},
+        record_directory / "claude-defect-hunt-second-strongest-model.md", background=True)
+    probe_saw_held = False
+    cell_stderr = ""
+    try:
+        wait_for_path(running)
+        probe_saw_held = shipper_module.record_directory_being_written_lock_is_held_by_any_process(record_directory)
+        may_exit.write_text("go", encoding="utf-8")
+        _, cell_stderr = cell.communicate(timeout=120)
+    finally:
+        if cell.poll() is None:
+            cell.kill()
+            cell.communicate()
+    check("the shipper's probe sees the lock a cell run directly holds while its reviewer writes",
+          probe_saw_held and cell.returncode == 0,
+          f"probe {probe_saw_held}; exit {cell.returncode}; stderr={cell_stderr[-2000:]!r}")
+
+    # A cell run directly into a record another writer holds, without being started by it, holds the
+    # lock too, so the record stays held after that writer releases its lock and until the cell exits.
+    report = repository / "cold-read-records" / "run-held-elsewhere" / "claude-defect-hunt-second-strongest-model.md"
+    report.parent.mkdir(parents=True)
+    running, may_exit = scratch / "held-elsewhere-cell-running", scratch / "held-elsewhere-cell-may-exit"
+    shipper_module.record_directory_being_written_lock_take(report.parent)
+    cell = None
+    held_after_other_writer_released = False
+    cell_stderr = ""
+    try:
+        cell = run_claude_cell(
+            repository, stubs,
+            {"*": {"report": "STUB REVIEW: one finding\n", "signal_file": str(running),
+                   "wait_for_file": str(may_exit)}},
+            report, background=True)
+        wait_for_path(running)
+        shipper_module.record_directory_being_written_lock_release(report.parent)
+        held_after_other_writer_released = shipper_module.record_directory_being_written_lock_is_held_by_any_process(report.parent)
+        may_exit.write_text("go", encoding="utf-8")
+        _, cell_stderr = cell.communicate(timeout=120)
+    finally:
+        shipper_module.record_directory_being_written_lock_release(report.parent)
+        if cell is not None and cell.poll() is None:
+            cell.kill()
+            cell.communicate()
+    check("a cell run into a record another writer holds keeps it held after that writer releases",
+          held_after_other_writer_released and cell.returncode == 0 and report.is_file(),
+          f"held {held_after_other_writer_released}; exit {cell.returncode}; stderr={cell_stderr[-2000:]!r}")
+    check("the record's lock is free once that cell has exited",
+          not shipper_module.record_directory_being_written_lock_is_held_by_any_process(report.parent))
+
     # --- And it does not cry wolf ------------------------------------------
     # The tree is dirty and the reviewer touched nothing but its report. A
     # detector that named the already-dirty document here would accuse every
@@ -656,11 +810,11 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- Every failed attempt names its cause (nedschorus#413) ---------------
     # The classifier's fixtures are real lines (the fixture rule,
-    # nedschorus#18): the session limit is line 2 of
-    # nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-10-design-to-main-test-writing-agent-instructions/2026-09-10-design-to-main-test-writing-agent-instructions--claude-hunt-good.md.stderr.log
-    # and the Fable limit line 2 of
+    # nedschorus#18): the weekly limit is line 1 of
+    # nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2384-each-round-of-a-pull-request-runs-its-2026-11-02-2/claude-hunt-deep.md.attempt-1.stderr.log,
+    # from the grid launching the Claude cell on ned-box; the Fable limit is line 2 of
     # nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-11-SKILL-2/2026-09-11-SKILL-2--claude-hunt-floor.md.stderr.log,
-    # both from the grid launching the Claude cell on the Mac; the logged-out
+    # from the grid launching the Claude cell on the Mac; the logged-out
     # line is the 2026-09-18 capture on ned-box, Claude Code 2.1.272,
     # `CLAUDE_CONFIG_DIR=$(mktemp -d) claude -p "say hi"` from a scratch
     # directory, exit 1, that line on stdout; and the Codex logged-out line
@@ -738,7 +892,7 @@ with tempfile.TemporaryDirectory() as scratch:
         "cold_read_codex_cell_under_test", SYSTEM_DIRECTORY / "cold-read-codex-cell.py")
     codex_module = importlib.util.module_from_spec(codex_spec)
     codex_spec.loader.exec_module(codex_module)
-    SESSION_LIMIT_LINE = "You've hit your session limit · resets 8:50pm (America/Los_Angeles)"
+    WEEKLY_LIMIT_LINE = "You've hit your weekly limit · resets Nov 7, 3am (America/Los_Angeles)"
     FABLE_LIMIT_LINE = ("You've reached your Fable limit. Switch to another model, or manage "
                         "usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, "
                         "to continue.")
@@ -757,10 +911,23 @@ with tempfile.TemporaryDirectory() as scratch:
             recognised_texts=claude_module.recognised_failure_texts_for_model(model),
             start_error=start_error)
 
-    check("the session limit line is account-limit with the reset as its detail",
-          classify(stdout=PERMISSION_NOISE + SESSION_LIMIT_LINE + "\n")
-          == ("account-limit", "resets 8:50pm (America/Los_Angeles)"),
-          repr(classify(stdout=PERMISSION_NOISE + SESSION_LIMIT_LINE + "\n")))
+    check("the weekly limit line is account-limit, the limit and its reset as detail",
+          classify(stdout=PERMISSION_NOISE + WEEKLY_LIMIT_LINE + "\n")
+          == ("account-limit", "weekly limit · resets Nov 7, 3am (America/Los_Angeles)"),
+          repr(classify(stdout=PERMISSION_NOISE + WEEKLY_LIMIT_LINE + "\n")))
+    check("a line starting \"You've hit your \" whose next words do not end in limit is exit-N",
+          classify(stdout="You've hit your limitless quota · resets Nov 7\n")[0] == "exit-1",
+          repr(classify(stdout="You've hit your limitless quota · resets Nov 7\n")))
+    check("three words before limit is still account-limit",
+          classify(stdout="You've hit your Opus weekly usage limit · resets Nov 7\n")
+          == ("account-limit", "Opus weekly usage limit · resets Nov 7"),
+          repr(classify(stdout="You've hit your Opus weekly usage limit · resets Nov 7\n")))
+    check("exactly four words before limit is exit-N",
+          classify(stdout="You've hit your a b c d limit\n")[0] == "exit-1",
+          repr(classify(stdout="You've hit your a b c d limit\n")))
+    check("a line whose \"limit\" comes five or more words after \"You've hit your \" is exit-N",
+          classify(stdout="You've hit your stride and now the speed limit\n")[0] == "exit-1",
+          repr(classify(stdout="You've hit your stride and now the speed limit\n")))
     check("the Fable limit line is model-limit for a Fable attempt, the family as detail",
           classify(stdout=PERMISSION_NOISE + FABLE_LIMIT_LINE + "\n") == ("model-limit", "Fable"),
           repr(classify(stdout=PERMISSION_NOISE + FABLE_LIMIT_LINE + "\n")))
@@ -771,8 +938,8 @@ with tempfile.TemporaryDirectory() as scratch:
           classify(stdout=LOGGED_OUT_LINE + "\n") == ("logged-out", LOGGED_OUT_LINE),
           repr(classify(stdout=LOGGED_OUT_LINE + "\n")))
     check("a limit text inside a line, not at its start, is not recognised",
-          classify(stdout=f"The document quotes: {SESSION_LIMIT_LINE}\n")[0] == "exit-1",
-          repr(classify(stdout=f"The document quotes: {SESSION_LIMIT_LINE}\n")))
+          classify(stdout=f"The document quotes: {WEEKLY_LIMIT_LINE}\n")[0] == "exit-1",
+          repr(classify(stdout=f"The document quotes: {WEEKLY_LIMIT_LINE}\n")))
     check("an agent-binary that could not be started is agent-binary-missing with the error",
           classify(exit_code=None, start_error="[Errno 2] No such file or directory: 'claude'")
           == ("agent-binary-missing", "[Errno 2] No such file or directory: 'claude'"))
@@ -794,8 +961,8 @@ with tempfile.TemporaryDirectory() as scratch:
           and classify(exit_code=-9) == ("exit--9", "no output"))
     check("a Codex attempt recognises no text, so the Claude limit line is exit-1 there",
           common_module.classify_failed_attempt(
-              stdout=SESSION_LIMIT_LINE + "\n", stderr="", exit_code=1, recognised_texts=[])
-          == ("exit-1", SESSION_LIMIT_LINE))
+              stdout=WEEKLY_LIMIT_LINE + "\n", stderr="", exit_code=1, recognised_texts=[])
+          == ("exit-1", WEEKLY_LIMIT_LINE))
 
     # The Codex logged-out line carries the tracing logger's timestamp, which
     # the classifier skips before matching by how the line starts; the
@@ -819,9 +986,9 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(classify_codex(
               stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} the doc says: {CODEX_LOGGED_OUT_TEXT}\n")))
     check("a timestamp then an unrecognised text falls through to exit-N, detail untouched",
-          classify_codex(stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} {SESSION_LIMIT_LINE}\n")
-          == ("exit-1", f"{CODEX_LOGGED_OUT_TIMESTAMP} {SESSION_LIMIT_LINE}"),
-          repr(classify_codex(stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} {SESSION_LIMIT_LINE}\n")))
+          classify_codex(stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} {WEEKLY_LIMIT_LINE}\n")
+          == ("exit-1", f"{CODEX_LOGGED_OUT_TIMESTAMP} {WEEKLY_LIMIT_LINE}"),
+          repr(classify_codex(stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} {WEEKLY_LIMIT_LINE}\n")))
     check("the Claude logged-out line still matches at column 0 with no timestamp",
           classify(stdout=LOGGED_OUT_LINE + "\n") == ("logged-out", LOGGED_OUT_LINE))
     check("the family name is the model id's second word, capitalised",
@@ -853,11 +1020,11 @@ with tempfile.TemporaryDirectory() as scratch:
     report = repository / "cold-read-records" / "run-cause-b" / "codex-defect-hunt-second-strongest-model.md"
     result = run_codex_cell(
         repository, stubs,
-        {"*": {"exit": 1, "stdout": SESSION_LIMIT_LINE + "\n"}},
+        {"*": {"exit": 1, "stdout": WEEKLY_LIMIT_LINE + "\n"}},
         report,
     )
     check("a Codex cell printing the Claude limit text names exit-1, the line as detail",
-          f"cold-read-codex-cell: cause: exit-1 — {SESSION_LIMIT_LINE}" in result.stderr,
+          f"cold-read-codex-cell: cause: exit-1 — {WEEKLY_LIMIT_LINE}" in result.stderr,
           repr(result.stderr))
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
@@ -1454,17 +1621,19 @@ with tempfile.TemporaryDirectory() as scratch:
     # The Codex cell, the same rule in Codex's terms: a named permission
     # profile extending :workspace, which Codex will not combine with
     # --sandbox. The cell runs with HOME at a scratch home holding
-    # .config/nedschorus and .config/gh and no .ssh, and three canaries: one
-    # in the repository and one in the home, which the Linux profile must
-    # name, and one in neither, which it must not -- a path outside the
-    # scanned roots can be deleted by its owner before Codex starts, and
-    # Codex then stops or recreates it on the real disk (review 5346123311).
+    # .config/nedschorus, .config/gh, .steam and nedsmessenger and no .ssh,
+    # and three credential-named canaries, in the repository, in the home and
+    # in neither, which no profile names by path: a named path its owner
+    # deletes before Codex starts makes Codex stop or recreate it on the real
+    # disk (review 5346123311).
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "codex-denies-credentials", "codex")
     scratch_home = scratch / "codex-scratch-home"
     (scratch_home / ".config" / "nedschorus").mkdir(parents=True, exist_ok=True)
     (scratch_home / ".config" / "gh").mkdir(parents=True, exist_ok=True)
+    (scratch_home / ".steam").mkdir(parents=True, exist_ok=True)
+    (scratch_home / "nedsmessenger" / "secrets").mkdir(parents=True, exist_ok=True)
     credential_canary = repository / "codex-credential-canary.token"
     home_canary = scratch_home / "projects" / "codex-home-canary.token"
     unscanned_canary = scratch / "neither-home-nor-repository" / "codex-unscanned-canary.token"
@@ -1493,11 +1662,11 @@ with tempfile.TemporaryDirectory() as scratch:
                          if override.startswith("permissions.cold-read-no-credentials.filesystem=")),
                         "")
     home = str(scratch_home)
-    expected_denials = [f'"{home}/.config/nedschorus"="deny"', f'"{home}/.config/gh"="deny"']
+    expected_denials = [f'"{home}/.config/nedschorus"="deny"', f'"{home}/.config/gh"="deny"',
+                        f'"{home}/.steam"="deny"', f'"{home}/nedsmessenger"="deny"']
     expected_denials += [f'"{login}"="deny"' for login in login_canaries]
-    expected_denials += ([f'"{credential_canary}"="deny"', f'"{home_canary}"="deny"']
-                         if sys.platform.startswith("linux")
-                         else ['"/**/*.token"="deny"', '"/**/.env"="deny"'])
+    if not sys.platform.startswith("linux"):
+        expected_denials += ['"/**/*.token"="deny"', '"/**/.env"="deny"']
     check("a Codex cell's run reaches the runtime at all",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("the Codex cell runs under no --sandbox, which Codex will not combine with a profile",
@@ -1520,8 +1689,12 @@ with tempfile.TemporaryDirectory() as scratch:
           f"expected {expected_denials} in {denied_table!r}")
     check("the Codex cell's profile names no credential directory that does not exist",
           f'"{home}/.ssh"' not in denied_table, denied_table)
-    check("the Codex cell's profile names no file outside the home and the repository",
-          str(unscanned_canary) not in denied_table, denied_table)
+    # No scan runs before a launch: a credential-named file outside the
+    # credential directories is named by no path, on either platform.
+    check("the Codex cell's profile names no credential-named file by its path",
+          not any(str(canary) in denied_table
+                  for canary in (credential_canary, home_canary, unscanned_canary)),
+          denied_table)
     check("the Codex cell's profile names no login file that does not exist",
           str(absent_login_file) not in denied_table, denied_table)
     # :workspace makes /tmp and $TMPDIR writable roots, and Codex's Linux
@@ -1531,19 +1704,14 @@ with tempfile.TemporaryDirectory() as scratch:
     # read-only $TMPDIR breaks every zsh here-document, so there they stay
     # writable. Both platforms' profiles are built here on every machine, by
     # calling the builder with the platform named, so ned-box checks the
-    # macOS profile and the Mac checks the Linux one. The Linux profile's
-    # home scan is replaced by an empty list for the call: the scan is not
-    # what is checked, and on a Mac home it runs for minutes. The scan's
-    # stand-in returns one path, so the Linux table's file denials are checked
-    # on the Mac too. The credential directories are pointed at the scratch
+    # macOS profile and the Mac checks the Linux one. The credential
+    # directories are pointed at the scratch
     # home for the call, so the real home's paths never reach a failure line
     # (review 5347451780); the module computed them from the real HOME at import.
     # Each is re-rooted from the real list rather than listed here, so a
     # directory dropped from CREDENTIAL_DIRECTORIES drops out of both tables.
-    real_scan = codex_module.common.credential_files_found_now
     real_directories = codex_module.common.CREDENTIAL_DIRECTORIES
     real_login_files = codex_module.common.REVIEWER_PROGRAM_LOGIN_FILES
-    codex_module.common.credential_files_found_now = lambda: [str(home_canary)]
     codex_module.common.CREDENTIAL_DIRECTORIES = tuple(
         scratch_home / directory.relative_to(Path.home()) for directory in real_directories)
     codex_module.common.REVIEWER_PROGRAM_LOGIN_FILES = {
@@ -1554,7 +1722,6 @@ with tempfile.TemporaryDirectory() as scratch:
             platform: codex_module.credential_denying_permission_profile_arguments(platform)[-1]
             for platform in ("linux", "darwin")}
     finally:
-        codex_module.common.credential_files_found_now = real_scan
         codex_module.common.CREDENTIAL_DIRECTORIES = real_directories
         codex_module.common.REVIEWER_PROGRAM_LOGIN_FILES = real_login_files
     check("the Linux profile keeps /tmp and $TMPDIR read-only",
@@ -1564,9 +1731,10 @@ with tempfile.TemporaryDirectory() as scratch:
           '":slash_tmp"' not in profile_tables["darwin"]
           and '":tmpdir"' not in profile_tables["darwin"], profile_tables["darwin"])
     scratch_credential_directory_denial = f'"{home}/.config/nedschorus"="deny"'
-    check("the Linux profile denies the credential directory and each file the scan found",
+    check("the Linux profile denies the credential directory and names no credential-named file",
           scratch_credential_directory_denial in profile_tables["linux"]
-          and f'"{home_canary}"="deny"' in profile_tables["linux"], profile_tables["linux"])
+          and str(home_canary) not in profile_tables["linux"]
+          and "/**/" not in profile_tables["linux"], profile_tables["linux"])
     check("the macOS profile denies the credential directory, *.token and .env anywhere",
           scratch_credential_directory_denial in profile_tables["darwin"]
           and '"/**/*.token"="deny"' in profile_tables["darwin"]
@@ -1574,6 +1742,15 @@ with tempfile.TemporaryDirectory() as scratch:
     check("both platforms' profiles deny gh's login directory",
           all(f'"{home}/.config/gh"="deny"' in profile_tables[platform]
               for platform in ("linux", "darwin")), repr(profile_tables))
+    present_scratch_directories = [
+        scratch_home / directory.relative_to(Path.home()) for directory in real_directories
+        if (scratch_home / directory.relative_to(Path.home())).is_dir()]
+    check("both platforms' profiles deny every credential directory that exists, "
+          "~/.steam and ~/nedsmessenger among them",
+          {scratch_home / ".steam", scratch_home / "nedsmessenger"} <= set(present_scratch_directories)
+          and all(f'"{directory}"="deny"' in profile_tables[platform]
+                  for directory in present_scratch_directories
+                  for platform in ("linux", "darwin")), repr(profile_tables))
     check("neither platform's profile names the real home's credential directories",
           not any(str(directory) in profile_tables[platform]
                   for directory in real_directories for platform in ("linux", "darwin")),
@@ -1582,102 +1759,6 @@ with tempfile.TemporaryDirectory() as scratch:
           all(f'"{login}"="deny"' in profile_tables[platform]
               for login in login_canaries for platform in ("linux", "darwin")),
           repr(profile_tables))
-
-    # The scan splits each root into levels it lists one deep and subtrees it
-    # walks whole, so a canary at every depth, on both sides of the split, and
-    # several subtrees per find, catch a level or a subtree the split drops.
-    scan_root = scratch / "credential-scan-root"
-    outside = scratch / "credential-scan-outside"
-    scan_canaries = [scan_root / "depth-1.token"]
-    nested = scan_root
-    for depth in range(2, 8):
-        nested = nested / f"level-{depth - 1}"
-        scan_canaries.append(nested / (".env" if depth % 2 else f"depth-{depth}.token"))
-    for sibling in range(5):
-        scan_canaries.append(scan_root / "wide" / f"branch-{sibling}" / "deep" / "sibling.token")
-    for canary in (*scan_canaries, outside / "inner" / "behind-a-symlink.token"):
-        canary.parent.mkdir(parents=True, exist_ok=True)
-        canary.write_text("CANARY-NOT-A-SECRET-common-test\n", encoding="utf-8")
-    (scan_root / "wide" / "notes.txt").write_text("not a credential\n", encoding="utf-8")
-    (scan_root / "level-1" / "link-to-outside").symlink_to(outside, target_is_directory=True)
-    real_roots = codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS
-    real_find_commands = codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT
-    codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = (scan_root,)
-    codex_module.common.CREDENTIAL_DIRECTORIES = ()
-    codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = 2
-    try:
-        split_scan_found = codex_module.common.credential_files_found_now()
-    finally:
-        codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = real_roots
-        codex_module.common.CREDENTIAL_DIRECTORIES = real_directories
-        codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = real_find_commands
-    check("the credential scan finds a credential file at every depth and in every subtree",
-          split_scan_found == sorted(str(canary) for canary in scan_canaries),
-          f"expected {sorted(str(canary) for canary in scan_canaries)}, found {split_scan_found}")
-
-    # A directory the split cannot list, or an entry it cannot stat, is
-    # skipped alone: a handler that caught the error around the whole loop
-    # would drop the readable siblings listed after it, and their credential
-    # files would go missing from the deny list without any error.
-    real_scandir = codex_module.common.os.scandir
-    wide = scan_root / "wide"
-
-    class EntryWhoseStatFails:
-        def __init__(self, entry):
-            self.entry, self.path = entry, entry.path
-
-        def is_dir(self, follow_symlinks=True):
-            return self.entry.is_dir(follow_symlinks=follow_symlinks)
-
-        def stat(self, follow_symlinks=True):
-            raise PermissionError(13, "injected stat failure", self.path)
-
-    class Listing:
-        def __init__(self, entries):
-            self.entries = entries
-
-        def __enter__(self):
-            return iter(self.entries)
-
-        def __exit__(self, *exc):
-            return False
-
-    for failure in ("scandir", "stat"):
-        failed = []
-
-        def scandir_failing_once(directory, failure=failure, failed=failed):
-            if failure == "scandir" and not failed and Path(directory).parent == wide:
-                failed.append(Path(directory))
-                raise PermissionError(13, "injected scandir failure", str(directory))
-            with real_scandir(directory) as entries:
-                listed = list(entries)
-            if failure == "stat" and not failed and Path(directory) == wide:
-                for index, entry in enumerate(listed):
-                    if entry.name.startswith("branch-"):
-                        failed.append(Path(entry.path))
-                        listed[index] = EntryWhoseStatFails(entry)
-                        break
-            return Listing(listed)
-
-        codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = (scan_root,)
-        codex_module.common.CREDENTIAL_DIRECTORIES = ()
-        codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = 2
-        codex_module.common.os.scandir = scandir_failing_once
-        try:
-            failed_scan_found = codex_module.common.credential_files_found_now()
-        except OSError as error:
-            failed_scan_found = [f"raised {error!r}"]
-        finally:
-            codex_module.common.os.scandir = real_scandir
-            codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = real_roots
-            codex_module.common.CREDENTIAL_DIRECTORIES = real_directories
-            codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = real_find_commands
-        expected = sorted(str(canary) for canary in scan_canaries
-                          if not (failed and failed[0] in canary.parents))
-        check(f"a {failure} failure on one subtree leaves its readable siblings' credential "
-              "files found",
-              len(failed) == 1 and failed_scan_found == expected,
-              f"failed {failed}; expected {expected}, found {failed_scan_found}")
 
     # The Codex `deep` tier. Max beat xhigh by 46 net findings measured per
     # cell, but the grid is a union and there it is worth ten findings of 331

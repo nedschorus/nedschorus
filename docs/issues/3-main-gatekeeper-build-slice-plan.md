@@ -549,7 +549,7 @@ remains in git history at `4cadb46`.
   integration absorbs it — it is not tolerable here, because in `status`
   and `cancel` the fetch decides whether the answer is true.
 - APPLIED 2026-08-12 (`71d492e`, `6d356d2`) — **The two exemptions from
-  the one-JSON-object contract are written down, and agent-facing text
+  the one-JSON-object contract are written down, and tool-message-to-agent text
   stops citing `--help`.** The reply contract states that every invocation
   prints exactly one JSON object on stdout, and reserves exit 2 for a
   program defect; two invocations broke it. `worker` was a real,

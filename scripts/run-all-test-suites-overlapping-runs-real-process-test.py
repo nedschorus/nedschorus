@@ -246,5 +246,51 @@ with tempfile.TemporaryDirectory(prefix="run-all-test-suites-overlapping-runs-")
           [line for _, output in collisions for line in output.splitlines()
            if line.startswith("SKIP")])
 
+    # A run started as cron starts it, with no way to the user's systemd in its environment.
+    user_session_bus = pathlib.Path(f"/run/user/{os.getuid()}/bus")
+    if user_session_bus.exists():
+        cron_repository = scratch / "cron-repository"
+        cron_repository.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=cron_repository, check=True)
+        (cron_repository / "reports-its-cgroup-test.py").write_text(
+            'print("PASS  runs in cgroup " + open("/proc/self/cgroup").read().strip())\n')
+        subprocess.run(["git", "add", "."], cwd=cron_repository, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                        "-m", "start"], cwd=cron_repository, check=True)
+        cron_environment = {name: value for name, value in os.environ.items()
+                            if name not in ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS")}
+        cron_log_dir = scratch / "logs-cron"
+        started_by_cron = subprocess.run(
+            [sys.executable, "-c", DRIVER_SOURCE, NO_MEETING_DIRECTORY, str(RUNNER_PATH),
+             "--checkout", str(cron_repository), "--lock-file", str(lock_file),
+             "--log-dir", str(cron_log_dir),
+             "--recorded-inputs-directory", str(scratch / "recorded-cron")],
+            cwd=scratch, env=cron_environment, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=600)
+        cgroup_lines = [row[5] for row in case_rows(cron_log_dir)
+                        if row[5].startswith("runs in cgroup ")] if (
+            cron_log_dir / "test-case-times.tsv").is_file() else []
+        check("a run started with no XDG_RUNTIME_DIR, as cron starts it, puts its suite in a "
+              "scope in the suites' slice of the user's systemd",
+              started_by_cron.returncode == 0 and len(cgroup_lines) == 1
+              and f"/user@{os.getuid()}.service/{runner.TEST_SUITE_CGROUP_SLICE}/"
+              in cgroup_lines[0], (cgroup_lines, started_by_cron.stdout[-1500:]))
+        # The one-suite runner builds its suite's environment before its cgroup check runs.
+        one_suite_by_cron = subprocess.run(
+            [sys.executable, "-c", DRIVER_SOURCE, NO_MEETING_DIRECTORY, str(ONE_SUITE_PATH),
+             "reports-its-cgroup-test.py", "--checkout", str(cron_repository),
+             "--lock-file", str(lock_file)],
+            cwd=scratch, env=cron_environment, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=600)
+        check("scripts/run-suite-in-signal-sandbox.py started with no XDG_RUNTIME_DIR, as cron "
+              "starts it, runs its suite in a scope in the suites' slice of the user's systemd",
+              one_suite_by_cron.returncode == 0
+              and "VERDICT: suite passed" in one_suite_by_cron.stdout
+              and f"/user@{os.getuid()}.service/{runner.TEST_SUITE_CGROUP_SLICE}/"
+              in one_suite_by_cron.stdout, one_suite_by_cron.stdout[-1500:])
+    else:
+        print(f"SKIP  a run started as cron starts it: {user_session_bus} does not exist, so "
+              f"this machine's user systemd cannot be reached")
+
 print(f"{len(failures)} failed" if failures else "all cases passed")
 sys.exit(1 if failures else 0)

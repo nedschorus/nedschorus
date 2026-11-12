@@ -11,9 +11,14 @@ message the user (or, for a subagent, its parent) sent. absence_claim_matches()
 decides whether that reply claims a stored artifact is absent. It is five
 phrase patterns, 2, 4, 6 and 12, numbered after the larger detector they were
 chosen from, and 13, for "does not exist" and "no longer exists", with the
-guards measured alongside them. Patterns 2 and 13 count only when a word
-naming a stored artifact stands in the match's own clause. On 278
-hand-labelled replies, about six fires in seven were correct. Matches inside
+guards measured alongside them. Pattern 2 counts only when one of the
+artifact words that ARTIFACT lists, such as file, transcript or log, stands
+in the match's own clause, or, after a pronoun subject such as "it is gone",
+in the 100 characters before the match. Pattern 13 counts when an ARTIFACT
+word, or "branch", stands in its clause, or when "on", "in" or "anywhere"
+follows it, with or without "yet" between, as in "does not exist on main".
+On 278 hand-labelled
+replies, about six fires in seven were correct. Matches inside
 code, quoted text and block quotes do not count.
 
 THE HOOK STAYS SILENT when any of these holds:
@@ -24,9 +29,9 @@ THE HOOK STAYS SILENT when any of these holds:
     programs, SEARCH_PROGRAM_NAMES;
   - this agent-session (for a subagent, this subagent) was already reminded:
     agents remember the reminder for a while, so it comes once;
-  - the agent-session is a headless `claude -p` child, told apart as the
-    due-task hook does: NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER set,
-    or CLAUDE_CODE_SESSION_ATTENDED == "0". The reminder would otherwise
+  - no user attends the agent-session, as
+    nc-systems/general-tools/agent-session-unattended-by-user-check-common.py
+    decides, such as a headless `claude -p` child. The reminder would otherwise
     become the child's last words, which its caller reads as the answer;
   - a SubagentStop payload names no agent_transcript_path: the main
     transcript holds the parent's reply, not the subagent's;
@@ -86,6 +91,15 @@ _stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_locat
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
 stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
 _stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
+
+_agent_session_unattended_by_user_check_common_specification = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "agent-session-unattended-by-user-check-common.py")
+agent_session_unattended_by_user_check_common = importlib.util.module_from_spec(
+    _agent_session_unattended_by_user_check_common_specification)
+_agent_session_unattended_by_user_check_common_specification.loader.exec_module(
+    agent_session_unattended_by_user_check_common)
 
 _claude_code_session_transcript_records_read_backward_common_specification = importlib.util.spec_from_file_location(
     "claude_code_session_transcript_records_read_backward_common",
@@ -156,13 +170,20 @@ PATTERNS = {
 }
 COMPILED = {number: re.compile(pattern, re.I) for number, pattern in PATTERNS.items()}
 
-# Pattern 2 fires only when a stored artifact is named in its own clause, just before the match. A hyphen
+# Pattern 2 fires only when a stored artifact is named in its own clause, or within 100 characters before a pronoun
+# subject. A hyphen
 # next to the word ("per-path", "file-by-file") makes it a modifier, not the artifact.
 ARTIFACT = re.compile(r"(?<![\w-])(?:FILE|files?|documents?|drafts?|transcripts?|records?|copies|copy|backups?|paths?|directories|directory|folders?|artifacts?|overviews?|reports?|logs?|history|traces?|mirrors?|checkouts?|repos?|issues?|citations?|rulings?|approvals?|prompts?|minutes|data|results?)(?![\w-])", re.I)
 CLAUSE_BREAK = re.compile(r"[;:(—–]|\s-\s")
 # Code and text elements an edit removes; "the fallback is gone" reports a change, not a missing artifact.
-EDITED_ELEMENT = re.compile(r"\b(?:parsing|parser|lookup|comparison|rules?|guards?|comments?|fallback|scan|tail|property|words?|phrases?|names?|command|gap|rows?|arithmetic|waker|advice|alignment|minimum|mod|change|premise|reason|case|binary|style|options?|flags?|code|helper|function|stand-ins)\s*$", re.I)
-EDITED_HEAD = re.compile(r"\b(?:rules?|comparison|owner|guards?|scan|lock|lookup|minimum|change|parsing|arithmetic|waker|code|comments?|refusal|cases?|checks?|format|steps?|fork|clog|command|words|mark|link|alignment|distinction|mod)\b", re.I)
+EDITED_ELEMENT = re.compile(r"(?<![\w-])(?:parsing|parser|lookup|comparison|rules?|guards?|comments?|fallback|scan|tail|property|words?|phrases?|names?|commands?|gap|rows?|arithmetic|waker|advice|alignment|minimum|mod|change|premise|reason|cases?|binary|style|options?|flags?|code|helper|function|stand-ins|owner|lock|refusal|checks?|format|steps?|fork|clog|mark|link|distinction)(?![\w-])", re.I)
+# Words that open a clause inside a sentence; the claim's subject stands after the last one before the match.
+# "and" opens one only when a subject follows it: "the scan finished and the file", not "grep and glob".
+CLAUSE_OPENER = re.compile(r"[,;:(—–]|\s-\s|\b(?:that|which|who|whether|why|how|what|because|since|while|but|so|although|though)\b|\band(?=\s+(?:I|we|you|they|it|he|she|the|a|an|this|these|those|its|their|my|our)\b)", re.I)
+# After the subject's first noun, a preposition, a pronoun or a determiner starts what modifies it: "the transcript
+# for that step", "the folders it checks", "the file the link points to".
+# A participle does too: "the logs showing parser failures".
+POST_MODIFIER = re.compile(r"\b(?:of|for|to|from|on|in|at|by|with|about|it|they|we|I|you|he|she|the|a|an|this|these|those|its|their|\w+ing)\b", re.I)
 FIRST_PERSON = re.compile(r"\b(?:I|[Ww]e|[Mm]y|[Oo]ur|me|us)\b")
 SCORING_REPLY = re.compile(r"\b(?:match file|match to|report covers|answer-key entries)\b", re.I)
 
@@ -210,6 +231,61 @@ def strip_noise(text):
 def clause_before(before):
     """The text after the last clause break before the match: the match's own subject, roughly."""
     return CLAUSE_BREAK.split(before)[-1][-80:]
+
+
+def claim_subject(before):
+    """The match's subject: the text before the match after the last clause break or clause-opening word."""
+    return CLAUSE_OPENER.split(before)[-1]
+
+
+def edited_element_heads_subject(before):
+    """True when the head noun of the match's subject is an edited code or text element: of the artifact and
+    element words before the subject's first modifier, the last is an element word, as in "the log format for
+    each step". "The transcript for the log parser" is headed by an artifact word. A subject of nouns joined by
+    "and" is an element's only when an element heads every one: "the transcript and the parser" is not."""
+    # After a preposition, "that" is a determiner: "the transcript for that step".
+    before = re.sub(r"\b(of|for|to|from|on|in|at|by|with|about)\s+that\b", r"\1 the", before, flags=re.I)
+    parts = re.split(f"({CLAUSE_OPENER.pattern})", before, flags=re.I)
+    index = len(parts) - 1
+    # Right after a noun, "that" opens a relative clause, which modifies that noun: "the file that contains the parser".
+    while (index >= 2 and parts[index - 1].lower() in ("that", "which", "who")
+           and re.search(f"(?:{ARTIFACT.pattern}|{EDITED_ELEMENT.pattern})\\s*$", parts[index - 2], re.I)):
+        index -= 2
+    # "And" right after a noun joins two nouns of one subject, "the transcript and the parser", where after a verb it
+    # opened a new clause, "the scan finished and the file". An element heads the subject only when it heads every part.
+    # A part with a pronoun subject, or with a second determiner not opening a prepositional phrase, holds a verb, so
+    # its last noun is that verb's object: "I edited the file and the guard", "the commit touched the log and the
+    # fallback", but not "the logs for the scan and the parser".
+    last = index
+    while (index >= 2 and parts[index - 1].lower() == "and"
+           and re.search(f"(?:{ARTIFACT.pattern}|{EDITED_ELEMENT.pattern})\\s*$", parts[index - 2], re.I)
+           and not re.match(r"\s*(?:I|we|you|they|he|she|it)\b", parts[index - 2], re.I)
+           and len(re.findall(r"(?<!\bof )(?<!\bfor )(?<!\bto )(?<!\bfrom )(?<!\bon )(?<!\bin )(?<!\bat )(?<!\bby )"
+                              r"(?<!\bwith )(?<!\babout )\b(?:the|a|an|this|these|those|its|their|my|our)\b",
+                              parts[index - 2], re.I)) <= 1):
+        index -= 2
+    heads = [element_heads_noun_phrase(part) for part in parts[index:last + 1:2]]
+    heads = [head for head in heads if head is not None]
+    return bool(heads) and all(heads)
+
+
+def element_heads_noun_phrase(subject):
+    """True when the head noun of subject is an edited element, False when it is an artifact word, None when it
+    names neither."""
+    nouns = [(word.start(), word.end(), bool(ARTIFACT.fullmatch(word[0])))
+             for word in re.finditer(ARTIFACT.pattern + "|" + EDITED_ELEMENT.pattern, subject, re.I)]
+    if not nouns:
+        return None
+    # "parsing" in "the transcript parsing" is the head noun, not a participle; "naming" in "the file naming rules"
+    # is part of a compound noun, since it stands right before the subject's last noun. A noun in a compound's first
+    # place is singular, so after a plural it is a participle: "the files containing code".
+    modifier = next((word for word in POST_MODIFIER.finditer(subject, nouns[0][1])
+                     if not EDITED_ELEMENT.fullmatch(word[0])
+                     and not (word[0].lower().endswith("ing") and re.fullmatch(r"\s+\w+\s*", subject[word.end():])
+                              and not re.search(r"(?<!s)s\s+$", subject[:word.start()]))),
+                    None)
+    head = [noun for noun in nouns if not modifier or noun[0] < modifier.start()][-1]
+    return not head[2]
 
 
 def match_is_excluded(number, sentence, before, after):
@@ -263,13 +339,21 @@ def match_is_excluded(number, sentence, before, after):
     if re.search(r"\b(?:say|says|said|saying)\s+(?:[\w'-]+\s+){0,5}$", before, re.I):
         return True
     # "no test case on main is lost", "nobody's lines are lost".
-    if number == 2 and re.search(r"\b(?:no|nobody's|neither)\s+(?:[\w'-]+\s+){0,4}$", before, re.I):
+    # "The file with no backup is gone": after a preposition, the "no" phrase is not the subject.
+    if number == 2 and re.search(r"(?<!\bwith )(?<!\bwithout )(?<!\bof )(?<!\bfor )\b(?:no|nobody's|neither)\s+(?:[\w'-]+\s+){0,4}$", before, re.I):
         return True
     # What a test or check verifies: "the tests check that the temporary folder is gone".
     if re.search(r"\b(?:tests?|checks?)\s+(?:\w+\s+){0,2}(?:that|whether)\b", before, re.I):
         return True
-    # Pattern 2 on an edited code or text element: "the untested guards are gone".
-    if number == 2 and EDITED_ELEMENT.search(before.rstrip()):
+    # A match followed by the sentence's own verb sits inside a clause about something else: "the log that confirms
+    # the parser is gone is still on disk".
+    # When "that" or "which" is the match's own subject, the clause is about the noun before it: "the transcript that
+    # is gone is the only copy".
+    if (number == 2 and re.match(r"\s+(?:is|are|was|were|has|have|had|remains?|stays?|seems?)\b", after, re.I)
+            and not re.search(ARTIFACT.pattern + r"\s+(?:that|which)\s+$", before, re.I)):
+        return True
+    # Pattern 2 on an edited code or text element: "the untested guards are gone", "the log format is gone".
+    if number == 2 and edited_element_heads_subject(before):
         return True
     # Alternatives in a case analysis: "its file is gone", "is missing or stale".
     if number == 2 and (re.match(r"\s+or\b", after, re.I) or re.search(r"\bor\s+(?:[\w'-]+\s+){0,3}$", before, re.I)):
@@ -288,7 +372,10 @@ def match_is_excluded(number, sentence, before, after):
     if number == 12 and re.search(r"\b(?:that|which)\s+(?:(?:is|are|was|were)\s+)?$", before, re.I):
         return True
     # A definition: "step 4 uses the word for another file: the old version kept beside a revised text that is not in the repository".
-    if number == 6 and re.search(r"\b(?:uses?|means|refers? to|stands? for)\b", before, re.I):
+    # The defining verb stands before the colon that opens the definition, and the match sits in a relative clause of
+    # the defining phrase; "This means the following: the transcript is not in the repository" makes a claim.
+    if (number == 6 and ":" in before and re.search(r"\b(?:uses?|means|refers? to|stands? for)\b", before.rsplit(":", 1)[0], re.I)
+            and re.search(r"\b(?:that|which)\s+(?:(?:is|are|was|were)\s+)?$", before, re.I)):
         return True
     # "missing" as a verb: "the record is missing a field".
     if number == 2 and re.match(r"\s+(?:a|an|something)\b", after, re.I) and "missing" in sentence[len(before):].lower():
@@ -303,15 +390,8 @@ def match_is_excluded(number, sentence, before, after):
         return True
     if number == 2 and re.search(r"\b(?:advice|conditional)\b", before, re.I):
         return True
-    # A removed code element is the head of the match's clause, after any artifact word: "TR1's checks on FILE are gone".
-    if number == 2:
-        clause_after_comma = re.split(r"[,;:]", before)[-1]
-        heads = list(EDITED_HEAD.finditer(clause_after_comma))
-        artifacts = list(ARTIFACT.finditer(clause_after_comma))
-        if heads and (not artifacts or heads[-1].start() >= artifacts[-1].start()):
-            return True
     # What a search tool can do: "grep and glob don't find branch names".
-    if number == 4 and re.search(r"\b(?:the locator|keyword search|grep and glob|the pre-push hook|the search)\b", sentence, re.I) and re.search(r"\b(?:cannot|can't|don't)\b", sentence, re.I):
+    if number == 4 and re.search(r"\b(?:the locator|keyword search|grep and glob|the pre-push hook|the search)(?:\s+(?:still|also|just|simply|often|never|even|really|actually))*\s*$", claim_subject(before), re.I) and re.search(r"\b(?:cannot|can't|don't)\b", sentence, re.I):
         return True
     # "Records like these belong in the log-store, not in the repository": where things should go.
     if number == 6 and re.search(r"\bbelongs?\b", re.split(r"[;:]", before)[-1], re.I):
@@ -457,8 +537,7 @@ def run(stdin_text, environment, home, now):
     session_key = str(payload.get("session_id") or "unknown-session")
     if event == "SubagentStop":
         session_key += "-" + str(payload.get("agent_id") or "unknown-agent")
-    headless = bool(environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
-                    or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0")
+    headless = agent_session_unattended_by_user_check_common.agent_session_unattended_by_user(environment)
     if headless:
         outcome = "headless"
     elif locator_ran:
