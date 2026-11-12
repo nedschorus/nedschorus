@@ -1715,7 +1715,9 @@ def run_cases():
              "--cosmic-ray-venv", str(fixture.venv),
              "--mutation-testing-program", str(fixture.program)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            env={**os.environ, PLAN_VARIABLE: str(fixture.plan_file)}, start_new_session=True)
+            # The kill skips the program's TemporaryDirectory cleanup, so it makes that directory in scratch.
+            env={**os.environ, PLAN_VARIABLE: str(fixture.plan_file), "TMPDIR": scratch},
+            start_new_session=True)
         deadline = time.monotonic() + 120
         while len(fixture.calls()) == calls_before and time.monotonic() < deadline \
                 and process.poll() is None:
