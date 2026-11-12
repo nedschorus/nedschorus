@@ -1398,27 +1398,93 @@ def run_cases():
               (completed.returncode, task_files(alpha_list), fixture.state_json(),
                completed.stderr))
 
-        # Each run checks that the tasks it opened still hold their survivors, and reports, once,
-        # each that does not and is not completed; it opens no task in its place.
-        (alpha_list / "1.json").write_text(json.dumps({"id": "1", "description": "rewritten"}))
+        # An agent rewrites the description of an open survivor task, as TaskUpdate does, keeping
+        # the task's other keys: the task still holds its mutant, and the recheck lists it again.
+        rewritten = json.loads((alpha_list / "1.json").read_text())
+        rewritten["description"] = "Rewritten by its owner; the mutant is not named here."
+        (alpha_list / "1.json").write_text(json.dumps(rewritten))
         diff_file = job.mutant_diff_file_path(fixture.log_store, key)
+        calls_before = len(fixture.calls())
         completed = fixture.run()
-        check("a task rewritten so it no longer names its mutant is reported in the record and "
-              "on stderr, no task is opened, the state stops naming it, and the run exits 7",
-              completed.returncode == job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR
-              and task_files(alpha_list) == ["1.json"]
-              and fixture.state_json()["tasks_opened"] == {}
-              and f"TASK LOST: task #1 on alpha's task list ({alpha_list / '1.json'}) no "
-                  f"longer holds the surviving mutant {diff_file}: its description no longer "
-                  f"names the mutant's diff file" in fixture.records()[-1].read_text()
-              and "1 task(s) that an earlier run opened" in completed.stderr
-              and "later runs do not report them again" in completed.stderr,
-              (completed.returncode, task_files(alpha_list), completed.stderr))
-        completed = fixture.run()
-        check("a lost task already reported is not reported again, and the run exits 0",
-              completed.returncode == 0 and "TASK LOST" not in fixture.records()[-1].read_text()
-              and task_files(alpha_list) == ["1.json"],
-              (completed.returncode, completed.stderr))
+        recheck_calls = [call for call in fixture.calls()[calls_before:]
+                         if call[:1] == ["--recorded-mutant-killed-check"]]
+        task = json.loads((alpha_list / "1.json").read_text())
+        check("an open task whose description was rewritten so it no longer names its mutant "
+              "still holds the mutant: nothing is reported lost, the state still names the "
+              "task, the recheck judges the mutant, the description names the diff file again, "
+              "and the run exits 0",
+              completed.returncode == 0
+              and "TASK LOST" not in fixture.records()[-1].read_text()
+              and fixture.state_json()["tasks_opened"] == {key: {"agent_seat": "alpha",
+                                                                 "task_id": 1}}
+              and [call[1] for call in recheck_calls] == [str(diff_file)]
+              and task["status"] == rewritten["status"]
+              and f"This task's command: {job.survivor_task_recorded_mutant_killed_check_command_line([diff_file])}\n"
+                  in task["description"],
+              (completed.returncode, completed.stderr, fixture.state_json(), recheck_calls, task))
+        rewritten = json.loads((alpha_list / "1.json").read_text())
+        rewritten["description"] = "Rewritten by its owner again."
+        (alpha_list / "1.json").write_text(json.dumps(rewritten))
+        completed = fixture.run({"recheck": {"verdicts": {key: "killed"}}})
+        check("the recheck completes a rewritten task whose mutant is killed, and the state "
+              "stops naming the mutant",
+              completed.returncode == 0
+              and json.loads((alpha_list / "1.json").read_text())["status"] == "completed"
+              and fixture.state_json()["tasks_opened"] == {},
+              (completed.returncode, completed.stderr, fixture.state_json()))
+
+    # An open task whose description no longer names its mutant: when one other open task names
+    # the diff file, the mutant moves there; when two or more do, the mutant is reported lost.
+    for others_naming in (1, 2):
+        with tempfile.TemporaryDirectory() as scratch:
+            fixture = Fixture(scratch)
+            alpha_list = fixture.seat("alpha")
+            fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+            merge = fixture.commit("scripts/thing.py",
+                                   "def double(x):\n    return x + x\nVALUE = 1\n",
+                                   author="alpha")
+            fixture.run({merge: {"json": verdict(
+                survived=[survivor(), survivor(1, "core/ReplaceBinaryOperator_Add_Sub"),
+                          survivor(3, "core/ReplaceBinaryOperator_Add_Div")])}})
+            keys = {given["task_id"]: key
+                    for key, given in fixture.state_json()["tasks_opened"].items()}
+            left = json.loads((alpha_list / "1.json").read_text())
+            left["description"] = "Rewritten by its owner."
+            (alpha_list / "1.json").write_text(json.dumps(left))
+            for task_id in (2, 3)[:others_naming]:
+                other = json.loads((alpha_list / f"{task_id}.json").read_text())
+                other["description"] += f"\n{keys[1]}.diff"
+                (alpha_list / f"{task_id}.json").write_text(json.dumps(other))
+            completed = fixture.run()
+            record = fixture.records()[-1].read_text()
+            diff_file = job.mutant_diff_file_path(fixture.log_store, keys[1])
+            if others_naming == 1:
+                check("a mutant whose open task no longer names its diff file moves to the one "
+                      "other open task naming it, and the run exits 0",
+                      completed.returncode == 0 and "TASK LOST" not in record
+                      and f"TASK MOVED: the surviving mutant {diff_file} is now held by task #2 "
+                          f"on alpha's task list, not task #1 (its description no longer names "
+                          f"the mutant's diff file)" in record
+                      and fixture.state_json()["tasks_opened"].get(keys[1])
+                      == {"agent_seat": "alpha", "task_id": 2},
+                      (completed.returncode, record, fixture.state_json()))
+            else:
+                check("a mutant whose open task no longer names its diff file, while two other "
+                      "open tasks do, is reported lost, and the run exits 7",
+                      completed.returncode == job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR
+                      and f"TASK LOST: task #1 on alpha's task list ({alpha_list / '1.json'}) no "
+                          f"longer holds the surviving mutant {diff_file}: its description no "
+                          f"longer names the mutant's diff file" in record
+                      and "TASK MOVED" not in record
+                      and "1 task(s) that an earlier run opened" in completed.stderr
+                      and "later runs do not report them again" in completed.stderr
+                      and keys[1] not in fixture.state_json()["tasks_opened"],
+                      (completed.returncode, record, completed.stderr, fixture.state_json()))
+                completed = fixture.run()
+                check("a lost task already reported is not reported again, and the run exits 0",
+                      completed.returncode == 0
+                      and "TASK LOST" not in fixture.records()[-1].read_text(),
+                      (completed.returncode, completed.stderr))
 
     # A task whose file is gone is reported once; a completed task is dropped from the state
     # without a report, and a pending one that holds its mutant is kept.

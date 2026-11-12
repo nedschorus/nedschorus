@@ -45,12 +45,15 @@ WHAT ONE RUN DOES, in order.
   3. Reads the state file. With no state file, it writes one naming
      origin/main and tests nothing: the merges after that commit are tested
      from the next run on.
-  4. Checks that each survivor task the state names still lists each of its
-     mutants: the task file is still on its owner's task list, not marked
-     completed, and its description still names each mutant's diff file. A
-     mutant whose task no longer holds it, because the task is marked
-     completed, or its file is gone or cannot be read, or its description no
-     longer names the diff file, goes one of three ways:
+  4. Checks that each survivor task the state names still holds each of its
+     mutants: the task file is still on its owner's task list and not marked
+     completed. A task whose description no longer names a mutant's diff file,
+     as after an agent rewrites the description, still holds the mutant unless
+     exactly one other open task names the diff file, and the recheck writes
+     the description again. A mutant whose task no longer holds it, because
+     the task is marked completed, or its file is gone or cannot be read, or
+     its description no longer names the diff file while another open task
+     does, goes one of three ways:
      - Moved: when exactly one other task on the same list, not marked
        completed, names its diff file, the state alone is changed to name that
        task, as when an agent moves the mutants of several survivor tasks into
@@ -59,9 +62,10 @@ WHAT ONE RUN DOES, in order.
      - Finished: when its task is marked completed and no task not marked
        completed names its diff file, the state stops naming it.
      - Reported once: in every other case, which is one of these:
-       - its task's file is gone or cannot be read, or its task is not marked
-         completed but no longer names the diff file, and no other open task
+       - its task's file is gone or cannot be read, and no other open task
          names the diff file, or two or more do;
+       - its task is not marked completed but no longer names the diff file,
+         and two or more other open tasks do;
        - its task is marked completed and two or more other open tasks name
          the diff file.
      Reporting it goes like this:
@@ -205,8 +209,8 @@ whose owner's list holds a survivor task for it not marked completed gets no
 second task: that task is rewritten to list its mutants the state names and
 the line's new ones, with one command for them all, and the state names that
 task for each. A task Claude Code rewrites at the same moment as this
-program can lose either rewrite; step 4 of the next run then reports each
-mutant the task no longer lists.
+program can lose either rewrite; the next run's recheck then lists again each
+mutant the state gives the task.
 
 THE RECHECK runs, for each survivor task the state names, the mutation
 testing program's --recorded-mutant-killed-check with every diff file the
@@ -555,24 +559,28 @@ def task_ids_on_list_open_naming_mutant(list_directory, key):
 
 def lost_tasks_reported(state, arguments, record):
     """Drop from the state in memory each task that is completed or no longer holds its mutant,
-    and re-point a mutant to the one other open task on its owner's list that names it.
+    and re-point a mutant to the one other open task on its owner's list that names it. An open
+    task whose description no longer names its mutant keeps the mutant while no other open task
+    names it.
 
-    Return one line per task that no longer holds its mutant, is not completed, and has no
-    single open task on the list naming the mutant, and per completed task whose mutant more
-    than one open task names; the caller writes the state. Raises OSError when another task
+    Return one line per task whose file is gone or is not a task and that has no single open
+    task on the list naming the mutant, and per task, open or completed, whose mutant more than
+    one other open task names; the caller writes the state. Raises OSError when another task
     file on the list cannot be read."""
     lost = []
     for key, given in list(state["tasks_opened"].items()):
         list_directory = arguments.task_lists_directory / f"nedschorus-{given['agent_seat']}-tasks"
         task_file = list_directory / f"{given['task_id']}.json"
         completed = False
+        open_task = False
         try:
             task = task_file_read(task_file)
         except OSError as error:
             why = f"the task file cannot be read ({type(error).__name__}: {error})"
         else:
             completed = task is not None and task.get("status") == "completed"
-            if not completed and task_names_mutant(task, key):
+            open_task = task is not None and not completed
+            if open_task and task_names_mutant(task, key):
                 continue
             why = ("it is marked completed" if completed
                    else "its description no longer names the mutant's diff file")
@@ -588,6 +596,10 @@ def lost_tasks_reported(state, arguments, record):
                           f"task #{naming[0]} on {given['agent_seat']}'s task list, not task "
                           f"#{given['task_id']} ({why})")
             state["tasks_opened"][key] = dict(given, task_id=naming[0])
+            continue
+        if open_task and not naming:
+            # The state, not the description, records which task holds the mutant: agents
+            # rewrite descriptions, and the recheck lists the state's mutants in it again.
             continue
         lost.append(f"task #{given['task_id']} on {given['agent_seat']}'s task list "
                     f"({task_file}) no longer holds the surviving mutant "
