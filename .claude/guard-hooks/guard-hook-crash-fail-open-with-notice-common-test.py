@@ -91,11 +91,14 @@ def raise_inside(running_as_hook, error):
         raise error
 
 
-try:
-    raise_inside(False, KeyError("injected"))
-    raised = None
-except KeyError as error:
-    raised = error
+# BaseException: an exit 0 escaping here would end this suite as a pass.
+stdout = io.StringIO()
+with contextlib.redirect_stdout(stdout):
+    try:
+        raise_inside(False, KeyError("injected"))
+        raised = None
+    except BaseException as error:
+        raised = error
 check("when not running as the hook, a crash is raised unchanged, so a test sees it",
       isinstance(raised, KeyError), raised)
 
