@@ -743,7 +743,7 @@ for case, answer in (("send with no message", judged(True, "  ")),
 
 # --- one cause of a headless failure, met again the same day with other text from claude --------
 def usage_limit_exit(uuid, duration_ms):
-    """claude at a usage limit, as on ned-box on 2026-11-12: exit 1 after a result event whose
+    """claude at a usage limit, as ned-box's claude gives it: exit 1 after a result event whose
     reset time, ids and duration differ from one invocation to the next."""
     return {"exit": 1, "result": {
         "subtype": "success", "is_error": True, "api_error_status": 429,
