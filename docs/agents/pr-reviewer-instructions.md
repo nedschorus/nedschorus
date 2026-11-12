@@ -1,6 +1,6 @@
 # PR reviewer instructions
 
-This file's text is pasted whole into the prompt of every commissioned PR reviewer: Claude's, and Codex's, whose prompt `scripts/code-review-codex-cell.py` builds. `CLAUDE.md` also holds the review-scope section below as one of its bullets. `scripts/pr-reviewer-instructions-copies-test.py` fails when the two copies differ, so change both together.
+This file's text is pasted whole into the prompt of every commissioned PR reviewer: Claude's, and Codex's, whose prompt `scripts/code-review-codex-cell.py` builds.
 
 ## Review scope: must-fix-now code findings block the merge; prose gets none, apart from the exceptions below
 
