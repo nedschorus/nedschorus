@@ -18,6 +18,7 @@ import json
 import os
 import signal
 import sqlite3
+import socket
 import subprocess
 import sys
 import tempfile
@@ -2388,6 +2389,11 @@ def run_cases():
               and f"{empty_venv}/bin/pip install cosmic-ray==" in completed.stderr
               and str(empty_venv / "bin") in completed.stderr,
               f"rc={completed.returncode} err={completed.stderr}")
+        rerun = completed.stderr.partition("Then run again:\n  python3 ")[2].split("\n")[0]
+        check("cosmic-ray missing: the message names the machine and the command to run again",
+              f"on {socket.gethostname()}, the machine this ran on" in completed.stderr
+              and "--cosmic-ray-venv" in rerun and str(empty_venv) in rerun and head in rerun,
+              f"err={completed.stderr}")
         home = Path(scratch_name) / "home"
         home.mkdir()
         default_venv = home / ".local" / "share" / "nedschorus" / "cosmic-ray-venv"
