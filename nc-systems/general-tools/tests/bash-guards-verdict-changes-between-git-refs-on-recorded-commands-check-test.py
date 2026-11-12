@@ -851,6 +851,10 @@ try:
           and "  290 more refusal groups are left out here, holding 290 refused recorded commands\n" in out
           and len(groups) == 300, f"status {status}, {len(out)} characters\n{out[:3000]}\n{err}")
     lines_file = groups_file.with_name(replay.ADDED_GUARD_REFUSAL_GROUP_RIGHTLY_REFUSED_REVIEW_ANSWER_LINES_FILE_NAME)
+    check("a head that adds a guard refusing 300 long commands, each with its own message: the refusal right lines "
+          "file is named added-guard-refusal-group-rightly-refused-review-answer-lines.txt",
+          lines_file.name == "added-guard-refusal-group-rightly-refused-review-answer-lines.txt"
+          and lines_file.exists(), f"{lines_file}")
     lines = lines_file.read_text().splitlines() if lines_file.exists() else []
     check("a head that adds a guard refusing 300 long commands, each with its own message: the refusal right lines "
           "file holds the ready line of every one of the 300 groups, the 290 the list leaves out included",
