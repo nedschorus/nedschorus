@@ -222,8 +222,13 @@ def awaited_phrase(flight: WorkInFlight) -> str:
 # it the task is presumed stuck or open-ended. The first kind with a pattern the command matches
 # (re.search, ignoring case) is the task's kind. Work kinds come before waiting-task, so a command
 # that both does work and waits keeps the work's limit: a false waiting-task match kills work.
-# A waiting-task does no work of its own, so a limit of 0 never holds the handoff.
+# A waiting-task does no work of its own, so a limit of 0 never holds the handoff. A wait loop is
+# a waiting-task only when nothing but reading commands follows its `done`, because work after the
+# loop that matches no work kind would otherwise get 0 and be killed by the handoff.
 _COMMAND_PREFIX_PATTERN = r"^\s*(?:(?:cd\s+\S+|export\s+\S+|[A-Za-z_]\w*=\S*)\s*(?:&&|;|\n)\s*)*"
+_ONLY_READING_COMMANDS_TO_THE_END_PATTERN = (
+    r"(?:\s*(?:;|&&|\|\||\||\n)\s*(?:cat|tail|head|grep|ls|echo|test|true"
+    r"|gh\s+pr\s+(?:view|checks)|git\s+(?:status|log))\b[^;&|\n]*)*\s*;?\s*$")
 BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND = (
     ("nc-mutation-testing", (r"mutation|mutmut|mutant",), 105.0),
     ("test-suite", (r"run-all-test-suites\.py|pytest|-test\.py\b|_test\.py\b|unittest"
@@ -232,7 +237,8 @@ BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND = (
                       r"|watch-open-pull-requests\.py|wait-review-runs",
                       r"\bgh\s+pr\s+checks\b.*--watch",
                       r"\bgh\s+run\s+watch\b",
-                      _COMMAND_PREFIX_PATTERN + r"(?:until|while)\b.*\bsleep\b",
+                      _COMMAND_PREFIX_PATTERN + r"(?:until|while)\b.*?\bsleep\b.*?\bdone\b"
+                      + _ONLY_READING_COMMANDS_TO_THE_END_PATTERN,
                       _COMMAND_PREFIX_PATTERN + r"sleep\s+\S+\s*(?:(?:;|&&)\s*echo\b[^;&|]*)?$"), 0.0),
 )
 # Allows a slow cold-read-full-run with one cell relaunch.
