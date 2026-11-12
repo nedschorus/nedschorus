@@ -1002,6 +1002,12 @@ def _descriptor_written_before(node, source):
     return ""
 
 
+def _is_braced_expansion(node):
+    """Return whether node is a ${ } expansion, including one tree-sitter-bash reads as an ERROR."""
+    return node.type == "expansion" or (
+        node.type == "ERROR" and [child.type for child in node.children[:1]] == ["${"])
+
+
 class _Collector:
     def __init__(self, glob_markers, source, heredocs_taken_out, restored=None):
         self.glob_markers = glob_markers
@@ -1039,15 +1045,19 @@ class _Collector:
                     for command in self.commands[first:]:
                         command.in_while_or_until_loop_condition = True
             return
-        if kind == "expansion":
-            for child in node.children:
-                if child.type == "word" and any(mark in _text(child) for mark in ("`", "<(", ">(")):
-                    # tree-sitter-bash leaves a backtick or a process substitution in a
-                    # ${name:-...} default as one word; bash runs it.
-                    found = simple_commands("echo " + _text_restored(child, self.restored),
-                                            self.glob_markers)
-                    self.adopt([command for command in found if command.inside_substitution()],
-                               child_shell + (ChildShell(child.start_byte, SUBSTITUTION),))
+        if _is_braced_expansion(node) and any(mark in _text(node) for mark in ("`", "<(", ">(")):
+            # tree-sitter-bash splits a backticked command or a process substitution
+            # inside ${ } into text, ERROR and substitution pieces, so the text inside
+            # the braces is read again whole, in the quoting it is written in.
+            quote = '"' if node.parent is not None and node.parent.type in ("string", "heredoc_body") \
+                else ""
+            # Inside ${ } a # after a blank starts no comment, so the second read gets it escaped.
+            inner = re.sub(r"(^|\s)#", r"\1\\#", _text_restored(node, self.restored)[2:-1])
+            found = simple_commands("echo " + quote + inner + quote, self.glob_markers)
+            # The offsets of the second read count from its own text, so the ${ } holds them.
+            self.adopt([command for command in found if command.inside_substitution()],
+                       child_shell + (ChildShell(node.start_byte, SUBSTITUTION),))
+            return
         for child in node.children:
             self.visit(child, child_shell, heredocs)
 
@@ -1594,11 +1604,8 @@ def _heredoc_body_substitution_commands(body, glob_markers):
     index = start
     while index < end:
         node = expansions.get(index)
-        if node is not None and not (node.type == "expansion" and b"`" in node.text):
+        if node is not None:
             index = node.end_byte
-        elif node is not None:
-            # tree-sitter-bash splits a backticked command inside ${ }; the walk reads it there.
-            index += 1
         elif source[index:index + 1] == b"\\":
             index += 2
         elif source[index:index + 1] == b"`":
