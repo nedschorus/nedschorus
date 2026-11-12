@@ -965,6 +965,20 @@ def cases(scratch):
     check("an incomplete last line of approved is never read as an approval",
           str(claude) in message, message)
 
+    # -- a whole line of approved whose checksum was cut off is no approval
+    world = fresh(scratch, "cut-checksum")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2\n")
+    key = world.key(claude)
+    directory = world.store / str(claude).lstrip("/")
+    directory.mkdir(parents=True, exist_ok=True)
+    checksum = hashlib.sha256(key.encode()).hexdigest()[:16]
+    with open(directory / "approved", "ab") as approved:
+        approved.write(f"{key}\t{checksum[:8]}\n".encode())
+    message = world.run()
+    check("a line of approved whose checksum was cut off is never read as an approval",
+          str(claude) in message and "has not approved" in message, message)
+
     # -- a run that fails part way leaves the file looking changed
     world = fresh(scratch, "fails-part-way")
     claude = world.repo / "CLAUDE.md"
@@ -1424,6 +1438,35 @@ def cases(scratch):
           "A guarded file changed" in message, message)
     check("a live asking session's file only reminds another session",
           "Reminder" in world.run(session="third", owner="owner-third"), "")
+
+    # -- a version whose asking session has ended, seen again after a change back, is asked about
+    world = fresh(scratch, "ended-takeover-changed")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2\n")
+    world.run(session="old", owner="ended-old")
+    claude.write_text("project v3\n")
+    world.run(session="old", owner="ended-old")
+    claude.write_text("project v2\n")
+    message = world.run(session="successor", owner="owner-new")
+    check("a version whose asking session has ended, seen again after a change back, is asked "
+          "about", "A guarded file changed" in message, message)
+
+    # -- a takeover reads the file before it records the new asking session
+    world = fresh(scratch, "takeover-read-first")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2\n")
+    world.run(session="old", owner="ended-old")
+    hook = load_hook_in_this_process()
+
+    def failing_read(path):
+        raise OSError(f"cannot read {path}")
+
+    hook.read_file = failing_read
+    texts = run_hook_in_this_process(world, hook, "successor", "owner-new")
+    message = world.run(session="successor", owner="owner-new")
+    check("a takeover whose read fails records no asking line, so the next run asks",
+          any("did not run" in text for text in texts) and "A guarded file changed" in message,
+          (texts, message))
 
     # -- an unsettled deletion an older state file holds
     world = fresh(scratch, "unsettled-deletion-in-state")
@@ -2084,6 +2127,22 @@ def copy_in_this_process(world, hook, path, copy_hash, data):
         os.environ.clear()
         os.environ.update(saved_environment)
     return None
+
+
+def run_hook_in_this_process(world, hook, session, owner):
+    """The texts run_hook of the loaded hook module returns for a Bash call in the world's
+    repository, run as session and owner."""
+    saved_environment, saved_directory = dict(os.environ), os.getcwd()
+    try:
+        os.environ.update(world.environment(owner))
+        os.chdir(world.repo)
+        return hook.run_hook({"session_id": session, "hook_event_name": "PostToolUse",
+                              "tool_name": "Bash", "cwd": str(world.repo),
+                              "tool_input": {"command": "x"}})
+    finally:
+        os.chdir(saved_directory)
+        os.environ.clear()
+        os.environ.update(saved_environment)
 
 
 def reflog_copy_and_saved_state_cases(scratch):
