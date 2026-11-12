@@ -87,7 +87,7 @@ with scratch_home() as home:
     make_file(home, ".ssh/id.token")
     result = run(home)
     check("with no credential file outside the listed folders, no user-alert is written and the exit is 0",
-          result.returncode == 0 and pending_alerts(home) == [] and "No credential file" in result.stdout,
+          result.returncode == 0 and pending_alerts(home) == [] and "The search found no file" in result.stdout,
           result)
 
 if os.geteuid() != 0:
