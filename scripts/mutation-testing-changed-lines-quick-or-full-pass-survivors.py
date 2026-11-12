@@ -420,15 +420,17 @@ def cosmic_ray_tool_paths(venv):
             quoted = shlex.quote(str(Path(venv).expanduser()))
             raise CouldNotRun(
                 f"{PROGRAM}: not run — {tool} is not in {Path(venv).expanduser() / 'bin'}.\n"
-                f"Install cosmic-ray into that venv, on {socket.gethostname()}, the machine "
-                f"this ran on:\n"
+                f"Do these steps on {socket.gethostname()}, the machine this ran on, because "
+                f"the venv is a path there; from another machine, run them over ssh to it.\n"
+                f"If a venv there already holds cosmic-ray=={COSMIC_RAY_VERSION}, add "
+                f"--cosmic-ray-venv <that venv> to the command below and skip the install; "
+                f"when the command already has --cosmic-ray-venv, the last one given wins. "
+                f"Without the flag the venv is {DEFAULT_COSMIC_RAY_VENV}.\n"
+                f"Otherwise install cosmic-ray into {quoted}:\n"
                 f"  python3 -m venv {quoted}\n"
                 f"  {quoted}/bin/pip install cosmic-ray=={COSMIC_RAY_VERSION}\n"
                 f"Then run again:\n"
-                f"  python3 {shlex.join(sys.argv)}\n"
-                f"To use a venv that already holds cosmic-ray instead, add "
-                f"--cosmic-ray-venv <that venv>; without the flag the venv is "
-                f"{DEFAULT_COSMIC_RAY_VENV}.")
+                f"  python3 {shlex.join(sys.argv)}")
         found[tool] = str(candidate)
     return found
 
