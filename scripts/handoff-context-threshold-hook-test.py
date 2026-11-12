@@ -109,7 +109,8 @@ def is_handoff_instruction(stderr):
 
 
 COMPACTED_HANDOFF_INSTRUCTION_PATTERN = re.compile(
-    r"This session has used \d+% \(\d+% counting the tokens its compactions dropped\) "
+    r"This session has used \d+% \(\d+% counting the tokens its compactions dropped, "
+    r"the figure compared with the threshold and the ceiling\) "
     r"of its context window, which has reached the reincarnation threshold\. "
     r"Run the /handoff skill now\.")
 
@@ -1198,7 +1199,8 @@ with tempfile.TemporaryDirectory() as workspace:
               and marker_file.exists(),
               f"code {result.returncode}, stderr {result.stderr[:200]}")
         check("the compacted handoff gives both shares",
-              "used 20% (33% counting the tokens its compactions dropped)" in result.stderr,
+              ("used 20% (33% counting the tokens its compactions dropped, the figure compared "
+               "with the threshold and the ceiling)") in result.stderr,
               result.stderr[:200])
 
         # --- A session its caller reincarnates is left alone ---------------
@@ -1262,7 +1264,8 @@ with tempfile.TemporaryDirectory() as workspace:
             check("a compacted session below the ceiling counting the dropped tokens defers, "
                   "giving both shares",
                   result.returncode == 2 and "handoff deferred" in result.stderr
-                  and "Context at 20% (60% counting the tokens its compactions dropped)"
+                  and ("Context at 20% (60% counting the tokens its compactions dropped, the figure "
+                       "compared with the threshold and the ceiling)")
                   in result.stderr and not dropped_ceiling_markers[0].exists(),
                   f"code {result.returncode}, stderr {result.stderr[:200]}")
             for marker in dropped_ceiling_markers:
@@ -1464,8 +1467,8 @@ with tempfile.TemporaryDirectory() as workspace:
               result.returncode == 0 and not result.stderr.strip(),
               f"code {result.returncode}, stderr {result.stderr[:200]}")
 
-        # --- A deferral that a compaction pushed below the threshold ---------
-        # Without the deferred marker, every Stop after the compaction returns at
+        # --- A deferral whose count then fell below the threshold ------------
+        # Without the deferred marker, every Stop after the fall returns at
         # the threshold check, so the promised handoff message never comes.
         COMPACTED_PROBE_SESSION_ID = "handoff-threshold-hook-test-compacted-deferral-session"
         compacted_marker_file = (
