@@ -44,7 +44,7 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
      `git diff --name-only --no-renames HEAD...origin/main`, never assumed —
      and to leave the branch alone and cut its next topic from origin/main.
   5b. If HEAD is detached and behind, and the checkout is an agent-home, which
-     the file AGENT_HOME_MARKER_FILE_NAME in its own git directory marks, and
+     the file agent-home-marker in its own git directory marks, and
      it holds no commits of its own, no uncommitted tracked change and no
      operation in progress, fast-forwards it to origin/main: CLAUDE.md, the
      skills and the hooks load from an agent-home. An agent-home that holds
