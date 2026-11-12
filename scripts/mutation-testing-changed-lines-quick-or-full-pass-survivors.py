@@ -418,7 +418,7 @@ COSMIC_RAY_VENV_PLACEHOLDER = "<that venv>"
 SHORTEST_COSMIC_RAY_VENV_FLAG_ABBREVIATION_LENGTH = len("--cos")
 
 
-def command_line_with_cosmic_ray_venv_placeholder(argv):
+def build_argv_with_cosmic_ray_venv_flags_replaced_by_placeholder(argv):
     """Return argv with every --cosmic-ray-venv given, and its value, taken out, and
     `--cosmic-ray-venv <that venv>` put at its end."""
     kept, arguments = [], iter(argv)
@@ -440,13 +440,15 @@ def cosmic_ray_tool_paths(venv):
         candidate = Path(venv).expanduser().resolve() / "bin" / tool
         if not candidate.is_file():
             quoted = shlex.quote(str(Path(venv).expanduser()))
+            existing_venv_argv = build_argv_with_cosmic_ray_venv_flags_replaced_by_placeholder(
+                sys.argv)
             raise CouldNotRun(
                 f"{PROGRAM}: not run — {tool} is not in {Path(venv).expanduser() / 'bin'}.\n"
                 f"Do these steps on {socket.gethostname()}, the machine this ran on, because "
                 f"the venv is a path there; from another machine, run them over ssh to it.\n"
                 f"If a venv there already holds cosmic-ray=={COSMIC_RAY_VERSION}, skip the "
                 f"install and run this, with <that venv> replaced by the venv's path:\n"
-                f"  python3 {shlex.join(command_line_with_cosmic_ray_venv_placeholder(sys.argv))}\n"
+                f"  python3 {shlex.join(existing_venv_argv)}\n"
                 f"Otherwise install cosmic-ray into {quoted}:\n"
                 f"  python3 -m venv {quoted}\n"
                 f"  {quoted}/bin/pip install cosmic-ray=={COSMIC_RAY_VERSION}\n"

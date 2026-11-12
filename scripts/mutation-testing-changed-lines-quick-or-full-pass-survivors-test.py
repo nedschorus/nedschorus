@@ -2743,7 +2743,7 @@ def run_cases():
     # ------------------------------------------------------------------
     # cosmic-ray missing.
     # ------------------------------------------------------------------
-    placeholder_command = load_script_module().command_line_with_cosmic_ray_venv_placeholder
+    placeholder_command = load_script_module().build_argv_with_cosmic_ray_venv_flags_replaced_by_placeholder
     for case_name, argv, expected in [
             ("no venv flag given", ["s.py", "--head", "h"], ["s.py", "--head", "h"]),
             ("the flag and its value as two words", ["s.py", "--cosmic-ray-venv", "/v", "--head", "h"],
