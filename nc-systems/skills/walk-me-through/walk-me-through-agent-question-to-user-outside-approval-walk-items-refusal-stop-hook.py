@@ -14,7 +14,11 @@ which finds the open walk, its waiting items and its walk-document's items. It
 also loads the answer hook,
 walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py,
 for the closing line's answer letters, ANSWER_LETTERS_TEXT, and for its
-closing_line, which builds the closing line the refusal's step 3 gives.
+closing_line, which builds the closing line the refusal's step 3 gives; and,
+when it refuses, the walk check program,
+walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py, for
+the category and waits-on tags the refusal's step 1 names, which that
+program's close step reads to choose when the new item is shown.
 
 EVERY TURN is checked, whoever started it: the user, another agent-seat, a
 background-task notice. THE REPLY is the text of every assistant message
@@ -174,6 +178,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CURRENT_ITEM_HOOK_FILE = HERE / "walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py"
 WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
+CHECK_PROGRAM_FILE = HERE / "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py"
 ANSWER_HOOK_FILE = (HERE / "walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-"
                     "user-prompt-submit-hook.py")
 REPOSITORY_TOP = HERE.parents[2]
@@ -299,10 +304,14 @@ MODEL_CHECK_FAILED_NOTICE = ("the hook's `claude -p` call that has the model jud
 REFUSAL_INSTRUCTIONS = (
     "If the flagged text asks the user to decide or answer something, do these three steps:",
     "1. Add it to the walk-document {document} as an interruption item headed `## <the point of the question>`, "
-    "with no number, placed right after item {last_waiting}. Do not number it yourself: when the user answers item "
-    "{last_waiting}, the close step of "
+    "with no number, placed right after item {last_waiting}. Under the heading, give it a line of its own naming "
+    "its category, the one for how soon its work must happen, one of {category_tags}, and a line "
+    "`{waits_on_tag} <title>` for each item it must follow, as the walk-me-through skill's section "
+    "\"Re-planning\" says. Do not number it yourself: the close step of "
     "nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py "
-    "writes the next number into this heading. "
+    "chooses when, among the items not yet shown, the user sees it, by the items it waits on, its category and the "
+    "day it first entered a walk, so it may come later than right after item {last_waiting}, and writes its number "
+    "into this heading then. "
     "Quote the question whole "
     "in the item, as its asker wrote it, whether you or another agent, giving each line of the flagged text a "
     "line of its own, word for word, and putting the rest of the question on other lines of the item. This hook passes the "
@@ -312,9 +321,9 @@ REFUSAL_INSTRUCTIONS = (
     "Give the item one recommendation and one alternative, and end it with the recommendation stated as an "
     "action, as in `Recommendation: <what you recommend doing>.` State the alternative before it, as in "
     "`The alternative: <what D does instead>.`",
-    "2. Do not show the new item now: it is shown after item {waiting} is answered.",
+    "2. Do not show the new item now: the walk shows it when its turn comes.",
     "3. The flagged text has already reached the user, so leave it. End the message you write next with the line "
-    "`I added the question as a new item after item {last_waiting}.` and then {closing_lines_named}, as the "
+    "`I added the question to the walk as a new item.` and then {closing_lines_named}, as the "
     "walk-me-through skill writes it, as the last text of that message:\n{closing_lines}{no_page}",
     "If the flagged text does not ask the user anything, reword it in your reply so that it no longer reads "
     "as a question for him, and end the turn.",
@@ -725,9 +734,14 @@ def output_for(payload, environment, model=model_judgement):
     waiting = numbers[-1]
     waiting_label = " and ".join(numbers)
     new_total = str(int(total) + 1)
+    # Loaded only here, on the way to a refusal, so a reply that passes does not pay for it.
+    check_and_close = load_module("walk_me_through_answer_added_texts_cold_read_fast_read_check_and_close",
+                                  CHECK_PROGRAM_FILE)
     closing, without_page = closing_lines(pages, name, document_text, units, parser, numbers, new_total)
     values = {"walk": name, "last_waiting": waiting, "sentence": sentence, "decided": decided, "waiting": waiting_label,
-              "document": document,
+              "document": document, "waits_on_tag": check_and_close.WALK_WAITS_ON_TAG,
+              "category_tags": ", ".join(f"`{check_and_close.WALK_CATEGORY_TAG}{category}`"
+                                         for category in check_and_close.WALK_CATEGORIES),
               "closing_lines_named": SEVERAL_CLOSING_LINES_NAMED if numbers[1:] else ONE_CLOSING_LINE_NAMED,
               "closing_lines": "\n".join(closing), "no_page": NO_PAGE_TEMPLATE.format(
                   items=("items " if without_page[1:] else "item ") + " and ".join(without_page),
