@@ -120,7 +120,10 @@ closed as not planned, 1636 an open pull request, 1724 a merged one, 1639 one
 closed without merging, and 999999 a number GitHub does not find. A link with a
 #fragment or a sub-path is read as the issue or pull request it names. The gate
 refuses a link to the pull request being merged before any lookup, and a
-/pull/<n> link whose lookup shows an issue.
+/pull/<n> link whose lookup shows an issue. On a pass the gate prints, after
+the merge command, each link to an open issue in this repository, for
+merge-lane-2 to send the author; the 1154 capture served at another
+repository's endpoint stands for an open issue there, which is not printed.
 
 Run: python3 scripts/merge-gate-test.py
 """
@@ -1315,6 +1318,16 @@ def case_follow_up_second_not_fixed_line_without_it(gate):
     return follow_up_refused(gate, line, [NOT_FIXED_WITH_FOLLOW_UP, line], link_route("open issue"))
 
 
+OPEN_FOLLOW_UP_ISSUES_HEADING = "OPEN FOLLOW-UP ISSUES: after the merge, add each issue below"
+
+
+def follow_up_passes_without_open_issues(gate, lines, *links):
+    run = description_with_lines_run(gate, lines, links)
+    return (passed_pinned_to(run, BASE_PR, BASE_APPROVAL["commit_id"])
+            and sum(is_link_lookup(call) for call in run.calls) == len(links)
+            and OPEN_FOLLOW_UP_ISSUES_HEADING not in run.stdout), run.summary()
+
+
 def case_follow_up_link_states_that_pass(gate):
     numbers = {"issue closed as completed": 1585, "open pull request": 1636, "merged pull request": 1724}
     lines, links = [], []
@@ -1323,7 +1336,22 @@ def case_follow_up_link_states_that_pass(gate):
         lines.append(f"Root cause not fixed: cause {number} stays. #follow_up "
                      f"https://github.com/nedschorus/nedschorus/{kind}/{number}")
         links.append(link_route(state, f"repos/nedschorus/nedschorus/issues/{number}"))
-    return follow_up_passes(gate, lines, *links)
+    return follow_up_passes_without_open_issues(gate, lines, *links)
+
+
+def case_follow_up_open_issue_printed_for_the_author(gate):
+    run = description_with_lines_run(gate, [NOT_FIXED_WITH_FOLLOW_UP], [link_route("open issue")])
+    heading_at = run.stdout.find(OPEN_FOLLOW_UP_ISSUES_HEADING)
+    return (passed_pinned_to(run, BASE_PR, BASE_APPROVAL["commit_id"])
+            and heading_at > run.stdout.find("Run that command with GH_TOKEN") >= 0
+            and run.stdout.endswith(f"\n  {FOLLOW_UP_LINK} from the line `{NOT_FIXED_WITH_FOLLOW_UP}`\n")), run.summary()
+
+
+def case_follow_up_open_issue_in_another_repository_not_printed(gate):
+    return follow_up_passes_without_open_issues(
+        gate, ["#root_cause_not_fixed the harness drops the variable. #follow_up "
+               "https://github.com/cli/cli/issues/1154"],
+        link_route("open issue", "repos/cli/cli/issues/1154"))
 
 
 def case_follow_up_issue_closed_as_not_planned(gate):
@@ -1688,6 +1716,10 @@ CASES = [
     ("H1 a #follow_up link that ends a sentence passes", case_follow_up_bare_link_ending_a_sentence),
     ("H1 links to an issue closed as completed, an open pull request and a merged one pass",
      case_follow_up_link_states_that_pass),
+    ("H8 a #follow_up link to an open issue in this repository is printed after the merge command",
+     case_follow_up_open_issue_printed_for_the_author),
+    ("H8 a #follow_up link to an open issue in another repository passes and is not printed",
+     case_follow_up_open_issue_in_another_repository_not_printed),
     ("H2 captured PR 1360's not-fixed line without #follow_up refuses",
      case_follow_up_captured_not_fixed_line_without_it),
     ("H2 captured PR 1298's not-fixed line without #follow_up refuses beside its root-cause line",
@@ -1883,6 +1915,19 @@ MUTATIONS = [
     ("the link's owner and repository compared in their own letter case",
      [("\"$(tr '[:upper:]' '[:lower:]' <<<\"$link_repo\")\"", '"$link_repo"')],
      [case_follow_up_issue_form_link_to_this_pull_request_in_other_letter_case]),
+    ("an open issue read as live, so it is not printed",
+     [('elif .state == "open" then "open-issue"', 'elif false then "open-issue"')],
+     [case_follow_up_open_issue_printed_for_the_author]),
+    ("an open issue printed whatever its repository",
+     [('[ "$(tr \'[:upper:]\' \'[:lower:]\' <<<"$link_repo")" != "$REPO" ] || open_follow_up_issues',
+       'false || open_follow_up_issues')],
+     [case_follow_up_open_issue_in_another_repository_not_printed]),
+    ("the open follow-up issues never printed",
+     [('[ -z "$open_follow_up_issues" ] || printf', 'true || printf')],
+     [case_follow_up_open_issue_printed_for_the_author]),
+    ("the open follow-up issues' heading printed when there are none",
+     [('[ -z "$open_follow_up_issues" ] || printf', 'false || printf')],
+     [case_follow_up_link_states_that_pass]),
     ("a /pull/ link whose number is an issue read as live",
      [('then "issue-at-a-pull-request-link"', 'then "live"')],
      [case_follow_up_pull_request_link_whose_number_is_an_issue]),
