@@ -898,6 +898,9 @@ SUITES_RUN_WITHOUT_ANY_SANDBOX = {
     "scripts/mac-request-from-ned-box-forced-command-test.py":
         "it runs the real ssh, which refuses its root-owned config files because "
         "inside the sandbox's user namespace they show as owned by nobody",
+    "nc-systems/general-tools/tests/agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook-real-claude-code-test.py":
+        "it runs the real claude, which needs the real HOME it is logged in from and an "
+        "agent-seat of this machine, and the sandbox's HOME is empty",
 }
 
 # Suites that must write the git directory of the repository under test, such as with
