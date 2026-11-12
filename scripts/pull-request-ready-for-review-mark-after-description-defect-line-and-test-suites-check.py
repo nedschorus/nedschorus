@@ -226,7 +226,8 @@ def check_and_mark_ready(number, runner, output):
             "The changes, as git status --porcelain lists them:\n"
             + "".join(f"  {line.strip()}\n" for line in changed)
             + "If the changes belong in the pull request: commit them, push with git push origin "
-            f"HEAD:{shlex.quote(pull_request['headRefName'])}, then run this again.\n"
+            f"HEAD:{shlex.quote(pull_request['headRefName'])}, then run this again; it runs the test "
+            "suites on the pushed commits and keeps the pull request a draft until they pass.\n"
             "If they do not: set them aside with git stash push -u -m <a name no entry in git "
             "stash list has>, then run this again. Keep them stashed until this command has "
             "marked the pull request ready, even if it refuses again for another reason; then "
@@ -274,7 +275,8 @@ def check_and_mark_ready(number, runner, output):
             f"the test suites exited with status {status}, {stays_a_draft} The failing suites "
             "are named above.\n"
             "Fix the cause of each suite's failure and commit the fix; then push, and run this "
-            "again, which runs the test suites again.\n"
+            "again: it runs the test suites on the pushed fix and keeps the pull request a draft "
+            "until they pass.\n"
             "If git or a pre-push hook refuses the push: do what its message says, push again, then "
             "run this again; if it names nothing to do, tell the user, or the agent that dispatched you, "
             "what it printed.")

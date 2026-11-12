@@ -234,7 +234,8 @@ def main():
               f"that are not in #77 ({URL})'s pushed commits.",
               "The changes, as git status --porcelain lists them:\n  M scripts/example.py\n",
               "If the changes belong in the pull request: commit them, push with git push origin "
-              f"HEAD:{BRANCH}, then run this again.",
+              f"HEAD:{BRANCH}, then run this again; it runs the test suites on the pushed commits "
+              "and keeps the pull request a draft until they pass.",
               "If they do not: set them aside with git stash push -u -m <a name no entry in git "
               "stash list has>, then run this again. Keep them stashed until this command has "
               "marked the pull request ready, even if it refuses again for another reason; then "
@@ -251,7 +252,8 @@ def main():
              FakeRunner(view=answers(view_answer(headRefName="odd;branch")),
                         status=answers(" M scripts/example.py\n")),
              ["view", "rev-parse", "status"],
-             ["push with git push origin HEAD:'odd;branch', then run this again."]),
+             ["push with git push origin HEAD:'odd;branch', then run this again; it runs the test "
+              "suites on the pushed commits"]),
             ("a pushed commit whose object fails its hash check, which git rev-parse --verify "
              "reports with exit 1 and an error",
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
@@ -286,7 +288,8 @@ def main():
              ["the test suites exited with status 1, so #77",
               "The failing suites are named above.",
               "Fix the cause of each suite's failure and commit the fix; then push, and run "
-              "this again, which runs the test suites again.",
+              "this again: it runs the test suites on the pushed fix and keeps the pull request "
+              "a draft until they pass.",
               "If git or a pre-push hook refuses the push: do what its message says, push again, "
               "then run this again; if it names nothing to do, tell the user, or the agent that "
               "dispatched you, what it printed."]),
