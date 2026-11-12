@@ -2394,6 +2394,13 @@ def run_cases():
               f"on {socket.gethostname()}, the machine this ran on" in completed.stderr
               and "--cosmic-ray-venv" in rerun and str(empty_venv) in rerun and head in rerun,
               f"err={completed.stderr}")
+        before_install, _, _ = completed.stderr.partition("python3 -m venv ")
+        check("cosmic-ray missing: a venv that already holds cosmic-ray is offered before the "
+              "install steps, and the message says the last --cosmic-ray-venv given wins",
+              "add --cosmic-ray-venv <that venv>" in before_install
+              and "the last one given wins" in before_install
+              and "from another machine, run them over ssh to it" in before_install,
+              f"err={completed.stderr}")
         home = Path(scratch_name) / "home"
         home.mkdir()
         default_venv = home / ".local" / "share" / "nedschorus" / "cosmic-ray-venv"
