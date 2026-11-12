@@ -40,9 +40,12 @@ the text code wrote. Each is stopped after 5 minutes.
 What it does not handle: it runs only on ned-box and reads only ned-box's agent-seats. One
 invocation runs its headless agent-sessions one after another, so a slow judge delays every other
 agent-seat's step, and the lock makes the next minute's invocation skip, until it ends. A wait
-does not end when the agent-seat answers a message; it ends when the agent-seat has nothing to do
-(rule 4) and no rule 2 message was sent on the wait, stops at a usage limit (rule 1), starts a new
-agent-session, or spends tokens after the user was told.
+does not end when the agent-seat only replies to a message in text; it ends when the agent-seat
+makes a tool call after the nudge that opened the wait or has nothing to do (rule 4), in either
+case only when no rule 2 message was sent on the wait, stops at a usage limit (rule 1), starts a
+new agent-session, or spends tokens after the user was told. So an agent-seat that answers each
+rule 3 or rule 5 message with a tool call and goes idle again is nudged again, and never
+escalated; one that answers a rule 2 message with a tool call and a fresh promise is escalated.
 
 How it fails, and what the user sees: a headless agent-session that fails, is stopped, answers
 JSON code cannot use, or sends to the wrong entry or the wrong text; a message missing from the
@@ -677,6 +680,12 @@ class Sweep:
                 self.end_wait(seat, "a usage limit")
             self.usage_limit(seat, verdict)
             return
+        # A tool call does not settle a promise a rule 2 message named, as rule 4 below does not.
+        worked_at = verdict.get(fields.LAST_TOOL_CALL_AT)
+        if (wait and PROMISE not in wait and worked_at
+                and parse_time(worked_at) > parse_time(wait[NUDGE])):
+            self.end_wait(seat, "it made a tool call after the nudge")
+            wait = None
         if wait and TELL_USER in wait and stretch and parse_time(stretch) > parse_time(wait[TELL_USER]):
             self.end_wait(seat, "it spent tokens after the user was told")
             wait = None

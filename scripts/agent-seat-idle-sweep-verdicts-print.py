@@ -609,6 +609,8 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
                     last_spend, source = spent, subagent_transcript
         verdict["last_activity"] = {"time": iso(last_spend),
                                     "source": str(source) if last_spend else None}
+        verdict[fields.LAST_TOOL_CALL_AT] = iso(max(
+            (moment for moment, _, _ in facts.tool_calls if moment), default=None))
 
         last = facts.last_model_turn_record or {}
         limit = is_usage_limit(last)

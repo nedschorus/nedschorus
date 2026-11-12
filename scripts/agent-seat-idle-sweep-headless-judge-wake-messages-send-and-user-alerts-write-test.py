@@ -293,6 +293,10 @@ code, _ = machine.run(31.5)
 check("idle again 15 minutes after the escalation: the user is told, and no message is sent",
       not machine.claude_calls() and len(machine.alerts()) == 2
       and "after a nudge and an escalation" in machine.alerts()[1]["title"], machine.alerts())
+check("a text-only reply keeps the wait, and the user-alert counts the minutes from when the "
+      "agent-seat first went idle, not from the reply",
+      len(machine.alerts()) == 2 and machine.alerts()[1]["title"].startswith(
+          "alpha has been idle 41 minutes after"), machine.alerts())
 code, _ = machine.run(40)
 check("after telling the user, nothing more while the agent-seat spends no tokens",
       not machine.claude_calls() and len(machine.alerts()) == 2, machine.alerts())
@@ -304,6 +308,37 @@ check("spending tokens after the user was told starts the steps over, with a new
       == ["nudge", "escalate", "tell_user", "nudge"]
       and machine.events("wait_ended")[-1]["why"] == "it spent tokens after the user was told",
       machine.events("wait_step"))
+
+# --- a tool call after the nudge ends the wait ---------------------------------------------------
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(tool=("Bash", {"command": "ls"})), turn_end()])
+machine.handoff_put_off()
+machine.script(sent_ok())
+machine.run(0)
+machine.script()
+machine.run(16)
+check("a tool call made before the nudge does not end the wait: the escalation is sent",
+      [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
+      machine.events("wait_step"))
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.script(sent_ok())
+machine.run(0)
+nudge = machine.events("message_sent")[-1]["text"]
+machine.append("alpha", cross_session(nudge, at(0.2)),
+               assistant(tool=("Bash", {"command": "make"}), when=at(1)),
+               assistant("Built it.", at(9)), turn_end(at(9.5)))
+machine.script(sent_ok())
+code, _ = machine.run(16)
+check("a tool call after the nudge ends the wait: no escalation, the next idle stretch gets a new "
+      "nudge counted from its own start",
+      code == 0 and [event["why"] for event in machine.events("wait_ended")]
+      == ["it made a tool call after the nudge"]
+      and [(event["step"], event.get("first_idle_at")) for event in machine.events("wait_step")]
+      == [("nudge", LONG_AGO), ("nudge", at(9))]
+      and not any(event["step"] == "escalate" for event in machine.events("message_sent")),
+      (machine.events("wait_step"), machine.events("wait_ended")))
 
 # --- rule 4 ends a wait; a new agent-session ends one too -------------------------------------
 machine = Machine()
@@ -458,6 +493,23 @@ machine.run(16)
 check("rule 2: the second promise did not put off the escalation",
       [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
       machine.events("wait_step"))
+
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.script(sent_ok())
+machine.run(0)
+machine.append("alpha", cross_session("You promised", at(0.5)),
+               assistant(tool=("Bash", {"command": "ls"}), when=at(0.8)),
+               assistant(SECOND_PROMISE, at(1)), turn_end(at(1)))
+machine.script(sent_ok())
+machine.run(7)
+machine.script(sent_ok())
+machine.run(16)
+check("rule 2: a tool call and a fresh promise in answer to the message do not end the wait, "
+      "and the escalation is sent",
+      not machine.events("wait_ended")
+      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
+      (machine.events("wait_step"), machine.events("wait_ended")))
 
 # A promise sent on a wait a rule 5 or rule 3 message opened keeps that wait going through rule 4.
 for opener in ("rule 5", "rule 3"):

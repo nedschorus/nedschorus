@@ -733,6 +733,21 @@ check("the newest spend across subagent transcripts, whatever their order, is th
                                              "source": str(subagents / "agent-a.jsonl")},
       verdicts["alpha"])
 
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(tool=("Bash", {"command": "ls"}), at="2026-11-02T11:40:00Z"),
+                       assistant(tool=("Read", {"file_path": "x"}), at="2026-11-02T11:45:00Z"),
+                       assistant("Done.", at="2026-11-02T11:48:00Z"), turn_end()])
+_, verdicts, _ = machine.run()
+check("the newest tool call of the agent-session's own transcript is its last tool call, and a "
+      "later text-only reply does not move it",
+      verdicts["alpha"].get("last_tool_call_at") == "2026-11-02T11:45:00Z", verdicts["alpha"])
+machine = Machine()
+machine.seat("alpha", IDLE_TURN)
+_, verdicts, _ = machine.run()
+check("an agent-session with no tool call: last tool call null",
+      "last_tool_call_at" in verdicts["alpha"] and verdicts["alpha"]["last_tool_call_at"] is None,
+      verdicts["alpha"])
+
 # --- the task list is read as the due-task hook reads it ------------------------------------
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant("Done."), turn_end()])
