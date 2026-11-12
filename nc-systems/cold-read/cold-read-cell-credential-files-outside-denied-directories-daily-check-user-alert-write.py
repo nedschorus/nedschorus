@@ -1,29 +1,33 @@
 #!/usr/bin/env python3
-"""Write a user-alert naming each credential file in the home directory that no cold-read-cell is denied.
+"""Write a user-alert naming each file named *.token or .env in the home directory that the Linux sandboxes leave readable.
 
     python3 <this file>
 
-On Linux the cold-read-cells' sandboxes deny a reviewer program only the folders CREDENTIAL_DIRECTORIES
-lists in nc-systems/cold-read/cold-read-cell-common.py, not files matched by CREDENTIAL_FILE_NAME_PATTERNS.
-A file matching one of those patterns anywhere else under the home directory is readable to every
-reviewer. This program walks the home directory, read from HOME, skipping those folders and the log-store
-(~/nedschorus-logs, whose test leftovers match the patterns but hold no credential), and when it finds
-such a file writes one user-alert naming every one found, through
+On Linux the sandboxes of the Codex and agy cold-read-cells deny a reviewer program only the folders
+CREDENTIAL_DIRECTORIES lists and the login files REVIEWER_PROGRAM_LOGIN_FILES lists, both in
+nc-systems/cold-read/cold-read-cell-common.py. They do not deny by the two name patterns of
+CREDENTIAL_FILE_NAME_PATTERNS, `*.token` and `.env`; only the macOS sandboxes and the Claude cell's
+Read(//**/<pattern>) rule do. A file with such a name anywhere else under the home directory is therefore
+readable to the Codex and agy reviewer programs. This program walks the home directory, read from HOME,
+skipping those folders and the log-store (~/nedschorus-logs, whose test leftovers match the patterns but
+hold no credential), and when it finds such a file writes one user-alert naming every one found, through
 nc-systems/general-tools/user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py.
-It keeps no state, so the alert comes again each day until the file's folder is added to
-CREDENTIAL_DIRECTORIES or the file is moved or deleted.
+It keeps no state, so the alert comes again each day until the file is moved into a folder
+CREDENTIAL_DIRECTORIES lists or deleted, or its folder is added to CREDENTIAL_DIRECTORIES; a file directly
+in the home folder can only be moved or deleted.
 
 It runs once a day on ned-box, from the table nc-systems/general-tools/scheduled-jobs-on-each-machine.json,
 which nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py installs as this cron line:
     45 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/cold-read/cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.py >> /home/nedlern/.claude/cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.log 2>&1
 
-Not handled: a folder this user cannot read is skipped, because the reviewers run as the same user and
-cannot read it either; a folder removed while the walk runs is skipped. Symbolic links to folders are not
-followed. Only the two patterns are looked for: a credential file with any other name is not found.
+Skipped: a folder this user cannot read, because the reviewers run as the same user and cannot read it
+either; a folder removed while the walk runs; the target of a symbolic link to a folder.
+Not found: a credential file named by neither pattern.
 
-Exit status: 0 when nothing was found or the alert was written. 1 when the walk or the alert write failed;
-a failed walk is itself reported in a user-alert, and when that write fails too the error is printed only,
-to the cron log above. The program changes nothing but the user-alerts directory.
+Exit status: 0 when nothing was found or the alert naming the files was written. 1 when the walk failed,
+whether or not the user-alert reporting that failure was written, or when the alert naming the files
+could not be written; an error the program cannot put in a user-alert is printed only, to the cron log
+above. The program writes only to the user-alerts directory, and cron appends its output to that log.
 """
 import argparse
 import fnmatch
@@ -53,7 +57,9 @@ FOUND_TITLE = "A credential file on ned-box is readable to the cold-read-cells' 
 FOUND_ACTION = (
     "An agent on ned-box can, after asking the user which: add the file's folder to CREDENTIAL_DIRECTORIES in "
     "nc-systems/cold-read/cold-read-cell-common.py in a pull request, if the file holds a credential that must stay "
-    "there; or move the file into a folder already listed. Only the user can say whether the file holds a credential.")
+    "there; or move the file into a folder already listed. A file directly in the home folder can only be moved. "
+    "Only the user can say whether the file holds a credential.")
+NAME_PATTERNS = " or ".join(cell_common.CREDENTIAL_FILE_NAME_PATTERNS)
 FAILED_TITLE = "The daily search of ned-box for credential files the cold-read-cells can read failed"
 FAILED_ACTION = (
     f"An agent on ned-box can run python3 {THIS_PROGRAM} by hand, read the error it prints, and fix its cause; "
@@ -87,26 +93,31 @@ def main(argv=None):
     try:
         found = credential_files_outside_denied_directories(home)
     except OSError as error:
-        text = f"The search of {home} for credential files stopped: {error!r}"
+        text = (f"The search of {home} for files named {NAME_PATTERNS} outside CREDENTIAL_DIRECTORIES ended "
+                f"before it had looked everywhere: {error!r}")
         print(text, file=sys.stderr)
         try:
             user_alerts.user_alert_write_to_pending(FAILED_TITLE, text, FAILED_ACTION)
         except OSError as alert_error:
-            print(f"The user-alert saying so could not be written either: {alert_error!r}", file=sys.stderr)
+            print(f"The user-alert saying so could not be written either, so no alert reached pending/: "
+                  f"{alert_error!r}", file=sys.stderr)
         return 1
     if not found:
-        print(f"No credential file outside CREDENTIAL_DIRECTORIES and the log-store under {home}.")
+        print(f"The search found no file named {NAME_PATTERNS} under {home} outside the folders CREDENTIAL_DIRECTORIES "
+              f"lists in nc-systems/cold-read/cold-read-cell-common.py and outside the log-store {home / 'nedschorus-logs'}.")
         return 0
-    text = ("Each file below matches CREDENTIAL_FILE_NAME_PATTERNS and is in no folder of CREDENTIAL_DIRECTORIES, "
-            "so on Linux every reviewer program a cold-read-cell starts can read it:\n"
+    text = (f"Each file below is named {NAME_PATTERNS} and lies in no folder that CREDENTIAL_DIRECTORIES lists in "
+            "nc-systems/cold-read/cold-read-cell-common.py, so on Linux the Codex and agy programs that the "
+            "cold-read-cells start can read it:\n"
             + "\n".join(str(path) for path in found))
     print(text)
     try:
         alert_id = user_alerts.user_alert_write_to_pending(FOUND_TITLE, text, FOUND_ACTION)
     except OSError as error:
-        print(f"The user-alert naming these files could not be written: {error!r}", file=sys.stderr)
+        print(f"The user-alert naming these files could not be written, so no alert reached pending/: {error!r}",
+              file=sys.stderr)
         return 1
-    print(f"Wrote user-alert {alert_id}.")
+    print(f"This program wrote user-alert {alert_id} into the user-alerts pending/ folder.")
     return 0
 
 
