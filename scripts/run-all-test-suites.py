@@ -3634,7 +3634,7 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used,
         "files_fingerprint": file_list_fingerprint(files),
     }
     if strace_used:
-        recording["files_only_strace_saw"] = sorted((touched - seen_by_hook) & files)
+        recording["files_only_strace_saw"] = sorted((touched - seen_by_hook) & files)  # pragma: no mutate, seen_by_hook is a copy of touched, which only grows after the copy, so ^ gives what - gives
     return recording
 
 
@@ -3715,11 +3715,8 @@ def files_only_strace_saw_file_for(directory, suite):
 def recorded_run_passed_and_skipped_only_cases_this_machine_cannot_run(recording):
     """True when the recorded run passed and skipped only cases marked as ones this machine
     cannot run, so it reached every file the suite reads."""
-    skipped = recording.get("skipped_cases")
-    marked = recording.get("skipped_cases_this_machine_cannot_run")
-    return (recording.get("exit") == 0
-            and isinstance(skipped, int) and not isinstance(skipped, bool)
-            and isinstance(marked, int) and not isinstance(marked, bool) and skipped == marked)
+    return (recording["exit"] == 0
+            and recording["skipped_cases"] == recording["skipped_cases_this_machine_cannot_run"])  # pragma: no mutate, the marked skips are some of the skips, so their count never exceeds it and <= gives what == gives
 
 
 def save_files_only_strace_saw(directory, recording):
@@ -3739,7 +3736,7 @@ def save_files_only_strace_saw(directory, recording):
     descriptor, temporary = tempfile.mkstemp(dir=directory, prefix=target.name + ".",
                                              suffix=".tmp")
     with os.fdopen(descriptor, "w") as written:
-        written.write(json.dumps(kept, indent=1, sort_keys=True) + "\n")
+        written.write(json.dumps(kept) + "\n")
     os.replace(temporary, target)
 
 
@@ -3900,6 +3897,11 @@ def added_or_deleted_name(before, after):
     return name, "added" if name in after else "deleted"
 
 
+def and_how_many_more(paths):
+    rest = paths[1:]
+    return f" and {len(rest)} more" if rest else ""
+
+
 def selection_reason(suite, recording, checkout, commit, files_only_strace_saw=None):
     """Return (selected, reason) for one suite."""
     # Recordings are shared across branches; compare both against COMMIT and the recording.
@@ -3935,15 +3937,13 @@ def selection_reason(suite, recording, checkout, commit, files_only_strace_saw=N
 
     changed_reads = [path for path in reads if path in differ]
     if changed_reads:
-        more = f" and {len(changed_reads) - 1} more" if len(changed_reads) > 1 else ""
-        return True, f"it reads {changed_reads[0]}, which differs{more}"
+        return True, f"it reads {changed_reads[0]}, which differs{and_how_many_more(changed_reads)}"
     if files_only_strace_saw is not None:
         changed = [path for path in files_only_strace_saw["files_only_strace_saw"]
                    if path in differ]
         if changed:
-            more = f" and {len(changed) - 1} more" if len(changed) > 1 else ""
-            return True, (f"it reads {changed[0]}, which differs{more}, as only the strace run "
-                          f"of {files_only_strace_saw['recorded_at']} saw")
+            return True, (f"it reads {changed[0]}, which differs{and_how_many_more(changed)}, "
+                          f"as only the strace run of {files_only_strace_saw['recorded_at']} saw")
     for path in looked_for:
         if checkout.there_then(path) != checkout.there_now(path):
             verb = "added" if checkout.there_now(path) else "deleted"
@@ -3969,9 +3969,8 @@ def selection_reason(suite, recording, checkout, commit, files_only_strace_saw=N
     stale = [path for path, blob in reads.items()
              if checkout.hashes_now.get(path, "not in the checkout") != blob]
     if stale:
-        more = f" and {len(stale) - 1} more" if len(stale) > 1 else ""
-        return True, (f"its recording read another copy of {stale[0]}{more} than the "
-                      f"checkout holds, so what it reads here is unknown")
+        return True, (f"its recording read another copy of {stale[0]}{and_how_many_more(stale)} "
+                      f"than the checkout holds, so what it reads here is unknown")
     for path, there in looked_for.items():
         if checkout.there_now(path) != there:
             return True, (f"its recording looked for {path} where it was "
