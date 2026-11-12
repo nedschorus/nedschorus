@@ -1965,7 +1965,16 @@ def cases(scratch):
         return
     world = World(Path(scratch) / "speed")
     fixture = Path(scratch) / "speed" / "guarded-files"
-    make_guarded_files_test_fixture_repository(world, fixture, Path(top.stdout.strip()))
+    checkout = Path(top.stdout.strip())
+    make_guarded_files_test_fixture_repository(world, fixture, checkout)
+    guarded_paths = guarded_paths_of_checkout(checkout)
+    fixture_paths = sorted(world.git("ls-files", cwd=fixture).stdout.splitlines())
+    check("the test fixture repository holds every file the hook guards in the checkout, "
+          "CLAUDE.md, guard hooks and wiki pages among them",
+          fixture_paths == guarded_paths and "CLAUDE.md" in fixture_paths
+          and any(path.startswith(".claude/guard-hooks/") for path in fixture_paths)
+          and any(path.startswith("docs/nedschorus-wiki/") for path in fixture_paths),
+          (len(fixture_paths), len(guarded_paths)))
     world.run(cwd=fixture)
     world.run(cwd=fixture)
     # CPU and wall time vary with machine load and tracing, so they are printed for information
@@ -2071,10 +2080,11 @@ def cases(scratch):
                                    capture_output=True, text=True, check=True).stdout.strip()
     guarded = len(json.loads((Path(git_directory) / hook.STATE_FILE_NAME).read_text())["files"])
     print(f"INFO  the first run in a new worktree with {guarded} guarded files: {store}")
-    check("the first run in a new worktree writes nothing to the store and opens it once, to find "
-          "the worktree has no directory there",
-          texts == [] and guarded and store["access"] == 0 and store["make"] == 0
-          and store["open"] == 1, (texts, guarded, store))
+    check("the first run in a new worktree guards every file the checkout guards, writes nothing "
+          "to the store and opens it once, to find the worktree has no directory there",
+          texts == [] and guarded == len(guarded_paths) and store["access"] == 0
+          and store["make"] == 0 and store["open"] == 1,
+          (texts, guarded, len(guarded_paths), store))
     (worktree / "CLAUDE.md").write_text((worktree / "CLAUDE.md").read_text() + "changed\n")
     texts = counted_run(worktree)
     # Making the file's directory costs a failed open, a mkdir and an open per part made, and
@@ -2089,19 +2099,25 @@ def make_guarded_files_test_fixture_repository(world, directory, checkout):
     """Make directory a repository of its own whose one commit holds this checkout's copy of
     every file the hook guards in the checkout's HEAD, as its guarded_blobs_at lists them. A git
     command that reads the checkout's files, such as a clone, makes the test runner select this
-    suite whenever any file changes; the files copied here select it only when one changes."""
+    suite whenever any file changes; the files copied here select it only when one changes. A
+    guarded file deleted from the checkout's working tree stops the suite with
+    FileNotFoundError: the cases need every guarded file."""
     hook = load_hook_in_this_process()
     for absolute in hook.guarded_blobs_at(checkout, "HEAD"):
         source = Path(absolute)
-        # A file deleted from the working tree, or a symbolic link, has no bytes of its own here.
-        if source.is_symlink() or not source.is_file():
-            continue
         target = directory / source.relative_to(checkout)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(source.read_bytes())
     world.git("init", "-q", "-b", "main", cwd=directory)
     world.git("add", ".", cwd=directory)
     world.git("commit", "-q", "-m", "the checkout's guarded files", cwd=directory)
+
+
+def guarded_paths_of_checkout(checkout):
+    """The checkout-relative paths of the files the hook guards in the checkout's HEAD, sorted."""
+    hook = load_hook_in_this_process()
+    return sorted(str(Path(absolute).relative_to(checkout))
+                  for absolute in hook.guarded_blobs_at(checkout, "HEAD"))
 
 
 def load_hook_in_this_process():
