@@ -370,7 +370,7 @@ beside the walk-minutes: `<key>.md` holds the text, the one an
 `<key>-outcome.json` the read's outcome, done with its report and the fast
 read's notes or failed with its FAILED line, with the item and the time it
 ended; `<key>-started.json` the read-ahead worker's pid; and `<key>.log` the
-worker's output. docs/walk/ is gitignored, and scripts/walk-files-ship.py ships
+worker's output. docs/walk/ is gitignored, and nc-systems/skills/walk-me-through/walk-files-ship.py ships
 only the walk's own files, not this directory: each read's cold-read-record
 keeps its own copy of the text read. The step
 approval-walk-item-cold-read-fast-read-review-background-worker is that
@@ -535,7 +535,7 @@ MORE_THAN_ONE_UNCLOSED_APPROVAL_WALK = (
     "work, each prerequisite before the item it blocks; related items next to each other; and older items before "
     "newer ones; and renumber the items after it that he has not yet seen; then close each other approval-walk: add "
     "the line `#next_to_present none, closed` as the last line of its walk-minutes, and run "
-    "`scripts/walk-files-ship.py <its name>`.\n"
+    "`nc-systems/skills/walk-me-through/walk-files-ship.py <its name>`.\n"
     "Then run the command you just ran again.\n"
     "From now on, add a new subject that needs the user's rulings to the open approval-walk instead of opening a "
     "second one.")
