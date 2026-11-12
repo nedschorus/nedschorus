@@ -482,7 +482,7 @@ def agents_grep_options_and_patterns_without_file_names(command, machines, unche
     return kept
 
 
-def stderr_sent_away_by_own_redirect(command):
+def does_command_own_redirect_send_stderr_elsewhere_than_stdout(command):
     """Whether the command's own redirect sends its stderr anywhere but its stdout."""
     # >&2 copies stdout onto stderr; only >& with a file name moves stderr too.
     return any(operator.startswith("&>")
@@ -497,7 +497,7 @@ def pattern_too_complex_causes(placed, machines, unchecked, output=""):
     refusal_shown = AGENTS_GREP_REFUSAL in (output or "")
     causes = []
     for command in placed:
-        if refusal_shown and not stderr_sent_away_by_own_redirect(command):
+        if refusal_shown and not does_command_own_redirect_send_stderr_elsewhere_than_stdout(command):
             continue
         arguments = agents_grep_options_and_patterns_without_file_names(
             command, machines, unchecked)

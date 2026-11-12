@@ -224,7 +224,7 @@ for redirect, sent_away in (("2>/dev/null", True), ("2>>log", True), ("&>/dev/nu
     command = check_module.split_into_simple_commands_with_the_machine_and_directory_each_runs_in(
         f"grep needle notes.md {redirect}", "/work")[0]
     check(f"`{redirect}` sends stderr away: {sent_away}",
-          check_module.stderr_sent_away_by_own_redirect(command) == sent_away)
+          check_module.does_command_own_redirect_send_stderr_elsewhere_than_stdout(command) == sent_away)
 check("S2's warning quotes the grep as the shell needs, so it can be run again as written",
       "`grep -oE '.{0,180}(a|b).{0,180}'`"
       in judge("grep -oE '.{0,180}(a|b).{0,180}' notes.md").causes[0].instruction,
