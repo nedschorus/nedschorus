@@ -1,8 +1,8 @@
 ---
-issue: "[Bash guards give every program they start a time limit of their own, so a program that never exits cannot hold up the Bash guards replay for hours](https://github.com/nedschorus/nedschorus/issues/1983)"
+issue: "[Bash guards give every program they start a time limit of their own, so a program that never exits cannot hold up `nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py` for hours](https://github.com/nedschorus/nedschorus/issues/1983)"
 ---
 
-# Bash guards give every program they start a time limit of their own, so a program that never exits cannot hold up the Bash guards replay for hours
+# Bash guards give every program they start a time limit of their own, so a program that never exits cannot hold up `nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py` for hours
 
 `nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py` runs every Bash command recorded in the agent-sessions' transcripts through every Bash guard, once at main and once at a pull request's head commit, to show which verdicts the pull request changes. A Bash guard is a PreToolUse hook with the matcher `Bash` in `.claude/settings.json`; there are seven. A pair is one recorded command with the working directory it ran in; a reading is one pair run through one guard. Each reading gets a time limit, the per-pair timeout, 20 seconds by default.
 
@@ -19,6 +19,8 @@ A replay whose step runs to that limit holds up the merge of the pull request it
 The user approved filing this GHI on 2026-10-26, at 13:58 by the minutes' clock, answering "A" (file the issue, owned by reboot-test) to item 12 of 23 of merge-lane-2's approval-walk merge-lane-2-everything-waiting-on-the-user-2026-10-22; its minutes are `nedlern@ned-box:/home/nedlern/agents/merge-lane-2/docs/walk/merge-lane-2-everything-waiting-on-the-user-2026-10-22-minutes.md`.
 
 ## The code, on main at commit 29fb37b38
+
+At that commit the program was named `nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py`, so the links below open it under that name.
 
 - `raise_pair_timed_out()`, the handler of the per-pair timeout's signal, walks the interrupted stack frames, and when any belongs to the `subprocess` module it sets the timer again for 0.05 seconds and returns instead of raising ([lines 172-188](https://github.com/nedschorus/nedschorus/blob/29fb37b38707b03bdefed9027e4907212f3df6c8/nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py#L172-L188)). So a subprocess call that never returns has its timeout put off every 0.05 seconds until the step's limit, below, kills the step.
 - `read_within_pair_timeout()` sets the per-pair timeout with `signal.alarm()`, and when the reading returns after its timeout was put off, counts the reading as timed out ([lines 190-204](https://github.com/nedschorus/nedschorus/blob/29fb37b38707b03bdefed9027e4907212f3df6c8/nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py#L190-L204)). The default, `DEFAULT_PER_PAIR_TIMEOUT_SECONDS`, is at [line 83](https://github.com/nedschorus/nedschorus/blob/29fb37b38707b03bdefed9027e4907212f3df6c8/nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py#L83).
