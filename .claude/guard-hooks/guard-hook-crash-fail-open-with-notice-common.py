@@ -34,15 +34,15 @@ def guard_hook_crash_notice_hook_output_json_text(guard_file, error):
     place = f", at {Path(frames[-1].filename).name}:{frames[-1].lineno}" if frames else ""
     crash = f"{type(error).__name__}: {error}{place}"
     agent_notice = (
-        f"The guard hook {guard_name} crashed on {host}, so it let this tool call through "
-        f"without checking it, and the call has run ({crash}). A crashed guard lets the call go "
-        f"ahead so that the crash does not stop work; the user has been shown that it crashed.\n"
-        f"Check whether the call did what {guard_name} exists to stop; the docstring at the top "
-        f"of {guard_file} says what that is.\n"
-        f"If it did, tell the user what the call did, and do not undo or repeat the call before "
-        f"he answers, because an undo can do further damage.\n"
-        f"If it did not, go on with your task.\n"
-        f"If you are a subagent, tell the agent that dispatched you instead of the user.")
+        f"The guard hook {guard_name} crashed on {host} ({crash}), so this tool call went ahead "
+        f"without being checked, and the call has run. A crashed guard lets the call go ahead "
+        f"so that the crash does not stop work; the user has been shown that the guard crashed.\n"
+        f"Check, from the call's input and its result, whether the call did what {guard_name} "
+        f"exists to stop; the docstring at the top of {guard_file} says what that is.\n"
+        f"If the call did, or you cannot tell, tell the user what the call did, or, if you are a "
+        f"subagent, tell the agent that dispatched you; do not undo the call before that answer "
+        f"comes, because an undo can do further damage.\n"
+        f"If the call did not, go on with your task.")
     user_notice = (
         f"The guard hook {guard_name} crashed on {host} and let a tool call through unchecked "
         f"({crash}). The agent has been told to check what the call did.")

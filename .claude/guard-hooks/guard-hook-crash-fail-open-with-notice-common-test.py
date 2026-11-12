@@ -116,7 +116,8 @@ if notices is not None:
               for notice in notices), notices)
     check("the agent notice says what to check, with the guard's path, and gives a subagent line",
           "/x/.claude/guard-hooks/some-guard.py says what that is" in notices[0]
-          and "If you are a subagent" in notices[0], notices[0])
+          and "if you are a subagent, tell the agent that dispatched you" in notices[0],
+          notices[0])
 
 try:
     raise_inside(True, SystemExit(2))
