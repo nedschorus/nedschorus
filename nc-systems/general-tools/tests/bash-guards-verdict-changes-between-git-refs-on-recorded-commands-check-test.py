@@ -1956,6 +1956,39 @@ check("each renamed guard's former path maps to a path in GUARDS, and no former 
       f"mapped to paths not in GUARDS: {renames_to_paths_not_in_guards}; former paths in GUARDS: "
       f"{former_paths_still_in_guards}")
 
+
+def wall_clock_that_jumps_past_the_search_file_budget():
+    """Return a clock that jumps ten seconds after its first read, as a loaded machine's wall clock can."""
+    reads = [0]
+
+    def clock():
+        reads[0] += 1
+        return 1000.0 if reads[0] == 1 else 1010.0
+    return clock
+
+
+search_file_guard = replay.guards_loaded(REPOSITORY_ROOT, False)[0][replay.SEARCH_FILE_GUARD]
+main_defaults = search_file_guard.main.__defaults__
+real_monotonic = time.monotonic
+with tempfile.TemporaryDirectory() as jump_directory:
+    for name in ("-v.txt", "a.txt"):
+        Path(jump_directory, name).touch()
+    try:
+        time.monotonic = wall_clock_that_jumps_past_the_search_file_budget()
+        try:
+            in_process = replay.read_search_file(search_file_guard, "grep x *.txt", None, jump_directory)[0]
+        except Exception as error:
+            in_process = f"EXCEPTION {type(error).__name__}"
+        search_file_guard.main.__defaults__ = (main_defaults[0], wall_clock_that_jumps_past_the_search_file_budget())
+        through_main = replay.search_file_main_outcome(search_file_guard, "grep x *.txt", jump_directory)[0]
+    finally:
+        time.monotonic = real_monotonic
+        search_file_guard.main.__defaults__ = main_defaults
+check("a wall clock that jumps past the search-file guard's budget mid-reading leaves its in-process verdict as is",
+      in_process == "refused", in_process)
+check("a wall clock that jumps past the search-file guard's budget mid-reading leaves its main() verdict as is",
+      through_main == ["refused", 0], through_main)
+
 if failures:
     print(f"{len(failures)} failed")
     sys.exit(1)

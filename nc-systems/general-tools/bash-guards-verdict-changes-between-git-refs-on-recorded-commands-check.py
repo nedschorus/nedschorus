@@ -528,6 +528,23 @@ def fixed_clock():
     return 1000.0
 
 
+SEARCH_FILE_CLOCK_SECONDS_PER_READ = 0.001
+
+
+def search_file_clock():
+    """Return a clock for one search-file reading that advances SEARCH_FILE_CLOCK_SECONDS_PER_READ each time it is read.
+
+    The guard's glob-expansion budget is measured in seconds, so on the wall clock a loaded machine spends it on
+    one ref's reading and not the other's. On this clock the budget is a count of clock reads, the same at both refs.
+    """
+    reads = [0]
+
+    def clock():
+        reads[0] += 1
+        return reads[0] * SEARCH_FILE_CLOCK_SECONDS_PER_READ
+    return clock
+
+
 def is_failed_reading(verdict):
     return isinstance(verdict, str) and (verdict.startswith("EXCEPTION") or verdict == "TIMEOUT")
 
@@ -560,7 +577,7 @@ def read_pkill_pattern_kill(guard, command, working_directory, search_file_direc
 
 
 def read_search_file(guard, command, working_directory, search_file_directory):
-    reason = guard.analyze_command_text(command, search_file_directory, time.monotonic)
+    reason = guard.analyze_command_text(command, search_file_directory, search_file_clock())
     return "refused" if reason else "passed", reason
 
 
@@ -713,7 +730,7 @@ def search_file_main_outcome(guard, command, working_directory):
     payload = json.dumps({"tool_name": "Bash", "cwd": working_directory, "tool_input": {"command": command}})
     printed = io.StringIO()
     with contextlib.redirect_stdout(printed):
-        exit_status = guard.main(stdin=io.StringIO(payload))
+        exit_status = guard.main(stdin=io.StringIO(payload), clock=search_file_clock())
     text = printed.getvalue().strip()
     if not text:
         return ["silent", exit_status], None
