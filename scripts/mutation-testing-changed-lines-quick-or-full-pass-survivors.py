@@ -411,6 +411,28 @@ def run_or_raise(command, cwd, environment=None, what=None):
     return completed.stdout
 
 
+COSMIC_RAY_VENV_FLAG = "--cosmic-ray-venv"
+COSMIC_RAY_VENV_PLACEHOLDER = "<that venv>"
+# argparse accepts an unambiguous abbreviation; "--co" also opens --checkout, so the shortest
+# abbreviation of --cosmic-ray-venv it accepts is "--cos".
+SHORTEST_COSMIC_RAY_VENV_FLAG_ABBREVIATION_LENGTH = len("--cos")
+
+
+def command_line_with_cosmic_ray_venv_placeholder(argv):
+    """Return argv with every --cosmic-ray-venv given, and its value, taken out, and
+    `--cosmic-ray-venv <that venv>` put at its end."""
+    kept, arguments = [], iter(argv)
+    for argument in arguments:
+        name, equals, _ = argument.partition("=")
+        if (len(name) >= SHORTEST_COSMIC_RAY_VENV_FLAG_ABBREVIATION_LENGTH
+                and COSMIC_RAY_VENV_FLAG.startswith(name)):
+            if not equals:
+                next(arguments, None)
+            continue
+        kept.append(argument)
+    return kept + [COSMIC_RAY_VENV_FLAG, COSMIC_RAY_VENV_PLACEHOLDER]
+
+
 def cosmic_ray_tool_paths(venv):
     """Return {tool: path} for the cosmic-ray commands, or raise naming how to install them."""
     found = {}
@@ -422,10 +444,9 @@ def cosmic_ray_tool_paths(venv):
                 f"{PROGRAM}: not run — {tool} is not in {Path(venv).expanduser() / 'bin'}.\n"
                 f"Do these steps on {socket.gethostname()}, the machine this ran on, because "
                 f"the venv is a path there; from another machine, run them over ssh to it.\n"
-                f"If a venv there already holds cosmic-ray=={COSMIC_RAY_VERSION}, add "
-                f"--cosmic-ray-venv <that venv> to the command below and skip the install; "
-                f"when the command already has --cosmic-ray-venv, the last one given wins. "
-                f"Without the flag the venv is {DEFAULT_COSMIC_RAY_VENV}.\n"
+                f"If a venv there already holds cosmic-ray=={COSMIC_RAY_VERSION}, skip the "
+                f"install and run this, with <that venv> replaced by the venv's path:\n"
+                f"  python3 {shlex.join(command_line_with_cosmic_ray_venv_placeholder(sys.argv))}\n"
                 f"Otherwise install cosmic-ray into {quoted}:\n"
                 f"  python3 -m venv {quoted}\n"
                 f"  {quoted}/bin/pip install cosmic-ray=={COSMIC_RAY_VERSION}\n"
