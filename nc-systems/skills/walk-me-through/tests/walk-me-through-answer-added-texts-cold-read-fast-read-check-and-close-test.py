@@ -2624,9 +2624,9 @@ def refused_as_rated_none(case, *problems):
 def test_an_item_of_no_kind_is_refused_when_rated_above_weak_or_rated_none_and_touching_a_guarded_file():
     check("an item of no kind rated medium is refused",
           *refused_as_rated_none(rated_none_case(rating="medium: the option changes what users see."),
-                                 "rates the case against medium; an item of none of the kinds settles without the "
-                                 "user only when its case against is rated none, or weak with a case against that "
-                                 "names only cost"))
+                                 "rates the case against medium; an item of none of the kinds 1 to 6 that `--help` "
+                                 "lists under `--not-asked` settles without the user only when its case against is "
+                                 "rated none, or weak with a case against that names only cost"))
     check("an item of no kind with no touches line is refused",
           *refused_as_rated_none(rated_none_case(touches=""), "it has no `#not_asked_touches` line"))
     for word in ("CLAUDE.md:12", "tools/counter.py.", "tools/missing.py"):
@@ -2642,7 +2642,8 @@ def test_an_item_of_no_kind_is_refused_when_rated_above_weak_or_rated_none_and_t
 
 WEAK_COST_ONLY = "weak: the option costs a few lines of code."
 WEAK_COST_ONLY_SETTLED = "item 1 of 3 is recorded as settled without asking the user, case against weak, cost only;"
-PERMISSIONS_JUDGEMENT = ("item 1 of 3 is of none of the kinds and its case against is rated weak: if its change "
+PERMISSIONS_JUDGEMENT = ("item 1 of 3 is of none of the kinds 1 to 6 that `--help` lists under `--not-asked` and "
+                         "its case against is rated weak: if its change "
                          "widens an agent's permissions, as a settings change can, or turns off a guard, do not run "
                          "close: present item 1 of 3 to the user.")
 
@@ -2692,7 +2693,8 @@ def test_an_item_of_no_kind_rated_weak_settles_when_it_touches_guarded_code_but_
               result.returncode == 1
               and "cannot be settled without asking the user as case against weak, cost only, because:" in result.stderr
               and f"`#not_asked_touches` names {path}, a Markdown file the instruction-file guard protects; this item "
-                  "is of none of the kinds and rated weak, and it changes such a file, so it is shown to the user."
+                  "is of none of the kinds 1 to 6 that `--help` lists under `--not-asked` and rated weak, and it "
+                  "changes such a file, so it is shown to the user."
                   in result.stderr
               and "which the instruction-file guard protects;" not in result.stderr
               and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))

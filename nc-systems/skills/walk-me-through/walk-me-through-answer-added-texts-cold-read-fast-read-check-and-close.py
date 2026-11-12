@@ -810,12 +810,13 @@ NOT_ASKED_REFUSED = (
 NOT_ASKED_RATING_PROBLEM = ("- its `#case_against` line rates the case against {rating}; only an item rated none, "
                             "or weak with a case against that names only cost, settles without the user.")
 NOT_ASKED_NO_LINE_PROBLEM = "- it has no `{marker}` line; {why}"
-NOT_ASKED_NOT_RATED_NONE_PROBLEM = ("- its `#case_against` line rates the case against {rating}; an item of none of "
-                                    "the kinds settles without the user only when its case against is rated none, "
-                                    "or weak with a case against that names only cost.")
+NOT_ASKED_KINDS_NAMED = "none of the kinds 1 to 6 that `--help` lists under `--not-asked`"
+NOT_ASKED_NOT_RATED_NONE_PROBLEM = ("- its `#case_against` line rates the case against {rating}; an item of "
+                                    + NOT_ASKED_KINDS_NAMED + " settles without the user only when its case "
+                                    "against is rated none, or weak with a case against that names only cost.")
 NOT_ASKED_WEAK_GUARDED_MARKDOWN_PROBLEM = (
-    "- `{marker}` names {path}, a Markdown file the instruction-file guard protects; this item is of none of the "
-    "kinds and rated weak, and it changes such a file, so it is shown to the user.")
+    "- `{marker}` names {path}, a Markdown file the instruction-file guard protects; this item is of "
+    + NOT_ASKED_KINDS_NAMED + " and rated weak, and it changes such a file, so it is shown to the user.")
 NOT_ASKED_GUARDED_FILE_PROBLEM = ("- `{marker}` names {path}, which the instruction-file guard protects; an item "
                                   "that adds words the user has not approved to such a file is shown to him, and "
                                   "one whose words a ruling of his gives settles as kind 1.")
@@ -862,8 +863,8 @@ NOT_ASKED_JUDGEMENT_LINES = (
 )
 # Code cannot see these in a change, so an item of no kind rated weak leaves them to the agent.
 NOT_ASKED_WEAK_JUDGEMENT_LINE = (
-    "{item} is of none of the kinds and its case against is rated weak: if its change widens an agent's "
-    "permissions, as a settings change can, or turns off a guard, do not run close: present {item} to the user.")
+    "{item} is of " + NOT_ASKED_KINDS_NAMED + " and its case against is rated weak: if its change "
+    "widens an agent's permissions, as a settings change can, or turns off a guard, do not run close: present {item} to the user.")
 GIT_GREP_FAILED = ("`git grep` failed with exit {code} in {top} while checking {item}'s evidence: {error}\n"
                    "Run `python3 {program} check --not-asked {kind}` again once; if it fails the same way, "
                    "present {item} to the user and run check with the flag for his answer, as `--help` lists it.")
@@ -1361,7 +1362,7 @@ def part_answer(value):
 
 def not_asked_kind(value):
     """Return the --not-asked value: a kind, 1 to 6, or `none` for an item of no kind whose case against is
-    rated none."""
+    rated none, or weak with a case against that names only cost."""
     if value.strip().lower() == NOT_ASKED_RATED_NONE:
         return NOT_ASKED_RATED_NONE
     if value.strip() in {str(kind) for kind in NOT_ASKED_KINDS}:
@@ -2638,7 +2639,8 @@ def main(argv=None):
     answer.add_argument("--not-asked", type=not_asked_kind, metavar="KIND",
                         help="check: the user is not asked; settle the item as kind KIND, 1 to 6, of the "
                              "walk-me-through skill's list of items that need no answer, if its evidence lines pass, "
-                             "or, as `none`, an item of no kind whose case against is rated none")
+                             "or, as `none`, an item of no kind whose case against is rated none, or weak with "
+                             "a case against that names only cost")
     parser.add_argument("--user-reply-as-typed", metavar="REPLY",
                         help="check: the user's reply exactly as he typed it, written into the minutes beside the "
                              "answer; needed for every answer but --not-asked, --already-decided, "
