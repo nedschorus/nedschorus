@@ -178,7 +178,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CURRENT_ITEM_HOOK_FILE = HERE / "walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py"
 WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
-CHECK_PROGRAM_FILE = HERE / "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py"
+WALK_CHECK_PROGRAM = HERE / "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py"
 ANSWER_HOOK_FILE = (HERE / "walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-"
                     "user-prompt-submit-hook.py")
 REPOSITORY_TOP = HERE.parents[2]
@@ -736,7 +736,7 @@ def output_for(payload, environment, model=model_judgement):
     new_total = str(int(total) + 1)
     # Loaded only here, on the way to a refusal, so a reply that passes does not pay for it.
     check_and_close = load_module("walk_me_through_answer_added_texts_cold_read_fast_read_check_and_close",
-                                  CHECK_PROGRAM_FILE)
+                                  WALK_CHECK_PROGRAM)
     closing, without_page = closing_lines(pages, name, document_text, units, parser, numbers, new_total)
     values = {"walk": name, "last_waiting": waiting, "sentence": sentence, "decided": decided, "waiting": waiting_label,
               "document": document, "waits_on_tag": check_and_close.WALK_WAITS_ON_TAG,
