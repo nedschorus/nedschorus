@@ -345,7 +345,7 @@ def test_the_item_the_block_message_asks_for_is_one_the_close_step_can_place():
     case = Case()
     case.reply("Should I merge the pull request now?")
     reason = blocked_reason(case.run()) or ""
-    close_spec = importlib.util.spec_from_file_location("check_and_close", hook.CHECK_PROGRAM_FILE)
+    close_spec = importlib.util.spec_from_file_location("check_and_close", hook.WALK_CHECK_PROGRAM)
     close = importlib.util.module_from_spec(close_spec)
     close_spec.loader.exec_module(close)
     tags = [close.WALK_CATEGORY_TAG + category for category in close.WALK_CATEGORIES]

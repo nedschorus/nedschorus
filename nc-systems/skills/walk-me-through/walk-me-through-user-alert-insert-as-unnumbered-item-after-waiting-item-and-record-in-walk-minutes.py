@@ -42,7 +42,7 @@ HERE = Path(__file__).resolve().parent
 CHECKOUT = HERE.parents[2]
 PROGRAM = Path(__file__).stem
 WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
-CHECK_PROGRAM_FILE = HERE / "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py"
+WALK_CHECK_PROGRAM = HERE / "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py"
 ALERTS_MODULE_FILE = (CHECKOUT / "nc-systems" / "general-tools"
                       / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
 
@@ -194,7 +194,7 @@ def insert(cwd, alert_ids, now=None):
     lines = text.split("\n")
     titles = [heading_title(str(alert.get("title")), walk_finder, parser) for alert in alerts]
     check_program = load_module("walk_me_through_answer_added_texts_cold_read_fast_read_check_and_close",
-                                CHECK_PROGRAM_FILE)
+                                WALK_CHECK_PROGRAM)
     new_lines = [line for alert, title in zip(alerts, titles)
                  for line in item_lines(alert, title, check_program.WALK_FIRST_ENTERED_TAG)]
     end = unit[4]
