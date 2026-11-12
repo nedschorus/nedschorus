@@ -1059,7 +1059,7 @@ EVERY_SUITE_RUNS_WHEN_THESE_CHANGE = (
 GIT_COMMANDS_THAT_ONLY_LIST = frozenset((
     "ls-files", "ls-tree", "rev-parse", "rev-list", "log", "branch", "config",
     "remote", "worktree", "for-each-ref", "symbolic-ref", "merge-base",
-    "describe", "show-ref", "check-ignore", "var", "version", "fetch", "init"))
+    "describe", "show-ref", "check-ignore", "var", "version", "fetch", "init", "ls-remote"))
 # These options read repository location, not checkout files.
 GIT_REV_PARSE_OPTIONS_THAT_SEE_NO_FILE = frozenset((
     "--show-toplevel", "--git-dir", "--absolute-git-dir", "--git-common-dir",

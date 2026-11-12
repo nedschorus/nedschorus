@@ -2301,6 +2301,40 @@ finally:
               f"SELECTED {suite}: it runs git {command} on the checkout, and "
               "notes/added.txt was added" in out, out)
 
+# git ls-remote lists the refs of the repository it names and reads no file of the checkout.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    suite = "git-ls-remote-test.py"
+    repo = make_repo(root, {suite: '''import subprocess, tempfile, shutil
+scratch = tempfile.mkdtemp()
+try:
+    subprocess.run(['git', 'init', '-q', scratch], check=True, capture_output=True)
+    subprocess.run(['git', 'ls-remote', '--heads', scratch], check=True, capture_output=True)
+finally:
+    shutil.rmtree(scratch)
+'''})
+    base = commit_files(repo, {"notes/unread.txt": "one\n"}, "a file the suite does not read")
+    result = run(root)
+    check("the git ls-remote fixture's full run passes, recording ls-remote as git on the "
+          "checkout",
+          result.returncode == 0
+          and recording(root, suite).get("git_commands_on_the_checkout") == ["ls-remote"],
+          (result.stdout, result.stderr, recording(root, suite)))
+    changed = commit_files(repo, {"notes/unread.txt": "two\n"}, "change the unread file")
+    result = select_since(root, base)
+    check("a changed file a suite running only git ls-remote on the checkout does not read "
+          "leaves the suite NOT SELECTED",
+          result.returncode == 0 and ran(root) == []
+          and any(line.startswith(f"NOT SELECTED {suite}: ") for line in lines(result.stdout)),
+          (ran(root), result.stdout, result.stderr))
+    commit_files(repo, {"notes/added.txt": "new\n"}, "add a file")
+    result = select_since(root, changed)
+    check("an added file still selects a suite running git ls-remote on the checkout",
+          result.returncode == 0 and ran(root) == [suite]
+          and f"SELECTED {suite}: it runs git ls-remote on the checkout, and "
+              "notes/added.txt was added" in lines(result.stdout),
+          (ran(root), result.stdout, result.stderr))
+
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
     repo = make_repo(root, {"a-test.py": PASSES})
