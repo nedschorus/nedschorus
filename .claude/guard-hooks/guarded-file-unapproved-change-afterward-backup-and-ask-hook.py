@@ -200,7 +200,11 @@ REFUSED = "{program_name} {mode}: refused, nothing was changed: {reason}"
 COMMAND_FAILED = ("{program_name} {mode} failed: {reason}. Tell the user, with this message; run "
                   "the command again once the cause is fixed.")
 RESTORE_INCOMPLETE = ("{program_name} --restore: not every file was put back; the lines above "
-                      "say what was done to each. Tell the user which files failed and why.")
+                      "say what was done to each, and a file that failed may be only part way "
+                      "restored. Tell the user which files failed and why.\n"
+                      "For a file that failed, do not run the git commit --only command that this "
+                      "hook's messages give for a declined version in a commit: it would commit "
+                      "the part-restored file.")
 MARKER_SURVIVED = (
     "{program_name} --approve: the approval above is recorded, but its marker {marker} could not "
     "be deleted: {reason}. While the marker exists, a later --approve would spend the user's "
