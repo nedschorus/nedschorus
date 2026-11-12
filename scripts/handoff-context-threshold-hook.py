@@ -222,24 +222,26 @@ def awaited_phrase(flight: WorkInFlight) -> str:
 # it the task is presumed stuck or open-ended. The first kind with a pattern the command matches
 # (re.search, ignoring case) is the task's kind. Work kinds come before waiting-task, so a command
 # that both does work and waits keeps the work's limit: a false waiting-task match kills work.
-# A waiting-task does no work of its own, so a limit of 0 never holds the handoff. A wait loop is
-# a waiting-task only when nothing but reading commands follows its `done`, because work after the
-# loop that matches no work kind would otherwise get 0 and be killed by the handoff.
+# A command is a waiting-task only when the whole command is one wait, followed by nothing but
+# redirections, because any work after the wait would get 0 and be killed by the handoff.
 _COMMAND_PREFIX_PATTERN = r"^\s*(?:(?:cd\s+\S+|export\s+\S+|[A-Za-z_]\w*=\S*)\s*(?:&&|;|\n)\s*)*"
-_ONLY_READING_COMMANDS_TO_THE_END_PATTERN = (
-    r"(?:\s*(?:;|&&|\|\||\||\n)\s*(?:cat|tail|head|grep|ls|echo|test|true"
-    r"|gh\s+pr\s+(?:view|checks)|git\s+(?:status|log))\b[^;&|\n]*)*\s*;?\s*$")
+_ONLY_REDIRECTIONS_TO_THE_END_PATTERN = r"(?:\s*(?:\d?>&\d|(?:\d?>>?|&>)\s*\S+))*\s*;?\s*$"
+# The loop ends at the first `done` that starts a command, never at a later one.
+_LOOP_END = r"(?:;|\n)\s*done\b"
+_NOT_PAST_LOOP_END = r"(?:(?!" + _LOOP_END + r").)*"
 BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND = (
     ("nc-mutation-testing", (r"mutation|mutmut|mutant",), 105.0),
     ("test-suite", (r"run-all-test-suites\.py|pytest|-test\.py\b|_test\.py\b|unittest"
                     r"|head-tests-with-retry|head-test-run|test-suite|run-suites",), 90.0),
     ("waiting-task", (r"watch-and-merge-provisional|wait-for-next-pull-request-event"
                       r"|watch-open-pull-requests\.py|wait-review-runs",
-                      r"\bgh\s+pr\s+checks\b.*--watch",
-                      r"\bgh\s+run\s+watch\b",
-                      _COMMAND_PREFIX_PATTERN + r"(?:until|while)\b.*?\bsleep\b.*?\bdone\b"
-                      + _ONLY_READING_COMMANDS_TO_THE_END_PATTERN,
-                      _COMMAND_PREFIX_PATTERN + r"sleep\s+\S+\s*(?:(?:;|&&)\s*echo\b[^;&|]*)?$"), 0.0),
+                      _COMMAND_PREFIX_PATTERN + r"gh\s+pr\s+checks\b[^;&|\n]*--watch[^;&|\n]*"
+                      + _ONLY_REDIRECTIONS_TO_THE_END_PATTERN,
+                      _COMMAND_PREFIX_PATTERN + r"gh\s+run\s+watch\b[^;&|\n]*"
+                      + _ONLY_REDIRECTIONS_TO_THE_END_PATTERN,
+                      _COMMAND_PREFIX_PATTERN + r"(?:until|while)\b" + _NOT_PAST_LOOP_END + r"\bsleep\b"
+                      + _NOT_PAST_LOOP_END + _LOOP_END + _ONLY_REDIRECTIONS_TO_THE_END_PATTERN,
+                      _COMMAND_PREFIX_PATTERN + r"sleep\s+\S+" + _ONLY_REDIRECTIONS_TO_THE_END_PATTERN), 0.0),
 )
 # Allows a slow cold-read-full-run with one cell relaunch.
 BACKGROUND_TASK_WAIT_LIMIT_MINUTES_WHEN_NO_KIND_MATCHES = 75.0
