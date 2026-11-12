@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Approve and merge each open GHI-MD edit pull request that only adds provisional-additions, and tell merge-lane-2 about each other one.
+r"""Approve and merge each open GHI-MD edit pull request that only adds provisional-additions, and tell merge-lane-2 about each other one.
 
 Usage:
   scripts/merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.py
@@ -16,20 +16,24 @@ table beside it, scheduled-jobs-on-each-machine.json:
 Each invocation lists every open pull request
 whose title starts "GHI-MD edit for issue" and, for each one that is not a
 draft pull request, is not on the held list and has not already been
-reported at its nc-head-commit, reads its diff and passes it when all of
-these hold:
+reported at its nc-head-commit, reads the file it changes at its merge base
+and at its nc-head-commit, and passes it when all of these hold:
   - it changes exactly one file, and that file is under docs/issues/ and
     is neither new nor renamed;
-  - the diff removes no line and adds at least one;
-  - no added line holds a carriage return, which Markdown reads as a line
-    break where git sees none;
-  - every added line that starts with "#" is exactly the heading
-    "## Provisional additions (not yet vetted by the user)";
-  - in the file at the nc-head-commit, which it reads too, that heading
-    appears once, and every added line that is not blank lies under it,
-    before the next line that starts with "#".
-The diff and the file are split into lines on "\n" alone, as git splits them,
-so the diff's line numbers name the file's lines.
+  - neither text holds a character that Markdown or git reads as a line
+    break other than "\n", such as a carriage return or a form feed;
+  - the text at the nc-head-commit holds the line
+    "## Provisional additions (not yet vetted by the user)" as a heading
+    once, and the text at the merge base holds it at most once;
+  - its other headings, as a CommonMark parser finds them, are the merge
+    base's, one for one, so the pull request adds, removes and changes no
+    other heading;
+  - with the section under that heading taken out of both texts, they are
+    the same, and the section at the nc-head-commit holds every line of the
+    merge base's section, when there is one, in order. The section
+    runs from the heading to the next heading, without the blank lines
+    that end it and with the blank lines just before it;
+  - the text at the nc-head-commit differs from the text at the merge base.
 A passing pull request is approved as ned-review-merge, pinned to the
 nc-head-commit that was read, and merged by running
 merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py
@@ -72,8 +76,7 @@ state directory without waiting, and an invocation that finds it held prints
 so and exits 0, because a merge and its after-merge test run can outlast 5
 minutes.
 
-What it does not handle: a heading written with leading spaces or as an
-underline is not recognised as a heading. It does not retry a failed approval or merge at the
+What it does not handle: it does not retry a failed approval or merge at the
 same nc-head-commit; merge-lane-2 handles that pull request by hand. An
 approval whose merge then fails stays on the pull request.
 
@@ -84,9 +87,9 @@ failure; nothing when there is nothing to do. Cron appends the output to
 Exit codes: 0 every pull request was merged, skipped or reported; 1 one or
 more approvals or merges failed, each reported to merge-lane-2; 2 the
 invocation stopped before handling every pull request, because the lock,
-the held list, the record, the merge account's token, a gh read, the review
-tools worktree or a message file could not be read or written, or the held
-list or the record is malformed.
+the held list, the record, the merge account's token, a gh read, the
+Markdown parser, the review tools worktree or a message file could not be
+read, loaded or written, or the held list or the record is malformed.
 """
 
 import argparse
@@ -94,7 +97,6 @@ import fcntl
 import importlib.util
 import json
 import os
-import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -113,6 +115,11 @@ MERGE_PROGRAM = Path(__file__).resolve().with_name(
     "merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py")
 TITLE_PREFIX = "GHI-MD edit for issue"
 PROVISIONAL_HEADING = "## Provisional additions (not yet vetted by the user)"
+MARKDOWN_PARSER_MODULE = (CHECKOUT / "nc-systems" / "general-tools"
+                          / "markdown-commonmark-parser-with-tables-common.py")
+# Every character Python's str.splitlines() splits on except "\n": CommonMark reads a carriage
+# return as a line break where git does not, and other Markdown tools split on the rest.
+LINE_BREAKS_OTHER_THAN_NEWLINE = "\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"
 STATE_DIRECTORY_NAME = "merge-lane-ghi-md-edit-pull-requests-check-approve-and-merge-hold-list-reported-heads-and-needs-a-look-messages"
 REVIEW_TOOLS_WORKTREE_NAME = "merge-lane-ghi-md-edit-pull-requests-check-approve-and-merge-review-tools-worktree-at-main"
 HELD_LIST_NAME = "held-pull-requests.txt"
@@ -205,10 +212,9 @@ def write_record(path, record):
         raise Stopped(f"could not write the record {path}: {error}") from error
 
 
-def gh(environment, *arguments):
-    """Run gh; return its stdout, or raise Stopped naming the call and its error."""
+def gh_bytes(environment, *arguments):
+    """Run gh; return its stdout as bytes, or raise Stopped naming the call and its error."""
     try:
-        # Not text=True: it would turn a lone "\r" into "\n" and shift the diff's line numbers.
         completed = subprocess.run(["gh", *arguments], capture_output=True,
                                    env=environment, stdin=subprocess.DEVNULL,
                                    timeout=GH_TIMEOUT_SECONDS)
@@ -218,82 +224,118 @@ def gh(environment, *arguments):
         error_text = completed.stderr.decode("utf-8", errors="replace").strip()
         raise Stopped(f"gh {' '.join(arguments[:3])} exited {completed.returncode}: "
                       f"{error_text or 'no error printed'}")
-    return completed.stdout.decode("utf-8", errors="replace")
+    return completed.stdout
 
 
 def gh_json(environment, *arguments):
-    output = gh(environment, *arguments)
+    output = gh_bytes(environment, *arguments).decode("utf-8", errors="replace")
     try:
         return json.loads(output)
     except ValueError as error:
         raise Stopped(f"gh {' '.join(arguments[:3])} printed no JSON: {output[:200]!r}") from error
 
 
-def provisional_additions_only_problem(files, diff):
-    """Return None when the diff passes the checks that need no file, else what makes the pull request need a look."""
-    if len(files) != 1 or not files[0].startswith("docs/issues/"):
-        return f"it changes {len(files)} files ({', '.join(files)}), not exactly one under docs/issues/"
-    lines = diff.split("\n")
-    if f"--- a/{files[0]}" not in lines or f"+++ b/{files[0]}" not in lines:
-        return f"its diff does not change {files[0]} in place: the file is new, renamed or binary"
-    removed = [line for line in lines if line.startswith("-") and line != f"--- a/{files[0]}"]
-    if removed:
-        return f"its diff removes {len(removed)} lines, first {removed[0][:120]!r}"
-    carriage_returns = [line for line in lines if line.startswith("+") and "\r" in line]
-    if carriage_returns:
-        return (f"it adds {len(carriage_returns)} lines holding a carriage return, which Markdown "
-                f"reads as a line break, first {carriage_returns[0][:120]!r}")
-    other_headings = [line for line in lines
-                      if line.startswith("+#") and line != "+" + PROVISIONAL_HEADING]
-    if other_headings:
-        return (f"it adds {len(other_headings)} lines starting \"#\" other than the heading "
-                f"\"{PROVISIONAL_HEADING}\", first {other_headings[0][:120]!r}")
+def markdown_parser():
+    """Return the project's CommonMark parser; raise Stopped when markdown-it-py cannot be loaded."""
+    try:
+        specification = importlib.util.spec_from_file_location(
+            "markdown_commonmark_parser_with_tables_common", MARKDOWN_PARSER_MODULE)
+        module = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+        return module.markdown_parser()
+    except Exception as error:
+        raise Stopped(f"the Markdown parser {MARKDOWN_PARSER_MODULE} could not be loaded: "
+                      f"{error}") from error
+
+
+def changed_file_problem(files):
+    """Return None when the compare's files are one docs/issues/ file changed in place, else why not."""
+    paths = [entry["filename"] for entry in files]
+    if len(paths) != 1 or not paths[0].startswith("docs/issues/"):
+        return f"it changes {len(paths)} files ({', '.join(paths)}), not exactly one under docs/issues/"
+    if files[0]["status"] != "modified":
+        return (f"it does not change {paths[0]} in place: GitHub calls the change "
+                f"\"{files[0]['status']}\"")
     return None
 
 
-def added_lines_outside_section_problem(diff, file_text):
-    """Return None when every added line that is not blank lies in the provisional-additions section of file_text, the file at the nc-head-commit, else why not."""
-    file_lines = file_text.split("\n")
-    heading_lines = [number for number, line in enumerate(file_lines, start=1)
-                     if line == PROVISIONAL_HEADING]
-    if len(heading_lines) != 1:
-        return (f"the file at the nc-head-commit has the heading \"{PROVISIONAL_HEADING}\" "
-                f"{len(heading_lines)} times, not once")
-    section_start = heading_lines[0]
-    section_end = next((number for number, line in enumerate(file_lines, start=1)
-                        if number > section_start and line.startswith("#")),
-                       len(file_lines) + 1)
-    added = []
-    new_line = None
-    for line in diff.split("\n"):
-        hunk = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
-        if hunk:
-            new_line = int(hunk.group(1))
-        elif new_line is not None and line.startswith("+"):
-            added.append((new_line, line[1:]))
-            new_line += 1
-        elif new_line is not None and line.startswith(" "):
-            new_line += 1
-    if not added:
-        return "its diff adds no line"
-    outside = [(number, text) for number, text in added
-               if text.strip() and not section_start <= number < section_end]
-    if outside:
-        number, text = outside[0]
-        return (f"it adds {len(outside)} lines outside the section \"{PROVISIONAL_HEADING}\" "
-                f"(lines {section_start} to {section_end - 1} of the file), first line "
-                f"{number}: {text[:120]!r}")
+def provisional_section(parser, text, where):
+    """Return (lines, headings other than the provisional one, section's first line, line after its end), or a problem string.
+
+    The section's first line is None when the text has no provisional heading; each heading is
+    its tag, its nesting level and its source lines."""
+    lines = text.split("\n")
+    headings = [(token.tag, token.level, "\n".join(lines[token.map[0]:token.map[1]]), token.map[0])
+                for token in parser.parse(text) if token.type == "heading_open"]
+    provisional = [heading for heading in headings if heading[2] == PROVISIONAL_HEADING]
+    if len(provisional) > 1 or (where == "nc-head-commit" and not provisional):
+        return (f"the file at the {where} has the heading \"{PROVISIONAL_HEADING}\" "
+                f"{len(provisional)} times, not once")
+    others = [heading[:3] for heading in headings if heading[2] != PROVISIONAL_HEADING]
+    if not provisional:
+        return lines, others, None, None
+    start = provisional[0][3]
+    end = next((heading[3] for heading in headings if heading[3] > start), len(lines))
+    while end > start + 1 and not lines[end - 1].strip(" \t"):
+        end -= 1
+    while start > 0 and not lines[start - 1].strip(" \t"):
+        start -= 1
+    return lines, others, start, end
+
+
+def provisional_additions_only_problem(parser, base_text, head_text):
+    """Return None when head_text is base_text with lines added only to its provisional-additions section, or with that section added, else why not."""
+    for where, text in (("merge base", base_text), ("nc-head-commit", head_text)):
+        line_break = next((character for character in text
+                           if character in LINE_BREAKS_OTHER_THAN_NEWLINE), None)
+        if line_break is not None:
+            line = text[:text.index(line_break)].count("\n") + 1
+            return (f"the file at the {where} holds U+{ord(line_break):04X} on line {line}, which "
+                    f"Markdown or git reads as a line break where the other does not")
+    if head_text == base_text:
+        return "it does not change the file's text"
+    base = provisional_section(parser, base_text, "merge base")
+    if isinstance(base, str):
+        return base
+    head = provisional_section(parser, head_text, "nc-head-commit")
+    if isinstance(head, str):
+        return head
+    (base_lines, base_headings, base_start, base_end), (head_lines, head_headings, start, end) = base, head
+    if base_headings != head_headings:
+        first = next(index for index in range(max(len(base_headings), len(head_headings)))
+                     if base_headings[index:index + 1] != head_headings[index:index + 1])
+        return (f"it adds, removes or changes a heading other than \"{PROVISIONAL_HEADING}\": "
+                f"heading {first + 1} is {(base_headings[first:first + 1] or ['none'])[0]!r} at the "
+                f"merge base and {(head_headings[first:first + 1] or ['none'])[0]!r} at the "
+                f"nc-head-commit")
+    base_section = base_lines[base_start:base_end] if base_start is not None else []
+    base_outside = (base_lines[:base_start] + base_lines[base_end:] if base_start is not None
+                    else base_lines)
+    head_outside = head_lines[:start] + head_lines[end:]
+    if base_outside != head_outside:
+        first = next(index for index in range(max(len(base_outside), len(head_outside)))
+                     if base_outside[index:index + 1] != head_outside[index:index + 1])
+        return (f"it changes text outside the section \"{PROVISIONAL_HEADING}\" (lines "
+                f"{start + 1} to {end} of the file at the nc-head-commit): the first line that "
+                f"differs is {(base_outside[first:first + 1] or ['none'])[0][:120]!r} at the merge "
+                f"base and {(head_outside[first:first + 1] or ['none'])[0][:120]!r} at the "
+                f"nc-head-commit")
+    head_section = iter(head_lines[start:end])
+    if not all(line in head_section for line in base_section):
+        return (f"it removes or changes a line of the section \"{PROVISIONAL_HEADING}\" instead "
+                f"of only adding lines to it")
     return None
 
 
-def approval_body(path, diff):
-    if ("+" + PROVISIONAL_HEADING) in diff.split("\n"):
+def approval_body(path, section_is_new):
+    if section_is_new:
         section = f"adding a \"{PROVISIONAL_HEADING[3:]}\" section"
     else:
         section = f"adding lines to its existing \"{PROVISIONAL_HEADING[3:]}\" section"
     return (f"Approved by merge-lane-2's scheduled job {PROGRAM}. Prose tier: the pull request "
-            f"changes only {path} (checked against the diff: one file, no lines removed), "
-            f"{section}, the form the user's task-to-GHI sweep asks for. No independent "
+            f"changes only {path} (checked against the file at the merge base and at the "
+            f"nc-head-commit with a CommonMark parser: one file, no other text or heading "
+            f"changed), {section}, the form the user's task-to-GHI sweep asks for. No independent "
             f"reviewer: prose under docs/ is silent to reviewers under CLAUDE.md's review-scope "
             f"rule.")
 
@@ -329,9 +371,15 @@ class Invocation:
         self.record = read_record(self.record_path)
         self.held = read_held_list(self.state_directory / HELD_LIST_NAME)
         self.failed = False
+        self._parser = None
+
+    def parser(self):
+        if self._parser is None:
+            self._parser = markdown_parser()
+        return self._parser
 
     def report(self, pull_request, why, details=""):
-        """Write merge-lane-2's message for this nc-head-commit, then record it."""
+        """Write the needs-a-look notice for merge-lane-2 for this nc-head-commit, then record it."""
         number, head = pull_request["number"], pull_request["headRefOid"]
         messages = needs_a_look_directory(self.arguments.merge_lane_worktrees_and_outputs_directory)
         message = messages / f"pr{number}-{head[:12]}.txt"
@@ -350,11 +398,12 @@ class Invocation:
             messages.mkdir(parents=True, exist_ok=True)
             message.write_text(text, encoding="utf-8")
         except OSError as error:
-            raise Stopped(f"could not write merge-lane-2's message {message} about pull request "
-                          f"{number}: {error}") from error
+            raise Stopped(f"could not write the needs-a-look notice for merge-lane-2 about pull "
+                          f"request {number} at {message}: {error}") from error
         self.record[number] = head
         write_record(self.record_path, self.record)
-        say(f"pull request {number} needs a look ({why}); merge-lane-2's message is {message}")
+        say(f"pull request {number} needs a look ({why}); the needs-a-look notice for "
+            f"merge-lane-2 is at {message}")
 
     def handle(self, pull_request):
         number, head = pull_request["number"], pull_request["headRefOid"]
@@ -363,30 +412,36 @@ class Invocation:
             return
         if self.record.get(number) == head:
             return
-        view = gh_json(self.environment, "pr", "view", str(number), "--repo", REPOSITORY,
-                       "--json", "files,headRefOid")
-        diff = gh(self.environment, "pr", "diff", str(number), "--repo", REPOSITORY)
-        head_after_diff = gh_json(self.environment, "pr", "view", str(number), "--repo",
+        compare = gh_json(self.environment, "api",
+                          f"repos/{REPOSITORY}/compare/{pull_request['baseRefName']}...{head}")
+        problem = changed_file_problem(compare["files"])
+        if not problem:
+            path = compare["files"][0]["filename"]
+            texts = [gh_bytes(self.environment, "api", "-H", "Accept: application/vnd.github.raw+json",
+                              f"repos/{REPOSITORY}/contents/{path}?ref={commit}")
+                     for commit in (compare["merge_base_commit"]["sha"], head)]
+            try:
+                base_text, head_text = (text.decode("utf-8") for text in texts)
+            except UnicodeDecodeError as error:
+                problem = f"{path} is not UTF-8 at its merge base or its nc-head-commit: {error}"
+            else:
+                problem = provisional_additions_only_problem(self.parser(), base_text, head_text)
+        head_after_read = gh_json(self.environment, "pr", "view", str(number), "--repo",
                                   REPOSITORY, "--json", "headRefOid")["headRefOid"]
-        if not (view["headRefOid"] == head == head_after_diff):
+        if head_after_read != head:
             say(f"pull request {number}'s nc-head-commit moved while it was read; left for the "
                 f"next invocation")
             return
-        files = [entry["path"] for entry in view["files"]]
-        problem = provisional_additions_only_problem(files, diff)
-        if not problem:
-            file_text = gh(self.environment, "api", "-H", "Accept: application/vnd.github.raw+json",
-                           f"repos/{REPOSITORY}/contents/{files[0]}?ref={head}")
-            problem = added_lines_outside_section_problem(diff, file_text)
         if problem:
             self.report(pull_request, problem)
             return
+        section_is_new = PROVISIONAL_HEADING not in base_text.split("\n")
         review_tools_worktree_move_to_main(self.arguments.review_tools_worktree_at_main)
         try:
             review = gh_json(self.environment, "api", "--method", "POST",
                              f"repos/{REPOSITORY}/pulls/{number}/reviews",
                              "-f", f"commit_id={head}", "-f", "event=APPROVE",
-                             "-f", f"body={approval_body(files[0], diff)}")
+                             "-f", f"body={approval_body(path, section_is_new)}")
             reviewed_since = review["submitted_at"]
         except (Stopped, KeyError, TypeError) as error:
             self.failed = True
@@ -399,7 +454,7 @@ class Invocation:
             stdin=subprocess.DEVNULL, cwd=CHECKOUT)
         last_lines = "\n".join(merge.stdout.splitlines()[-MERGE_OUTPUT_LINES_IN_MESSAGE:])
         if merge.returncode == 0:
-            say(f"pull request {number} ({files[0]}) merged: "
+            say(f"pull request {number} ({path}) merged: "
                 f"{(merge.stdout.splitlines() or [''])[-1]}")
             return
         self.failed = True
@@ -411,7 +466,7 @@ class Invocation:
     def run(self):
         listed = gh_json(self.environment, "pr", "list", "--repo", REPOSITORY, "--state", "open",
                          "--limit", str(OPEN_PULL_REQUEST_LIST_LIMIT),
-                         "--json", "number,title,headRefOid,isDraft")
+                         "--json", "number,title,headRefOid,isDraft,baseRefName")
         candidates = [pull_request for pull_request in listed
                       if pull_request["title"].startswith(TITLE_PREFIX)
                       and not pull_request["isDraft"]]
@@ -438,7 +493,7 @@ def stopped_message_write(merge_lane_worktrees_and_outputs_directory, error):
             f"{message.parent / HANDLED_MESSAGES_DIRECTORY_NAME} as soon as you have read it, "
             f"then fix the cause.\n", encoding="utf-8")
     except OSError as write_error:
-        say(f"could not write merge-lane-2's message {message}: {write_error}")
+        say(f"could not write the needs-a-look notice for merge-lane-2 at {message}: {write_error}")
 
 
 def main(argv=None):
