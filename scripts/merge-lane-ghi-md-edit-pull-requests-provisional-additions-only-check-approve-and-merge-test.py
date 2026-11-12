@@ -241,8 +241,9 @@ def main():
         code, output = scratch.run()
         check("lines added at the end of an existing section, above the blank line that ends it, "
               "are approved with that section's wording",
-              code == 0 and any("adding lines to its existing" in argument
-                                for argument in approvals(scratch)[0]), f"exit {code}\n{output}")
+              code == 0 and len(approvals(scratch)) == 1
+              and any("adding lines to its existing" in argument
+                      for argument in approvals(scratch)[0]), f"exit {code}\n{output}")
         scratch = Scratch(root, "existing-section-top")
         scratch.routes(routes_for(base_text=SECTION_BASE_TEXT, file_text=SECTION_BASE_TEXT.replace(
             "- old\n", "- new\n- old\n")))
@@ -257,8 +258,9 @@ def main():
             "\n## Next action", "\n" + HEADING + "\n\n- new\n\n## Next action")))
         code, output = scratch.run()
         check("a new section put between two vetted sections is approved with the new-section "
-              "wording", code == 0 and any("adding a \"Provisional additions" in argument
-                                           for argument in approvals(scratch)[0]),
+              "wording", code == 0 and len(approvals(scratch)) == 1
+              and any("adding a \"Provisional additions" in argument
+                      for argument in approvals(scratch)[0]),
               f"exit {code}\n{output}")
 
         # --- every line break other than "\n" is refused, in either text, as a problem
@@ -294,6 +296,24 @@ def main():
                  "## One\n## Two\n" + HEADING + "\n- a\n## Three\n",
                  f"it adds, removes or changes a heading other than \"{HEADING}\": heading 3 is "
                  f"'none' at the merge base and ('h2', 0, '## Three') at the nc-head-commit"),
+                ("a link reference definition already outside the section does not stop lines "
+                 "being added to it",
+                 "## Problem\nSee [x].\n\n[x]: https://example.com\n\n" + HEADING + "\n- a\n",
+                 "## Problem\nSee [x].\n\n[x]: https://example.com\n\n" + HEADING + "\n- a\n- b\n",
+                 None),
+                ("an added link reference definition is named with the one it adds",
+                 "See [x].\n\n" + HEADING + "\n- a\n",
+                 "See [x].\n\n" + HEADING + "\n- a\n\n[x]: https://example.com\n",
+                 f"it adds, removes or changes a Markdown link reference definition, such as "
+                 f"\"[x]: https://example.com\", which renders as nothing and can change where "
+                 f"other links in the file point: definition 1 is 'none' at the merge base and "
+                 f"('X', 'https://example.com', '') at the nc-head-commit"),
+                ("a moved section is named with the line its heading moved from and to",
+                 "## A\na\n\n" + HEADING + "\n- x\n\n## B\nb\n",
+                 "## A\na\n\n## B\nb\n\n" + HEADING + "\n- x\n",
+                 f"it moves the section \"{HEADING}\", whose heading is on line 4 of the file at "
+                 f"the merge base and on line 7 at the nc-head-commit, instead of only adding lines "
+                 f"to it"),
                 ("a removed heading is named the other way round",
                  "## One\n## Two\n" + HEADING + "\n- a\n",
                  "## One\n" + HEADING + "\n- a\n- b\n",
@@ -398,6 +418,31 @@ def main():
                     base_text=SECTION_BASE_TEXT,
                     file_text=SECTION_HEAD_TEXT.replace("- new\n", "- new\n```\n")),
                  "('h2', 0, '## Next action') at the merge base and 'none' at the nc-head-commit"),
+                # The section moves below a vetted section, so the vetted text it sat above now
+                # reads as if it came before the provisional-additions.
+                ("section-moved-below-a-vetted-section", routes_for(
+                    base_text="## A\na\n\n" + HEADING + "\n- x\n\n## B\nb\n",
+                    file_text="## A\na\n\n## B\nb\n\n" + HEADING + "\n- x\n"),
+                 "it moves the section"),
+                ("section-moved-with-a-line-added", routes_for(
+                    base_text="## A\na\n\n" + HEADING + "\n- x\n\n## B\nb\n",
+                    file_text="## A\na\n\n## B\nb\n\n" + HEADING + "\n- x\n- y\n"),
+                 "it moves the section"),
+                ("link-reference-definition-added", routes_for(
+                    base_text=SECTION_BASE_TEXT,
+                    file_text=SECTION_HEAD_TEXT.replace("- new\n", "- new\n\n[x]: https://example.com\n")),
+                 "Markdown link reference definition"),
+                # A later definition of a label already defined changes no link, but renders as
+                # nothing, so a reader of the rendered issue never sees the line.
+                ("link-reference-definition-repeating-a-label", routes_for(
+                    base_text="See [x].\n\n[x]: https://a.example\n\n" + HEADING + "\n- a\n",
+                    file_text=("See [x].\n\n[x]: https://a.example\n\n" + HEADING
+                               + "\n- a\n\n[x]: https://b.example\n")),
+                 "Markdown link reference definition"),
+                ("link-reference-definition-in-a-list-item", routes_for(
+                    base_text=SECTION_BASE_TEXT,
+                    file_text=SECTION_HEAD_TEXT.replace("- new\n", "- [x]: https://example.com\n")),
+                 "Markdown link reference definition"),
                 ("not-utf-8", routes_for(head_bytes_hex=(PASSING_FILE_TEXT.encode() + b"\xff\n").hex()),
                  "docs/issues/9-x.md is not UTF-8")):
             scratch = Scratch(root, name)
