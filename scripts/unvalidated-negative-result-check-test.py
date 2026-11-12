@@ -217,10 +217,23 @@ check("S2 still warns of a grep whose own 2>/dev/null hid its refusal, when anot
       hidden_and_shown.signals == [PATTERN_TOO_COMPLEX] and len(hidden_and_shown.causes) == 1
       and "notes.md" not in hidden_and_shown.causes[0].instruction,
       f"{hidden_and_shown.signals} {[cause.instruction for cause in hidden_and_shown.causes]}")
+shown_after_stdout_and_stderr_sent_away = judge(
+    f"{refused_grep} notes.md >/dev/null 2>&1; {refused_grep} other.md", exit_code=2,
+    output="ugrep: error at position 9: exceeds complexity limits\n")
+check("S2 still warns of a grep whose >/dev/null 2>&1 hid its refusal, when another grep's "
+      "refusal was shown",
+      shown_after_stdout_and_stderr_sent_away.signals == [PATTERN_TOO_COMPLEX]
+      and len(shown_after_stdout_and_stderr_sent_away.causes) == 1,
+      f"{shown_after_stdout_and_stderr_sent_away.signals}")
+check("S2 stays silent for a grep whose 2>/dev/null 2>&1 left its shown refusal on the screen",
+      not judge(f"{refused_grep} notes.md 2>/dev/null 2>&1", exit_code=2,
+                output="ugrep: error at position 9: exceeds complexity limits\n").fires)
 for redirect, sent_away in (("2>/dev/null", True), ("2>>log", True), ("&>/dev/null", True),
                             ("&>>log", True), (">&/dev/null", True), ("2>&-", True),
                             ("2>&1", False), (">&2", False), ("1>&2", False), (">out", False),
-                            ("", False)):
+                            ("", False), (">/dev/null 2>&1", True), ("2>&1 >/dev/null", False),
+                            ("2>/dev/null 2>&1", False), ("2>&2", False),
+                            ("2>/dev/stdout", False), ("2>/dev/null >&2", True)):
     command = check_module.split_into_simple_commands_with_the_machine_and_directory_each_runs_in(
         f"grep needle notes.md {redirect}", "/work")[0]
     check(f"`{redirect}` sends stderr away: {sent_away}",

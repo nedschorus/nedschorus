@@ -482,13 +482,39 @@ def agents_grep_options_and_patterns_without_file_names(command, machines, unche
     return kept
 
 
+REDIRECT_OPERATOR = re.compile(r"(\d*)(>>|>\||>&|<&|>|<>|<)(-?)")
+
+
 def does_command_own_redirect_send_stderr_elsewhere_than_stdout(command):
-    """Whether the command's own redirect sends its stderr anywhere but its stdout."""
-    # >&2 copies stdout onto stderr; only >& with a file name moves stderr too.
-    return any(operator.startswith("&>")
-               or operator.startswith("2>") and (operator, target) != ("2>&", "1")
-               or operator == ">&" and not target.isdigit()
-               for operator, target in command.redirects)
+    """Whether the command's own redirects, read in order as bash applies them, leave its stderr
+    pointing anywhere but the stdout the command started with, which the agent is shown."""
+    shown, closed = "shown", "closed"
+    points_to = {1: shown, 2: shown}
+    for operator, target in command.redirects:
+        if operator in ("&>", "&>>") or operator == ">&" and not target.isdigit() and target != "-":
+            points_to[1] = points_to[2] = ("file", target)
+            continue
+        match = REDIRECT_OPERATOR.fullmatch(operator)
+        if not match:
+            continue  # A here-document or here-string feeds stdin only.
+        number, kind, dash = match.groups()
+        fd = int(number) if number else (0 if kind.startswith("<") else 1)
+        if kind in (">&", "<&"):
+            if dash or target in ("-", ""):
+                points_to[fd] = closed
+            elif target.isdigit():
+                points_to[fd] = points_to.get(int(target), closed)
+            continue
+        if kind == "<":
+            points_to[fd] = ("input", target)
+            continue
+        special = re.fullmatch(r"/dev/(?:std(out|err)|fd/(\d+))", target)
+        if special:
+            source = {"out": 1, "err": 2}.get(special.group(1)) or int(special.group(2))
+            points_to[fd] = points_to.get(source, closed)
+        else:
+            points_to[fd] = ("file", target)
+    return points_to[2] != shown
 
 
 def pattern_too_complex_causes(placed, machines, unchecked, output=""):
