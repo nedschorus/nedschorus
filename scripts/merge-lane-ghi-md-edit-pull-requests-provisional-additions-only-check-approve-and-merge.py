@@ -19,7 +19,8 @@ draft pull request, is not on the held list and has not already been
 reported at its nc-head-commit, reads the file it changes at its merge base
 and at its nc-head-commit, and passes it when all of these hold:
   - it changes exactly one file, and that file is under docs/issues/ and
-    is neither new nor renamed;
+    is changed in place, which GitHub's compare calls "modified": a file
+    the pull request adds, renames or deletes is reported;
   - neither text holds a character that Markdown or git reads as a line
     break other than "\n", such as a carriage return or a form feed;
   - the text at the nc-head-commit holds the line
@@ -27,25 +28,36 @@ and at its nc-head-commit, and passes it when all of these hold:
     once, and the text at the merge base holds it at most once;
   - its other headings, as a CommonMark parser finds them, are the merge
     base's, one for one, so the pull request adds, removes and changes no
-    other heading;
+    other heading of any level, a "###" heading inside the section included;
   - its link reference definitions, such as "[x]: https://example.com", as
     the CommonMark parser finds them, are the merge base's, one for one,
     because a definition renders as nothing and can change where other
     links in the file point;
-  - with the section under that heading taken out of both texts, they are
-    the same; when the merge base has the section, it starts at the same
-    place in what is left, so the pull request does not move it; and the
-    section at the nc-head-commit holds every line of the merge base's
-    section, in order. The section
-    runs from the heading to the next heading, without the blank lines
-    that end it and with the blank lines just before it;
+  - the section is taken out of the text at the nc-head-commit, and out of
+    the text at the merge base when that text has the section, and what is
+    left of the two texts is the same; when the merge base has the section,
+    the section starts on the same line of the file in both texts, so the
+    pull request does not move it; and the section at the nc-head-commit
+    holds every line of the merge base's section, in order. The section
+    starts at the first of the blank lines just above the heading, or at
+    the heading when no blank line is there, and ends at its last line that
+    is not blank before the next heading of any level, or before the end of
+    the file. The blank lines above the heading are the section's, so a
+    pull request may add blank lines there; the blank lines after the
+    section are part of what is left;
   - the text at the nc-head-commit differs from the text at the merge base.
+Each pull request is read in turn, after the merges of the pull requests
+before it in the same invocation, but is checked against its own merge
+base, not against the main those merges made. When an earlier merge makes it
+conflict with main, its merge fails and it is reported; when the two merge
+without a conflict, such as two pull requests that each add the section at a
+different place in one file, nothing checks the file main ends up with.
 A passing pull request is approved as ned-review-merge, pinned to the
 nc-head-commit that was read, and merged by running
 merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py
 from the checkout this program is in, with the approval's time as the
-reviewed-since time. The merge's merge-gate.sh runs from this program's own
-review tools worktree, by default
+reviewed-since time. That merge program runs scripts/merge-gate.sh from this
+program's own review tools worktree, by default
 ~/.cache/merge-lane-review-worktrees/merge-lane-ghi-md-edit-pull-requests-check-approve-and-merge-review-tools-worktree-at-main, which is
 made when missing and moved to origin/main before each merge, so no review
 merge-lane-2 is running uses it.
@@ -56,17 +68,21 @@ needs-a-look/pr<number>-<first 12 characters of the nc-head-commit>.txt under
 the state directory, <merge-lane-worktrees-and-outputs-directory>/merge-lane-ghi-md-edit-pull-requests-check-approve-and-merge-hold-list-reported-heads-and-needs-a-look-messages,
 by default /home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/merge-lane-ghi-md-edit-pull-requests-check-approve-and-merge-hold-list-reported-heads-and-needs-a-look-messages.
 merge-lane-2's watcher, scripts/watch-open-pull-requests-nbd.py, prints one
-event line for each file in needs-a-look/, taking the directory from
-needs_a_look_directory() here, at every start until the file is moved;
-merge-lane-2 moves the file into needs-a-look/handled/ as soon as it has
-read it, and handles the pull request after. Whether a pull
+event line for each file in needs-a-look/ at every start until the file is
+moved; the watcher loads this program by its path and calls its function
+needs_a_look_directory() for the directory. merge-lane-2 moves the file into
+needs-a-look/handled/ as soon as it has read it, and handles the pull
+request after. Whether a pull
 request was reported is read from reported-nc-head-commits.json alone, never
 from the files, so moving a file does not report its pull request again.
 reported-nc-head-commits.json in the state
 directory records the nc-head-commit each message was written for: a
 reported pull request is left alone, never approved, merged or reported
 again, until its nc-head-commit changes. A pull request that is no longer
-open is dropped from that record.
+open is dropped from that record. The program has no command that makes it
+check a reported pull request again at the same nc-head-commit: such a pull
+request is merged or closed by merge-lane-2, or gets a new nc-head-commit
+from its author.
 
 The held list is held-pull-requests.txt in the state directory, which
 merge-lane-2 edits: one pull request number to a line, with blank lines and
@@ -74,8 +90,10 @@ lines starting "#" ignored. A held pull request is neither merged nor
 reported. The program reads no project-wide merge pause, because the
 repository has none; removing its cron line stops it altogether.
 
-An invocation that stops, exit 2 below, also writes its reason to
-needs-a-look/invocation-stopped.txt, which each later stop replaces.
+An invocation that stops, exit 2 below, also writes its reason and the time
+it stopped to needs-a-look/invocation-stopped.txt, which each later stop
+replaces. A later invocation that does not stop leaves the file where it is,
+so merge-lane-2 checks whether the cause is still there before fixing it.
 
 Two invocations never overlap: each takes an exclusive flock on .lock in the
 state directory without waiting, and an invocation that finds it held prints
@@ -83,7 +101,9 @@ so and exits 0, because a merge and its after-merge test run can outlast 5
 minutes.
 
 What it does not handle: it does not retry a failed approval or merge at the
-same nc-head-commit; merge-lane-2 handles that pull request by hand. An
+same nc-head-commit; merge-lane-2 handles that pull request by hand. A
+failed approval or merge is reported and the invocation goes on to the next
+pull request. An
 approval whose merge then fails stays on the pull request.
 
 Output: one line for each pull request merged, held or reported, and each
@@ -92,10 +112,14 @@ failure; nothing when there is nothing to do. Cron appends the output to
 
 Exit codes: 0 every pull request was merged, skipped or reported; 1 one or
 more approvals or merges failed, each reported to merge-lane-2; 2 the
-invocation stopped before handling every pull request, because the lock,
-the held list, the record, the merge account's token, a gh read, the
-Markdown parser, the review tools worktree or a message file could not be
-read, loaded or written, or the held list or the record is malformed.
+invocation stopped before handling every pull request, and the pull request
+it was handling, if any, and those after it wait for the next invocation,
+because the lock file could
+not be opened, the held list, the record, ned-review-merge's token in
+~/.config/nedschorus/ned-review-merge.token, a gh read, the Markdown parser,
+the review tools worktree or a message file could not be read, loaded or
+written, the held list or the record is malformed, or anything else raised
+an exception the program does not expect, whose traceback goes to the log.
 """
 
 import argparse
@@ -105,6 +129,7 @@ import json
 import os
 import subprocess
 import sys
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -553,6 +578,13 @@ def main(argv=None):
         except (Stopped, common.MergeAccountTokenUnusable) as error:
             say(f"STOPPED: {error}")
             stopped_message_write(arguments.merge_lane_worktrees_and_outputs_directory, error)
+            return EXIT_STOPPED
+        except Exception as error:
+            traceback.print_exc()
+            stop = (f"unexpected {type(error).__name__}: {error}; the traceback is in this "
+                    f"program's output, which cron appends to ~/.claude/{PROGRAM}.log")
+            say(f"STOPPED: {stop}")
+            stopped_message_write(arguments.merge_lane_worktrees_and_outputs_directory, stop)
             return EXIT_STOPPED
 
 

@@ -354,6 +354,12 @@ def main():
                  "does not change docs/issues/9-x.md in place: GitHub calls the change \"added\""),
                 ("renamed-file", routes_for(files=[dict(FILE[0], status="renamed")]),
                  "GitHub calls the change \"renamed\""),
+                ("deleted-file", routes_for(files=[dict(FILE[0], status="removed")]),
+                 "GitHub calls the change \"removed\""),
+                ("subheading-added-inside-the-section", routes_for(
+                    base_text=SECTION_BASE_TEXT,
+                    file_text=SECTION_HEAD_TEXT.replace("- new\n", "- new\n\n### Details\n")),
+                 "('h3', 0, '### Details') at the nc-head-commit"),
                 ("adds-nothing", routes_for(file_text=BASE_TEXT), "does not change the file's text"),
                 ("heading-missing", routes_for(file_text=PASSING_FILE_TEXT.replace(HEADING, "x")),
                  "at the nc-head-commit has the heading \"" + HEADING + "\" 0 times, not once"),
@@ -548,6 +554,37 @@ def main():
                   code == 1 and f"exited {merge_exit}: {outcome}" in message
                   and "merge line one\nmerge line two\nmerge program last line" in message
                   and scratch.record() == {"9": HEAD}, f"exit {code}\n{output}\n{message}")
+
+        scratch = Scratch(root, "approval-refused-then-next-merged")
+        refused, passing = routes_for(review_exit=1), routes_for(number=10, head=NEW_HEAD)
+        scratch.routes({**refused, **passing, "pr list": {"out": listed(
+            (9, "GHI-MD edit for issue 9: t", HEAD, False),
+            (10, "GHI-MD edit for issue 10: t", NEW_HEAD, False))}})
+        code, output = scratch.run()
+        check("a refused approval on one pull request is reported and the next pull request is "
+              "still merged, exit 1",
+              code == 1 and scratch.messages() == [f"pr9-{HEAD[:12]}.txt"]
+              and [merge[:2] for merge in scratch.merge_calls()] == [["10", NEW_HEAD]],
+              f"exit {code}\n{output}")
+
+        scratch = Scratch(root, "unexpected-exception")
+        scratch.routes(routes_for())
+        saved_section = program.provisional_section
+
+        def section_raising(*arguments):
+            raise KeyError("map")
+        program.provisional_section = section_raising
+        try:
+            code, output = scratch.run()
+        finally:
+            program.provisional_section = saved_section
+        check("an unexpected exception stops the invocation before any approval, exit 2, prints "
+              "the traceback and tells merge-lane-2 the exception's type",
+              code == 2 and approvals(scratch) == [] and scratch.merge_calls() == []
+              and scratch.record() is None and "Traceback" in output
+              and scratch.messages() == ["invocation-stopped.txt"]
+              and "KeyError: 'map'" in scratch.message("invocation-stopped.txt"),
+              f"exit {code}\n{output}\n{scratch.messages()}")
 
         scratch = Scratch(root, "contents-fails")
         scratch.routes(routes_for(contents_exit=1))
