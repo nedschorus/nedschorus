@@ -1477,7 +1477,7 @@ def run_parallel_mutant_workers_cases_with_fake_cosmic_ray_package():
 
 
 def run_parallel_mutant_workers_case_with_real_cosmic_ray():
-    venv = Path.home() / ".local" / "share" / "nedschorus" / "cosmic-ray-venv"
+    venv = load_script_module().DEFAULT_COSMIC_RAY_VENV
     if not (venv / "bin" / "cosmic-ray").is_file():
         print(f"SKIP  [this machine cannot run it] the parallel workers with the real cosmic-ray: "
               f"no cosmic-ray venv at {venv}")
@@ -1529,8 +1529,6 @@ def run_parallel_mutants_and_kept_sessions_cases():
     flag = load_script_module().PARALLEL_MUTANT_WORKERS_FLAG
     kept_flag = load_script_module().COSMIC_RAY_SESSIONS_DIRECTORY_KEPT_TO_RESUME_FLAG
     for case_name, flags, wanted in [
-        ("--parallel-mutant-workers without --cosmic-ray-venv", [flag, "2"],
-         "--parallel-mutant-workers needs --cosmic-ray-venv"),
         ("--parallel-mutant-workers 0", [flag, "0", "--cosmic-ray-venv", "/nowhere"],
          "--parallel-mutant-workers needs a count of 1 or more"),
     ]:
@@ -2386,19 +2384,31 @@ def run_cases():
                                "--cosmic-ray-venv", str(empty_venv))
         check("cosmic-ray missing from the given venv: exit 2, saying how to install it",
               completed.returncode == 2
-              and "pip install cosmic-ray" in completed.stderr
-              and "--cosmic-ray-venv" in completed.stderr
+              and f"python3 -m venv {empty_venv}\n" in completed.stderr
+              and f"{empty_venv}/bin/pip install cosmic-ray==" in completed.stderr
               and str(empty_venv / "bin") in completed.stderr,
               f"rc={completed.returncode} err={completed.stderr}")
-        git_directory = str(Path(subprocess.run(["which", "git"], capture_output=True,
-                                                text=True).stdout.strip()).parent)
+        home = Path(scratch_name) / "home"
+        home.mkdir()
+        default_venv = home / ".local" / "share" / "nedschorus" / "cosmic-ray-venv"
         completed = run_script(repository, control, "--head", head, "--base", base,
-                               path_override=git_directory)
-        check("cosmic-ray missing from PATH with no venv given: exit 2, naming PATH",
-              completed.returncode == 2 and "is not on PATH" in completed.stderr,
+                               extra_environment={"HOME": str(home)})
+        check("no venv given, and none in the home directory: exit 2, saying how to build the "
+              "lasting one there, not in /tmp/cosmic-ray-venv",
+              completed.returncode == 2
+              and f"python3 -m venv {default_venv}\n" in completed.stderr
+              and f"{default_venv}/bin/pip install cosmic-ray==" in completed.stderr
+              and "/tmp/cosmic-ray-venv" not in completed.stderr,
               f"rc={completed.returncode} err={completed.stderr}")
         check("no worktree is made when cosmic-ray is missing",
               len(worktrees_of(repository)) == 1, worktrees_of(repository))
+        default_venv.parent.mkdir(parents=True)
+        (Path(scratch_name) / "venv").rename(default_venv)
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               extra_environment={"HOME": str(home)})
+        check("no venv given: cosmic-ray is run from the venv in the home directory",
+              completed.returncode == 0 and calls(control),
+              f"rc={completed.returncode} err={completed.stderr}")
 
     # ------------------------------------------------------------------
     # The baseline fails: exit 2, nothing mutated, worktree removed.

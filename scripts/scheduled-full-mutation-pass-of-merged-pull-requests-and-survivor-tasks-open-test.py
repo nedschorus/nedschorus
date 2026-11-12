@@ -1702,7 +1702,7 @@ def run_cases():
         completed = fixture.run()
         check("no cosmic-ray in the venv: exit 4, nothing tested, and the install command named",
               completed.returncode == job.EXIT_STEP_FAILED and fixture.calls() == []
-              and f"bin/pip install cosmic-ray=={job.COSMIC_RAY_VERSION}" in completed.stderr,
+              and f"bin/pip install cosmic-ray=={job.mutation_testing.COSMIC_RAY_VERSION}" in completed.stderr,
               f"rc={completed.returncode} err={completed.stderr}")
 
     # A fetch that fails.
