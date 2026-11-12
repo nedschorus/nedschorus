@@ -1989,6 +1989,22 @@ check("a wall clock that jumps past the search-file guard's budget mid-reading l
 check("a wall clock that jumps past the search-file guard's budget mid-reading leaves its main() verdict as is",
       through_main == ["refused", 0], through_main)
 
+# The guard reads its clock once per glob word that matches nothing, so 6000 such words read it more often than
+# the budget's 5000 reads allow; a clock that did not advance would let the reading pass.
+budget_command = "grep x " + " ".join(["zz*"] * 6000)
+with tempfile.TemporaryDirectory() as budget_directory:
+    try:
+        past_budget = replay.read_search_file(search_file_guard, budget_command, None, budget_directory)[0]
+    except Exception as error:
+        past_budget = f"EXCEPTION {type(error).__name__}"
+    past_budget_through_main = replay.search_file_main_outcome(search_file_guard, budget_command, budget_directory)
+check("a search-file reading that reads the replay's clock more often than the budget allows spends the budget",
+      past_budget == "EXCEPTION ExpansionBudgetSpent", past_budget)
+check("a search-file main() reading that reads the replay's clock more often than the budget allows lets the "
+      "command through with the over-the-limit note",
+      past_budget_through_main[0] == ["let through with a note", 0]
+      and "longer than the guard's" in (past_budget_through_main[1] or ""), past_budget_through_main)
+
 if failures:
     print(f"{len(failures)} failed")
     sys.exit(1)
