@@ -20,16 +20,20 @@ nc-systems/general-tools/scheduled-jobs-on-each-machine.json.
 
 WHAT ONE RUN DOES, in order.
 
-  1. Makes a scratch clone holding the hook and the two modules it loads,
-     with one commit, in a temporary directory.
+  1. Makes a scratch clone holding the hook and the four modules it needs:
+     nc-systems/handoff/uncommitted-work-snapshots.py and
+     scripts/worktree-owner-file-read-and-write.py, which the hook loads, and
+     the two nc-systems/general-tools/ modules the first of those loads. The
+     clone has one commit and sits in a temporary directory.
   2. Runs `claude -p` on Haiku from that clone, with the hook registered for
      Bash calls through --settings, and asks it to run one shell command that
-     writes LIVE_CHECK_FILE_NAME.
+     writes the file live-check.txt.
   3. Checks that claude exited 0 with a result that is not an error; that the
      clone has exactly one work-snapshot; that the work-snapshot holds the
      file; that its owner key names the process this program started as
      claude; and that its transcript trailer names claude's session id.
-  4. Writes the record, the day's lines below, to the log-store:
+  4. Writes the record, a header line, step 3's PASS and FAIL lines and a
+     VERDICT line, to the log-store:
      nedlern@ned-box:/home/nedlern/nedschorus-logs/uncommitted-work-snapshot-hook-scheduled-checks-that-real-claude-session-is-recorded-as-owner/<machine>/<YYYY-MM-DD>.txt,
      where <machine> is ned-box or mac and the date is in America/Los_Angeles;
      from the Mac it is written over ssh.
@@ -53,7 +57,10 @@ schedule is made.
   the Mac: a launchd job at the same time; a run missed while the Mac
   sleeps starts at the next wake.
 
-A record that could not be written leaves the run's lines in that log file.
+Both jobs append their output to
+~/.claude/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.log
+on their own machine, so a record that could not be written leaves the run's
+lines there.
 """
 
 import argparse

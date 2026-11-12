@@ -338,6 +338,17 @@ def test_the_record_goes_to_the_log_store_by_default():
         mark.this_machine_is_ned_box, mark.run_on_ned_box_or_here = real
 
 
+def test_the_records_directory_is_the_kind_the_log_store_readme_names():
+    # The test above builds its path from the constant, so it cannot catch the constant
+    # drifting from the kind name the log-store README lists.
+    readme_source = (REPOSITORY_ROOT / "nc-systems" / "cold-read"
+                     / "cold-read-record-ship.py").read_text(encoding="utf-8")
+    kind_line = f"- `{owner_check.RECORDS_KIND_DIRECTORY_NAME}/` -- "
+    check(kind_line in readme_source,
+          "the records directory is a kind the log-store README in cold-read-record-ship.py "
+          "lists", kind_line)
+
+
 def test_a_scratch_clone_that_cannot_be_made_fails():
     broken = SCRATCH / "broken-gitconfig"
     broken.write_text("[unclosed\n")
@@ -420,6 +431,7 @@ def main():
                      test_an_interrupted_check_kills_claude_and_removes_its_scratch_clone,
                      test_an_interruption_after_claude_was_reaped_still_propagates,
                      test_the_record_goes_to_the_log_store_by_default,
+                     test_the_records_directory_is_the_kind_the_log_store_readme_names,
                      test_a_scratch_clone_that_cannot_be_made_fails,
                      test_the_scratch_clone_holds_the_owner_file_module_the_hook_loads,
                      test_a_check_that_cannot_run_fails,
