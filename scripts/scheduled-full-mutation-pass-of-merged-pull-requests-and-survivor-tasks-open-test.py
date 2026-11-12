@@ -2060,12 +2060,17 @@ def run_cases():
               completed.returncode == job.EXIT_STEP_FAILED
               and "a key holds the wrong type" in completed.stderr, completed.stderr)
         fixture.set_last("0" * 40)
+        state_text = (fixture.state / job.STATE_FILE_NAME).read_text()
         completed = fixture.run()
         check("a state file naming a commit not on origin/main: exit 4, saying how to fix it",
               completed.returncode == job.EXIT_STEP_FAILED
               and "is not an ancestor of origin/main" in completed.stderr
               and "Set last_tested_main_commit" in completed.stderr
               and "the next run tests the merges after it" in completed.stderr, completed.stderr)
+        # The state is written indented, and set_last wrote it compact, so a rewrite shows.
+        check("a run that loses no task and changes no state leaves the state file as it was",
+              (fixture.state / job.STATE_FILE_NAME).read_text() == state_text,
+              (fixture.state / job.STATE_FILE_NAME).read_text())
 
     # No cosmic-ray venv, with merges to test.
     with tempfile.TemporaryDirectory() as scratch:
