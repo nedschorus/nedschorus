@@ -135,7 +135,6 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/obsolete-file-edit-warning-hook-test.py": 6,
     "scripts/open-iterm-window-running-command-test.py": 3,
     "scripts/post-compaction-session-continues-hook-test.py": 1,
-    "scripts/pr-reviewer-instructions-copies-test.py": 5,
     "scripts/recover-crashed-seats-test.py": 170,
     "scripts/recover-crashed-seats.py": 32,
     "scripts/restart-live-seats-at-login-test.py": 39,
