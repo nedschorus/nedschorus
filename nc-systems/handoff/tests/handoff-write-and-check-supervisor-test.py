@@ -351,6 +351,9 @@ def check_cannot_tell(result, workspace: Path, situation: str):
           and "keep working" not in result.stdout, result.stdout + result.stderr)
     check(f"{situation}, the agent is told not to rerun", "Do not rerun" in result.stderr,
           result.stderr)
+    check(f"{situation}, resupervise-seat.py is to be run on the Mac, where it works for a seat of either machine",
+          "--machine ubuntu` in a Terminal on the Mac" in result.stderr
+          or "--machine mac` in a Terminal on the Mac" in result.stderr, result.stderr)
 
 
 def run_liveness_report_cases(workspace: Path):
@@ -367,6 +370,9 @@ def run_liveness_report_cases(workspace: Path):
           "resupervise-seat.py tester --machine " in result.stdout
           and str(workspace / "tester-handoff.md") in result.stdout,
           result.stdout)
+    check("with no supervisor, resupervise-seat.py is to be run on the Mac, where it works for a seat of either machine",
+          "run, in a Terminal on the Mac, `scripts/resupervise-seat.py tester --machine " in result.stdout
+          and "on the ubuntu machine" not in result.stdout, result.stdout)
     check("with no supervisor, the by-hand relaunch is named as the wrong path",
           "another unsupervised seat" in result.stdout, result.stdout)
     check("no supervisor is started for an unseated session",
