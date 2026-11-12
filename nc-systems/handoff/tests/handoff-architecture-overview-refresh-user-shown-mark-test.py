@@ -197,12 +197,13 @@ def run_mark_cases(workspace: Path):
           f"{code} {refused.mark_files()} {calls!r} {stdout!r}")
     check("the refusal says nothing was written, and what to pass",
           stderr == "handoff-architecture-overview-refresh-user-shown-mark: 'docs/nedschorus-wiki/"
-          "nedschorus-handoff-architecture-overview.md' was refused as a system's name, so no "
-          f"mark was written in nedlern@ned-box:{refused.marks}/: a system's name is the name "
-          "of its directory under nc-systems/ without the nc-systems/ prefix, such as handoff, "
+          "nedschorus-handoff-architecture-overview.md' was refused as an overview's name, so no "
+          f"mark was written in nedlern@ned-box:{refused.marks}/: an overview's name is a system's "
+          "directory name under nc-systems/, such as handoff, <system>-<subsystem> for a "
+          "subsystem, or project, "
           "starting with a letter or digit and holding only letters, digits, '-' and '_' "
           "(only these characters are checked, not whether the directory exists).\n"
-          "Run this again with the system's name that the handoff-supervisor's overview "
+          "Run this again with the name that the handoff-supervisor's overview "
           "refresh reminder gave, such as: python3 "
           "nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py handoff\n",
           stderr)

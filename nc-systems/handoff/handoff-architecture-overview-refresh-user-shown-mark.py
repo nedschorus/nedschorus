@@ -74,8 +74,10 @@ def main(argv=None, now=None) -> int:
     parser = argparse.ArgumentParser(
         prog=PROGRAM,
         description="Record that the user has been shown today's refresh of one "
-                    "system's overview.")
-    parser.add_argument("system", help="the system's directory name under nc-systems/")
+                    "nc-architecture-overview.")
+    parser.add_argument("system", help="the name the handoff-supervisor's overview refresh reminder "
+                                       "gave: a system's directory name under nc-systems/, "
+                                       "<system>-<subsystem> for a subsystem, or project")
     # A retry carries the day the user was shown the refresh, so a retry after that
     # Pacific day cannot mark a day on which the user saw nothing.
     parser.add_argument("--shown-on-pacific-date", type=date.fromisoformat, default=None,
@@ -85,13 +87,13 @@ def main(argv=None, now=None) -> int:
     marks_directory_citation = (f"{handoff_user_review_of_agent_memory_stores_mark.NED_BOX_SSH_TARGET}:"
                                 f"{DAILY_OVERVIEW_REFRESH_REMINDER_MARKS_DIRECTORY}/")
     if not re.fullmatch(SYSTEM_NAME_PATTERN, arguments.system):
-        print(f"{PROGRAM}: {arguments.system!r} was refused as a system's name, so no mark "
-              f"was written in {marks_directory_citation}: a system's name is the name "
-              f"of its directory under nc-systems/ without the nc-systems/ prefix, such as "
-              f"handoff, starting with a letter or digit and holding only letters, digits, "
+        print(f"{PROGRAM}: {arguments.system!r} was refused as an overview's name, so no mark "
+              f"was written in {marks_directory_citation}: an overview's name is a system's "
+              f"directory name under nc-systems/, such as handoff, <system>-<subsystem> for a "
+              f"subsystem, or project, starting with a letter or digit and holding only letters, digits, "
               f"'-' and '_' (only these characters are checked, not whether the directory "
               f"exists).\n"
-              f"Run this again with the system's name that the handoff-supervisor's overview "
+              f"Run this again with the name that the handoff-supervisor's overview "
               f"refresh reminder gave, "
               f"such as: python3 {PROGRAM_PATH} handoff", file=sys.stderr)
         return 2

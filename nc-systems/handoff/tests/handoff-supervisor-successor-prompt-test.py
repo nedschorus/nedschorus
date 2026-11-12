@@ -1387,9 +1387,118 @@ def run_overview_check_git_output_cases(workspace: Path):
         git_output.run_git = real_run_git
     check("a failed ls-tree stops the check with a printed line naming it, and no line is due",
           due == () and "handoff-supervisor: overview check stopped: GitCommandFailed: "
-          "git ls-tree -z -d --name-only " in console.getvalue()
+          "git ls-tree -r -z -d --name-only " in console.getvalue()
           and "stub: ls-tree failed" in console.getvalue(),
           f"{due!r}\n{console.getvalue()}")
+
+
+def run_overview_refresh_hierarchy_cases(workspace: Path):
+    """The project overview and a subsystem's overview get refresh lines of
+    their own, each for what the page on writing an nc-architecture-overview
+    says makes it due."""
+    repository = workspace / "overview-refresh-hierarchy"
+    repository.mkdir()
+    git_in(["init", "--quiet", "--initial-branch=main"], repository)
+    git_in(["config", "user.name", "fixture"], repository)
+    git_in(["config", "user.email", "fixture@nedschorus.invalid"], repository)
+
+    def commit(texts_by_path, message):
+        for relative, text in texts_by_path.items():
+            path = repository / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        git_in(["add", "-A"], repository)
+        git_in(["commit", "--quiet", "-m", message], repository)
+        return git_in(["rev-parse", "HEAD"], repository).stdout.strip()
+
+    def publish():
+        git_in(["update-ref", "refs/remotes/origin/main", "HEAD"], repository)
+        return git_in(["rev-parse", "--short", "HEAD"], repository).stdout.strip()
+
+    def checked_line(sha):
+        return (f"**Checked against:** commit [{sha}]"
+                f"(https://github.com/nedschorus/nedschorus/commit/{sha})")
+
+    def overview(title, purpose, sha):
+        return f"# {title}\n\n## Purpose\n\n{purpose}\n\n## Components\n\n- x\n\n{checked_line(sha)}\n"
+
+    def due_lines():
+        due = overview_refresh_due_or_missing(repository)
+        return {line.split(" — ", 1)[0]: line for line in due} if isinstance(due, tuple) else due
+
+    wiki = "docs/nedschorus-wiki/"
+    project = wiki + "nedschorus-project-architecture-overview.md"
+    tools = wiki + "nedschorus-general-tools-architecture-overview.md"
+    walk = wiki + "nedschorus-general-tools-walk-me-through-architecture-overview.md"
+    landed = commit({"nc-systems/general-tools/tool.py": "print(1)\n",
+                     "nc-systems/general-tools/walk-me-through/walk.py": "print(1)\n",
+                     "nc-systems/general-tools/explain/explain.py": "print(1)\n"}, "code lands")
+    # As the page has a writer order them: an overview names a commit that already holds its subsystems' overviews.
+    walk_written = commit({walk: overview("Walk", "Walks.", landed)}, "the subsystem's overview, checked")
+    commit({project: overview("The project", "It does everything.", walk_written),
+            tools: overview("General tools", "Tools.", walk_written)}, "the system's and project's overviews, checked")
+    publish()
+    check("no overview is due while nothing it watches has moved", due_lines() == {}, repr(due_lines()))
+
+    moved = commit({"nc-systems/general-tools/walk-me-through/walk.py": "print(2)\n"}, "the walk grows")
+    main = publish()
+    due = due_lines()
+    subsystem_line = due.get("overview refresh due: general-tools-walk-me-through", "")
+    check("a change in a subsystem's directory makes its overview due, named for its path, with its own draft",
+          subsystem_line.startswith(
+              "overview refresh due: general-tools-walk-me-through — 1 commit(s) under "
+              f"nc-systems/general-tools/walk-me-through/ since the commit its overview was checked against, in {landed[:7]}")
+          and "docs/nedschorus-wiki/queue/nedschorus-general-tools-walk-me-through-architecture-overview-draft.md"
+          in subsystem_line
+          and f"`git log --no-merges {landed[:7]}" in subsystem_line, repr(due))
+    check("the change makes the system's overview due too, as the page's rule reads, but not the project's",
+          "overview refresh due: general-tools" in due and "overview refresh due: project" not in due, repr(due))
+
+    commit({walk: overview("Walk", "Walks.", moved), tools: overview("General tools", "Tools.", moved)},
+           "both refreshed")
+    publish()
+    check("refreshed overviews are not due", due_lines() == {}, repr(due_lines()))
+    added = commit({wiki + "nedschorus-general-tools-explain-architecture-overview.md":
+                    overview("Explain", "Explains.", moved)}, "the explain subsystem gets an overview")
+    main = publish()
+    due = due_lines()
+    system_line = due.get("overview refresh due: general-tools", "")
+    check("adding a subsystem's overview makes its system's overview due, and the line hands both commands",
+          system_line.startswith("overview refresh due: general-tools — 1 commit(s) under nc-systems/general-tools/ "
+                                 "or adding or removing one of its subsystems' overviews")
+          and "--diff-filter=AD" in system_line and set(due) == {"overview refresh due: general-tools"},
+          repr(due))
+    commit({tools: overview("General tools", "Tools.", added)}, "the system refreshed")
+    publish()
+    check("nothing is due once the system's overview is refreshed", due_lines() == {}, repr(due_lines()))
+
+    project_checked = git_in(["rev-parse", "HEAD"], repository).stdout.strip()
+    commit({project: overview("The project", "It does everything.", project_checked)}, "the project refreshed")
+    commit({"nc-systems/cold-read/cell.py": "print(1)\n"}, "a new system")
+    main = publish()
+    due = due_lines()
+    project_line = due.get("overview refresh due: project", "")
+    check("a new directory under nc-systems/ makes the project overview due, naming it",
+          project_line.startswith("overview refresh due: project — since the commit it was checked against, in "
+                                  f"{project_checked}..{main}, nc-systems/ gained cold-read")
+          and f"git log --no-merges {project_checked}..{main} -- nc-systems/cold-read/" in project_line
+          and "docs/nedschorus-wiki/queue/nedschorus-project-architecture-overview-draft.md" in project_line,
+          repr(due))
+    project_checked = git_in(["rev-parse", "HEAD"], repository).stdout.strip()
+    commit({project: overview("The project", "It does everything.", project_checked)}, "the project refreshed")
+    commit({tools: overview("General tools", "Tools, and more.", added),
+            walk: overview("Walk", "Walks far.", added)}, "two Purposes change")
+    main = publish()
+    project_line = due_lines().get("overview refresh due: project", "")
+    check("a system's overview changing its Purpose makes the project overview due; a subsystem's does not",
+          f"the Purpose changed in {tools} — " in project_line
+          and walk not in project_line.split(" — ")[1], repr(project_line))
+    commit({project: overview("The project", "It does everything.", main)}, "the project refreshed")
+    commit({tools: overview("General tools", "Tools, and more.", added).replace(
+        "- x", "- y")}, "the system's Components change")
+    publish()
+    check("a system's overview changing outside its Purpose does not make the project overview due",
+          "overview refresh due: project" not in due_lines(), repr(due_lines()))
 
 
 def run_overview_refresh_due_cases(workspace: Path):
@@ -3508,6 +3617,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
             workspace / "gh-answering-no-open-pull-requests"):
         run_overview_check_git_output_cases(workspace)
         run_overview_refresh_due_cases(workspace)
+        run_overview_refresh_hierarchy_cases(workspace)
         run_overview_refresh_unusable_system_name_cases(workspace)
     run_overview_refresh_withheld_while_pull_request_open_cases(workspace)
     run_overview_refresh_once_a_day_cases(workspace)
