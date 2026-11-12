@@ -3321,14 +3321,15 @@ with tempfile.TemporaryDirectory() as scratch:
     (proc / "104" / "task" / "104" / "children").symlink_to(proc / "104" / "gone")
     write_fake_stat(proc, 104, 14)
     (proc / "101" / "task" / "101" / "children").write_text("103 104 ")
-    found = sorted(module.descendant_processes_with_start_ticks(
-        100, ProcWhereOneThreadEndsAsItsChildrenAreRead(proc)))
+    found = sorted(module.descendant_processes_and_ended_children(
+        100, ProcWhereOneThreadEndsAsItsChildrenAreRead(proc))[0])
     check("the descendants read from /proc are every process below the suite, through every "
           "thread, each with its start ticks, leaving out one that ended while the tree was "
           "read and a thread that ended as its children were read",
           found == [(101, 11), (103, 13), (104, 14), (105, 15)], found)
     check("there is no descendant to read where there is no /proc",
-          module.descendant_processes_with_start_ticks(100, pathlib.Path(scratch) / "none") == [])
+          module.descendant_processes_and_ended_children(100, pathlib.Path(scratch) / "none")
+          == ([], set()))
 
 
 class ProcWhereEveryStatReadFindsTheProcessEnding(type(pathlib.Path())):
@@ -3556,6 +3557,39 @@ with tempfile.TemporaryDirectory() as scratch:
           ("kill", 206, signal.SIGKILL) in signalled
           and signalled.index(("kill", 206, signal.SIGKILL))
           < signalled.index(("killpg", 200, signal.SIGKILL)), (signalled, still_running))
+
+
+class ProcWhereAKilledProcessEndsDuringTheNextRead(type(pathlib.Path())):
+    """201, sent SIGKILL after the first read, forked 206 between that read of its children
+    and its kill; during the second read, after the read has passed the suite's process, 201
+    ends and 206 is reparented to the suite's process."""
+
+    reads_of_201 = 0
+
+    def read_text(self, *arguments, **keywords):
+        if self.name == "children" and self.parent.name == "201":
+            type(self).reads_of_201 += 1
+            if type(self).reads_of_201 == 2:
+                root = self.parents[3]
+                write_fake_stat(root, 201, 0, state="Z")
+                fake_proc(root, {206: (26, {206: []})})
+                (root / "200" / "task" / "200" / "children").write_text("201 206 ")
+                raise ProcessLookupError(3, "No such process")
+        return super().read_text(*arguments, **keywords)
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = fake_proc(pathlib.Path(scratch), {200: (20, {200: [201]}), 201: (21, {201: []})})
+    signalled = []
+    still_running = kill_with_hooks(
+        ProcWhereAKilledProcessEndsDuringTheNextRead(root), signalled,
+        on_kill=lambda pid: pid == 206 and write_fake_stat(root, 206, 0, state="Z"))
+    check("a read during which a process sent SIGKILL ends is not the last, even when it "
+          "finds nothing new, so a child the process forked after its children were read, "
+          "reparented after the read passed the suite's process, is found and killed before "
+          "the group is",
+          signalled[-2:] == [("kill", 206, signal.SIGKILL), ("killpg", 200, signal.SIGKILL)]
+          and still_running == [], (signalled, still_running))
 
 
 class ProcWhereAChildHasEndedBeforeItsStartTicksAreRead(type(pathlib.Path())):

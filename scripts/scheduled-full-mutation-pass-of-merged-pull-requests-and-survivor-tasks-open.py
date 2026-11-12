@@ -296,8 +296,6 @@ UNTESTABLE_MERGES_STATE_KEY = "untestable_merges"
 LOCK_FILE_NAME = "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.lock"
 DEFAULT_TASK_LISTS_DIRECTORY = Path.home() / ".claude" / "tasks"
 DEFAULT_AGENT_SEATS_DIRECTORY = Path.home() / "agents"
-DEFAULT_COSMIC_RAY_VENV = Path.home() / ".local" / "share" / "nedschorus" / "cosmic-ray-venv"
-COSMIC_RAY_VERSION = "8.7.0"
 SURVIVOR_TASK_AGENT_SEAT_WHEN_LINE_AUTHOR_IS_RETIRED_OR_UNKNOWN = "merge-lane-2"
 TASK_FILE_NAME_PATTERN = re.compile(r"[1-9][0-9]*\.json")
 TASK_HIGH_WATER_MARK_FILE_NAME = ".highwatermark"
@@ -1053,7 +1051,8 @@ def parse_arguments(argv):
     parser.add_argument("--agent-seats-directory", type=Path,
                         default=DEFAULT_AGENT_SEATS_DIRECTORY,
                         help="where each agent-seat's checkout is, named for the agent-seat")
-    parser.add_argument("--cosmic-ray-venv", type=Path, default=DEFAULT_COSMIC_RAY_VENV,
+    parser.add_argument("--cosmic-ray-venv", type=Path,
+                        default=mutation_testing.DEFAULT_COSMIC_RAY_VENV,
                         help="the venv holding cosmic-ray")
     parser.add_argument("--mutation-testing-program", default=str(MUTATION_TESTING_PROGRAM),
                         help="the program run for each merge; default, the one beside this file")
@@ -1158,7 +1157,7 @@ def main_under_lock(arguments):
                     f"cosmic-ray is not installed in {arguments.cosmic_ray_venv}, so no merge "
                     f"can be mutation-tested.\n"
                     f"Install it on ned-box: python3 -m venv {venv} && {venv}/bin/pip install "
-                    f"cosmic-ray=={COSMIC_RAY_VERSION}, then run this program again on ned-box: {RUN_BY_HAND}")
+                    f"cosmic-ray=={mutation_testing.COSMIC_RAY_VERSION}, then run this program again on ned-box: {RUN_BY_HAND}")
             sessions_root = (arguments.state_directory
                              / COSMIC_RAY_SESSIONS_KEPT_FOR_UNFINISHED_MERGES_DIRECTORY_NAME)
             for kept in sorted(sessions_root.iterdir()) if sessions_root.is_dir() else ():

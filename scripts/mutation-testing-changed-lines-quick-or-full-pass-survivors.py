@@ -112,7 +112,7 @@ and, outside an nc-test-sandbox, outlives a runner killed with SIGKILL.
 
 PARALLEL MUTANTS. --parallel-mutant-workers N runs N mutants at once, each in a
 scratch worktree of its own at the head, since each worker edits its mutant into
-the file on disk; it needs --cosmic-ray-venv, whose python runs the workers.
+the file on disk; the python of --cosmic-ray-venv runs the workers.
 This script runs itself under that python with
 --cosmic-ray-session-pending-mutants-run-by-parallel-workers, a flag no caller
 gives, in place of `cosmic-ray exec`: it hands each mutant of the session with
@@ -260,6 +260,9 @@ EXIT_COULD_NOT_RUN = 2
 EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD = 3
 
 COSMIC_RAY_TOOLS = ("cosmic-ray", "cr-filter-git", "cr-filter-pragma", "cr-filter-lines")
+# In a home directory, not /tmp, so the venv outlasts a reboot or a /tmp clean-up.
+DEFAULT_COSMIC_RAY_VENV = Path.home() / ".local" / "share" / "nedschorus" / "cosmic-ray-venv"
+COSMIC_RAY_VERSION = "8.7.0"
 
 QUICK_MUTATION_PASS_COMMAND_LINE_FLAG = "--quick-mutation-pass"
 FULL_MUTATION_PASS_COMMAND_LINE_FLAG = "--full-mutation-pass"
@@ -367,21 +370,17 @@ def cosmic_ray_tool_paths(venv):
     """Return {tool: path} for the cosmic-ray commands, or raise naming how to install them."""
     found = {}
     for tool in COSMIC_RAY_TOOLS:
-        if venv is not None:
-            candidate = Path(venv).expanduser().resolve() / "bin" / tool
-            path = str(candidate) if candidate.is_file() else None
-        else:
-            path = shutil.which(tool)
-        if path is None:
-            where = (f"in {Path(venv).expanduser() / 'bin'}" if venv is not None
-                     else "on PATH")
+        candidate = Path(venv).expanduser().resolve() / "bin" / tool
+        if not candidate.is_file():
+            quoted = shlex.quote(str(Path(venv).expanduser()))
             raise CouldNotRun(
-                f"{PROGRAM}: not run — {tool} is not {where}.\n"
-                f"Install cosmic-ray into a venv of its own, not globally:\n"
-                f"  python3 -m venv /tmp/cosmic-ray-venv\n"
-                f"  /tmp/cosmic-ray-venv/bin/pip install cosmic-ray\n"
-                f"Then run this again with --cosmic-ray-venv /tmp/cosmic-ray-venv.")
-        found[tool] = path
+                f"{PROGRAM}: not run — {tool} is not in {Path(venv).expanduser() / 'bin'}.\n"
+                f"Install cosmic-ray into that venv, on the machine this ran on:\n"
+                f"  python3 -m venv {quoted}\n"
+                f"  {quoted}/bin/pip install cosmic-ray=={COSMIC_RAY_VERSION}\n"
+                f"Then run this again. --cosmic-ray-venv names another venv; by default it is "
+                f"{DEFAULT_COSMIC_RAY_VENV}.")
+        found[tool] = str(candidate)
     return found
 
 
@@ -1568,8 +1567,8 @@ def parse_arguments(argv):
     parser.add_argument("--base", help="the base the head is compared with (with --head)")
     parser.add_argument("--checkout", default=str(Path(__file__).resolve().parent.parent),
                         help="the checkout the worktree is made from; default, the one this file is in")
-    parser.add_argument("--cosmic-ray-venv", default=None,
-                        help="a venv holding cosmic-ray; default, cosmic-ray on PATH")
+    parser.add_argument("--cosmic-ray-venv", default=str(DEFAULT_COSMIC_RAY_VENV),
+                        help=f"a venv holding cosmic-ray; default, {DEFAULT_COSMIC_RAY_VENV}")
     parser.add_argument("--python", default=sys.executable,
                         help="the interpreter that runs each Python suite; default, this one")
     parser.add_argument("--recorded-inputs-directory", default=None,
@@ -1604,9 +1603,6 @@ def parse_arguments(argv):
     if arguments.parallel_mutant_workers is not None:
         if arguments.parallel_mutant_workers < 1:
             parser.error(f"{PARALLEL_MUTANT_WORKERS_FLAG} needs a count of 1 or more")
-        if arguments.cosmic_ray_venv is None:
-            parser.error(f"{PARALLEL_MUTANT_WORKERS_FLAG} needs --cosmic-ray-venv, whose python "
-                         f"runs the workers")
     if arguments.pull_request is None and arguments.head is None:
         parser.error("one of the arguments --pull-request --head is required")
     if arguments.head is not None and arguments.base is None:

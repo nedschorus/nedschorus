@@ -787,9 +787,9 @@ def prune_completed_tasks_unguarded(next_step_text: str) -> str:
             failed, remedy = "read", (f"On ned-box, run `ls -l` on {copies} in "
                                       f"{store_list_directory} and make each a file nedlern can read")
         else:
-            failed, remedy = "written or read", (
-                "rsync's message names the file that did not transfer. On ned-box, run "
-                f"`ls -ld {store_list_directory}` and `df -h {store_list_directory}` to check that nedlern "
+            failed, remedy = "updated", (
+                "rsync's message, in the parentheses, says what failed. Check on ned-box yourself, with "
+                f"`ls -ld {store_list_directory}` and `df -h {store_list_directory}`, that nedlern "
                 "can write there and the disk has room")
         return (f"kept every completed task in {list_name}, because ned-box answered but the "
                 f"log-store copy at {store_text} could not be {failed} ({error}). {remedy}; the next "
@@ -992,28 +992,30 @@ def write_handoff_and_report_supervisor(argv) -> int:
         print(
             f"handoff-write-and-check-supervisor: {explanation}. The handoff is written at "
             f"{handoff_path}, but whether a supervisor is watching this seat could not be told.\n"
-            "Stop working now, so that a supervisor that is watching takes over from the handoff "
-            "as written.\n"
-            "Do not rerun this program: the handoff is already written, and a second one would "
-            "replace it.\n"
-            f"Tell the user what this message says, and ask him to check on the {machine} machine, "
+            f"First tell the user what this message says, and ask him to check on the {machine} machine, "
             f"with `ps -ww -e -o pid=,args= | grep -F {supervisor.SUPERVISOR_SCRIPT_FILE_NAME}`, "
             f"whether a {supervisor.SUPERVISOR_SCRIPT_FILE_NAME} with --agent {agent} is running.\n"
-            "If one is, it takes over this session from the handoff; there is nothing more to "
-            "do.\n"
+            "If one is, it ends this session and starts a successor from the handoff; there is "
+            "nothing more to do.\n"
             f"If none is, the user runs `scripts/resupervise-seat.py {agent} --machine {machine}` "
-            "to seat a supervised successor from the handoff.",
+            "in a Terminal on the Mac to seat a supervised successor from the handoff.\n"
+            "Then stop working now, so that a supervisor that is watching takes over from the "
+            "handoff as written.\n"
+            "Do not rerun this program: the handoff is already written, and a second one would "
+            "replace it.",
             file=sys.stderr, flush=True,
         )
         print(HANDOFF_WRITTEN_CANNOT_TELL_WHETHER_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE)
         return 2
 
     # Use the supervised launcher to consume the waiting handoff.
-    # Print --machine explicitly: the default is Mac, but a box seat must be recovered on the box.
+    # resupervise-seat.py runs on the Mac for a seat of either machine: for a box seat it
+    # prepares over ssh and then runs the Mac-side launch-claude-ubuntu. Print --machine
+    # explicitly: the default is Mac, and a box seat's advice must not target a same-named Mac seat.
     print(
         f"handoff-write-and-check-supervisor: {explanation} — and this seat has no supervisor to "
         f"reincarnate it. The handoff is written at {handoff_path}; nothing will act on it by itself. "
-        "Tell the user: to seat a supervised successor, run "
+        "Tell the user: to seat a supervised successor, run, in a Terminal on the Mac, "
         f"`scripts/resupervise-seat.py {agent} --machine {machine}` — it clears this seat's stale "
         "tmux session and relaunches, and the supervisor starts a fresh agent-session from the handoff. Relaunching "
         "`claude` by hand instead produces another unsupervised seat. Until then, keep working."

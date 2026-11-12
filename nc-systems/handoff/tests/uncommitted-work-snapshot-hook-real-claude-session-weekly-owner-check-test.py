@@ -108,25 +108,15 @@ FAKE_CLAUDE_CHILD_PROCESS_ID_FILE = SCRATCH / "fake-claude-child-process-id"
 FAKE_CLAUDE_ARGUMENTS_FILE = SCRATCH / "fake-claude-arguments.json"
 
 
-def interpreter_image_of_this_process():
-    """The executable file this process runs, which is not always sys.executable: on macOS a
-    framework Python's bin/python3.x is a launcher that re-executes Python.app's Python, so a
-    copy of the launcher would run under the name Python, not claude."""
-    if sys.platform.startswith("linux"):
-        return Path(os.readlink("/proc/self/exe"))
-    ps = subprocess.run(["ps", "-o", "comm=", "-p", str(os.getpid())],
-                        capture_output=True, text=True, check=True)
-    image = Path(ps.stdout.strip())
-    if not image.is_absolute():
-        raise RuntimeError(f"ps reported {image!r} as this process's executable, not a full path")
-    return image
+_interpreter_image_spec = importlib.util.spec_from_file_location(
+    "interpreter_image_of_this_process_test_fixture",
+    REPOSITORY_ROOT / "scripts" / "interpreter-image-of-this-process-test-fixture.py")
+_interpreter_image = importlib.util.module_from_spec(_interpreter_image_spec)
+_interpreter_image_spec.loader.exec_module(_interpreter_image)
 
-
-# A copy, not a symbolic link: the process name the hook reads is the name of the executable
-# file the process runs.
 PYTHON_NAMED_CLAUDE = SCRATCH / "python-named-claude" / "claude"
 PYTHON_NAMED_CLAUDE.parent.mkdir()
-shutil.copy2(interpreter_image_of_this_process(), PYTHON_NAMED_CLAUDE)
+shutil.copy2(_interpreter_image.interpreter_image_of_this_process(), PYTHON_NAMED_CLAUDE)
 os.environ.update(FAKE_CLAUDE_PROCESS_ID_FILE=str(FAKE_CLAUDE_PROCESS_ID_FILE),
                   FAKE_CLAUDE_CHILD_PROCESS_ID_FILE=str(FAKE_CLAUDE_CHILD_PROCESS_ID_FILE),
                   FAKE_CLAUDE_ARGUMENTS_FILE=str(FAKE_CLAUDE_ARGUMENTS_FILE),

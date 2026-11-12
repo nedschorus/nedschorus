@@ -155,6 +155,8 @@ def run_multi_line_next_step_cases(workspace: Path):
           "END-OF-NEXT-STEP" in refused.stderr, refused.stderr)
     check("the terminator refusal writes nothing",
           not (workspace / "terminatorcase-handoff.md").exists())
+    check("the terminator refusal's last stdout line is the nothing-written verdict",
+          last_stdout_line(refused) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, refused.stdout)
 
     # The refusal is on an EXACT line match, matching the reader. An indented
     # lookalike is ordinary content and must be written, not refused.
@@ -343,11 +345,15 @@ def check_cannot_tell(result, workspace: Path, situation: str):
           last_stdout_line(result) == writer.HANDOFF_WRITTEN_CANNOT_TELL_WHETHER_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE,
           result.stdout)
     check(f"{situation}, the agent is told to stop, not to wait or to keep working",
-          "Stop working now, so that" in result.stderr
+          "stop working now, so that" in result.stderr
+          and result.stderr.index("First tell the user") < result.stderr.index("stop working now")
           and "Stop working now and wait" not in result.stdout
           and "keep working" not in result.stdout, result.stdout + result.stderr)
     check(f"{situation}, the agent is told not to rerun", "Do not rerun" in result.stderr,
           result.stderr)
+    check(f"{situation}, resupervise-seat.py is to be run on the Mac, where it works for a seat of either machine",
+          "--machine ubuntu` in a Terminal on the Mac" in result.stderr
+          or "--machine mac` in a Terminal on the Mac" in result.stderr, result.stderr)
 
 
 def run_liveness_report_cases(workspace: Path):
@@ -364,6 +370,9 @@ def run_liveness_report_cases(workspace: Path):
           "resupervise-seat.py tester --machine " in result.stdout
           and str(workspace / "tester-handoff.md") in result.stdout,
           result.stdout)
+    check("with no supervisor, resupervise-seat.py is to be run on the Mac, where it works for a seat of either machine",
+          "run, in a Terminal on the Mac, `scripts/resupervise-seat.py tester --machine " in result.stdout
+          and "on the ubuntu machine" not in result.stdout, result.stdout)
     check("with no supervisor, the by-hand relaunch is named as the wrong path",
           "another unsupervised seat" in result.stdout, result.stdout)
     check("no supervisor is started for an unseated session",
@@ -532,6 +541,8 @@ def run_agent_name_and_claim_cases(workspace: Path):
     check("the refusal teaches the fix", "--claim" in foreign.stderr, foreign.stderr)
     check("and, with no supervised name here, says what else --claim waives",
           "also waives" in foreign.stderr, foreign.stderr)
+    check("the foreign-directory refusal's last stdout line is the nothing-written verdict",
+          last_stdout_line(foreign) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, foreign.stdout)
     check("nothing was written on the refusal",
           (handoffs / "seat-one-handoff.md").read_text(encoding="utf-8") == first_body)
 
@@ -608,6 +619,8 @@ def run_seat_name_the_supervisor_does_not_answer_to_cases(workspace: Path):
     check("the refusal says why it matters -- the handoff would never be read",
           "never reincarnated" in refused.stderr, refused.stderr)
     check("the refusal teaches both exits", "--claim" in refused.stderr, refused.stderr)
+    check("the unwatched-name refusal's last stdout line is the nothing-written verdict",
+          last_stdout_line(refused) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, refused.stdout)
     check("nothing was written on the refusal",
           stray.read_text(encoding="utf-8") == stray_body)
 
@@ -1853,8 +1866,23 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
     check("over ssh, an rsync that cannot write the store keeps every completed task",
           fixture.present("1.json") and "kept every completed task" in line and "exited 23" in line, line)
     check("over ssh, an rsync that cannot write the store gets the log-store remedy, not the ssh remedy",
-          "could not be written or read" in line and f"`ls -ld {fixture.store_list_directory}`" in line
+          "could not be updated" in line and f"`ls -ld {fixture.store_list_directory}`" in line
           and "ssh stubhost true" not in line, line)
+
+    # rsync exits 3 and 11 after connecting too, and need the same remedy as 23.
+    for exit_code in (3, 11):
+        fixture = PruneFixture(workspace, f"remote-rsync-exit-{exit_code}")
+        fixture.task("1.json", task_bytes(1, "completed"), stored=False)
+        stubs = stub_ssh_directory(fixture.root / f"remote-rsync-exit-{exit_code}-stubs", RUN_REMOTE_COMMAND_HERE_SSH_STUB)
+        (stubs / "rsync").write_text(f"#!/bin/sh\nexit {exit_code}\n", encoding="utf-8")
+        (stubs / "rsync").chmod(0o755)
+        line = prune_line(fixture.run(
+            "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
+            PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+        check(f"over ssh, an rsync that exits {exit_code} keeps every completed task and gets the log-store remedy, "
+              "not the ssh remedy",
+              fixture.present("1.json") and f"exited {exit_code}" in line and "could not be updated" in line
+              and f"`ls -ld {fixture.store_list_directory}`" in line and "ssh stubhost true" not in line, line)
 
     stubs = stub_ssh_directory(workspace / "prune-silent-stubs", "sleep 5\n")
     original_path, original_timeout = os.environ.get("PATH", ""), writer.LOG_STORE_TASK_FILE_COPIES_HASH_SSH_TIMEOUT_SECONDS

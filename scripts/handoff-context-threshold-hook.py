@@ -101,7 +101,7 @@ FIRST_TAIL_READ_BYTES = 256 * 1024
 # The count can pass 100% of the window, so a compacted session's message gives both shares.
 SHARE_WITH_COMPACTION_DROPPED = (
     "{used_percentage:.0f}% ({used_plus_dropped_percentage:.0f}% counting the "
-    "tokens its compactions dropped)"
+    "tokens its compactions dropped, the figure compared with the threshold and the ceiling)"
 )
 
 HANDOFF_INSTRUCTION = (
@@ -936,8 +936,9 @@ def main(argv=None) -> int:
     share = (SHARE_WITH_COMPACTION_DROPPED.format(
                  used_percentage=100.0 * used_tokens / window, used_plus_dropped_percentage=used)
              if dropped_tokens else f"{used:.0f}%")
-    # A compaction can drop the share below the threshold after a deferral; the deferred marker
-    # records that the threshold was passed, so the handoff its notice promised still comes.
+    # The count can fall below the threshold after a deferral, as when the session moves to a model
+    # with a larger window; a compaction does not lower it. The deferred marker records that the
+    # threshold was passed, so the handoff its notice promised still comes.
     if used < arguments.threshold_used_percentage and not deferred_marker_path(session_id).exists():
         return 0
 
