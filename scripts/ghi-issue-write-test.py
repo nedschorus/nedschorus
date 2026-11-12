@@ -1401,7 +1401,7 @@ def run_cases(scratch: Path):
     # missing verdict, and the report says what ghi-guide-agent said instead of
     # "did not answer". Exit 3, the ruling question, has its own cases below.
     for case_name, exit_code, first_line in [
-            ("an out-of-scope reply lets the write proceed and says so", 2,
+            ("a not-about-issues reply lets the write proceed and says so", 2,
              "Not a question about GitHub issues: ghi-guide-agent reports which "
              "issues relate to a subject.")]:
         lines = []
