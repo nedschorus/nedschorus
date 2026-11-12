@@ -879,7 +879,7 @@ RULING_GIVEN_LINE = "#ruling_given {walk} item {number} {word}"
 RULING_GIVEN_WORDS = {OUTCOMES[APPROVED]: APPROVED, OUTCOMES[DISAPPROVED]: DISAPPROVED}
 RULING_GIVEN_DEFERRED, RULING_GIVEN_MOVED_ON, RULING_GIVEN_PART_ANSWERS = "deferred", "moved_on", "part_answers"
 GH_PROGRAM = "gh"
-GH_TIMEOUT_SECONDS = 60
+GH_TIMEOUT_SECONDS = 60  # pragma: no mutate, a limit a second longer or shorter behaves the same
 HELD_PULL_REQUESTS_LIST = ("pr", "list", "--state", "open", "--limit", "1000", "--json", "number,reviews")
 HELD_PULL_REQUESTS_BY_HAND_JQ = ('.[] | select(any(.reviews[].body | split("\\n")[] | gsub("^\\\\s+|\\\\s+$"; ""); '
                                  '. == {line})) | .number')
@@ -1199,7 +1199,7 @@ def new_marks(text, tokens, ranges, shown):
                 marks.append(NewMark(match[1], number, False, comment_cut, [match[2]],
                                      block_right_below(lines, number + 1, end)))
                 continue
-            paragraph_end = max((paragraph[1] for paragraph in paragraphs if paragraph[0] <= number < paragraph[1]),
+            paragraph_end = max((paragraph[1] for paragraph in paragraphs if paragraph[0] <= number < paragraph[1]),  # pragma: no mutate, paragraphs never overlap, so a paragraph starting above the one holding the line also ends above it and max picks the same end, and with no paragraph holding the line both give no line below it
                                 default=number + 1)
             text_end = next((below for below in range(number + 1, paragraph_end)
                              if any(marker.match(lines[below]) for marker in MARKER_LINES_READ_ON_THEIR_OWN)),
@@ -2125,7 +2125,7 @@ def unshown_items_first_entered_stamped(walk_finder, text, units, parser, today)
     for first in reversed(unstamped):
         # The blank line after it keeps a next line, such as indented code, from joining the tag's paragraph.
         after = [""] if first + 1 < len(lines) and lines[first + 1].strip() else []
-        lines[first + 1:first + 1] = ["", f"{WALK_FIRST_ENTERED_TAG} {today}"] + after
+        lines[first + 1:first + 1] = ["", f"{WALK_FIRST_ENTERED_TAG} {today}"] + after  # pragma: no mutate, an unshown item comes after a numbered one, so first is never 0 and a slice ending at first - 1 is as empty as one ending at first + 1
     return "\n".join(lines)
 
 
