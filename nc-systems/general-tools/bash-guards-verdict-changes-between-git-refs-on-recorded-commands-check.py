@@ -34,7 +34,7 @@ Steps:
   4. Compare the two refs row by row and print each difference, then the recorded commands the
      guards the head adds refuse, in refusal groups: one guard and one refusal message each, with
      a few of its commands; every group in full is in added-guard-refusal-groups.json, and every group's
-     "refusal right" answer line, ready to copy, is in added-guard-refusal-right-lines.txt.
+     "refusal right" answer line, ready to copy, is in added-guard-refusal-group-rightly-refused-review-answer-lines.txt.
 
 Exit status: 0 when no verdict differs and no added guard refuses a recorded command; 1 when a
 verdict differs or an added guard refuses a recorded command; 2 when the replay itself
@@ -53,7 +53,7 @@ raised for any other reason is not read again. A message that differs while its 
 Files: the run log directory holds the files a reader needs to see why a run exited 1 or 2, each step's log
 and each mode's differences-<mode>.json. By default it is a new directory under --log-store-runs-directory, in
 the log-store on ned-box, removed after an exit 0 and kept after an exit 1 or 2. It also holds
-added-guard-refusal-groups.json and added-guard-refusal-right-lines.txt when an added guard refuses a recorded
+added-guard-refusal-groups.json and added-guard-refusal-group-rightly-refused-review-answer-lines.txt when an added guard refuses a recorded
 command. Everything else, the
 checkouts and the pairs and verdicts files, goes in a scratch directory, by default a temporary directory that
 is removed whenever the replay exits, on an exception, SIGTERM or SIGHUP too, unless its checkouts could not be
@@ -114,7 +114,7 @@ PRINTED_TEXT_LENGTH = 300
 REFUSAL_GROUPS_PRINTED = 10
 REFUSED_COMMANDS_PRINTED_PER_GROUP = 3
 REFUSAL_GROUPS_FILE_NAME = "added-guard-refusal-groups.json"
-REFUSAL_RIGHT_LINES_FILE_NAME = "added-guard-refusal-right-lines.txt"
+ADDED_GUARD_REFUSAL_GROUP_RIGHTLY_REFUSED_REVIEW_ANSWER_LINES_FILE_NAME = "added-guard-refusal-group-rightly-refused-review-answer-lines.txt"
 SCRATCH_OR_RUN_LOG_DIRECTORY_NOT_REMOVED_MESSAGE = (
     "REPLAY FAILED: the paths listed below could not be removed, so "
     "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check exits 2; any verdicts it printed above "
@@ -1351,7 +1351,7 @@ def replay_with_sigterm_handled(arguments):
         if added_guard_refused:
             groups = added_guard_refusal_groups(refusals_by_mode)
             (run_log_directory / REFUSAL_GROUPS_FILE_NAME).write_text(json.dumps(groups, indent=1))
-            (run_log_directory / REFUSAL_RIGHT_LINES_FILE_NAME).write_text(
+            (run_log_directory / ADDED_GUARD_REFUSAL_GROUP_RIGHTLY_REFUSED_REVIEW_ANSWER_LINES_FILE_NAME).write_text(
                 "".join(refusal_right_line(group) + "\n" for group in groups))
             print_added_guard_refusal_groups(groups, run_log_directory / REFUSAL_GROUPS_FILE_NAME)
         if all_failed:
@@ -1364,7 +1364,7 @@ def replay_with_sigterm_handled(arguments):
             if added_guard_refused:
                 print(NEW_GUARD_REFUSES_MESSAGE.format(
                     groups_file=run_log_directory / REFUSAL_GROUPS_FILE_NAME,
-                    refusal_right_lines_file=run_log_directory / REFUSAL_RIGHT_LINES_FILE_NAME)
+                    refusal_right_lines_file=run_log_directory / ADDED_GUARD_REFUSAL_GROUP_RIGHTLY_REFUSED_REVIEW_ANSWER_LINES_FILE_NAME)
                       + (NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING if verdict_changed
                          else NEW_GUARD_REFUSES_ONLY_ENDING))
             status = 1
