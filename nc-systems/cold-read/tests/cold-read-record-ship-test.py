@@ -1785,6 +1785,37 @@ check("a failed remote store step with any other exit gives 'ssh exit N'",
       failure_reason("nedlern@ned-box", subprocess.CompletedProcess([], 1, "out", ""))
       == "ssh exit 1")
 
+# --- A store inventory whose ssh call runs past its time limit is unreachable --
+# A real sh in place of ssh evals every step but the inventory, which hangs.
+# `exec` makes sleep the child itself: a sleep left behind by a killed sh
+# would hold the pipes open, and subprocess.run would wait for it.
+with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-inventory-timeout-test-") as timeout_name:
+    timeout_scratch = pathlib.Path(timeout_name)
+    timeout_store = timeout_scratch / "store" / "cold-read-records"
+    timeout_record = make_record(timeout_scratch / "records", "timeout-2026-11-12",
+                                 {"a.md": REPORT_A})
+    real_ssh_command = failing_shipper.SSH_COMMAND
+    real_inventory_timeout = failing_shipper.STORE_INVENTORY_SSH_TIMEOUT_SECONDS
+    failing_shipper.SSH_COMMAND = [
+        "sh", "-c", 'case "$2" in *sha256sum*) exec sleep 30;; *) eval "$2";; esac',
+        "ssh-replay"]
+    failing_shipper.STORE_INVENTORY_SSH_TIMEOUT_SECONDS = 1
+    started = time.monotonic()
+    try:
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(io.StringIO()):
+            code = returned_or_raised(lambda: failing_shipper.ship_one(
+                "nobody@ned-box", pathlib.PurePosixPath(timeout_store), timeout_record))
+    finally:
+        failing_shipper.SSH_COMMAND = real_ssh_command
+        failing_shipper.STORE_INVENTORY_SSH_TIMEOUT_SECONDS = real_inventory_timeout
+    elapsed = time.monotonic() - started
+    check("a remote store inventory whose ssh call runs past its time limit is stopped, and "
+          "ship_one prints FAILED with 'ned-box unreachable' and exits 1",
+          code == 1 and elapsed < 20
+          and printed.getvalue().startswith("FAILED: timeout-2026-11-12 — ned-box unreachable;"),
+          f"exit {code} after {elapsed:.1f}s: {printed.getvalue()}")
+
 # --- A relative record directory means the one under the current directory --
 # Run from a directory outside the shipper's checkout with a relative path:
 # the record under that directory is the one shipped.
