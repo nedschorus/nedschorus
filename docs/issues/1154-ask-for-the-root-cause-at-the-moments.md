@@ -38,10 +38,9 @@ A root-cause analysis document, a template beyond the one line, or a separate re
 
 Items 1 and 2 are done. Item 1 is the section "A pull request that fixes a defect" in `docs/agents/pr-reviewer-instructions.md`, added by pull request [PR reviewer instructions: a pull request that fixes a defect carries a Root cause line](https://github.com/nedschorus/nedschorus/pull/1166); merge-lane-2's review asks item 2's question. Item 3 waits on the two conditions in item 3 above. The agent-seat cold-read-improvement checks them weekly and, when both hold, builds item 3 with merge-lane-2, which owns `scripts/merge-gate.sh`.
 
-Item 4's link check in `scripts/merge-gate.sh` is built; its two steps are not. `scripts/merge-gate.sh` does not yet print the open follow-ups; that can be built now, because the shared reader of description lines it was to wait for, `scripts/pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py`, has merged. The daily job is built under GHI 1058. The agent-seat cold-read-improvement makes the one check of the not-fixed lines merged before the link was required, as item 4 says.
+Item 4's link check in `scripts/merge-gate.sh` is built, and so is its first step: `scripts/merge-gate.sh` prints the open follow-ups, added by pull request [merge-gate.sh prints the open follow-up issues for merge-lane-2 to send the author](https://github.com/nedschorus/nedschorus/pull/3256). Its second step, the daily job, is not built yet; it is to be built under GHI 1058. The agent-seat cold-read-improvement makes the one check of the not-fixed lines merged before the link was required, as item 4 says.
 
 ## Provisional additions (not yet vetted by the user)
 
 - The agent-seat cold-read-improvement (2026-10-14): the research into kinds of root cause (process, infrastructure, code), item 3's second condition: internal evidence first, then external best-practice research; its proposal is being walked with the user.
 - The agent-seat cold-read-improvement (2026-10-14): checks item 3's two conditions weekly.
-- The agent-seat cold-read-improvement (2026-11-11): settles with merge-lane-2 who builds the printing of open follow-ups in `scripts/merge-gate.sh`.
