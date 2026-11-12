@@ -26,9 +26,12 @@ says to move it as soon as it is read. A missing
 directory, before the job first writes one, raises nothing. A directory that
 cannot be listed raises one NEEDS A LOOK line naming the error, again only
 after a listing has succeeded in between; a notice that cannot be read is
-reported with the error in place of its first line. A notice moved out and
-back unchanged, keeping its modification time, is not reported again by the
-same process. The watcher never moves or deletes a notice.
+reported with the error in place of its first line, and an entry whose
+status cannot be read, other than one gone since the listing or a dangling
+link, is reported once with the error. A notice moved out and back between
+two polls, keeping its modification time, is not reported again by the same
+process; one that a poll found missing is reported again when it comes back.
+The watcher never moves or deletes a notice.
 
 Polling needs no public webhook endpoint. GraphQL selects only needed fields
 and avoids gh versions’ differing --json field lists."""
@@ -67,6 +70,8 @@ HEAD_SHA_PREFIX_CHARS = 8
 TITLE_SNIPPET_CHARS = 120
 FAILURE_REASON_SNIPPET_CHARS = 300
 NOTICE_FIRST_LINE_CHARS = 300
+# Stands in the reported record for a notice whose status could not be read; no mtime equals it.
+STATUS_UNREADABLE = "status unreadable"
 
 # A short redaction pattern would corrupt ordinary output; reject invalid credentials at startup.
 MINIMUM_PLAUSIBLE_TOKEN_CHARS = 8
@@ -261,8 +266,15 @@ def needs_a_look_events(directory, state):
     for path in entries:
         try:
             status = path.stat()
-        except OSError:
+        except FileNotFoundError:
             # Gone since the listing, or a dangling link: nothing to read.
+            continue
+        except OSError as error:
+            present.add(path.name)
+            if reported.get(path.name) != STATUS_UNREADABLE:
+                reported[path.name] = STATUS_UNREADABLE
+                lines.append(f"NEEDS A LOOK {path.name}: (could not read its status: "
+                             f"{error.strerror or error}) -- look at {path}")
             continue
         if not stat.S_ISREG(status.st_mode):
             continue

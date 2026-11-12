@@ -450,6 +450,25 @@ def run_needs_a_look_unit_cases():
         os.utime(notice, ns=(saved_status.st_atime_ns, saved_status.st_mtime_ns + 1))
         check("a notice that leaves the directory and comes back is reported again",
               len(events(directory, state)) == 1, str(state))
+        saved_status = notice.stat()
+        notice.rename(handled / notice.name)
+        events(directory, state)
+        (handled / notice.name).rename(notice)
+        os.utime(notice, ns=(saved_status.st_atime_ns, saved_status.st_mtime_ns))
+        check("a notice that a poll found missing is reported again when it comes back with "
+              "the same modification time",
+              len(events(directory, state)) == 1, str(state))
+
+        looping = directory / "looping.txt"
+        looping.symlink_to(looping)
+        first = events(directory, state)
+        second = events(directory, state)
+        looping.unlink()
+        check("an entry whose status cannot be read, other than a dangling link, is one NEEDS A "
+              "LOOK line naming the error, not repeated while it stays so",
+              first == [f"NEEDS A LOOK looping.txt: (could not read its status: Too many levels "
+                        f"of symbolic links) -- look at {looping}"]
+              and second == [], f"{first}\n{second}")
 
         empty = directory / "empty.txt"
         empty.write_text("", encoding="utf-8")

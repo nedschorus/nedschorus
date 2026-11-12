@@ -21,11 +21,15 @@ these hold:
   - it changes exactly one file, and that file is under docs/issues/ and
     is neither new nor renamed;
   - the diff removes no line and adds at least one;
+  - no added line holds a carriage return, which Markdown reads as a line
+    break where git sees none;
   - every added line that starts with "#" is exactly the heading
     "## Provisional additions (not yet vetted by the user)";
   - in the file at the nc-head-commit, which it reads too, that heading
     appears once, and every added line that is not blank lies under it,
     before the next line that starts with "#".
+The diff and the file are split into lines on "\n" alone, as git splits them,
+so the diff's line numbers name the file's lines.
 A passing pull request is approved as ned-review-merge, pinned to the
 nc-head-commit that was read, and merged by running
 merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py
@@ -204,15 +208,17 @@ def write_record(path, record):
 def gh(environment, *arguments):
     """Run gh; return its stdout, or raise Stopped naming the call and its error."""
     try:
-        completed = subprocess.run(["gh", *arguments], capture_output=True, text=True,
+        # Not text=True: it would turn a lone "\r" into "\n" and shift the diff's line numbers.
+        completed = subprocess.run(["gh", *arguments], capture_output=True,
                                    env=environment, stdin=subprocess.DEVNULL,
                                    timeout=GH_TIMEOUT_SECONDS)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise Stopped(f"gh {' '.join(arguments[:3])} could not run: {error}") from error
     if completed.returncode != 0:
+        error_text = completed.stderr.decode("utf-8", errors="replace").strip()
         raise Stopped(f"gh {' '.join(arguments[:3])} exited {completed.returncode}: "
-                      f"{completed.stderr.strip() or 'no error printed'}")
-    return completed.stdout
+                      f"{error_text or 'no error printed'}")
+    return completed.stdout.decode("utf-8", errors="replace")
 
 
 def gh_json(environment, *arguments):
@@ -227,12 +233,16 @@ def provisional_additions_only_problem(files, diff):
     """Return None when the diff passes the checks that need no file, else what makes the pull request need a look."""
     if len(files) != 1 or not files[0].startswith("docs/issues/"):
         return f"it changes {len(files)} files ({', '.join(files)}), not exactly one under docs/issues/"
-    lines = diff.splitlines()
+    lines = diff.split("\n")
     if f"--- a/{files[0]}" not in lines or f"+++ b/{files[0]}" not in lines:
         return f"its diff does not change {files[0]} in place: the file is new, renamed or binary"
     removed = [line for line in lines if line.startswith("-") and line != f"--- a/{files[0]}"]
     if removed:
         return f"its diff removes {len(removed)} lines, first {removed[0][:120]!r}"
+    carriage_returns = [line for line in lines if line.startswith("+") and "\r" in line]
+    if carriage_returns:
+        return (f"it adds {len(carriage_returns)} lines holding a carriage return, which Markdown "
+                f"reads as a line break, first {carriage_returns[0][:120]!r}")
     other_headings = [line for line in lines
                       if line.startswith("+#") and line != "+" + PROVISIONAL_HEADING]
     if other_headings:
@@ -243,7 +253,7 @@ def provisional_additions_only_problem(files, diff):
 
 def added_lines_outside_section_problem(diff, file_text):
     """Return None when every added line that is not blank lies in the provisional-additions section of file_text, the file at the nc-head-commit, else why not."""
-    file_lines = file_text.splitlines()
+    file_lines = file_text.split("\n")
     heading_lines = [number for number, line in enumerate(file_lines, start=1)
                      if line == PROVISIONAL_HEADING]
     if len(heading_lines) != 1:
@@ -255,7 +265,7 @@ def added_lines_outside_section_problem(diff, file_text):
                        len(file_lines) + 1)
     added = []
     new_line = None
-    for line in diff.splitlines():
+    for line in diff.split("\n"):
         hunk = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
         if hunk:
             new_line = int(hunk.group(1))
@@ -277,7 +287,7 @@ def added_lines_outside_section_problem(diff, file_text):
 
 
 def approval_body(path, diff):
-    if ("+" + PROVISIONAL_HEADING) in diff.splitlines():
+    if ("+" + PROVISIONAL_HEADING) in diff.split("\n"):
         section = f"adding a \"{PROVISIONAL_HEADING[3:]}\" section"
     else:
         section = f"adding lines to its existing \"{PROVISIONAL_HEADING[3:]}\" section"
@@ -439,7 +449,9 @@ def main(argv=None):
         state_directory.mkdir(parents=True, exist_ok=True)
         lock = open(lock_path, "a")
     except OSError as error:
-        say(f"STOPPED: could not open the lock {lock_path}: {error}")
+        stop = f"could not open the lock {lock_path}: {error}"
+        say(f"STOPPED: {stop}")
+        stopped_message_write(arguments.merge_lane_worktrees_and_outputs_directory, stop)
         return EXIT_STOPPED
     with lock:
         try:

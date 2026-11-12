@@ -271,7 +271,28 @@ def main():
                     file_text="line 1\n" + HEADING + "\nline 3\n## Deferred-decisions\n"
                     + "".join(f"line {number}\n" for number in range(5, 11))
                     + "\n- an addition\n"),
-                 "first line 12: '- an addition'")):
+                 "first line 12: '- an addition'"),
+                ("heading-twice", routes_for(file_text=PASSING_FILE_TEXT + HEADING + "\n"),
+                 "2 times, not once"),
+                ("heading-with-trailing-spaces", routes_for(
+                    diff=PASSING_DIFF.replace("+" + HEADING + "\n", ""),
+                    file_text=PASSING_FILE_TEXT.replace(HEADING, HEADING + "  ")),
+                 "0 times, not once"),
+                # Markdown reads a lone carriage return as a line break, so this adds a heading.
+                ("carriage-returns-in-an-added-line", routes_for(
+                    diff=PASSING_DIFF.replace("@@ -10,0 +11,3 @@", "@@ -10,0 +11,4 @@")
+                    + "+- new item\r## Next action\rSneaky text.\n",
+                    file_text=PASSING_FILE_TEXT + "- new item\r## Next action\rSneaky text.\n"),
+                 "1 lines holding a carriage return"),
+                # Python's splitlines() splits on a form feed; git does not. Splitting the
+                # file there would move the section down over the vetted "## Next action".
+                ("form-feed-lines-before-the-section", routes_for(
+                    diff=("diff --git a/docs/issues/9-x.md b/docs/issues/9-x.md\n"
+                          "--- a/docs/issues/9-x.md\n+++ b/docs/issues/9-x.md\n"
+                          "@@ -2,0 +3,2 @@\n+\x0c\n+\x0c\n@@ -5,0 +8 @@\n+Sneaky.\n"),
+                    file_text=("## Problem\ntext\n\x0c\n\x0c\n" + HEADING
+                               + "\n- item\n## Next action\nSneaky.\nmore\n")),
+                 "first line 8: 'Sneaky.'")):
             scratch = Scratch(root, name)
             scratch.routes(routes)
             code, output = scratch.run()
@@ -515,6 +536,14 @@ def main():
         code, output = scratch.run()
         check("a lock that cannot be opened stops the invocation, exit 2",
               code == 2 and "could not open the lock" in output, f"exit {code}\n{output}")
+        scratch = Scratch(root, "lock-is-a-directory")
+        (scratch.state / ".lock").mkdir(parents=True)
+        code, output = scratch.run()
+        check("a lock that cannot be opened is reported to merge-lane-2 in "
+              "invocation-stopped.txt, exit 2",
+              code == 2 and scratch.gh_calls() == []
+              and "could not open the lock" in scratch.message("invocation-stopped.txt"),
+              f"exit {code}\n{output}\n{scratch.messages()}")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
