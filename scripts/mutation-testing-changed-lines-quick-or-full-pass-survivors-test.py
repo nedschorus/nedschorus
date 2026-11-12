@@ -2743,6 +2743,20 @@ def run_cases():
     # ------------------------------------------------------------------
     # cosmic-ray missing.
     # ------------------------------------------------------------------
+    placeholder_command = load_script_module().build_argv_with_cosmic_ray_venv_flags_replaced_by_placeholder
+    for case_name, argv, expected in [
+            ("no venv flag given", ["s.py", "--head", "h"], ["s.py", "--head", "h"]),
+            ("the flag and its value as two words", ["s.py", "--cosmic-ray-venv", "/v", "--head", "h"],
+             ["s.py", "--head", "h"]),
+            ("the flag with =", ["s.py", "--cosmic-ray-venv=/v", "--head", "h"], ["s.py", "--head", "h"]),
+            ("an abbreviated flag, given twice", ["s.py", "--cos", "/v", "--cosmic-ray=/w"], ["s.py"]),
+            ("--checkout is kept, though it shares --c with the flag",
+             ["s.py", "--checkout", "/c"], ["s.py", "--checkout", "/c"])]:
+        got = placeholder_command(argv)
+        check(f"rerun command with the venv placeholder, {case_name}: every venv flag taken out "
+              "and one placeholder flag put at the end",
+              got == expected + ["--cosmic-ray-venv", "<that venv>"], got)
+
     with tempfile.TemporaryDirectory() as scratch_name:
         repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
         _, control = fake_venv(scratch_name, {})
@@ -2762,11 +2776,15 @@ def run_cases():
               and "--cosmic-ray-venv" in rerun and str(empty_venv) in rerun and head in rerun,
               f"err={completed.stderr}")
         before_install, _, _ = completed.stderr.partition("python3 -m venv ")
-        check("cosmic-ray missing: a venv that already holds cosmic-ray is offered before the "
-              "install steps, and the message says the last --cosmic-ray-venv given wins",
-              "add --cosmic-ray-venv <that venv>" in before_install
-              and "the last one given wins" in before_install
-              and "from another machine, run them over ssh to it" in before_install,
+        existing_venv_command = before_install.partition(
+            "replaced by the venv's path:\n  python3 ")[2].split("\n")[0]
+        check("cosmic-ray missing: before the install steps, the message prints the command to "
+              "run with a venv that already holds cosmic-ray, its --cosmic-ray-venv given once, "
+              "as the placeholder to fill in",
+              "from another machine, run them over ssh to it" in before_install
+              and existing_venv_command.endswith(" --cosmic-ray-venv '<that venv>'")
+              and existing_venv_command.count("--cosmic-ray-venv") == 1
+              and str(empty_venv) not in existing_venv_command and head in existing_venv_command,
               f"err={completed.stderr}")
         home = Path(scratch_name) / "home"
         home.mkdir()
