@@ -44,12 +44,19 @@ The user approved the new text of the design's § 3 on 2026-11-07, as item 1 of 
 
 - The design's § 3 is replaced with the approved text, and the build follows it; where What to build above and the approved text differ, the approved text holds.
 - `scripts/clean-worktrees.py` is the code that closes the task `restore` opens, at its runs with `--remove`.
-- The task follows the commit `restore` made, not the branch's name: after `git fetch --prune origin`, the cleaner marks the task completed when that commit is reachable from `origin/main`, or when no ref holds it.
+- The task follows the commit `restore` made, not the branch's name: after `git fetch --prune origin`, the cleaner marks the task completed when that commit is reachable from `origin/main`, or when no ref holds it. The 2026-11-08 ruling below replaces this rule.
 - `restore` writes the new worktree's owner file, naming the agent-seat, so that `scripts/clean-worktrees.py` and the agent-seat's list of worktrees handle the restored worktree.
+
+The user approved a change to the rule that closes the task on 2026-11-08, as item 3.2 of the approval-walk `memory-refusal-only-the-callers-lines-and-restored-branch-task-rebase-gap-approval-walk-2026-11-08`, whose walk-minutes are `nedlern@ned-box:/home/nedlern/agents/fleet-restart-at-login/docs/walk/memory-refusal-only-the-callers-lines-and-restored-branch-task-rebase-gap-approval-walk-2026-11-08-minutes.md`, answering "A". The item, with the exact design sentences he approved, is under the heading "Item 3.2 of 4: The design's new sentences" in `nedlern@ned-box:/home/nedlern/agents/fleet-restart-at-login/docs/walk/memory-refusal-only-the-callers-lines-and-restored-branch-task-rebase-gap-approval-walk-2026-11-08.md`. The defect it fixes: a rebase copies the restore commit under a new id, so no ref holds the commit the task's `Restore commit: ` line names, and the cleaner marks the task completed while the work is still unmerged. Decided:
+
+- `restore` gives the commit it makes the trailer `Restored-from-work-snapshot: <the work-snapshot's ref>`, whose key is the constant `RESTORED_FROM_WORK_SNAPSHOT_TRAILER_KEY` in `nc-systems/handoff/uncommitted-work-snapshots.py`, and writes the same line in the task's description, whose instructions add "Keep this trailer in the commit message."; the task's `Restore commit: ` line stays, for the reader only.
+- After `git fetch --prune origin`, `scripts/clean-worktrees.py` reads each commit's trailers in `git log --all` and marks the task completed when a commit with the task's `Restored-from-work-snapshot: ` line is reachable from `origin/main`, or when no commit with that line is on any ref. A rebase copies the commit message, so a rebased or renamed branch keeps the task open until its work is on main or deleted.
+- A task with no `Restored-from-work-snapshot: ` line, opened before `restore` wrote one, is judged by its `Restore commit: ` line, as before.
+- This is built in a follow-up pull request after PR 2790 merges, not on PR 2790's branch; that pull request also puts the approved sentences into the design's § 3.
 
 ## Next action
 
-An agent-seat that takes up this GHI builds it, as the design's approved § 3 says: one pull request carrying the two commands, the task `restore` opens and the code that closes it, their tests, the shortened `RESTORE_STEPS`, and the design's § 3.
+[PR 2790](https://github.com/nedschorus/nedschorus/pull/2790), open on 2026-11-08, builds what the 2026-11-07 rulings decided: the two commands, the task `restore` opens and the code that closes it, their tests, the shortened `RESTORE_STEPS`, and the design's § 3. It merges with the rule the 2026-11-07 rulings set, under which a rebase still closes the task early, and is not changed for the 2026-11-08 ruling. After it merges, an agent-seat builds the 2026-11-08 ruling in a pull request of its own: the trailer in `restore`'s commit and in the task's description, the new rule in `scripts/clean-worktrees.py`, its tests, one of which rebases a restored branch and checks that the task stays open, and the approved sentences in the design's § 3.
 
 ## Where this came from
 
