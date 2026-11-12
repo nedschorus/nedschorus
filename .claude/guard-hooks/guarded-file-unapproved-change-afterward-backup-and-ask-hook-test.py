@@ -1903,7 +1903,7 @@ def cases(scratch):
     check("a guarded file a fast-forward brings, after a first run made while a merge was stopped "
           "in a checkout with no guarded file, is not asked about", message == "", message)
 
-    # -- speed, on a copy of main
+    # -- speed, on a test fixture repository holding the checkout's guarded files
     if sys.platform != "linux":
         print("SKIP  with nothing changed, a run does no hashing, copying or store work: not on ned-box")
         return
@@ -1914,17 +1914,16 @@ def cases(scratch):
               "in no checkout to copy")
         return
     world = World(Path(scratch) / "speed")
-    copy_of_main = Path(scratch) / "speed" / "main"
-    subprocess.run(["git", "clone", "-q", "--shared", top.stdout.strip(), str(copy_of_main)],
-                   check=True, env=world.environment())
-    world.run(cwd=copy_of_main)
-    world.run(cwd=copy_of_main)
+    fixture = Path(scratch) / "speed" / "guarded-files"
+    make_guarded_files_test_fixture_repository(world, fixture, Path(top.stdout.strip()))
+    world.run(cwd=fixture)
+    world.run(cwd=fixture)
     # CPU and wall time vary with machine load and tracing, so they are printed for information
     # only. What the case guards is that a run with nothing changed does no expensive work.
     times = []
     cpu_times = []
     for _ in range(5):
-        world.run(cwd=copy_of_main)
+        world.run(cwd=fixture)
         times.append(world.last_seconds)
         cpu_times.append(world.last_cpu_seconds)
     print(f"INFO  with nothing changed, wall seconds per run: {[round(t, 3) for t in times]}")
@@ -1952,22 +1951,22 @@ def cases(scratch):
     saved_environment, saved_directory = dict(os.environ), os.getcwd()
     try:
         os.environ.update(world.environment())
-        os.chdir(copy_of_main)
+        os.chdir(fixture)
         texts = hook.run_hook({"session_id": "session-a", "hook_event_name": "PostToolUse",
-                               "tool_name": "Bash", "cwd": str(copy_of_main),
+                               "tool_name": "Bash", "cwd": str(fixture),
                                "tool_input": {"command": "x"}})
     finally:
         os.chdir(saved_directory)
         os.environ.clear()
         os.environ.update(saved_environment)
-    check("with nothing changed, a run on a copy of main hashes no file, reads no file, copies "
-          "nothing and does not open the store",
+    check("with nothing changed, a run on a repository holding the checkout's guarded files "
+          "hashes no file, reads no file, copies nothing and does not open the store",
           texts == [] and not any(calls.values()) and store_listing(world.store) == store_before,
           (texts, calls))
 
     # -- a new worktree: on the Mac's SMB mount every store open is a network round trip
-    worktree = copy_of_main / ".claude" / "worktrees" / "agent-new"
-    subprocess.run(["git", "-C", str(copy_of_main), "worktree", "add", "-q", "-b",
+    worktree = fixture / ".claude" / "worktrees" / "agent-new"
+    subprocess.run(["git", "-C", str(fixture), "worktree", "add", "-q", "-b",
                     "worktree-agent-new", str(worktree)], check=True, env=world.environment())
     hook = load_hook_in_this_process()
     store = {"open": 0, "not found": 0, "make": 0, "access": 0}
@@ -2034,6 +2033,25 @@ def cases(scratch):
           "besides the lookups and the walk that make the file's directory",
           len(texts) == 1 and 0 < store["open"]
           <= 2 * store["access"] + 2 * store["make"] + store["not found"], (store, texts))
+
+
+def make_guarded_files_test_fixture_repository(world, directory, checkout):
+    """Make directory a repository of its own whose one commit holds this checkout's copy of
+    every file the hook guards in the checkout's HEAD, as its guarded_blobs_at lists them. A git
+    command that reads the checkout's files, such as a clone, makes the test runner select this
+    suite whenever any file changes; the files copied here select it only when one changes."""
+    hook = load_hook_in_this_process()
+    for absolute in hook.guarded_blobs_at(checkout, "HEAD"):
+        source = Path(absolute)
+        # A file deleted from the working tree, or a symbolic link, has no bytes of its own here.
+        if source.is_symlink() or not source.is_file():
+            continue
+        target = directory / source.relative_to(checkout)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+    world.git("init", "-q", "-b", "main", cwd=directory)
+    world.git("add", ".", cwd=directory)
+    world.git("commit", "-q", "-m", "the checkout's guarded files", cwd=directory)
 
 
 def load_hook_in_this_process():
