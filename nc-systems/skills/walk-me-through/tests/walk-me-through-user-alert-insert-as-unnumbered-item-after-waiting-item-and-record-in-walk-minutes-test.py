@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
@@ -296,6 +297,44 @@ def run_repeated_id_and_title_spanning_two_headings_cases(root):
     check("a title whose `##` heading would be two unnumbered items, not one, gets the prefix",
           title == "User alert: first\n## second", repr(title))
 
+def run_walk_order_cases(root):
+    close_spec = importlib.util.spec_from_file_location(
+        "check_and_close", HERE / "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py")
+    close = importlib.util.module_from_spec(close_spec)
+    close_spec.loader.exec_module(close)
+    checkout, home = walk_checkout(root, "walk-order")
+    claimed_alert(home, "alert-a", "merge-lane-2 is down")
+    result = run(checkout, home, "alert-a")
+    document, _ = files(checkout)
+    day = datetime.fromisoformat("2026-10-27T12:00:00+00:00").astimezone().date().isoformat()
+    check("the added item holds the first-entered line with the day the alert was written, right under its heading",
+          f"## merge-lane-2 is down\n\n{close.WALK_FIRST_ENTERED_TAG} {day}\n" in document, document)
+    tags = [close.WALK_CATEGORY_TAG + category for category in close.WALK_CATEGORIES]
+    check("the output tells the agent to write a category line, naming every category tag the close step reads",
+          all(f"`{tag}`" in result.stdout for tag in tags) and close.WALK_WAITS_ON_TAG in result.stdout,
+          result.stdout)
+    tagged = document.replace("## merge-lane-2 is down\n", f"## merge-lane-2 is down\n\n{tags[0]}\n", 1)
+    parser = walk_finder.markdown_parser()
+    units = walk_finder.item_unit_spans(tagged, parser)
+    try:
+        placing = close.unshown_items_placing(walk_finder, tagged, units, parser, "walk.md", "2026-11-11")
+    except close.WalkOrderUnusable as problem:
+        placing = problem
+    check("once the agent adds the category line, the close step places the item by that category and the "
+          "alert's day", isinstance(placing, dict) and [key[:2] for key, _ in placing.values()] == [(0, day)],
+          placing)
+
+    checkout, home = walk_checkout(root, "unreadable-written-at")
+    (home / ".local/state/nedschorus/user-alerts/claimed" / "alert-t.json").write_text(
+        json.dumps({"id": "alert-t", "written_at": "yesterday", "title": "t", "alert_text": "x", "action": "y"}),
+        encoding="utf-8")
+    before = files(checkout)
+    result = run(checkout, home, "alert-t")
+    check("an alert whose written_at is no ISO 8601 time makes the program exit 1, naming it, and change nothing",
+          result.returncode == 1 and "the alert alert-t cannot be read from" in result.stderr
+          and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     scratch = Path(temporary_directory)
     run_one_alert_cases(scratch)
@@ -303,6 +342,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_marker_in_title_cases(scratch)
     run_refusal_cases(scratch)
     run_repeated_id_and_title_spanning_two_headings_cases(scratch)
+    run_walk_order_cases(scratch)
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

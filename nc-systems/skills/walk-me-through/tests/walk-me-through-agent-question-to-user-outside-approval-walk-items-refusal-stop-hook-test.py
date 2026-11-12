@@ -341,6 +341,30 @@ def test_each_kind_of_logged_line_that_asks_nothing_passes_once_the_model_says_s
         check(f"{case_name} goes to the model", len(calls) == 1 and numbered_lines(calls[0]).startswith("1. "), calls)
 
 
+def test_the_item_the_block_message_asks_for_is_one_the_close_step_can_place():
+    case = Case()
+    case.reply("Should I merge the pull request now?")
+    reason = blocked_reason(case.run()) or ""
+    close_spec = importlib.util.spec_from_file_location("check_and_close", hook.CHECK_PROGRAM_FILE)
+    close = importlib.util.module_from_spec(close_spec)
+    close_spec.loader.exec_module(close)
+    tags = [close.WALK_CATEGORY_TAG + category for category in close.WALK_CATEGORIES]
+    check("the message names every category tag the close step reads", all(f"`{tag}`" in reason for tag in tags),
+          reason)
+    check("the message promises no fixed turn for the new item",
+          "shown after item 2 is answered" not in reason and "when the user answers item 2" not in reason
+          and "a new item after item 2" not in reason, reason)
+    document = WALK_DOCUMENT + f"\n## merge-lane-2's question about the GHI\n\n{tags[1]}\n\nRecommendation: File it.\n"
+    parser = hook.walk_finder.markdown_parser()
+    units = hook.walk_finder.item_unit_spans(document, parser)
+    try:
+        placing = close.unshown_items_placing(hook.walk_finder, document, units, parser, "walk.md", "2026-11-11")
+    except close.WalkOrderUnusable as problem:
+        placing = problem
+    check("an item headed and tagged as the message says is placed by the close step's walk order",
+          isinstance(placing, dict) and [key[0] for key, _ in placing.values()] == [1], placing)
+
+
 def test_the_block_message_says_what_to_do():
     case = Case()
     case.reply("Should I merge the pull request now?")
@@ -353,11 +377,18 @@ def test_the_block_message_says_what_to_do():
              "The flagged text: \"Should I merge the pull request now?\""),
             ("the message names the waiting item", "goes to the waiting item, item 2,"),
             ("the message gives the interruption item a heading with no number, and names the script whose close "
-             "step numbers it",
-             "headed `## <the point of the question>`, with no number, placed right after item 2. Do not number it "
-             "yourself: when the user answers item 2, the close step of "
+             "step chooses when it is shown and numbers it",
+             "headed `## <the point of the question>`, with no number, placed right after item 2. Under the heading, "
+             "give it a line of its own naming its category, the one for how soon its work must happen, one of "
+             "`#approval_walk_item_in_category_must_fix_now`, "
+             "`#approval_walk_item_in_category_fix_next`, `#approval_walk_item_in_category_fix_during_maintenance`, "
+             "`#approval_walk_item_in_category_file_an_improvement_feature_or_change`, and a line "
+             "`#approval_walk_item_waits_on <title>` for each item it must follow, as the walk-me-through skill's "
+             "section \"Re-planning\" says. Do not number it yourself: the close step of "
              "nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py "
-             "writes the next number into this heading."),
+             "chooses when, among the items not yet shown, the user sees it, by the items it waits on, its category "
+             "and the day it first entered a walk, so it may come later than right after item 2, and writes its "
+             "number into this heading then."),
             ("the message says to quote the question whole with a recommendation",
              "Quote the question whole in the item, as its asker wrote it, whether you or another agent, giving each "
              "line of the flagged text a line of its own, word for word, and putting the rest of the question on "
@@ -368,9 +399,9 @@ def test_the_block_message_says_what_to_do():
              "an action, as in `Recommendation: <what you recommend doing>.` State the alternative before it, as in "
              "`The alternative: <what D does instead>.`"),
             ("the message says not to show the new item now",
-             "Do not show the new item now: it is shown after item 2 is answered."),
+             "Do not show the new item now: the walk shows it when its turn comes."),
             ("the message gives the closing line's form when the minutes record no page for the waiting item",
-             "End the message you write next with the line `I added the question as a new item after item 2.` and "
+             "End the message you write next with the line `I added the question to the walk as a new item.` and "
              "then the waiting item's closing line, as the walk-me-through skill writes it, as the last text of that "
              f"message:\n`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the poem page lives](<page link>) · "
              f"{CLOSING_LINE_ANSWER_LETTERS}`\n"
@@ -604,7 +635,7 @@ def test_a_question_held_in_an_interruption_item_is_not_checked():
           held.model_calls())
     unnumbered = Case(document=WALK_DOCUMENT + "\n" + INTERRUPTION_ITEM.replace("## Item 2.1 of 11: ", "## "))
     unnumbered.records(PEER_PROMPT, text_record(stray), text_record(
-        "I added the question as a new item after item 2.\n\nItem 2 of 10 is waiting for your answer."))
+        "I added the question to the walk as a new item.\n\nItem 2 of 10 is waiting for your answer."))
     check_silent("a question an unnumbered item holds, headed as the refusal's step 1 says, passes",
                  unnumbered.run(model="yes"))
     held.reply("Should I merge the pull request now?\n\n" + closing)
@@ -942,8 +973,8 @@ def test_two_waiting_items():
     case = Case(minutes="#next_to_present items 2 and 3 of 10")
     case.reply("Should I merge the pull request now?")
     check_blocked("with two items waiting, the interruption item follows the later one and both are named",
-                  case.run(), "`## <the point of the question>`, with no number, placed right after item 3. Do not number it yourself: when the user answers item 3,",
-                  "`I added the question as a new item after item 3.`",
+                  case.run(), "`## <the point of the question>`, with no number, placed right after item 3. Under the heading",
+                  "so it may come later than right after item 3,", "`I added the question to the walk as a new item.`",
                   "and then each waiting item's closing line, on a line of its own, as the walk-me-through skill "
                   f"writes it, as the last text of that message:\n`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the "
                   f"poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}`\n`[Item 3 of "
