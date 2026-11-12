@@ -305,6 +305,9 @@ def merge_lane_cases(scratch):
              "\"nit\" key"),
             ("a nit whose category is must-fix-now", [nit(2, category="must-fix-now")], "REQUEST_CHANGES",
              "whose \"finding_category\" is 'must-fix-now'; only a fix-in-maintenance finding can be a nit"),
+            ("a nit whose category is file-for-later, which sorts before fix-in-maintenance",
+             [nit(2, category="file-for-later")], "APPROVE",
+             "whose \"finding_category\" is 'file-for-later'; only a fix-in-maintenance finding can be a nit"),
             ("a \"nit\" of false", [nit(2, value=False)], "APPROVE",
              "comment on scripts/thing.py:2 whose \"nit\" is False; give \"nit\" only as the JSON value true, "
              "on a nit, a small fix that names no failure, such as a misspelt name, and omit the \"nit\" key "
