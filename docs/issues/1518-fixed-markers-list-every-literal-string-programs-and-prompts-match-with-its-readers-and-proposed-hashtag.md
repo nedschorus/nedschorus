@@ -81,7 +81,7 @@ Open points reboot-test's survey raises, not yet settled:
 - `#rejected` already has a meaning on main: a deferred-decisions line the user turned down for good, as the GHI-MD's own `docs/issues/1518-review-the-whole-project-for-fixed-markers-that.md:18`, `docs/agents/queue/design-to-main-design-writing-agent-instructions.md:15`, `docs/issues/1583-before-a-ghi-md-s-first-code-pull.md:18` and `scripts/design-to-main/tests/design-to-main-design-names-exist-in-state-tables-test.py:168` use it. Row 12 proposes `#rejected` for the walk-minutes outcome class `<rejected>`, a disapproved approval-walk item, which is another meaning; the walk-minutes class needs another name, such as reboot-test's `#outcome_rejected`, or the two meanings must be shown to be one.
 - Row 4 lists fewer handoff fields than `nc-systems/handoff/session-handoff-field-names-common.py` now holds: `session-handoff-sequence-number` (`:11`) and `ask-user-before-restart` (`:16`) are missing, and so is `next-step-verbatim-unterminated` (`:25`), which reboot-test's survey does not name either. The recommendation to keep the fields stays, since every reader takes the names from that module, but rows 4 and 5 should name every field it holds.
 
-## The cold-read system
+### The cold-read system
 
 This section covers the programs and the two designs in `nc-systems/cold-read/`, `.claude/skills/cold-read/SKILL.md`, the three prompts in `.claude/skills/cold-read/prompts/`, and `scripts/cold-read-fast-read-due-for-linked-document-reminder-hook.py`. Row 20 already covers `cold-read-fast-read: record: FAILED` and `cold-read-fast-read: record: REFUSED`. Already hashtags: `#frozen_copy_changed_during_run` and `#cold_read_target_changed_during_run` (`nc-systems/cold-read/cold-read-grid.py:273-275`), and `#cold_read_fast_read_sonnet_backup_ran` (`nc-systems/cold-read/cold-read-fast-read.py:284`), which the list of existing hashtags does not yet name. The `cause:` lines of the cold-read-cell programs and the phrases the cold-read-grid lifts from them (`nc-systems/cold-read/cold-read-cell-common.py:298-299`, `:362-365`, `:421-424`), and the `## Question 4: What should be code` heading, are left out: every writer and reader takes them from `cold-read-cell-common.py` or from `cold-read-fast-read.py:330`.
 
@@ -105,7 +105,7 @@ This section covers the programs and the two designs in `nc-systems/cold-read/`,
 
 `scripts/cold-read-fast-read-due-for-linked-document-reminder-hook.py`, `nc-systems/cold-read/cold-read-record-names-common.py` and `nc-systems/cold-read/cold-read-restater-judge-cell.py` match no fixed marker: they match file names, filename suffixes, environment variable names, Claude Code transcript fields, or constants shared through `cold-read-cell-common.py`.
 
-## The sanity-check
+### The sanity-check
 
 This section covers `scripts/sanity-check-adversarial-prompts.py`, `scripts/sanity-check-record-ship.py`, `.claude/skills/sanity-check/SKILL.md` and the three sanity-check-adversarial-prompts in `docs/agents/`. The `shipped:` line the runner reads, and the provenance line it writes, are rows 33 and 34.
 
@@ -118,7 +118,7 @@ This section covers `scripts/sanity-check-adversarial-prompts.py`, `scripts/sani
 
 `scripts/sanity-check-record-ship.py` matches no fixed marker: it prints `nc-systems/cold-read/cold-read-record-ship.py`'s lines unchanged.
 
-## The main-gatekeeper
+### The main-gatekeeper
 
 This section covers `nc-systems/main-gatekeeper/main-gatekeeper.py`, `main-gatekeeper-design.md`, `main-gatekeeper-first-live-check-in-record.md` and `main-gatekeeper-glossary.md`.
 
@@ -129,7 +129,7 @@ This section covers `nc-systems/main-gatekeeper/main-gatekeeper.py`, `main-gatek
 
 `nc-systems/main-gatekeeper/main-gatekeeper-first-live-check-in-record.md` and `nc-systems/main-gatekeeper/main-gatekeeper-glossary.md` match no fixed marker.
 
-## The nc-shared-database
+### The nc-shared-database
 
 This section covers the programs in `nc-systems/nc-shared-database/` and its systemd unit.
 
@@ -139,7 +139,7 @@ This section covers the programs in `nc-systems/nc-shared-database/` and its sys
 
 `nc-shared-database-local-events-file-sender.py`, `nc-shared-database-newest-backup-copy-to-mac.py`, `nc-shared-database-nightly-backup-with-integrity-check.py` (whose only match is SQLite's `ok` from `PRAGMA integrity_check`, at `:79`), `nc-shared-database-service-on-ned-box-and-jobs-on-both-machines-install-from-the-mac.py`, `nc-shared-database-service-restart-after-merge.py` and `nc-shared-database-service.service` match no fixed marker.
 
-## design-to-main
+### design-to-main
 
 This section covers the programs in `scripts/design-to-main/`, its four scenario files in `scripts/design-to-main/scenarios/`, and the eleven `docs/agents/queue/design-to-main-*-instructions.md` files. design-to-main already uses the GHI-MD's proposed `#not_in_this_run` and `#rejected` (row 53); it uses `#revisit_before` and `#revisit_after` in place of `#revisit_when`, which no file on main holds outside the two GHI 1518 files.
 
@@ -154,7 +154,7 @@ This section covers the programs in `scripts/design-to-main/`, its four scenario
 
 `scripts/design-to-main/design-to-main-run-state.py`, `scripts/design-to-main/design-to-main-scenario-runner.py`, the four scenario files and the remaining eight instructions files match no fixed marker beyond rows 53 to 58: they read state JSON keys, scenario keys only the scenario runner reads, or the `state-exit.json` fields of row 56.
 
-## The merge-lane and the pull-request tools
+### The merge-lane and the pull-request tools
 
 This section covers the merge-lane's programs `scripts/merge-lane-*.py` and `scripts/merge-lane-pull-request-claude-reviewer-review-schema.json`, `scripts/merge-gate.sh`, `scripts/branch-conflict-check.py`, `scripts/branch-reverts-a-file-to-an-older-main-version-check.py`, `scripts/compose-pull-request-reviewer-brief.py`, `scripts/code-review-codex-cell.py`, `scripts/pull-request-*.py`, `scripts/watch-open-pull-requests-nbd.py`, `nc-systems/general-tools/pull-request-*.py`, `docs/agents/pr-reviewer-instructions.md` and `.claude/skills/pull-request-review-write/SKILL.md`. Rows 24 to 27 and 30 already hold `**Blocks**` and the nit mark, the `ANSWER:` lines, `VERDICT: BRANCH-REVERTS-A-FILE-TO-AN-OLDER-MAIN-VERSION`, `SUMMARY:`, and `FAIL`/`NOT RUN`. Six fixed markers here are already hashtags: `#root_cause`, `#root_cause_not_fixed` and `#no_defect_fixed`, which `scripts/pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py:30-32` reads; and three that the GHI-MD's list does not yet name: `#follow_up` (`:33` of the same reader, and `scripts/merge-gate.sh:368-397`), `#replaces` (`scripts/pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py:26`), and `#follow_up_request pull request <n>`, which merge-lane-2 writes and `scripts/pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py:173-177` and `nc-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-and-forked-subagent-brief-hand-over-user-prompt-submit-hook.py:26` read.
 
@@ -171,7 +171,7 @@ This section covers the merge-lane's programs `scripts/merge-lane-*.py` and `scr
 
 `scripts/merge-lane-code-review-codex-cell-run-on-pull-request-head.py`, `scripts/merge-lane-pull-request-helpers-common-options-paths-and-token.py`, `scripts/merge-lane-pull-request-worktrees-reviewer-brief-codex-review-and-head-tests-run-without-merge.py`, `scripts/pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py`, `nc-systems/general-tools/pull-request-conflict-with-main-rebase-or-replace-answer-common.py`, `nc-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-and-forked-subagent-brief-hand-over-user-prompt-submit-hook.py` and `.claude/skills/pull-request-review-write/SKILL.md` match no fixed marker.
 
-## The git client-side hooks and the test runners
+### The git client-side hooks and the test runners
 
 This section covers the git client-side hooks, `scripts/git-client-side-hooks/*` and `scripts/git-client-side-hooks-*.py`, and the test runners and their schedulers: `scripts/run-all-test-suites.py`, `scripts/run-all-test-suites-one-suite-child-subreaper-launcher.py`, `scripts/run-suite-in-signal-sandbox.py`, `scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py`, `scripts/scheduled-full-test-run-of-main.py`, `scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py` and `scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py`. Rows 26, 27 and 30 already hold the revert verdict, `SUMMARY:`, the per-suite `FAIL` and `NOT RUN` lines and `run-all-test-suites: not run to the end`.
 
@@ -187,7 +187,7 @@ This section covers the git client-side hooks, `scripts/git-client-side-hooks/*`
 
 `scripts/git-client-side-hooks/post-checkout`, `scripts/git-client-side-hooks/post-merge`, `scripts/git-client-side-hooks/pre-commit`, `scripts/git-client-side-hooks/pre-merge-commit`, `scripts/git-client-side-hooks-post-checkout-new-worktree-owner-file-write.py`, `scripts/git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py`, `scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py` and `scripts/run-all-test-suites-one-suite-child-subreaper-launcher.py` match no fixed marker.
 
-## The ghi-write-tool and ghi-guide-agent
+### The ghi-write-tool and ghi-guide-agent
 
 This section covers the ghi-write-tool `scripts/ghi-issue-write.py` and its skill `.claude/skills/ghi-write/SKILL.md`, its two guard-hooks `.claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py` and `.claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py`, ghi-guide-agent's `scripts/ghi-guide-agent-ask.py` and `scripts/ghi-mirror-refresh.py`, and the Codex and Gemini task runners `scripts/run-codex-task-from-brief.py` and `scripts/run-gemini-task-from-brief.py`. Row 19 already holds ghi-guide-agent's verdict lines. The ghi-write-tool writes the hashtag `#no_defect_fixed` into the description of each GHI-MD edit pull request (`scripts/ghi-issue-write.py:1818`, `:2464`).
 
@@ -201,7 +201,7 @@ This section covers the ghi-write-tool `scripts/ghi-issue-write.py` and its skil
 
 `scripts/ghi-mirror-refresh.py`, `.claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py`, `.claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py`, `scripts/run-codex-task-from-brief.py` and `scripts/run-gemini-task-from-brief.py` match no fixed marker.
 
-## The guard hooks
+### The guard hooks
 
 The programs in `.claude/guard-hooks/` other than the two `ghi-*` files. Row 22 lists the obvious-fix marker's opening words, and `#pre_approved_change` is already a hashtag; the second line of a pre-approved-change marker file is free text that `.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py:1527` logs and no program matches. Every other literal these guards match is a word of a shell command, git's or tmux's syntax, or text the same guard writes.
 
@@ -211,7 +211,7 @@ The programs in `.claude/guard-hooks/` other than the two `ghi-*` files. Row 22 
 
 `.claude/guard-hooks/backup-and-snapshot-write-guard.py`, `claude-code-artifact-tool-claude-ai-page-delete-refusal-hook.py`, `claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py`, `force-push-with-open-pull-request-guard-hook.py`, `git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py`, `guard-approval-marker-common.py`, `hand-typed-codex-exec-command-refusal-hook.py`, `handoff-deferral-cold-read-full-run-launch-refusal-hook.py`, `pkill-killall-and-process-name-pattern-kill-refusal-hook.py`, `search-file-argument-read-as-option-guard-hook.py` and `synthetic-keystroke-guard-hook.py` match no fixed marker.
 
-## The scripts/ hooks
+### The scripts/ hooks
 
 Every `scripts/*hook*.py` in this sweep. `scripts/standing-user-rulings-store-add-from-transcripts-and-walk-minutes-then-index-file-and-anchor-list-for-hooks-write.py` writes files for hooks but is not one; it is in the next section.
 
@@ -224,7 +224,7 @@ Every `scripts/*hook*.py` in this sweep. `scripts/standing-user-rulings-store-ad
 
 `scripts/absence-claim-locator-reminder-hook.py`, `scripts/file-name-collision-warning-hook.py`, `scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-nbd.py`, `scripts/new-shared-names-reminder-hook.py`, `scripts/obsolete-file-edit-warning-hook.py`, `scripts/post-compaction-session-continues-hook.py`, `scripts/style-guide-word-checker-markdown-edit-hook-nbd.py` and `scripts/uncommitted-work-snapshot-hook.py` match no fixed marker beyond rows 1 to 30 and the GHI-MD's `VERDICT: CONFLICT`.
 
-## The log-store search, backup search and transcript tools
+### The log-store search, backup search and transcript tools
 
 `scripts/locate-file-copies-across-machines.py`, `scripts/find-deleted-path-across-backups.py`, `scripts/log-store-past-discussions-regex-search-newest-first.py`, the programs that write and read session dialogs, `scripts/transcript-mirror-to-log-store.py`, the transcript readers and the standing-user-rulings program. Rows 3 and 18 already list the first-prompt phrases and the walk-minutes answer line these programs read. The backup search's summary lines, which the locator reads, are row 99, with the other search lines the find-info skill names.
 
@@ -237,7 +237,7 @@ Every `scripts/*hook*.py` in this sweep. `scripts/standing-user-rulings-store-ad
 
 `scripts/claude-code-session-transcript-lookup-and-text-search-common.py`, `scripts/claude-code-session-transcript-records-read-backward-common.py`, `scripts/log-store-session-dialogs-refresh-common.py` and `scripts/log-store-session-dialogs-refresh-nbd.py` match no fixed marker: the last line of a session dialog and stale-dialog warning are written and read through one shared constant.
 
-## The general tools
+### The general tools
 
 `nc-systems/general-tools/` other than its `pull-request-*.py` files, and the remaining scripts of this sweep.
 
@@ -255,7 +255,7 @@ Every `scripts/*hook*.py` in this sweep. `scripts/standing-user-rulings-store-ad
 
 `nc-systems/general-tools/agent-seat-task-list-new-pending-task-write-common.py`, `nc-systems/general-tools/agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook.py`, `nc-systems/general-tools/agent-session-unattended-by-user-check-common.py`, `nc-systems/general-tools/agy-print-prompt-run-in-empty-home-sandbox.py`, `nc-systems/general-tools/claude-code-background-command-output-file-wait-until-no-process-writes-it.py`, `nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py`, `nc-systems/general-tools/claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py`, `nc-systems/general-tools/claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py`, `nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py`, `nc-systems/general-tools/common-module-wording-copied-into-other-test-files-finder-common.py`, `nc-systems/general-tools/edited-file-path-within-checkout-root-and-git-check-ignore-common.py`, `nc-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py`, `nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py`, `nc-systems/general-tools/git-worktree-remove-deferred-until-cold-read-record-and-sanity-check-record-being-written-locks-release-then-ship-to-log-store-waiter.py`, `nc-systems/general-tools/guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py`, `nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py`, `nc-systems/general-tools/log-suffix-and-extension-file-classify-common.py`, `nc-systems/general-tools/markdown-commonmark-parser-with-tables-common.py`, `nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py`, `nc-systems/general-tools/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py`, `nc-systems/general-tools/python-libraries-pinned-requirements-check-and-install.py`, `nc-systems/general-tools/python-libraries-pinned-requirements-install-if-missing-then-import-common.py`, `nc-systems/general-tools/python-libraries-pinned-requirements.txt`, `nc-systems/general-tools/python-source-tool-message-to-agent-string-collector-common.py`, `nc-systems/general-tools/rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py`, `nc-systems/general-tools/scheduled-jobs-on-each-machine.json`, `nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py`, `nc-systems/general-tools/stop-signal-sigterm-or-sighup-raises-system-exit-so-cleanup-runs-common.py`, `nc-systems/general-tools/test-scratch-directory-whose-earlier-killed-runs-leftovers-are-removed-first-common.py`, `nc-systems/general-tools/tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete.py`, `nc-systems/general-tools/user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py`, `scripts/agent-binary-update-under-lock.py`, `scripts/agent-seat-worktree-create-with-owner-file.py`, `scripts/backup-health-check.py`, `scripts/citation-and-history-marker-tests-date-pattern-common.py`, `scripts/claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py`, `scripts/git-redirecting-environment-removal-test-fixture.py`, `scripts/glossary-term-agent-facing-message-replaced-by-tool-message-to-agent-in-repository-nbd.py`, `scripts/launch-claude-mac`, `scripts/launch-claude-ubuntu`, `scripts/new-shared-names-in-changed-files-list.py`, `scripts/open-file-in-typora-on-mac-from-ned-box-nbd.py`, `scripts/open-html-page-in-mac-browser-from-ned-box.py`, `scripts/open-iterm-window-running-command`, `scripts/running-python-executable-file-path-for-copy-named-claude-test-fixture.py`, `scripts/save-uncommitted-scratch-worktrees-before-reboot.py`, `scripts/session-statusline-command.py`, `scripts/style-guide-word-checker-nbd.py`, `scripts/tool-message-to-agent-ask-two-fresh-agents-next-step-and-check-named-script-flags.py`, `scripts/worktree-owner-file-one-time-backfill-for-existing-worktrees-with-none.py` and `scripts/worktree-owner-file-read-and-write.py` match no fixed marker: what they match is a shared constant or module, text the same program writes, text an outside program writes, a file or directory name pattern, an environment variable name, or words only a person reads. `scripts/clean-worktrees.py`, `scripts/agent-seat-transcript-worth-resuming-common.py`, `scripts/search-user-messages-in-transcripts.py`, `scripts/resupervise-seat.py` and `scripts/uncommitted-work-snapshot-hook.py` match nothing beyond the rows above and rows 1 to 11. `scripts/agent-home-seat-branch-commits-save-to-pushed-branch-and-detach-at-origin-main.py` and `scripts/seat-shared-file-ship.py` match only names that several programs copy rather than import, `agent-home-marker` and the task list directory `nedschorus-<agent-seat>-tasks`; a name is left out, as a filename suffix is.
 
-## The other skills, and the standing instruction files
+### The other skills, and the standing instruction files
 
 This section covers the skills no other section covers, `.claude/skills/explain/`, `find-info/`, `find-missing-file/`, `handoff/`, `overview-write/` and `start-agent-seat/`, with `.claude/skills/skills-glossary.md` and the programs under `nc-systems/skills/explain/` and `nc-systems/skills/overview-write/`; and the standing instruction files: `CLAUDE.md`, `AGENTS.md`, `docs/agents/seat-first-prompt.md`, `docs/agents/seat-session-appended-system-prompt.md`, `nc-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md`, `.claude/agents/new-name-propose-and-check-fresh-agent.md`, and the seat-briefs of the three agent-seats whose agent-home is on ned-box, `agent-instructions-editor`, `merge-lane-2` and `prime-intellect`, cited by their path on ned-box. The Mac's seat-briefs could not be read from ned-box and are not swept. The handoff skill's texts are rows 17 and 23; the walk-me-through skill's are rows 12 to 16, 18, 28 and 29; the `-instructions.md` and `-prompt.md` files of the cold-read system, the sanity-check, design-to-main and the merge-lane are in their systems' sections.
 
@@ -269,7 +269,7 @@ This section covers the skills no other section covers, `.claude/skills/explain/
 
 `.claude/skills/find-missing-file/SKILL.md`, `.claude/skills/start-agent-seat/SKILL.md`, `.claude/skills/skills-glossary.md`, `CLAUDE.md` (beyond `#root_cause`, `#root_cause_not_fixed` and `#no_defect_fixed`, already hashtags), `AGENTS.md`, `docs/agents/seat-first-prompt.md` (beyond `#pre_approved_change`, already a hashtag, whose next line the guard hooks' section describes), `docs/agents/seat-session-appended-system-prompt.md`, `nc-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md`, whose citation forms are read by people, and the seat-briefs of `agent-instructions-editor` and `prime-intellect` match no fixed marker. The overview claim check's `result: ` line is read by `scripts/pull-request-review-plan.py:973-976` through the claim check's own constants, and its `Claim: ` lines only by the program that writes them, so neither is listed; the `/explain fast` argument is read by the agent the user types it to.
 
-## What the sweep of the remaining systems adds to rows 1 to 30, and where the list stands
+### What the sweep of the remaining systems adds to rows 1 to 30, and where the list stands
 
 With the sections from "The cold-read system" onward, every program and prompt under `scripts/`, `nc-systems/`, `.claude/guard-hooks/` and `.claude/skills/`, and every standing instruction file on ned-box, falls in a section of this list: in a row, or named in a section as matching no fixed marker. A test file is covered as a reader of the program it tests. The sweep was made at commit `b54c75da7` of main, by the agent-seat `fleet-restart-at-login` and three subagents, each grepping its files for literals a program compares, searches for or splits text on, and for exact phrases a prompt tells an agent to write or look for; the Mac's seat-briefs were not reachable from ned-box and are not swept: an agent-seat on the Mac adds them before step 4's approval-walk. That approval-walk takes each row together with the parts and readers this list adds for it later: in the section of reboot-test's survey and in the list below.
 
