@@ -7,6 +7,15 @@ filing or editing an issue, to learn what already covers the ground.
 Usage:
   ghi-guide-agent-ask.py "<question>" [--include-closed]
   ghi-guide-agent-ask.py --question-file <path> [--include-closed]
+  ... [--print-answer-json]
+
+ghi-guide-agent's answer is a JSON object that `claude -p --json-schema`
+constrains to GHI_GUIDE_AGENT_ANSWER_JSON_SCHEMA; its `kind` says which reply
+it is. By default this program prints what ghi_guide_agent_answer_render_as_caller_stdout_stderr_and_exit_code makes of
+it, with the exit codes below. With --print-answer-json it prints the object
+itself on stdout instead, whatever the exit code, for a program such as
+scripts/ghi-issue-write.py that reads its fields; a failed ask prints nothing
+on stdout.
 
 Exit codes:
   0  the reading list ghi-guide-agent returns, printed to stdout; without
@@ -16,10 +25,10 @@ Exit codes:
      erroring or timing out: one line on stderr. A failed ask never blocks a
      write (design's own words): the caller's job is to fall down the
      ghi-write skill's fallback ladder, not to treat exit 1 as fatal.
-  2  ghi-guide-agent replied `not-about-issues`: the question was not about issues.
-     NOT_ABOUT_ISSUES_MESSAGE on stderr, nothing on stdout.
-  3  ghi-guide-agent replied `ask-user-about-ruling: <sentence>`: it found a ruling
-     of the user's it may not judge. RULING_QUESTION_MESSAGE, carrying that
+  2  ghi-guide-agent answered with kind `not-about-issues`: the question was not
+     about issues. NOT_ABOUT_ISSUES_MESSAGE on stderr, nothing on stdout.
+  3  ghi-guide-agent answered with kind `ask-user-about-ruling`: it found a ruling
+     of the user's it may not judge. RULING_QUESTION_MESSAGE, carrying its
      sentence, on stderr, nothing on stdout.
 
 Why 2 and 3 are not passed through (user-ruled 2026-09-29, walk
@@ -37,20 +46,12 @@ Exit codes of their own, rather than 1, because 1 sends a caller down the
 fallback ladder, which is wrong for both: one wants the question reworded,
 the other wants the user.
 
-ghi-guide-agent itself still replies with bare words: they are the protocol
-between its prompt and this script (COLD_START_PROMPT_TEMPLATE). What
-changed is what reaches the caller. The words themselves were renamed to say
-what they mean (user-ruled 2026-10-01, reboot-test seat, after "escalate or
-whatever the other response is makes no sense"): `out-of-scope` became
-`not-about-issues`, and `escalate:` became `ask-user-about-ruling:`. The old
-words are still read for a while; see RETIRED_BOUNDARY_REPLY_WORDS.
-
 A draft that conflicts with a ruling the user made gets the ruling question,
-not a verdict line. too-similar is a soft block an agent may pass on its own
+not a verdict. too-similar is a soft block an agent may pass on its own
 judgment, and a ruling is the user's to settle; the GHI write tool writes the
 issue and records the question in a proposed-improvements-or-changes-file
-in the log-store on ned-box. Every ruling question opens with the number of the issue
-holding the ruling, so that record can cite the ruling. The prompt reaches ghi-guide-agent at a cold start, so a session started
+in the log-store on ned-box. Every ruling question carries the number of the issue
+holding the ruling, its `ruling_issue`, so that record can cite the ruling. The prompt reaches ghi-guide-agent at a cold start, so a session started
 earlier keeps its old prompt until it is next reincarnated.
 
 Seat and machine: ghi-guide-agent lives ONLY on the Ubuntu box, at ~/agents/ghi-guide-agent
@@ -108,25 +109,20 @@ session — it cold-starts a throwaway session of its own and never writes
 its outcome back to the state file (design: "nothing waits, nothing shares
 a transcript").
 
-Two guards against a reply that is not the answer (measured 2026-09-17).
-This script returns the run's LAST message, and on that day ghi-guide-agent answered
-the question at 20:16:59Z and then answered the checkout-freshness Stop hook
-13 seconds later; the caller got "No action needed on my part ..." with exit
-0, so its fallback ladder never fired. So the run no longer loads this
-project's settings (--setting-sources user, the flag PR #417 gave the
-cold-read cells for the same leak), and a reply that names no issue, has no
-`verdict: unrelated` line, and is neither of the two boundary replies fails
-the ask instead of being passed back.
+The answer is read from the result's `structured_output`, never from its
+text, so a reply the session gave after its answer, such as one to a Stop
+hook, cannot stand in for it. `claude -p` exits 0 with `"is_error": false`
+even when the model never satisfied the schema, leaving `structured_output`
+null; that, and an object that lacks a field its kind needs, fail the ask
+(ghi_guide_agent_answer_extract_and_schema_check_from_claude_result).
 
-Post-check (design step 4): every pointer ghi-guide-agent returns is checked
+Post-check (design step 4): every issue number in the answer is checked
 against the just-refreshed mirror by this script, never taken on the
-agent's word. A closed pointer that the caller did not ask for via
+agent's word. A closed issue that the caller did not ask for via
 --include-closed is treated as drift — stale context — and triggers exactly
-one recheck turn, the corrected reply becoming the final answer. This
-script does not itself rewrite ghi-guide-agent's truthful-tag wording; the
-cold-start prompt already instructs ghi-guide-agent to tag closed pointers itself,
-and the post-check's job is deciding WHETHER a recheck is owed, not
-re-authoring the reply.
+one recheck turn, the corrected answer becoming the final answer. The
+"(closed <date>)" tag on a closed issue in the printed reading list comes
+from the mirror too.
 """
 
 import argparse
@@ -238,11 +234,60 @@ TRANSCRIPT_SIZE_THRESHOLD_BYTES = 5_000_000
 # and the design's reincarnation errs eager.
 CONTEXT_USED_PERCENTAGE_THRESHOLD = 40.0
 
-POINTER_PATTERN = re.compile(r"#(\d+)")
-# The one verdict that names no issue. A line of its own, as the draft-body
-# request asks, so prose that only mentions the verdict does not pass.
-VERDICT_UNRELATED_LINE_PATTERN = re.compile(
-    r"^[ \t]*verdict:[ \t]*unrelated[ \t]*$", re.IGNORECASE | re.MULTILINE)
+GHI_GUIDE_AGENT_ANSWER_KIND_READING_LIST = "reading-list"
+GHI_GUIDE_AGENT_ANSWER_KIND_VERDICT = "verdict"
+GHI_GUIDE_AGENT_ANSWER_KIND_REPAIR = "repair"
+GHI_GUIDE_AGENT_ANSWER_KIND_NOT_ABOUT_ISSUES = "not-about-issues"
+GHI_GUIDE_AGENT_ANSWER_KIND_ASK_USER_ABOUT_RULING = "ask-user-about-ruling"
+VERDICTS = ("too-similar", "related", "unrelated")
+REPAIR_OUTCOMES = ("done", "no-change", "blocked")
+
+# The API refuses oneOf, anyOf and allOf at a schema's top level (Claude Code
+# 2.1.322), so one flat object carries every kind's fields, and
+# GHI_GUIDE_AGENT_ANSWER_FIELDS_EACH_KIND_NEEDS says which of them each kind must fill.
+GHI_GUIDE_AGENT_ANSWER_JSON_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["kind"],
+    "properties": {
+        "kind": {
+            "enum": [GHI_GUIDE_AGENT_ANSWER_KIND_READING_LIST, GHI_GUIDE_AGENT_ANSWER_KIND_VERDICT, GHI_GUIDE_AGENT_ANSWER_KIND_REPAIR,
+                     GHI_GUIDE_AGENT_ANSWER_KIND_NOT_ABOUT_ISSUES, GHI_GUIDE_AGENT_ANSWER_KIND_ASK_USER_ABOUT_RULING],
+            "description": ("Which reply this is: reading-list for request forms 1 and 3, "
+                            "verdict for form 2, repair for form 4, and not-about-issues or "
+                            "ask-user-about-ruling for the Boundaries.")},
+        "issues": {
+            "type": "array", "items": {"type": "integer"},
+            "description": ("For reading-list and verdict: the issue numbers, without #, "
+                            "in the order you would have the asker read them.")},
+        "notes": {
+            "type": "array", "items": {"type": "string"},
+            "description": "For reading-list: note lines in plain sentences, only when needed."},
+        "verdict": {
+            "enum": list(VERDICTS),
+            "description": "For verdict: too-similar, related or unrelated."},
+        "outcome": {
+            "enum": list(REPAIR_OUTCOMES),
+            "description": "For repair: done, no-change or blocked."},
+        "sentence": {
+            "type": "string",
+            "description": ("For repair: the repair, why no change was needed, or what "
+                            "stopped you. For ask-user-about-ruling: one sentence naming "
+                            "the ruling and the doubt.")},
+        "ruling_issue": {
+            "type": "integer",
+            "description": ("For ask-user-about-ruling: the number of the issue that "
+                            "holds the ruling.")},
+    },
+}
+# The fields each kind must fill beyond `kind`.
+GHI_GUIDE_AGENT_ANSWER_FIELDS_EACH_KIND_NEEDS = {
+    GHI_GUIDE_AGENT_ANSWER_KIND_READING_LIST: ("issues",),
+    GHI_GUIDE_AGENT_ANSWER_KIND_VERDICT: ("verdict", "issues"),
+    GHI_GUIDE_AGENT_ANSWER_KIND_REPAIR: ("outcome", "sentence"),
+    GHI_GUIDE_AGENT_ANSWER_KIND_NOT_ABOUT_ISSUES: (),
+    GHI_GUIDE_AGENT_ANSWER_KIND_ASK_USER_ABOUT_RULING: ("ruling_issue", "sentence"),
+}
 
 COLD_START_PROMPT_TEMPLATE = """You are ghi-guide-agent: this project's knowledge agent over its GitHub-issue corpus. Other agents send you one request at a time; you answer it from the corpus you hold in context and stop. You are the judgment layer — every mechanical fact (fetching, counting, verifying) is script work done for you before a request reaches you.
 
@@ -253,18 +298,20 @@ You run inside a checkout of the project repository; your knowledge is the local
 
 GitHub is the source of truth; the mirror is your working copy of it. Answer from the mirror only: never read issue state from GitHub (no gh queries, no API, no web). The one time you run gh is to make the issue edit a link repair (form 4) needs; take the issue's current text from the mirror. The facts a request states are already established by script; your job is only the judgment.
 
+Your answer to every request is a JSON object whose `kind` says which reply it is; each form below and each boundary says which kind and fields to give.
+
 Requests arrive in four forms:
 
-1. **You are asked for a reading list**: what should an agent read before it files or edits an issue on some topic. Reply with a bare list — "read #13, #24, #31" — plus, only when needed, note lines in plain sentences. Closed issues belong in a reply only when the request says closed history is wanted; tag each truthfully: "#31 (closed 2026-08-08)".
-2. **You are shown a draft issue** — title and body — and asked whether the corpus already covers it. When the draft is an edit of an existing issue, the request names that issue: leave it out of the comparison. Reply with exactly one line, nothing else: `verdict: too-similar #n` (an existing issue already covers this ground; #n is that issue), or `verdict: related #n,#m` (no collision, but the author should know these), or `verdict: unrelated`. In these shapes #n,#m stands for one or more issue numbers. When the draft conflicts with a ruling the user made, reply instead with the ruling question under Boundaries. A reply in any other shape is thrown away.
-3. **You are told a fact that corrects your last reply** — an issue you cited has closed — and asked to redo that one judgment. The fact is already established by script from the refreshed mirror: do not question or verify it; re-read the named entry in issues-closed.md, including any Superseded-by: link, and reply with a corrected reading list.
-4. **You are asked to repair a link** — a cross-reference the maintenance sweep found broken. The request states the defect; repair exactly that link and nothing else. Issue edits go through gh as normal; document-side changes are landed through `scripts/ghi-issue-write.py`, whose pull request merge-lane-2 reviews and merges; never push to main yourself. Reply done: <the repair>, done: no change needed — <why>, or blocked: <what stopped you>.
+1. **You are asked for a reading list**: what should an agent read before it files or edits an issue on some topic. Answer with kind `reading-list`: the issue numbers in `issues`, plus, only when needed, note lines in plain sentences in `notes`. Closed issues belong in a reply only when the request says closed history is wanted.
+2. **You are shown a draft issue** — title and body — and asked whether the corpus already covers it. When the draft is an edit of an existing issue, the request names that issue: leave it out of the comparison. Answer with kind `verdict`: `too-similar` with the issue that already covers this ground in `issues`, `related` with the issues the author should know in `issues` (no collision), or `unrelated` with `issues` empty. When the draft conflicts with a ruling the user made, answer instead with the ruling question under Boundaries.
+3. **You are told a fact that corrects your last reply** — an issue you cited has closed — and asked to redo that one judgment. The fact is already established by script from the refreshed mirror: do not question or verify it; re-read the named entry in issues-closed.md, including any Superseded-by: link, and answer with a corrected reading list.
+4. **You are asked to repair a link** — a cross-reference the maintenance sweep found broken. The request states the defect; repair exactly that link and nothing else. Issue edits go through gh as normal; document-side changes are landed through `scripts/ghi-issue-write.py`, whose pull request merge-lane-2 reviews and merges; never push to main yourself. Answer with kind `repair`: `outcome` done and the repair in `sentence`, no-change and why no change was needed in `sentence`, or blocked and what stopped you in `sentence`.
 
 Boundaries:
 
-- Asked a question about anything beyond the issue corpus — the wiki, the code, anything else — reply exactly: not-about-issues.
-- Whether an old ruling still binds is never yours to judge. Reply: ask-user-about-ruling: #<issue> <one sentence naming the ruling and the doubt>, where #<issue> is the issue that holds the ruling. Every ruling question starts with that issue number.
-- A draft-body request gets a verdict line, except that a draft that conflicts with a ruling the user made gets the ruling question: whether the ruling still binds, or still binds this draft, is the user's to settle. A question beyond the corpus gets not-about-issues even when it touches a ruling."""
+- Asked a question about anything beyond the issue corpus — the wiki, the code, anything else — answer with kind `not-about-issues`.
+- Whether an old ruling still binds is never yours to judge. Answer with kind `ask-user-about-ruling`: the issue that holds the ruling in `ruling_issue`, and one sentence naming the ruling and the doubt in `sentence`.
+- A draft-body request gets a verdict, except that a draft that conflicts with a ruling the user made gets the ruling question: whether the ruling still binds, or still binds this draft, is the user's to settle. A question beyond the corpus gets not-about-issues even when it touches a ruling."""
 
 
 ASK_PROMPT_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE_REQUEST_SENTENCE = (
@@ -309,39 +356,8 @@ def compose_drift_notice(unexpected_closed) -> str:
     return "\n".join(lines)
 
 
-# The two boundary replies COLD_START_PROMPT_TEMPLATE tells ghi-guide-agent to give.
-NOT_ABOUT_ISSUES_REPLY = "not-about-issues"
-ASK_USER_ABOUT_RULING_REPLY_PREFIX = "ask-user-about-ruling:"
-# The words those replaced on 2026-10-01, still read. A resumed ghi-guide-agent
-# session answers with the words its own cold-start prompt taught it, and the
-# stored session is reused until a reincarnation trigger fires, so a session
-# born before this change keeps saying `out-of-scope` and `escalate:`. Remove
-# these, and the tests that send them, once the session id stored in the box
-# seat's .ghi-guide-agent-state.json was cold-started after this change reached
-# ~/agents/ghi-guide-agent on ned-box.
-RETIRED_BOUNDARY_REPLY_WORDS = {
-    NOT_ABOUT_ISSUES_REPLY: ("out-of-scope",),
-    ASK_USER_ABOUT_RULING_REPLY_PREFIX: ("escalate:",),
-}
-NOT_ABOUT_ISSUES_REPLY_WORDS = (
-    (NOT_ABOUT_ISSUES_REPLY,)
-    + RETIRED_BOUNDARY_REPLY_WORDS[NOT_ABOUT_ISSUES_REPLY])
-ASK_USER_ABOUT_RULING_REPLY_PREFIXES = (
-    (ASK_USER_ABOUT_RULING_REPLY_PREFIX,)
-    + RETIRED_BOUNDARY_REPLY_WORDS[ASK_USER_ABOUT_RULING_REPLY_PREFIX])
-
-
-def is_passthrough_reply(text: str) -> bool:
-    """The two boundary replies are not reading lists (design step 4); the
-    post-check does not apply to them, and neither does drift recheck.
-    main() turns them into caller_message_for_passthrough_reply's messages."""
-    stripped = text.strip().lower()
-    return (stripped in NOT_ABOUT_ISSUES_REPLY_WORDS
-            or stripped.startswith(ASK_USER_ABOUT_RULING_REPLY_PREFIXES))
-
-
-# What main() hands the caller in place of the two bare replies, and the exit
-# code each carries. The text is the user's approved wording (module docstring,
+# What main() hands the caller in place of the two boundary answers, and the
+# exit code each carries. The text is the user's approved wording (module docstring,
 # "Why 2 and 3 are not passed through"); change it only by his walk.
 # `<your subject>` and `<terms>` are placeholders the caller fills in.
 EXIT_NOT_ABOUT_ISSUES = 2
@@ -355,8 +371,7 @@ RULING_QUESTION_MESSAGE_TEMPLATE = (
     "ghi-guide-agent found a ruling of the user's that it cannot tell still applies: {sentence}\n"
     "If you are filing or editing a GHI, go on with scripts/ghi-issue-write.py as planned: it records this question in the log-store on ned-box and tells you to dispatch a subagent to settle it.\n"
     "If you are not filing or editing a GHI, ask the user whether that ruling still applies, and put the question on your task list.")
-# What follows the sentence when it opened with the number of the issue
-# holding the ruling; scripts/ghi-issue-write.py reads the number back from it.
+# What follows the sentence: the number of the issue holding the ruling.
 RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE = " (held in GHI {number})"
 # Printed on stderr after an answer asked without --include-closed. stderr,
 # because stdout is the answer that callers such as ghi-issue-write.py parse.
@@ -370,74 +385,113 @@ OPEN_ISSUES_ONLY_INCLUDE_CLOSED_HINT_MESSAGE = (
     "covers a subject, rerun the same command with --include-closed added.")
 
 
-def caller_message_for_passthrough_reply(text: str):
-    """(message, exit code) for a not-about-issues or ask-user-about-ruling:
-    reply, or None for any other reply. The ruling sentence is carried over
-    as ghi-guide-agent wrote it, with the prefix and surrounding whitespace removed;
-    a leading `#<n>` is moved to the end as RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE."""
-    stripped = text.strip()
-    if stripped.lower() in NOT_ABOUT_ISSUES_REPLY_WORDS:
-        return NOT_ABOUT_ISSUES_MESSAGE, EXIT_NOT_ABOUT_ISSUES
-    for prefix in ASK_USER_ABOUT_RULING_REPLY_PREFIXES:
-        if stripped.lower().startswith(prefix):
-            sentence = stripped[len(prefix):].strip()
-            numbered = re.match(r"#(\d+)\s*(.*)", sentence, re.DOTALL)
-            if numbered:
-                sentence = (numbered.group(2).strip()
-                            + RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE.format(
-                                number=numbered.group(1)))
-            return (RULING_QUESTION_MESSAGE_TEMPLATE.format(sentence=sentence),
-                    EXIT_RULING_QUESTION)
-    return None
+def ghi_guide_agent_answer_extract_and_schema_check_from_claude_result(result: dict):
+    """(answer, None) when the result's `structured_output` is an answer
+    this program can use, else (None, a sentence saying what came back).
+
+    `claude -p --json-schema` exits 0 with `"is_error": false` and a null
+    `structured_output` when the model never satisfied the schema, so the
+    object is checked here, field by field, rather than trusted."""
+    answer = result.get("structured_output")
+    if not isinstance(answer, dict):
+        return None, ("claude returned no JSON answer (structured_output is "
+                      f"{json.dumps(answer)}); its text reply began: "
+                      f"{str(result.get('result') or '')[:200]!r}")
+    shown = json.dumps(answer)[:300]
+    properties = GHI_GUIDE_AGENT_ANSWER_JSON_SCHEMA["properties"]
+    kind = answer.get("kind")
+    if not isinstance(kind, str) or kind not in GHI_GUIDE_AGENT_ANSWER_FIELDS_EACH_KIND_NEEDS:
+        return None, f"the answer's kind {kind!r} is none the schema allows: {shown}"
+    unknown = sorted(set(answer) - set(properties))
+    if unknown:
+        return None, f"the answer has fields the schema does not: {', '.join(unknown)}: {shown}"
+    missing = [field for field in GHI_GUIDE_AGENT_ANSWER_FIELDS_EACH_KIND_NEEDS[kind] if field not in answer]
+    if missing:
+        return None, f"the {kind} answer lacks its {', '.join(missing)} field: {shown}"
+    for field, value in answer.items():
+        allowed = properties[field].get("enum")
+        if allowed is not None:
+            if value not in allowed:
+                return None, f"the answer's {field} {value!r} is none the schema allows: {shown}"
+        elif properties[field].get("type") == "array":
+            item_type = int if properties[field]["items"]["type"] == "integer" else str
+            if not (isinstance(value, list)
+                    and all(isinstance(item, item_type) and not isinstance(item, bool)
+                            for item in value)):
+                return None, f"the answer's {field} is not a list of {properties[field]['items']['type']}s: {shown}"
+        else:
+            field_type = int if properties[field]["type"] == "integer" else str
+            if not isinstance(value, field_type) or isinstance(value, bool):
+                return None, f"the answer's {field} is not of the schema's type {properties[field]['type']}: {shown}"
+    if kind == GHI_GUIDE_AGENT_ANSWER_KIND_READING_LIST and not answer["issues"] and not answer.get("notes"):
+        return None, f"the reading-list answer names no issue and gives no note: {shown}"
+    return answer, None
 
 
-def reply_answers_the_question(text: str) -> bool:
-    """Whether a reply is an answer at all, rather than something else the
-    session said.
-
-    A reading list names issues, the two passthrough replies are fixed
-    strings, and a draft-body request's "nothing covers this" is a
-    `verdict: unrelated` line; anything with none of these is not an answer
-    this caller can use. The
-    case that earned this check (2026-09-17): the run's last message was
-    "No action needed on my part -- this session hasn't touched any scripts
-    or tests", a reply to a Stop hook, and the ask returned it with exit 0,
-    so the caller's fallback ladder never fired.
-
-    A true answer to a question that names no issue -- "nothing covers this"
-    in those words -- is refused by this check too, and that costs one trip down the
-    fallback ladder, which never blocks a write. Silently passing a
-    non-answer costs a write made against no knowledge at all.
-    """
-    return (bool(POINTER_PATTERN.search(text)) or is_passthrough_reply(text)
-            or bool(VERDICT_UNRELATED_LINE_PATTERN.search(text)))
+def answer_issue_numbers(answer: dict):
+    """The issue numbers the post-check verifies against the mirror: a
+    reading list's and a verdict's. A ruling question's issue holds a ruling
+    the user made, so it is the user's to judge, closed or not."""
+    if answer["kind"] in (GHI_GUIDE_AGENT_ANSWER_KIND_READING_LIST, GHI_GUIDE_AGENT_ANSWER_KIND_VERDICT):
+        return answer["issues"]
+    return []
 
 
-def find_unexpected_closed_pointers(reply_text: str, cache: dict, include_closed: bool):
-    """Every #n pointer in the reply, checked against the mirror cache.
+def ghi_guide_agent_answer_render_as_caller_stdout_stderr_and_exit_code(answer: dict, closed_on: dict):
+    """(stdout text, stderr text, exit code) that main() prints for a checked
+    answer when --print-answer-json is not given. `closed_on` maps the
+    number of each closed issue in the answer to its close date, which tags
+    that issue in a reading list."""
+    kind = answer["kind"]
+    if kind == GHI_GUIDE_AGENT_ANSWER_KIND_NOT_ABOUT_ISSUES:
+        return "", NOT_ABOUT_ISSUES_MESSAGE, EXIT_NOT_ABOUT_ISSUES
+    if kind == GHI_GUIDE_AGENT_ANSWER_KIND_ASK_USER_ABOUT_RULING:
+        sentence = (answer["sentence"].strip()
+                    + RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE.format(
+                        number=answer["ruling_issue"]))
+        return ("", RULING_QUESTION_MESSAGE_TEMPLATE.format(sentence=sentence),
+                EXIT_RULING_QUESTION)
+    if kind == GHI_GUIDE_AGENT_ANSWER_KIND_READING_LIST:
+        lines = []
+        if answer["issues"]:
+            lines.append("read " + ", ".join(
+                f"#{number}" + (f" (closed {closed_on[number]})" if number in closed_on else "")
+                for number in answer["issues"]))
+        lines += [note.strip() for note in answer.get("notes", []) if note.strip()]
+        return "\n".join(lines), "", 0
+    if kind == GHI_GUIDE_AGENT_ANSWER_KIND_VERDICT:
+        numbers = ",".join(f"#{number}" for number in answer["issues"])
+        return f"verdict: {answer['verdict']}" + (f" {numbers}" if numbers else ""), "", 0
+    sentence = answer["sentence"].strip()
+    if answer["outcome"] == "no-change":
+        return f"done: no change needed — {sentence}", "", 0
+    return f"{answer['outcome']}: {sentence}", "", 0
 
-    --include-closed makes every closed pointer expected by definition (the
-    caller asked for closed history); otherwise any closed pointer means
+
+def closed_issue_dates(numbers, cache: dict) -> dict:
+    """{number: close date} for each of `numbers` that the mirror cache
+    holds as closed; "?" when the cache has no close time."""
+    dates = {}
+    for number in numbers:
+        issue = cache.get("issues", {}).get(str(number))
+        if issue and issue.get("state") == "CLOSED":
+            closed_at = issue.get("closedAt") or ""
+            dates[number] = closed_at[:10] if closed_at else "?"
+    return dates
+
+
+def find_unexpected_closed_pointers(numbers, cache: dict, include_closed: bool):
+    """Each of the answer's issue numbers that the mirror holds as closed.
+
+    --include-closed makes every closed issue expected by definition (the
+    caller asked for closed history); otherwise any closed issue means
     ghi-guide-agent's context predates the issue's close — drift, not a fact it
-    established. Returns [(number, closed_date), ...].
+    established. Returns [(number, closed_date), ...] in the answer's order,
+    each number once.
     """
     if include_closed:
         return []
-    flagged = []
-    for match in POINTER_PATTERN.finditer(reply_text):
-        number = match.group(1)
-        issue = cache.get("issues", {}).get(number)
-        if issue and issue.get("state") == "CLOSED":
-            closed_at = issue.get("closedAt") or ""
-            flagged.append((number, closed_at[:10] if closed_at else "?"))
-    # Stable order, no duplicate numbers.
-    seen = set()
-    unique = []
-    for number, date in flagged:
-        if number not in seen:
-            seen.add(number)
-            unique.append((number, date))
-    return unique
+    return list(closed_issue_dates(numbers, cache).items())
 
 
 # The key under which `.ghi-guide-agent-state.json` holds the id of the ghi-guide-agent
@@ -571,9 +625,12 @@ def run_claude(prompt: str, resume_session_id, seat_dir: Path, timeout_seconds: 
     # flag. The seat's own settings.json is project settings, so nothing here
     # needs it: permissions come from GHI_GUIDE_AGENT_ALLOWED_TOOLS.
     # The prompt goes on stdin: one argument may not exceed 128 KiB on
-    # Linux, and a draft GHI-MD with its diff can be larger.
+    # Linux, and a draft GHI-MD with its diff can be larger. It must not
+    # follow --allowedTools either, which takes any number of values and
+    # would read the prompt as one more tool name.
     command = [*command_line_prefix.claude_code_headless_run_command_line_prefix_build("dontAsk"),
                "--output-format", "json", "--setting-sources", "user",
+               "--json-schema", json.dumps(GHI_GUIDE_AGENT_ANSWER_JSON_SCHEMA),
                "--allowedTools", GHI_GUIDE_AGENT_ALLOWED_TOOLS, "--model", GHI_GUIDE_AGENT_MODEL]
     if resume_session_id:
         command += ["--resume", resume_session_id]
@@ -623,7 +680,8 @@ def ask(question: str, include_closed: bool, seat_dir: Path, repo: str,
        timeout_seconds: int = ASK_TIMEOUT_SECONDS,
        projects_root: Path = None):
     """The whole ask path (design § The ask path, steps 1-5). Returns
-    (answer_text, error) — exactly one is not None."""
+    (answer, closed_on, error): the checked answer object and
+    closed_issue_dates of its issue numbers, or (None, None, error)."""
     if projects_root is None:
         projects_root = Path.home() / ".claude" / "projects"
     state_path = seat_dir / STATE_FILE_NAME
@@ -644,7 +702,7 @@ def ask(question: str, include_closed: bool, seat_dir: Path, repo: str,
         return _locked_ask(question, include_closed, seat_dir, repo,
                            projects_root, state_path, lock_path, turn)
     except SeatDirectoryUnusable as error:
-        return None, str(error)
+        return None, None, str(error)
 
 
 def _locked_ask(question, include_closed, seat_dir, repo, projects_root,
@@ -798,7 +856,7 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
     if has_session:
         delta_result, error = mirror_refresh.refresh(mirror_dir, repo, full=False)
         if delta_result is None:
-            return None, f"mirror refresh failed: {error}"
+            return None, None, f"mirror refresh failed: {error}"
         changed = delta_result["changed"]
         cache = mirror_refresh.read_cache(mirror_dir / mirror_refresh.CACHE_FILE_NAME)
         # Counts a changed issue that is currently closed. An already-
@@ -823,7 +881,7 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
                   file=sys.stderr)
         full_result, error = mirror_refresh.refresh(mirror_dir, repo, full=True)
         if full_result is None:
-            return None, f"mirror refresh (full, for cold-start) failed: {error}"
+            return None, None, f"mirror refresh (full, for cold-start) failed: {error}"
         cache = mirror_refresh.read_cache(mirror_dir / mirror_refresh.CACHE_FILE_NAME)
         # The slot names the mirror DIRECTORY, not one of its files: the
         # design's sentence is followed by a bullet list of BOTH files, so
@@ -831,9 +889,10 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
         # stated location (PR #143 review, P3).
         cold_start_text = COLD_START_PROMPT_TEMPLATE.format(
             mirror_path=full_result["mirror_dir"])
+        # The cold-start turn asks nothing, so its structured_output is not read.
         cold_reply, error = turn(cold_start_text, None)
         if cold_reply is None:
-            return None, f"ghi-guide-agent cold-start failed: {error}"
+            return None, None, f"ghi-guide-agent cold-start failed: {error}"
         session_id = cold_reply["session_id"]
         resume_prompt = compose_resume_ask_prompt(question, include_closed, [], False)
     else:
@@ -842,23 +901,26 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
 
     answer_reply, error = turn(resume_prompt, session_id)
     if answer_reply is None:
-        return None, f"ghi-guide-agent ask failed: {error}"
+        return None, None, f"ghi-guide-agent ask failed: {error}"
     session_id = answer_reply.get("session_id", session_id)
-    reply_text = (answer_reply.get("result") or "").strip()
+    answer, problem = ghi_guide_agent_answer_extract_and_schema_check_from_claude_result(answer_reply)
 
     # Step 4: post-check.
     stale = False
-    if not is_passthrough_reply(reply_text):
-        unexpected = find_unexpected_closed_pointers(reply_text, cache, include_closed)
+    if answer is not None:
+        unexpected = find_unexpected_closed_pointers(
+            answer_issue_numbers(answer), cache, include_closed)
         if unexpected:
             stale = True
             drift_reply, error = turn(compose_drift_notice(unexpected), session_id)
             if drift_reply is not None:
                 session_id = drift_reply.get("session_id", session_id)
-                reply_text = (drift_reply.get("result") or "").strip()
-            # A failed recheck falls back to the original reply rather
-            # than failing the whole ask — the pointer may simply carry
-            # a now-stale tag, which is better than no answer at all.
+                corrected, _ = ghi_guide_agent_answer_extract_and_schema_check_from_claude_result(drift_reply)
+                if corrected is not None:
+                    answer = corrected
+            # A failed recheck keeps the first answer rather than failing
+            # the whole ask: a closed issue in a reading list is tagged as
+            # closed, which is better than no answer at all.
 
     if locked:
         if cold_starting:
@@ -869,18 +931,14 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
         state["recent_matches"] = recent[-STALE_MATCH_WINDOW:]
         save_state(state_path, state)
 
-    if not reply_answers_the_question(reply_text):
-        return None, ("ghi-guide-agent's reply names no issue, has no `verdict: "
-                      "unrelated` line, and is not a not-about-issues or "
-                      "ask-user-about-ruling: reply, so "
-                      "it is not an answer to this question. The reply began: "
-                      f"{reply_text[:200]!r}")
-
-    return reply_text, None
+    if answer is None:
+        return None, None, f"ghi-guide-agent's answer is not usable: {problem}"
+    return answer, closed_issue_dates(answer_issue_numbers(answer), cache), None
 
 
 def build_remote_command(question: str, include_closed: bool, repo: str,
-                         question_on_stdin: bool = False) -> str:
+                         question_on_stdin: bool = False,
+                         print_answer_json: bool = False) -> str:
     """The command the box runs, as one string: ssh hands it to the box's
     login shell, which parses it exactly once — no second parse layer here
     (unlike the launchers, which also cross tmux's pane-command parse), so
@@ -910,6 +968,8 @@ def build_remote_command(question: str, include_closed: bool, repo: str,
         else shlex.quote(question))
     if include_closed:
         invocation += " --include-closed"
+    if print_answer_json:
+        invocation += " --print-answer-json"
     invocation += " --repo " + shlex.quote(repo)
     invocation += ' --seat-dir "$PWD"'
     return "\n".join([
@@ -939,6 +999,9 @@ def main(argv=None) -> int:
                              "question too long to pass as one argument")
     parser.add_argument("--include-closed", action="store_true",
                         help="closed history is wanted (precedent, absence claims)")
+    parser.add_argument("--print-answer-json", action="store_true",
+                        help="print ghi-guide-agent's answer as one JSON object on stdout, "
+                             "whatever the exit code, instead of the text printed by default")
     parser.add_argument("--repo", default=DEFAULT_REPO)
     parser.add_argument("--seat-dir", default=None,
                         help="run locally against this seat directory, skipping the "
@@ -965,7 +1028,8 @@ def main(argv=None) -> int:
             remote_command = build_remote_command(question,
                                                   arguments.include_closed,
                                                   arguments.repo,
-                                                  question_on_stdin)
+                                                  question_on_stdin,
+                                                  arguments.print_answer_json)
             try:
                 completed = subprocess.run(
                     ["ssh", AGENT_BOX, remote_command], capture_output=True, text=True,
@@ -1001,20 +1065,22 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 1
 
-    answer, error = ask(question, arguments.include_closed, seat_dir,
-                        arguments.repo)
+    answer, closed_on, error = ask(question, arguments.include_closed, seat_dir,
+                                   arguments.repo)
     if answer is None:
         print(f"ghi-guide-agent-ask: {error}", file=sys.stderr)
         return 1
-    passthrough = caller_message_for_passthrough_reply(answer)
-    if passthrough is not None:
-        message, exit_code = passthrough
-        print(message, file=sys.stderr)
-        return exit_code
-    print(answer)
-    if not arguments.include_closed:
+    stdout_text, stderr_text, exit_code = ghi_guide_agent_answer_render_as_caller_stdout_stderr_and_exit_code(
+        answer, closed_on)
+    if arguments.print_answer_json:
+        print(json.dumps(answer))
+    elif stdout_text:
+        print(stdout_text)
+    if stderr_text:
+        print(stderr_text, file=sys.stderr)
+    if exit_code == 0 and not arguments.include_closed:
         print(OPEN_ISSUES_ONLY_INCLUDE_CLOSED_HINT_MESSAGE, file=sys.stderr)
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

@@ -441,30 +441,6 @@ GH_TIMEOUT_SECONDS = 120
 # git sending the branch.
 PUSH_TIME_MARGIN_SECONDS = 120
 ADJUDICATION_TIMEOUT_SECONDS = 420
-# scripts/ghi-guide-agent-ask.py's EXIT_NOT_ABOUT_ISSUES and EXIT_RULING_QUESTION:
-# ghi-guide-agent answered, but with an `out-of-scope` or `escalate:` reply rather
-# than a verdict. Copied rather than imported, because this program runs that
-# one as a subprocess and loads nothing from it; ghi-issue-write-test.py
-# checks the two stay equal.
-GHI_GUIDE_AGENT_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES = (2, 3)
-# How each of those two exits' messages opens: NOT_ABOUT_ISSUES_MESSAGE's first
-# line, and RULING_QUESTION_MESSAGE_TEMPLATE up to its {sentence}. The message
-# is not the first line on stderr whenever the ask refreshed the seat checkout
-# or reincarnated the session first, so adjudicate finds it by these openings.
-# Copied for the same reason as the exit codes, and checked the same way.
-GHI_GUIDE_AGENT_ASK_NO_LIST_MESSAGE_OPENINGS = (
-    "Not a question about GitHub issues:",
-    "ghi-guide-agent found a ruling of the user's that it cannot tell still applies:")
-GHI_GUIDE_AGENT_ASK_RULING_QUESTION_EXIT_CODE = 3
-# Where the ruling question's sentence ends: the opening of the line that
-# follows {sentence} in ghi-guide-agent-ask.py's RULING_QUESTION_MESSAGE_TEMPLATE.
-# A sentence can run over several lines. Copied and checked like the above.
-GHI_GUIDE_AGENT_ASK_RULING_QUESTION_SENTENCE_END = "If you are filing or editing a GHI"
-# How the sentence ends when ghi-guide-agent named the issue holding the ruling:
-# ghi-guide-agent-ask.py's RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE, as a pattern whose group
-# is the number. Copied and checked like the above.
-GHI_GUIDE_AGENT_ASK_RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_PATTERN = re.compile(
-    r"\s*\(held in GHI (\d+)\)$")
 # ghi-guide-agent's ruling questions are kept in the log-store on ned-box, never on
 # main: one proposed-improvements-or-changes-file each (the glossary's entry),
 # named `<GHI-MD name>-proposed-improvements-or-changes-ghi-guide-agent-<YYYY-MM-DD>[-<n>].md`.
@@ -502,30 +478,6 @@ class RulingConflict:
     def __init__(self, ruling_issue, sentence: str):
         self.ruling_issue = ruling_issue
         self.sentence = sentence
-
-
-def ruling_conflict_from_stderr(stderr: str):
-    """The RulingConflict in an exit-3 message, or None when the message's
-    opening is not there. The ask can write progress lines first, so the
-    opening is looked for on any line."""
-    lines = (stderr or "").splitlines()
-    opening = GHI_GUIDE_AGENT_ASK_NO_LIST_MESSAGE_OPENINGS[1]
-    for index, line in enumerate(lines):
-        if not line.strip().startswith(opening):
-            continue
-        parts = [line.strip()[len(opening):].strip()]
-        for following in lines[index + 1:]:
-            if following.strip().startswith(
-                    GHI_GUIDE_AGENT_ASK_RULING_QUESTION_SENTENCE_END):
-                break
-            parts.append(following.strip())
-        sentence = " ".join(part for part in parts if part)
-        held_in = GHI_GUIDE_AGENT_ASK_RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_PATTERN.search(sentence)
-        if held_in:
-            return RulingConflict(int(held_in.group(1)),
-                                  sentence[:held_in.start()].strip())
-        return RulingConflict(None, sentence)
-    return None
 
 
 class Refused(Exception):
@@ -1141,12 +1093,9 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
         excluded = (f"This draft is an edit of issue #{exclude_issue}: leave "
                     "that issue out of the comparison.\n\n")
     question = (
-        "Does an open issue already cover this ground? Reply with exactly "
-        "one line: `verdict: too-similar #n`, `verdict: related #n,#m`, or "
-        "`verdict: unrelated`; or, when the draft conflicts with a ruling "
-        "the user made, `ask-user-about-ruling: #<issue> <one sentence "
-        "naming the ruling and the doubt>`, where #<issue> is the issue "
-        "that holds the ruling.\n\n" + excluded +
+        "Does an open issue already cover this ground? Answer with kind "
+        "`verdict`; or, when the draft conflicts with a ruling the user "
+        "made, with kind `ask-user-about-ruling`.\n\n" + excluded +
         f"Draft title: {title}\n\nDraft GHI-MD, verbatim:\n\n{text}")
     # Sent in a file: one argument may not exceed 128 KiB on Linux, and a
     # large GHI-MD is longer.
@@ -1157,7 +1106,7 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
         with os.fdopen(descriptor, "w", encoding="utf-8") as question_file:
             question_file.write(question)
         completed = runner([sys.executable, str(ask), "--question-file",
-                            question_path],
+                            question_path, "--print-answer-json"],
                            timeout=ADJUDICATION_TIMEOUT_SECONDS, check=False)
     except Exception as failure:                      # noqa: BLE001
         report(f"adjudication skipped: ghi-guide-agent did not answer ({failure})")
@@ -1165,45 +1114,39 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
     finally:
         if question_path is not None:
             Path(question_path).unlink(missing_ok=True)
-    if completed.returncode == GHI_GUIDE_AGENT_ASK_RULING_QUESTION_EXIT_CODE:
-        conflict = ruling_conflict_from_stderr(completed.stderr)
-        if conflict is not None:
-            report("ghi-guide-agent raised a question about a ruling of the "
-                   "user's; the write goes ahead and records it in a "
-                   "proposed-improvements-or-changes-file in the log-store")
-            return conflict
-    stderr_lines = [line.strip() for line in
-                    (completed.stderr or "").splitlines() if line.strip()]
-    if completed.returncode in GHI_GUIDE_AGENT_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES:
-        # ghi-guide-agent answered, but with no verdict: the question was not about
-        # issues, or it found a ruling it may not judge. Fail-open like any
-        # other missing verdict, and say which, rather than "did not answer".
-        # The ask's own progress lines can come first, so the message is found
-        # by its opening, falling back on the last line, where main() puts it.
-        said = next((line for line in stderr_lines if line.startswith(
-            GHI_GUIDE_AGENT_ASK_NO_LIST_MESSAGE_OPENINGS)),
-            stderr_lines[-1] if stderr_lines else "no detail")
-        report(f"adjudication skipped: ghi-guide-agent gave no verdict: {said}")
-        return None
-    if completed.returncode != 0:
+    # The answer's kind, not the exit code, says what ghi-guide-agent
+    # answered: an argument error exits 2 too.
+    try:
+        answer = json.loads(completed.stdout or "")
+    except json.JSONDecodeError:
+        answer = None
+    if not isinstance(answer, dict):
         # The ask prints why it failed, such as ned-box being unreachable,
         # as its last stderr line.
+        stderr_lines = [line.strip() for line in
+                        (completed.stderr or "").splitlines() if line.strip()]
         report("adjudication skipped: ghi-guide-agent did not answer" +
                (f": {stderr_lines[-1]}" if stderr_lines else ""))
         return None
-    verdict = ""
-    for line in (completed.stdout or "").splitlines():
-        if line.strip().lower().startswith("verdict:"):
-            verdict = line.strip()
-    if not verdict:
-        report("adjudication skipped: ghi-guide-agent's reply had no verdict line")
+    kind = answer.get("kind")
+    if kind == "ask-user-about-ruling":
+        report("ghi-guide-agent raised a question about a ruling of the "
+               "user's; the write goes ahead and records it in a "
+               "proposed-improvements-or-changes-file in the log-store")
+        return RulingConflict(answer.get("ruling_issue"),
+                              str(answer.get("sentence", "")).strip())
+    if kind != "verdict":
+        report(f"adjudication skipped: ghi-guide-agent gave no verdict: it "
+               f"answered with kind {kind}")
         return None
-    if "too-similar" in verdict.lower():
+    issues = answer.get("issues") or []
+    verdict = f"verdict: {answer.get('verdict')}" + (
+        " " + ",".join(f"#{number}" for number in issues) if issues else "")
+    if answer.get("verdict") == "too-similar":
         # The design's § Prompts gives this refusal verbatim, including the
         # paragraph that appears only for an edit; the slots are filled from
-        # the verdict line and the issue being edited.
-        cited = re.search(r"#(\d+)", verdict)
-        covering = f"#{cited.group(1)}" if cited else "that issue"
+        # the verdict and the issue being edited.
+        covering = f"#{issues[0]}" if issues else "that issue"
         paragraphs = [
             f"Refused: {covering} already covers this ground. Read "
             f"{covering}, then merge this content into it by editing it — "
