@@ -154,11 +154,13 @@ def run_typed_prompt_cases(root):
     case.alert("alert-a")
     before = case.document.read_text(encoding="utf-8")
     result, context = case.run("A")
+    # "run: " anchors the command's start: with sys.executable, such as /usr/bin/python3, put after "python3",
+    # the text "python3 <program>" would still appear inside the command.
     check("when the insert program fails, the agent gets its exit code, its message and the command to run "
-          "again, and no item is added",
+          "again, python3 then the program, and no item is added",
           result.returncode == 0 and "failed, so no item was added. The program exited 1" in context
           and "waiting item cannot be found" in context
-          and f"{INSERT_PROGRAM} --cwd {case.checkout} alert-a" in context
+          and f"then run: python3 {INSERT_PROGRAM} --cwd {case.checkout} alert-a\n" in context
           and case.document.read_text(encoding="utf-8") == before, context)
 
     for name, insert_run, code in (
@@ -168,9 +170,11 @@ def run_typed_prompt_cases(root):
         case = Case(root, f"insert-{name.replace(' ', '-')}", walk_open=True)
         case.alert("alert-a")
         result, context = case.run("A", insert_run=insert_run)
-        check(f"when the insert program {name}, the agent is told it failed, with the command to run again",
+        check(f"when the insert program {name}, the agent is told it failed, with the command to run again, "
+              "python3 then the program",
               result.returncode == 0 and f"failed, so no item was added. The program {code}" in context
-              and f"{INSERT_PROGRAM} --cwd {case.checkout} alert-a" in context, context + result.stderr)
+              and f"then run: python3 {INSERT_PROGRAM} --cwd {case.checkout} alert-a\n" in context,
+              context + result.stderr)
 
     case = Case(root, "recorded-typed")
     case.alert("alert-a")
