@@ -1550,7 +1550,7 @@ def main() -> int:
             question_4_cell=question_4_cell)
         try:
             quota_error_line = ""
-            for attempt in range(1, FAST_READ_ATTEMPTS + 1):
+            for attempt in range(1, FAST_READ_ATTEMPTS + 1):  # pragma: no mutate, FAST_READ_ATTEMPTS is even, so | 1 gives + 1
                 exit_code, output = run_one_fast_clarify_cell(
                     AGY_CELL_LAUNCHER, marked_copy, cell_report, prompt_file)
                 if exit_code == 0:
