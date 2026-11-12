@@ -219,29 +219,41 @@ def awaited_phrase(flight: WorkInFlight) -> str:
 
 
 # A background Bash task holds the session-handoff while younger than its kind's wait-limit; past
-# it the task is presumed stuck or open-ended. The first kind with a pattern the command matches
-# (re.search, ignoring case) is the task's kind. Work kinds come before waiting-task, so a command
-# that both does work and waits keeps the work's limit: a false waiting-task match kills work.
-# A command is a waiting-task only when the whole command is one wait, followed by nothing but
-# redirections, because any work after the wait would get 0 and be killed by the handoff.
-_COMMAND_PREFIX_PATTERN = r"^\s*(?:(?:cd\s+\S+|export\s+\S+|[A-Za-z_]\w*=\S*)\s*(?:&&|;|\n)\s*)*"
-_ONLY_REDIRECTIONS_TO_THE_END_PATTERN = r"(?:\s*(?:\d?>&\d|(?:\d?>>?|&>)\s*\S+))*\s*;?\s*$"
-# The loop ends at the first `done` that starts a command, never at a later one.
-_LOOP_END = r"(?:;|\n)\s*done\b"
-_NOT_PAST_LOOP_END = r"(?:(?!" + _LOOP_END + r").)*"
+# it the task is presumed stuck or open-ended. The first kind with a pattern that matches the whole
+# command (re.fullmatch, ignoring case) is the task's kind. Work kinds come before waiting-task and
+# match a name anywhere, so a command that both does work and waits keeps the work's limit.
+# A waiting-task pattern spells out one whole command, because any work beside the wait would get 0
+# and be killed by the handoff: each operand is one _WORD, which cannot hold a backtick,
+# a command substitution or an unquoted separator. A variable name is read whole, or a failed
+# match backtracks over every way to split it.
+_WORD = r"""(?:[^\s;&|<>()`$'"\\]|\$\w+(?!\w)|\$\{\w+\}|'[^']*'|"(?:[^"`$\\]|\$\w+(?!\w)|\$\{\w+\})*")+"""
+_ARGUMENTS = r"(?:[ \t]+" + _WORD + r")*"
+_REDIRECTIONS = r"(?:[ \t]*(?:\d?>&\d|(?:\d?>>?|&>|<)[ \t]*" + _WORD + r"))*"
+_COMMAND_END = r"[ \t]*(?:;|\n)\s*"
+_COMMAND_PREFIX = r"\s*(?:(?:(?:cd|export)[ \t]+" + _WORD + r"|[A-Za-z_]\w*=(?:" + _WORD + r")?)[ \t]*(?:&&|;|\n)\s*)*"
+_TO_THE_END = _REDIRECTIONS + r"[ \t]*;?\s*"
+_WATCHER = (r"(?:bash[ \t]+|python3(?:[ \t]+-u)?[ \t]+)?(?:" + _WORD + r"/)?"
+            r"(?:watch-and-merge-provisional[\w.-]*|wait-review-runs[\w.-]*"
+            r"|wait-for-next-pull-request-event[\w.-]*|watch-open-pull-requests-nbd\.py)"
+            + _ARGUMENTS + _REDIRECTIONS
+            + r"""(?:[ \t]*\|[ \t]*(?:grep[ \t]+-v[ \t]+(?:'[^']*'|"[^"`$\\]*")|tail[ \t]+-n?[ \t]*\d+))*""")
+_LOOP_CONDITION_CHECK = r"(?:![ \t]+)?(?:grep|pgrep|kill[ \t]+-0|test|\[|true|:)" + _ARGUMENTS + _REDIRECTIONS
+_DEADLINE = r"\$\(date[ \t]+\+%s\)"
 BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND = (
-    ("nc-mutation-testing", (r"mutation|mutmut|mutant",), 105.0),
-    ("test-suite", (r"run-all-test-suites\.py|pytest|-test\.py\b|_test\.py\b|unittest"
-                    r"|head-tests-with-retry|head-test-run|test-suite|run-suites",), 90.0),
-    ("waiting-task", (r"watch-and-merge-provisional|wait-for-next-pull-request-event"
-                      r"|watch-open-pull-requests\.py|wait-review-runs",
-                      _COMMAND_PREFIX_PATTERN + r"gh\s+pr\s+checks\b[^;&|\n]*--watch[^;&|\n]*"
-                      + _ONLY_REDIRECTIONS_TO_THE_END_PATTERN,
-                      _COMMAND_PREFIX_PATTERN + r"gh\s+run\s+watch\b[^;&|\n]*"
-                      + _ONLY_REDIRECTIONS_TO_THE_END_PATTERN,
-                      _COMMAND_PREFIX_PATTERN + r"(?:until|while)\b" + _NOT_PAST_LOOP_END + r"\bsleep\b"
-                      + _NOT_PAST_LOOP_END + _LOOP_END + _ONLY_REDIRECTIONS_TO_THE_END_PATTERN,
-                      _COMMAND_PREFIX_PATTERN + r"sleep\s+\S+" + _ONLY_REDIRECTIONS_TO_THE_END_PATTERN), 0.0),
+    ("nc-mutation-testing", (r".*(?:mutation|mutmut|mutant).*",), 105.0),
+    ("test-suite", (r".*(?:run-all-test-suites\.py|pytest|-test\.py\b|_test\.py\b|unittest"
+                    r"|head-tests-with-retry|head-test-run|test-suite|run-suites).*",), 90.0),
+    ("waiting-task", tuple(_COMMAND_PREFIX + shape + _TO_THE_END for shape in (
+        r"sleep[ \t]+" + _WORD,
+        r"gh[ \t]+pr[ \t]+checks(?=[^\n;&|]*--watch)" + _ARGUMENTS,
+        r"gh[ \t]+run[ \t]+watch" + _ARGUMENTS,
+        _WATCHER,
+        r"(?:until|while)[ \t]+" + _LOOP_CONDITION_CHECK
+        + r"(?:[ \t]*(?:&&|\|\|)[ \t]*" + _LOOP_CONDITION_CHECK + r")*"
+        + _COMMAND_END + r"do\s+sleep[ \t]+" + _WORD + _COMMAND_END + r"done",
+        r"end=\$\(\([ \t]*" + _DEADLINE + r"[ \t]*\+[ \t]*\d+[ \t]*\)\)" + _COMMAND_END
+        + r"while[ \t]+\[[ \t]+" + _DEADLINE + r"[ \t]+-lt[ \t]+\$end[ \t]+\]" + _COMMAND_END
+        + r"do\s+" + _WATCHER + _COMMAND_END + r"done")), 0.0),
 )
 # Allows a slow cold-read-full-run with one cell relaunch.
 BACKGROUND_TASK_WAIT_LIMIT_MINUTES_WHEN_NO_KIND_MATCHES = 75.0
@@ -251,11 +263,11 @@ _COMPILED_WAIT_LIMIT_KINDS = [
 
 
 def background_task_kind_wait_limit_seconds_from_command(command) -> float:
-    """Return the wait-limit, in seconds, of the first kind whose pattern the command matches;
-    a command no pattern matches, or None for an unknown command, gets the no-match limit."""
+    """Return the wait-limit, in seconds, of the first kind with a pattern that matches the whole
+    command; a command no pattern matches, or None for an unknown command, gets the no-match limit."""
     if isinstance(command, str):
         for patterns, minutes in _COMPILED_WAIT_LIMIT_KINDS:
-            if any(pattern.search(command) for pattern in patterns):
+            if any(pattern.fullmatch(command) for pattern in patterns):
                 return minutes * 60
     return BACKGROUND_TASK_WAIT_LIMIT_MINUTES_WHEN_NO_KIND_MATCHES * 60
 

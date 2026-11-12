@@ -38,6 +38,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -861,7 +862,7 @@ with tempfile.TemporaryDirectory() as workspace:
             ("python3 scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py --quick", 105),
             ("gh pr checks 3101 --watch --interval 30", 0),
             ("gh run watch 12345", 0),
-            ("python3 -u scripts/watch-open-pull-requests.py --exit-after-first-poll-with-events", 0),
+            ("python3 -u scripts/watch-open-pull-requests-nbd.py --exit-after-first-poll-with-events", 0),
             ("cd /home/nedlern/x && until grep -q done out.txt; do sleep 5; done", 0),
             ("while kill -0 4242; do sleep 30; done", 0),
             ("sleep 120; echo finished", 75),
@@ -883,6 +884,70 @@ with tempfile.TemporaryDirectory() as workspace:
         seconds = hook.background_task_kind_wait_limit_seconds_from_command(command)
         check(f"the wait-limit of {command!r} is {expected_minutes} minutes",
               seconds == expected_minutes * 60, seconds)
+
+    # Each waiting-task shape, as recorded background launches wrote it, gets 0 alone; with work
+    # beside it, before it, after it or inside its loop, the command gets the no-match limit.
+    waiter = "/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/loop/watch-and-merge-provisional-ghi-md-edits.sh"
+    waiting_task_shapes = (
+        "sleep 120",
+        "sleep 120 >/dev/null 2>&1",
+        "gh pr checks 3101 --watch --interval 30",
+        "gh run watch 12345",
+        f"bash {waiter}",
+        waiter,
+        f"bash {waiter} 2>&1 | tail -30",
+        "python3 -u scripts/watch-open-pull-requests-nbd.py --exit-after-first-poll-with-events",
+        "/tmp/claude-1000/x/scratchpad/wait-review-runs.sh",
+        "until grep -q done out.txt; do sleep 5; done",
+        "while kill -0 4242; do sleep 30; done",
+        "until [ -f /tmp/r ] && grep -q '^exit=' /tmp/r; do sleep 10; done",
+        "while pgrep -f x >/dev/null; do\n  sleep 20\ndone > /dev/null 2>&1",
+        "end=$(( $(date +%s) + 1200 )); while [ $(date +%s) -lt $end ]; do "
+        f"bash {waiter} 2>&1 | grep -v '^watcher exit 0' | tail -30; done",
+    )
+    work = "./work.sh"
+    for shape in waiting_task_shapes:
+        check(f"the waiting-task shape {shape!r} alone has a wait-limit of 0",
+              hook.background_task_kind_wait_limit_seconds_from_command(shape) == 0,
+              hook.background_task_kind_wait_limit_seconds_from_command(shape))
+        for separator in ("; ", ";", " && ", " || ", " | ", " & ", "\n"):
+            for command in (shape + separator + work, work + separator + shape):
+                seconds = hook.background_task_kind_wait_limit_seconds_from_command(command)
+                check(f"work beside a wait, {command!r}, has the no-match wait-limit",
+                      seconds == 75 * 60, seconds)
+    for command in (
+            f"while true; do {work}; sleep 60; done",
+            f"while true; do sleep 60; {work}; done",
+            f"until {work}; do sleep 5; done",
+            f"until grep -q done out.txt; do sleep 5; done; {work}",
+            f"until grep -q done out.txt && {work}; do sleep 5; done",
+            f"end=$(( $(date +%s) + 1200 )); while [ $(date +%s) -lt $end ]; do bash {waiter}; {work}; done",
+            f"bash {waiter} 2>&1 | {work}",
+            f"{work};{waiter}",
+            f"X=$({work}); sleep 5",
+            f"cd $({work}) && sleep 5",
+            f"cd `{work}` && sleep 5",
+            f"sleep `{work}`",
+            f'sleep "$({work})"',
+            f'until grep -q "$({work})" out.txt; do sleep 5; done',
+            f"bash {waiter} $({work})",
+            f"sleep 120 > $({work})",
+            "sleep 120 >/dev/null;./work.sh",
+            "gh run watch 12345 && gh pr merge 3101",
+            "cd /home/nedlern/agents/merge-lane-2; H=/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers; "
+            "python3 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py "
+            "3220 abc t > $H/merge-3220.log 2>&1; while true; do bash $H/loop/watch-and-merge-provisional-ghi-md-edits.sh; done",
+            "python3 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py 3220 abc t "
+            "> x 2>&1; while true; do bash h/loop/watch-and-merge-provisional-ghi-md-edits.sh; done"):
+        seconds = hook.background_task_kind_wait_limit_seconds_from_command(command)
+        check(f"work inside or around a wait, {command!r}, has the no-match wait-limit",
+              seconds == 75 * 60, seconds)
+    # A variable name the pattern could split many ways made a failed match take minutes.
+    many_variables = "export A=$CLAUDE_PROJECT_DIR/a; " * 12 + work
+    started = time.monotonic()
+    seconds = hook.background_task_kind_wait_limit_seconds_from_command(many_variables)
+    check("a command of many variables that matches no kind is read within a second",
+          seconds == 75 * 60 and time.monotonic() - started < 1, time.monotonic() - started)
 
     # With no wait given, the transcript scan gives each task its kind's wait-limit from the
     # command of the Bash call whose tool_use id the launch record answers.
