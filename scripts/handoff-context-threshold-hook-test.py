@@ -2064,6 +2064,17 @@ with tempfile.TemporaryDirectory() as workspace:
         flight = flight_of([list_entry("anospawn", "subagent")], transcript=list_unknown_session)
         check("with no saved list, a listed subagent whose launch no transcript records holds it",
               hook.awaited_work_still_in_flight(list_unknown_marker, flight), flight.launched_at_by_id)
+        # A foreground Agent call's result carries the agentId with status "completed", which sorts
+        # after "async_launched"; its report quotes "async_launched" so the line is not skipped unparsed.
+        foreground_result = dict(subagent_spawn_record("aforeground"), timestamp=two_hours_ago)
+        foreground_result["toolUseResult"] = {
+            "status": "completed", "agentId": "aforeground", "agentType": "general-purpose",
+            "content": [{"type": "text", "text": "Every spawn record had status async_launched."}]}
+        foreground_session = transcript_of(workspace, "background-tasks-list-foreground-agent.jsonl", [
+            usage_record(100_000, cache_read=450_000), foreground_result])
+        flight = flight_of([list_entry("aforeground", "subagent")], transcript=foreground_session)
+        check("a foreground Agent call's completed result does not date a listed subagent's launch",
+              flight.launched_at_by_id == {}, flight.launched_at_by_id)
         # A subagent launched before the deferral leaves the list while it waits on a shell task it
         # starts after the deferral began; that task stands in for the subagent and holds the handoff.
         owner_session = transcript_of(workspace, "background-tasks-list-unknown-count-owner.jsonl", [
