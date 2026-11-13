@@ -698,7 +698,8 @@ failed but the run gave no full verdict: a suite was not run because its
 nc-test-sandbox did not start, the run was not run to the end, its records
 could not be written, or the run could not start (not a checkout's top
 directory, no suites listed, git or the interpreter unusable, a COMMIT git
-cannot resolve, a suite --only-suites-named names that git does not list);
+cannot resolve, a suite --only-suites-named names that git does not list, a
+--log-dir that cannot be created or written to);
 3 when another run holds the lock, where a lock is taken.
 """
 
@@ -4281,8 +4282,14 @@ def main(argv=None, platform=None):
         globals().update(sandbox_lists)
         if arguments.log_dir:
             log_dir = Path(arguments.log_dir).resolve()
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_dir_handle = lock_explicit_log_directory(log_dir)
+            try:
+                log_dir.mkdir(parents=True, exist_ok=True)
+                log_dir_handle = lock_explicit_log_directory(log_dir)
+            except OSError as error:
+                print(f"{PROGRAM}: not run — could not write to the log directory {log_dir} "
+                      f"({error}).\nRun this again with a --log-dir this user can create and "
+                      f"write to.", file=sys.stderr)
+                return EXIT_COULD_NOT_RUN
             if log_dir_handle is None:
                 print(f"{PROGRAM}: not run — another run is writing to the log directory "
                       f"{log_dir}.\nRun this again with another --log-dir, or after that "

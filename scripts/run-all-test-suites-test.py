@@ -2071,6 +2071,16 @@ if linux_only_cases_run_here("the removal of what a killed run left, decided fro
         check("a run refuses a --log-dir another run is writing to, with exit 3",
               result.returncode == 3 and "another run is writing to the log directory"
               in result.stderr, (result.returncode, result.stderr))
+        unwritable = root / "unwritable"
+        unwritable.mkdir()
+        unwritable.chmod(0o555)
+        for case, log_dir in (("it cannot create", unwritable / "logs"),
+                              ("it cannot write to", unwritable)):
+            result = run(root, "--log-dir", str(log_dir), lock_file=root / "another.lock")
+            check(f"a run given a --log-dir {case} says so and exits 2, with no traceback",
+                  result.returncode == 2 and "could not write to the log directory"
+                  in result.stderr and "Traceback" not in result.stderr,
+                  (result.returncode, result.stderr))
 
 # --- Git calls that read no file of the checkout -----------------------------
 # Full arguments distinguish location and config reads from calls whose
