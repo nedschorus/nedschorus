@@ -260,8 +260,8 @@ sys.exit(step.get("exit", 0))
 # backup sees it fail. "report" writes the report and succeeds; "fail_stderr"
 # is what a failure prints; "dump_prompt" saves the prompt; "pid_file" saves
 # the stub's process ID, first thing; "wait_for_file" fails unless that file
-# appears within 20 s; "hang" sleeps past any deadline a case sets;
-# "concurrent_read_answer" exits 0 without writing its own report, after
+# appears within 20 s; "sleep_seconds" sleeps that long after it; "hang"
+# sleeps past any deadline a case sets; "concurrent_read_answer" exits 0 without writing its own report, after
 # writing that text where a concurrent fast read, in a temporary directory of
 # its own, would write its Question 4 answer; it saves that directory, then
 # that file, one per line, to the file "concurrent_read_answer_path_file" names;
@@ -292,6 +292,7 @@ if "wait_for_file" in plan:
     else:
         sys.stderr.write("stub claude: %s never appeared\\n" % plan["wait_for_file"])
         sys.exit(1)
+time.sleep(plan.get("sleep_seconds", 0))
 if plan.get("hang"):
     time.sleep(300)
 own_report = (pathlib.Path(re.search(r"Write your report to (\\S+), once", prompt).group(1))
@@ -1037,6 +1038,29 @@ with tempfile.TemporaryDirectory() as scratch:
 
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    copied_agy_cell = repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"
+    copied_agy_cell.write_text(
+        copied_agy_cell.read_text(encoding="utf-8").replace(launcher_entry, (
+            'if __name__ == "__main__":\n'
+            '    counter = pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_COUNTER_PATH"])\n'
+            '    counter.write_text(str((int(counter.read_text()) if counter.is_file() else 0) + 1))\n'
+            '    sys.exit(common.EXIT_BAD_INVOCATION + 6)\n')),
+        encoding="utf-8")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: never\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: after the launcher's exit 70\n"},
+    )
+    check("an agy launcher exit above 64 is retried like any failure other than its "
+          "refusal: two Gemini launches, then the backup",
+          result.returncode == 0 and launches_counted(counter) == 2
+          and launches_counted(claude_counter_path(counter)) == 1,
+          f"exit {result.returncode}; launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
@@ -1235,6 +1259,25 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the model the Question 4 cell started is killed with it at the time limit",
           hanging_stub_pid is not None and not process_is_running(hanging_stub_pid),
           f"pid {hanging_stub_pid}")
+
+    # On a machine up for hours, deadline / now is about 1, so a wait given
+    # that ratio instead of the time left gives up after about a second.
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    fast_clarify_started = scratch / "fast-clarify-cell-started"
+    fast_clarify_started.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n",
+                                  "started_file": str(fast_clarify_started)}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"report": QUESTION_4_STUB_ANSWER,
+                         "wait_for_file": str(fast_clarify_started), "sleep_seconds": 4},
+    )
+    report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
+    check("a Question 4 cell still answering seconds after Questions 1 to 3 are done is "
+          "waited for, within its time limit, and its answer is the report's",
+          result.returncode == 0 and QUESTION_4_STUB_ANSWER.strip() in report_text,
+          f"exit {result.returncode}; report={report_text!r}; stderr={result.stderr!r}")
 
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"

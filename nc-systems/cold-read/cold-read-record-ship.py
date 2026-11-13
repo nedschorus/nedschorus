@@ -533,7 +533,7 @@ def record_directory_being_written_lock_is_held_by_any_process(record_dir: pathl
     descriptor = os.open(record_dir, os.O_RDONLY)
     try:
         # Exclusive, since every writer holds the lock shared.
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)  # pragma: no mutate, the two flags are distinct bits, so + and ^ give the same as |
     except BlockingIOError:
         return True
     finally:
