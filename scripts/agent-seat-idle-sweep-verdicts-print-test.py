@@ -747,6 +747,22 @@ try:
     check("tasks with unreadable or unmet prerequisites are held, and the next free task is still found",
           verdicts["alpha"]["open_tasks_nothing_holds"] == [{"id": "3", "subject": "task 3"}],
           verdicts["alpha"])
+    walk_minutes = machine.agents / "alpha" / "docs" / "walk" / "w-minutes.md"
+    machine.walk_minutes("alpha", "item 1 of 2: deferred; it moves to just before the summary item. <open>\n")
+    (walk_minutes.parent / "w.md").write_text("# Walk\n\n## Item 1 of 2: The fix\n\n## Item 2 of 2: Summary\n")
+    machine.task("alpha", "5", metadata={"prerequisites": [{"approval_walk_item_decided": {
+        "approval_walk_minutes_file_path": str(walk_minutes), "approval_walk_item_heading": "The fix"}}]})
+    code, verdicts, _ = machine.run()
+    check("a task waiting on an approval-walk item the walk-minutes record as deferred is held",
+          code == 0 and verdicts["alpha"]["open_tasks_nothing_holds"] == [{"id": "3", "subject": "task 3"}],
+          verdicts["alpha"])
+    machine.walk_minutes("alpha", "item 1 of 2: approved; every text the change adds has had a fast read. "
+                                  "<accepted>\n")
+    code, verdicts, _ = machine.run()
+    check("a task waiting on an approval-walk item the walk-minutes record as approved is free",
+          code == 0 and verdicts["alpha"]["open_tasks_nothing_holds"]
+          == [{"id": "3", "subject": "task 3"}, {"id": "5", "subject": "task 5"}], verdicts["alpha"])
+    machine.task("alpha", "5", status="completed")
     machine.task("alpha", "3", status="completed")
     machine.task("alpha", "4", metadata={"prerequisites": [{"pr_merged": 51}, {"pr_merged": 52}]})
     code, verdicts, _ = machine.run()
