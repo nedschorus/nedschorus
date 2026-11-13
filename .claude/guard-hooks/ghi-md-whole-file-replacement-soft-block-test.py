@@ -252,20 +252,21 @@ with tempfile.TemporaryDirectory() as scratch:
           code == 0 and got == refusal, (code, output))
 
     replay_check = Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools" / (
-        "bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-"
-        "check.py")
+        "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py")
     _replay_spec = importlib.util.spec_from_file_location("bash_guards_replay_check", replay_check)
     replay = importlib.util.module_from_spec(_replay_spec)
     _replay_spec.loader.exec_module(replay)
     marker.write_text("A reason the replay must not consume.\n")
     reading = replay.read_ghi_md_whole_file_replacement(
         hook, "cp x.md docs/issues/46-ghi-info-agent-design.md", str(checkout), None)
-    check("the Bash-guard replay reads a refused command as refused, naming the GHI-MD",
-          reading == ("refused", f"replaces {ghi_md}"), reading)
-    check("the Bash-guard replay leaves the marker file in place", marker.exists())
+    check("bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check reads a refused command as "
+          "refused, naming the GHI-MD", reading == ("refused", f"replaces {ghi_md}"), reading)
+    check("bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check leaves the marker file in place",
+          marker.exists())
     reading = replay.read_ghi_md_whole_file_replacement(
         hook, "cp x.md docs/notes.md", str(checkout), None)
-    check("the Bash-guard replay reads a passed command as passed", reading == ("passed", None),
+    check("bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check reads a passed command as passed",
+          reading == ("passed", None),
           reading)
     marker.unlink()
 

@@ -221,38 +221,9 @@ Rulings from the user's review of the revised spec (records:
 `git show db917b5:md-review-records/2026-08-09-git-gatekeeper-design/`); program work, not
 spec text.
 
-Applied 2026-08-11 (suite then 140 cases green, was 146): the `imports`
-deletion, the base absorption, and the catalog collapse below.
-Applied 2026-08-12 (suite then 150 cases green): the symlink refusal, the
-parser-contract wrap, the untracked-files advisory, and the digest
-length-prefix reframing. Slice 4 itself BUILT later the same day (suite
-162 green): the worker lifecycle landed with all four of its ruled build
-notes — the 30-day expiry sweep (plus stale screening scratch and
-day-old dead-worker leftovers), the liveness check before the resubmit
-sweep, process-group kill-and-wait for cancel, and the worker start-time
-recorded beside its pid (Codex FIX-2 — the tag-only framing was
-collidable by crafted content; every component is now length-prefixed) — plus one
-stray the sweep exposed: the program's `unsafe-path` code, which the spec's
-catalog never listed, folded into `malformed-field` under the same
-collapse principle. The refusal-text quality pass ran the same day over
-the final catalog: every refusal site meets the user's bar (facts name
-the offending path/field and embed what the program holds — stderr,
-intervening commits, the current tip; next actions are verb-first and
-specific); no entry needed a user judgment call. Still pending, slice-4
-scope by design: the expiry sweep and the liveness check.
+Applied 2026-08-11 (suite then 140 cases green, was 146): the `imports` deletion, the base absorption, and the catalog collapse below. Applied 2026-08-12 (suite then 150 cases green): the symlink refusal, the parser-contract wrap, the untracked-files advisory, and the digest length-prefix reframing. Slice 4 itself BUILT later the same day (suite 162 green): the worker lifecycle landed with all four of its ruled build notes — the 30-day expiry sweep (plus stale screening scratch and day-old dead-worker leftovers), the liveness check before the resubmit sweep, process-group kill-and-wait for cancel, and the worker start-time recorded beside its pid (Codex FIX-2 — the tag-only framing was collidable by crafted content; every component is now length-prefixed) — plus one stray the sweep exposed: the program's `unsafe-path` code, which the spec's catalog never listed, folded into `malformed-field` under the same collapse principle. The refusal-text quality pass ran the same day over the final catalog: every refusal site meets the user's bar (facts name the offending path/field and embed what the program holds — stderr, intervening commits, the current tip; next actions are verb-first and specific); no entry needed a user judgment call.
 
-- **Refusal-text quality pass** (user-ruled 2026-08-10). The bar, in the
-  user's words: a refused check-in gets "the best, most useful and
-  actionable refusal text that can be reliably generated." Sweep every
-  error-catalog entry against three questions: (1) does the text say what
-  happened, in the caller's terms; (2) does it name the exact next action,
-  not a category of action; (3) does it include every fact the program
-  already holds that the caller would otherwise have to dig up — the
-  offending path, the conflicting commit id, the expected form of a missing
-  argument. "Already holds" is the limit: no speculative investigation
-  beyond what the check-in computed. Entries whose text needs a judgment
-  call go to the user rather than being decided silently. Runs alongside
-  slice 4.
+- APPLIED 2026-08-12 — **Refusal-text quality pass** (user-ruled 2026-08-10). The bar, in the user's words: a refused check-in gets "the best, most useful and actionable refusal text that can be reliably generated." Sweep every error-catalog entry against three questions: (1) does the text say what happened, in the caller's terms; (2) does it name the exact next action, not a category of action; (3) does it include every fact the program already holds that the caller would otherwise have to dig up — the offending path, the conflicting commit id, the expected form of a missing argument. "Already holds" is the limit: no speculative investigation beyond what the check-in computed. Entries whose text needs a judgment call go to the user rather than being decided silently. Runs alongside slice 4.
 - APPLIED 2026-08-12 with slice 4 — **Refusal-record expiry**
   (user-ruled 2026-08-10). Every gatekeeper
   invocation first sweeps retained `--no-wait` refusal records older than
@@ -287,27 +258,9 @@ scope by design: the expiry sweep and the liveness check.
   whether its recorded worker is alive — alive answers `in-progress`
   instead of sweeping the ground from under a running twin. Slice 4 work:
   lands with the worker lifecycle it protects.
-- **Collapse the refusal catalog in the built program** (user-ruled
-  2026-08-10): delete the unreachable `empty-change` branch (dead code —
-  the first unchanged path refuses first) and its catalog entry; fold
-  `missing-message` into `malformed-field`; merge the four import codes
-  into `import-invalid`. Teaching text and facts keep every distinction.
-  Matching test-assertion edits across T1/T11. Apply after the review
-  walk closes, together with the other program follow-ups.
-- **Absorb the base into the program** (user-ruled 2026-08-10): drop the
-  `--base` field from the contract; the program computes
-  `git merge-base HEAD origin/main`, after a fetch, in the caller's
-  checkout. Retire `unknown-base` / `base-not-on-main`. Rework against
-  built code: screening resolves the base after `resolve_repository`;
-  T1's base cases delete; T3/T4/T5 fixtures set the caller's HEAD instead
-  of passing `--base`. Apply after the review walk closes.
-- **Delete the `imports` subcommand from the built program** (user-ruled
-  2026-08-10): the parser entry, `imports_table`, `parse_import_trailers`,
-  the per-call scratch clone, and T10's test cases. The `--import` trailer
-  machinery and T11's screening stay. The view is
-  `git log origin/main --grep "Gatekeeper-import:"`, documented in the
-  spec. Apply after the review walk closes; suite must stay green minus
-  the retired cases.
+- APPLIED 2026-08-11 — **Collapse the refusal catalog in the built program** (user-ruled 2026-08-10): delete the unreachable `empty-change` branch (dead code — the first unchanged path refuses first) and its catalog entry; fold `missing-message` into `malformed-field`; merge the four import codes into `import-invalid`. Teaching text and facts keep every distinction. Matching test-assertion edits across T1/T11. Apply after the review walk closes, together with the other program follow-ups.
+- APPLIED 2026-08-11 — **Absorb the base into the program** (user-ruled 2026-08-10): drop the `--base` field from the contract; the program computes `git merge-base HEAD origin/main`, after a fetch, in the caller's checkout. Retire `unknown-base` / `base-not-on-main`. Rework against built code: screening resolves the base after `resolve_repository`; T1's base cases delete; T3/T4/T5 fixtures set the caller's HEAD instead of passing `--base`. Apply after the review walk closes.
+- APPLIED 2026-08-11 — **Delete the `imports` subcommand from the built program** (user-ruled 2026-08-10): the parser entry, `imports_table`, `parse_import_trailers`, the per-call scratch clone, and T10's test cases. The `--import` trailer machinery and T11's screening stay. The view is `git log origin/main --grep "Gatekeeper-import:"`, documented in the spec. Apply after the review walk closes; suite must stay green minus the retired cases.
 
 ### From the PR [git-gatekeeper review walk: spec revised through 2026-08-12, rulings applied, suite 150 green](https://github.com/nedschorus/nedschorus/pull/49) code review (2026-08-12)
 
@@ -568,7 +521,7 @@ remains in git history at `4cadb46`.
   integration absorbs it — it is not tolerable here, because in `status`
   and `cancel` the fetch decides whether the answer is true.
 - APPLIED 2026-08-12 (`71d492e`, `6d356d2`) — **The two exemptions from
-  the one-JSON-object contract are written down, and agent-facing text
+  the one-JSON-object contract are written down, and tool-message-to-agent text
   stops citing `--help`.** The reply contract states that every invocation
   prints exactly one JSON object on stdout, and reserves exit 2 for a
   program defect; two invocations broke it. `worker` was a real,
@@ -668,29 +621,7 @@ remains in git history at `4cadb46`.
   *beats* the placeholder — pinning the happy-path outcome of the very
   race the ruling deleted. It committed that batch noting it was behind
   schedule and reached its context-reincarnation threshold three items later.
-- APPLIED 2026-08-12 (`cb582d6`) — **Version floors are met by upgrading
-  hosts, not by lowering the floors.** The suite asserts Python ≥ 3.12 and
-  git ≥ 2.40. A stock macOS host meets neither: its system `python3` is
-  3.9.6, and the program's type annotations require ≥ 3.10 to import at
-  all, while Apple's shipped git is 2.39.5 — the sole failing case in
-  every suite run performed during the review, an environment artifact
-  rather than a code defect. The floors stand: macOS hosts in the fleet
-  take a current Python and a current git (Homebrew or equivalent) rather
-  than the program accommodating superseded versions. Applied as the
-  ruling directs — nothing in the program changed — with one repair
-  alongside: the suite's own git-version parse took the last token of `git
-  version 2.39.5 (Apple Git-154)` and crashed the whole run on macOS
-  before the floor could report. The ruling was then carried out on the
-  Mac host 2026-08-13: `brew install git` put 2.55.0 ahead of Apple's
-  2.39.5 on PATH and the git-floor case went green, leaving
-  `user.useConfigOnly` as the suite's only failing case there — itself
-  settled 2026-08-14, taking this host to 214 of 214 for the first time
-  (the setting is per-host and had been true on the Ubuntu box since the
-  build; the Mac was a later clone that never received the same setup).
-  Python was
-  already satisfied by an explicitly-invoked `python3.13`; the system
-  `python3` remains 3.9.6, which matters for any caller that runs the
-  program as plain `python3` rather than naming the interpreter.
+- APPLIED 2026-08-12 (`cb582d6`) — **Version floors are met by upgrading hosts, not by lowering the floors.** The suite asserts Python ≥ 3.12 and git ≥ 2.40. A stock macOS host meets neither: its system `python3` is 3.9.6, and the program's type annotations require ≥ 3.10 to import at all, while Apple's shipped git is 2.39.5 — the sole failing case in every suite run performed during the review, an environment artifact rather than a code defect. The floors stand: macOS hosts in the fleet take a current Python and a current git (Homebrew or equivalent) rather than the program accommodating superseded versions. Applied as the ruling directs — nothing in the program changed — with one repair alongside: the suite's own git-version parse took the last token of `git version 2.39.5 (Apple Git-154)` and crashed the whole run on macOS before the floor could report. The ruling was then carried out on the Mac host 2026-08-13: `brew install git` put 2.55.0 ahead of Apple's 2.39.5 on PATH and the git-floor case went green, leaving `user.useConfigOnly` as the suite's only failing case there — itself settled 2026-08-14, taking this host to 214 of 214 for the first time (the setting is per-host and had been true on the Ubuntu box since the build; the Mac was a later clone that never received the same setup). Python was already satisfied by an explicitly-invoked `python3.13`; the system `python3` remains 3.9.6, which matters for any caller that runs the program as plain `python3` rather than naming the interpreter. **Superseded 2026-09-18** (nedschorus#451; the user: "who cares which python as long as it works"): the Mac's production `python3` is Apple's 3.9 at every seat, supervisor and handoff, so the audit failed silently at every Mac handoff. The program now loads under 3.9 (`from __future__ import annotations`) and the suite's Python floor is 3.9.
 - APPLIED 2026-08-12 (`cb582d6`, `cacd3b9`) and 2026-08-13 (the accepted
   reply, the specification correction) — **`status` and `cancel` are
   host-local, and say so.** The workspace lives under the
@@ -724,52 +655,7 @@ remains in git history at `4cadb46`.
   section's "discoverable from the digest alone" holds only on the host
   that created it, and the reply contract and procedure both carried the
   hostless `accepted <digest>` form.
-- APPLIED 2026-08-12 (the cases, across the seven fix commits) and
-  2026-08-13 (the phase seam and the cases needing it) — **The regression
-  set, and the phase seam it needs.** The 162-case suite caught
-  none of the defects above, for two structural reasons worth recording
-  rather than the individual gaps. It tests what the code does rather than
-  what was ruled — the clearest case being the process-group kill: WALK-4
-  exists because a worker may already have spawned `git push`, so killing
-  only the recorded process leaves that child alive to push anyway, and
-  the test parked the worker in a pause that runs *before* any git work
-  begins, so no child existed at cancel time and replacing the group kill
-  with a single-process kill left every cancel case green. And it never
-  asserted the absence of damage: every destructive defect found here
-  produced a successful-looking reply (`cancel` on an arbitrary path
-  answers `cancelled`; a twin trampling a live worker answers `accepted`),
-  and a test that checks only the reply passes. The missing half is always
-  the second assertion — *and the thing that should not have been touched
-  is still there*. Each case states its oracle and red condition in
-  advance and must fail against the pre-fix program; written after the
-  fix, several would pass vacuously. The eleven groups ruled: path safety;
-  kill scope; cancel truthfulness; torn pid file; refusal record; twin
-  claim; symlinks in both directions; repository resolution; advisory;
-  identity guard; host locality. Roughly 25–30 cases. Ten of the eleven
-  groups landed inside the seven fix commits above rather than as one
-  batch, taking the suite 162 → 202. The eleventh, cancel truthfulness,
-  waited on the named-phase seam, which was the ruled prerequisite and was
-  not built at the time; both were built 2026-08-13. The seam
-  (`worker_phase`, env `GATEKEEPER_TEST_WORKER_PAUSE_AT`) replaces the
-  single pre-git sleep: the worker writes a `.reached-<phase>` file on
-  arrival at `before-git`, `before-push` and `after-push`, and blocks at
-  the one phase a test names until that test creates `.release-<phase>`.
-  It is inert unless the variable is set. A companion variable,
-  `GATEKEEPER_TEST_WORKER_IGNORES_TERM`, makes the held worker ignore
-  SIGTERM; it stands in for the two ways a real worker outlives its
-  cancellation — a `git push` child that survived a single-process kill,
-  and a worker the canceller lacks permission to signal — neither of which
-  is constructible from inside one test process. The two cases: a worker
-  released inside cancel's ten-second SIGTERM wait pushes, and cancel
-  answers `too-late` with the commit; and a workspace whose recorded worker
-  is alive but unsignalable (pid 1, the case skipping itself where that pid
-  *is* signalable, as when running as root) yields `cancel-failed`, exit 1,
-  workspace left in place. Red conditions verified by mutation rather than
-  against the pre-fix program, since the cancel fixes had already landed:
-  removing the every-path history re-check turns the first case's answer
-  into `cancelled`, and removing the post-kill liveness confirmation does
-  the same to the second — the exact false `cancelled` the ruling exists to
-  prevent. Still unwritten: the host-locality case.
+- APPLIED 2026-08-12 (the cases, across the seven fix commits) and 2026-08-13 (the phase seam and the cases needing it) — **The regression set, and the phase seam it needs.** The 162-case suite caught none of the defects above, for two structural reasons worth recording rather than the individual gaps. It tests what the code does rather than what was ruled — the clearest case being the process-group kill: WALK-4 exists because a worker may already have spawned `git push`, so killing only the recorded process leaves that child alive to push anyway, and the test parked the worker in a pause that runs *before* any git work begins, so no child existed at cancel time and replacing the group kill with a single-process kill left every cancel case green. And it never asserted the absence of damage: every destructive defect found here produced a successful-looking reply (`cancel` on an arbitrary path answers `cancelled`; a twin trampling a live worker answers `accepted`), and a test that checks only the reply passes. The missing half is always the second assertion — *and the thing that should not have been touched is still there*. Each case states its oracle and red condition in advance and must fail against the pre-fix program; written after the fix, several would pass vacuously. The eleven groups ruled: path safety; kill scope; cancel truthfulness; torn pid file; refusal record; twin claim; symlinks in both directions; repository resolution; advisory; identity guard; host locality. Roughly 25–30 cases. Ten of the eleven groups landed inside the seven fix commits above rather than as one batch, taking the suite 162 → 202. The eleventh, cancel truthfulness, waited on the named-phase seam, which was the ruled prerequisite and was not built at the time; both were built 2026-08-13. The seam (`worker_phase`, env `GATEKEEPER_TEST_WORKER_PAUSE_AT`) replaces the single pre-git sleep: the worker writes a `.reached-<phase>` file on arrival at `before-git`, `before-push` and `after-push`, and blocks at the one phase a test names until that test creates `.release-<phase>`. It is inert unless the variable is set. A companion variable, `GATEKEEPER_TEST_WORKER_IGNORES_TERM`, makes the held worker ignore SIGTERM; it stands in for the two ways a real worker outlives its cancellation — a `git push` child that survived a single-process kill, and a worker the canceller lacks permission to signal — neither of which is constructible from inside one test process. The two cases: a worker released inside cancel's ten-second SIGTERM wait pushes, and cancel answers `too-late` with the commit; and a workspace whose recorded worker is alive but unsignalable (pid 1, the case skipping itself where that pid *is* signalable, as when running as root) yields `cancel-failed`, exit 1, workspace left in place. Red conditions verified by mutation rather than against the pre-fix program, since the cancel fixes had already landed: removing the every-path history re-check turns the first case's answer into `cancelled`, and removing the post-kill liveness confirmation does the same to the second — the exact false `cancelled` the ruling exists to prevent. The host-locality case followed on 2026-08-13, `T7 the accepted reply names the submitting host`; no case yet pins the host in the two absence replies.
 - APPLIED 2026-08-12 (the git-version parse and the `finally` reaping) and
   2026-08-13 (the rest) — **The harness synchronises by handshake, fails
   soft, and reaps what it spawns.** Three weaknesses in the test
@@ -849,15 +735,10 @@ remains in git history at `4cadb46`.
   available if something needed main sooner. Enacted as ruled: the seven
   fix commits landed on choirmaster first, and PR [git-gatekeeper review walk: spec revised through 2026-08-12, rulings applied, suite 150 green](https://github.com/nedschorus/nedschorus/pull/49) merged to
   main afterwards as `9bd1335`.
-  **Superseded 2026-09-18** (nedschorus#451; the user: "who cares which
-  python as long as it works"): the Mac's production `python3` is Apple's
-  3.9 at every seat, supervisor and handoff, so the audit failed silently
-  at every Mac handoff. The program now loads under 3.9 (`from __future__
-  import annotations`) and the suite's Python floor is 3.9.
 
 ### Approval-walk `complexity-sweep-findings-2026-10-02`, item 17: making the asynchronous machinery robust
 
-The approval-walk `docs/walk/complexity-sweep-findings-2026-10-02.md`, item 17, held on 2026-10-03 (walk-minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/complexity-sweep-findings-2026-10-02-minutes.md`), asked whether build-slice 4's asynchronous machinery — `--no-wait`, the detached worker, `status` and `cancel` — should be removed, since no slow check has yet run at the main-gatekeeper. The user ruled to keep it: a main-gatekeeper run with its checks can take 20 minutes or more, and a run that long must outlive the agent-session that submitted it, which an agent-seat's session-handoff or crash can end at any time. A command run by an agent's harness as a background task belongs to that agent-session and is not built to outlive it; the detached worker, started in its own operating-system session, is, and so is what the worker leaves for `status`: a commit on main, or a refusal record in its workspace. Neither survives a reboot of the host, after which the request reads as abandoned and is resubmitted. The user also ruled that the machinery must be made robust before the main-gatekeeper is activated, and that the requirements are recorded here, because no agent-seat owns the main-gatekeeper (the agent-seat `gatekeeper` was retired on 2026-10-04), and this build-slice plan is where whoever builds the main-gatekeeper starts. The user approved the six requirements below in summary form; the detail under each is the recording agent's, and a builder who finds it wrong proposes a change to the user rather than building around it.
+The approval-walk `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/complexity-sweep-findings-2026-10-02.md`, item 17, held on 2026-10-03 (walk-minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/complexity-sweep-findings-2026-10-02-minutes.md`), asked whether build-slice 4's asynchronous machinery — `--no-wait`, the detached worker, `status` and `cancel` — should be removed, since no slow check has yet run at the main-gatekeeper. The user ruled to keep it: a main-gatekeeper run with its checks can take 20 minutes or more, and a run that long must outlive the agent-session that submitted it, which an agent-seat's session-handoff or crash can end at any time. A command run by an agent's harness as a background task belongs to that agent-session and is not built to outlive it; the detached worker, started in its own operating-system session, is, and so is what the worker leaves for `status`: a commit on main, or a refusal record in its workspace. Neither survives a reboot of the host, after which the request reads as abandoned and is resubmitted. The user also ruled that the machinery must be made robust before the main-gatekeeper is activated, and that the requirements are recorded here, because no agent-seat owns the main-gatekeeper (the agent-seat `gatekeeper` was retired on 2026-10-04), and this build-slice plan is where whoever builds the main-gatekeeper starts. The user approved the six requirements below in summary form; the detail under each is the recording agent's, and a builder who finds it wrong proposes a change to the user rather than building around it.
 
 The six are program work in `nc-systems/main-gatekeeper/main-gatekeeper.py`, where every function and constant named below lives, with their tests in `nc-systems/main-gatekeeper/tests/main-gatekeeper-test.py`. Each is a prerequisite of activation; requirement 5 is built with build-slice 7. None is built. They contradict specification text in `nc-systems/main-gatekeeper/main-gatekeeper-design.md`, so the pull request that builds each one amends every passage of the specification it contradicts, at least these: § The request and the reply (the instant `accepted` of a non-waiting caller, which requirement 2 changes, and the outcomes `status` returns, which requirements 1, 4 and 5 change); the error catalog in § States, crashes, cancel, and errors (requirement 2's new refusal); § States, crashes, cancel, and errors (the workspace's `worker.pid`, liveness judged by the recorded process ID and start time, and `cancel`'s group rule, which requirement 3 changes); and the Records paragraph of § The job and the guarantee, "No side files, no separate logs" (requirements 1 and 4 add files to the workspace). The exact field names and wording of the new outcomes are the builder's, recorded in those amendments.
 
@@ -867,7 +748,7 @@ In what follows, the main-gatekeeper-check-in-request-holder is the process that
 2. **A detached worker that never becomes ready is reported, not shown as in progress.** Today `worker_state` reads a workspace with no readable `worker.pid` as its `unknown`, and every caller counts that `unknown` as live, so a detached worker that dies before it writes `worker.pid` is reported `in-progress` until `sweep_stale_workspaces`, run at the start of each main-gatekeeper invocation on that host, removes the workspace at the first invocation at least `STALE_WORKSPACE_SECONDS`, 24 hours, after the workspace last changed. The main-gatekeeper-worker-spawner never checks that the worker became ready. Required: the detached worker is ready once it has read its request and recorded its first step (requirement 4). The main-gatekeeper-worker-spawner waits a bounded time for readiness before it answers `accepted`. When the bound expires or the worker dies first, the main-gatekeeper-worker-spawner stops the worker's process group, removes the workspace, and answers a refusal that names the failure, so that a refused request never goes on to run. A detached worker that dies after it is ready is requirement 1's `abandoned`.
 3. **The liveness check is an advisory file lock, not a saved process ID.** Today the liveness check reads `worker.pid` plus a process start time from `/proc` or `ps` (`process_start_time`, `worker_state`). Required: the main-gatekeeper-check-in-request-holder's liveness is an exclusive advisory file lock on one lock file in the workspace, held from the moment the workspace is claimed until the main-gatekeeper-check-in-request-holder and every child of it that can change main have ended. The process that claims the workspace takes the lock at the claim; a main-gatekeeper-worker-spawner hands its lock to the detached worker it starts, by an inherited descriptor, and the worker hands it in the same way to any child that can push or open a pull request, so the lock is never free between the claim and the end of the work. A reader tests liveness without holding the lock against other readers (for example, a shared non-blocking lock, released at once): a held exclusive lock means live, and a lock the reader can take means the work has ended. No process ID or start time is consulted to judge liveness. The lock file is never renamed over or deleted while it may be held: a process that removes a workspace first takes its lock exclusively. The workspace root, `$XDG_STATE_HOME/nedschorus-gatekeeper` or `~/.local/state/nedschorus-gatekeeper`, must be on a local disk, because a file lock on a network filesystem is not reliable everywhere; when the root is on a network filesystem, the main-gatekeeper refuses, naming the root and the filesystem. `cancel` still stops a detached worker by its process group, which the worker leads: the worker records its process group ID, and `cancel` signals that process group only while the lock is held, since while the lock is held the group still has a member and its ID cannot be reused. The window between that test and the signal is accepted. A waiting check-in does not lead its own process group, whose group is its caller's, so `cancel` signals only the waiting check-in's own process, as the specification already rules. `sweep_stale_workspaces` never removes a workspace whose lock is held, however old.
 4. **`status` shows the step a live main-gatekeeper-check-in-request-holder is on.** Today a live main-gatekeeper-check-in-request-holder answers only `in-progress`, so a caller polling a 20-minute run sees nothing change. Required: the main-gatekeeper-check-in-request-holder records its current step, such as fetching main, running a named check, or opening the gate's pull request, with the time it started that step, written atomically, as `worker.pid` and `refusal.json` are written today (`write_atomically`). Every `in-progress` reply, from `status` and from a twin `check-in`, carries the step and its start time. A caller then sees which step a run is in and for how long; telling a stuck check from a slow one is left to the caller's judgment of that time.
-5. **The outcomes fit the gate's pull request (build-slice 7).** Today a main-gatekeeper-check-in-request-holder that succeeds deletes its workspace, and `status`, `cancel` and a twin `check-in` learn the result from main's history. Once build-slice 7 has the main-gatekeeper open a pull request instead of pushing to main, a finished request leaves no commit on main until the merge-lane merges the pull request, so `status` would answer `unknown`, `cancel` would answer `cancelled` while the pull request stays open, and a resubmission would open a second pull request. Required, built with build-slice 7: an outcome for a request whose pull request is open, naming the pull request, which `status`, `cancel` and `check-in` all honour. Build-slice 7 also decides where that outcome is kept, what removes it, what `status` answers once the pull request is closed without merging, and what a main-gatekeeper-check-in-request-holder that dies after opening the pull request but before recording it leaves behind.
+5. **The outcomes fit the gate's pull request (build-slice 7).** Today a main-gatekeeper-check-in-request-holder that succeeds deletes its workspace, and `status`, `cancel` and a twin `check-in` learn the result from main's history. Once build-slice 7 has the main-gatekeeper open a pull request instead of pushing to main, a finished request leaves no commit on main until the merge-lane merges the pull request, so `status` would answer `unknown`, `cancel` would answer `cancelled` while the pull request stays open, and a resubmission would open a second pull request. Required, built with build-slice 7: the outcomes the specification designs in § Check-in through a pull request, which `status`, `cancel` and `check-in` all honour. There the open pull request is the request's record, so no outcome is kept in the workspace; a resubmit finds the open pull request from the digest's branch and answers `in-review <pull request>`, which also covers a main-gatekeeper-check-in-request-holder that dies after opening the pull request; and `status` answers `closed-unmerged <pull request>` once the pull request is closed without merging.
 6. **A long run is tested.** No check slow enough to need the detached worker has run, because build-slice 9's check battery is not built, and the worker has no check step yet. Required: a test-only check step in the worker, inert unless a test enables it as the existing `worker_phase` pauses are, that blocks until the test releases it, with a deadline of its own so that a failed case ends in seconds rather than minutes. With it, the tests cover: a detached worker that keeps running after its caller's whole process group is killed, which a worker sharing that group would not survive; a worker killed with `SIGKILL`, and one whose `run_worker` raises outside its `try` block, each giving `abandoned` with requirement 1's content; a worker that dies before it is ready, and one that is slower than the readiness bound, each refused with its workspace removed (requirement 2); a twin submission while the main-gatekeeper-worker-spawner is still filling the workspace, which must read the request as live; `status` during the run, carrying the step (requirement 4); `cancel` during the run; `cancel` after the lock is free, which signals nothing; and a workspace older than `STALE_WORKSPACE_SECONDS` whose lock is held, which the sweep keeps.
 
 Item 10 of the same walk adds one more requirement, ruled by the user on 2026-10-04 after the build found that the sweep had missed half of what the read-once rule does. Today `status` returns a retained refusal record once and then deletes its workspace, and that deletion is also what lets the same work be resubmitted: a kept workspace makes `check-in` answer `in-progress` for the same digest. Required, built with the six requirements above: `status` returns a refusal record every time it is asked, until the record expires after `REFUSAL_RECORD_RETENTION_SECONDS`, 30 days; and a refusal record does not block a new `check-in` of identical work, which starts a fresh run. The pull request that builds it amends every passage that says a refusal is returned once: the specification, `nc-systems/main-gatekeeper/main-gatekeeper-design.md`, in its opening revision note, in § The request and the reply (twice, the `status` line included), and in § States, crashes, cancel, and errors; `docs/issues/3-gatekeeper-build-bindings.md`, ruling B4d; and this plan's own follow-up entry on claiming the record.
@@ -1027,7 +908,7 @@ The slice numbers are not a ruled build order: which of slices 7, 8 and 10 is bu
 | Slice | Delivers | Spec tests | Retires |
 |---|---|---|---|
 | 7 | The gate opens a pull request instead of pushing to main (ruled 2026-08-29). Today `attempt_push` pushes `main-gatekeeper-candidate:main` directly. **Ruled 2026-09-15: shape A** — the pull request carries the single candidate commit and the merge lane merges it as a merge commit; § What the gate's pull request carries and how it merges — ruled 2026-09-15. Designed 2026-10-01: the specification § Check-in through a pull request. Also ruled 2026-10-02: the `audit` subcommand checks main's review requirement and that no bypass allowance exists (the specification § The credential and enforcement) | none yet; owed: the pull-request forms of T2, T4, T7 and T8, which still describe the push; T6 retires with the push race | `attempt_push`'s direct push to main |
-| 8 | The per-file staleness report (user-ruled 2026-08-31; in full below, § The per-file staleness report — slice 8's requirement): for every declared path, whether main has changed it since the base commit, how many commits, the latest pull request — a report, never a refusal | none yet | the accepted interim in which nothing checks a path against `origin/main` at push or pull-request time |
+| 8 | The per-file staleness report (user-ruled 2026-08-31; in full below, § The per-file staleness report — slice 8's requirement): for every declared path, whether main has changed it since the base commit, how many commits, the latest pull request — a report, never a refusal. Build note: the pre-push hook's `scripts/branch-reverts-a-file-to-an-older-main-version-check.py` already makes part of this comparison, finding a file the branch sets back to a version main has since replaced; slice 8 builds on it rather than writing that comparison a second time, since the user ruled on 2026-08-31 that this check belongs to the gate so that it is not built twice (§ The per-file staleness report — slice 8's requirement, "Why it belongs to the gate rather than to a session hook") | none yet | the accepted interim in which nothing reports, path by path, that main changed a declared path since the base |
 | 9 | The check battery, the mechanical checks that run at check-in. **Ownership unruled** since 2026-08-14 (§ Open item 3 below; PR [gatekeeper slice plan: an open question on whether this build owns the check battery](https://github.com/nedschorus/nedschorus/pull/63)): whether this build owns it or the toolchain plan's Phase 1 binding is corrected is the user's ruling | none yet | unruled |
 | 10 | The C2 move: the gate runs from the dedicated Unix user, on the deployed root-owned copy, pushing on the `ned-git-gatekeeper` token rather than on its caller's credential (specification § The credential and enforcement, the Unix-user boundary bullet) | none yet | pushing on whatever credential the caller's environment carries |
 
@@ -1072,15 +953,7 @@ Measured 2026-08-31 at the MD-skills seat: a checkout 112 commits behind
 main, whose hand merge hit twelve conflicts, every one of them this exact
 shape (the branch's older copy against main's landed version).
 
-**The interim, accepted deliberately.** Until the gate is live, nothing
-enforces this. The session-start half exists — the ignition prompt carries
-the launch-time-git-sync result and, per pull request
-PR [ignition: catch up with main before the first substantive action, and verify it](https://github.com/nedschorus/nedschorus/pull/220), tells the
-successor to catch up with main before its first substantive action — and
-the harness already refuses an edit to a file that changed on disk since
-the session read it. But nothing knows about `origin/main` at push or
-pull-request time. That gap is accepted rather than filled with a hook this
-requirement would later replace.
+**The interim, accepted deliberately.** Until the gate is live, nothing enforces this. The session-start half exists — the ignition prompt carries the launch-time-git-sync result and, per pull request PR [ignition: catch up with main before the first substantive action, and verify it](https://github.com/nedschorus/nedschorus/pull/220), tells the successor to catch up with main before its first substantive action — and the harness already refuses an edit to a file that changed on disk since the session read it. Since 2026-09-23 a pre-push hook, `scripts/git-client-side-hooks-pre-push-conflict-check.py`, refuses to push a branch that conflicts with `origin/main` or sets a file back to a version main has since replaced; nothing reports, path by path, that main changed a file the branch also changed. That gap is accepted rather than filled with a hook this requirement would later replace.
 
 ### Shape 2 — a reviewer attached to the gate, deferred
 

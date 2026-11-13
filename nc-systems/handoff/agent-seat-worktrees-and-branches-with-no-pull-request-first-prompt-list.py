@@ -353,11 +353,11 @@ def branch_entries(repo, branches, by_head_branch, by_head_commit, deleted,
             deletion_failure = (f"; every commit is on origin/main as a cherry-picked copy, but "
                                 f"`git branch -D` exited {result.returncode}: "
                                 f"{' '.join(result.stderr.split())[:200] or 'no error text'}")
-        count = git_lines(repo, "rev-list", "--count", f"{ORIGIN_MAIN}..{tip}")[0]
-        subject = git_lines(repo, "log", "-1", "--format=%s", tip)[0]
+        count = git_lines(repo, "rev-list", "--count", f"{ORIGIN_MAIN}..{tip}")[0]  # pragma: no mutate, --count prints one line, so [-1] picks the same line as [0]
+        subject = git_lines(repo, "log", "-1", "--format=%s", tip)[0]  # pragma: no mutate, %s prints the subject on one line, so [-1] picks the same line as [0]
         command = delete_command_text(
             repo, clean_worktrees_module().FORCE_DELETE_BRANCH_FLAG, branch)
-        entries.append(f"branch {branch}; {count} commit(s) not on origin/main, the newest "
+        entries.append(f"branch {branch}; main lacks the changes of its {count} commit(s), the newest "
                        f"{tip[:12]} of {date}, \"{subject}\"; "
                        f"{pushed_text(branch, tip, origin_tips)}{deletion_failure}; "
                        f"delete with: {command}")
@@ -365,7 +365,7 @@ def branch_entries(repo, branches, by_head_branch, by_head_commit, deleted,
 
 
 INSTRUCTIONS = """\
-Each is listed because it belongs to this agent-seat: a worktree because its owner file names this agent-seat, a branch because this agent-seat wrote its newest commit not on origin/main and no pull request has it as its head. An earlier agent-session left each one. Decide for each whether you will carry it on. To carry one on, work on it, or say in your session-handoff which agent-seat will. To delete one, run the command printed beside it, which keeps a worktree whose pull request is open; for a branch marked "not on origin", read `git log origin/main..<branch>` first. If the command prints a line opening FAILED or exits nonzero, keep that item, tell the user what it printed, and go on with the others. Tell the user in your next message which worktrees and branches you kept and which you deleted."""
+An earlier agent-session of this agent-seat left each worktree and branch listed above. Carry each on, by working on it or by naming in your session-handoff the agent-seat that will, or delete it with the command printed beside it; that command keeps a worktree whose pull request is open. For a branch marked "not on origin", read `git log origin/main..<branch>` first. If the command prints a line opening FAILED or exits nonzero, keep that item, tell the user what it printed, and go on with the others."""
 
 
 def section(heading, entries, agent_seat, entries_at_most):
@@ -390,7 +390,7 @@ def hidden_line(hidden):
     """The one line that stands for the entries open tasks hold; "" when none is hidden."""
     if not hidden:
         return ""
-    worktrees = sum(1 for kind, _ in hidden if kind == "worktree")
+    worktrees = sum(1 for kind, _ in hidden if kind == "worktree")  # pragma: no mutate, kind is "worktree" or "branch", and "branch" sorts before "worktree", so >= acts as ==
     branches = len(hidden) - worktrees
     parts = []
     if worktrees:

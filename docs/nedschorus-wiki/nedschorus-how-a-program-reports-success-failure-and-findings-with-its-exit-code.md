@@ -89,7 +89,7 @@ These rules are exceptions to the rest of this page. Exit 2 from a Claude Code h
 - A program asked for help with `--help` or `-h` prints the help on stdout and exits 0, because the help is the answer that was asked for. A program called the wrong way, such as with a missing argument, prints the error and its short usage line on stderr and exits 2, because it could not answer. `scripts/merge-gate.sh` does both: for `--help`, lines 142 to 150 print its help on stdout and exit 0, and at line 152 it prints on stderr that it takes exactly three arguments, and exits 2.
 - A program that offers machine-readable output, such as JSON, prints that output on stdout, and only when asked, for example with `--json`, so a person running the program still reads plain sentences. Under `--json`, any verdict goes inside the JSON.
 - Under `--json`, a program that exits 1 or 2 still prints its JSON on stdout, with the verdict inside; the cause still goes on stderr.
-- A program that exits 1 or 2 prints why, and what to do, as the page [How to write an agent-facing-message](nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md) says.
+- A program that exits 1 or 2 prints why, and what to do, as the page [How to write a tool-message-to-agent](nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md) says.
 - No program uses a code above 2, unless its host requires one. A program that runs another program on another machine, such as over ssh, passes that program's code through unchanged; ssh's own 255, for a connection that failed, is above 2, so callers read it as 2. More outcomes than these go in the verdict line, because a caller checking for nonzero cannot tell 3 from 1.
 
 ## A caller

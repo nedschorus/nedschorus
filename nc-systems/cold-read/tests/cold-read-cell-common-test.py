@@ -15,7 +15,7 @@ alone, because what is under test is the module both legs share. The ones
 that launch the Codex leg do so for a reason named where they sit: a token
 total is a figure only the Codex CLI prints, the near-miss accident below
 happened to a Codex cell, and the stray-write detector is driven once through
-each launcher because a check that runs for one runtime and not the other is
+each launcher because a check that runs for one agent-binary and not the other is
 precisely the defect nedschorus#161 records.
 
 WHAT IS PINNED HERE.
@@ -88,10 +88,10 @@ WHAT IS PINNED HERE.
     this attempt's report, and the cell fails rather than taking it.
 
   - The stamp carries what the cell cost. `duration_s=` on every stamp, and
-    `tokens=` when the runtime reported a total. Absent is absent: a claude
+    `tokens=` when the agent-binary reported a total. Absent is absent: a claude
     cell, and a codex cell whose CLI printed no total, carry no `tokens=`
     field rather than a guessed zero, because a zero would read as "this cell
-    cost nothing". The total is read from the runtime's stderr and never from
+    cost nothing". The total is read from the agent-binary's stderr and never from
     its stdout, which is the model talking — a reviewer of a document about
     model costs can write "tokens used: N" in its findings, and that sentence
     is not what the run cost.
@@ -107,12 +107,12 @@ WHAT IS PINNED HERE.
     stamped `checkout=no-commits-yet`. `target=` stays the last field in
     every one of those cases.
 
-  - The runtime's stderr survives a successful run. It used to be passed
+  - The agent-binary's stderr survives a successful run. It used to be passed
     straight through to the log nc-systems/cold-read/cold-read-grid.py deletes on success,
     which is why the only token figure recoverable from six cold-read runs on
     2026-08-25 came from the one cell that failed.
 
-  - And the runtime's stdout survives a model that exits 0 having written
+  - And the agent-binary's stdout survives a model that exits 0 having written
     nothing. That path used to discard it, so the cold-read runs of 2026-08-31 and
     2026-09-01 recorded claude-hunt-floor's silence with none of the model's
     own words to explain it.
@@ -133,7 +133,7 @@ WHAT IS PINNED HERE.
     still exits 64: the validation moved out of argparse, and this pins
     that it did not move out of the cell.
 
-  - The stray-write detector runs for both runtimes. The cases above drive
+  - The stray-write detector runs for both agent-binaries. The cases above drive
     the Claude launcher; the one at the end of the file drives the Codex
     launcher through the same shared call. The fleet's other review
     instrument gated the same comparison on `runtime == "codex"`, and on
@@ -209,7 +209,7 @@ CONCURRENT_RUN_REVIEW_TEXT = (
 # post-run check cannot run, "near_miss" reproduces the 2026-08-25 accident
 # (see below), "report_at_records_root" and "concurrent_run_report" are the
 # other two places a report can turn up, "stderr" and "stdout" are the
-# runtime's own words on each stream, "dump_prompt" is a path to write the
+# agent-binary's own words on each stream, "dump_prompt" is a path to write the
 # prompt the stub received to -- the whole of stdin on the Claude leg, which
 # is how a case reads what the cell composed -- "dump_argv" is a path to
 # write the argv the cell built, as JSON, and "exit" is the code to
@@ -402,9 +402,9 @@ def dirty_the_target(repository):
 def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
                       runtime="claude", environment_overrides=None, cell="defect-hunt", pass_fds=(),
                       background=False):
-    """One cell launcher, run against a stub standing in for its runtime.
+    """One cell launcher, run against a stub standing in for its agent-binary.
 
-    The stub is installed under the runtime's own name, because that is how
+    The stub is installed under the agent-binary's own name, because that is how
     each launcher finds its CLI: `cold-read-claude-cell.py` execs `claude`
     and `cold-read-codex-cell.py` execs `codex`, and a stub on PATH under
     that name is the whole seam. Both legs share this one function so a case
@@ -415,8 +415,8 @@ def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
     stub = stub_directory / runtime
     stub.write_text(STUB_MODEL_RUNTIME, encoding="utf-8")
     stub.chmod(0o755)
-    # The Codex cell scans HOME for credential files at launch, and the real
-    # home takes seconds to walk. A case that checks the scan gives its own.
+    # A scratch HOME, so the Codex cell's credential profile names paths in
+    # it, not the real home's. A case that checks the profile gives its own.
     scratch_home = repository.parent / "scratch-home"
     scratch_home.mkdir(exist_ok=True)
     environment = dict(os.environ)
@@ -1063,7 +1063,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- The quiet death keeps the model's own account --------------------
     # A model that exits 0 having written nothing is the ending that explains
     # itself least, and it was the one keeping no evidence: the non-zero path
-    # printed the runtime's stdout, this one dropped it. claude-hunt-floor
+    # printed the agent-binary's stdout, this one dropped it. claude-hunt-floor
     # produced no report on the cold-read runs of 2026-08-31 and 2026-09-01 and left
     # three refusal lines and nothing of the model's in either log, while the
     # same argv rerun by hand put 512 bytes on stdout. What the model said
@@ -1621,17 +1621,19 @@ with tempfile.TemporaryDirectory() as scratch:
     # The Codex cell, the same rule in Codex's terms: a named permission
     # profile extending :workspace, which Codex will not combine with
     # --sandbox. The cell runs with HOME at a scratch home holding
-    # .config/nedschorus and .config/gh and no .ssh, and three canaries: one
-    # in the repository and one in the home, which the Linux profile must
-    # name, and one in neither, which it must not -- a path outside the
-    # scanned roots can be deleted by its owner before Codex starts, and
-    # Codex then stops or recreates it on the real disk (review 5346123311).
+    # .config/nedschorus, .config/gh, .steam and nedsmessenger and no .ssh,
+    # and three credential-named canaries, in the repository, in the home and
+    # in neither, which no profile names by path: a named path its owner
+    # deletes before Codex starts makes Codex stop or recreate it on the real
+    # disk (review 5346123311).
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "codex-denies-credentials", "codex")
     scratch_home = scratch / "codex-scratch-home"
     (scratch_home / ".config" / "nedschorus").mkdir(parents=True, exist_ok=True)
     (scratch_home / ".config" / "gh").mkdir(parents=True, exist_ok=True)
+    (scratch_home / ".steam").mkdir(parents=True, exist_ok=True)
+    (scratch_home / "nedsmessenger" / "secrets").mkdir(parents=True, exist_ok=True)
     credential_canary = repository / "codex-credential-canary.token"
     home_canary = scratch_home / "projects" / "codex-home-canary.token"
     unscanned_canary = scratch / "neither-home-nor-repository" / "codex-unscanned-canary.token"
@@ -1660,11 +1662,11 @@ with tempfile.TemporaryDirectory() as scratch:
                          if override.startswith("permissions.cold-read-no-credentials.filesystem=")),
                         "")
     home = str(scratch_home)
-    expected_denials = [f'"{home}/.config/nedschorus"="deny"', f'"{home}/.config/gh"="deny"']
+    expected_denials = [f'"{home}/.config/nedschorus"="deny"', f'"{home}/.config/gh"="deny"',
+                        f'"{home}/.steam"="deny"', f'"{home}/nedsmessenger"="deny"']
     expected_denials += [f'"{login}"="deny"' for login in login_canaries]
-    expected_denials += ([f'"{credential_canary}"="deny"', f'"{home_canary}"="deny"']
-                         if sys.platform.startswith("linux")
-                         else ['"/**/*.token"="deny"', '"/**/.env"="deny"'])
+    if not sys.platform.startswith("linux"):
+        expected_denials += ['"/**/*.token"="deny"', '"/**/.env"="deny"']
     check("a Codex cell's run reaches the runtime at all",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("the Codex cell runs under no --sandbox, which Codex will not combine with a profile",
@@ -1687,8 +1689,12 @@ with tempfile.TemporaryDirectory() as scratch:
           f"expected {expected_denials} in {denied_table!r}")
     check("the Codex cell's profile names no credential directory that does not exist",
           f'"{home}/.ssh"' not in denied_table, denied_table)
-    check("the Codex cell's profile names no file outside the home and the repository",
-          str(unscanned_canary) not in denied_table, denied_table)
+    # No scan runs before a launch: a credential-named file outside the
+    # credential directories is named by no path, on either platform.
+    check("the Codex cell's profile names no credential-named file by its path",
+          not any(str(canary) in denied_table
+                  for canary in (credential_canary, home_canary, unscanned_canary)),
+          denied_table)
     check("the Codex cell's profile names no login file that does not exist",
           str(absent_login_file) not in denied_table, denied_table)
     # :workspace makes /tmp and $TMPDIR writable roots, and Codex's Linux
@@ -1698,19 +1704,14 @@ with tempfile.TemporaryDirectory() as scratch:
     # read-only $TMPDIR breaks every zsh here-document, so there they stay
     # writable. Both platforms' profiles are built here on every machine, by
     # calling the builder with the platform named, so ned-box checks the
-    # macOS profile and the Mac checks the Linux one. The Linux profile's
-    # home scan is replaced by an empty list for the call: the scan is not
-    # what is checked, and on a Mac home it runs for minutes. The scan's
-    # stand-in returns one path, so the Linux table's file denials are checked
-    # on the Mac too. The credential directories are pointed at the scratch
+    # macOS profile and the Mac checks the Linux one. The credential
+    # directories are pointed at the scratch
     # home for the call, so the real home's paths never reach a failure line
     # (review 5347451780); the module computed them from the real HOME at import.
     # Each is re-rooted from the real list rather than listed here, so a
     # directory dropped from CREDENTIAL_DIRECTORIES drops out of both tables.
-    real_scan = codex_module.common.credential_files_found_now
     real_directories = codex_module.common.CREDENTIAL_DIRECTORIES
     real_login_files = codex_module.common.REVIEWER_PROGRAM_LOGIN_FILES
-    codex_module.common.credential_files_found_now = lambda: [str(home_canary)]
     codex_module.common.CREDENTIAL_DIRECTORIES = tuple(
         scratch_home / directory.relative_to(Path.home()) for directory in real_directories)
     codex_module.common.REVIEWER_PROGRAM_LOGIN_FILES = {
@@ -1721,7 +1722,6 @@ with tempfile.TemporaryDirectory() as scratch:
             platform: codex_module.credential_denying_permission_profile_arguments(platform)[-1]
             for platform in ("linux", "darwin")}
     finally:
-        codex_module.common.credential_files_found_now = real_scan
         codex_module.common.CREDENTIAL_DIRECTORIES = real_directories
         codex_module.common.REVIEWER_PROGRAM_LOGIN_FILES = real_login_files
     check("the Linux profile keeps /tmp and $TMPDIR read-only",
@@ -1731,9 +1731,10 @@ with tempfile.TemporaryDirectory() as scratch:
           '":slash_tmp"' not in profile_tables["darwin"]
           and '":tmpdir"' not in profile_tables["darwin"], profile_tables["darwin"])
     scratch_credential_directory_denial = f'"{home}/.config/nedschorus"="deny"'
-    check("the Linux profile denies the credential directory and each file the scan found",
+    check("the Linux profile denies the credential directory and names no credential-named file",
           scratch_credential_directory_denial in profile_tables["linux"]
-          and f'"{home_canary}"="deny"' in profile_tables["linux"], profile_tables["linux"])
+          and str(home_canary) not in profile_tables["linux"]
+          and "/**/" not in profile_tables["linux"], profile_tables["linux"])
     check("the macOS profile denies the credential directory, *.token and .env anywhere",
           scratch_credential_directory_denial in profile_tables["darwin"]
           and '"/**/*.token"="deny"' in profile_tables["darwin"]
@@ -1741,6 +1742,15 @@ with tempfile.TemporaryDirectory() as scratch:
     check("both platforms' profiles deny gh's login directory",
           all(f'"{home}/.config/gh"="deny"' in profile_tables[platform]
               for platform in ("linux", "darwin")), repr(profile_tables))
+    present_scratch_directories = [
+        scratch_home / directory.relative_to(Path.home()) for directory in real_directories
+        if (scratch_home / directory.relative_to(Path.home())).is_dir()]
+    check("both platforms' profiles deny every credential directory that exists, "
+          "~/.steam and ~/nedsmessenger among them",
+          {scratch_home / ".steam", scratch_home / "nedsmessenger"} <= set(present_scratch_directories)
+          and all(f'"{directory}"="deny"' in profile_tables[platform]
+                  for directory in present_scratch_directories
+                  for platform in ("linux", "darwin")), repr(profile_tables))
     check("neither platform's profile names the real home's credential directories",
           not any(str(directory) in profile_tables[platform]
                   for directory in real_directories for platform in ("linux", "darwin")),
@@ -1749,102 +1759,6 @@ with tempfile.TemporaryDirectory() as scratch:
           all(f'"{login}"="deny"' in profile_tables[platform]
               for login in login_canaries for platform in ("linux", "darwin")),
           repr(profile_tables))
-
-    # The scan splits each root into levels it lists one deep and subtrees it
-    # walks whole, so a canary at every depth, on both sides of the split, and
-    # several subtrees per find, catch a level or a subtree the split drops.
-    scan_root = scratch / "credential-scan-root"
-    outside = scratch / "credential-scan-outside"
-    scan_canaries = [scan_root / "depth-1.token"]
-    nested = scan_root
-    for depth in range(2, 8):
-        nested = nested / f"level-{depth - 1}"
-        scan_canaries.append(nested / (".env" if depth % 2 else f"depth-{depth}.token"))
-    for sibling in range(5):
-        scan_canaries.append(scan_root / "wide" / f"branch-{sibling}" / "deep" / "sibling.token")
-    for canary in (*scan_canaries, outside / "inner" / "behind-a-symlink.token"):
-        canary.parent.mkdir(parents=True, exist_ok=True)
-        canary.write_text("CANARY-NOT-A-SECRET-common-test\n", encoding="utf-8")
-    (scan_root / "wide" / "notes.txt").write_text("not a credential\n", encoding="utf-8")
-    (scan_root / "level-1" / "link-to-outside").symlink_to(outside, target_is_directory=True)
-    real_roots = codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS
-    real_find_commands = codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT
-    codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = (scan_root,)
-    codex_module.common.CREDENTIAL_DIRECTORIES = ()
-    codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = 2
-    try:
-        split_scan_found = codex_module.common.credential_files_found_now()
-    finally:
-        codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = real_roots
-        codex_module.common.CREDENTIAL_DIRECTORIES = real_directories
-        codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = real_find_commands
-    check("the credential scan finds a credential file at every depth and in every subtree",
-          split_scan_found == sorted(str(canary) for canary in scan_canaries),
-          f"expected {sorted(str(canary) for canary in scan_canaries)}, found {split_scan_found}")
-
-    # A directory the split cannot list, or an entry it cannot stat, is
-    # skipped alone: a handler that caught the error around the whole loop
-    # would drop the readable siblings listed after it, and their credential
-    # files would go missing from the deny list without any error.
-    real_scandir = codex_module.common.os.scandir
-    wide = scan_root / "wide"
-
-    class EntryWhoseStatFails:
-        def __init__(self, entry):
-            self.entry, self.path = entry, entry.path
-
-        def is_dir(self, follow_symlinks=True):
-            return self.entry.is_dir(follow_symlinks=follow_symlinks)
-
-        def stat(self, follow_symlinks=True):
-            raise PermissionError(13, "injected stat failure", self.path)
-
-    class Listing:
-        def __init__(self, entries):
-            self.entries = entries
-
-        def __enter__(self):
-            return iter(self.entries)
-
-        def __exit__(self, *exc):
-            return False
-
-    for failure in ("scandir", "stat"):
-        failed = []
-
-        def scandir_failing_once(directory, failure=failure, failed=failed):
-            if failure == "scandir" and not failed and Path(directory).parent == wide:
-                failed.append(Path(directory))
-                raise PermissionError(13, "injected scandir failure", str(directory))
-            with real_scandir(directory) as entries:
-                listed = list(entries)
-            if failure == "stat" and not failed and Path(directory) == wide:
-                for index, entry in enumerate(listed):
-                    if entry.name.startswith("branch-"):
-                        failed.append(Path(entry.path))
-                        listed[index] = EntryWhoseStatFails(entry)
-                        break
-            return Listing(listed)
-
-        codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = (scan_root,)
-        codex_module.common.CREDENTIAL_DIRECTORIES = ()
-        codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = 2
-        codex_module.common.os.scandir = scandir_failing_once
-        try:
-            failed_scan_found = codex_module.common.credential_files_found_now()
-        except OSError as error:
-            failed_scan_found = [f"raised {error!r}"]
-        finally:
-            codex_module.common.os.scandir = real_scandir
-            codex_module.common.CREDENTIAL_FILE_SCAN_ROOTS = real_roots
-            codex_module.common.CREDENTIAL_DIRECTORIES = real_directories
-            codex_module.common.CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = real_find_commands
-        expected = sorted(str(canary) for canary in scan_canaries
-                          if not (failed and failed[0] in canary.parents))
-        check(f"a {failure} failure on one subtree leaves its readable siblings' credential "
-              "files found",
-              len(failed) == 1 and failed_scan_found == expected,
-              f"failed {failed}; expected {expected}, found {failed_scan_found}")
 
     # The Codex `deep` tier. Max beat xhigh by 46 net findings measured per
     # cell, but the grid is a union and there it is worth ten findings of 331
@@ -2055,7 +1969,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- One prompt per pass, read by both agent-binaries -----------------
     # Until 2026-09-19 a sibling `<cell>.<runtime>.md` was read in place of
-    # the shared `<cell>.md` by that runtime's cell. The user ended the split
+    # the shared `<cell>.md` by that agent-binary's cell. The user ended the split
     # on 2026-09-18 ("we just should have one prompt for both") and the lookup
     # went with it, so a file left at the old name is now ignored: the case
     # plants one, with a marker the shared file lacks, and reads what each

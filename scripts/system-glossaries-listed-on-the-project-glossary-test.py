@@ -40,7 +40,7 @@ https://github.com/nedschorus/nedschorus/pull/633, raised and reproduced
 independently). The first version of this test walked the checkout with
 rglob, so a checkout holding an agent worktree at `.claude/worktrees/<name>/`
 -- the project's documented home for them, see
-docs/nedschorus-wiki/nedschorus-fleet-machine-paths-and-checkouts.md --
+docs/nedschorus-wiki/nedschorus-mac-and-ned-box-machine-setup.md --
 failed, reporting that worktree's copies of all three glossaries as unlisted
 and instructing the agent to add those worktree paths to the page; once the
 worktree was removed those same paths failed the other direction. The check

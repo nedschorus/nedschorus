@@ -758,18 +758,6 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
         str(remaining),
     )
 
-    # --- Queue status -----------------------------------------------------
-    project = workspace / "project"
-    (project / "nc-queue").mkdir(parents=True)
-    (project / "nc-queue" / "2026-07-28-older-note.md").write_text("x", encoding="utf-8")
-    (project / "nc-queue" / "2026-08-01-newer-note.md").write_text("x", encoding="utf-8")
-    (project / "nc-queue" / "README.md").write_text("x", encoding="utf-8")
-    (project / "docs" / "nedschorus-wiki" / "queue").mkdir(parents=True)
-    line = supervisor.queue_status_line(project)
-    check("queue status counts a loaded queue", "nc-queue: 2" in line, line)
-    check("queue status names the oldest item", "2026-07-28-older-note.md" in line, line)
-    check("queue status reports an empty queue", "docs/nedschorus-wiki/queue: empty" in line, line)
-
 
 def run_supervisor_names_replaced_unknown_name_cases():
     """The fixture refuses a stub under a name the supervisor does not define,
@@ -848,6 +836,25 @@ def run_launch_time_git_sync_cases(workspace: Path):
           and (home / "README.md").read_text(encoding="utf-8") == "seed\nfrom main\nfurther\n",
           report)
     check("the untracked file survives the fast-forward", (home / "work-in-progress.txt").is_file())
+
+    # An ignored file at a path main newly tracks: without --no-overwrite-ignore,
+    # git replaces it with main's file, and its only copy is lost.
+    (seed / "notes.txt").write_text("main's notes\n", encoding="utf-8")
+    git_in(["add", "-A"], seed)
+    git_in(["commit", "--quiet", "-m", "main tracks notes.txt"], seed)
+    git_in(["push", "--quiet", "origin", "main"], seed)
+    home_exclude = home / ".git" / "info" / "exclude"
+    home_exclude.write_text("notes.txt\n", encoding="utf-8")
+    (home / "notes.txt").write_text("the only copy\n", encoding="utf-8")
+
+    report = supervisor.launch_time_git_sync(home)
+    check("an ignored file at a path main tracks stops the fast-forward, and the report names it",
+          report.startswith("launch-time-git-sync: agent-branch left as is — ")
+          and "notes.txt" in report, report)
+    check("the ignored file survives the refused fast-forward",
+          (home / "notes.txt").read_text(encoding="utf-8") == "the only copy\n")
+    (home / "notes.txt").unlink()
+    home_exclude.write_text("", encoding="utf-8")
 
     # A tracked change is never disturbed, however far behind the branch is.
     (seed / "README.md").write_text("seed\nfrom main\nfurther\nagain\n", encoding="utf-8")
@@ -1067,8 +1074,7 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
 
     def launch_time_git_sync_next_steps(rerun):
         return supervisor.next_step_lines.git_failure_next_step_lines(
-            rerun, include_the_misspelt_branch_commit_or_path_line=False,
-            rerun_fails_when="prints an error again",
+            rerun, rerun_fails_when="prints an error again",
             which_lines_to_quote_in_the_report=(
                 "the launch-time-git-sync line in this prompt and the error the rerun printed"),
             read_by_a_subagent=False, next_step_to_skip_when_the_rerun_fails_too="act on the rest of this prompt")
@@ -3321,14 +3327,11 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
     """carry_over_to_successor, with the extractor stubbed: what the reincarnation
     actually prints to the console, and what it actually puts in the prompt.
 
-    Two rulings of 2026-08-29 meet here. The queue-status line is CUT from
-    the initial agent instructions but the console print STAYS — before this change the
-    supervisor threaded queue status into every reincarnation prompt
-    unconditionally (queue_status_line always returns a truthy string), so
-    the prompt assertion below fails against that code. And the plan now
-    carries the predecessor's session directory, composed from the retiring
-    session id, so the roster sentence can name where the dead subagents'
-    transcripts survive.
+    The working directory holds a loaded nc-queue, so a queue status printed
+    to the console or put in the prompt would show. The plan carries the
+    predecessor's session directory, composed from the retiring session id,
+    so the roster sentence can name where the dead subagents' transcripts
+    survive.
     """
     home = workspace / "recycle-composition"
     handoff_directory = home / "handoffs"
@@ -3360,9 +3363,8 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
         supervisor.extract_dialog = original_extract_dialog
 
     printed = console.getvalue()
-    check("a reincarnation still prints the queue status to its own console",
-          "handoff-supervisor: queues — nc-queue: 1, oldest 2026-07-30-stale-item.md" in printed,
-          printed)
+    check("a reincarnation prints no queue status to its console",
+          "queues —" not in printed and "2026-07-30-stale-item.md" not in printed, printed)
     check("the plan names the predecessor's session directory, composed from its id",
           plan is not None and plan.predecessor_session_directory
           == supervisor.project_directory_for_working_directory(working_directory)

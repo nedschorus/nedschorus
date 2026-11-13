@@ -12,7 +12,8 @@ verdict_for_seat itself, judges the cases marked "judge", sends, and runs on a s
 What it reads, for each agent-seat that has a handoff-supervisor state file
 (`<handoff directory>/<seat>-supervisor-state.json`):
 - the agent-session the supervisor launched last, and its transcript under the projects root,
-  with every transcript under that agent-session's `subagents/` folder;
+  with every subagent transcript under that agent-session's `subagents/` folder, the Workflow-tool
+  agents' under `subagents/workflows/` included;
 - the walk-minutes in the agent-seat's `docs/walk/`, the handoff deferral marker file, the task
   list `<tasks root>/nedschorus-<seat>-tasks/`, and, for a usage limit, `oauthAccount.accountUuid`
   in `~/.claude.json`;
@@ -600,15 +601,15 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         facts = read_main_transcript(transcript)
         last_spend, source = facts.last_token_spend, transcript
         newest_spend_by_subagent_transcript = {}
-        subagent_directory = project_directory / session_id / "subagents"
-        if subagent_directory.is_dir():
-            for subagent_transcript in sorted(subagent_directory.glob("*.jsonl")):
-                spent = newest_token_spend_in(subagent_transcript)
-                newest_spend_by_subagent_transcript[subagent_transcript] = spent
-                if spent and (last_spend is None or spent > last_spend):
-                    last_spend, source = spent, subagent_transcript
+        for subagent_transcript in threshold_hook.session_subagent_transcript_paths(transcript):
+            spent = newest_token_spend_in(subagent_transcript)
+            newest_spend_by_subagent_transcript[subagent_transcript] = spent
+            if spent and (last_spend is None or spent > last_spend):
+                last_spend, source = spent, subagent_transcript
         verdict["last_activity"] = {"time": iso(last_spend),
                                     "source": str(source) if last_spend else None}
+        verdict[fields.LAST_TOOL_CALL_AT] = iso(max(
+            (moment for moment, _, _ in facts.tool_calls if moment), default=None))
 
         last = facts.last_model_turn_record or {}
         limit = is_usage_limit(last)
@@ -667,7 +668,7 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         raised = [item for item in verdict["sentences"] if item["code_reading"] != fields.NOT_RAISED]
         if not raised:
             verdict.update(rules_three_to_five(verdict, put_off_at, checker, task_directory))
-        elif any(item["code_reading"] == fields.JUDGE for item in raised):
+        elif any(item["code_reading"] == fields.JUDGE for item in raised):  # pragma: no mutate, raised holds only the UNBACKED and JUDGE constants themselves, and "unbacked" sorts after "judge", so <= and is give what == gives
             judged = [item for item in raised if item["code_reading"] == fields.JUDGE]
             verdict[fields.TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE] = (
                 tool_calls_since_start_of_earliest_turn_with_sentence_to_judge(facts, judged))

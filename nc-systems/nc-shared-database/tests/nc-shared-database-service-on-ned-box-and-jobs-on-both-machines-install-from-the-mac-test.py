@@ -14,7 +14,8 @@ run the token and accepted-tokens commands in a real shell under a temporary
 HOME: a token is made once and kept, and the accepted-tokens file holds both,
 and is left as it was when ned-box's token file cannot be read. One case calls
 the real runner with subprocess.run replaced, to check which machine each step
-runs on.
+runs on. One case loads the program as a module under a name that sorts before
+`__main__`, to check that loading it runs nothing.
 
 Run: python3 nc-systems/nc-shared-database/tests/nc-shared-database-service-on-ned-box-and-jobs-on-both-machines-install-from-the-mac-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -25,6 +26,7 @@ import io
 import os
 import shlex
 import subprocess
+import sys
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -36,9 +38,67 @@ _spec = importlib.util.spec_from_file_location(
     "nc_shared_database_service_on_ned_box_and_jobs_on_both_machines_install_from_the_mac", PROGRAM_PATH)
 installer = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(installer)
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    REPOSITORY_ROOT / "scripts" / "git-redirecting-environment-removal-test-fixture.py")
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 failures = 0
 
+
+
+def fast_forward_command_over_an_ignored_file_cases():
+    """The fast-forward command the advice hands out, run on a real clone holding an ignored
+    file at a path main newly tracks: git must refuse and leave the file, not replace it."""
+    real_reference_checkout = installer.REFERENCE_CHECKOUT
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+
+        def git(arguments, cwd):
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                            *arguments], cwd=cwd, check=True, capture_output=True)
+
+        origin = root / "origin"
+        origin.mkdir()
+        git(["init", "-q", "-b", "main"], origin)
+        git(["commit", "-q", "--allow-empty", "-m", "first"], origin)
+        clone = root / "clone"
+        git(["clone", "-q", str(origin), str(clone)], root)
+        (origin / "ignored-here").mkdir()
+        (origin / "ignored-here" / "notes.txt").write_text("main's copy\n")
+        git(["add", "-A"], origin)
+        git(["commit", "-q", "-m", "main tracks a file the clone ignores"], origin)
+        (clone / "ignored-here").mkdir()
+        (clone / "ignored-here" / ".gitignore").write_text("*\n")
+        (clone / "ignored-here" / "notes.txt").write_text("the only copy\n")
+        installer.REFERENCE_CHECKOUT = shlex.quote(str(clone))
+        try:
+            advice = installer.reference_checkout_missing_commit_failure_advice("mac", "")
+        finally:
+            installer.REFERENCE_CHECKOUT = real_reference_checkout
+        command = advice.split("`")[1]
+        ran = subprocess.run(command, shell=True, capture_output=True, text=True)
+        check("the advised fast-forward over an ignored file at a path main tracks fails, "
+              "naming the file",
+              ran.returncode != 0 and "ignored-here/notes.txt" in ran.stderr,
+              (command, ran.returncode, ran.stderr))
+        check("and the ignored file survives",
+              (clone / "ignored-here" / "notes.txt").read_text() == "the only copy\n")
+        (clone / "ignored-here" / "notes.txt").unlink()
+        git(["switch", "-q", "-c", "some-topic-branch"], clone)
+        topic_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone,
+                                      capture_output=True, text=True).stdout
+        ran = subprocess.run(command, shell=True, capture_output=True, text=True)
+        topic_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone,
+                                     capture_output=True, text=True).stdout
+        check("the advised fast-forward stops when the reference-checkout is on a branch other "
+              "than main, saying so",
+              ran.returncode != 0 and "is not on main" in ran.stderr,
+              (command, ran.returncode, ran.stderr))
+        check("and that branch is not fast-forwarded", topic_after == topic_before,
+              (topic_before, topic_after))
 
 def check(name, condition, detail=None):
     global failures
@@ -61,7 +121,7 @@ class FakeRunner:
             code, out, err = self.answers[number]
             return subprocess.CompletedProcess([], code, out, err)
         # Built at run time, as curl's output is, so an identity comparison would not match.
-        out = "".join(["4", "12" if "Bearer" in command else "01"]) if "curl" in command else ""
+        out = "".join(["2" if "Bearer" in command else "4", "00" if "Bearer" in command else "01"]) if "curl" in command else ""
         return subprocess.CompletedProcess([], 0, out, "")
 
 
@@ -144,20 +204,25 @@ with tempfile.TemporaryDirectory() as directory:
     code, out, err = run_main(runner)
     check("a ned-box reference-checkout without main's commit gets the fast-forward command, "
           "through ssh",
-          code == 1 and "`ssh nedlern@ned-box 'git -C ~/Projects/nedschorus pull --ff-only'`"
+          code == 1 and "`ssh nedlern@ned-box '{ [ \"$(git -C ~/Projects/nedschorus branch "
+          "--show-current)\" = main ] || " in err
+          and "git -C ~/Projects/nedschorus fetch origin && "
+          "git -C ~/Projects/nedschorus merge --ff-only --no-overwrite-ignore origin/main'`"
           in err, err)
+    fast_forward_command_over_an_ignored_file_cases()
 
     runner = FakeRunner({10: (0, "401", "")})
     code, out, err = run_main(runner)
     check("a service answer other than the one the check needs fails the step",
           code == 1 and "stopped at step 10 on mac" in err and "answered 401" in err
-          and "needs 412" in err and "journalctl --user -u nc-shared-database-service" in err,
+          and "needs 200" in err and "journalctl --user -u nc-shared-database-service" in err,
           err)
 
-    runner = FakeRunner({10: (0, "500", "")})
+    runner = FakeRunner({10: (0, "000", "")})
     code, out, err = run_main(runner)
-    check("a service answer that sorts after the needed one fails the step too",
-          code == 1 and "stopped at step 10 on mac" in err and "answered 500" in err, err)
+    check("a service answer that sorts before the needed one, such as curl's 000 for no "
+          "answer, fails the step too",
+          code == 1 and "stopped at step 10 on mac" in err and "answered 000" in err, err)
 
     runner = FakeRunner({6: (-9, "", "")})
     code, out, err = run_main(runner)
@@ -234,5 +299,23 @@ check("a Mac step runs in a local shell and a ned-box step through ssh to ned-bo
       [r[0] for r in recorded] == [["sh", "-c", "echo mac step"],
                                    ["ssh", "nedlern@ned-box", "echo ned-box step"]]
       and [r[1].get("input") for r in recorded] == [None, "a token"], recorded)
+
+# "Installer" sorts before "__main__", so only an exact comparison in the program's guard keeps main() from
+# running. sys.platform is not darwin during the load, so a guard that let main() run on the Mac reaches its
+# refusal instead of installing.
+_specification_under_name_sorting_before_main = importlib.util.spec_from_file_location("Installer", PROGRAM_PATH)
+real_platform, sys.platform = sys.platform, "linux"
+load_output, load_exit_code = io.StringIO(), None
+try:
+    with redirect_stdout(load_output), redirect_stderr(load_output):
+        _specification_under_name_sorting_before_main.loader.exec_module(
+            importlib.util.module_from_spec(_specification_under_name_sorting_before_main))
+except SystemExit as stop:
+    load_exit_code = stop.code
+finally:
+    sys.platform = real_platform
+check("loaded as a module under a name that sorts before __main__, the program runs nothing and prints "
+      "nothing", load_exit_code is None and load_output.getvalue() == "",
+      (load_exit_code, load_output.getvalue()))
 
 raise SystemExit(1 if failures else 0)

@@ -180,14 +180,14 @@ def test_branches():
     ])
     text, failed = listing.list_text_and_failure(main, "seat-a")
     check(not failed, "a full listing reports no failure", text)
-    check("branch seat-a-work; 1 commit(s) not on origin/main" in text and "not on origin" in text,
+    check("branch seat-a-work; main lacks the changes of its 1 commit(s)" in text and "not on origin" in text,
           "a branch whose tip this agent-seat wrote, with no pull request, is listed", text)
     check("seat-b-work" not in text, "another agent-seat's branch is not listed", text)
     check("nobody-work" not in text, "a branch whose tip author is no agent-seat is not listed", text)
     check("by-head-name" not in text, "a branch that is a pull request's head branch is not listed")
     check("by-head-commit" not in text,
           "a branch whose tip is a pull request's head commit is not listed", text)
-    check(f"branch pushed-work; 1 commit(s) not on origin/main, the newest {pushed_tip[:12]} of " in text
+    check(f"branch pushed-work; main lacks the changes of its 1 commit(s), the newest {pushed_tip[:12]} of " in text
           and "on origin at the same commit" in text, "a pushed branch says it is on origin", text)
     check('"work on seat-a-work"; not on origin' in text,
           "a branch entry gives its newest commit's subject", text)
@@ -549,7 +549,7 @@ def test_supervisor_puts_leftovers_before_the_next_step_without_a_conversation_t
     counts = SCRATCH / "seat-y-leftovers-prompt-listing-counts.json"
     prompt = supervisor.IgnitionPlanWithoutConversationTail("Do the next thing.").compose(
         "launch-time-git-sync: test")
-    branches = "This agent-seat's branches with no pull request: 1:\n- branch b1; 1 commit(s)"
+    branches = "This agent-seat's branches with no pull request: 1:\n- branch b1; main lacks the changes of its 1 commit(s)"
     launched = supervisor.launch_prompt_with_leftovers_before_the_next_step(
         prompt, ("", branches), counts)
     check(launched.index("branch b1;") < launched.index("Do the next thing.")
@@ -569,7 +569,7 @@ def test_supervisor_puts_leftovers_before_the_next_step():
     supervisor = fixture.supervisor
     counts = SCRATCH / "seat-x-leftovers-prompt-listing-counts.json"
     prompt = f"Opening.{supervisor.NEXT_STEP_HEADING}Do the next thing."
-    branches = "This agent-seat's branches with no pull request: 1:\n- branch b1; 1 commit(s)\nSteps."
+    branches = "This agent-seat's branches with no pull request: 1:\n- branch b1; main lacks the changes of its 1 commit(s)\nSteps."
     snapshots = "Leftover work-snapshots: 1:\n- refs/work-snapshots/k/w: worktree /x (is gone); more"
     first = supervisor.launch_prompt_with_leftovers_before_the_next_step(
         prompt, (snapshots, branches), counts)
@@ -607,7 +607,7 @@ def test_supervisor_puts_deleted_branches_above_the_leftovers_and_forgets_counts
     counts = SCRATCH / "seat-w-leftovers-prompt-listing-counts.json"
     prompt = f"Opening.{supervisor.NEXT_STEP_HEADING}Do the next thing."
     deleted = "\n".join(listing.deleted_section(["deleted branch d1, whose every commit is a copy"]))
-    branches = ("This agent-seat's branches with no pull request: 1:\n- branch b1; 1 commit(s)\nSteps.\n"
+    branches = ("This agent-seat's branches with no pull request: 1:\n- branch b1; main lacks the changes of its 1 commit(s)\nSteps.\n"
                 + deleted)
     both = supervisor.launch_prompt_with_leftovers_before_the_next_step(prompt, ("", branches), counts)
     check(both.startswith("Opening.\n\n" + listing.ALREADY_DELETED_HEADING_START)
@@ -626,8 +626,8 @@ def test_supervisor_puts_deleted_branches_above_the_leftovers_and_forgets_counts
     check("- (listed in 1 first prompt(s)) branch b1;" in again,
           "a leftover listed after a launch that listed none starts its count again", again)
     quoting = ("This agent-seat's branches with no pull request: 2:\n"
-               f"- branch b2; 1 commit(s), the newest \"Move the {listing.ALREADY_DELETED_HEADING_START} "
-               "heading\"\n- branch b3; 1 commit(s)\nSteps.\n" + deleted)
+               f"- branch b2; main lacks the changes of its 1 commit(s), the newest \"Move the {listing.ALREADY_DELETED_HEADING_START} "
+               "heading\"\n- branch b3; main lacks the changes of its 1 commit(s)\nSteps.\n" + deleted)
     quoted = supervisor.launch_prompt_with_leftovers_before_the_next_step(prompt, ("", quoting), counts)
     check("- (listed in 1 first prompt(s)) branch b2;" in quoted
           and "- (listed in 1 first prompt(s)) branch b3;" in quoted
