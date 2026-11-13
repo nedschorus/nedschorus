@@ -3416,6 +3416,18 @@ def test_now_over_later_takes_no_reply_no_other_answer_and_its_rerun_command_rep
           and "--already-decided" not in rerun.stderr.replace(NOW_OVER_LATER, ""), described(rerun))
 
 
+def test_now_over_later_refusal_names_a_new_if_d_text_on_an_even_line_by_its_own_line_number():
+    document = WALK_DOCUMENT.replace("If the sentence stays, a note follows it:\n",
+                                     "If the sentence stays,\na note follows it:\n", 1)
+    line = walk_document_line(document, '#new_if_d "A note says why the sentence stays."')
+    case = Case(document=document)
+    refused = case.run("check", NOW_OVER_LATER)
+    check("check --now-over-later-already-decided names a `#new_if_d` text on an even line by that line's number",
+          document != WALK_DOCUMENT and line % 2 == 0 and refused.returncode == 1
+          and f"\n- a `#new_if_d` text, what his disapproval would do instead, on line {line}\n" in refused.stderr,
+          described(refused))
+
+
 def test_an_item_the_walk_moves_on_from_is_recorded_without_a_fast_read_and_not_shown():
     case = summary_case(next_to_present="item 1 of 5")
     checked = case.run("check", "--moved-on", "the question went to walk y")
