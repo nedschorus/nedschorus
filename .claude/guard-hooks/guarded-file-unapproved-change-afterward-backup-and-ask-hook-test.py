@@ -2063,17 +2063,7 @@ def cases(scratch):
     def counted_run(directory):
         for name in store:
             store[name] = 0
-        saved_environment, saved_directory = dict(os.environ), os.getcwd()
-        try:
-            os.environ.update(world.environment())
-            os.chdir(directory)
-            return hook.run_hook({"session_id": "session-a", "hook_event_name": "PostToolUse",
-                                  "tool_name": "Bash", "cwd": str(directory),
-                                  "tool_input": {"command": "x"}})
-        finally:
-            os.chdir(saved_directory)
-            os.environ.clear()
-            os.environ.update(saved_environment)
+        return run_hook_in_this_process(world, hook, "session-a", "owner-a", directory)
 
     texts = counted_run(worktree)
     git_directory = subprocess.run(["git", "-C", str(worktree), "rev-parse", "--absolute-git-dir"],
@@ -2152,15 +2142,16 @@ def copy_in_this_process(world, hook, path, copy_hash, data):
     return None
 
 
-def run_hook_in_this_process(world, hook, session, owner):
-    """The texts run_hook of the loaded hook module returns for a Bash call in the world's
-    repository, run as session and owner."""
+def run_hook_in_this_process(world, hook, session, owner, directory=None):
+    """The texts run_hook of the loaded hook module returns for a Bash call in directory, the
+    world's repository by default, run as session and owner."""
+    directory = world.repo if directory is None else directory
     saved_environment, saved_directory = dict(os.environ), os.getcwd()
     try:
         os.environ.update(world.environment(owner))
-        os.chdir(world.repo)
+        os.chdir(directory)
         return hook.run_hook({"session_id": session, "hook_event_name": "PostToolUse",
-                              "tool_name": "Bash", "cwd": str(world.repo),
+                              "tool_name": "Bash", "cwd": str(directory),
                               "tool_input": {"command": "x"}})
     finally:
         os.chdir(saved_directory)
