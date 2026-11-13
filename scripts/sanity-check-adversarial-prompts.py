@@ -370,6 +370,17 @@ STOPPED_PROCESS_GRACE_SECONDS = 10.0
 # How long the main thread waits for a cell at a time, and so the longest a
 # stop signal can wait for its handler: see run_cells_in_review_copy.
 MAIN_THREAD_WAIT_STEP_SECONDS = 0.25
+# Set while the main thread runs the cells' thread pool: submitting the
+# cells, waiting for them and shutting the pool down, all of which run the
+# threading module's lock code. stop_run_on_signal does not raise there: an
+# exception raised between a condition's wait and its re-acquire of the lock
+# leaves the lock released, `with` releases it again, and RuntimeError
+# replaces the stop. It records the signal in
+# STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL instead, and run_cells_in_review_copy
+# raises it after each submit, after each wait step and after the pool has
+# shut down, where the main thread holds no such lock.
+MAIN_THREAD_RUNS_THE_CELLS_POOL = False
+STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL = None
 # Set by the first stop signal, and read by every thread before it launches an
 # agent-binary: a cell stopped with its run is not relaunched, and the claude
 # chain does not go on to its next model.
@@ -1289,7 +1300,9 @@ def processes_under_this_one() -> dict:
 
 class RunStoppedBySignal(BaseException):
     """A stop signal ended this run: raised in the main thread by
-    stop_run_on_signal, after the agents' processes were stopped, so that
+    stop_run_on_signal, or by run_cells_in_review_copy for a signal taken
+    while the main thread ran the cells' thread pool, after the agents' processes
+    were stopped, so that
     every `finally` and context manager between the run and main() does its
     work, the review copy's removal among them. A BaseException, so that no
     `except Exception` on the way takes it for an error of its own."""
@@ -1391,7 +1404,9 @@ def stop_run_on_signal(signal_number: int, _frame) -> None:
     way: see WHEN A RUN IS STOPPED in the module docstring. Every later stop
     signal does nothing from here on (stop_signal_after_the_first_does_nothing),
     so the stopping and the removal of the review copy are not themselves cut
-    short."""
+    short. While the main thread runs the cells' thread pool it records the
+    signal instead of raising RunStoppedBySignal: see
+    MAIN_THREAD_RUNS_THE_CELLS_POOL."""
     for number in RUN_STOP_SIGNALS:
         signal.signal(number, stop_signal_after_the_first_does_nothing)
     # Under the lock a cell's thread holds from reading RUN_STOPPED to
@@ -1405,6 +1420,10 @@ def stop_run_on_signal(signal_number: int, _frame) -> None:
     global STOP_PROCESS_LISTING_FAILURE
     STOP_PROCESS_LISTING_FAILURE = None
     stop_processes_this_run_started()
+    if MAIN_THREAD_RUNS_THE_CELLS_POOL:
+        global STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL
+        STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL = signal_number
+        return
     raise RunStoppedBySignal(signal_number)
 
 
@@ -2020,33 +2039,46 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
         copy_record_dir = checkout / RECORDS_DIRECTORY_NAME / out_dir.name
         CELLS_FINISHED.clear()
         GIT_CHECKS_FAILED_AFTER_A_CELL.clear()
-        global CELLS_FINISHED_AT_THE_STOP
+        global CELLS_FINISHED_AT_THE_STOP, STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL
+        global MAIN_THREAD_RUNS_THE_CELLS_POOL
         CELLS_FINISHED_AT_THE_STOP = None
+        STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL = None
+
+        def raise_stop_taken_in_the_cells_pool():
+            if STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL is not None:
+                raise RunStoppedBySignal(STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL)
+
         futures = []
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells)) as pool:
-                futures = [
-                    pool.submit(run_cell, adversarial_prompt, runtime, args.target, args.context,
-                                args.problem_statement, out_dir, baseline_status, corpus,
-                                checkout, copy_record_dir)
-                    for adversarial_prompt, runtime in cells
-                ]
-                # Waited for in short steps, not with as_completed: Python runs
-                # stop_run_on_signal only in the main thread, and when Linux
-                # hands a stop signal to a cell's thread, a main thread blocked
-                # with no timeout runs the handler only when some cell
-                # finishes, which can be minutes later. Each step's end lets
-                # the handler run.
-                waiting = set(futures)
-                while waiting:
-                    finished, waiting = concurrent.futures.wait(
-                        waiting, timeout=MAIN_THREAD_WAIT_STEP_SECONDS,
-                        return_when=concurrent.futures.FIRST_COMPLETED)
-                    for future in finished:
-                        _, cell_ok = future.result()
-                        ok = ok and cell_ok
-                        saved_count += 1 if cell_ok else 0
-                run_log.reports_saved_once_cells_ended = saved_count
+            MAIN_THREAD_RUNS_THE_CELLS_POOL = True
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells)) as pool:
+                    for adversarial_prompt, runtime in cells:
+                        futures.append(pool.submit(
+                            run_cell, adversarial_prompt, runtime, args.target, args.context,
+                            args.problem_statement, out_dir, baseline_status, corpus,
+                            checkout, copy_record_dir))
+                        raise_stop_taken_in_the_cells_pool()
+                    # Waited for in short steps, not with as_completed: Python
+                    # runs stop_run_on_signal only in the main thread, and when
+                    # Linux hands a stop signal to a cell's thread, a main
+                    # thread blocked with no timeout runs the handler only when
+                    # some cell finishes, which can be minutes later. Each
+                    # step's end lets the handler run.
+                    waiting = set(futures)
+                    while waiting:
+                        finished, waiting = concurrent.futures.wait(
+                            waiting, timeout=MAIN_THREAD_WAIT_STEP_SECONDS,
+                            return_when=concurrent.futures.FIRST_COMPLETED)
+                        raise_stop_taken_in_the_cells_pool()
+                        for future in finished:
+                            _, cell_ok = future.result()
+                            ok = ok and cell_ok
+                            saved_count += 1 if cell_ok else 0
+                    run_log.reports_saved_once_cells_ended = saved_count
+            finally:
+                MAIN_THREAD_RUNS_THE_CELLS_POOL = False
+            raise_stop_taken_in_the_cells_pool()
         except RunStoppedBySignal:
             # A stop that came after every cell had finished, saving its
             # report or saying why it could not, cut nothing short: that run
