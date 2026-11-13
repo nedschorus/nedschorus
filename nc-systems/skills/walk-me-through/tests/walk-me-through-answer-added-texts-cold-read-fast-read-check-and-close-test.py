@@ -676,6 +676,28 @@ def test_the_waiting_item_read_step_counts_each_item_of_a_shared_heading_on_its_
           result.returncode == 0 and "had to be run now" in result.stdout, described(result))
 
 
+def test_the_waiting_item_read_step_counts_the_text_of_a_shared_heading_above_its_first_item():
+    document = ("# A walk\n\n## Items 6 and 7 of 9: two short items\n\n" + words_of_body(400)
+                + "\n**Item 6 of 9:** the first.\n\nShort.\n\n#case_against weak: one.\n\nRecommendation: do one.\n\n"
+                "**Item 7 of 9:** the second.\n\nShort.\n\n#case_against weak: two.\n\nRecommendation: do two.\n")
+    case = Case(next_to_present="items 6 and 7 of 9", document=document)
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("400 words between a shared heading and its first item are counted as one more text, and refused",
+          result.returncode == 1 and "the text from line 3 of the walk-document" in result.stderr
+          and "has 409 words" in result.stderr and case.calls.read_text() == "", described(result))
+
+
+def test_the_waiting_item_read_step_leaves_out_an_older_version_sub_step_of_the_same_number():
+    document = ("# A walk\n\n## Item 3 of 9: the older version\n\nOld.\n\n### Item 3.1 of 9: the older first half\n\n"
+                + words_of_body(320) + "\n## Item 3 of 10: the opening sentence\n\nNew.\n\n"
+                "### Item 3.1 of 10: the first half\n\nShort.\n\n"
+                "#case_against weak: the page grows.\n\nRecommendation: change it.\n")
+    case = Case(next_to_present="item 3 of 10", document=document)
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("with `#next_to_present item 3 of 10`, an older `3.1 of 9` of 320 words elsewhere is not counted",
+          result.returncode == 0 and "had to be run now" in result.stdout, described(result))
+
+
 def test_a_failed_fast_read_stops_the_check():
     case = Case()
     before = case.minutes.read_text()
