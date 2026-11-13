@@ -943,6 +943,9 @@ def case_run_failure(namespace):
               len(raised) == 2 and len(notices) == 1 and len(fixture.ssh_requests()) == 1
               and "JSONDecodeError" in notices[0].read_text(encoding="utf-8"),
               (raised, notices, fixture.ssh_requests()))
+        check("a run failure whose notice opens is marked as told in the watcher's own run-failures file",
+              (fixture.logs / watcher.REMOTE_CONTROL_RECONNECT_WATCHER_RUN_FAILURES_REPORTED_TO_USER_FILE_NAME).is_file(),
+              sorted(path.name for path in fixture.logs.iterdir()))
     finally:
         fixture.close()
 
