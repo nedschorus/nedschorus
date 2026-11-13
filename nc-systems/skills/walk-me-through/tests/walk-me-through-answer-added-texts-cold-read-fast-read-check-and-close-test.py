@@ -1860,6 +1860,113 @@ def test_dotted_sub_step_headings_one_level_down_do_not_stop_an_added_item_being
           described(closed) + walk_document(case))
 
 
+SUB_STEPS_THEN_ITEMS_WAITING_ON_THEIR_ITEM_DOCUMENT = """# A walk whose item 2 is shown as sub-steps, with added items waiting on item 2
+
+## Item 1 of 2: one
+
+#case_against none.
+
+## Item 2 of 2: The restore task finds its commit
+
+### Item 2.1 of 2: why
+
+No decision here.
+
+### Item 2.2 of 2: the new sentences
+
+#case_against none.
+
+## Nothing reports a renamed constant
+
+#approval_walk_item_in_category_file_an_improvement_feature_or_change
+#approval_walk_item_waits_on The restore task finds its commit
+
+#case_against none.
+
+## What this walk decided
+
+#approval_walk_item_in_category_file_an_improvement_feature_or_change
+#approval_walk_item_waits_on The restore task finds its commit
+#approval_walk_item_waits_on Nothing reports a renamed constant
+
+The walk in short.
+"""
+
+
+def test_an_item_whose_sub_steps_are_all_decided_is_not_named_again_and_the_items_waiting_on_it_are_numbered():
+    case = Case(next_to_present="item 2.2 of 2", document=SUB_STEPS_THEN_ITEMS_WAITING_ON_THEIR_ITEM_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n" + approved_line("item 1 of 2")
+                            + "item 2.1 of 2: moved on; the item asked for no decision. <moved on, no decision>\n"
+                            + "#next_to_present item 2.2 of 2\n")
+    case.run("check")
+    closed = case.run("close")
+    check("once its last sub-step is decided, item 2 is not named again, and the item waiting on it is numbered and "
+          "named next",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 3 of 4"
+          and "\n## Item 3 of 4: Nothing reports a renamed constant\n" in walk_document(case),
+          described(closed) + case.minutes.read_text() + walk_document(case))
+    case.run("check")
+    closed = case.run("close")
+    check("the item that waits on items 2 and 3 is numbered and named once both are decided",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 4 of 4"
+          and "\n## Item 4 of 4: What this walk decided\n" in walk_document(case),
+          described(closed) + case.minutes.read_text() + walk_document(case))
+    case.run("check", "--moved-on-no-decision", reply="next")
+    closed = case.run("close")
+    check("with every item and sub-step decided, close closes the walk",
+          closed.returncode == 0 and marker(case) == "#next_to_present none, closed",
+          described(closed) + case.minutes.read_text())
+
+
+def test_close_hold_answer_numbers_a_new_item_that_waits_on_the_item_whose_last_sub_step_it_holds():
+    case = Case(next_to_present="item 2.2 of 2", document=SUB_STEPS_THEN_ITEMS_WAITING_ON_THEIR_ITEM_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n" + approved_line("item 1 of 2")
+                            + "item 2.1 of 2: moved on; the item asked for no decision. <moved on, no decision>\n"
+                            + "#next_to_present item 2.2 of 2\n")
+    case.run("check")
+    closed = case.run("close", "--hold-answer-until-new-item-answered")
+    check("close --hold-answer-until-new-item-answered numbers a new item that waits on item 2, whose other sub-steps "
+          "the minutes decide and whose last sub-step's answer it holds",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 3 of 4"
+          and "\n## Item 3 of 4: Nothing reports a renamed constant\n" in walk_document(case),
+          described(closed) + walk_document(case))
+
+
+def test_an_item_whose_held_answer_is_unresolved_is_named_again_once_its_sub_steps_are_decided():
+    # The held-answer line close writes when the `#next_to_present` line has moved on to a new item.
+    case = Case(next_to_present="item 2.2 of 2", document=SUB_STEPS_THEN_ITEMS_WAITING_ON_THEIR_ITEM_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n" + approved_line("item 1 of 2")
+                            + "item 2.1 of 2: moved on; the item asked for no decision. <moved on, no decision>\n"
+                            + "item 2 of 2: answer held: item 2.2 of 2, raised by a fast-read finding, waits for the "
+                              "user's answer. <open>\n"
+                            + "#next_to_present item 2.2 of 2\n")
+    case.run("check", "--moved-on-no-decision", reply="next")
+    closed = case.run("close")
+    check("a move on from the last sub-step of item 2, whose own answer is held for that sub-step, leaves item 2 "
+          "unresolved, so the walk names it again rather than passing it",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 2 of 4",
+          described(closed) + case.minutes.read_text())
+
+
+def test_close_posts_the_ruling_on_an_item_its_answer_decides_through_the_last_sub_step():
+    pull_requests = held_pull_requests((501, [f"#held_on_ruling {WALK_NAME} item 2"]),
+                                       (502, [f"#held_on_ruling {WALK_NAME} item 2.2"]))
+    for flags, word in (((), "approved"), (("--disapproved",), "disapproved"),
+                        (("--moved-on-no-decision",), "moved_on")):
+        case = Case(next_to_present="item 2.2 of 2", document=SUB_STEPS_THEN_ITEMS_WAITING_ON_THEIR_ITEM_DOCUMENT)
+        case.minutes.write_text("# Minutes\n\n" + approved_line("item 1 of 2")
+                                + "item 2.1 of 2: moved on; the item asked for no decision. <moved on, no decision>\n"
+                                + "#next_to_present item 2.2 of 2\n")
+        case.run("check", *flags, reply="next" if flags == ("--moved-on-no-decision",) else "a")
+        closed = case.run("close", environment=gh_environment(pull_requests))
+        check(f"close after check {' '.join(flags) or '(approved)'} on item 2's last sub-step posts the ruling "
+              f"`{word}` on the pull request held on item 2, as on the one held on the sub-step",
+              closed.returncode == 0
+              and sorted(case.gh_comments()) == [("501", f"#ruling_given {WALK_NAME} item 2 {word}"),
+                                                 ("502", f"#ruling_given {WALK_NAME} item 2.2 {word}")],
+              described(closed) + repr(case.gh_comments()))
+
+
 def test_close_numbers_the_new_item_a_finding_raised_and_holds_the_answer():
     case = Case(next_to_present="item 1 of 4", document=UNNUMBERED_ITEMS_DOCUMENT)
     case.run("check")
