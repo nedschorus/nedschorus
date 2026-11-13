@@ -2280,8 +2280,8 @@ def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minut
         return None
     # A walk-document may give sub-sub-steps 2.1.1 to 2.1.3 no heading for 2.1: step into the next level that has one.
     parts = named[0][len(numbers[0]) + 1:].split(".")
-    return next((level for level in (numbers[0] + "." + ".".join(parts[:depth]) for depth in range(1, len(parts)))
-                 if level in sub_steps), named[0])
+    return next(level for level in (numbers[0] + "." + ".".join(parts[:depth]) for depth in range(1, len(parts) + 1))
+                if level in sub_steps)
 
 
 def waiting_item_read(arguments, sub_step_of=None):

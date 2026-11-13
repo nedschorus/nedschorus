@@ -810,6 +810,22 @@ def test_the_waiting_item_read_step_steps_into_the_shortest_sub_step_with_a_head
           result.returncode == 1 and case.minutes.read_text() == before, described(result))
 
 
+
+def test_the_waiting_item_read_step_steps_into_the_shortest_of_two_levels_with_a_heading():
+    document = ("# A walk\n\n## Item 3 of 9: the opening sentence\n\n#### Item 3.1.1 of 9: its first part\n\n"
+                '#new "The page lists\none poem."\n\n##### Item 3.1.1.1 of 9: its first piece\n\nOne.\n\n'
+                "###### Item 3.1.1.1.1 of 9: its first bit\n\nUno.\n\n"
+                "###### Item 3.1.1.1.2 of 9: its second bit\n\nDos.\n\n"
+                "#case_against weak: the page grows.\n\nRecommendation: change it.\n")
+    case = Case(document=document)
+    case.minutes.write_text("# Minutes\n\nitem 3.1.1 of 9: deferred; it moves to just before the summary item. "
+                            "<open>\n#next_to_present item 3 of 9\n")
+    before = case.minutes.read_text()
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("with no heading `Item 3.1` and headings for both 3.1.1 and 3.1.1.1 above the named 3.1.1.1.1, the read "
+          "step steps into the shorter, 3.1.1, so its broken `#new` mark is refused, not into 3.1.1.1",
+          result.returncode == 1 and case.minutes.read_text() == before, described(result))
+
 def test_the_waiting_item_read_step_keeps_no_withdrawn_version_when_the_sub_step_read_is_refused():
     case = Case(document=marks_document(words_of_body(200)))
     case.run(WAITING_ITEM_READ_STEP_NAME)
