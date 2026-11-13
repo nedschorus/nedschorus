@@ -187,8 +187,13 @@ the branch when it is main,
 does not exist, is checked out in a worktree, cannot be checked against the
 pull requests, or is the head branch of an open pull request; otherwise it
 deletes it with `git branch -D` and writes its last commit to the log of
-removals. A worktree or branch kept for an open pull request is not a
-failure. Any other keep, and any failure, ends the run with a line opening
+removals. Before either flag removes anything, it asks origin for its refs
+with `git ls-remote origin`, and when no ref of origin, a pull request's
+refs/pull/<number>/head included, holds the branch's last commit, it pushes
+the branch to origin with a plain push, so that GitHub keeps every commit the
+deletion drops; when origin cannot be asked or the push fails, it keeps the branch, and the worktree that has it checked out, or that
+an earlier run stopped partway through removing. A worktree or branch kept for
+an open pull request is not a failure. Any other keep, and any failure, ends the run with a line opening
 `FAILED: ` and exit 1.
 
 THE COUNT LINE. The report and --remove end their worktree lines with one
@@ -1870,6 +1875,40 @@ ONE_NAMED_FAILED_LINE_TEMPLATE = (
     "and why the rest was not")
 
 
+def push_branch_unless_origin_holds_its_last_commit_failure(repo, branch):
+    """Push the branch to origin with a plain push when no ref of origin, a pull request's
+    refs/pull/<number>/head included, holds its last commit, as git ls-remote finds origin now;
+    return why that failed, or None."""
+    tip = commit_of(repo, f"refs/heads/{branch}")
+    # Remote-tracking refs can name a branch GitHub has since deleted, and leave out pull request refs.
+    listing = run_git(repo, "ls-remote", "origin")
+    if listing.returncode != 0:
+        return (f"git ls-remote origin exited {listing.returncode}, so whether origin holds its "
+                f"last commit {tip} is unknown: {listing.stderr.strip()[:160] or 'no error text'}")
+    remote_tips = {line.split("\t", 1)[0] for line in listing.stdout.splitlines() if line}
+    # rev-list refuses an object it lacks; a tip it lacks cannot be this branch's commit, nor hold
+    # it unless someone pushed onto it, and then the plain push below is refused and the branch kept.
+    present = subprocess.run(["git", "-C", str(repo), "cat-file", "--batch-check=%(objectname)"],
+                             input="".join(f"{sha}\n" for sha in remote_tips),
+                             capture_output=True, text=True, check=False)
+    known = [line for line in present.stdout.splitlines() if not line.endswith(" missing")]
+    # --not on the command line does not reach revisions read from --stdin, so each carries its own ^.
+    unreached = subprocess.run(["git", "-C", str(repo), "rev-list", "--max-count=1", tip,
+                                "--stdin"], input="".join(f"^{sha}\n" for sha in known),
+                               capture_output=True, text=True, check=False)
+    if unreached.returncode != 0:
+        return (f"git rev-list exited {unreached.returncode}, so whether origin holds its last "
+                f"commit {tip} is unknown: {unreached.stderr.strip()[:160] or 'no error text'}")
+    if not unreached.stdout.strip():
+        return None
+    push = run_git(repo, "push", "origin", f"refs/heads/{branch}:refs/heads/{branch}")
+    if push.returncode != 0:
+        return (f"origin lacks its last commit {tip}, and git push origin exited "
+                f"{push.returncode}: {' '.join(push.stderr.split())[:200] or 'no error text'}")
+    print(f"branch {branch}: pushed to origin, which lacked its last commit {tip}")
+    return None
+
+
 def open_pull_request_of(by_head_branch, branch, head):
     """The open pull request whose head branch is the branch, or whose head commit is the head,
     or None."""
@@ -1938,6 +1977,13 @@ def remove_one_named_worktree(repo, main_checkout, path):
         if Path(record["worktree"]).resolve() != wanted:
             continue
         if not removal_never_began(record, listed):
+            branch = record.get("branch")
+            if branch and branch != MAIN_BRANCH and commit_of(repo, f"refs/heads/{branch}") != "unknown":
+                failure = push_branch_unless_origin_holds_its_last_commit_failure(repo, branch)
+                if failure is not None:
+                    print(f"{Path(path).name}: kept — an earlier run stopped partway through "
+                          f"removing it, and its branch {branch} is kept too: {failure}")
+                    return False
             return finish_recorded_removal(record, repo, one_named=True)
         try:
             record["file"].unlink()
@@ -1964,6 +2010,11 @@ def remove_one_named_worktree(repo, main_checkout, path):
     if reason is not None:
         print(f"{worktree.name}: kept — {reason}")
         return not_a_failure
+    if branch and branch != MAIN_BRANCH:
+        failure = push_branch_unless_origin_holds_its_last_commit_failure(repo, branch)
+        if failure is not None:
+            print(f"{worktree.name}: kept — its branch {branch} is kept too, since {failure}")
+            return False
     verdict = Verdict(True, "", "", owner, "", uncommitted, discarded)
     return remove_worktree(worktree, branch, repo, verdict, one_named=True)
 
@@ -1998,6 +2049,10 @@ def delete_one_named_branch(repo, branch):
         print(f"{name}: kept — {pull_request_text(pull_request)} has it as its head branch, so "
               f"its work is still under review")
         return True
+    failure = push_branch_unless_origin_holds_its_last_commit_failure(repo, branch)
+    if failure is not None:
+        print(f"{name}: kept — {failure}")
+        return False
     unlanded = run_git(repo, "rev-list", "--count", f"origin/main..{tip}")
     count = unlanded.stdout.strip() if unlanded.returncode == 0 else "unknown"
     deletion = run_git(repo, "branch", "-D", branch)

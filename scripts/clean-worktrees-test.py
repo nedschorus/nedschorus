@@ -2067,6 +2067,20 @@ with tempfile.TemporaryDirectory() as scratch:
         return (run.returncode == 1 and any(line.startswith(f"{name}: kept — ") for line in lines)
                 and bool(lines) and lines[-1].startswith("FAILED: "))
 
+    origin_pre_receive_hook = origin / "hooks" / "pre-receive"
+
+    def origin_refuses_pushes(refuses):
+        """Make the scratch origin refuse every push, as a remote that fails does, or accept them."""
+        if refuses:
+            origin_pre_receive_hook.write_text(
+                "#!/bin/sh\necho 'stand-in remote refuses the push' >&2\nexit 1\n", encoding="utf-8")
+            origin_pre_receive_hook.chmod(0o755)
+        else:
+            origin_pre_receive_hook.unlink()
+
+    def origin_tip(branch):
+        return git(checkout, "ls-remote", "origin", f"refs/heads/{branch}").split("\t")[0]
+
     # A worktree of a stopped agent-session, with a commit origin/main lacks and an untracked file.
     gone_wt = named_worktree("gone-wt")
     gone_tip = commit_in(gone_wt, "unlanded-work")
@@ -2082,6 +2096,30 @@ with tempfile.TemporaryDirectory() as scratch:
     check(f"{REMOVE_WORKTREE_FLAG} logs the worktree and the branch's last commit in the log of removals",
           [event for event, _ in events] == ["removed-worktree", "deleted-branch"]
           and events[1][1]["commit"] == gone_tip, str(events))
+    check(f"{REMOVE_WORKTREE_FLAG} first pushes a branch whose last commit origin lacks",
+          origin_tip("gone-wt-branch") == gone_tip
+          and f"branch gone-wt-branch: pushed to origin, which lacked its last commit {gone_tip}"
+          in removed.stdout, removed.stdout)
+    unpushable_wt = named_worktree("unpushable-wt")
+    unpushable_tip = commit_in(unpushable_wt, "unpushable-work")
+    origin_refuses_pushes(True)
+    try:
+        unpushable = run_one_named(REMOVE_WORKTREE_FLAG, str(unpushable_wt))
+    finally:
+        origin_refuses_pushes(False)
+    check(f"{REMOVE_WORKTREE_FLAG} keeps the worktree and its branch, and fails, when the push of a "
+          "last commit origin lacks fails",
+          kept_and_failed(unpushable, "unpushable-wt") and unpushable_wt.exists()
+          and git(checkout, "rev-parse", "unpushable-wt-branch").strip() == unpushable_tip
+          and origin_tip("unpushable-wt-branch") == ""
+          and "stand-in remote refuses the push" in unpushable.stdout,
+          unpushable.stdout + unpushable.stderr)
+    unasked = run_one_named(REMOVE_WORKTREE_FLAG, str(unpushable_wt), git_refuses=" ls-remote ")
+    check(f"{REMOVE_WORKTREE_FLAG} keeps the worktree and its branch, and fails, when origin cannot "
+          "be asked for its refs",
+          kept_and_failed(unasked, "unpushable-wt") and unpushable_wt.exists()
+          and git(checkout, "branch", "--list", "unpushable-wt-branch") != ""
+          and "git ls-remote origin exited 1" in unasked.stdout, unasked.stdout + unasked.stderr)
     check(f"{REMOVE_WORKTREE_FLAG} first copies the untracked file to a work-snapshot",
           any("untracked.txt" in git(checkout, "ls-tree", "-r", "--name-only", ref)
               for ref in git(checkout, "for-each-ref", "--format=%(refname)",
@@ -2288,6 +2326,56 @@ with tempfile.TemporaryDirectory() as scratch:
                                              "commits-not-on-origin-main": "1"})],
           deleted.stdout + deleted.stderr + str(events))
 
+    check(f"{FORCE_DELETE_BRANCH_FLAG} first pushes a branch whose last commit origin lacks",
+          origin_tip("lone-branch") == lone_tip, deleted.stdout)
+
+    def branch_with_a_commit(name):
+        holder = scratch / f"{name}-holder"
+        git(checkout, "worktree", "add", "-b", name, str(holder), "origin/main")
+        tip = commit_in(holder, f"{name}-work")
+        git(checkout, "worktree", "remove", str(holder))
+        return tip
+
+    unpushable_tip = branch_with_a_commit("unpushable-branch")
+    origin_refuses_pushes(True)
+    try:
+        unpushable = run_one_named(FORCE_DELETE_BRANCH_FLAG, "unpushable-branch")
+        pushed_branch_tip = branch_with_a_commit("pushed-branch")
+        origin_refuses_pushes(False)
+        git(checkout, "push", "origin", "pushed-branch")
+        closed_tip = branch_with_a_commit("closed-pull-request-branch")
+        git(checkout, "push", "origin", "closed-pull-request-branch:refs/pull/7/head")
+        origin_refuses_pushes(True)
+        already_pushed = run_one_named(FORCE_DELETE_BRANCH_FLAG, "pushed-branch")
+        held_by_pull_ref = run_one_named(FORCE_DELETE_BRANCH_FLAG, "closed-pull-request-branch")
+    finally:
+        if origin_pre_receive_hook.exists():
+            origin_refuses_pushes(False)
+    check(f"{FORCE_DELETE_BRANCH_FLAG} keeps the branch and fails when the push of a last commit "
+          "origin lacks fails",
+          kept_and_failed(unpushable, "branch unpushable-branch")
+          and git(checkout, "rev-parse", "unpushable-branch").strip() == unpushable_tip
+          and "stand-in remote refuses the push" in unpushable.stdout, unpushable.stdout)
+    check(f"{FORCE_DELETE_BRANCH_FLAG} deletes a branch origin already holds at its last commit "
+          "without pushing it",
+          already_pushed.returncode == 0 and git(checkout, "branch", "--list", "pushed-branch") == ""
+          and origin_tip("pushed-branch") == pushed_branch_tip
+          and "pushed to origin" not in already_pushed.stdout,
+          already_pushed.stdout + already_pushed.stderr)
+    check(f"{FORCE_DELETE_BRANCH_FLAG} deletes a branch whose last commit only a pull request's ref "
+          "on origin holds, without pushing it back as a branch",
+          held_by_pull_ref.returncode == 0
+          and git(checkout, "branch", "--list", "closed-pull-request-branch") == ""
+          and origin_tip("closed-pull-request-branch") == ""
+          and "pushed to origin" not in held_by_pull_ref.stdout,
+          held_by_pull_ref.stdout + held_by_pull_ref.stderr + closed_tip)
+    unreachable_checked = run_one_named(FORCE_DELETE_BRANCH_FLAG, "unpushable-branch",
+                                        git_refuses=" --max-count=1 ")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} keeps the branch and fails when git cannot say whether "
+          "origin's refs hold its last commit",
+          kept_and_failed(unreachable_checked, "branch unpushable-branch")
+          and git(checkout, "branch", "--list", "unpushable-branch") != ""
+          and "git rev-list exited 1" in unreachable_checked.stdout, unreachable_checked.stdout)
     main_named = run_one_named(FORCE_DELETE_BRANCH_FLAG, "main")
     check(f"{FORCE_DELETE_BRANCH_FLAG} never deletes main", kept_and_failed(main_named, "branch main")
           and git(checkout, "branch", "--list", "main") != "", main_named.stdout)
@@ -2800,6 +2888,35 @@ with tempfile.TemporaryDirectory() as scratch:
           named_run.returncode == 0 and not named.exists() and not registered(named)
           and git(checkout, "branch", "--list", "stopped-partway-named-wt-branch").strip() == "",
           named_run.stdout + named_run.stderr)
+
+    unpushed_record, _ = stopped_partway("stopped-partway-unpushed-wt")
+    unpushed_commit = git(checkout, "commit-tree", "-p", "origin/main", "-m", "unpushed work",
+                          "origin/main^{tree}").strip()
+    git(checkout, "update-ref", "refs/heads/stopped-partway-unpushed-wt-branch", unpushed_commit)
+    refusing_hook = origin / "hooks" / "pre-receive"
+    refusing_hook.write_text("#!/bin/sh\necho 'stand-in remote refuses the push' >&2\nexit 1\n",
+                             encoding="utf-8")
+    refusing_hook.chmod(0o755)
+    try:
+        unpushed_run = run_clean(checkout, "--remove-worktree-and-force-delete-its-branch",
+                                 str(unpushed_record))
+    finally:
+        refusing_hook.unlink()
+    check("--remove-worktree-and-force-delete-its-branch, finishing a removal stopped partway, keeps "
+          "the worktree and its branch, and fails, when the push of a last commit origin lacks fails",
+          unpushed_run.returncode == 1 and unpushed_record.exists()
+          and git(checkout, "rev-parse", "stopped-partway-unpushed-wt-branch").strip() == unpushed_commit
+          and "stopped-partway-unpushed-wt: kept — an earlier run stopped partway" in unpushed_run.stdout
+          and unpushed_run.stdout.splitlines()[-1].startswith("FAILED: "),
+          unpushed_run.stdout + unpushed_run.stderr)
+    unpushed_rerun = run_clean(checkout, "--remove-worktree-and-force-delete-its-branch",
+                               str(unpushed_record))
+    check("once origin takes the push, the removal stopped partway is finished and origin keeps the "
+          "branch's last commit",
+          unpushed_rerun.returncode == 0 and not unpushed_record.exists()
+          and git(checkout, "branch", "--list", "stopped-partway-unpushed-wt-branch") == ""
+          and git(checkout, "ls-remote", "origin", "refs/heads/stopped-partway-unpushed-wt-branch")
+          .startswith(unpushed_commit), unpushed_rerun.stdout + unpushed_rerun.stderr)
 
     stuck, _ = stopped_partway("stopped-partway-undeletable-wt")
     (stuck / "kept-dir").mkdir()

@@ -357,7 +357,7 @@ def branch_entries(repo, branches, by_head_branch, by_head_commit, deleted,
         subject = git_lines(repo, "log", "-1", "--format=%s", tip)[0]  # pragma: no mutate, %s prints the subject on one line, so [-1] picks the same line as [0]
         command = delete_command_text(
             repo, clean_worktrees_module().FORCE_DELETE_BRANCH_FLAG, branch)
-        entries.append(f"branch {branch}; {count} commit(s) not on origin/main, the newest "
+        entries.append(f"branch {branch}; main lacks the changes of its {count} commit(s), the newest "
                        f"{tip[:12]} of {date}, \"{subject}\"; "
                        f"{pushed_text(branch, tip, origin_tips)}{deletion_failure}; "
                        f"delete with: {command}")
