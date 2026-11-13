@@ -4482,7 +4482,10 @@ def run_close_cases(scratch: Path):
               refusal.code == 1 and "HTTP 502" in str(refusal), str(refusal))
 
     # A reason the close would reject is refused before anything runs.
+    # "wontfix" and "not planned yet" sort after "not planned", so an
+    # ordering comparison there would accept them.
     for bad in (["fixed"], ["duplicate"], ["duplicate", "570"],
+                ["wontfix"], ["not", "planned", "yet"],
                 ["duplicate", "0"], ["completed", "now"], ["not"],
                 ["duplicate", "twelve"], ["duplicate", "#570"],
                 ["duplicate", "##12"]):
