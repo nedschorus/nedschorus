@@ -1185,6 +1185,99 @@ def run_spawned_subagent_roster_cases(workspace: Path):
           writer.spawned_subagent_field_lines([]) == [])
 
 
+def run_threshold_hook_and_roster_agree_on_each_subagent_cases(workspace: Path):
+    """The threshold hook and the roster read subagent events with one shared reader, so on the
+    same transcript the hook lists a subagent as in flight exactly when the roster's last event
+    for it is one of STILL_WORKING_SUBAGENT_LAST_EVENTS."""
+    threshold_hook = writer.threshold_hook
+    first, second = "a1c0ffee000000001", "a1c0ffee000000002"
+
+    def delivered(body, stamp):
+        return [{"type": "queue-operation", "operation": "enqueue", "timestamp": stamp,
+                 "sessionId": FIXTURE_SESSION_ID, "content": body},
+                {"type": "user", "timestamp": stamp, "message": {"role": "user", "content": body},
+                 "sessionId": FIXTURE_SESSION_ID}]
+
+    def final(agent_id, stamp):
+        return delivered(notification_body(agent_id, "completed", f'Agent "{agent_id}" finished'),
+                         stamp)
+
+    def interim(agent_id, stamp):
+        return delivered(
+            "<task-notification>\n"
+            f"<task-id>{agent_id}</task-id>\n"
+            "<status>completed</status>\n"
+            "<note>This agent stopped with background work of its own still running. It may "
+            "resume on its own when that work completes or reports, and the same task-id "
+            "notifies again if it does; the result below may be interim.</note>\n"
+            "<result>Waiting on the test run.</result>\n"
+            "</task-notification>", stamp)
+
+    def task_stop(agent_id, stamp):
+        result = {"message": f"Successfully stopped task: {agent_id}", "task_id": agent_id,
+                  "task_type": "local_agent", "command": "a builder subagent"}
+        return {"type": "user", "timestamp": stamp,
+                "message": {"role": "user", "content": [{
+                    "tool_use_id": "toolu_stop", "type": "tool_result",
+                    "content": json.dumps(result)}]},
+                "toolUseResult": result, "sessionId": FIXTURE_SESSION_ID}
+
+    def spawn(agent_id, stamp):
+        return spawn_record(agent_id, "a builder subagent", stamp)
+
+    final_line_cut_mid_write = json.dumps(final(first, "2026-11-13T10:05:00.000Z")[1])
+    final_line_cut_mid_write = final_line_cut_mid_write[:final_line_cut_mid_write.index(
+        "</task-notification>") + len("</task-notification>")]
+    cases = (
+        ("a spawn", [spawn(first, "2026-11-13T10:00:00.000Z")], [first]),
+        ("a final notification", [spawn(first, "2026-11-13T10:00:00.000Z"),
+                                  *final(first, "2026-11-13T10:05:00.000Z")], []),
+        ("an interim notification", [spawn(first, "2026-11-13T10:00:00.000Z"),
+                                     *interim(first, "2026-11-13T10:05:00.000Z")], [first]),
+        ("a resume after a final notification", [
+            spawn(first, "2026-11-13T10:00:00.000Z"), *final(first, "2026-11-13T10:05:00.000Z"),
+            resume_record(first, "2026-11-13T10:07:00.000Z")], [first]),
+        ("a TaskStop", [spawn(first, "2026-11-13T10:00:00.000Z"),
+                        task_stop(first, "2026-11-13T10:05:00.000Z")], []),
+        ("a resume after a TaskStop", [
+            spawn(first, "2026-11-13T10:00:00.000Z"), task_stop(first, "2026-11-13T10:05:00.000Z"),
+            resume_record(first, "2026-11-13T10:07:00.000Z")], [first]),
+        ("an interim notification that arrives after a TaskStop", [
+            spawn(first, "2026-11-13T10:00:00.000Z"), task_stop(first, "2026-11-13T10:05:00.000Z"),
+            *interim(first, "2026-11-13T10:06:00.000Z")], []),
+        ("two subagents, one finished", [
+            spawn(first, "2026-11-13T10:00:00.000Z"), spawn(second, "2026-11-13T10:01:00.000Z"),
+            *final(first, "2026-11-13T10:05:00.000Z")], [second]),
+        ("a final notification on a line cut mid-write",
+         [spawn(first, "2026-11-13T10:00:00.000Z"), final_line_cut_mid_write], [first]),
+    )
+    for case_number, (situation, records, expected_in_flight) in enumerate(cases, start=1):
+        path = workspace / f"hook-and-roster-agree-case-{case_number}.jsonl"
+        path.write_text("\n".join(record if isinstance(record, str) else json.dumps(record)
+                                  for record in records) + "\n", encoding="utf-8")
+        hook_in_flight = threshold_hook.spawned_subagent_ids_in_flight(str(path))
+        roster = writer.spawned_subagent_roster(path)
+        roster_still_working = [entry["agent_id"]
+                                for entry in writer.still_working_subagent_entries(roster)]
+        check(f"the threshold hook and the roster agree on {situation}",
+              hook_in_flight == roster_still_working == expected_in_flight,
+              f"hook {hook_in_flight}, roster {roster}, expected {expected_in_flight}")
+
+    # The one rule the two keep apart: a spawn line that does not parse stops the hook, which
+    # must not take a scan that missed a spawn to mean nothing runs, and the roster skips it.
+    cut_spawn_path = workspace / "hook-and-roster-cut-spawn.jsonl"
+    cut_spawn_path.write_text(
+        json.dumps(spawn(first, "2026-11-13T10:00:00.000Z"))[:-20] + "\n", encoding="utf-8")
+    try:
+        threshold_hook.spawned_subagent_ids_in_flight(str(cut_spawn_path))
+        hook_refused = False
+    except threshold_hook.TranscriptCouldNotBeFullyRead:
+        hook_refused = True
+    check("on a spawn line cut mid-write the hook refuses and the roster skips the line",
+          hook_refused and writer.spawned_subagent_roster(cut_spawn_path) == [],
+          f"hook refused: {hook_refused}")
+
+
 def run_roster_never_blocks_a_handoff_cases(workspace: Path):
     """A roster that cannot be derived must not cost the seat its handoff.
 
@@ -2316,6 +2409,7 @@ with tempfile.TemporaryDirectory() as temporary_directory_name:
     run_agent_name_and_claim_cases(temporary_directory)
     run_seat_name_the_supervisor_does_not_answer_to_cases(temporary_directory)
     run_spawned_subagent_roster_cases(temporary_directory)
+    run_threshold_hook_and_roster_agree_on_each_subagent_cases(temporary_directory)
     run_roster_never_blocks_a_handoff_cases(temporary_directory)
     run_seat_name_and_directory_from_the_handoff_supervisor_cases(temporary_directory)
     run_completed_task_prune_cases(temporary_directory)
