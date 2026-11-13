@@ -40,7 +40,12 @@ scripts/recover-crashed-seats.py makes (assess_seat), and:
 One rule says whether a death is already handled (death_already_handled): the
 watcher records the seat supervisor's last poll when it handles a death, and
 the death stays handled until that supervisor, or a new one, polls later. A
-later poll shows the seat ran again, so its next death is a new crash. Times
+later poll shows the seat ran again, so its next death is a new crash. Each
+death is reported once, whichever verdict it is first confirmed under: a
+verdict that changes over the same death, as when a passing process makes
+recovery refuse a seat with a recorded exit, reports nothing more. The one
+exception is a crash beneath a refusal already reported, which is restarted,
+because that report restarted nothing. Times
 are compared as parsed moments at the supervisor's own precision, which
 carries microseconds. A restart that succeeded counts as a sighting of the
 seat running; after a failed attempt the poll is recorded again, so the
@@ -876,7 +881,10 @@ class Watcher:
                          verdict=verdict, detail=str(detail))
             return
         record.pop("left_alone_verdict", None)
-        if self.death_already_handled(seat, record):
+        # A noticed refusal handles its death, but its report restarted nothing: a crash
+        # found once the refusal clears is that same death, still the watcher's to restart.
+        crash_beneath_noticed_refusal = kind == "crash" and record.get("refusal_noticed")
+        if not crash_beneath_noticed_refusal and self.death_already_handled(seat, record):
             return
         last_seen_running = parse_timestamp(record.get("last_seen_running_at"))
         if last_seen_running is None or last_seen_running < self.boot_at:
@@ -893,14 +901,14 @@ class Watcher:
         if (self.now - first_seen_crashed).total_seconds() < CRASH_CONFIRMATION_SECONDS:
             return
         died_at = self.died_at_about(seat) or last_seen_running
+        self.mark_handled(seat, record)
         if kind == "refused":
-            # Not marked handled: once the refusal clears, as when the user closes a leftover
-            # shell by hand, the crash beneath it is restarted, after two sightings of its own.
             record["refusal_noticed"] = verdict
+            # The crash beneath the refusal gets two sightings of its own.
             record.pop("first_seen_crashed_at", None)
             self.report_refused(seat, verdict, detail, died_at)
             return
-        self.mark_handled(seat, record)
+        record.pop("refusal_noticed", None)
         if kind == "for-the-user":
             self.report_down_for_the_user(seat, verdict, detail, died_at)
             return
