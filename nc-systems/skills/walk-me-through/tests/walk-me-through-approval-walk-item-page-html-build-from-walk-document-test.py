@@ -138,8 +138,8 @@ def run_unit_cases(scratch):
           and page.startswith(f"<title>Version 2, Item 3 of 9: {WALK}</title>"), page[:200])
 
 
-# Item 45 of the walk-document agent-seat-git-worktrees-branches-checkout-refresh-and-cleanup-redesign-approval-walk-2026-11-03:
-# the item's own text is only its tags, and each version replaced later sits under a Withdrawn heading.
+# An item whose own text is only its tags, its content in sub-steps, each version replaced later under a Withdrawn
+# heading, some of them after the sub-steps.
 PARENT_WITH_WITHDRAWN_VERSIONS_AND_SUB_STEPS = """# A walk
 
 ## Item 44 of 46: the item before
