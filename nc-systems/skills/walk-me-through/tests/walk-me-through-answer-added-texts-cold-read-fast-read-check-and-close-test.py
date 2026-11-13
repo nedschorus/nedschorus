@@ -634,6 +634,40 @@ def test_the_waiting_item_read_step_refuses_an_item_over_300_words_and_reads_it_
           again.returncode == 0 and "had to be run now" in again.stdout, described(again))
 
 
+def test_the_waiting_item_read_step_names_and_reads_the_first_undecided_numbered_sub_step_of_the_item_named():
+    case = Case(document=marks_document(words_of_body(300)))
+    case.run(WAITING_ITEM_READ_STEP_NAME)
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(document.read_text().replace(
+        "word150 ", "\n### Item 3.2 of 9: the second half\n\nword150 ").replace(
+        "word0 ", "### Item 3.1 of 9: the first half\n\nword0 "))
+    result = case.run(WAITING_ITEM_READ_STEP_NAME, "--after-fixes-reread-only-when-facts-change")
+    items_read = [json.loads(outcome.read_text())["item"] for outcome in case.reads().glob("*-outcome.json")]
+    check("with `#next_to_present item 3 of 9` left naming an item split into numbered sub-steps, the read step names "
+          "sub-step 3.1 in the walk-minutes, reads it and says to present it, and gives item 3's heading no read",
+          result.returncode == 0 and marker(case) == "#next_to_present item 3.1 of 9"
+          and "`#next_to_present item 3.1 of 9`" in result.stdout
+          and "item 3.1 of 9: its cold-read-fast-read" in result.stdout and "Then present item 3.1 of 9" in result.stdout
+          and "item 3 of 9" not in items_read, described(result) + repr(items_read))
+    case.run("check", "--moved-on-no-decision", reply="next")
+    closed = case.run("close")
+    # close counts M from the walk-document, which holds item 3 alone.
+    check("the close after sub-step 3.1 names sub-step 3.2", closed.returncode == 0
+          and marker(case) == "#next_to_present item 3.2 of 1", described(closed) + case.minutes.read_text())
+    case.minutes.write_text(case.minutes.read_text() + "#next_to_present item 3 of 9\n")
+    again = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("with sub-step 3.1 decided, a line naming item 3 again is moved to sub-step 3.2",
+          again.returncode == 0 and marker(case) == "#next_to_present item 3.2 of 9", described(again))
+    case = Case(next_to_present="item 2.2 of 2", document=SUB_STEPS_THEN_ITEMS_WAITING_ON_THEIR_ITEM_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n" + approved_line("item 1 of 2")
+                            + "item 2.1 of 2: moved on; the item asked for no decision. <moved on, no decision>\n"
+                            + approved_line("item 2.2 of 2") + "#next_to_present item 2 of 2\n")
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("an item whose numbered sub-steps the walk-minutes all decide stays named and is read",
+          result.returncode == 0 and marker(case) == "#next_to_present item 2 of 2"
+          and "item 2 of 2: its cold-read-fast-read" in result.stdout, described(result))
+
+
 def test_the_waiting_item_read_step_reads_an_item_of_300_words_leaving_out_its_approval_walk_item_lines():
     body = ("#approval_walk_item_first_entered 2026-11-12\n- #approval_walk_item_waits_on the opening paragraph\n\n"
             + words_of_body(300 - MARKS_DOCUMENT_WORDS_OUTSIDE_BODY))
