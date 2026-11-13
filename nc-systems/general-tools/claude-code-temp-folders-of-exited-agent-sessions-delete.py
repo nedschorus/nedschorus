@@ -305,7 +305,7 @@ def main(arguments=None):
             print(TMP_AND_REVIEWER_SCRATCH_FOLDERS_UNCHANGED_A_DAY_AND_UNUSED_DELETE_STEP_COULD_NOT_START_ERROR_TEMPLATE.format(command=shlex.join(command),
                                                                     error=error), file=sys.stderr)
             step = EXIT_FAILED
-        if step != EXIT_DONE:
+        if step != EXIT_DONE:  # pragma: no mutate, `is not` agrees with `!=` here: a returncode of 0 is the small int CPython caches, and every other step value differs from EXIT_DONE under both
             exit_status = EXIT_FAILED
     return exit_status
 
