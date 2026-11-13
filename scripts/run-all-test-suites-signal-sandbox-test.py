@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the signal sandbox scripts/run-all-test-suites.py puts each suite in.
+"""Tests for the signal sandbox scripts/run-all-test-suites.py puts each suite in, and on Linux for each suite's nc-test-sandbox.
 
 The isolation cases signal only a sleeper this file starts itself, never -1,
 0, 1 or any other process: if the sandbox did not work, the worst a case can
