@@ -3056,6 +3056,20 @@ def test_an_item_with_parts_options_or_a_new_if_d_text_is_not_settled_as_now_ove
               and case.minutes.read_text() == before and case.calls.read_text() == "", described(refused))
 
 
+def test_a_new_if_d_line_inside_a_multi_line_html_comment_does_not_stop_now_over_later():
+    document = NOW_OVER_LATER_DOCUMENT.replace(
+        "Recommendation: change the sentence.\n",
+        '<!-- a note the user is not shown:\n#new_if_d "Nothing changes."\n-->\n\n'
+        "Recommendation: change the sentence.\n", 1)
+    case = Case(document=document)
+    checked = case.run("check", NOW_OVER_LATER)
+    check("check --now-over-later-already-decided reads the item's lines with HTML comments cut, so a `#new_if_d` "
+          "line inside a multi-line comment does not refuse the item",
+          document != NOW_OVER_LATER_DOCUMENT and checked.returncode == 0
+          and "\nitem 3 of 9: settled without asking the user, already decided by " in case.minutes.read_text(),
+          described(checked) + case.minutes.read_text())
+
+
 def test_now_over_later_takes_no_reply_no_other_answer_and_its_rerun_command_repeats_it():
     case = Case(document=NOW_OVER_LATER_DOCUMENT)
     before = case.minutes.read_text()
