@@ -912,6 +912,20 @@ def test_the_log_store_is_found_on_ned_box_or_through_the_macs_mount():
           and tried[1] == Path("/Volumes/nedhome/nedschorus-logs/cold-read-records"), repr(tried))
 
 
+def test_an_excerpt_keeps_a_text_of_60_characters_whole_and_cuts_a_longer_one_to_57_and_dots():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    sixty = "a" * 60
+    check("a text of exactly 60 characters is excerpted whole",
+          program.excerpt(walk_finder, sixty) == walk_finder.text_wrapped_as_markdown_code_span(sixty),
+          program.excerpt(walk_finder, sixty))
+    sixty_one = "b" * 56 + " " + "c" * 4
+    check("a text of 61 characters is cut to its first 57, right-stripped, and '...'",
+          program.excerpt(walk_finder, sixty_one)
+          == walk_finder.text_wrapped_as_markdown_code_span("b" * 56 + "..."),
+          program.excerpt(walk_finder, sixty_one))
+
+
 def test_a_capitalised_marker_is_read_and_closed():
     case = Case(next_to_present="Item 4 of 9")
     case.run("check")
