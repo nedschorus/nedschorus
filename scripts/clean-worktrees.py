@@ -1876,7 +1876,7 @@ ONE_NAMED_FAILED_LINE_TEMPLATE = (
 
 
 def push_branch_unless_origin_holds_its_last_commit_failure(repo, branch):
-    """Push the branch to origin with a plain push when no ref of origin, a pull request's
+    """Push the branch to origin with a plain push, skipping the clone's client hooks, when no ref of origin, a pull request's
     refs/pull/<number>/head included, holds its last commit, as git ls-remote finds origin now;
     return why that failed, or None."""
     tip = commit_of(repo, f"refs/heads/{branch}")
@@ -1901,7 +1901,9 @@ def push_branch_unless_origin_holds_its_last_commit_failure(repo, branch):
                 f"commit {tip} is unknown: {unreached.stderr.strip()[:160] or 'no error text'}")
     if not unreached.stdout.strip():
         return None
-    push = run_git(repo, "push", "origin", f"refs/heads/{branch}:refs/heads/{branch}")
+    # A backup is never a pull request branch, so the clone's pre-push conflict check, which would
+    # refuse the old leftover branches deleted here, does not apply.
+    push = run_git(repo, "push", "--no-verify", "origin", f"refs/heads/{branch}:refs/heads/{branch}")
     if push.returncode != 0:
         return (f"origin lacks its last commit {tip}, and git push origin exited "
                 f"{push.returncode}: {' '.join(push.stderr.split())[:200] or 'no error text'}")

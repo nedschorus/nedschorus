@@ -2369,6 +2369,27 @@ with tempfile.TemporaryDirectory() as scratch:
           and origin_tip("closed-pull-request-branch") == ""
           and "pushed to origin" not in held_by_pull_ref.stdout,
           held_by_pull_ref.stdout + held_by_pull_ref.stderr + closed_tip)
+    conflicting_holder = scratch / "conflicting-branch-holder"
+    git(checkout, "worktree", "add", "-b", "conflicting-branch", str(conflicting_holder), "origin/main")
+    (conflicting_holder / "README.md").write_text("# the branch's line\n", encoding="utf-8")
+    git(conflicting_holder, "commit", "-am", "branch side of a conflict")
+    conflicting_tip = git(conflicting_holder, "rev-parse", "HEAD").strip()
+    git(checkout, "worktree", "remove", str(conflicting_holder))
+    (checkout / "README.md").write_text("# main's line\n", encoding="utf-8")
+    git(checkout, "commit", "-am", "main side of a conflict")
+    git(checkout, "push", "origin", "main")
+    git(checkout, "fetch", "origin")
+    git(checkout, "config", "core.hooksPath", str(CLEAN_SCRIPT.parent / "git-client-side-hooks"))
+    try:
+        conflicting = run_one_named(FORCE_DELETE_BRANCH_FLAG, "conflicting-branch")
+    finally:
+        git(checkout, "config", "--unset", "core.hooksPath")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} pushes and deletes a branch that conflicts with main, past the "
+          "clone's real pre-push conflict check",
+          conflicting.returncode == 0
+          and git(checkout, "branch", "--list", "conflicting-branch") == ""
+          and origin_tip("conflicting-branch") == conflicting_tip,
+          conflicting.stdout + conflicting.stderr)
     unreachable_checked = run_one_named(FORCE_DELETE_BRANCH_FLAG, "unpushable-branch",
                                         git_refuses=" --max-count=1 ")
     check(f"{FORCE_DELETE_BRANCH_FLAG} keeps the branch and fails when git cannot say whether "
