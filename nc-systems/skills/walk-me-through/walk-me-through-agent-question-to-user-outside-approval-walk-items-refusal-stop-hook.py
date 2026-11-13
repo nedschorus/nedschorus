@@ -14,7 +14,7 @@ which finds the open walk, its waiting items and its walk-document's items. It
 also loads the answer hook,
 walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py,
 for the closing line's answer letters, ANSWER_LETTERS_TEXT, and for its
-closing_line, which builds the closing line the refusal's step 3 gives; and,
+closing_line, which builds the closing lines the refusal gives; and,
 when it refuses, the walk check program,
 walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py, for
 the category and waits-on tags the refusal's step 1 names, which that
@@ -106,7 +106,7 @@ hook cannot run inside it, no session file, no tools, and a cwd outside any
 checkout. When the call fails, runs past MODEL_TIMEOUT_SECONDS, or answers
 without giving each numbered line exactly one entry holding both answers, the hook
 blocks on the first question-like line, saying the model check failed: a missed
-question scrolls away, a false block costs one reworded line.
+question scrolls away, a false block costs one turn ending with the closing line.
 
 AN INTERRUPTION ITEM'S TEXT is not checked either: a line of the text
 checked, a list joined to its lead-in included, is left out when the
@@ -332,9 +332,9 @@ REFUSAL_INSTRUCTIONS = (
     "2. Do not show the new item now: the walk shows it when its turn comes.",
     "3. The flagged text has already reached the user, so leave it. End the message you write next with the line "
     "`I added the question to the walk as a new item.` and then {closing_lines_named}, as the "
-    "walk-me-through skill writes it, as the last text of that message:\n{closing_lines}{no_page}",
-    "If the flagged text does not ask the user anything, reword it in your reply so that it no longer reads "
-    "as a question for him, and end the turn.",
+    "walk-me-through skill writes it, as the last text of that message:\n{closing_lines}",
+    "If the flagged text does not ask the user anything, end the turn with only the waiting item's closing line, "
+    "printed below.\n{closing_lines_no_item_added}{no_page}",
     "From now on, while an approval-walk is open, put every question for the user, yours or another "
     "agent's, into the walk as an item instead of asking it in prose.",
 )
@@ -758,12 +758,15 @@ def output_for(payload, environment, model=model_judgement):
     check_and_close = load_module("walk_me_through_answer_added_texts_cold_read_fast_read_check_and_close",
                                   WALK_CHECK_PROGRAM)
     closing, without_page = closing_lines(pages, name, document_text, units, parser, numbers, new_total)
+    # No item is added when the flagged text asks nothing, so that branch's closing line keeps the walk's count.
+    closing_no_item_added, _ = closing_lines(pages, name, document_text, units, parser, numbers, total)
     values = {"walk": name, "last_waiting": waiting, "sentence": sentence, "decided": decided, "waiting": waiting_label,
               "document": document, "waits_on_tag": check_and_close.WALK_WAITS_ON_TAG,
               "category_tags": ", ".join(f"`{check_and_close.WALK_CATEGORY_TAG}{category}`"
                                          for category in check_and_close.WALK_CATEGORIES),
               "closing_lines_named": SEVERAL_CLOSING_LINES_NAMED if numbers[1:] else ONE_CLOSING_LINE_NAMED,
-              "closing_lines": "\n".join(closing), "no_page": NO_PAGE_TEMPLATE.format(
+              "closing_lines": "\n".join(closing),
+              "closing_lines_no_item_added": "\n".join(closing_no_item_added), "no_page": NO_PAGE_TEMPLATE.format(
                   items=("items " if without_page[1:] else "item ") + " and ".join(without_page),
                   minutes=minutes) if without_page else ""}
     lines_out = [REFUSAL_OPENING_TEMPLATE.format(**values)] + [line.format(**values) for line in REFUSAL_INSTRUCTIONS]

@@ -87,6 +87,9 @@ The page goes in the wiki, next to the glossary. Do you agree that agents look t
 """ + ANSWER_LINE
 # The minutes' `#next_to_present` line gives M as 10; once the agent adds the item a refusal asks for, the walk has 11.
 M_AFTER_THE_ADDED_ITEM = "11"
+M_WITH_NO_ITEM_ADDED = "10"
+NO_QUESTION_SENTENCE = ("If the flagged text does not ask the user anything, end the turn with only the waiting item's "
+                        "closing line, printed below.")
 INTERRUPTION_ITEM = f"""## Item 2.1 of 11: merge-lane-2's question about the GHI
 
 merge-lane-2 asks: should I file one GHI listing the remaining seats' tests?
@@ -404,12 +407,14 @@ def test_the_block_message_says_what_to_do():
              "End the message you write next with the line `I added the question to the walk as a new item.` and "
              "then the waiting item's closing line, as the walk-me-through skill writes it, as the last text of that "
              f"message:\n`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the poem page lives](<page link>) · "
+             f"{CLOSING_LINE_ANSWER_LETTERS}`\n{NO_QUESTION_SENTENCE}\n"
+             f"`[Item 2 of {M_WITH_NO_ITEM_ADDED}, where the poem page lives](<page link>) · "
              f"{CLOSING_LINE_ANSWER_LETTERS}`\n"
              "The minutes record no `#item_page` line for item 2. For each such item, publish its page first if it "
              f"has none and add to {case.minutes} the line `#item_page item <N> of <M> <the page's link>`, which this "
              "hook reads back; then put the same link in place of `<page link>` in the item's closing line.\n"),
-            ("the message says how to clear a false block",
-             "If the flagged text does not ask the user anything, reword it in your reply so that it no longer reads")):
+            ("the message says how to clear a false block, with the closing line that keeps the walk's count",
+             f"{NO_QUESTION_SENTENCE}\n`[Item 2 of {M_WITH_NO_ITEM_ADDED}, where the poem page lives]")):
         check(case_name, phrase in reason, reason)
     check("the message asks for no change to M in any heading or in the minutes",
           "item count M" not in reason and "#next_to_present" not in reason, reason)
@@ -1049,12 +1054,18 @@ def test_two_waiting_items():
                   f"writes it, as the last text of that message:\n`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the "
                   f"poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}`\n`[Item 3 of "
                   f"{M_AFTER_THE_ADDED_ITEM}, the hook](<page link>) · "
+                  f"{CLOSING_LINE_ANSWER_LETTERS}`\n{NO_QUESTION_SENTENCE}\n`[Item 2 of {M_WITH_NO_ITEM_ADDED}, where "
+                  f"the poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}`\n`[Item 3 of "
+                  f"{M_WITH_NO_ITEM_ADDED}, the hook](<page link>) · "
                   f"{CLOSING_LINE_ANSWER_LETTERS}`\nThe minutes record no `#item_page` line for items 2 and 3. For each such item")
     mixed = Case(minutes="#item_page item 3 of 10 https://claude.ai/artifact/p3\n#next_to_present items 2 and 3 of 10")
     mixed.reply("Should I merge the pull request now?")
     check_blocked("with two items waiting and a page for one, each gets its own form of the closing line",
                   mixed.run(), f"`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the poem page lives](<page link>) · "
                   f"{CLOSING_LINE_ANSWER_LETTERS}`\n`[Item 3 of {M_AFTER_THE_ADDED_ITEM}, the hook]"
+                  f"(https://claude.ai/artifact/p3) · {CLOSING_LINE_ANSWER_LETTERS}`\n{NO_QUESTION_SENTENCE}\n"
+                  f"`[Item 2 of {M_WITH_NO_ITEM_ADDED}, where the poem page lives](<page link>) · "
+                  f"{CLOSING_LINE_ANSWER_LETTERS}`\n`[Item 3 of {M_WITH_NO_ITEM_ADDED}, the hook]"
                   f"(https://claude.ai/artifact/p3) · {CLOSING_LINE_ANSWER_LETTERS}`\n"
                   "The minutes record no `#item_page` line for item 2. For each such item")
 
@@ -1172,9 +1183,14 @@ def test_the_refusal_gives_the_waiting_items_closing_line_and_it_passes_once_the
     reason = blocked_reason(case.run()) or ""
     expected = (f"`[Item 2 of 11, where the poem page lives](https://claude.ai/artifact/p2) · "
                 f"{CLOSING_LINE_ANSWER_LETTERS}`")
-    check("the refusal gives the waiting item's closing line with its page link and the new total",
-          reason.endswith(f"as the last text of that message:\n{expected}\n" + hook.REFUSAL_INSTRUCTIONS[-2]
-                          + "\n" + hook.REFUSAL_INSTRUCTIONS[-1]), reason)
+    unchanged = expected.replace("Item 2 of 11", "Item 2 of 10")
+    check("the refusal gives the waiting item's closing line with its page link, the new total for a question and "
+          "the walk's own total for text that asks nothing",
+          reason.endswith(f"as the last text of that message:\n{expected}\n{NO_QUESTION_SENTENCE}\n{unchanged}\n"
+                          + hook.REFUSAL_INSTRUCTIONS[-1]), reason)
+    case.reply(unchanged[1:-1])
+    check_silent("the reply the refusal asks for when the flagged text asks nothing, the closing line alone, passes",
+                 case.run(model="yes"))
     done = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n"
                 + INTERRUPTION_ITEM.replace("merge-lane-2 asks: should I file one GHI listing the remaining seats' "
                                             "tests?", "Should I merge the pull request now?"),
