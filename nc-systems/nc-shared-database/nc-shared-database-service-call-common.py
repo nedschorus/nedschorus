@@ -31,15 +31,20 @@ Which answer counts as what:
   anything else  no answer within 2 seconds, name lookup of ned-box.local
                  included, a refused connection, or any other status, such as a
                  500: ned-box cannot be reached
+
+A call whose name lookup has not finished within the 2 seconds sends nothing. An
+event sent whose answer did not come within them may still be stored, and the
+FAILED line says so; the service stores an event ID once, so sending the same
+event ID again is safe.
 """
 
 import http.client
 import json
+import socket
 import sys
 import threading
 import time
-import urllib.error
-import urllib.request
+import urllib.parse
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,7 +61,8 @@ STATUSES_THE_SERVICE_REFUSES_WITH = (400, 401, 422)
 
 
 class NcSharedDatabaseServiceCallFailed(Exception):
-    """The call stored or read nothing. service_answered is True when calling again
+    """The call read nothing, and stored nothing unless its text says the event was sent
+    and may still be stored. service_answered is True when calling again
     would not help: the service refused the request (400, 401 or 422), or this
     machine's token file cannot be read, so nothing was sent. It is False when
     ned-box could not be reached."""
@@ -81,16 +87,26 @@ NC_SHARED_DATABASE_SERVICE_STATUS_COMMAND_ON_NED_BOX = (
     "systemctl --user status nc-shared-database-service")
 
 
-def _not_reached(method, url, what_happened):
+def _not_reached(method, url, what_happened, sent_event=None):
+    """sent_event is the event when it was sent and no answer came, so the service may
+    have stored it."""
+    if sent_event is None:
+        outcome, outcome_for_user = "so nothing was recorded or read", "nothing was recorded"
+    else:
+        outcome = (f"after the event was sent, so the service may still store it: event ID "
+                   f"{sent_event.get('event_id')}. The service stores an event ID once, but a "
+                   f"program run again sends its event under a new event ID, so before running "
+                   f"the step again, check whether the service holds the event")
+        outcome_for_user = (f"the {sent_event.get('operation')} event, ID "
+                            f"{sent_event.get('event_id')}, was sent and may have been recorded")
     return NcSharedDatabaseServiceCallFailed(
         f"FAILED: ned-box cannot be reached: {method} {url}, a call to the nc-shared-database "
-        f"service on ned-box, {what_happened}, so nothing was recorded or read. The service "
-        f"holds the only record of the agent-seats, so a program that needs it stops until "
-        f"ned-box answers.\n"
+        f"service on ned-box, {what_happened}, {outcome}. The service holds the only record of "
+        f"the agent-seats, so a program that needs it stops until ned-box answers.\n"
         f"Check the service: on ned-box run `{NC_SHARED_DATABASE_SERVICE_STATUS_COMMAND_ON_NED_BOX}`; "
         f"on the Mac run `ssh nedlern@ned-box '{NC_SHARED_DATABASE_SERVICE_STATUS_COMMAND_ON_NED_BOX}'`.\n"
         f"Then tell the user: \"The nc-shared-database service on ned-box did not answer "
-        f"{method} {url} ({what_happened}); nothing was recorded. The check of the service "
+        f"{method} {url} ({what_happened}); {outcome_for_user}. The check of the service "
         f"printed: <the first lines the check printed, or ssh's error>.\" Do not record or read "
         f"the agent-seat records another way, such as from files, and do not call again in a "
         f"loop: leave the step that needs the service until ned-box answers, and go on with work "
@@ -109,12 +125,13 @@ def _refused(method, url, status, answer, token_file, body):
             f"machine sent the token in {token_file}.\n"
             f"If you are on the Mac: run `{NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND}` "
             f"once, which writes both machines' tokens into that file; if it stops with an error, "
-            f"follow what it prints. Then run the step that failed again.\n"
+            f"follow what it prints. Then run again the step whose call to the service failed.\n"
             f"If you are on ned-box: tell the user: \"The nc-shared-database service on ned-box "
             f"refuses ned-box's token in {token_file}. Running "
             f"`{NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND}` in a Terminal on the Mac "
             f"puts it into the service's accepted-tokens file.\" Then leave the step that needs "
-            f"the service until he has run it, and go on with work that does not need it.\n"
+            f"the service until he has run the installer, and go on with work that does not "
+            f"need the service.\n"
             f"{SUBAGENT_PASSES_IT_TO_DISPATCHING_AGENT_LINE}",
             service_answered=True)
     sent = f" the event {json.dumps(body)}" if body is not None else ""
@@ -153,51 +170,87 @@ def nc_shared_database_service_http_request_single_attempt(
             f"file.\n"
             f"If you are on the Mac: run `{NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND}` "
             f"once, which writes the token file; if it stops with an error, follow what it "
-            f"prints. Then run the step that failed again.\n"
+            f"prints. Then run again the step whose call to the service failed.\n"
             f"If you are on ned-box: tell the user: \"The nc-shared-database service cannot be "
             f"called from ned-box: its token file {token_file} cannot be read ({error}). Running "
             f"`{NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND}` in a Terminal on the Mac "
-            f"writes it.\" Then leave the step that needs the service until he has run it, and "
-            f"go on with work that does not need it.\n"
+            f"writes it.\" Then leave the step that needs the service until he has run the "
+            f"installer, and go on with work that does not need the service.\n"
             f"{SUBAGENT_PASSES_IT_TO_DISPATCHING_AGENT_LINE}", service_answered=True)
-    request = urllib.request.Request(
-        url, method=method,
-        data=None if body is None else json.dumps(body).encode("utf-8"),
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-    outcome = {}
+    address = urllib.parse.urlsplit(url)
+    deadline = time.monotonic() + timeout_seconds
+    no_answer = f"got no answer within {timeout_seconds} seconds"
+    lookup = {}
 
-    def call():
+    def look_up():
         try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                outcome["answer"] = response.read()
-        except urllib.error.HTTPError as error:
-            outcome["status"] = error.code
-            try:
-                outcome["status_answer"] = error.read().decode("utf-8", "replace").strip()
-            except (OSError, http.client.HTTPException) as read_error:
-                outcome["status_answer"] = (f"<its answer could not be read: "
-                                            f"{type(read_error).__name__}: {read_error}>")
-        except (OSError, http.client.HTTPException) as error:
-            # urllib.error.URLError, a timeout and a refused connection are all OSError.
-            outcome["error"] = error
+            lookup["addresses"] = socket.getaddrinfo(address.hostname, address.port or 80,
+                                                     type=socket.SOCK_STREAM)
+        except OSError as error:
+            lookup["error"] = error
 
-    # urlopen's timeout bounds each socket operation but not the name lookup of
-    # ned-box.local, so the whole call runs in a thread that is abandoned at the limit.
-    calling = threading.Thread(target=call, daemon=True)
-    calling.start()
-    calling.join(timeout_seconds)
-    if calling.is_alive():
-        raise _not_reached(method, url, f"got no answer within {timeout_seconds} seconds")
-    if "answer" in outcome:
-        return json.loads(outcome["answer"])
-    if "status" in outcome:
-        status, answer = outcome["status"], outcome["status_answer"]
-        if status in STATUSES_THE_SERVICE_REFUSES_WITH:
-            raise _refused(method, url, status, answer, token_file, body)
-        raise _not_reached(method, url, f"was answered {status}: {answer}")
-    error = outcome["error"]
-    raise _not_reached(method, url, f"got no answer within {timeout_seconds} seconds "
-                                    f"({type(error).__name__}: {error})")
+    # getaddrinfo takes no timeout, so only the name lookup of ned-box.local runs in a
+    # thread, abandoned at the limit; the request is sent from this thread, so an
+    # abandoned lookup can never send it.
+    looking_up = threading.Thread(target=look_up, daemon=True)
+    looking_up.start()
+    looking_up.join(timeout_seconds)
+    if looking_up.is_alive():
+        raise _not_reached(method, url, f"{no_answer}: the name lookup of {address.hostname} "
+                                        f"did not finish")
+    if "error" in lookup:
+        error = lookup["error"]
+        raise _not_reached(method, url, f"failed the name lookup of {address.hostname} "
+                                        f"({type(error).__name__}: {error})")
+    connection = http.client.HTTPConnection(address.hostname, address.port)
+    errors = []
+    for family, kind, protocol, _, socket_address in lookup["addresses"]:
+        candidate = socket.socket(family, kind, protocol)
+        try:
+            candidate.settimeout(max(deadline - time.monotonic(), 0.001))
+            candidate.connect(socket_address)
+        except OSError as error:
+            candidate.close()
+            errors.append(f"{type(error).__name__}: {error}")
+            continue
+        connection.sock = sock = candidate
+        break
+    if connection.sock is None:
+        raise _not_reached(method, url, f"could not connect ({'; '.join(errors)})")
+    selector = (address.path or "/") + (f"?{address.query}" if address.query else "")
+    sent_event = None
+    try:
+        try:
+            sock.settimeout(max(deadline - time.monotonic(), 0.001))
+            connection.request(
+                method, selector, body=None if body is None else json.dumps(body).encode("utf-8"),
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+            # A request cut short is not stored: the service reads the whole body first.
+            sent_event = body
+            sock.settimeout(max(deadline - time.monotonic(), 0.001))
+            response = connection.getresponse()
+        except (OSError, http.client.HTTPException) as error:
+            # A timeout is an OSError.
+            raise _not_reached(method, url, f"{no_answer} ({type(error).__name__}: {error})",
+                               sent_event) from None
+        try:
+            sock.settimeout(max(deadline - time.monotonic(), 0.001))
+            answer = response.read()
+        except (OSError, http.client.HTTPException) as error:
+            answer = None
+            unreadable = f"its answer could not be read: {type(error).__name__}: {error}"
+    finally:
+        connection.close()
+    status = response.status
+    if 200 <= status < 300:
+        if answer is None:
+            raise _not_reached(method, url, f"was answered {status}, but {unreadable}",
+                               sent_event)
+        return json.loads(answer)
+    answer = f"<{unreadable}>" if answer is None else answer.decode("utf-8", "replace").strip()
+    if status in STATUSES_THE_SERVICE_REFUSES_WITH:
+        raise _refused(method, url, status, answer, token_file, body)
+    raise _not_reached(method, url, f"was answered {status}: {answer}")
 
 
 def nc_shared_database_event_body(operation, seat_id, fields, event_id=None):
