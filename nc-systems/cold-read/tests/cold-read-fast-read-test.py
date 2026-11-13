@@ -1368,7 +1368,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- The embedded instructions: two cases, and why both are needed ---
     # The case below and the one after it are a pair. The first proves the
-    # runtime uses the text embedded in the script: that text, and not the
+    # agent-binary uses the text embedded in the script: that text, and not the
     # skill's prompt file, is what the model receives. The second proves that
     # embedded text is current: still byte-for-byte the user's editable
     # source. Neither covers the other. The first compares the prompt the
