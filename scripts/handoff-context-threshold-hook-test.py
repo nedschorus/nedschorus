@@ -1422,6 +1422,16 @@ with tempfile.TemporaryDirectory() as workspace:
         check("the compacted handoff rounds the count with the dropped tokens, not truncates it",
               "used 20% (34% counting the tokens its compactions dropped" in result.stderr,
               result.stderr[:200])
+        # 90.6% is the context used alone: it truncates to 90, a 1% larger factor gives 91.5 and
+        # a 1% smaller one 89.7, so the share must be computed exactly to read 91%.
+        compacted_used_fractional = transcript_of(workspace, "compacted-used-fractional.jsonl", [
+            compaction_record(10_000), usage_record(906_000)])  # 90.6% + 1% = 91.6%
+        marker_file.unlink(missing_ok=True)
+        result = run_hook({"session_id": PROBE_SESSION_ID,
+                           "transcript_path": str(compacted_used_fractional)})
+        check("the compacted handoff rounds the context used alone, not truncates it",
+              "used 91% (92% counting the tokens its compactions dropped" in result.stderr,
+              result.stderr[:200])
 
         # --- A session its caller reincarnates is left alone ---------------
         # 2026-09-16: ghi-guide-agent, run by scripts/ghi-guide-agent-ask.py as `claude -p`
