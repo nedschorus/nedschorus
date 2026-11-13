@@ -1386,6 +1386,14 @@ def moved_into_body_cases(root, repository, base, frozen_head):
         "Comments on lines outside this pull request's diff:\n- `setup.py:3`: **Blocks** the moved finding.")
     check("a line in the moved-comment form above the moved-comment heading is not read back as a moved comment",
           read_back == [{"path": "setup.py", "line": 3, "body": "**Blocks** the moved finding."}], repr(read_back))
+
+    read_back = load_program().outside_the_diff_comments_read_back_from_review_body(
+        "Comments on lines outside this pull request's diff:\n  an indented line before any moved comment\n"
+        "- `setup.py:3`: **Blocks** the moved finding.\n  its continuation.\n\nA closing paragraph.")
+    check("only an indented line after a moved comment continues it: an indented line before the first one, "
+          "a blank line and an unindented paragraph after it are not read back",
+          read_back == [{"path": "setup.py", "line": 3, "body": "**Blocks** the moved finding.\nits continuation."}],
+          repr(read_back))
     del base
 
 
