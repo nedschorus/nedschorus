@@ -3141,7 +3141,8 @@ def test_an_item_of_no_kind_is_refused_when_rated_above_weak_or_rated_none_and_t
           *refused_as_rated_none(rated_none_case(rating="medium: the option changes what users see."),
                                  "rates the case against medium; an item of none of the kinds 1 to 6 that `--help` "
                                  "lists under `--not-asked` settles without the user only when its case against is "
-                                 "rated none, or weak with a case against that names only cost"))
+                                 "rated none, or weak with a case against that names only cost, or only that the change "
+                                 "alters text the user approved word for word on an earlier date"))
     check("an item of no kind with no touches line is refused",
           *refused_as_rated_none(rated_none_case(touches=""), "it has no `#not_asked_touches` line"))
     for word in ("CLAUDE.md:12", "tools/counter.py.", "tools/missing.py"):
