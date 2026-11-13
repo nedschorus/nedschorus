@@ -421,6 +421,20 @@ try:
           == {"time": "2026-11-02T11:59:00Z", "source": str(subagents / "agent-x.jsonl")}
           and set(verdicts) == {"beta"}, verdicts)
 
+    project, _ = machine.seat("gamma", IDLE_TURN)
+    workflow_run = project / "s-1" / "subagents" / "workflows" / "wf_1"
+    workflow_run.mkdir(parents=True)
+    (workflow_run / "agent-y.jsonl").write_text(
+        json.dumps(assistant("working", at="2026-11-02T11:59:00Z")) + "\n")
+    (workflow_run / "journal.jsonl").write_text(
+        json.dumps(assistant("not a transcript", at="2026-11-02T11:59:30Z")) + "\n")
+    _, verdicts, _ = machine.run("--agent-seat", "gamma")
+    check("a Workflow-tool agent spent a token a minute ago: not idle, and the source is its "
+          "transcript, not the workflow run's journal",
+          verdicts["gamma"]["idle"] is False and verdicts["gamma"]["last_activity"]
+          == {"time": "2026-11-02T11:59:00Z", "source": str(workflow_run / "agent-y.jsonl")},
+          verdicts)
+
     # --- approval-walk items --------------------------------------------------------------------
     machine = Machine()
     machine.seat("alpha", [user("go"), assistant("Done."), turn_end()])
