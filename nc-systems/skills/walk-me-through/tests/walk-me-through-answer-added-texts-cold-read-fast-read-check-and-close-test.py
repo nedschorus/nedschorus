@@ -4453,21 +4453,27 @@ def test_a_kept_version_whose_first_block_is_indented_code_stays_code():
           and [unit[0] for unit in units] == [["1"], ["2"], ["3"], ["4"], ["5"]], described(result) + text)
 
 
-def test_a_read_outcome_with_no_number_predicted_field_is_the_items_own_read_even_after_a_retitle():
-    case = item_read_case()
-    answered_and_closed(case)
-    case.run(WAITING_ITEM_READ)
-    for path in case.reads().glob("*-outcome.json"):
-        outcome = json.loads(path.read_text())
-        if not outcome.pop("number_predicted", False):
-            path.write_text(json.dumps(outcome))
-    document = rewritten_item_3(case, "drop it.")
-    document.write_text(document.read_text().replace("## Item 3 of 5: three\n", "## Item 3 of 5: three renamed\n", 1))
-    result = case.run(WAITING_ITEM_READ)
-    text = document.read_text()
-    check("a read outcome with no number_predicted field, as record_read wrote an ordinary read before the field was "
-          "always written, is the item's own read: its text is kept as a withdrawn version after a retitle",
-          result.returncode == 0 and "#### Withdrawn version 1 of item 3\n\n" in text, described(result) + text)
+def test_a_read_outcome_with_number_predicted_absent_or_false_is_the_items_own_read_even_after_a_retitle():
+    # record_read leaves the field out of an ordinary read; records an earlier version wrote, already on disk, say false.
+    for how, field in (("no number_predicted field", None), ('"number_predicted": false', False)):
+        case = item_read_case()
+        answered_and_closed(case)
+        case.run(WAITING_ITEM_READ)
+        for path in case.reads().glob("*-outcome.json"):
+            outcome = json.loads(path.read_text())
+            if not outcome.get("number_predicted"):
+                outcome.pop("number_predicted", None)
+                if field is not None:
+                    outcome["number_predicted"] = field
+                path.write_text(json.dumps(outcome))
+        document = rewritten_item_3(case, "drop it.")
+        document.write_text(document.read_text().replace("## Item 3 of 5: three\n", "## Item 3 of 5: three renamed\n",
+                                                         1))
+        result = case.run(WAITING_ITEM_READ)
+        text = document.read_text()
+        check(f"a read outcome with {how} is the item's own read: its text is kept as a withdrawn version after a "
+              "retitle",
+              result.returncode == 0 and "#### Withdrawn version 1 of item 3\n\n" in text, described(result) + text)
 
 
 def test_a_kept_versions_first_line_loses_only_the_running_count_and_its_markup_never_a_code_spans_characters():
