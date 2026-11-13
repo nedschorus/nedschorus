@@ -2111,7 +2111,7 @@ def pushed_head_read_from_origin_cases(root, repository, _base, frozen_head):
           and (root / "ls-remote-calls.txt").read_text() == f"-C . ls-remote origin refs/heads/{BRANCH}\n",
           out + err)
 
-    code, out, err = check_with_origin(f"{fix}\trefs/heads/other/{BRANCH}\n")
+    code, out, err = check_with_origin(f"{fix}\trefs/heads/other/refs/heads/{BRANCH}\n")
     check("pushed head: origin without the pull request's branch, only one whose name ends the same, fails with "
           "exit 2, naming the branch",
           code == 2 and out == "" and f"found no branch {BRANCH} on origin" in err
