@@ -715,7 +715,7 @@ def topic_worktree_cases(root, repository, base, frozen_head):
           code == 2 and out == "" and "fetch --quiet origin" in err, err + out)
 
     submitted = "2026-11-11T12:00:00Z"
-    submitted_seconds = datetime.datetime.fromisoformat(submitted).timestamp()
+    submitted_seconds = datetime.datetime.fromisoformat(submitted.replace("Z", "+00:00")).timestamp()
     dated_routes = routes_for(frozen_head, [dict(review(commit_id=frozen_head), submitted_at=submitted)])
     os.utime(made / ANSWERS_NAME, (submitted_seconds - 60, submitted_seconds - 60))
     code, out, err = run(root, made, dated_routes, "--check")
