@@ -625,7 +625,7 @@ def round_facts(number, reviewer_login):
         carried_blocking, carried_nits = unanswered_round_findings_of_replaced_pull_requests(replaced, reviewer_login)
         findings = without_reposts(findings + carried_blocking)
         nits = without_reposts(nits + carried_nits)
-    return (url, head, branch, review_links(latest_first(anchor, reviews)), anchor.get("id"), frozen_head,
+    return (url, head, branch, review_links(latest_first(anchor, reviews)), frozen_head,
             findings, nits, fix_round_number,
             None if recorded else [review.get("id") for review in reviews], anchor.get("submitted_at"))
 
@@ -722,7 +722,7 @@ def topic_worktree_at_frozen_head(number, branch, frozen_head):
 
 
 def print_brief(number, reviewer_login):
-    (url, head, branch, review_link, _review_id, frozen_head, findings, nits,
+    (url, head, branch, review_link, frozen_head, findings, nits,
      fix_round_number, _unrecorded_review_ids, _review_submitted_at) = round_facts(number, reviewer_login)
     if head != frozen_head:
         raise Refused(f"Pull request {url} has head {head}, but merge-lane-2 reviewed {frozen_head}; "
@@ -1146,7 +1146,7 @@ def refuse_answers_written_before_review(answers_path, review_submitted_at, revi
 
 def check_round(number, reviewer_login, answers_path, commit_name, after_conflict_merge,
                 confirm_dispatching_agent_checked_new_shared_names=False):
-    (url, head, branch, review_link, _review_id, frozen_head, blocking, nits,
+    (url, head, branch, review_link, frozen_head, blocking, nits,
      _fix_round_number, unrecorded_review_ids, review_submitted_at) = round_facts(number, reviewer_login)
     findings = blocking + nits
     answers_path = answers_path or default_answers_path(number)
@@ -1247,7 +1247,7 @@ def local_branch_exists(branch):
 
 
 def move_start(number, reviewer_login, new_branch, whole_file_paths):
-    (_url, _head, pull_request_branch, _review_link, _review_id, frozen_head, _findings, _nits,
+    (_url, _head, pull_request_branch, _review_link, frozen_head, _findings, _nits,
      _fix_round_number, _unrecorded_review_ids, _review_submitted_at) = round_facts(number, reviewer_login)
     state_path = move_state_path()
     if state_path.exists():
