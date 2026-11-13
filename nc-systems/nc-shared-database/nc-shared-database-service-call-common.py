@@ -58,6 +58,7 @@ NC_SHARED_DATABASE_SERVICE_CALL_TIMEOUT_SECONDS = 2
 NC_SHARED_DATABASE_SERVICE_CALL_AGAIN_AFTER_SECONDS = 30
 THIS_MACHINE = "mac" if sys.platform == "darwin" else "ned-box"
 STATUSES_THE_SERVICE_REFUSES_WITH = (400, 401, 422)
+_name_lookups_not_finished = {}
 
 
 class NcSharedDatabaseServiceCallFailed(Exception):
@@ -79,7 +80,7 @@ def utc_now():
 # Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 SUBAGENT_PASSES_IT_TO_DISPATCHING_AGENT_LINE = (
     "If you are a subagent, on either machine, and a line above says to tell the user, send "
-    "the quoted text to the agent that dispatched you instead.")
+    "the words that line quotes to the agent that dispatched you instead.")
 NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND = (
     "python3 ~/Projects/nedschorus/nc-systems/nc-shared-database/"
     "nc-shared-database-service-on-ned-box-and-jobs-on-both-machines-install-from-the-mac.py")
@@ -100,8 +101,9 @@ def _not_reached(method, url, what_happened, sent_event=None):
         outcome_for_user = (f"the {sent_event.get('operation')} event, ID "
                             f"{sent_event.get('event_id')}, was sent and may have been recorded")
     return NcSharedDatabaseServiceCallFailed(
-        f"FAILED: ned-box cannot be reached: {method} {url}, a call to the nc-shared-database "
-        f"service on ned-box, {what_happened}, {outcome}. The service holds the only record of "
+        f"FAILED: the nc-shared-database service on ned-box cannot be reached: "
+        f"{method} {url}, a call to the service, "
+        f"{what_happened}, {outcome}. The service holds the only record of "
         f"the agent-seats, so a program that needs it stops until ned-box answers.\n"
         f"Check the service: on ned-box run `{NC_SHARED_DATABASE_SERVICE_STATUS_COMMAND_ON_NED_BOX}`; "
         f"on the Mac run `ssh nedlern@ned-box '{NC_SHARED_DATABASE_SERVICE_STATUS_COMMAND_ON_NED_BOX}'`.\n"
@@ -124,8 +126,9 @@ def _refused(method, url, status, answer, token_file, body):
             f"{NC_SHARED_DATABASE_SERVICE_ACCEPTED_TOKENS_FILE_ON_NED_BOX} on ned-box, and this "
             f"machine sent the token in {token_file}.\n"
             f"If you are on the Mac: run `{NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND}` "
-            f"once, which writes both machines' tokens into that file; if it stops with an error, "
-            f"follow what it prints. Then run again the step whose call to the service failed.\n"
+            f"once, which writes both machines' tokens into that file. If it stops with an error, "
+            f"follow what it prints and run it again; once it finishes without an error, run "
+            f"again the step whose call to the service failed.\n"
             f"If you are on ned-box: tell the user: \"The nc-shared-database service on ned-box "
             f"refuses ned-box's token in {token_file}. Running "
             f"`{NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND}` in a Terminal on the Mac "
@@ -169,8 +172,9 @@ def nc_shared_database_service_http_request_single_attempt(
             f"read ({error}). Every call to the service carries this machine's token from that "
             f"file.\n"
             f"If you are on the Mac: run `{NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND}` "
-            f"once, which writes the token file; if it stops with an error, follow what it "
-            f"prints. Then run again the step whose call to the service failed.\n"
+            f"once, which writes the token file. If it stops with an error, follow what it "
+            f"prints and run it again; once it finishes without an error, run again the step "
+            f"whose call to the service failed.\n"
             f"If you are on ned-box: tell the user: \"The nc-shared-database service cannot be "
             f"called from ned-box: its token file {token_file} cannot be read ({error}). Running "
             f"`{NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND}` in a Terminal on the Mac "
@@ -191,11 +195,18 @@ def nc_shared_database_service_http_request_single_attempt(
 
     # getaddrinfo takes no timeout, so only the name lookup of ned-box.local runs in a
     # thread, abandoned at the limit; the request is sent from this thread, so an
-    # abandoned lookup can never send it.
+    # abandoned lookup can never send it. A lookup still stalled from an earlier call
+    # is not started again, so a caller calling every 30 seconds leaves one thread, not one
+    # per call.
+    earlier = _name_lookups_not_finished.get(address.hostname)
+    if earlier is not None and earlier.is_alive():
+        raise _not_reached(method, url, f"did not look up {address.hostname}: its name lookup "
+                                        f"started by an earlier call has still not finished")
     looking_up = threading.Thread(target=look_up, daemon=True)
     looking_up.start()
     looking_up.join(timeout_seconds)
     if looking_up.is_alive():
+        _name_lookups_not_finished[address.hostname] = looking_up
         raise _not_reached(method, url, f"{no_answer}: the name lookup of {address.hostname} "
                                         f"did not finish")
     if "error" in lookup:
@@ -205,12 +216,14 @@ def nc_shared_database_service_http_request_single_attempt(
     connection = http.client.HTTPConnection(address.hostname, address.port)
     errors = []
     for family, kind, protocol, _, socket_address in lookup["addresses"]:
-        candidate = socket.socket(family, kind, protocol)
+        candidate = None
         try:
+            candidate = socket.socket(family, kind, protocol)
             candidate.settimeout(max(deadline - time.monotonic(), 0.001))
             candidate.connect(socket_address)
         except OSError as error:
-            candidate.close()
+            if candidate is not None:
+                candidate.close()
             errors.append(f"{type(error).__name__}: {error}")
             continue
         connection.sock = sock = candidate

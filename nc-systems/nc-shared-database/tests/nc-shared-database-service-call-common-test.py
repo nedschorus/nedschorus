@@ -150,7 +150,7 @@ with tempfile.TemporaryDirectory() as scratch:
             "agent-seat-paused", "seat-1", {}, **options))
         check(f"{status} counts as no answer: ned-box cannot be reached",
               failure is not None and not failure.service_answered
-              and str(failure).startswith("FAILED: ned-box cannot be reached")
+              and str(failure).startswith("FAILED: the nc-shared-database service on ned-box cannot be reached")
               and f"was answered {status}" in str(failure)
               and "Do not record or read the agent-seat records another way" in str(failure),
               failure and str(failure))
@@ -185,7 +185,7 @@ with tempfile.TemporaryDirectory() as scratch:
         "/agent-seats", service_url=f"http://127.0.0.1:{closed_port}", token_file=token_file))
     check("a refused connection: ned-box cannot be reached",
           failure is not None and not failure.service_answered
-          and str(failure).startswith("FAILED: ned-box cannot be reached")
+          and str(failure).startswith("FAILED: the nc-shared-database service on ned-box cannot be reached")
           and caller.NC_SHARED_DATABASE_SERVICE_STATUS_COMMAND_ON_NED_BOX in str(failure),
           failure and str(failure))
 
@@ -254,6 +254,14 @@ with tempfile.TemporaryDirectory() as scratch:
                                     **keywords)
         if host == "unknown-name.invalid":
             raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+        if host == "stalled-twice.invalid":
+            time.sleep(0.6)
+            raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+        if host == "ipv6-first.invalid":
+            found = real_getaddrinfo("127.0.0.1", fake.server.server_address[1], *arguments,
+                                     **keywords)
+            return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "",
+                     ("::1", fake.server.server_address[1], 0, 0))] + found
         return real_getaddrinfo(host, port, *arguments, **keywords)
 
     socket.getaddrinfo = name_lookup_that_stalls_then_finds_the_fake
@@ -288,6 +296,51 @@ with tempfile.TemporaryDirectory() as scratch:
               failure is not None and not failure.service_answered
               and "failed the name lookup of unknown-name.invalid (gaierror: " in str(failure),
               failure and str(failure))
+
+        looked_up.clear()
+        first = failure_of(lambda: caller.nc_shared_database_service_http_request_single_attempt(
+            "/agent-seats", service_url="http://stalled-twice.invalid:8765", token_file=token_file,
+            timeout_seconds=0.2))
+        second = failure_of(lambda: caller.nc_shared_database_service_http_request_single_attempt(
+            "/agent-seats", service_url="http://stalled-twice.invalid:8765", token_file=token_file,
+            timeout_seconds=0.2))
+        check("while an earlier call's name lookup is still stalled, a call starts no other "
+              "lookup and says why",
+              first is not None and second is not None and not second.service_answered
+              and looked_up == ["stalled-twice.invalid"]
+              and "did not look up stalled-twice.invalid: its name lookup started by an earlier "
+                  "call has still not finished" in str(second),
+              (looked_up, second and str(second)))
+        time.sleep(1)
+        looked_up.clear()
+        third = failure_of(lambda: caller.nc_shared_database_service_http_request_single_attempt(
+            "/agent-seats", service_url="http://stalled-twice.invalid:8765", token_file=token_file,
+            timeout_seconds=0.2))
+        check("once the stalled lookup has finished, the next call looks the name up again",
+              looked_up == ["stalled-twice.invalid"] and third is not None
+              and "did not look up" not in str(third), (looked_up, third and str(third)))
+        time.sleep(1)
+
+        real_socket = socket.socket
+
+        def socket_that_cannot_open_ipv6(family=socket.AF_INET, *arguments, **keywords):
+            if family == socket.AF_INET6:
+                raise OSError(97, "Address family not supported by protocol")
+            return real_socket(family, *arguments, **keywords)
+
+        socket.socket = socket_that_cannot_open_ipv6
+        try:
+            fake.statuses = [200]
+            answer = caller.nc_shared_database_service_http_request_single_attempt(
+                "/agent-seats", service_url="http://ipv6-first.invalid:8765", token_file=token_file)
+        except caller.NcSharedDatabaseServiceCallFailed as failure:
+            answer = str(failure)
+        except OSError as error:
+            answer = f"raw {type(error).__name__}: {error}"
+        finally:
+            socket.socket = real_socket
+        check("an address whose family this machine cannot open is skipped, and the next address "
+              "is tried", answer == {"sequence": 7}, answer)
     finally:
         socket.getaddrinfo = real_getaddrinfo
 
