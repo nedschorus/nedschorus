@@ -1711,6 +1711,16 @@ def test_items_under_a_shared_heading_whose_openings_are_not_read_get_no_recomme
                   f"lines {lines!r}")
 
 
+def test_items_under_a_shared_heading_with_no_openings_and_no_recommendation_line_say_there_is_none():
+    document = shared_heading_document("Item five fixes a path. Item six drops a sentence.\n")
+    for number in ("5", "6"):
+        lines = Case(next_to_present=f"item {number} of 9", document=document).lines("a")
+        check(f"under a shared heading with no openings and no recommendation, item {number} gets the line saying "
+              "it has no recommendation line, not that its part could not be told apart",
+              lines is not None and unknown_line(f"item {number} of 9", NO_RECOMMENDATION, "A") in lines
+              and not any("has no opening it reads" in line for line in lines), f"lines {lines!r}")
+
+
 def main():
     try:
         for name, function in sorted(globals().items()):
