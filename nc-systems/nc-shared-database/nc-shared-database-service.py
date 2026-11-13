@@ -38,9 +38,10 @@ POST /events answers:
        infinity, which the body may hold as NaN, Infinity or a number too large
        for a float, are numbers SQLite cannot store, and a string holding a
        lone surrogate, which the body may hold as \\udc80, is a string SQLite
-       cannot store; a seat ID with no agent-seat row; or an agent-seat name
-       another agent-seat not retired holds
-  409  an unknown operation, or keys or fields other than the operation's
+       cannot store; a seat ID with no agent-seat row; an agent-seat name
+       another agent-seat not retired holds; an unknown operation; keys or
+       fields other than the operation's; or a seat_id on an operation that
+       names no agent-seat, or none on one that does
   500  any other error, as {"error": "<its type>: <its message>"}; nothing is
        stored
 
@@ -245,11 +246,11 @@ def check_event_fits_its_operation(connection, event):
         raise Answer(422, {"error": f"unknown machine {event.get('machine')!r}"})
     operation = event.get("operation")
     if operation not in OPERATION_FIELDS:
-        raise Answer(409, {"error": f"unknown operation {operation!r}"})
+        raise Answer(422, {"error": f"unknown operation {operation!r}"})
     fields = event.get("fields")
     if set(event) != EVENT_KEYS or not isinstance(fields, dict) \
             or set(fields) != OPERATION_FIELDS[operation]:
-        raise Answer(409, {"error": f"the keys or fields differ from {operation}'s: event keys "
+        raise Answer(422, {"error": f"the keys or fields differ from {operation}'s: event keys "
                                     f"{sorted(EVENT_KEYS)}, fields "
                                     f"{sorted(OPERATION_FIELDS[operation])}"})
     wrong = [key for key in ("occurred_at", "seat_id")
@@ -275,7 +276,7 @@ def check_event_fits_its_operation(connection, event):
                                     f"Correct the program that sent it."})
     names_no_seat = operation in OPERATIONS_THAT_NAME_NO_AGENT_SEAT
     if names_no_seat != (event["seat_id"] is None):
-        raise Answer(409, {"error": f"{operation} takes "
+        raise Answer(422, {"error": f"{operation} takes "
                                     f"{'no' if names_no_seat else 'a'} seat_id"})
     if not names_no_seat and operation not in OPERATIONS_THAT_MAY_NAME_A_NEW_AGENT_SEAT \
             and connection.execute("SELECT 1 FROM agent_seat WHERE seat_id = ?",

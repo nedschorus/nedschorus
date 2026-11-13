@@ -3,7 +3,7 @@
 
 Each case starts the service on a loopback port with a database and an
 accepted-tokens file under a temporary directory, sends real HTTP requests,
-and reads the database back: tokens and 401, the 400, 422 and 409 answers,
+and reads the database back: tokens and 401, the 400 and 422 answers,
 values of the wrong type, an event sent twice, the state each operation
 leaves, the 500 answer to an error no check foresaw, and that a request which
 gets no answer fails only its own case.
@@ -191,7 +191,7 @@ with tempfile.TemporaryDirectory() as scratch:
     db.execute("DELETE FROM event")
     db.execute("DELETE FROM sqlite_sequence")
 
-    # 409
+    # 422: an event the service cannot place
     for name, body in (
             ("an unknown operation", event("agent-seat-teleported", {})),
             ("a field the operation does not know", event("agent-seat-paused", {"why": "x"})),
@@ -208,7 +208,7 @@ with tempfile.TemporaryDirectory() as scratch:
             ("no seat ID on an operation about an agent-seat",
              event("agent-seat-created", SEAT_FIELDS, seat_id=None))):
         status, answer = request("/events", body)
-        check(f"409: {name} stores nothing", status == 409 and events_stored() == before,
+        check(f"422: {name} stores nothing", status == 422 and events_stored() == before,
               (status, answer))
 
     # 200, and an event sent twice
