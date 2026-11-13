@@ -6,7 +6,9 @@ temporary directory: a copy kept as one file, 14 copies kept, a copy that
 fails its integrity check, which is injected because SQLite's backup does not
 make one, with the check command its message prints run as printed, an event
 stored between the backup and the read of the copy's highest sequence number,
-and a database that does not exist.
+and a database that does not exist. HOME points into the temporary directory,
+so the user-alert the failed integrity check writes never reaches the user's real
+user-alerts directory.
 
 Run: python3 nc-systems/nc-shared-database/tests/nc-shared-database-nightly-backup-with-integrity-check-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -14,6 +16,7 @@ Prints one line per case and exits non-zero if any case fails.
 
 import importlib.util
 import io
+import json
 import os
 import sqlite3
 import subprocess
@@ -47,6 +50,11 @@ def check(name, condition, detail=None):
         print(f"FAIL  {name}: {detail!r}")
 
 
+def pending_user_alerts():
+    return [json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted((backup.user_alerts.user_alerts_directory() / "pending").glob("*.json"))]
+
+
 def run(database, backup_directory):
     printed, errors = io.StringIO(), io.StringIO()
     with redirect_stdout(printed), redirect_stderr(errors):
@@ -57,14 +65,17 @@ def run(database, backup_directory):
 
 with tempfile.TemporaryDirectory() as scratch:
     scratch = Path(scratch)
+    os.environ["HOME"] = str(scratch / "home")
     database = scratch / "nc-shared-database.sqlite3"
     service.create_nc_shared_database_if_absent(database)
     live = sqlite3.connect(str(database), isolation_level=None)
     backups = scratch / "backups"
 
     code, printed, errors = run(database, backups)
-    check("a database with no event yet is backed up, with no highest sequence number",
-          code == 0 and "highest sequence number None" in printed, (code, printed, errors))
+    check("a database with no event yet is backed up, with no highest sequence number, "
+          "and no user-alert is written",
+          code == 0 and "highest sequence number None" in printed and pending_user_alerts() == [],
+          (code, printed, errors))
 
     for number in range(1, 8):
         live.execute("INSERT INTO event (event_id, machine, operation, received_at, body) "
@@ -107,6 +118,14 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the failure names the failed copy, the database and what the check printed",
           str(failed[0]) in errors and str(database) in errors and "Page 3 is never used" in errors
           and "tell the user" in errors, errors)
+    alerts = pending_user_alerts()
+    check("a copy that fails its integrity check writes one user-alert carrying the failure "
+          "as printed",
+          len(alerts) == 1 and alerts[0]["title"] == backup.BACKUP_COPY_FAILED_INTEGRITY_CHECK_USER_ALERT_TITLE
+          and alerts[0]["alert_text"] == errors.rstrip("\n")
+          and alerts[0]["action"] == backup.BACKUP_COPY_FAILED_INTEGRITY_CHECK_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO, alerts)
+    for alert_file in (backup.user_alerts.user_alerts_directory() / "pending").glob("*.json"):
+        alert_file.unlink()
     commands = [line.strip() for line in errors.splitlines()
                 if "PRAGMA integrity_check\"" in line]
     with tempfile.TemporaryDirectory() as fake_ssh_directory:
