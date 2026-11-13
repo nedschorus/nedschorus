@@ -2188,7 +2188,7 @@ def run_background_task_past_wait_limit_cases(workspace: Path):
     check("the successor's first prompt carries the task's five fields and asks for a speed-up "
           "before a raised wait-limit",
           expected_field in prompt and "Run each again, then look first for a way to make it faster"
-          in prompt and "raise its kind's wait-limit in the wait-limit table only when you find none"
+          in prompt and "raise its kind's wait-limit in the wait-limit table only when you find no such way"
           in prompt, prompt[:1200])
 
     lost = run_writer(handoffs, "carry on\n", "--agent", "pastwaitlimitlostcase",
@@ -2204,7 +2204,7 @@ def run_background_task_past_wait_limit_cases(workspace: Path):
             handoffs, workspace)
     check("with no session id, nothing is listed and the status says to name the tasks in the next step",
           no_session_lines == [] and "CLAUDE_CODE_SESSION_ID is unset" in no_session_status
-          and "Name in the next step each background task" in no_session_status, no_session_status)
+          and "Find in your own conversation each background task" in no_session_status, no_session_status)
 
 
 THRESHOLD_HOOK_SCRIPT = SYSTEM_DIRECTORY.parent.parent / "scripts" / "handoff-context-threshold-hook.py"
