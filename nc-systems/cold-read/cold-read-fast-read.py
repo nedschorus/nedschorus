@@ -1336,6 +1336,8 @@ class WhatShouldBeCodeQuestionCell(typing.NamedTuple):
     # a timer, not that wait, stops the cell at its time limit.
     time_limit_timer: threading.Timer
     stopped_at_time_limit: threading.Event
+    # The cell's exit code cannot say this: the timer sets it too.
+    section_collected_output: threading.Event
 
 
 def what_should_be_code_cell_stop_at_time_limit(process: subprocess.Popen,
@@ -1388,7 +1390,7 @@ def what_should_be_code_cell_start(target: pathlib.Path, scratch: pathlib.Path) 
     return WhatShouldBeCodeQuestionCell(
         process, answer, launcher_output, target,
         time.monotonic() + COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS,
-        time_limit_timer, stopped_at_time_limit)
+        time_limit_timer, stopped_at_time_limit, threading.Event())
 
 
 def what_should_be_code_cell_abandon(cell: WhatShouldBeCodeQuestionCell) -> None:
@@ -1399,10 +1401,14 @@ def what_should_be_code_cell_abandon(cell: WhatShouldBeCodeQuestionCell) -> None
     was_running = cell.process.poll() is None
     cell_common.stop_process_tree(cell.process)
     print(cell.launcher_output.read_text(encoding="utf-8"), file=sys.stderr, end="")
+    if was_running:
+        how_it_ended = "its cell was still running, and was stopped."
+    elif cell.stopped_at_time_limit.is_set():
+        how_it_ended = "its cell was stopped at its time limit."
+    else:
+        how_it_ended = "its cell had already exited."
     print(f"{PROGRAM}: Question 4 was abandoned: the read failed, so there is no report "
-          f"to hold its answer; "
-          + ("its cell was still running, and was stopped." if was_running
-             else "its cell had already exited."), file=sys.stderr)
+          f"to hold its answer; {how_it_ended}", file=sys.stderr)
 
 
 def what_should_be_code_section(cell: WhatShouldBeCodeQuestionCell) -> str:
@@ -1423,6 +1429,7 @@ def what_should_be_code_section(cell: WhatShouldBeCodeQuestionCell) -> str:
     exit_code = None if cell.stopped_at_time_limit.is_set() else cell.process.returncode
     output_text = cell.launcher_output.read_text(encoding="utf-8")
     print(output_text, file=sys.stderr, end="")
+    cell.section_collected_output.set()
     if exit_code == 0:
         return (f"\n{WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING}\n\n"
                 f"{cell.answer.read_text(encoding='utf-8').strip()}\n")
@@ -1620,7 +1627,7 @@ def main() -> int:
                 CLAUDE_CELL_LAUNCHER, exit_code, output)
         finally:
             # Inside the temporary directory: the cell writes there until it stops.
-            if question_4_cell.process.returncode is None:
+            if not question_4_cell.section_collected_output.is_set():
                 what_should_be_code_cell_abandon(question_4_cell)
     if bare_references:
         print(f"{PROGRAM}: bare issue, pull request or task numbers in this walk "

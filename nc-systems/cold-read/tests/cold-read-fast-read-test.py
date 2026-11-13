@@ -1408,6 +1408,56 @@ with tempfile.TemporaryDirectory() as scratch:
           abandoned_stub_pid is not None and not process_is_running(abandoned_stub_pid),
           f"pid {abandoned_stub_pid}")
 
+    # Questions 1 to 3 fail only after the time limit has stopped the Question
+    # 4 cell, which leaves the cell's exit code set though no section took it.
+    repository = build_scratch_repository(scratch)
+    copied_fast_read = repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"
+    copied_fast_read.write_text(
+        copied_fast_read.read_text(encoding="utf-8").replace(
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n",
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 2\n"),
+        encoding="utf-8")
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    reaped_stub_pid_file = scratch / "reaped-question-4-stub.pid"
+    reaped_stub_pid_file.unlink(missing_ok=True)
+    questions_1_to_3_released_file = scratch / "questions-1-to-3-released-to-fail"
+    questions_1_to_3_released_file.unlink(missing_ok=True)
+    question_4_died_before_questions_1_to_3_failed = []
+
+    def release_questions_1_to_3_to_fail_once_question_4_stub_dies():
+        started = time.monotonic()
+        while time.monotonic() - started < 15:
+            if reaped_stub_pid_file.is_file():
+                pid = int(reaped_stub_pid_file.read_text())
+                if not process_is_running(pid):
+                    question_4_died_before_questions_1_to_3_failed.append(True)
+                    break
+            time.sleep(0.1)
+        # The timer reaps the launcher a moment after the stub dies.
+        time.sleep(1)
+        questions_1_to_3_released_file.write_text("released", encoding="utf-8")
+
+    releaser = threading.Thread(target=release_questions_1_to_3_to_fail_once_question_4_stub_dies)
+    releaser.start()
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"wait_for_file": str(questions_1_to_3_released_file),
+               "fail_first_attempts": 99}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"hang": True, "report": QUESTION_4_STUB_ANSWER,
+                         "pid_file": str(reaped_stub_pid_file)},
+    )
+    releaser.join()
+    check("when Questions 1 to 3 fail after the time limit has stopped the Question 4 "
+          "cell, the read still says Question 4 was abandoned, and that its cell was "
+          "stopped at its time limit",
+          question_4_died_before_questions_1_to_3_failed == [True]
+          and result.returncode == 1 and result.stdout.startswith("FAILED")
+          and "Question 4 was abandoned" in result.stderr
+          and "its cell was stopped at its time limit" in result.stderr,
+          f"died before 1 to 3 failed: {question_4_died_before_questions_1_to_3_failed}; "
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
     # A session-handoff stops a background read with SIGTERM, and a closing
     # terminal stops a read run in it with SIGHUP, while the fast-clarify cell
     # runs; the Question 4 cell, in a session of its own, must not outlive it,
