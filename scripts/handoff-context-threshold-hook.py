@@ -259,7 +259,7 @@ BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND = (
 BACKGROUND_TASK_WAIT_LIMIT_MINUTES_WHEN_NO_KIND_MATCHES = 75.0
 BACKGROUND_TASK_KIND_WHEN_NO_KIND_MATCHES = "no kind in the table matched"
 _COMPILED_WAIT_LIMIT_KINDS = [
-    (kind, [re.compile(pattern, re.I | re.S) for pattern in patterns], minutes)
+    (kind, [re.compile(pattern, re.I | re.S) for pattern in patterns], minutes)  # pragma: no mutate, re.I and re.S share no bit, so ^ and + give the flags | gives
     for kind, patterns, minutes in BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND]
 
 

@@ -24,7 +24,9 @@ over a minute and reaches ned-box, so no case runs it except for --help.
 Run: python3 scripts/locate-file-copies-across-machines-test.py   (exit 0 = all passed)
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -36,6 +38,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 PROGRAM = pathlib.Path(
@@ -1151,6 +1154,22 @@ with scratch() as directory:
 with scratch() as directory:
     base = pathlib.Path(directory)
     make_stand_in_bin(base)
+    full_name = "rerun-root-probe-minutes.md"
+    write(base / "mac" / "agents" / "c" / full_name, "x")
+    code, stdout, stderr = run(base, "/rerun-root-probe")
+    first, _, second = stdout.partition(RERUN_LINE_OPENING)
+    same_second, other_second, _ = sections(second)
+    check("a path query in the root directory, which has one part, reruns in "
+          "the root directory, not by name, so a file elsewhere is still only "
+          "a candidate, and exits 1",
+          code == 1 and second.startswith(
+              f"{full_name}, so this program runs again with /{full_name} "
+              f"in place of /rerun-root-probe.")
+          and not same_second and full_name in other_second, stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
     write(base / "mac" / "agents" / "c" / "found-probe.md", "the file")
     write(base / "mac" / "agents" / "c" / "found-probe-minutes.md", "other")
     code, stdout, stderr = run(base, "found-probe.md")
@@ -1783,6 +1802,8 @@ with scratch() as directory:
           code == 0 and str(seat_b / "CLAUDE.local.md") in sections(stdout)[0]
           and "/seat-c/CLAUDE.local.md" in sections(stdout)[0],
           stdout + stderr)
+    check("a bare file name's search does not ask git which copies it tracks",
+          "not tracked by git" not in stdout, stdout)
     code, stdout, stderr = run(base, str(seat_a / "docs" / "tracked-probe.md"),
                                plan=plan)
     check("a file git tracks in another checkout is still found by its path "
@@ -2398,6 +2419,24 @@ check("a relative query's target is the same as its absolute spelling's",
       == {"kind": "checkout", "parts": ["docs", "b.md"],
           "path": "/Users/el/agents/s/.claude/worktrees/a/docs/b.md",
           "canonical": "/Users/el/agents/s/.claude/worktrees/a/docs/b.md"})
+
+# --- The time a search took ----------------------------------------------------
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    write(base / "mac" / "tmp" / "clock-probe.md", "tick")
+    clock_readings = iter([100.0, 103.5])
+    saved_time = program.time
+    program.time = types.SimpleNamespace(monotonic=lambda: next(clock_readings))
+    try:
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            clock_code = program.search_and_report(
+                "clock-probe.md", {"this": make_plan(base)["this"]})[0]
+    finally:
+        program.time = saved_time
+    check("the time a search took is the clock's reading after it less the "
+          "reading before it",
+          clock_code == 0 and "\nTook 3.5 s.\n" in printed.getvalue(),
+          printed.getvalue())
 
 blob_a = "a" * 40
 blob_b = "b" * 40
