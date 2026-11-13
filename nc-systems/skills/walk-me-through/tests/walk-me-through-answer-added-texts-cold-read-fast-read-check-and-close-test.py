@@ -602,6 +602,48 @@ def test_the_waiting_item_read_step_refuses_a_mark_whose_text_would_not_be_read_
           in again.stdout, described(again))
 
 
+# marks_document's heading, `#case_against` line and recommendation: 7 + 5 + 3 words.
+MARKS_DOCUMENT_WORDS_OUTSIDE_BODY = 15
+
+
+def words_of_body(count):
+    """A body of count words, ten to a line."""
+    words = [f"word{number}" for number in range(count)]
+    return "\n".join(" ".join(words[start:start + 10]) for start in range(0, count, 10)) + "\n"
+
+
+def test_the_waiting_item_read_step_refuses_an_item_over_300_words_and_reads_it_once_split_into_sub_steps():
+    # Two words of the body follow a `###` that is no sub-step heading: one in fenced code, one in a quotation.
+    body = (words_of_body(301 - MARKS_DOCUMENT_WORDS_OUTSIDE_BODY - 2) + "\n```\n### code\n```\n\n> ### quoted\n")
+    case = Case(document=marks_document(body))
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    command = (f"python3 {PROGRAM} {WAITING_ITEM_READ_STEP_NAME} --after-fixes-reread-only-when-facts-change "
+               f"--cwd {shlex.quote(str(case.checkout.resolve()))}")
+    check("the read step refuses an item of 301 words, counting code and marker lines, before any read",
+          result.returncode == 1
+          and "the text from line 3 of the walk-document" in result.stderr
+          and "`## Item 3 of 9: the opening sentence`, has 301 words, over the limit of 300 words" in result.stderr
+          and "\nSplit that text into `###` sub-steps, each within 300 words" in result.stderr
+          and f"\nThen run `{command}` again.\n" in result.stderr
+          and case.calls.read_text() == "" and not case.reads().exists(), described(result))
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(document.read_text().replace(
+        "word150 ", "\n### The second half\n\nword150 ").replace("word0 ", "### The first half\n\nword0 "))
+    again = case.run(*shlex.split(command)[2:-2])
+    check("once the item is split into `###` sub-steps, each counted on its own, the command the refusal gave reads it",
+          again.returncode == 0 and "had to be run now" in again.stdout, described(again))
+
+
+def test_the_waiting_item_read_step_reads_an_item_of_300_words_leaving_out_its_approval_walk_item_lines():
+    body = ("#approval_walk_item_first_entered 2026-11-12\n- #approval_walk_item_waits_on the opening paragraph\n\n"
+            + words_of_body(300 - MARKS_DOCUMENT_WORDS_OUTSIDE_BODY))
+    case = Case(document=marks_document(body))
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("the read step reads an item of exactly 300 words, its `#approval_walk_item_` lines not counted",
+          result.returncode == 0 and "had to be run now" in result.stdout
+          and "word284" in case.calls.read_text(), described(result))
+
+
 def test_a_failed_fast_read_stops_the_check():
     case = Case()
     before = case.minutes.read_text()

@@ -347,7 +347,11 @@ APPROVAL-WALK-WAITING-ITEM-COLD-READ-FAST-READ gives the item the
 item's lines in the walk-document, heading and fenced code included, keyed by
 the sha256 of that text unchanged, whitespace included. It first refuses,
 as CHECK does and before it starts any read, an item with a `#new` or
-`#new_if_d` mark whose text would not be read whole. A read of that key
+`#new_if_d` mark whose text would not be read whole; then it refuses, also
+before any read, an item whose text up to its first `###` sub-step, or one of
+whose `###` sub-steps, holds more than 300 words, counting every run of
+characters between spaces that holds a letter or a digit, on every line but
+those opening `#approval_walk_item_`. A read of that key
 that wrote its report is used, a read ahead included; one a read-ahead worker
 still runs is waited for, for as long as the worker's process lives, since the
 fast read ends its own run with timeouts of its own; otherwise the step runs the
@@ -976,6 +980,27 @@ READ_AHEAD_NOT_STARTED = ("No cold-read-fast-read could be started ahead for the
                           "from you now, since when that item waits its read step reads it or reports the problem "
                           "again. The problem: {problem}")
 GIT_LS_FILES_FAILED = "every changed word, since `git ls-files` failed in {top} ({error}) and file names were not known"
+APPROVAL_WALK_ITEM_WORD_LIMIT = 300
+# The user has not decided whether the hashtag marker lines, such as `#new`, `#new_if_d` and `#case_against`, and
+# the texts quoted on `#old` and `#new` lines count toward the limit; until he does, only a line opening with one
+# of these, which the item page shows apart from the item's text, is left out of the count.
+APPROVAL_WALK_ITEM_WORD_COUNT_LEFT_OUT_LINE_OPENINGS = ("#approval_walk_item_",)
+APPROVAL_WALK_ITEM_WORD_COUNT_LEFT_OUT_LINE = re.compile(
+    LINE_OPENING_MARKERS + "(?:" + "|".join(map(re.escape, APPROVAL_WALK_ITEM_WORD_COUNT_LEFT_OUT_LINE_OPENINGS)) + ")")
+# A run of characters between spaces that holds a letter or a digit, so Markdown's `##`, `-`, `>` and `|` are no words.
+APPROVAL_WALK_ITEM_WORD = re.compile(r"\S*[^\W_]\S*")
+APPROVAL_WALK_ITEM_SUB_STEP_HEADING_MARKUP = "###"
+APPROVAL_WALK_ITEM_OVER_WORD_LIMIT = (
+    "nothing read: {item} was not given its cold-read-fast-read, because the text from line {line} of the "
+    "walk-document {document}, `{heading}`, has {count} words, over the limit of {limit} words for an item or a "
+    "sub-step, and the user is shown no item longer than that. A word here is a run of characters between spaces or line "
+    "breaks that holds a letter or a digit; every line of the item counts, heading, code and hashtag marker lines "
+    "included, except a line opening with {left_out}, and each `###` sub-step counts on its own.\n"
+    "Split that text into `###` sub-steps, each within {limit} words, headed and ended as the walk-me-through skill's "
+    "paragraph opening \"Limit each item to 300 words\" says; do not cut the text down to fit, since the user wants "
+    "long material broken into steps, not compressed.\n"
+    "Then run `{command}` again.\n"
+    "From now on, write each item and each sub-step within {limit} words when you write it into the walk-document.")
 
 
 class Failure(Exception):
@@ -1109,6 +1134,25 @@ def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None
                                                   command=command))
     lines = text.split("\n")
     return document, "\n".join(line for first, end in ranges for line in lines[first:end]).strip()
+
+
+def approval_walk_item_text_over_word_limit_refused(walk_finder, minutes, value, numbers, total, parser, item, command):
+    """Raise Failure when an item's text up to its first `###` sub-step, or a sub-step, has more words than
+    APPROVAL_WALK_ITEM_WORD_LIMIT, naming the first such text."""
+    document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
+    lines = text.split("\n")
+    sub_steps = {token.map[0] for token in tokens if token.type == "heading_open" and token.level == 0
+                 and token.map is not None and len(token.markup) >= len(APPROVAL_WALK_ITEM_SUB_STEP_HEADING_MARKUP)}
+    for first, end in ranges:
+        starts = sorted({first} | {line for line in sub_steps if first < line < end})
+        for start, stop in zip(starts, starts[1:] + [end]):
+            count = sum(len(APPROVAL_WALK_ITEM_WORD.findall(line)) for line in lines[start:stop]
+                        if not APPROVAL_WALK_ITEM_WORD_COUNT_LEFT_OUT_LINE.match(line))
+            if count > APPROVAL_WALK_ITEM_WORD_LIMIT:
+                raise Failure(APPROVAL_WALK_ITEM_OVER_WORD_LIMIT.format(
+                    item=item, line=start + 1, document=document, heading=lines[start].strip(), count=count,
+                    limit=APPROVAL_WALK_ITEM_WORD_LIMIT, command=command,
+                    left_out=" or ".join(f"`{opening}`" for opening in APPROVAL_WALK_ITEM_WORD_COUNT_LEFT_OUT_LINE_OPENINGS)))
 
 
 def proposed_texts(marks_found, marks):
@@ -1986,6 +2030,7 @@ def waiting_item_read(arguments):
     command = READ_STEP_COMMAND.format(program=program, flags=" " + AFTER_FIXES_FLAG, top=shlex.quote(str(top)))
     document, text = item_text(walk_finder, minutes, value, numbers, total, parser,
                                refused_unless_marks_read=(item, command))
+    approval_walk_item_text_over_word_limit_refused(walk_finder, minutes, value, numbers, total, parser, item, command)
     reads = item_reads_directory(walk_finder, minutes)
     not_started = start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, total,
                                                  arguments.fast_read_program)
