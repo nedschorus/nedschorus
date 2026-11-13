@@ -247,27 +247,16 @@ as untestable, opened as AN UNTESTABLE MERGE above says; a merge carried on
 in the first pass with no mutant judged beyond those its kept sessions held
 before the run; a
 survivor task whose recheck gave no verdicts; a run record that could not be
-written, opened after the failed write; and any merge still not recorded as
+written, opened after the failed write; any merge still not recorded as
 tested MERGE_STILL_UNTESTED_TASK_OPENED_AFTER_SECONDS_SINCE_MERGE, three days,
 after its merge commit, the sign that the first pass no longer keeps up and
 that it must run fewer mutants; and a merge with mutants the mutation testing
-program reports ERRORED, whose suites gave no verdict on them. A failed step's
-task has the first line of its message as its subject; the task of an
-untestable merge, a carried-on merge or a merge with ERRORED mutants names
-the merge; an untestable merge's task also names the failing suites, and asks
-for the merge's changed lines to be mutation-tested at a later main commit
-where they pass.
-A merge's ERRORED mutants get one task, opened before the merge is recorded
-as tested, which the merge is all the same. The task names each such mutant
-by file, line and cosmic-ray operator, with the reason the mutation testing
-program gives from the mutant's output, such as `No space left on device` or
-a timeout, or `cosmic-ray could not judge it` when it gives none, and asks
-the agent-seat to judge each. The run never runs an ERRORED mutant again. A
-later run of the merge, in the second pass, opens the task again, or
-rewrites its description while it is open, only when it reports an ERRORED
-mutant that errored_mutant_keys_already_reported does not hold. A task that
-cannot be opened or rewritten is a failed step, and the merge is not
-recorded.
+program reports ERRORED, whose suites gave no verdict on them (ERRORED
+MUTANTS below). A failed step's task has the first line of its message as
+its subject; the task of an untestable merge, a carried-on merge or a merge
+with ERRORED mutants names the merge; an untestable merge's task also names
+the failing suites, and asks for the merge's changed lines to be
+mutation-tested at a later main commit where they pass.
 Each of the other three kinds has one task with a fixed subject:
 SURVIVOR_TASKS_NOT_RECHECKED_TASK_SUBJECT, "Nightly full mutation pass:
 survivor tasks left as they were, because their recheck gave no verdicts",
@@ -284,6 +273,20 @@ completes it once the cause is fixed. A task that cannot be opened is named
 in the record and on standard error, and the run exits EXIT_STEP_FAILED; the
 task for a record not written, when it cannot be opened, is named on standard
 error only, and the run still exits EXIT_RECORD_NOT_WRITTEN.
+
+ERRORED MUTANTS. A merge with ERRORED mutants is recorded as tested all the
+same, and gets one job failure task, opened before the merge is recorded.
+The task names each such mutant by file, line and cosmic-ray operator, with
+the reason the mutation testing program gives from the mutant's output, such
+as `No space left on device` or a timeout, or `cosmic-ray could not judge it`
+when it gives none, and asks the agent-seat to judge each, fix each cause in
+this project, and complete the task once it has. The run never runs
+an ERRORED mutant again. A later run of the merge, in the second pass, opens
+the task again, or rewrites its description while it is open, only when it
+reports an ERRORED mutant that errored_mutant_keys_already_reported does not
+hold; the task then names every ERRORED mutant that run reports. A task that
+cannot be opened or rewritten is a failed step, and the merge is not
+recorded as tested.
 
 THE RECORD is one text file per run in the log-store:
 
@@ -321,9 +324,9 @@ The cron line, at 00:30 in ned-box's local time, America/Los_Angeles (Pacific):
     30 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py >> /home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log 2>&1
 
 Exit codes: 0 every survivor task was rechecked and every merge since the last
-run had its first pass and its survivors and ERRORED mutants given tasks, or was recorded as
-untestable with its job failure task opened, or the first run wrote the state
-file; EXIT_STEP_FAILED (4) a step failed, as above;
+run had its first pass and its survivors and ERRORED mutants given tasks, or
+was recorded as untestable with its job failure task opened, or the first run
+wrote the state file; EXIT_STEP_FAILED (4) a step failed, as above;
 EXIT_RECORD_NOT_WRITTEN (5) the record could not be written;
 EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6) another run holds the lock;
 EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR (7) no step failed, but a
@@ -1030,11 +1033,17 @@ def errored_mutants_job_failure_task_opened(arguments, merge, merge_subject, err
         f"Its record: {record_citation}\n"
         f"A reason's advice to run the mutation testing program again is written for a hand "
         f"run of it; the nightly run follows none.\n"
-        f"For each mutant, judge from its reason where the cause is. A cause in this project, "
-        f"such as a mutant that makes a suite hang or a suite that cannot start: fix it in a "
-        f"pull request. A cause outside the code that has passed, such as a full disk or a "
-        f"busy machine: nothing to fix.\n"
-        f"Mark this task completed once every mutant listed is judged.")
+        f"For each mutant, judge from its reason where the cause is:\n"
+        f"- When the cause is in this project, such as a mutant that makes a suite hang or a "
+        f"suite that cannot start: fix the cause in a pull request.\n"
+        f"- When the cause is outside the code and still there, such as a disk on ned-box "
+        f"still full: remove it, such as by freeing space on that disk.\n"
+        f"- When the cause was outside the code and has passed, such as a busy machine: "
+        f"nothing needs fixing.\n"
+        f"- When the reason names no cause, as `cosmic-ray could not judge it` does: nothing "
+        f"here shows one; say so in this task's description.\n"
+        f"Mark this task completed once you have judged every mutant listed and fixed each "
+        f"cause you found in this project.")
     try:
         task_id, opened = job_failure_task_opened_unless_open(subject, description, arguments,
                                                               True)
