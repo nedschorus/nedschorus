@@ -4123,9 +4123,13 @@ def test_a_read_ahead_never_counts_for_another_item_of_the_same_title():
     answered_and_closed(case)
     result = case.run(WAITING_ITEM_READ)
     text = document.read_text()
+    answered_and_closed(case)
+    later = case.run(WAITING_ITEM_READ)
+    later_text = document.read_text()
     check("while two items share the title of an item read ahead and rewritten since, neither is given its text",
           result.returncode == 0 and "## Item 3 of 5: three\n" in text and "Recommendation: drop it.\n\n## three\n" in text
-          and "Withdrawn" not in text, described(result) + text)
+          and "Withdrawn" not in text and later.returncode == 0 and "## Item 4 of 5: three\n" in later_text
+          and "Withdrawn" not in later_text, described(result) + described(later) + later_text)
 
 
 def test_a_read_ahead_the_read_step_used_stays_the_items_read_once_the_item_is_retitled_or_renumbered():
@@ -4239,7 +4243,9 @@ def test_a_kept_versions_first_line_loses_only_the_running_count_and_its_markup_
             ("**Item 3 of 5: rename `__init__.py`.** Recommendation: x ** 2 stays.",
              "rename `__init__.py`. Recommendation: x ** 2 stays."),
             ("**Item 3 of 5 (deferred: moved to just before the summary item)** Recommendation: `a**b`.",
-             "Recommendation: `a**b`.")):
+             "Recommendation: `a**b`."),
+            ("**Item 3 of 5: rename `a**b`, then x ** 2.** Recommendation: go.",
+             "rename `a**b`, then x ** 2. Recommendation: go.")):
         result = program.heading_body(finder, first + "\n\n#case_against none.")
         check(f"a kept version of the bold-paragraph item `{first}` keeps the rest of its first line as written",
               result == kept + "\n\n#case_against none.", repr(result))
