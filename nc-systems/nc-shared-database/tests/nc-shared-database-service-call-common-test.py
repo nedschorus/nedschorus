@@ -3,12 +3,14 @@
 
 The cases call a fake service on a loopback port that answers each request with
 the status the case sets, a listening socket that never answers, and a port
-nothing listens on: success, the 400, 401 and 422 refusals, a 404 and a 500
-counted as no answer, no answer within the time limit, a refused connection,
+nothing listens on: success, the 400, 401 and 422 refusals, a 422 whose answer
+is cut short or still being read at the time limit, a 404, a 500 and a 200 cut
+short counted as no answer, no answer within the time limit to a read and to an
+event, a name lookup that ends after the limit or fails, a refused connection,
 an unreadable token file, and the handoff-supervisor's variant, which calls
 again with the same event ID, logs once when its wait starts and once when it
-stops, and does not call again after a refusal. One case records an event in
-the real service, nc-shared-database-service.py, to show the event the module
+stops, and does not call again after a refusal or an unreadable token file. One
+case records an event in the real service, nc-shared-database-service.py, to show the event the module
 builds is one the service stores.
 
 Run: python3 nc-systems/nc-shared-database/tests/nc-shared-database-service-call-common-test.py
@@ -20,6 +22,7 @@ import json
 import socket
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -158,10 +161,21 @@ with tempfile.TemporaryDirectory() as scratch:
     failure = failure_of(lambda: caller.nc_shared_database_service_http_request_single_attempt(
         "/agent-seats", service_url=f"http://127.0.0.1:{silent.getsockname()[1]}",
         token_file=token_file, timeout_seconds=0.2))
-    silent.close()
     check("no answer within the time limit: ned-box cannot be reached",
           failure is not None and not failure.service_answered
-          and "got no answer within 0.2 seconds" in str(failure), failure and str(failure))
+          and "got no answer within 0.2 seconds" in str(failure)
+          and "so nothing was recorded or read" in str(failure), failure and str(failure))
+    failure = failure_of(lambda: caller.nc_shared_database_event_send_single_attempt(
+        "agent-seat-paused", "seat-1", {}, service_url=f"http://127.0.0.1:{silent.getsockname()[1]}",
+        token_file=token_file, timeout_seconds=0.2))
+    silent.close()
+    check("an event sent with no answer within the time limit may still be stored, and the "
+          "FAILED line says so, with its event ID",
+          failure is not None and not failure.service_answered
+          and "got no answer within 0.2 seconds" in str(failure)
+          and "after the event was sent, so the service may still store it: event ID "
+          in str(failure) and "nothing was recorded" not in str(failure)
+          and "was sent and may have been recorded" in str(failure), failure and str(failure))
 
     closed = socket.socket()
     closed.bind(("127.0.0.1", 0))
@@ -183,6 +197,99 @@ with tempfile.TemporaryDirectory() as scratch:
           and len(fake.requests) == requests_before
           and str(scratch / "no-such.token") in str(failure)
           and str(failure).startswith("FAILED: GET"), failure and str(failure))
+
+    def answers_once(raw_answer, then_wait_seconds=0):
+        """A service URL whose one connection gets raw_answer, which may end short of its
+        Content-Length, and is closed then_wait_seconds later."""
+        listening = socket.socket()
+        listening.bind(("127.0.0.1", 0))
+        listening.listen(1)
+
+        def answer():
+            connection, _ = listening.accept()
+            connection.recv(65536)
+            connection.sendall(raw_answer)
+            time.sleep(then_wait_seconds)
+            connection.close()
+            listening.close()
+
+        threading.Thread(target=answer, daemon=True).start()
+        return f"http://127.0.0.1:{listening.getsockname()[1]}"
+
+    failure = failure_of(lambda: caller.nc_shared_database_event_send_single_attempt(
+        "agent-seat-paused", "seat-1", {}, token_file=token_file, service_url=answers_once(
+            b"HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: 100\r\n\r\nshort")))
+    check("a 422 whose answer is cut short raises the refusal's FAILED line, saying the answer "
+          "could not be read",
+          failure is not None and failure.service_answered and "with 422" in str(failure)
+          and "its answer could not be read: " in str(failure),
+          failure and str(failure))
+
+    failure = failure_of(lambda: caller.nc_shared_database_event_send_single_attempt(
+        "agent-seat-paused", "seat-1", {}, token_file=token_file, timeout_seconds=0.2,
+        service_url=answers_once(b"HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: 100"
+                                 b"\r\n\r\nshort", then_wait_seconds=1)))
+    check("a 422 whose answer is still being read at the time limit raises the refusal's FAILED "
+          "line, so the retrying variant does not send the event again",
+          failure is not None and failure.service_answered and "with 422" in str(failure)
+          and "its answer could not be read: " in str(failure),
+          failure and str(failure))
+
+    failure = failure_of(lambda: caller.nc_shared_database_event_send_single_attempt(
+        "agent-seat-paused", "seat-1", {}, token_file=token_file,
+        service_url=answers_once(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort")))
+    check("a 200 whose answer is cut short counts as no answer, and says the event may be stored",
+          failure is not None and not failure.service_answered
+          and "was answered 200, but its answer could not be read: " in str(failure)
+          and "the service may still store it" in str(failure), failure and str(failure))
+
+    real_getaddrinfo = socket.getaddrinfo
+    looked_up = []
+
+    def name_lookup_that_stalls_then_finds_the_fake(host, port, *arguments, **keywords):
+        looked_up.append(host)
+        if host == "stalled-name-lookup.invalid":
+            time.sleep(0.5)
+            return real_getaddrinfo("127.0.0.1", fake.server.server_address[1], *arguments,
+                                    **keywords)
+        if host == "unknown-name.invalid":
+            raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+        return real_getaddrinfo(host, port, *arguments, **keywords)
+
+    socket.getaddrinfo = name_lookup_that_stalls_then_finds_the_fake
+    try:
+        requests_before = len(fake.requests)
+        started = time.monotonic()
+        failure = failure_of(lambda: caller.nc_shared_database_event_send_single_attempt(
+            "agent-seat-paused", "seat-1", {}, service_url="http://stalled-name-lookup.invalid:8765",
+            token_file=token_file, timeout_seconds=0.2))
+        took = time.monotonic() - started
+        time.sleep(1)
+        check("a name lookup that ends after the time limit ends the call at the limit, and the "
+              "event is never sent: ned-box cannot be reached, nothing was recorded",
+              failure is not None and not failure.service_answered and took < 0.5
+              and len(fake.requests) == requests_before
+              and "got no answer within 0.2 seconds: the name lookup of "
+                  "stalled-name-lookup.invalid did not finish" in str(failure)
+              and "so nothing was recorded or read" in str(failure),
+              (took, fake.requests[requests_before:], failure and str(failure)))
+
+        looked_up.clear()
+        fake.statuses = [200]
+        answer = caller.nc_shared_database_service_http_request_single_attempt(
+            "/agent-seats", service_url=fake.url.replace("127.0.0.1", "localhost"),
+            token_file=token_file)
+        check("a call looks its host name up once, within the time limit",
+              answer == {"sequence": 7} and looked_up == ["localhost"], (answer, looked_up))
+
+        failure = failure_of(lambda: caller.nc_shared_database_service_http_request_single_attempt(
+            "/agent-seats", service_url="http://unknown-name.invalid:8765", token_file=token_file))
+        check("a failed name lookup: ned-box cannot be reached",
+              failure is not None and not failure.service_answered
+              and "failed the name lookup of unknown-name.invalid (gaierror: " in str(failure),
+              failure and str(failure))
+    finally:
+        socket.getaddrinfo = real_getaddrinfo
 
     # The handoff-supervisor's variant
     logged, slept = [], []
@@ -231,6 +338,15 @@ with tempfile.TemporaryDirectory() as scratch:
           and logged[0].startswith("waiting for ned-box") and logged[1].startswith("ned-box "
                                                                                    "answered again")
           and logged[2].startswith("FAILED"), logged)
+
+    logged, slept = [], []
+    requests_before = len(fake.requests)
+    answer = caller.nc_shared_database_event_send_retrying_every_30_seconds_until_service_answers(
+        "handoff-supervisor-ended", "seat-1", {"run_id": "run-1"}, logged.append,
+        sleep=slept.append, service_url=fake.url, token_file=scratch / "no-such.token")
+    check("an unreadable token file is logged as its FAILED line, returns None and sends nothing",
+          answer is None and len(fake.requests) == requests_before and slept == []
+          and len(logged) == 1 and logged[0].startswith("FAILED: POST"), (answer, logged))
 
     database = scratch / "nc-shared-database.sqlite3"
     tokens = scratch / "accepted-tokens"
