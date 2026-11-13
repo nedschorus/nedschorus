@@ -50,6 +50,10 @@ import time
 from pathlib import Path
 
 LAUNCHER = Path(__file__).with_name("launch-claude-mac")
+# The sandbox HOME's ~/Projects/nedschorus links here, so the launcher finds a
+# reference-checkout and a case that runs the real supervisor finds its modules.
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+SUPERVISOR_WITHIN_A_CHECKOUT = Path("nc-systems") / "handoff" / "handoff-supervisor.py"
 UPDATE_LOCK_HELPER_NAME = "agent-binary-update-under-lock.py"
 # The bytes launch-claude-mac writes to colour an iTerm2 session's background:
 # iTerm2's SetColors sequence, OSC 1337 ... BEL, with the seat colour.
@@ -120,6 +124,9 @@ class MacLaunchSandbox:
     def __init__(self, root: Path):
         self.home = root / "home"
         self.home.mkdir(parents=True)
+        self.reference_checkout = self.home / "Projects" / "nedschorus"
+        self.reference_checkout.parent.mkdir()
+        self.reference_checkout.symlink_to(REPOSITORY_ROOT)
         self.workdir = root / "workdir"
         self.workdir.mkdir()
         self.captures = root / "captures"
@@ -253,7 +260,7 @@ class MacLaunchSandbox:
             extra_arguments=None, update_timeout_seconds=None,
             seat_github_account=None, inherited_github_token=None,
             ambient_git_identity=None, term_program=None,
-            stdout_on_terminal=False):
+            stdout_on_terminal=False, launcher_options=()):
         """Run the launcher in the sandbox. extra_arguments, when given, is
         placed in LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS the way
         recover-crashed-seats.py's launch_seat places it — after the strip
@@ -265,8 +272,10 @@ class MacLaunchSandbox:
         term_program sets TERM_PROGRAM, which is otherwise stripped so the
         terminal the suite runs in cannot decide a case.
         stdout_on_terminal gives the launcher a pseudo-terminal as stdout in
-        place of a pipe, and returns what it wrote there as result.stdout."""
+        place of a pipe, and returns what it wrote there as result.stdout.
+        launcher_options are put after the seat name and --no-attach."""
         arguments = [seat_name] if attach else [seat_name, "--no-attach"]
+        arguments += list(launcher_options)
         environment = {
             **{key: value for key, value in os.environ.items()
                if key not in ("TERM_PROGRAM", "GH_TOKEN")
@@ -442,7 +451,7 @@ def main() -> int:
               sandbox.invoked_commands()[:200])
         check("tilde-user root: no directory was created",
               not any(sandbox.workdir.iterdir())
-              and not any(sandbox.home.iterdir()),
+              and list(sandbox.home.iterdir()) == [sandbox.home / "Projects"],
               (sorted(str(p) for p in sandbox.workdir.iterdir()),
                sorted(str(p) for p in sandbox.home.iterdir())))
 
@@ -792,6 +801,59 @@ def main() -> int:
               and Path(sandbox.after_exit_cwd()).resolve()
               == (sandbox.home / "agents" / "seat-c").resolve(),
               sandbox.after_exit_cwd() or "no shell recorded")
+
+        # --- which checkout the supervisor runs from. It keeps that checkout's
+        # code and runs the conversation extractor from there at each
+        # session-handoff, so a launcher run from a topic-worktree must not
+        # tie the seat to that worktree. LAUNCHER lives in this checkout,
+        # never the sandbox's ~/Projects/nedschorus, so the default case is a
+        # launcher run from another checkout. ---------------------------------
+        sandbox = MacLaunchSandbox(root / "supervisor-checkout-default")
+        result = sandbox.run("~/agents", seat_name="seat-d")
+        check("supervisor checkout: by default the supervisor runs from ~/Projects/nedschorus, "
+              "not from the launcher's own checkout",
+              result.returncode == 0 and sandbox.supervisor_argv()[:1]
+              == [str(sandbox.reference_checkout / SUPERVISOR_WITHIN_A_CHECKOUT)],
+              (result.returncode, sandbox.supervisor_argv()[:1], result.stderr[-300:]))
+
+        # An apostrophe and a space in the path: it is spliced between single quotes in the pane command.
+        sandbox = MacLaunchSandbox(root / "supervisor-checkout-option")
+        other_checkout = root / "supervisor-checkout-option" / "other's checkout"
+        (other_checkout / SUPERVISOR_WITHIN_A_CHECKOUT).parent.mkdir(parents=True)
+        (other_checkout / SUPERVISOR_WITHIN_A_CHECKOUT).write_text("", encoding="utf-8")
+        result = sandbox.run("~/agents", seat_name="seat-o",
+                             launcher_options=["--supervisor-checkout", str(other_checkout)])
+        check("supervisor checkout: --supervisor-checkout <path> runs the supervisor of that checkout",
+              result.returncode == 0 and sandbox.supervisor_argv()[:1]
+              == [str(other_checkout / SUPERVISOR_WITHIN_A_CHECKOUT)],
+              (result.returncode, sandbox.supervisor_argv()[:1], result.stderr[-300:]))
+
+        sandbox = MacLaunchSandbox(root / "supervisor-checkout-relative")
+        relative_checkout = sandbox.workdir / "relative-checkout"
+        (relative_checkout / SUPERVISOR_WITHIN_A_CHECKOUT).parent.mkdir(parents=True)
+        (relative_checkout / SUPERVISOR_WITHIN_A_CHECKOUT).write_text("", encoding="utf-8")
+        result = sandbox.run("~/agents", seat_name="seat-l",
+                             launcher_options=["--supervisor-checkout", "relative-checkout"])
+        check("supervisor checkout: a relative --supervisor-checkout is resolved against the "
+              "caller's directory, since the pane starts in $HOME",
+              result.returncode == 0 and sandbox.supervisor_argv()[:1]
+              == [str(relative_checkout / SUPERVISOR_WITHIN_A_CHECKOUT)],
+              (result.returncode, sandbox.supervisor_argv()[:1], result.stderr[-300:]))
+
+        sandbox = MacLaunchSandbox(root / "supervisor-checkout-missing")
+        missing_checkout = root / "supervisor-checkout-missing" / "no-such-checkout"
+        result = sandbox.run("~/agents", seat_name="seat-m",
+                             launcher_options=["--supervisor-checkout", str(missing_checkout)])
+        check("supervisor checkout: a path holding no handoff-supervisor.py is refused with "
+              "exit 2, naming the file, and nothing is updated, created or started",
+              result.returncode == 2
+              and f"launch-claude-mac: refused, because {missing_checkout / SUPERVISOR_WITHIN_A_CHECKOUT} "
+                  "does not exist" in result.stderr
+              and "pass the root of a nedschorus checkout that exists" in result.stderr
+              and "claude" not in sandbox.invoked_commands().replace("python3", "")
+              and not sandbox.tmux_argv()
+              and not (sandbox.home / "agents" / "seat-m").exists(),
+              (result.returncode, result.stderr[-400:], sandbox.invoked_commands()))
 
         # --- the extra-arguments hook is CONSUMED, not inherited. Measured
         # 2026-09-03: recover-crashed-seats.py launched a seat with

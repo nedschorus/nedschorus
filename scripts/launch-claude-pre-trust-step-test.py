@@ -159,6 +159,11 @@ class PreTrustSandbox:
         box_scripts = self.home / "Projects" / "nedschorus" / "scripts"
         box_scripts.mkdir(parents=True)
         (box_scripts / PRESETS_WRITE_SCRIPT_NAME).symlink_to(PRESETS_WRITE_SCRIPT)
+        # The Mac launcher refuses unless ~/Projects/nedschorus holds the
+        # handoff-supervisor it runs; the python3 stub answers for it.
+        supervisor = self.home / "Projects" / "nedschorus" / "nc-systems" / "handoff" / "handoff-supervisor.py"
+        supervisor.parent.mkdir(parents=True)
+        supervisor.write_text("", encoding="utf-8")
         # has-session answers "no session" so the launch proceeds on the
         # seat's own socket; new-session records its argv and returns,
         # without running the pane command — the seat's own contents are

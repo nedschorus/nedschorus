@@ -137,6 +137,13 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
+def reference_checkout_mac_launcher(workspace: Path) -> Path:
+    """The launcher resupervise-seat.py runs for a Mac seat, in this suite's sandbox HOME."""
+    launcher = workspace / "home" / "Projects" / "nedschorus" / "scripts" / "launch-claude-mac"
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    return launcher
+
+
 def run_resupervise(workspace: Path, name: str, *flags):
     """Run the script against a scratch handoff directory and agents root."""
     return subprocess.run(
@@ -362,15 +369,28 @@ def run_missing_launcher_case(workspace: Path):
             RESUPERVISE_SCRIPT.with_name(supervisor_import)
             .read_text(encoding="utf-8"), encoding="utf-8")
     write_handoff(workspace, "nolauncher", counter=1)
+    # A launcher beside this script does not stand in for the reference-checkout's.
+    beside = isolated / "launch-claude-mac"
+    beside.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    beside.chmod(0o755)
+    home_without_reference_checkout = workspace / "home-without-reference-checkout"
+    home_without_reference_checkout.mkdir()
     result = subprocess.run(
         [sys.executable, str(copied), "nolauncher",
          "--handoff-dir", str(workspace), "--agents-root", str(workspace / "agents")],
         capture_output=True, text=True, check=False,
+        env={**os.environ, "HOME": str(home_without_reference_checkout)},
     )
-    check("a missing launcher refuses before anything is killed",
-          result.returncode == 1, result.stdout + result.stderr)
-    check("the missing-launcher refusal names the path it looked at",
-          "launch-claude-mac" in result.stderr, result.stderr)
+    beside.unlink()
+    missing = home_without_reference_checkout / "Projects" / "nedschorus" / "scripts" / "launch-claude-mac"
+    check("a missing launcher refuses before anything is killed: --machine mac with no "
+          "launcher in ~/Projects/nedschorus refuses, even with one beside the script, naming "
+          "the missing launcher and the fix",
+          result.returncode == 1
+          and f"{missing} does not exist, so no successor can be launched; nothing was killed"
+          in result.stderr
+          and "Clone nedschorus to ~/Projects/nedschorus on this Mac" in result.stderr,
+          result.stdout + result.stderr)
 
 
 def run_prepare_only_case(workspace: Path):
@@ -430,7 +450,7 @@ def run_end_to_end_case(workspace: Path):
     copied = isolated / "resupervise-seat.py"
     launcher_record = workspace / "launcher-ran.txt"
     launcher_environment_record = workspace / "launcher-environment.txt"
-    stub_launcher = isolated / "launch-claude-mac"
+    stub_launcher = reference_checkout_mac_launcher(workspace)
     stub_launcher.write_text(
         f'#!/bin/sh\necho "ran $1" >> {launcher_record}\n'
         f'env > {launcher_environment_record}\n', encoding="utf-8"
@@ -519,7 +539,7 @@ def run_per_seat_server_end_to_end_case(workspace: Path):
     isolated = workspace / "isolated"
     copied = isolated / "resupervise-seat.py"
     launcher_record = workspace / "launcher-ran-per-seat.txt"
-    stub_launcher = isolated / "launch-claude-mac"
+    stub_launcher = reference_checkout_mac_launcher(workspace)
     stub_launcher.write_text(
         f'#!/bin/sh\necho "ran $1" >> {launcher_record}\n', encoding="utf-8"
     )
@@ -862,20 +882,29 @@ def run_override_propagation_case(workspace: Path):
     """
     isolated = workspace / "isolated"
     record = workspace / "launcher-environment.txt"
-    stub_launcher = isolated / "launch-claude-mac"
+    stub_launcher = reference_checkout_mac_launcher(workspace)
     stub_launcher.write_text(
         '#!/bin/sh\n'
         f'echo "root=$NEDSCHORUS_AGENTS_ROOT" >> {record}\n'
         f'echo "extra=$LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS" >> {record}\n',
         encoding="utf-8")
     stub_launcher.chmod(0o755)
+    beside_record = workspace / "launcher-beside-script-ran.txt"
+    beside = isolated / "launch-claude-mac"
+    beside.write_text(f'#!/bin/sh\necho ran >> {beside_record}\n', encoding="utf-8")
+    beside.chmod(0o755)
     write_handoff(workspace, "override-carry", counter=3)
     result = subprocess.run(
         [sys.executable, str(isolated / "resupervise-seat.py"), "override-carry",
          "--handoff-dir", str(workspace), "--agents-root", str(workspace / "agents")],
         capture_output=True, text=True, check=False,
     )
+    beside.unlink()
     recorded = record.read_text(encoding="utf-8") if record.is_file() else ""
+    check("--machine mac runs the launcher in ~/Projects/nedschorus, not the one beside "
+          "the script",
+          recorded and not beside_record.exists(),
+          (recorded, beside_record.exists(), result.stdout, result.stderr))
     recorded_values = dict(line.split("=", 1)
                            for line in recorded.splitlines() if "=" in line)
     check("the mac launch carries the assessed agents root through NEDSCHORUS_AGENTS_ROOT",
@@ -1107,7 +1136,7 @@ def run_apostrophe_propagation_case(workspace: Path):
         encoding="utf-8")
     isolated = workspace / "isolated"
     record = workspace / "launcher-environment-apostrophe.txt"
-    stub_launcher = isolated / "launch-claude-mac"
+    stub_launcher = reference_checkout_mac_launcher(workspace)
     stub_launcher.write_text(
         '#!/bin/sh\n'
         f'echo "extra=$LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS" >> "{record}"\n',
@@ -1151,6 +1180,12 @@ def main() -> int:
 def run_all_cases() -> int:
     with tempfile.TemporaryDirectory(prefix="resupervise-seat-test-") as scratch:
         workspace = Path(scratch)
+        # resupervise-seat.py runs ~/Projects/nedschorus's Mac launcher, so every run here
+        # sees a sandbox HOME whose launcher a case writes or this stand-in answers for.
+        os.environ["HOME"] = str(workspace / "home")
+        stand_in = reference_checkout_mac_launcher(workspace)
+        stand_in.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        stand_in.chmod(0o755)
         run_no_handoff_cases(workspace)
         run_already_consumed_case(workspace)
         run_live_supervisor_case(workspace)

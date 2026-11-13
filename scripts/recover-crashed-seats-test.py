@@ -2434,6 +2434,7 @@ with tempfile.TemporaryDirectory() as temporary:
               f"{workspace.handoffs} --resume-session-id abc-123",
               f"NEDSCHORUS_AGENTS_ROOT={workspace.agents_root}",
               "/fake/scripts/launch-claude-mac", workspace.name,
+              "--supervisor-checkout", str(recovery.durable_checkout),
               "--first-prompt-file", str(prompt_file)],
           command_text)
     check("WINDOW: the seat is launched attached, not --no-attach",
@@ -3278,25 +3279,37 @@ with tempfile.TemporaryDirectory() as temporary:
     try:
         patch("launch_seat", real_launch_seat)
         seat_comes_up()
-        if sys.platform == "darwin":
-            workspace = Workspace(root / "checkout-mac")
-            all_dead()
-            mac_launch_commands = []
-            recovery.subprocess.run = (
-                lambda command, env=None, check=False:
-                    mac_launch_commands.append(command) or subprocess.CompletedProcess(command, 0))
-            exit_code, output = recover_through_main_with_checkout(workspace, checkout_b)
-            recovery.subprocess.run = run_before_checkout_cases
-            check("CHECKOUT: on the Mac, a recovery run from checkout A launches checkout B's "
-                  "launch-claude-mac",
-                  exit_code == 0 and len(mac_launch_commands) == 1
-                  and mac_launch_commands[0][0]
-                  == str(checkout_b / "scripts" / "launch-claude-mac"),
-                  (exit_code, output, mac_launch_commands))
-        else:
-            skip("CHECKOUT: on the Mac, a recovery run from checkout A launches checkout B's "
-                 "launch-claude-mac",
-                 "macOS only: launcher_path() is None off macOS")
+        # launcher_path() as it answers on macOS, so the Mac branch runs on either machine.
+        patch("launcher_path",
+              lambda: recovery.durable_checkout / recovery.LAUNCH_CLAUDE_MAC_WITHIN_A_CHECKOUT)
+        workspace = Workspace(root / "checkout-mac")
+        all_dead()
+        mac_launch_commands = []
+        recovery.subprocess.run = (
+            lambda command, env=None, check=False:
+                mac_launch_commands.append(command) or subprocess.CompletedProcess(command, 0))
+        exit_code, output = recover_through_main_with_checkout(workspace, checkout_b)
+        recovery.subprocess.run = run_before_checkout_cases
+        check("CHECKOUT: on the Mac, a recovery run from checkout A launches checkout B's "
+              "launch-claude-mac",
+              exit_code == 0 and len(mac_launch_commands) == 1
+              and mac_launch_commands[0][0]
+              == str(checkout_b / "scripts" / "launch-claude-mac"),
+              (exit_code, output, mac_launch_commands))
+        # The launcher would otherwise run the supervisor of ~/Projects/nedschorus, not checkout B's.
+        check("CHECKOUT: on the Mac, the launch passes --supervisor-checkout naming checkout B",
+              len(mac_launch_commands) == 1
+              and mac_launch_commands[0][1:5]
+              == [workspace.name, "--no-attach", "--supervisor-checkout", str(checkout_b)],
+              mac_launch_commands)
+        by_hand_words = shlex.split(recovery.by_hand_launch_command_for_seat(
+            workspace.name, workspace.seat_directory, workspace.handoffs, ""))
+        check("CHECKOUT: on the Mac, the by-hand launch command passes --supervisor-checkout "
+              "naming checkout B",
+              by_hand_words[-4:] == [str(checkout_b / "scripts" / "launch-claude-mac"),
+                                     workspace.name, "--supervisor-checkout", str(checkout_b)],
+              by_hand_words)
+        patch("launcher_path", launcher_path_before_checkout_cases)
 
         workspace = Workspace(root / "checkout-box")
         all_dead()
@@ -4086,7 +4099,9 @@ with tempfile.TemporaryDirectory() as temporary:
                        if recovery.launcher_path() else []) + [
         "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="
         f"--handoff-dir {shlex.quote(str(workspace.handoffs))} --resume-session-id resume-me",
-        expected_launcher_word, workspace.name]
+        expected_launcher_word, workspace.name] + (
+        ["--supervisor-checkout", str(recovery.durable_checkout)]
+        if recovery.launcher_path() else [])
     check("EXIT RECORD: the by-hand resume command parses into the launch_seat environment",
           resume_command_words[:len(expected_prefix)] == expected_prefix,
           resume_command_words)
