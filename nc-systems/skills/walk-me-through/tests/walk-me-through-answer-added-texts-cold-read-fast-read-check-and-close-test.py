@@ -3831,6 +3831,13 @@ def test_moving_on_is_refused_when_a_comment_opening_inside_a_tag_hides_a_recomm
               in checked.stderr
               and "check --moved-on-no-decision --user-reply-as-typed next` again." in checked.stderr,
               described(checked))
+        deferred_case = Case(next_to_present="item 1.2 of 2", document=plain.format(line=line))
+        deferred_case.minutes.write_text("# Minutes\n\n#next_to_present item 1.2 of 2\n")
+        deferred = deferred_case.run("check", "--deferred")
+        check(f"check --deferred records the deferral although `<!--` in an attribute hides the recommendation and "
+              f"{why}: {line!r}",
+              deferred.returncode == 0 and "item 1.2 of 2: the user answered deferred" in deferred_case.minutes.read_text()
+              and "opens no comment" not in deferred.stderr, described(deferred))
 
 
 def test_moving_on_is_not_refused_when_a_stray_less_than_sign_comes_before_a_hidden_note_in_a_real_comment():
