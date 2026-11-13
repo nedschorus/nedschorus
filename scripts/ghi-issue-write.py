@@ -3052,7 +3052,8 @@ CLOSE_GHI_REFUSED_WHILE_OUTCOME_EDIT_PULL_REQUEST_UNMERGED_EXIT_CODE = 67
 CLOSE_REASON_COMPLETED = "completed"
 CLOSE_REASON_NOT_PLANNED = "not planned"
 CLOSE_REASON_DUPLICATE = "duplicate"
-CLOSE_REASON_DUPLICATE_PATTERN = re.compile(r"duplicate (\d+)")
+# An issue number is often written as #12; gh takes 12.
+CLOSE_REASON_DUPLICATE_PATTERN = re.compile(r"duplicate #?(\d+)")
 
 
 def close_reason_gh_arguments(reason_words, number: int):

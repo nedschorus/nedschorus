@@ -4438,7 +4438,9 @@ def run_close_cases(scratch: Path):
             ("completed", ["completed"], ["--reason", "completed"]),
             ("not planned, quoted", ["not planned"],
              ["--reason", "not planned"]),
-            ("duplicate", ["duplicate", "12"], ["--duplicate-of", "12"])]:
+            ("duplicate", ["duplicate", "12"], ["--duplicate-of", "12"]),
+            ("duplicate, the number written with #", ["duplicate", "#12"],
+             ["--duplicate-of", "12"])]:
         finishing = finished_edit()
         result = tool.close_ghi_after_its_outcome_edit_merges_to_main(
             source, reason_words, REPO, scratch, finishing, quiet)
@@ -4466,7 +4468,8 @@ def run_close_cases(scratch: Path):
     # A reason the close would reject is refused before anything runs.
     for bad in (["fixed"], ["duplicate"], ["duplicate", "570"],
                 ["duplicate", "0"], ["completed", "now"], ["not"],
-                ["duplicate", "twelve"]):
+                ["duplicate", "twelve"], ["duplicate", "#570"],
+                ["duplicate", "##12"]):
         nothing = Recorder()
         try:
             tool.close_ghi_after_its_outcome_edit_merges_to_main(
