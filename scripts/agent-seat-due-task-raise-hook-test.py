@@ -600,9 +600,9 @@ check("unreadable prerequisites, blockers completed: named, never raised",
 
 # --- a pull request closed without merging ---------------------------------------------
 CLOSED_INSTRUCTIONS = (
-    "If a task named above as closed without merging is still wanted, put what it now waits on in "
-    "its metadata.prerequisites with TaskUpdate, in place of that pull request, or act on the task "
-    "now.\n"
+    "If a task named above as waiting on a pull request closed without merging is still wanted, "
+    "put what it now waits on in its metadata.prerequisites with TaskUpdate, in place of that pull "
+    "request, or act on the task now.\n"
     "If such a task is no longer wanted, delete it with TaskUpdate.\n"
     "If you expect such a pull request to be reopened and merged, leave its task as it is: this "
     "hook raises the task when the pull request merges, and does not name the closing again.")
@@ -700,10 +700,31 @@ seat.task("129", metadata={"prerequisites": [{"pr_merged": 158}]})
 cached = {"pr_merged:157": {"met": False, "closed_without_merging": True, "checked_at_epoch": 0},
           "pr_merged:158": {"met": False, "closed_without_merging": False, "checked_at_epoch": 0}}
 unheld, held = hook.unheld_and_held_tasks(hook.read_tasks(seat.task_directory),
-                                          seat.task_directory, hook.GitHubConditionChecker(cached, 0))
-check("pull request closed without merging: the next-action list, and the idle sweep's rule 4, "
-      "count its task as not held, though a blocker is open",
+                                          seat.task_directory, hook.GitHubConditionChecker(cached, 0),
+                                          {})
+check("pull request closed without merging, not yet raised: the idle sweep's rule 4 counts its "
+      "task as not held, though a blocker is open",
       unheld == ["127", "128"] and held == 1, (unheld, held))
+unheld, held = hook.unheld_and_held_tasks(
+    hook.read_tasks(seat.task_directory), seat.task_directory,
+    hook.GitHubConditionChecker(cached, 0),
+    {"127": {"pull_requests_closed_without_merging": [157]}})
+check("pull request closed without merging, already raised: counted as held again",
+      unheld == ["128"] and held == 2, (unheld, held))
+
+seat = Seat()
+seat.task("130", metadata={"prerequisites": [{"pr_merged": 159}]})
+seat.respond({"pr:159": {"state": "CLOSED", "title": "T", "url": "https://x/159"}})
+seat.state_path.parent.parent.mkdir(parents=True)
+seat.state_path.parent.write_text("a file where the state directory should be")
+result = seat.run()
+check("pull request closed without merging, state cannot be written: reported, counting the "
+      "task as not raised",
+      reported(result, "could not be written, and so 1 due task(s) were not raised at this "
+                       "stop"), result)
+seat.state_path.parent.unlink()
+check("pull request closed without merging, state writable again: raised",
+      "closed without merging" in (context_of(seat.run()) or ""))
 
 # --- malformed input ----------------------------------------------------------------
 seat = Seat()
@@ -1232,7 +1253,8 @@ seat.waiting_task("78", ITEM_1)
 seat.minutes_say("item 1 of 3: deferred; it moves to just before the summary item. <open>")
 seat.task("79")
 unheld, held = hook.unheld_and_held_tasks(hook.read_tasks(seat.task_directory),
-                                          seat.task_directory, hook.GitHubConditionChecker({}, 0))
+                                          seat.task_directory, hook.GitHubConditionChecker({}, 0),
+                                          {})
 check("approval-walk item not decided: the next-action list counts the task held",
       unheld == ["79"] and held == 1, (unheld, held))
 

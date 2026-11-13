@@ -16,6 +16,8 @@ What it reads, for each agent-seat that has a handoff-supervisor state file
 - the walk-minutes in the agent-seat's `docs/walk/`, the handoff deferral marker file, the task
   list `<tasks root>/nedschorus-<seat>-tasks/`, and, for a usage limit, `oauthAccount.accountUuid`
   in `~/.claude.json`;
+- for rule 4, the due-task hook's state file for the task list, which says which tasks that hook
+  has already raised for a pull request closed without merging;
 - GitHub, through `gh`, for the prerequisites of open tasks, only when rule 4 needs the answer.
 
 It prints one JSON object per agent-seat, one per line. Each holds what the later slice needs
@@ -450,8 +452,9 @@ def logged_in_account(claude_json):
     return account.get("accountUuid") if isinstance(account, dict) else None
 
 
-def open_tasks_nothing_holds(task_directory, checker):
-    """Open tasks nothing recorded holds back, as the due-task hook counts them for its idle check."""
+def open_tasks_nothing_holds(task_directory, checker, due_task_raise_state_directory):
+    """Open tasks nothing recorded holds back, as the due-task hook counts them for its idle check,
+    from that hook's state file for the task list."""
     if not task_directory.is_dir():
         return []
     unreadable = []
@@ -463,7 +466,9 @@ def open_tasks_nothing_holds(task_directory, checker):
                           "program again.")
     # The checker is shared by every agent-seat, so only the failures appended here are this one's.
     failures_before = len(checker.gh_failures)
-    free, _ = due_task_hook.unheld_and_held_tasks(tasks, task_directory, checker)
+    raised = due_task_hook.read_state(
+        due_task_raise_state_directory / f"{task_directory.name}.json")["raised"]
+    free, _ = due_task_hook.unheld_and_held_tasks(tasks, task_directory, checker, raised)
     if len(checker.gh_failures) > failures_before:
         kind, number, cause = checker.gh_failures[failures_before]
         raise ReadFailure(f"GitHub could not say whether {kind} {number} holds: {cause}")
@@ -554,13 +559,15 @@ def tool_calls_since_start_of_earliest_turn_with_sentence_to_judge(facts, judged
             for moment, name, tool_input in facts.tool_calls if moment and moment >= earliest]
 
 
-def rules_three_to_five(verdict, put_off_at, checker, task_directory):
+def rules_three_to_five(verdict, put_off_at, checker, task_directory,
+                        due_task_raise_state_directory):
     running = verdict["running"]["subagents"] or verdict["running"]["background_commands"]
     if verdict["handoff_deferred_marker"] and not running:
         return {fields.RULE: 3, fields.DECISION: fields.WAKE_HANDOFF_PUT_OFF,
                 fields.TEXT: HANDOFF_PUT_OFF_TEXT.format(time=iso(put_off_at))}
     if not running and not verdict["handoff_deferred_marker"]:
-        verdict["open_tasks_nothing_holds"] = open_tasks_nothing_holds(task_directory, checker)
+        verdict["open_tasks_nothing_holds"] = open_tasks_nothing_holds(
+            task_directory, checker, due_task_raise_state_directory)
         if not verdict["open_tasks_nothing_holds"]:
             return {fields.RULE: 4, fields.DECISION: fields.NO_WAKE}
     return {fields.RULE: 5, fields.DECISION: fields.JUDGE}
@@ -668,7 +675,8 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         verdict["sentences"] = matched_sentences(facts, since, open_waiting_tasks)
         raised = [item for item in verdict["sentences"] if item["code_reading"] != fields.NOT_RAISED]
         if not raised:
-            verdict.update(rules_three_to_five(verdict, put_off_at, checker, task_directory))
+            verdict.update(rules_three_to_five(verdict, put_off_at, checker, task_directory,
+                                               paths.due_task_raise_state_directory))
         elif any(item["code_reading"] == fields.JUDGE for item in raised):  # pragma: no mutate, raised holds only the UNBACKED and JUDGE constants themselves, and "unbacked" sorts after "judge", so <= and is give what == gives
             judged = [item for item in raised if item["code_reading"] == fields.JUDGE]
             verdict[fields.TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE] = (
@@ -679,7 +687,8 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
             # after those reads, so one that fails leaves the rule null.
             if not any(item["code_reading"] == fields.UNBACKED for item in raised):
                 verdict[fields.IF_EVERY_SENTENCE_BACKED] = rules_three_to_five(
-                    verdict, put_off_at, checker, task_directory)
+                    verdict, put_off_at, checker, task_directory,
+                    paths.due_task_raise_state_directory)
             verdict.update({fields.RULE: 2, fields.DECISION: fields.JUDGE})
         else:
             verdict.update({fields.RULE: 2, fields.DECISION: fields.SEND_UNBACKED})
@@ -697,6 +706,8 @@ class Paths:
         self.projects_root = Path(arguments.projects_root).expanduser()
         self.tasks_root = Path(arguments.tasks_root).expanduser()
         self.claude_json = Path(arguments.claude_json).expanduser()
+        self.due_task_raise_state_directory = Path(
+            arguments.due_task_raise_state_directory).expanduser()
 
 
 def agent_seats(handoff_directory):
@@ -716,6 +727,8 @@ def main(argv=None):
     parser.add_argument("--projects-root", default="~/.claude/projects")
     parser.add_argument("--tasks-root", default="~/.claude/tasks")
     parser.add_argument("--claude-json", default="~/.claude.json")
+    parser.add_argument("--due-task-raise-state-directory",
+                        default=str(Path("~") / due_task_hook.STATE_DIRECTORY_UNDER_HOME))
     parser.add_argument("--usage-limit-record-uuid-to-ignore", action="append", default=[],
                         help="uuid of a usage-limit record rule 1 no longer applies to; may repeat")
     arguments = parser.parse_args(argv)

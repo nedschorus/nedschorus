@@ -227,7 +227,8 @@ class Machine:
             [sys.executable, str(PROGRAM), "--now", at(minutes), "--handoff-directory",
              str(self.handoffs), "--agents-root", str(self.agents), "--projects-root",
              str(self.projects), "--tasks-root", str(self.tasks), "--claude-json",
-             str(self.claude_json), "--log-file", str(self.log), "--state-directory",
+             str(self.claude_json), "--due-task-raise-state-directory",
+             str(self.root / "due-task-raise-state"), "--log-file", str(self.log), "--state-directory",
              str(self.state), "--machine-name", "ned-box", *extra],
             capture_output=True, text=True, env=environment, check=False)
         return completed.returncode, completed.stdout + completed.stderr

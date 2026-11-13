@@ -995,6 +995,8 @@ def main(argv=None):
     parser.add_argument("--projects-root", default="~/.claude/projects")
     parser.add_argument("--tasks-root", default="~/.claude/tasks")
     parser.add_argument("--claude-json", default="~/.claude.json")
+    parser.add_argument("--due-task-raise-state-directory",
+                        default=str(Path("~") / verdicts_print.due_task_hook.STATE_DIRECTORY_UNDER_HOME))
     arguments = parser.parse_args(argv)
     now = parse_time(arguments.now) if arguments.now else datetime.now(timezone.utc)
     if now is None:

@@ -100,6 +100,7 @@ class Machine:
         gh.chmod(0o755)
         self.gh_responses = self.root / "gh.json"
         self.gh_responses.write_text("{}")
+        self.due_task_raise_state = self.root / "due-task-raise-state"
 
     def seat(self, name, records=(), session="s-1", state=None, raw_tail=b""):
         (self.agents / name).mkdir(exist_ok=True)
@@ -135,7 +136,8 @@ class Machine:
         completed = subprocess.run(
             [sys.executable, str(PROGRAM), "--now", NOW, "--handoff-directory", str(self.handoffs),
              "--agents-root", str(self.agents), "--projects-root", str(self.projects),
-             "--tasks-root", str(self.tasks), "--claude-json", str(self.claude_json), *extra],
+             "--tasks-root", str(self.tasks), "--claude-json", str(self.claude_json),
+             "--due-task-raise-state-directory", str(self.due_task_raise_state), *extra],
             capture_output=True, text=True, env=environment, check=False)
         verdicts = {}
         for line in completed.stdout.splitlines():
@@ -639,13 +641,23 @@ try:
           and verdicts["alpha"]["open_tasks_nothing_holds"] == [{"id": "3", "subject": "task 3"}],
           verdicts["alpha"])
     machine.task("alpha", "3", metadata={"prerequisites": [{"pr_merged": 50}]},
-                 blocked_by=["2"])
-    machine.gh_responses.write_text(json.dumps({"pr:50": {"state": "CLOSED"}}))
+                 blocked_by=["4"])
+    machine.task("alpha", "4", metadata={"prerequisites": [{"pr_merged": 51}]})
+    machine.task("alpha", "2", blocked_by=["4"])
+    machine.gh_responses.write_text(json.dumps({"pr:50": {"state": "CLOSED"},
+                                                "pr:51": {"state": "OPEN"}}))
     _, verdicts, _ = machine.run()
-    check("a task whose pull request closed without merging, though a blocker holds it: rule 5, "
-          "and the task is named",
+    check("a task whose pull request closed without merging, though a blocker holds it, not yet "
+          "raised by the due-task hook: rule 5, and the task is named",
           verdicts["alpha"]["rule"] == 5
           and verdicts["alpha"]["open_tasks_nothing_holds"] == [{"id": "3", "subject": "task 3"}],
+          verdicts["alpha"])
+    machine.due_task_raise_state.mkdir()
+    (machine.due_task_raise_state / "nedschorus-alpha-tasks.json").write_text(json.dumps(
+        {"raised": {"3": {"pull_requests_closed_without_merging": [50]}}, "checks": {}}))
+    _, verdicts, _ = machine.run()
+    check("the same task once the due-task hook has raised it for that pull request: rule 4",
+          verdicts["alpha"]["rule"] == 4 and verdicts["alpha"]["open_tasks_nothing_holds"] == [],
           verdicts["alpha"])
     machine.gh_responses.write_text("{}")
     machine.seat("beta", [user("go"), assistant("Done."), turn_end()])
@@ -836,7 +848,7 @@ try:
     for name in ("1.json", "2.json"):
         (unreadable_tasks / name).write_text("{not json")
     try:
-        program.open_tasks_nothing_holds(unreadable_tasks, checker=None)
+        program.open_tasks_nothing_holds(unreadable_tasks, None, unreadable_tasks)
         message = None
     except program.ReadFailure as error:
         message = str(error)

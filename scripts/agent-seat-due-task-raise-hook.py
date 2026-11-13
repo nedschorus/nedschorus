@@ -66,12 +66,13 @@ condition, so its task would wait in silence. An open task is raised once
 for each such pull request, with the words "closed without merging", so its
 agent re-plans it, whatever its other prerequisites and its blockedBy tasks
 say, and it is not raised for that pull request again when they change. A
-pull request reopened and then merged meets its condition as usual. The
-next-action prompt lists such a task among the tasks nothing holds back, and
-the idle sweep, which counts them with this hook's code, then does not apply
-its rule 4, nothing to do, to the task's agent-seat: an agent-seat that went
-idle before the pull request closed reaches no stop for this hook to raise the
-task at, so the sweep's rule 5 judge decides whether to wake it.
+pull request reopened and then merged meets its condition as usual. Until
+this hook has raised it, such a task counts as one nothing holds back for the
+idle sweep, which counts with this hook's code and reads its state file, so
+the sweep does not apply its rule 4, nothing to do, to the task's agent-seat:
+an agent-seat that went idle before the pull request closed reaches no stop
+for this hook to raise the task at, so the sweep's rule 5 judge decides
+whether to wake it.
 
 RAISED ONCE. The hook records, per task, the prerequisites list it raised
 the task for, or for a task raised because its blockers completed, its
@@ -270,9 +271,9 @@ CLOSED_WITHOUT_MERGING_LINE_TEMPLATE = (
     'Task {task_id} "{subject}" is not raised while a pull request in its metadata.prerequisites '
     "stays closed without merging: {citations}.")
 CLOSED_WITHOUT_MERGING_INSTRUCTIONS = (
-    "If a task named above as closed without merging is still wanted, put what it now waits on "
-    "in its metadata.prerequisites with TaskUpdate, in place of that pull request, or act on the "
-    "task now.",
+    "If a task named above as waiting on a pull request closed without merging is still wanted, "
+    "put what it now waits on in its metadata.prerequisites with TaskUpdate, in place of that pull "
+    "request, or act on the task now.",
     "If such a task is no longer wanted, delete it with TaskUpdate.",
     "If you expect such a pull request to be reopened and merged, leave its task as it is: this "
     "hook raises the task when the pull request merges, and does not name the closing again.",
@@ -598,6 +599,13 @@ def github_item_citation(kind: str, number: int, answer: dict) -> str:
     return f"{id_type} {number}"
 
 
+def pull_request_conditions_not_raised_as_closed(conditions, record: dict) -> list:
+    """The `pr_merged` conditions this task's record has not raised as closed without merging."""
+    already_closed = record.get(CLOSED_WITHOUT_MERGING_RECORD_KEY) or []
+    return [(kind, number) for kind, number in conditions
+            if kind == PULL_REQUEST_KIND and number not in already_closed]
+
+
 def pull_requests_closed_without_merging(conditions, checker) -> list:
     """(number, answer) for each `pr_merged` condition gh says is closed without merging."""
     found = []
@@ -672,14 +680,12 @@ def due_task_lines(tasks: dict, directory: Path, state: dict,
 
         if (conditions is not None
                 and record.get(PREREQUISITES_KEY) != canonical_prerequisites(prerequisites_value)):
-            already_closed = record.get(CLOSED_WITHOUT_MERGING_RECORD_KEY) or []
             newly_closed = pull_requests_closed_without_merging(
-                [(kind, number) for kind, number in conditions
-                 if kind == PULL_REQUEST_KIND and number not in already_closed],
-                checker)
+                pull_request_conditions_not_raised_as_closed(conditions, record), checker)
             if newly_closed:
                 new_record[CLOSED_WITHOUT_MERGING_RECORD_KEY] = sorted(
-                    set(already_closed) | {number for number, _ in newly_closed})
+                    set(record.get(CLOSED_WITHOUT_MERGING_RECORD_KEY) or [])
+                    | {number for number, _ in newly_closed})
                 closed_lines.append(CLOSED_WITHOUT_MERGING_LINE_TEMPLATE.format(
                     task_id=task["id"], subject=single_line(task.get("subject", "")),
                     citations="; ".join(github_item_citation(PULL_REQUEST_KIND, number, answer)
@@ -771,9 +777,8 @@ NEXT_ACTION_INSTRUCTIONS = (
     "items.",
 )
 NEXT_ACTION_UNHELD_TASKS_HEADER = (
-    "Your open tasks that no recorded prerequisite or blocker holds back, or that wait on a pull "
-    "request closed without merging; which of them are ready, and which need the user, is yours "
-    "to judge:")
+    "Your open tasks that no recorded prerequisite or blocker holds back; which of them are "
+    "ready, and which need the user, is yours to judge:")
 NEXT_ACTION_HELD_TASKS_LINE = (
     "{count} more open task(s) are not listed: each waits on a blocker task, a pull request or "
     "GHI that is not done, an approval-walk item not yet decided, or a pull request or GHI whose "
@@ -821,9 +826,11 @@ def open_outcome_lines(walk_directory: Path) -> list:
     return found
 
 
-def unheld_and_held_tasks(tasks: dict, directory: Path, checker) -> "tuple[list, int]":
+def unheld_and_held_tasks(tasks: dict, directory: Path, checker,
+                          raised: dict) -> "tuple[list, int]":
     """The ids of open tasks nothing recorded holds back, or that wait on a pull request closed
-    without merging, oldest first, and the count of the rest."""
+    without merging that `raised`, the state file's record, does not show raised yet, oldest
+    first, and the count of the rest."""
     unheld = []
     held = 0
     for task_id in sorted(tasks, key=lambda text: (len(text), text)):
@@ -838,7 +845,9 @@ def unheld_and_held_tasks(tasks: dict, directory: Path, checker) -> "tuple[list,
                 conditions = parse_prerequisites(prerequisites_value)
             except UnreadablePrerequisites:
                 pass  # due_task_lines names it to the agent
-        if conditions and pull_requests_closed_without_merging(conditions, checker):
+        record = raised.get(task_id) if isinstance(raised.get(task_id), dict) else {}
+        if conditions and pull_requests_closed_without_merging(
+                pull_request_conditions_not_raised_as_closed(conditions, record), checker):
             unheld.append(task_id)  # its agent must re-plan it, whatever else holds it
             continue
         if is_held_by_blockers(task, tasks, directory):
@@ -915,7 +924,7 @@ def next_action_prompt_lines(payload: dict, tasks: dict, directory: Path, state:
         return None
     state[NEXT_ACTION_STATE_KEY] = this_prompt
 
-    unheld, held = unheld_and_held_tasks(tasks, directory, checker)
+    unheld, held = unheld_and_held_tasks(tasks, directory, checker, state["raised"])
     unheld = [f'task {task_id} "{shortened(tasks[task_id].get("subject", ""))}"' for task_id in unheld]
     lines = list(NEXT_ACTION_INSTRUCTIONS)
     lines += listed_with_limit(NEXT_ACTION_UNHELD_TASKS_HEADER, unheld,
