@@ -928,12 +928,22 @@ def read_next_item_line(case, item):
             "and do what it prints before you present it.")
 
 
+def prerequisite_line(case, item, heading):
+    """The line close and the read step print last for the item they name, as a task's metadata.prerequisites entry."""
+    return (f"If a task waits on the user's decision on {item}, add this entry to its metadata.prerequisites with "
+            "TaskUpdate: " + json.dumps({"approval_walk_item_decided": {
+                "approval_walk_minutes_file_path": str(case.minutes.resolve()),
+                "approval_walk_item_heading": heading}}, ensure_ascii=False))
+
+
 def took_effect_next(case):
     return [
         "If the change needs nothing more from the user, such as a text he has not yet seen, start it as the "
         "walk-me-through skill's sentence on ready work says; if it edits a file that work you dispatched "
         "earlier is still editing, start it when that earlier work finishes.",
-        read_next_item_line(case, f"item 6 of {WALK_DOCUMENT_COUNTED_M}")]
+        read_next_item_line(case, f"item 6 of {WALK_DOCUMENT_COUNTED_M}"),
+        prerequisite_line(case, f"items 6 and 7 of {WALK_DOCUMENT_COUNTED_M}",
+                          "## Items 6 and 7 of 9: two small corrections")]
 
 
 def test_close_records_that_the_answer_took_effect():
@@ -3223,7 +3233,7 @@ def test_an_item_the_walk_moves_on_from_is_recorded_without_a_fast_read_and_not_
           and closed.stdout.rstrip("\n").split("\n") == [
               "item 1 of 5 is recorded in the minutes as settled without being shown to the user.",
               "List it, with its number, in one line of your next message to the user.",
-              read_next_item_line(case, "item 2 of 5")]
+              read_next_item_line(case, "item 2 of 5"), prerequisite_line(case, "item 2 of 5", "## Item 2 of 5: two")]
           and marker(case) == "#next_to_present item 2 of 5", described(closed) + case.minutes.read_text())
 
 
@@ -3621,7 +3631,8 @@ def test_close_reads_the_item_after_the_next_one_ahead_and_the_read_step_uses_it
     closed = answered_and_closed(case)
     check("close names the read step for the next item and starts the read of the item after it",
           closed.returncode == 0
-          and closed.stdout.rstrip("\n").split("\n")[-1] == read_next_item_line(case, "item 3 of 5")
+          and closed.stdout.rstrip("\n").split("\n")[-2:] == [
+              read_next_item_line(case, "item 3 of 5"), prerequisite_line(case, "item 3 of 5", "## Item 3 of 5: three")]
           and times_read(case, "## Item 4 of 5: four") == 1 and times_read(case, "## Item 3 of 5") == 0,
           described(closed) + case.calls.read_text())
     first = case.run(WAITING_ITEM_READ)
@@ -3630,7 +3641,8 @@ def test_close_reads_the_item_after_the_next_one_ahead_and_the_read_step_uses_it
           first.returncode == 0
           and lines[0].startswith("item 3 of 5: its cold-read-fast-read, of its text as it stands, had to be run now: ")
           and lines[0].endswith("/cold-read-fast-read.md") and times_read(case, "## Item 3 of 5: three") == 1
-          and lines[-1] == ("Then present item 3 of 5, unless its only choice is whether to build something now or "
+          and lines[-1] == prerequisite_line(case, "item 3 of 5", "## Item 3 of 5: three")
+          and lines[-2] == ("Then present item 3 of 5, unless its only choice is whether to build something now or "
                             f"later and it recommends now: then run `python3 {PROGRAM} check "
                             f"--now-over-later-already-decided --cwd {shlex.quote(str(case.checkout))}`, then the "
                             "close command it prints.")
@@ -3728,8 +3740,9 @@ def test_a_read_ahead_that_cannot_find_its_item_never_stops_close_or_the_read_st
                    "from you now, since when that item waits its read step reads it or reports the problem again. "
                    "The problem: the item after item 3 of 5, `item 4 of 5`: ")
     check("close whose read ahead cannot find its item names the next item, saying in one line why no read ahead started",
-          closed.returncode == 0 and lines[-1] == read_next_item_line(case, "item 3 of 5")
-          and lines[-2].startswith(not_started) and closed.stdout.count(not_started) == 1
+          closed.returncode == 0 and lines[-2] == read_next_item_line(case, "item 3 of 5")
+          and lines[-1] == prerequisite_line(case, "item 3 of 5", "## Item 3 of 5: three")
+          and lines[-3].startswith(not_started) and closed.stdout.count(not_started) == 1
           and marker(case) == "#next_to_present item 3 of 5" and times_read(case, "## Item") == 0, described(closed))
     read = case.run(WAITING_ITEM_READ)
     check("the read step reads its own item when the read ahead of the item after it cannot find that item",
@@ -3791,7 +3804,8 @@ def test_a_fix_that_touches_no_fact_is_not_read_again():
     check(f"{AFTER_FIXES} after a wording fix runs no read and says to present the item",
           result.returncode == 0
           and result.stdout.startswith("item 3 of 5: no new cold-read-fast-read: your changes since its last one (")
-          and result.stdout.rstrip("\n").split("\n")[-1] == "Present item 3 of 5."
+          and result.stdout.rstrip("\n").split("\n")[-2:] == [
+              "Present item 3 of 5.", prerequisite_line(case, "item 3 of 5", "## Item 3 of 5: three")]
           and times_read(case, ITEM_3_HEADING) == 1, described(result))
     second = case.run(WAITING_ITEM_READ, AFTER_FIXES)
     check(f"a second {AFTER_FIXES} compares with the text last read, not the text it let pass",
@@ -4429,6 +4443,94 @@ def test_close_reads_an_answer_line_whose_time_is_the_old_local_form_or_the_utc_
               closed.returncode == 0 and f"({when})" in case.minutes.read_text()
               and "\nitem 3 of 9: approved; every text the change adds has had a fast read." in case.minutes.read_text(),
               described(closed) + case.minutes.read_text())
+
+
+
+RAISE_HOOK = Path(__file__).resolve().parents[4] / "scripts" / "agent-seat-due-task-raise-hook.py"
+PREREQUISITE_KIND = "approval_walk_item_decided"
+HEADING_WITH_HASHTAG_BACKTICKS_AND_QUOTE = '## Item 2 of 3: #poem_list rows in `docs/walk/` say "why"'
+PREREQUISITE_DOCUMENT = f"""# A walk whose item headings hold a hashtag, backticks and a double quote
+
+## Item 1 of 3: one
+
+#case_against none.
+
+Recommendation: approve.
+
+{HEADING_WITH_HASHTAG_BACKTICKS_AND_QUOTE}
+
+#case_against none.
+
+Recommendation: approve.
+
+## three
+
+#approval_walk_item_in_category_fix_next
+
+#case_against none.
+
+Recommendation: approve.
+
+## Summary
+
+#case_against none.
+
+The walk in short.
+"""
+
+
+def load_raise_hook():
+    spec = importlib.util.spec_from_file_location("agent_seat_due_task_raise_hook", RAISE_HOOK)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def prerequisite_lines(result):
+    return [line for line in result.stdout.split("\n") if line.startswith("If a task waits on the user's decision on ")]
+
+
+def prerequisite_entry(line):
+    return json.loads(line[line.index("{"):])
+
+
+def test_the_item_named_next_comes_with_a_prerequisite_entry_the_raise_hook_reads_and_finds():
+    hook = load_raise_hook()
+    case = Case(next_to_present="item 1 of 3", document=PREREQUISITE_DOCUMENT)
+    case.run("check")
+    closed = case.run("close")
+    expected = prerequisite_line(case, "item 2 of 4", HEADING_WITH_HASHTAG_BACKTICKS_AND_QUOTE)
+    lines = prerequisite_lines(closed)
+    check("close prints, right after the read step's command, the prerequisites entry for the item it names next, "
+          "its heading's hashtag, backticks and double quote kept",
+          closed.returncode == 0 and lines == [expected]
+          and closed.stdout.rstrip("\n").split("\n")[-2:] == [read_next_item_line(case, "item 2 of 4"), expected],
+          described(closed))
+    entry = prerequisite_entry(expected)
+    parsed = hook.parse_prerequisites([entry])
+    check("the raise hook's parse_prerequisites reads the printed entry",
+          parsed == [(PREREQUISITE_KIND, entry[PREREQUISITE_KIND])], repr(parsed))
+    check("the raise hook finds the item by the printed heading and holds it undecided",
+          hook.approval_walk_item_decided_or_problem(entry[PREREQUISITE_KIND]) == {"met": False},
+          repr(hook.approval_walk_item_decided_or_problem(entry[PREREQUISITE_KIND])))
+    read = case.run(WAITING_ITEM_READ)
+    check("the read step prints the same entry as its last line",
+          read.returncode == 0 and read.stdout.rstrip("\n").split("\n")[-1] == expected, described(read))
+    case.run("check")
+    closed = case.run("close")
+    check("once close records the item as approved, the raise hook counts the printed entry as met",
+          closed.returncode == 0 and hook.approval_walk_item_decided_or_problem(entry[PREREQUISITE_KIND]) == {"met": True},
+          described(closed))
+    lines = prerequisite_lines(closed)
+    numbered = [line for line in walk_document(case).split("\n") if line.startswith("## Item ") and line.endswith(": three")]
+    entry = prerequisite_entry(lines[0]) if len(lines) == 1 else {}
+    check("for an unnumbered item close numbers as it names it, the entry gives the heading with its new running "
+          "count, and the raise hook finds it undecided",
+          len(numbered) == 1 and lines == [lines[0]] and lines[0].startswith(
+              "If a task waits on the user's decision on item 3 of 4, ")
+          and entry[PREREQUISITE_KIND]["approval_walk_item_heading"] == numbered[0]
+          and hook.approval_walk_item_decided_or_problem(entry[PREREQUISITE_KIND]) == {"met": False},
+          described(closed) + walk_document(case))
 
 
 
