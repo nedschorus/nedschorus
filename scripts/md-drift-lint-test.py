@@ -327,6 +327,13 @@ with tempfile.TemporaryDirectory() as workspace:
     findings = problems_for("see `docs/ghost-design.md:40`", root)
     check("a line-numbered citation of a missing file is reported as written",
           findings == ["path does not exist: docs/ghost-design.md:40"], str(findings))
+    for dash in ("-", "–"):
+        check(f"a line-range citation written with {dash!r} of an existing file passes",
+              problems_for(f"see `docs/real-doc.md:2{dash}3`", root) == [])
+        findings = problems_for(f"see `docs/ghost-design.md:40{dash}44`", root)
+        check(f"a line-range citation written with {dash!r} of a missing file is reported",
+              findings == [f"path does not exist: docs/ghost-design.md:40{dash}44"],
+              str(findings))
     # A MISSING file, so the case fails if anything but a trailing number is
     # ever stripped: an existing file would resolve and pass either way.
     findings = problems_for("the `docs/ghost-design.md:section` form", root)
