@@ -1,0 +1,51 @@
+---
+issue: "[Architecture overview claim check and lint: steps the writer does by hand that code could take over](https://github.com/nedschorus/nedschorus/issues/3418)"
+---
+
+# Architecture overview claim check and lint: steps the writer does by hand that code could take over
+
+## Why
+
+An nc-architecture-overview is checked by the claim-check program, `nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py`, and by the overview checks of `scripts/md-drift-lint.py`; the page `docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md` says how. Cold-read-fast-reads of that page and of the program's messages, made on 2026-11-12 for pull request [overview-write: the claim check appends to one proposals file per overview, outside the wiki; overview page's merge, handler and pointer-line rulings true](https://github.com/nedschorus/nedschorus/pull/3406), named steps the writer does by hand, or rules nothing checks, that code could take over. Pull request 3406 did not change the passages these findings are about, so its triage deferred the findings to /ghi-write. This GHI holds them in one place so that each can be judged, and built only if it earns its place.
+
+CLAUDE.md allows a guard, validation or retry only when the failure has happened, or concrete evidence shows it is foreseeable within 30 days, and it would lose or damage work, stop work beyond the task that failed, or go unnoticed until it does. Most candidates below cite no such failure yet. Each says what evidence exists.
+
+Below, an overview's entries file is its proposed-improvements-or-changes-file, `nc-systems/<system>/docs/<system>-architecture-overview-proposed-improvements-or-changes-entries.md`, where the claim-check program appends the claims it ranks fix later.
+
+The records, all under `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/`, are cited by a short name and the finding's number, so that "page Q4.1" is item 1 under Question 4 of the first record:
+- `nedschorus-how-to-write-an-architecture-overview-2026-11-12/cold-read-fast-read.md`, the page, cited as "page".
+- `nc-systems-skills-overview-write-overview-write-architecture-overview-claim-check-by-fresh-agent-bb73fd1734f51ecf-tool-message-to-agent-2026-11-12/cold-read-fast-read.md`, the program's module docstring, which is its `--help`, cited as "docstring".
+- `nc-systems-skills-overview-write-overview-write-architecture-overview-claim-check-by-fresh-agent-563272e601073938-tool-message-to-agent-2026-11-12/cold-read-fast-read.md`, the pointer line the program builds, cited as "pointer line".
+
+Each record's `cold-read-triage.md`, beside it, gives the disposition of every finding.
+
+## The candidates
+
+1. **The follow-up pull request is remembered by no program** (page Q4.1, docstring Q4.2). When a check ranks claims fix later, the page says the agent that ran the program opens a follow-up pull request that fixes them once the checked pull request merges. That may be long after the agent's session ends. The program could record the pending follow-up, as a task or GHI, when it appends claims; or a maintenance-job of GHI [Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedschorus/nedschorus/issues/1058) could list each overview's entries file on main that holds open claims and has no open follow-up pull request. Evidence: none cited. The entries are not lost when no follow-up comes, because they stay open in the entries file, where GHI [Proposed improvements or changes to a GHI are handled by agents first, and reach the user only when they need him](https://github.com/nedschorus/nedschorus/issues/1132) rule 6 has a maintenance job list every entry open more than 7 days.
+2. **One failed fresh-agent discards the whole run** (docstring Q3.3). The program writes no report unless every fresh-agent produced output, and exits 4, so the work of the fresh-agents that finished is lost and the whole run is repeated. The program could keep what finished and run again only the fresh-agent that failed, the pattern closed GHI [cold-read grid: retry a failed cold-read-cell once, report its cause, and name a runtime that is down](https://github.com/nedschorus/nedschorus/issues/413) built for cold-read-cells. Evidence: none cited. The program writes no report for a failed run, so the report directory, `nedlern@ned-box:/home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/`, cannot show how often this happened; the work can be redone by running the program again.
+3. **The program could retry a malformed report itself** (docstring Q4.5). On the first malformed report for an overview text, the program's last line tells the agent to run it again; it could do that once itself, and hand the user only a second malformed report. Evidence: 1 of the 47 reports in the report directory, checked on 2026-11-12, is malformed, `nedlern@ned-box:/home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/5cf59344c6cbfcae661cc52cb170f5229bc69cdb-2026-11-02T18-23-56-018163Z.md`, whose COUNTS line disagrees with its VERDICT lines. Running again redoes that work, so no work was lost. GHI [Sanity-check-cells return their reports as a JSON object checked against a schema, so the runner stops guessing from prose whether a text is a report](https://github.com/nedschorus/nedschorus/issues/2007) and GHI [ghi-guide-agent answers with a JSON object checked against a schema, so its callers stop sorting its prose replies](https://github.com/nedschorus/nedschorus/issues/2159) take another approach, a schema-checked reply, which may remove the malformed report instead; whoever takes up candidate 3 first checks whether the claim check has taken that approach, and drops candidate 3 if it has.
+4. **Nothing checks that the entries file was committed** (docstring Q4.1). The program writes the claims ranked fix later into the entries file in the writer's checkout and tells the writer to commit it. If the writer does not, the claims are lost with the worktree. `scripts/pull-request-review-plan.py` already reads the newest report for the overview's text, so it could refuse a pull request whose report lists claims ranked fix later that the entries file at the pull request's head does not hold. Evidence: none cited.
+5. **Overview rules that `scripts/md-drift-lint.py` could check.** Today its overview checks cover hook registration, lock and environment-variable names, the Planned work GHIs being open, and programs the overview does not name. It could also check:
+   - the seven section headings, in the page's order (page Q4.5);
+   - that the pointer line, "This document has proposed improvements or changes: read ...", stands under the first heading exactly when the overview's entries file exists and holds an open entry, since GHI 1132 removes the line with the last such file (page Q4.5, pointer line Q4.1);
+   - no date, no pull request or issue link outside Planned work, no commit link other than the last line, and no component path under a `tests/` directory (page Q4.7);
+   - in a pull request that moves an overview, the path check run over every tracked Markdown file, not only the files the pull request changes, so that a link still naming the old path is caught (page Q4.12);
+   - the GitHub search for open GHIs on the system that Planned work leaves out, reported as a note (page Q4.8).
+
+   Evidence: none cited for any of these.
+6. **A refresh writer could be handed what changed** (page Q4.9). The page has the writer read the commits between the overview's `**Checked against:**` commit and main. The program that runs refreshes, the maintenance job that GHI [refresh-design: when a system's code lands, bring its design, build-slice plan and overview into line — removing, never revising](https://github.com/nedschorus/nedschorus/issues/670) designs, could hand the writer that `git log` and `git diff`, limited to the paths that trigger a refresh. Evidence: none cited.
+
+## Not in this GHI
+
+- The claim-check program starting GHI 1132's handler itself (page Q4.6) is already planned in GHI 1132, "What must be built", item 4.
+- The program adding the pointer line itself, so that adding it needs no second run (pointer line Q4.2, docstring Q4.3), is waiting on the user's ruling in pull request 3406's approval-walk.
+- Checking the `**Checked against:**` commit's ancestry (docstring Q4.6) is already recorded in the triage of record `nedschorus-how-to-write-an-architecture-overview-2026-11-07-3`, items B25 and C3; rule 4 of `scripts/pull-request-review-plan.py` already refuses a commit that is not an ancestor of the pull request's head commit.
+- GHI [Overview claim check: judge again only new, changed or flagged claims, and keep a supported claim's verdict while its wording and cited files are unchanged](https://github.com/nedschorus/nedschorus/issues/2532) changes the same program; whoever builds a candidate here reads it first, so the two do not collide.
+
+## Search receipt
+
+On 2026-11-12, ghi-guide-agent was asked, with closed issues included, which issues cover candidates 1 to 6. It named GHIs 1132, 670, 1058, 2532, 2007, 2159 and 413 as related, as cited above, and no issue covering any of the six candidates. `gh issue list --repo nedschorus/nedschorus --state all --search` on "overview claim check in:title", "architecture overview lint" and "overview follow-up pull request" found only GHI 2532.
+
+## Next action
+
+The queue-drain of GHI [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, the drafts directory and the queue-drain-candidate-label issue queue](https://github.com/nedschorus/nedschorus/issues/24) decides whether this GHI stays open. An agent that sees one of these failures happen adds the citation under its candidate with edit-GHI. Each candidate, and each check under candidate 5, stands on its own: one with a citation that meets CLAUDE.md's rule is built on its own topic branch, with a test that reproduces the failure, and this GHI-MD records it as built. The GHI closes when every candidate is built or dropped.
