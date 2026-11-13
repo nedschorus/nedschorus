@@ -10,8 +10,8 @@ Checks, per file type:
 
   .md   - repo paths named in backticks or markdown links exist on disk
           (a path this repository deliberately does not track is skipped;
-          a backtick citation with a line number, `file.md:120`, is checked
-          as the file it names)
+          a backtick citation with a line number, `file.md:120`, or a line
+          range, `file.md:120-125`, is checked as the file it names)
         - markdown link targets resolve (external schemes skipped; a target
           that is only a `<placeholder>` skipped; a target written in angle
           brackets, `[x](<docs/file.md>)`, checked as the path inside them
@@ -194,11 +194,13 @@ def _warn_once(repo_root: Path, detail: str):
           f"so citations of the record stores will be reported", file=sys.stderr)
 
 
-LINE_SUFFIXED_PATH = re.compile(r"^(?P<path>[^\s:]+):(?P<line>\d+)$")
+# The project's prose uses en dashes as well as hyphens for line ranges.
+LINE_SUFFIXED_PATH = re.compile(
+    r"^(?P<path>[^\s:]+):(?P<line>\d+)(?:[-–](?P<last_line>\d+))?$")
 
 
 def without_line_suffix(token: str) -> str:
-    """Remove a trailing :line number from a backtick citation."""
+    """Remove a trailing :line or :first-last suffix from a backtick citation."""
     match = LINE_SUFFIXED_PATH.match(token)
     return match.group("path") if match else token
 
