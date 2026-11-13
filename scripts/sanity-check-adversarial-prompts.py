@@ -377,8 +377,9 @@ MAIN_THREAD_WAIT_STEP_SECONDS = 0.25
 # leaves the lock released, `with` releases it again, and RuntimeError
 # replaces the stop. It records the signal in
 # STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL instead, and run_cells_in_review_copy
-# raises it after each submit, after each wait step and after the pool has
-# shut down, where the main thread holds no such lock.
+# raises it after each wait step and after the pool has shut down, where the
+# main thread holds no such lock. A stop taken while a cell is submitted waits
+# for the next wait step: a cell submitted after the stop launches nothing.
 MAIN_THREAD_RUNS_THE_CELLS_POOL = False
 STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL = None
 # Set by the first stop signal, and read by every thread before it launches an
@@ -2058,7 +2059,6 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
                             run_cell, adversarial_prompt, runtime, args.target, args.context,
                             args.problem_statement, out_dir, baseline_status, corpus,
                             checkout, copy_record_dir))
-                        raise_stop_taken_in_the_cells_pool()
                     # Waited for in short steps, not with as_completed: Python
                     # runs stop_run_on_signal only in the main thread, and when
                     # Linux hands a stop signal to a cell's thread, a main
