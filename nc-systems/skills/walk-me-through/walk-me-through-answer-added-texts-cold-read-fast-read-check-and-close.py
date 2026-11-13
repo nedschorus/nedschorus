@@ -1172,7 +1172,9 @@ def approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parse
     own: each numbered item's own lines, even under a heading it shares with other items; when several items
     are shown together, the lines of their shared heading above the first item's opening; and each of the
     item's numbered sub-steps, such as `### Item 3.1 of 9`, which item_unit_spans reads as units of their own,
-    taken from the units right after the item's own, so an older version's `3.1 of 9` elsewhere is not counted."""
+    taken from the units right after the item's own that are sub-steps of any item of that unit, so an older
+    version's `3.1 of 9` elsewhere is not counted, with the lines of a heading several sub-steps share above
+    the first sub-step's opening."""
     openings = walk_finder.item_opening_lines(text, parser, tokens)
     all_units = walk_finder.item_unit_spans(text, parser)
 
@@ -1183,10 +1185,14 @@ def approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parse
                 openings, first, end, number, unit_numbers, unit_total)
         return first, end
 
-    def sub_step_units(unit, number):
+    def shared_heading_text(unit):
+        first_opening = min(own_range(unit, part)[0] for part in unit[0])
+        return [(unit[3], first_opening)] if first_opening > unit[3] else []
+
+    def sub_step_units(unit):
         found = []
         for each in [each for each in all_units if each[3] > unit[3]]:
-            if not each[0] or not all(part.startswith(number + ".") for part in each[0]):
+            if not each[0] or not all(any(part.startswith(number + ".") for number in unit[0]) for part in each[0]):
                 break
             found.append(each)
         return found
@@ -1196,18 +1202,20 @@ def approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parse
         unit = next(unit for unit in spans if number in unit[0])
         ranges.append(own_range(unit, number))
         if len(numbers) > 1 and len(unit[0]) > 1:
-            first_opening = min(own_range(unit, part)[0] for part in unit[0])
-            if first_opening > unit[3]:
-                ranges.append((unit[3], first_opening))
-        ranges += [own_range(each, part) for each in sub_step_units(unit, number) for part in each[0]
-                   if part not in numbers]
+            ranges += shared_heading_text(unit)
+        for each in sub_step_units(unit):
+            parts = [part for part in each[0] if part.startswith(number + ".") and part not in numbers]
+            ranges += [own_range(each, part) for part in parts]
+            if parts and len(each[0]) > 1:
+                ranges += shared_heading_text(each)
     return sorted(set(ranges))
 
 
 def approval_walk_item_text_over_word_limit_refused(walk_finder, minutes, value, numbers, total, parser, item, command):
-    """Raise Failure when an item's text up to its first `###` sub-step, or a sub-step, has more words than
-    APPROVAL_WALK_ITEM_WORD_LIMIT, naming the first such text. A sub-step is a `###` heading, numbered or not;
-    a deeper heading is part of the text it falls in."""
+    """Raise Failure when an item's text up to its first `###` sub-step, a sub-step, or the text of a heading
+    several items or sub-steps share above the first of them, has more words than APPROVAL_WALK_ITEM_WORD_LIMIT,
+    naming the first such text. A sub-step is a `###` heading, numbered or not; a deeper heading is part of the
+    text it falls in."""
     document, text, tokens, _, spans = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
     lines = text.split("\n")
     sub_steps = {token.map[0] for token in tokens if token.type == "heading_open" and token.level == 0
