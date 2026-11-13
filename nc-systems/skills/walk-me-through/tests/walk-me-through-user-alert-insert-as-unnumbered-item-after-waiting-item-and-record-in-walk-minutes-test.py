@@ -190,6 +190,32 @@ def run_several_alert_cases(root):
           and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
 
 
+def run_unnumbered_item_count_cases(root):
+    # 257 existing items: past the integers Python caches, so the counts are equal but distinct objects.
+    existing = "".join(f"## waiting point {number}\n\nRecommendation: go.\n\n" for number in range(257))
+    checkout, home = walk_checkout(root, "existing-unnumbered",
+                                   document=WALK_DOCUMENT + "\n" + existing)
+    claimed_alert(home, "alert-a", "first")
+    result = run(checkout, home, "alert-a")
+    document, _ = files(checkout)
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    check("with 257 unnumbered items already in the walk-document, the alert is added as the 258th",
+          result.returncode == 0 and "\n## first\n" in document
+          and sum(map(walk_finder.approval_walk_unit_is_unnumbered_item, units)) == 258,
+          result.stderr)
+
+    checkout, home = walk_checkout(root, "heading-in-action")
+    claimed_alert(home, "alert-a", "first")
+    path = home / ".local/state/nedschorus/user-alerts/claimed" / "alert-a.json"
+    alert = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps({**alert, "action": "Restart it.\n\n## a second heading"}), encoding="utf-8")
+    before = files(checkout)
+    result = run(checkout, home, "alert-a")
+    check("an alert whose text outside the fence adds a second unnumbered item makes the program exit 1 and "
+          "change nothing", result.returncode == 1 and "Traceback" not in result.stderr
+          and files(checkout) == before, result.stderr)
+
+
 def run_marker_in_title_cases(root):
     for number, title in enumerate(("pause it with #approval_walk_paused", "close it: #next_to_present none",
                                     "quote `#next_to_present none` first", "two lines,\n#next_to_present none")):
@@ -339,6 +365,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     scratch = Path(temporary_directory)
     run_one_alert_cases(scratch)
     run_several_alert_cases(scratch)
+    run_unnumbered_item_count_cases(scratch)
     run_marker_in_title_cases(scratch)
     run_refusal_cases(scratch)
     run_repeated_id_and_title_spanning_two_headings_cases(scratch)
