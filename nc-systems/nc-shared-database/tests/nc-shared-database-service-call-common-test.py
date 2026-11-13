@@ -3,7 +3,7 @@
 
 The cases call a fake service on a loopback port that answers each request with
 the status the case sets, a listening socket that never answers, and a port
-nothing listens on: success, the 400, 401 and 422 refusals, a 409 and a 500
+nothing listens on: success, the 400, 401 and 422 refusals, a 404 and a 500
 counted as no answer, no answer within the time limit, a refused connection,
 an unreadable token file, and the handoff-supervisor's variant, which calls
 again with the same event ID, logs once when its wait starts and once when it
@@ -141,7 +141,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and caller.NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND in str(failure),
           failure and str(failure))
 
-    for status in (409, 500):
+    for status in (404, 500):
         fake.statuses = [status]
         failure = failure_of(lambda: caller.nc_shared_database_event_send_single_attempt(
             "agent-seat-paused", "seat-1", {}, **options))
