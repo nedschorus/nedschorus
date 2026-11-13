@@ -1967,6 +1967,31 @@ def test_close_posts_the_ruling_on_an_item_its_answer_decides_through_the_last_s
               described(closed) + repr(case.gh_comments()))
 
 
+def test_a_later_close_does_not_post_again_the_ruling_on_an_item_decided_through_its_last_sub_step():
+    pull_requests = held_pull_requests((501, [f"#held_on_ruling {WALK_NAME} item 2"]))
+    case = Case(next_to_present="item 2.2 of 2", document=SUB_STEPS_THEN_ITEMS_WAITING_ON_THEIR_ITEM_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n" + approved_line("item 1 of 2")
+                            + "item 2.1 of 2: moved on; the item asked for no decision. <moved on, no decision>\n"
+                            + "#next_to_present item 2.2 of 2\n")
+    case.run("check")
+    case.run("close", environment=gh_environment(pull_requests))
+    case.run("check")
+    closed = case.run("close", environment=gh_environment(pull_requests))
+    check("the close after the one that decided item 2 through its last sub-step does not post item 2's ruling again",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 4 of 4"
+          and case.gh_comments() == [("501", f"#ruling_given {WALK_NAME} item 2 approved")],
+          described(closed) + case.minutes.read_text() + repr(case.gh_comments()))
+
+
+def test_an_item_is_decided_through_a_sub_step_that_is_itself_decided_through_its_sub_steps():
+    program = load_program()
+    inferred = program.items_decided_through_sub_steps(
+        ["5", "5.1", "5.2", "5.2.1"], {"5.1": "approved", "5.2.1": "approved"})
+    check("in a three-level walk, 5.2 is decided through 5.2.1, and then 5 through 5.1 and 5.2, so item 5 is not named "
+          "again",
+          inferred == {"5.2": "approved", "5": "approved"}, repr(inferred))
+
+
 def test_close_numbers_the_new_item_a_finding_raised_and_holds_the_answer():
     case = Case(next_to_present="item 1 of 4", document=UNNUMBERED_ITEMS_DOCUMENT)
     case.run("check")
