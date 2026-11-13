@@ -351,7 +351,11 @@ as CHECK does and before it starts any read, an item with a `#new` or
 before any read, an item whose text up to its first `###` sub-step, or one of
 whose `###` sub-steps, holds more than 300 words, counting every run of
 characters between spaces that holds a letter or a digit, on every line but
-those opening `#approval_walk_item_`. A read of that key
+those opening `#approval_walk_item_`. When the line names one item that has
+numbered sub-steps, such as `### Item 3.1 of 9`, the walk-minutes do not all
+decide, the step then adds a `#next_to_present` line naming the first of them
+instead, since the user is shown such an item one sub-step at a time, and
+reads that sub-step as this paragraph says. A read of that key
 that wrote its report is used, a read ahead included; one a read-ahead worker
 still runs is waited for, for as long as the worker's process lives, since the
 fast read ends its own run with timeouts of its own; otherwise the step runs the
@@ -983,6 +987,10 @@ ITEM_READ_LINES = (
     "then run `python3 {program} check " + NOW_OVER_LATER_FLAG + " --cwd {top}`, then the close command it prints.",
 )
 ITEM_READ_NOT_RUN_NEXT = "Present {item}."
+ITEM_READ_SUB_STEP_NAMED = (
+    "{item} is split into numbered sub-steps, which the user is shown one at a time, so the step added the line "
+    "`#next_to_present {sub_step}` to {minutes}, naming the first sub-step of {item} the walk-minutes record no answer "
+    "to, and reads {sub_step} instead of {item}.")
 MARKDOWN_HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+(.*)$")
 WITHDRAWN_VERSION_HEADING = "#### Withdrawn version {version} of item {number}"
 NUMBER_PREDICTED = "number_predicted"
@@ -2190,10 +2198,29 @@ def earlier_read_texts_kept_as_withdrawn_versions(walk_finder, minutes, value, n
     return kept
 
 
-def waiting_item_read(arguments):
-    """Give the item the `#next_to_present` line names its cold-read-fast-read, as its text stands."""
+def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minutes, parser, numbers, order):
+    """Return the first sub-step in order, such as 3.1, of the one item numbers names, such as 3, that the
+    walk-minutes do not decide, as next_item counts an item decided; None when numbers names several items or no
+    such sub-step exists."""
+    if len(numbers) != 1:
+        return None
+    text = minutes.read_text(encoding="utf-8")
+    decided = decided_with_items_whose_sub_steps_are_all_decided(
+        order, minutes_record(walk_finder, text, parser)[0], held_answers_unresolved(walk_finder, text, parser))
+    return next((item for item in order if isinstance(item, str) and "." in item
+                 and item.rsplit(".", 1)[0] == numbers[0] and item not in decided), None)
+
+
+def waiting_item_read(arguments, sub_step_of=None):
+    """Give the item the `#next_to_present` line names its cold-read-fast-read, as its text stands.
+
+    sub_step_of is (the sub-step's `#next_to_present` value, the item it is a sub-step of) when the line names an
+    item split into numbered sub-steps: the sub-step is read in its place, and its line is added to the walk-minutes
+    only once every refusal has passed, so a refused read leaves the walk-minutes as they were."""
     walk_finder = load_walk_finder()
     top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
+    if sub_step_of:
+        value = sub_step_of[0]
     _, numbers, total = waiting_items(walk_finder, value, minutes)
     program = Path(__file__).resolve()
     reads = item_reads_directory(walk_finder, minutes)
@@ -2202,8 +2229,8 @@ def waiting_item_read(arguments):
         top=shlex.quote(str(top)))
     # Before walk_document_items, which can write: a missing copy refuses with nothing written.
     earlier = earlier_read_texts_of_item(walk_finder, minutes, value, numbers, total, parser, reads, rerun)
-    count, _, _, _, _ = walk_document_items(walk_finder, minutes, value, numbers, total, parser,
-                                            WAITING_ITEM_READ_STEP, top)
+    count, order, _, _, _ = walk_document_items(walk_finder, minutes, value, numbers, total, parser,
+                                                WAITING_ITEM_READ_STEP, top)
     total = total or count
     item = items_named(numbers, total)
     command = READ_STEP_COMMAND.format(program=program, flags=" " + AFTER_FIXES_FLAG, top=shlex.quote(str(top)))
@@ -2211,6 +2238,12 @@ def waiting_item_read(arguments):
                                refused_unless_marks_read=(item, command))
     # Before the kept versions are written, so a refused item's document is left as it was.
     approval_walk_item_text_over_word_limit_refused(walk_finder, minutes, value, numbers, total, parser, item, command)
+    sub_step = approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minutes, parser, numbers, order)
+    if sub_step:
+        return waiting_item_read(arguments, (items_named([sub_step], total), item))
+    if sub_step_of:
+        append_to_minutes(minutes, [NEXT_MARKER_LINE.format(value=item)])
+        print(ITEM_READ_SUB_STEP_NAMED.format(item=sub_step_of[1], sub_step=item, minutes=minutes))
     for line in earlier_read_texts_kept_as_withdrawn_versions(walk_finder, minutes, value, numbers, total, parser,
                                                               earlier, item, text):
         print(line)
