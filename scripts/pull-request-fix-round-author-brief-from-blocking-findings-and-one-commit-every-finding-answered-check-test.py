@@ -75,7 +75,7 @@ if os.environ.get("FAKE_RUNNER_CALLS"):
     with open(os.environ["FAKE_RUNNER_CALLS"], "a") as calls:
         calls.write(json.dumps({"checkout": str(checkout), "arguments": arguments}) + "\n")
 if os.environ.get("FAKE_RUNNER_EXIT"):
-    print("run-all-test-suites: could not run")
+    print("scripts/run-all-test-suites.py: could not run")
     sys.exit(int(os.environ["FAKE_RUNNER_EXIT"]))
 listed = checkout / "failing-suites.txt"
 failing = listed.read_text().split() if listed.exists() else []
@@ -84,7 +84,7 @@ if "--only-suites-named" in arguments:
 for suite in failing:
     print(f"FAIL {suite} exit 1 (0.1s)")
 if os.environ.get("FAKE_RUNNER_STOPPED"):
-    print("run-all-test-suites: not run to the end — stopped by SIGTERM.")
+    print("scripts/run-all-test-suites.py: not run to the end — stopped by SIGTERM.")
     sys.exit(1 if failing else 2)
 print(f"{len(failing)} failed:")
 for suite in failing:
@@ -1899,7 +1899,7 @@ def suite_cases(root, repository, _base, _frozen_head):
     code, out, err = check_with_head(frozen_head, {"FAKE_RUNNER_STOPPED": "1"})
     check("suites: a run stopped before its end beside a failure the frozen-head shares fails the check "
           "with exit 2, before any push",
-          code == 2 and "did not judge every suite: it printed\n  run-all-test-suites: not run to the end" in err
+          code == 2 and "did not judge every suite: it printed\n  scripts/run-all-test-suites.py: not run to the end" in err
           and "Not pushed yet" not in out, out + err)
     runner_calls(root)
     code, out, err = run(root, repository, routes_for(fixed, reviews), "--check", "--answers", answers,
