@@ -4367,7 +4367,7 @@ def test_a_kept_version_whose_first_block_is_indented_code_stays_code():
 
 
 def test_a_read_outcome_with_number_predicted_absent_or_false_is_the_items_own_read_even_after_a_retitle():
-    # record_read leaves the field out of an ordinary read; PR 3483's records, already on disk, say false.
+    # record_read leaves the field out of an ordinary read; records an earlier version wrote, already on disk, say false.
     for how, field in (("no number_predicted field", None), ('"number_predicted": false', False)):
         case = item_read_case()
         answered_and_closed(case)
