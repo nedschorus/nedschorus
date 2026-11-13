@@ -1306,6 +1306,24 @@ with tempfile.TemporaryDirectory() as workspace:
                   "table can be updated."),
               f"code {result.returncode}, stderr {result.stderr!r}")
 
+        # At the 200,000 default, // 999 also gives 200, so only a larger default tells a
+        # wrong divisor from the right one.
+        unlisted_model_at_a_million = transcript_with_usage(
+            workspace, "unlisted-model-at-a-million.jsonl", 350_000, model="claude-something-unreleased")
+        marker_file.unlink(missing_ok=True)
+        real_default_window = hook.DEFAULT_CONTEXT_WINDOW_TOKENS
+        hook.DEFAULT_CONTEXT_WINDOW_TOKENS = 1_000_000
+        try:
+            code, stderr = run_hook_in_process(
+                {"session_id": PROBE_SESSION_ID, "transcript_path": str(unlisted_model_at_a_million)})
+        finally:
+            hook.DEFAULT_CONTEXT_WINDOW_TOKENS = real_default_window
+        check("for a model id not in the table, the default window it names is the default in "
+              "thousands, whatever the default is",
+              code == 2 and "so the 35% of its context window this session has used assumes a "
+                            "1000K window;" in stderr,
+              f"code {code}, stderr {stderr!r}")
+
         marker_file.unlink(missing_ok=True)
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(loud)},
                           ("--threshold-used-percentage", "75"))
