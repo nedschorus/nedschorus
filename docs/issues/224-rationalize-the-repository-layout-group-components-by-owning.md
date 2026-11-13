@@ -19,7 +19,7 @@ The repository is laid out by file type, so no system is findable in one place. 
 
 Alphabetical order actively scatters these groups: the recovery system's two halves sort to opposite ends of the directory, eleven unrelated programs apart. Add its design (on an unmerged branch), its unbuilt hook half, and its sudoers file, and one system occupies five locations across two trees and a branch.
 
-**Why waiting costs more than acting.** Every additional citation into a path raises the price of moving it later, and this project has now measured that price three times: the `md-review` -> `cold-read` rename left an entire branch reading as obsolete; the incident behind `scripts/find-deleted-path-across-backups.py` was an agent following a citation to a moved file and building the wrong thing from its absence; and the queue note on the gatekeeper's unrun checks cited `scripts/git-gatekeeper.py:823-825` (`git show 78ceb75b:docs/issues/queue/3-gatekeeper-checks-never-run-at-check-in.md`), where the attach point had since moved to 861-863.
+**Why waiting costs more than acting.** Every additional citation into a path raises the price of moving it later, and this project has now measured that price three times: the `md-review` -> `cold-read` rename left an entire branch reading as obsolete; the incident behind `scripts/find-deleted-path-across-backups.py` was an agent following a citation to a moved file and building the wrong thing from its absence; and the queue note on the gatekeeper's unrun checks (`git show 78ceb75b:docs/issues/queue/3-gatekeeper-checks-never-run-at-check-in.md`) cited the gatekeeper's attach point by line numbers that had since moved 38 lines down; that attach point is now in `nc-systems/main-gatekeeper/main-gatekeeper.py`'s `integrate_and_push`, between its calls to `build_candidate` and `attempt_push`.
 
 ## What is proposed
 
@@ -106,7 +106,7 @@ From item 3 of the approval-walk md-skills-questions-waiting-2026-11-05, answere
 
 ## Next action
 
-The MD-skills seat moves the systems in the order ruled on 2026-09-30, one pull request each. The first, the review-rule pull request, PR [The instruction-file guard protects the files the user reviews, by where they sit](https://github.com/nedschorus/nedschorus/pull/852), merged on 2026-10-02. The rename to `.claude/guard-hooks/`, PR [Every guard moves into .claude/guard-hooks/](https://github.com/nedschorus/nedschorus/pull/2371), merged on 2026-11-01, and the two files it left behind move under the 2026-11-05 ruling below. walk-me-through is next.
+The MD-skills seat moves the systems in the order ruled on 2026-09-30, one pull request each. The first, the review-rule pull request, PR [The instruction-file guard protects the files the user reviews, by where they sit](https://github.com/nedschorus/nedschorus/pull/852), merged on 2026-10-02. The rename to `.claude/guard-hooks/`, PR [Every guard moves into .claude/guard-hooks/](https://github.com/nedschorus/nedschorus/pull/2371), merged on 2026-11-01, and the two files it left behind move under the 2026-11-05 ruling above. walk-me-through is next.
 
 ## Search receipt
 
