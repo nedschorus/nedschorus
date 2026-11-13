@@ -2262,7 +2262,8 @@ def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minut
     """Return the sub-step, such as 3.1, of the one item numbers names, such as 3, that holds the sub-step
     next_item names first among the item's sub-steps and theirs, such as 3.1.1, taken from the walk-document's
     units right after the item's own; next_item's rule decides, so the read step and the close step name the
-    same sub-step. None when numbers names several items or next_item names none."""
+    same sub-step. When the walk-document has no heading for that sub-step, such as no 3.1 above 3.1.1, the
+    sub-step next_item names. None when numbers names several items or next_item names none."""
     if len(numbers) != 1:
         return None
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
@@ -2276,7 +2277,9 @@ def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minut
                       unresolved=held_answers_unresolved(walk_finder, text, parser))
     if not named:
         return None
-    return numbers[0] + "." + named[0][len(numbers[0]) + 1:].split(".")[0]
+    # A walk-document may give sub-sub-steps 2.1.1 to 2.1.3 no heading for 2.1: step straight to what next_item names.
+    level = numbers[0] + "." + named[0][len(numbers[0]) + 1:].split(".")[0]
+    return level if level in sub_steps else named[0]
 
 
 def waiting_item_read(arguments, sub_step_of=None):

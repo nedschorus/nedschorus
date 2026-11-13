@@ -771,8 +771,21 @@ def test_the_waiting_item_read_step_names_the_sub_step_next_item_names_under_a_s
                             "#next_to_present item 3 of 9\n")
     result = case.run(WAITING_ITEM_READ_STEP_NAME)
     check("with sub-step 3.1 deferred once but its sub-step 3.1.1 never deferred, the read step names 3.1.1, as "
-          "next_item does, not 3.2", result.returncode == 0 and marker(case) == "#next_to_present item 3.1.1 of 9",
-          described(result))
+          "next_item does, not 3.2, stepping through 3.1 so that 3.1's own checks run",
+          result.returncode == 0 and marker(case) == "#next_to_present item 3.1.1 of 9"
+          and "item 3.1 of 9 is split" in result.stdout, described(result))
+
+
+def test_the_waiting_item_read_step_steps_straight_to_a_sub_sub_step_whose_parent_has_no_heading():
+    document = ("# A walk\n\n## Item 3 of 9: the opening sentence\n\n#### Item 3.1.1 of 9: its first part\n\nOne.\n\n"
+                "#### Item 3.1.2 of 9: its second part\n\nTwo.\n\n"
+                "#case_against weak: the page grows.\n\nRecommendation: change it.\n")
+    case = Case(document=document)
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("when sub-sub-steps 3.1.1 and 3.1.2 have no heading `Item 3.1` above them, a line naming item 3 moves "
+          "straight to 3.1.1, which is read", result.returncode == 0
+          and marker(case) == "#next_to_present item 3.1.1 of 9"
+          and "item 3.1.1 of 9: its cold-read-fast-read" in result.stdout, described(result))
 
 
 def test_the_waiting_item_read_step_keeps_no_withdrawn_version_when_the_sub_step_read_is_refused():
