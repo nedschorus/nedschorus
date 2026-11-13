@@ -340,7 +340,7 @@ def match_is_excluded(number, sentence, before, after):
         return True
     # "no test case on main is lost", "nobody's lines are lost".
     # "The file with no backup is gone": after a preposition, the "no" phrase is not the subject.
-    if number == 2 and re.search(r"(?<!\bwith )(?<!\bwithout )(?<!\bof )(?<!\bfor )\b(?:no|nobody's|neither)\s+(?:[\w'-]+\s+){0,4}$", before, re.I):
+    if number == 2 and re.search(r"(?<!\bwith )(?<!\bwithout )(?<!\bof )(?<!\bfor )\b(?:no|nobody's|neither)\s+(?:[\w'-]+\s+){0,4}$", before, re.I):  # pragma: no mutate, no pattern is numbered below 2, so <= 2 matches only 2
         return True
     # What a test or check verifies: "the tests check that the temporary folder is gone".
     if re.search(r"\b(?:tests?|checks?)\s+(?:\w+\s+){0,2}(?:that|whether)\b", before, re.I):
