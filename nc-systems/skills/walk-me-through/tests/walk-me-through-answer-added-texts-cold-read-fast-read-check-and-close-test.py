@@ -3893,6 +3893,11 @@ def after_fixes_case(old, new):
     return case, case.run(WAITING_ITEM_READ, AFTER_FIXES)
 
 
+def without_kept_lines(stdout):
+    """stdout without the lines saying an earlier text of the item is now kept below it as a withdrawn version."""
+    return "".join(line for line in stdout.splitlines(keepends=True) if ": its earlier text, which " not in line)
+
+
 ITEM_3_HEADING = "## Item 3 of 5: three\n"
 
 
@@ -3900,7 +3905,8 @@ def test_a_fix_that_touches_no_fact_is_not_read_again():
     case, result = after_fixes_case(ITEM_3_HEADING, ITEM_3_HEADING + "\nThis item, e.g. this one, asks little.\n")
     check(f"{AFTER_FIXES} after a wording fix runs no read and says to present the item",
           result.returncode == 0
-          and result.stdout.startswith("item 3 of 5: no new cold-read-fast-read: your changes since its last one (")
+          and without_kept_lines(result.stdout).startswith(
+              "item 3 of 5: no new cold-read-fast-read: your changes since its last one (")
           and result.stdout.rstrip("\n").split("\n")[-1] == "Present item 3 of 5."
           and times_read(case, ITEM_3_HEADING) == 1, described(result))
     second = case.run(WAITING_ITEM_READ, AFTER_FIXES)
@@ -3957,12 +3963,224 @@ def test_a_fix_that_touches_a_fact_is_read_again():
             ("the case against", ITEM_3_HEADING + "\n#case_against none.", ITEM_3_HEADING + "\n#case_against weak.",
              '"#case_against weak."')):
         case, result = after_fixes_case(old, new)
-        first = result.stdout.split("\n")[0]
+        first = without_kept_lines(result.stdout).split("\n")[0]
         check(f"{AFTER_FIXES} after a fix that changes {name} reads the item again and names the fact",
               result.returncode == 0
               and "had to be run now, because your changes since its last cold-read-fast-read (" in first
               and fact in first.split(") touch ", 1)[-1]
               and times_read(case, ITEM_3_HEADING) == 2, described(result))
+
+
+ITEM_3_BODY = "#case_against none.\n\n\nRecommendation: {}"
+
+
+def rewritten_item_3(case, recommendation):
+    """Rewrite the live version of item 3 to recommend recommendation, as an agent rewriting the item would."""
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    text = document.read_text()
+    document.write_text(re.sub(r"(## Item 3 of 5: three\n\n#case_against none\.\n\n\nRecommendation: )[^\n]*",
+                               lambda live: live[1] + recommendation, text, count=1))
+    return document
+
+
+def kept_line(case, document, version):
+    report = case.records / f"{WALK_NAME}-item-3-of-5-2026-10-17" / "cold-read-fast-read.md"
+    return (f"item 3 of 5: its earlier text, which the cold-read-fast-read {report} read, is now kept below its live "
+            f"version in {document}, under `#### Withdrawn version {version} of item 3`; leave it there.")
+
+
+def test_the_read_step_keeps_a_rewritten_items_earlier_read_text_below_it_as_a_withdrawn_version():
+    case = item_read_case()
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    document = rewritten_item_3(case, "drop it.")
+    result = case.run(WAITING_ITEM_READ)
+    check("the read step puts the text its earlier read read below the rewritten item as Withdrawn version 1",
+          result.returncode == 0 and result.stdout.split("\n")[0] == kept_line(case, document, 1)
+          and ("Recommendation: drop it.\n\n#### Withdrawn version 1 of item 3\n\n" + ITEM_3_BODY.format("leave it.")
+               + "\n\n## Item 4 of 5") in document.read_text()
+          and "had to be run now" in result.stdout, described(result) + document.read_text())
+    again = case.run(WAITING_ITEM_READ)
+    check("a second read step on the same item keeps nothing again and runs no read",
+          again.returncode == 0 and "Withdrawn" not in again.stdout
+          and document.read_text().count("#### Withdrawn") == 1 and times_read(case, ITEM_3_HEADING) == 2,
+          described(again))
+    rewritten_item_3(case, "keep it.")
+    third = case.run(WAITING_ITEM_READ, AFTER_FIXES)
+    finder = load_program().load_walk_finder()
+    units = finder.item_unit_spans(document.read_text(), finder.markdown_parser())
+    check("a later rewrite is kept as the next version, after the versions already kept, and the item stays one item",
+          third.returncode == 0 and third.stdout.split("\n")[0] == kept_line(case, document, 2)
+          and ("Recommendation: keep it.\n\n#### Withdrawn version 1 of item 3\n\n" + ITEM_3_BODY.format("leave it.")
+               + "\n\n#### Withdrawn version 2 of item 3\n\n" + ITEM_3_BODY.format("drop it.") + "\n\n## Item 4 of 5")
+          in document.read_text()
+          and [unit[0] for unit in units] == [["1"], ["2"], ["3"], ["4"], ["5"]]
+          and case.calls.read_text().split("## Item 3 of 5")[-1].count("Recommendation") == 1,
+          described(third) + document.read_text())
+
+
+def test_an_earlier_read_text_already_kept_or_changed_only_in_its_heading_is_not_kept_again():
+    case = item_read_case()
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(document.read_text().replace("## Item 3 of 5: three", "## Item 3 of 5: three, retitled"))
+    retitled = case.run(WAITING_ITEM_READ)
+    check("an item whose heading alone changed keeps no withdrawn version",
+          retitled.returncode == 0 and "Withdrawn" not in document.read_text(), described(retitled))
+    text = document.read_text()
+    document.write_text(text.replace("Recommendation: leave it.\n\n## Item 4 of 5",
+                                     "Recommendation: drop it.\n\n### Withdrawn version 1 of item 3\n\n"
+                                     "#case_against  none.\n\nRecommendation:\nleave it.\n\n## Item 4 of 5", 1))
+    by_hand = case.run(WAITING_ITEM_READ)
+    check("an earlier text an agent already kept below the item, whatever its spacing, is not kept again",
+          by_hand.returncode == 0 and document.read_text().count("Withdrawn version") == 1, described(by_hand))
+
+
+SEPARATE_HEADINGS_DOCUMENT = WALK_DOCUMENT.replace(
+    "## Items 6 and 7 of 9: two small corrections\n\nItem 6 of 9 fixes a path.\n",
+    "## Item 6 of 9: a path\n\nItem 6 of 9 fixes a path.\n").replace(
+    "Item 7 of 9 drops a sentence.\n", "## Item 7 of 9: a sentence\n\nItem 7 of 9 drops a sentence.\n")
+
+
+def test_items_under_a_shared_heading_or_waiting_together_keep_no_withdrawn_version():
+    # A line after the item's first changes, so the earlier text differs from the live one and only the guards keep
+    # it out.
+    for waiting, document_text, how in (
+            ("item 6 of 9", WALK_DOCUMENT, "under a heading shared with another item"),
+            ("items 6 and 7 of 9", WALK_DOCUMENT, "waiting with another item under a shared heading"),
+            ("items 6 and 7 of 9", SEPARATE_HEADINGS_DOCUMENT, "waiting with another item under its own heading")):
+        case = Case(next_to_present=waiting, document=document_text)
+        case.run(WAITING_ITEM_READ)
+        document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+        document.write_text(document.read_text().replace('#new "The path is docs/walk/."',
+                                                         '#new "The path is docs/walk/old/."'))
+        result = case.run(WAITING_ITEM_READ)
+        check(f"the read step of {waiting}, {how}, keeps no withdrawn version",
+              result.returncode == 0 and "Withdrawn" not in document.read_text()
+              and "docs/walk/old/" in document.read_text(), described(result) + document.read_text())
+
+
+def test_a_read_ahead_counts_for_the_item_it_read_and_never_for_an_item_that_takes_its_expected_number():
+    case = Case(next_to_present="item 1 of 4", document=UNNUMBERED_ITEMS_DOCUMENT)
+    answered_and_closed(case)
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    case.run(WAITING_ITEM_READ)
+    ahead = [json.loads(path.read_text())["item"] for path in case.reads().glob("*-outcome.json")]
+    document.write_text(document.read_text().replace(
+        "## three", "## inserted\n\n#approval_walk_item_in_category_must_fix_now\n\n#case_against none.\n\n"
+        "Recommendation: drop it.\n\n## three", 1))
+    closed = answered_and_closed(case)
+    result = case.run(WAITING_ITEM_READ)
+    text = document.read_text()
+    check("an item inserted ahead of an item read ahead, which takes the number close expected to give that item, "
+          "is not given that item's text as a withdrawn version",
+          "item 3 of 4" in ahead and closed.returncode == 0 and result.returncode == 0
+          and "## Item 3 of 5: inserted" in text and "Withdrawn" not in text, described(result) + text)
+    case = Case(next_to_present="item 1 of 4", document=UNNUMBERED_ITEMS_DOCUMENT)
+    answered_and_closed(case)
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    case.run(WAITING_ITEM_READ)
+    text = document.read_text()
+    three = text.index("## three")
+    document.write_text(text[:three] + text[three:].replace("Recommendation: approve.", "Recommendation: drop it.", 1))
+    answered_and_closed(case)
+    result = case.run(WAITING_ITEM_READ)
+    check("the item read ahead keeps that read's text as a withdrawn version once it is rewritten and numbered",
+          result.returncode == 0 and "## Item 3 of 4: three" in document.read_text()
+          and "Recommendation: drop it.\n\n#### Withdrawn version 1 of item 3\n\n" in document.read_text()
+          and "Recommendation: approve.\n\n## Summary" in document.read_text(),
+          described(result) + document.read_text())
+
+
+def test_two_earlier_texts_kept_in_one_run_both_land_below_the_item_and_the_next_item_stays_whole():
+    case = item_read_case()
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    document = rewritten_item_3(case, "drop it.")
+    case.run(WAITING_ITEM_READ)
+    text = document.read_text()
+    document.write_text(text.replace("\n\n#### Withdrawn version 1 of item 3\n\n" + ITEM_3_BODY.format("leave it."), "",
+                                     1))
+    rewritten_item_3(case, "keep it.")
+    result = case.run(WAITING_ITEM_READ)
+    finder = load_program().load_walk_finder()
+    text = document.read_text()
+    units = finder.item_unit_spans(text, finder.markdown_parser())
+    lines = text.split("\n")
+    four = next(unit for unit in units if unit[0] == ["4"])
+    check("two earlier texts kept in one run land in read order below item 3, and item 4 keeps its own text",
+          result.returncode == 0
+          and ("Recommendation: keep it.\n\n#### Withdrawn version 1 of item 3\n\n" + ITEM_3_BODY.format("leave it.")
+               + "\n\n#### Withdrawn version 2 of item 3\n\n" + ITEM_3_BODY.format("drop it.") + "\n\n## Item 4 of 5")
+          in text and lines[four[3]].startswith("## Item 4 of 5") and "Withdrawn" not in "\n".join(lines[four[3]:four[4]]),
+          described(result) + text)
+
+
+def test_a_bold_paragraph_items_changed_first_line_recommendation_is_kept_as_a_withdrawn_version():
+    case = item_read_case()
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(re.sub(r"## Item 3 of 5: three\n\n#case_against none\.\n\n\nRecommendation: leave it\.",
+                               "**Item 3 of 5** Recommendation: leave it.\n\n#case_against none.",
+                               document.read_text(), count=1))
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    document.write_text(document.read_text().replace("**Item 3 of 5** Recommendation: leave it.",
+                                                     "**Item 3 of 5** Recommendation: drop it.", 1))
+    result = case.run(WAITING_ITEM_READ)
+    check("a bold-paragraph item whose recommendation on its first line changed keeps its earlier text",
+          result.returncode == 0
+          and "#### Withdrawn version 1 of item 3\n\nRecommendation: leave it.\n\n#case_against none." in
+          document.read_text(), described(result) + document.read_text())
+
+
+def test_a_missing_copy_refuses_before_anything_is_written_even_a_first_entered_line():
+    case = Case(next_to_present="item 1 of 4", document=UNNUMBERED_ITEMS_DOCUMENT)
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    copies = [path for path in case.reads().glob("*.md") if "## Item 2 of 4: two" in path.read_text()]
+    text = document.read_text()
+    document.write_text(text.replace("## three", "## four\n\n#approval_walk_item_in_category_fix_next\n\n"
+                                     "#case_against none.\n\nRecommendation: approve.\n\n## three", 1)
+                        .replace("Recommendation: approve.\n\n## four", "Recommendation: drop it.\n\n## four", 1))
+    before = document.read_text()
+    copies[0].unlink()
+    result = case.run(WAITING_ITEM_READ)
+    check("a missing copy refuses the read step before it stamps an unshown item's first-entered line",
+          len(copies) == 1 and result.returncode == 1 and "nothing written" in result.stderr
+          and document.read_text() == before, described(result) + document.read_text())
+
+
+def test_the_read_step_refuses_an_item_whose_earlier_read_texts_copy_is_missing():
+    case = item_read_case()
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    copies = [path for path in case.reads().glob("*.md") if "## Item 3 of 5" in path.read_text()]
+    document = rewritten_item_3(case, "drop it.")
+    before = document.read_text()
+    copies[0].unlink()
+    result = case.run(WAITING_ITEM_READ)
+    report = case.records / f"{WALK_NAME}-item-3-of-5-2026-10-17" / "cold-read-fast-read.md"
+    command = f"python3 {PROGRAM} {WAITING_ITEM_READ} --cwd {shlex.quote(str(case.checkout.resolve()))}"
+    lines = result.stderr.rstrip("\n").split("\n")
+    check("the read step refuses an item whose earlier read text has no copy, writing nothing and reading nothing",
+          result.returncode == 1 and document.read_text() == before and times_read(case, ITEM_3_HEADING) == 1
+          and lines[0].endswith(f"{WAITING_ITEM_READ}: nothing written and no cold-read-fast-read run: item 3 of 5's "
+                                f"earlier text, which the cold-read-fast-read {report} read, could not be kept below "
+                                f"its live version in {document}, because {copies[0]}, this program's copy of that "
+                                "text, is missing.")
+          and lines[1] == (f"Copy the one file under {report.parent / 'target'} to {copies[0]}, then run `{command}` "
+                           "again; it then keeps that text below the live version itself.")
+          and lines[2].startswith(f"If {report.parent / 'target'} is gone too, do not present item 3 of 5 yet: ")
+          and f"delete {copies[0].with_name(copies[0].stem + '-outcome.json')} and run `{command}` again" in lines[2],
+          described(result))
+    shutil.copy(next((report.parent / "target").iterdir()), copies[0])
+    followed = case.run(WAITING_ITEM_READ)
+    check("once the copy is put back as the refusal says, the read step keeps the earlier text itself",
+          followed.returncode == 0
+          and "#### Withdrawn version 1 of item 3\n\n" + ITEM_3_BODY.format("leave it.") in document.read_text(),
+          described(followed))
 
 
 def test_a_file_or_path_git_lists_counts_as_a_fact_and_git_failing_counts_every_change():
