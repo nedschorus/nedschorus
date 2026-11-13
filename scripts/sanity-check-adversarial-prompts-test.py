@@ -2527,6 +2527,21 @@ if reacquire_go:
             armed.append(1)
         return wait_for_cells(*arguments, **keywords)
     module.concurrent.futures.wait = wait_armed_once_told
+if os.environ.get("DRIVER_SIGTERM_AT_MAIN_THREAD_LOCK_REACQUIRE_IN_SECOND_SUBMIT"):
+    import signal, threading
+    reacquire_in_submit = threading.Condition._acquire_restore
+    submits = []
+    def sigterm_then_reacquire_in_submit(condition, state):
+        if len(submits) == 2 and threading.current_thread() is threading.main_thread():
+            submits.append(1)
+            signal.raise_signal(signal.SIGTERM)
+        return reacquire_in_submit(condition, state)
+    threading.Condition._acquire_restore = sigterm_then_reacquire_in_submit
+    submit = module.concurrent.futures.ThreadPoolExecutor.submit
+    def submit_counted(pool, *arguments, **keywords):
+        submits.append(1)
+        return submit(pool, *arguments, **keywords)
+    module.concurrent.futures.ThreadPoolExecutor.submit = submit_counted
 ship_hold = os.environ.get("DRIVER_HOLD_FIRST_SHIP")
 if ship_hold:
     ship = module.ship_record
@@ -2720,6 +2735,42 @@ sys.exit(module.main())
                   and left_in_copies_root(base) == [],
                   f"started {started}, exit {process.returncode}, "
                   f"copies root {left_in_copies_root(base)}, stdout {out!r}, stderr {err!r}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 64: as case 63, but the SIGTERM lands while the main thread submits
+    # the second cell, where submit's idle-thread semaphore re-acquires its
+    # condition's lock.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-at-a-lock-reacquire-in-submit.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        environment = runner_process_environment(programs, recorded)
+        environment["DRIVER_SIGTERM_AT_MAIN_THREAD_LOCK_REACQUIRE_IN_SECOND_SUBMIT"] = "1"
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--adversarial-prompt", "cut"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            try:
+                out, err = process.communicate(timeout=60)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            check("a SIGTERM the main thread takes as it re-acquires a lock while it "
+                  "submits a cell ends the run with its STOPPED line, its record shipped",
+                  process.returncode == -signal.SIGTERM
+                  and "Traceback" not in err
+                  and "STOPPED: SIGTERM ended this run" in out
+                  and out.splitlines()[-1:] != []
+                  and out.splitlines()[-1].startswith("record: shipped: ")
+                  and left_in_copies_root(base) == [],
+                  f"exit {process.returncode}, copies root {left_in_copies_root(base)}, "
+                  f"stdout {out!r}, stderr {err!r}")
         finally:
             if process.poll() is None:
                 process.kill()
