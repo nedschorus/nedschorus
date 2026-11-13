@@ -2258,25 +2258,25 @@ def earlier_read_texts_kept_as_withdrawn_versions(walk_finder, minutes, value, n
     return kept
 
 
-def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minutes, value, numbers, total, parser,
-                                                              order):
-    """Return the first sub-step, such as 3.1, of the one item numbers names, such as 3, taken from the
-    walk-document's units right after the item's own, that the walk-minutes neither decide, as next_item counts an
-    item decided, nor defer twice; as next_item does, a sub-step deferred once comes after the ones never deferred.
-    None when numbers names several items or no such sub-step exists."""
+def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minutes, value, numbers, total, parser):
+    """Return the sub-step, such as 3.1, of the one item numbers names, such as 3, that holds the sub-step
+    next_item names first among the item's sub-steps and theirs, such as 3.1.1, taken from the walk-document's
+    units right after the item's own; next_item's rule decides, so the read step and the close step name the
+    same sub-step. None when numbers names several items or next_item names none."""
     if len(numbers) != 1:
         return None
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     all_units = walk_finder.item_unit_spans(document.read_text(encoding="utf-8"), parser)
     unit = walk_finder.waiting_item_units(document, value, numbers, total, parser, all_units)[1][0]
     sub_steps = [part for each in approval_walk_item_sub_step_units_right_after(all_units, unit)
-                 for part in each[0] if part.rsplit(".", 1)[0] == numbers[0]]
+                 for part in each[0] if part.startswith(numbers[0] + ".")]
     text = minutes.read_text(encoding="utf-8")
     decided, deferrals = minutes_record(walk_finder, text, parser)
-    decided = decided_with_items_whose_sub_steps_are_all_decided(
-        order, decided, held_answers_unresolved(walk_finder, text, parser))
-    waiting = [part for part in sub_steps if part not in decided and deferrals[part] <= 1]
-    return next(iter([part for part in waiting if not deferrals[part]] + waiting), None)
+    named = next_item(sub_steps, None, [], [], decided, deferrals,
+                      unresolved=held_answers_unresolved(walk_finder, text, parser))
+    if not named:
+        return None
+    return numbers[0] + "." + named[0][len(numbers[0]) + 1:].split(".")[0]
 
 
 def waiting_item_read(arguments, sub_step_of=None):
@@ -2299,7 +2299,7 @@ def waiting_item_read(arguments, sub_step_of=None):
         top=shlex.quote(str(top)))
     # Before walk_document_items, which can write: a missing copy refuses with nothing written.
     earlier = earlier_read_texts_of_item(walk_finder, minutes, value, numbers, total, parser, reads, rerun)
-    count, order, _, _, _ = walk_document_items(walk_finder, minutes, value, numbers, total, parser,
+    count, _, _, _, _ = walk_document_items(walk_finder, minutes, value, numbers, total, parser,
                                                 WAITING_ITEM_READ_STEP, top)
     total = total or count
     item = items_named(numbers, total)
@@ -2309,7 +2309,7 @@ def waiting_item_read(arguments, sub_step_of=None):
     # Before the kept versions are written, so a refused item's document is left as it was.
     approval_walk_item_text_over_word_limit_refused(walk_finder, minutes, value, numbers, total, parser, item, command)
     sub_step = approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minutes, value, numbers, total,
-                                                                         parser, order)
+                                                                         parser)
     keep = (walk_finder, minutes, value, numbers, total, parser, earlier, item, text)
     if sub_step:
         return waiting_item_read(arguments, (items_named([sub_step], total), item,

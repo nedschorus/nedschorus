@@ -736,13 +736,17 @@ def test_the_waiting_item_read_step_takes_sub_steps_only_from_the_item_own_units
           in result.stdout, described(result))
 
 
+# The two lines close writes when sub-step 3.1 is deferred, then deferred again.
+DEFERRED_TWICE_LINES = ("item 3.1 of 9: deferred; it moves to just before the summary item. <open>\n"
+                        "item 3.1 of 9: deferred a second time, so it leaves the walk and stays open. <open>\n")
+
+
 def test_the_waiting_item_read_step_passes_a_sub_step_deferred_twice_and_puts_one_deferred_once_last():
     document = ("# A walk\n\n## Item 3 of 9: the opening sentence\n\n### Item 3.1 of 9: the first half\n\nOne.\n\n"
                 "### Item 3.2 of 9: the second half\n\nTwo.\n\n"
                 "#case_against weak: the page grows.\n\nRecommendation: change it.\n")
     case = Case(document=document)
-    case.minutes.write_text("# Minutes\n\nitem 3.1 of 9: deferred a second time, so it leaves the walk and stays "
-                            "open. <open>\n#next_to_present item 3 of 9\n")
+    case.minutes.write_text("# Minutes\n\n" + DEFERRED_TWICE_LINES + "#next_to_present item 3 of 9\n")
     result = case.run(WAITING_ITEM_READ_STEP_NAME)
     check("a sub-step deferred twice has left the walk, so a line naming item 3 moves to 3.2",
           result.returncode == 0 and marker(case) == "#next_to_present item 3.2 of 9", described(result))
@@ -752,6 +756,38 @@ def test_the_waiting_item_read_step_passes_a_sub_step_deferred_twice_and_puts_on
     result = case.run(WAITING_ITEM_READ_STEP_NAME)
     check("a sub-step deferred once comes after its item's other sub-steps, so a line naming item 3 moves to 3.2",
           result.returncode == 0 and marker(case) == "#next_to_present item 3.2 of 9", described(result))
+    case = Case(document=document)
+    case.minutes.write_text("# Minutes\n\n" + DEFERRED_TWICE_LINES + approved_line("item 3.2 of 9")
+                            + "#next_to_present item 3 of 9\n")
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("with sub-step 3.1 deferred twice and 3.2 decided, no sub-step is left, so item 3 stays named and is read",
+          result.returncode == 0 and marker(case) == "#next_to_present item 3 of 9"
+          and "item 3 of 9: its cold-read-fast-read" in result.stdout, described(result))
+
+
+def test_the_waiting_item_read_step_names_the_sub_step_next_item_names_under_a_sub_step_deferred_once():
+    case = Case(document=SUB_SUB_STEPS_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\nitem 3.1 of 9: deferred; it moves to just before the summary item. <open>\n"
+                            "#next_to_present item 3 of 9\n")
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("with sub-step 3.1 deferred once but its sub-step 3.1.1 never deferred, the read step names 3.1.1, as "
+          "next_item does, not 3.2", result.returncode == 0 and marker(case) == "#next_to_present item 3.1.1 of 9",
+          described(result))
+
+
+def test_the_waiting_item_read_step_keeps_no_withdrawn_version_when_the_sub_step_read_is_refused():
+    case = Case(document=marks_document(words_of_body(200)))
+    case.run(WAITING_ITEM_READ_STEP_NAME)
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(document.read_text().replace(
+        "word100 ", "\n### Item 3.2 of 9: the second half\n\nword100 ").replace(
+        "word0 ", '### Item 3.1 of 9: the first half\n\n#new "The page lists\none poem."\n\nword0 '))
+    before_document, before_minutes = document.read_bytes(), case.minutes.read_text()
+    result = case.run(WAITING_ITEM_READ_STEP_NAME, "--after-fixes-reread-only-when-facts-change")
+    check("when item 3, read before it was split, moves to sub-step 3.1 and 3.1's read is refused, the walk-document "
+          "is left byte for byte as it was, with no withdrawn version of item 3, and the walk-minutes too",
+          result.returncode == 1 and document.read_bytes() == before_document
+          and case.minutes.read_text() == before_minutes, described(result))
 
 
 def test_the_waiting_item_read_step_keeps_the_text_read_before_the_item_was_split_as_a_withdrawn_version():
