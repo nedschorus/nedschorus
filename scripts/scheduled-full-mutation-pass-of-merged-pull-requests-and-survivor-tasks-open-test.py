@@ -832,7 +832,7 @@ def run_errored_mutants_cases():
               "exit 4, with the merge not recorded as tested",
               completed.returncode == job.EXIT_STEP_FAILED
               and f"merge {merge[:12]} (change scripts/thing.py): 1 of its mutants ended "
-                  f"ERRORED, but their job failure task could not be opened or rewritten on "
+                  f"ERRORED, but their job failure task could not be opened or added to on "
                   f"{job.JOB_FAILURE_TASK_AGENT_SEAT}'s task list (FileNotFoundError"
                   in completed.stderr
               and fixture.state_json()["last_tested_main_commit"] == start,
@@ -867,9 +867,30 @@ def run_errored_mutants_cases():
               (completed.returncode, completed.stderr, tasks, record))
         task_file = (fixture.tasks / f"nedschorus-{job.JOB_FAILURE_TASK_AGENT_SEAT}-tasks"
                      / f"{tasks[0]['id']}.json")
+        note = "Judged: the timeout came from a busy machine; nothing needs fixing."
+        task_file.write_text(json.dumps(
+            {**tasks[0], "description": f"{tasks[0]['description']}\n\n{note}"}))
+        completed = fixture.run({f"{merge} second pass": {
+            "json": verdict(errored=[timed_out, disk_full], not_run=1), "exit": 1}},
+            *schedule_flags)
+        tasks = job_failure_tasks(fixture)
+        description = tasks[0]["description"] if tasks else ""
+        added = description.partition(note)[2]
+        record = fixture.records()[-1].read_text() if fixture.records() else ""
+        check("a second pass that reports an ERRORED mutant no earlier run of the merge "
+              "reported while its job failure task is open adds only that mutant to the end of "
+              "the task's description, keeping the note the agent-seat wrote there",
+              completed.returncode == job.EXIT_ALL_DONE
+              and len(tasks) == 1 and tasks[0]["status"] == "pending"
+              and "- scripts/thing.py:1 core/NumberReplacer, reason: no verdict: " in added
+              and "core/AddNot" not in added
+              and "already open, so none opened, and the ERRORED mutants no earlier run "
+                  "reported are added to the end of its description: task #" in record,
+              (completed.returncode, completed.stderr, description, record))
         task_file.write_text(json.dumps({**tasks[0], "status": "completed"}))
         completed = fixture.run({f"{merge} second pass": {
-            "json": verdict(errored=[timed_out, disk_full]), "exit": 1}}, *schedule_flags)
+            "json": verdict(errored=[timed_out, disk_full, not_judgeable]), "exit": 1}},
+            *schedule_flags)
         tasks = job_failure_tasks(fixture)
         check("a second pass that reports an ERRORED mutant no earlier run of the merge "
               "reported opens a job failure task again once the first is completed, naming "

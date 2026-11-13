@@ -281,12 +281,13 @@ the reason the mutation testing program gives from the mutant's output, such
 as `No space left on device` or a timeout, or `cosmic-ray could not judge it`
 when it gives none, and asks the agent-seat to judge each, fix each cause in
 this project, and complete the task once it has. The run never runs
-an ERRORED mutant again. A later run of the merge, in the second pass, opens
-the task again, or rewrites its description while it is open, only when it
-reports an ERRORED mutant that errored_mutant_keys_already_reported does not
-hold; the task then names every ERRORED mutant that run reports. A task that
-cannot be opened or rewritten is a failed step, and the merge is not
-recorded as tested.
+an ERRORED mutant again. A later run of the merge, in the second pass, acts
+only when it reports an ERRORED mutant that errored_mutant_keys_already_reported
+does not hold: while the task is open, it adds those mutants to the end of the
+task's description, keeping what the agent-seat wrote there; once the task is
+completed, it opens the task again, naming every ERRORED mutant that run
+reports. A task that cannot be opened or added to is a failed step, and the
+merge is not recorded as tested.
 
 THE RECORD is one text file per run in the log-store:
 
@@ -803,10 +804,13 @@ def mutation_testing_hand_run_command(arguments, merge, parent, workers, session
 
 
 def job_failure_task_opened_unless_open(subject, description, arguments,
-                                        open_task_description_rewritten=False):
+                                        open_task_description_rewritten=False,
+                                        open_task_description_addition=None):
     """Open a task with this subject on JOB_FAILURE_TASK_AGENT_SEAT's task list, unless a task
     there not marked completed has the same subject; with open_task_description_rewritten,
-    that open task's description is replaced by this one. Return (its id, True when opened
+    that open task's description is replaced by this one, and with
+    open_task_description_addition, that text is added to the end of the open task's
+    description, keeping what an agent-seat wrote there. Return (its id, True when opened
     now). Raises OSError."""
     list_directory = (arguments.task_lists_directory
                       / f"nedschorus-{JOB_FAILURE_TASK_AGENT_SEAT}-tasks")
@@ -819,6 +823,9 @@ def job_failure_task_opened_unless_open(subject, description, arguments,
                     and task.get("subject") == subject:
                 if open_task_description_rewritten and task.get("description") != description:
                     task_file_rewrite(path, {**task, "description": description})
+                elif open_task_description_addition:
+                    task_file_rewrite(path, {**task, "description": (
+                        f"{task.get('description', '')}\n\n{open_task_description_addition}")})
                 return int(path.stem), False
     return agent_seat_task_list_new_pending_task_write(list_directory, subject,
                                                        description), True
@@ -1011,17 +1018,22 @@ def errored_mutants_job_failure_task_subject(merge):
             f"neither killed nor survived")
 
 
-def errored_mutants_job_failure_task_opened(arguments, merge, merge_subject, errored, record,
-                                            record_citation):
-    """Open the one job failure task of a merge with ERRORED mutants, naming each with its
-    reason, or rewrite the open one's description to name every ERRORED mutant this run
-    reported. Raises StepFailed when the task cannot be opened or rewritten, before the merge
-    is recorded as tested, so the next run tries the merge again."""
-    subject = errored_mutants_job_failure_task_subject(merge)
-    named = "\n".join(
+def errored_mutants_named(errored):
+    """A line per mutant with its reason, then its diff's lines indented."""
+    return "\n".join(
         f"- {errored_mutant_named(mutant)}, reason: {errored_mutant_reason(mutant)}"
         + "".join(f"\n      {line}" for line in mutant["diff"].splitlines())
         for mutant in errored)
+
+
+def errored_mutants_job_failure_task_opened(arguments, merge, merge_subject, errored,
+                                            errored_not_reported, record, record_citation):
+    """Open the one job failure task of a merge with ERRORED mutants, naming each with its
+    reason, or add to the end of the open one's description the ERRORED mutants no earlier run
+    reported, errored_not_reported. Raises StepFailed when the task cannot be opened or added
+    to, before the merge is recorded as tested, so the next run tries the merge again."""
+    subject = errored_mutants_job_failure_task_subject(merge)
+    named = errored_mutants_named(errored)
     description = (
         f"The scheduled full mutation pass on ned-box ran the mutation testing program on merge "
         f"{merge} ({merge_subject}), and {len(errored)} of its mutants ended ERRORED: their "
@@ -1045,12 +1057,15 @@ def errored_mutants_job_failure_task_opened(arguments, merge, merge_subject, err
         f"Mark this task completed once you have judged every mutant listed and fixed each "
         f"cause you found in this project.")
     try:
-        task_id, opened = job_failure_task_opened_unless_open(subject, description, arguments,
-                                                              True)
+        task_id, opened = job_failure_task_opened_unless_open(
+            subject, description, arguments, open_task_description_addition=(
+            f"A later run of merge {merge[:12]}, with its record at {record_citation}, reported "
+            f"{len(errored_not_reported)} more ERRORED mutants; judge each as above:\n\n"
+            f"{errored_mutants_named(errored_not_reported)}"))
     except OSError as error:
         raise StepFailed(
             f"merge {merge[:12]} ({merge_subject}): {len(errored)} of its mutants ended "
-            f"ERRORED, but their job failure task could not be opened or rewritten on "
+            f"ERRORED, but their job failure task could not be opened or added to on "
             f"{JOB_FAILURE_TASK_AGENT_SEAT}'s task list ({type(error).__name__}: {error}), so "
             f"the merge is not recorded as tested and no later merge is tested. The next run "
             f"tries this merge again, and gives no surviving mutant a second task.\n"
@@ -1059,8 +1074,8 @@ def errored_mutants_job_failure_task_opened(arguments, merge, merge_subject, err
     for mutant in errored:
         record.append(f"  ERRORED {errored_mutant_named(mutant)} "
                       f"({errored_mutant_reason(mutant)}): named in task #{task_id}")
-    how = ("opened" if opened else "already open, so none opened, and its description now names "
-           "the ERRORED mutants this run reported:")
+    how = ("opened" if opened else "already open, so none opened, and the ERRORED mutants no "
+           "earlier run reported are added to the end of its description:")
     record.append(f"JOB FAILURE TASK: {how} task #{task_id} on {JOB_FAILURE_TASK_AGENT_SEAT}'s "
                   f"task list, {subject}")
 
@@ -1266,9 +1281,11 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
         write_state(state_file, state)
     errored_already_reported = set(
         not_run_before.get(ERRORED_MUTANT_KEYS_ALREADY_REPORTED_STATE_KEY, ()))
-    if any(errored_mutant_key(mutant) not in errored_already_reported for mutant in errored):
-        errored_mutants_job_failure_task_opened(arguments, merge, merge_subject, errored, record,
-                                                record_citation)
+    errored_not_reported = [mutant for mutant in errored
+                            if errored_mutant_key(mutant) not in errored_already_reported]
+    if errored_not_reported:
+        errored_mutants_job_failure_task_opened(arguments, merge, merge_subject, errored,
+                                                errored_not_reported, record, record_citation)
     else:
         for mutant in errored:
             record.append(f"  ERRORED {errored_mutant_named(mutant)} "
