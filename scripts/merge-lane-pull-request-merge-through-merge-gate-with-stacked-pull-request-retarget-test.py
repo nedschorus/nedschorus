@@ -22,7 +22,9 @@ signal or exit 1, on any git command holding a given text once the fake
 the runner the after-merge test run starts in its worktree at that commit,
 which the fake `gh` reports as the merge commit; the fake runner logs its
 arguments and directory and answers from an output file and exit code the
-case writes, or passes when the case writes none.
+case writes, or passes when the case writes none. A case may add suite files to
+origin's commit and, before the program runs, write recordings under the outputs
+directory, or put a plain file where hr/store goes so no recording can be saved.
 
 Run: python3 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget-test.py
 """
@@ -138,14 +140,16 @@ def git(*arguments, cwd=None):
                    check=True, capture_output=True, stdin=subprocess.DEVNULL)
 
 
-def origin_with_one_commit(scratch):
-    """Return a bare origin repository whose main has one commit."""
+def origin_with_one_commit(scratch, extra_files=None):
+    """Return a bare origin repository whose main has one commit, holding extra_files too."""
     origin = scratch / "origin.git"
     seed = scratch / "origin-seed"
     git("init", "-q", "-b", "main", str(seed))
     (seed / "README").write_text("seed\n")
     (seed / "scripts").mkdir()
     (seed / "scripts" / "run-all-test-suites.py").write_text(FAKE_RUNNER)
+    for relative, body in (extra_files or {}).items():
+        (seed / relative).write_text(body)
     git("add", "README", "scripts", cwd=seed)
     git("commit", "-q", "-m", "seed", cwd=seed)
     git("clone", "-q", "--bare", str(seed), str(origin))
@@ -177,7 +181,8 @@ STACKED_AND_NOT = [{"number": 20, "baseRefName": BRANCH},
 
 def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_state="at-main",
              review_worktrees_state="none", git_killed_on_worktree_remove=None,
-             git_fails_after_merge_on=None, runner_answer=None, head_test_run_test_logs=()):
+             git_fails_after_merge_on=None, runner_answer=None, head_test_run_test_logs=(),
+             origin_files=None, before_the_program_runs=None):
     """Run main() once; return (exit code, output, gh calls, gate calls, waits).
 
     Each "MERGE_COMMIT" in routes becomes origin's commit, and each "ORIGIN"
@@ -194,6 +199,9 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     in a file name or a text becomes a commit made in the review tools clone
     with the tree of origin's commit, as pr10-merged has when main has not
     moved since the head test run; its hash is in the case's merged-commit file.
+    origin_files: path -> body, added to origin's one commit.
+    before_the_program_runs: None, or a function given the case's directory, called last
+    before main() runs.
 
     review_tools_state: "at-main", "behind-main" (origin/main moved on after the
     clone), "no-origin" (the clone's origin is gone) or "no-gate".
@@ -223,7 +231,7 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
             'esac; fi\n'
             f'exec {shutil.which("git")} "$@"\n')
         (bin_directory / "git").chmod(0o755)
-    origin = origin_with_one_commit(directory)
+    origin = origin_with_one_commit(directory, origin_files)
     review_tools = directory / "review-tools"
     git("clone", "-q", str(origin), str(review_tools))
     git("checkout", "-q", "--detach", "origin/main", cwd=review_tools)
@@ -289,6 +297,8 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     os.environ["HOME"] = str(home)
     os.environ["MERGE_LANE_MERGE_TEST_DIRECTORY"] = str(directory)
     output = io.StringIO()
+    if before_the_program_runs is not None:
+        before_the_program_runs(directory)
     try:
         with contextlib.redirect_stdout(output):
             exit_code = program.main([PULL_REQUEST, HEAD, SINCE, "--review-tools-worktree-at-main",
@@ -357,6 +367,34 @@ def origin_commit(scratch, name):
     return subprocess.run(["git", "-C", str(scratch / name / "origin-seed"), "rev-parse", "HEAD"],
                           capture_output=True, text=True, env=GIT_ENVIRONMENT,
                           check=True).stdout.strip()
+
+
+RECORDED_SUITE = "scripts/recorded-test.py"
+STALE_SUITE = "scripts/recorded-stale-test.py"
+
+
+def recording_in_store(store, directory, suite, blob):
+    """Write a passing recording of suite, which read only itself with the given blob, under
+    store's directory for origin's root commit; return its path."""
+    runner = program.common.run_all_test_suites
+    root = subprocess.run(["git", "-C", str(directory / "origin-seed"), "rev-list",
+                           "--max-parents=0", "HEAD"], capture_output=True, text=True,
+                          env=GIT_ENVIRONMENT, check=True).stdout.split()[0]
+    path = runner.recording_file_for(store / root[:16], suite)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "format": runner.RECORDED_INPUTS_FORMAT_VERSION, "suite": suite, "exit": 0,
+        "seconds": 1.0, "skipped_cases": 0, "skipped_cases_this_machine_cannot_run": 0,
+        "reads": {suite: blob}, "looked_for": {}, "lists": {},
+        "git_commands_on_the_checkout": [], "git_calls_run_from_the_checkout": [],
+        "files_fingerprint": "unused without git calls"}))
+    return path
+
+
+def blob_of(directory, suite):
+    return subprocess.run(["git", "-C", str(directory / "origin-seed"), "rev-parse",
+                           f"HEAD:{suite}"], capture_output=True, text=True,
+                          env=GIT_ENVIRONMENT, check=True).stdout.strip()
 
 
 def main():
@@ -614,6 +652,84 @@ def main():
               and not any("pr10-merge-commit-on-main-worktree" in path for path in registered_worktrees(
                   scratch / "after-merge-passes" / "review-tools")),
               f"exit {exit_code}\n{output}")
+
+        def head_test_run_recordings(directory):
+            saved = directory / "outputs" / "hr" / "pr10" / "recorded-inputs"
+            recording_in_store(saved, directory, RECORDED_SUITE,
+                               blob_of(directory, RECORDED_SUITE))
+            recording_in_store(saved, directory, STALE_SUITE, "0" * 40)
+
+        name = "recordings-adopted"
+        exit_code, output, _, _, _ = run_case(
+            scratch, name, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            origin_files={RECORDED_SUITE: "print('ok')\n", STALE_SUITE: "print('ok')\n"},
+            before_the_program_runs=head_test_run_recordings)
+        outputs = scratch / name / "outputs"
+        store = outputs / "hr" / "store"
+        saved = outputs / "hr" / "pr10" / "recorded-inputs"
+        adopted = sorted(path.name for path in store.glob("*/*.json"))
+        adopted_line = (f"adopted into {store} 1 recordings from {saved}, where this pull "
+                        f"request's head test runs saved theirs, that passed and match the "
+                        f"merge commit")
+        check("before the after-merge test run starts, a recording the head test run saved "
+              "under hr/pr10/recorded-inputs that matches the merge commit is adopted into "
+              "hr/store, one that read another copy of its suite is not, and "
+              "hr/pr10/recorded-inputs is removed",
+              exit_code == 0
+              and adopted == [RECORDED_SUITE.replace("/", "__") + ".json"]
+              and adopted_line in output
+              and output.index(adopted_line) < output.index("testing main at the merge commit")
+              and not saved.exists(), f"exit {exit_code}\n{output}\n{adopted}")
+        check("after the after-merge test run, recordings are adopted from the runner's "
+              "default recorded-inputs directory too",
+              output.index("testing main at the merge commit") < output.index(
+                  f"adopted into {store} 0 recordings from "
+                  f"{program.common.run_all_test_suites.DEFAULT_RECORDED_INPUTS_DIRECTORY}, "
+                  f"where the after-merge test run saved its own")
+              if "testing main at the merge commit" in output else False, output)
+
+        def store_cannot_be_written(directory):
+            head_test_run_recordings(directory)
+            (directory / "outputs" / "hr" / "store").write_text("not a directory\n")
+
+        name = "recordings-not-adopted"
+        exit_code, output, _, _, _ = run_case(
+            scratch, name, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            origin_files={RECORDED_SUITE: "print('ok')\n", STALE_SUITE: "print('ok')\n"},
+            before_the_program_runs=store_cannot_be_written)
+        merge_commit_worktree = (scratch / name / "review-worktrees"
+                                 / "pr10-merge-commit-on-main-worktree")
+        saved = scratch / name / "outputs" / "hr" / "pr10" / "recorded-inputs"
+        check("a recording that cannot be saved into hr/store exits 3, says the recordings "
+              "were not adopted, keeps hr/pr10/recorded-inputs, still runs the after-merge "
+              "test run and removes the worktree",
+              exit_code == 3
+              and f"STOP: merged, but the recordings in {saved}, where this pull request's "
+                  f"head test runs saved theirs, were not adopted into "
+                  f"{scratch / name / 'outputs' / 'hr' / 'store'}" in output
+              and saved.exists() and len(runner_calls(scratch, name)) == 1
+              and not merge_commit_worktree.exists(), f"exit {exit_code}\n{output}")
+
+        def saved_apart_cannot_be_removed(directory):
+            head_test_run_recordings(directory)
+            for held in (directory / "outputs" / "hr" / "pr10" / "recorded-inputs").glob("*"):
+                held.chmod(0o555)
+
+        name = "recordings-saved-apart-not-removed"
+        try:
+            exit_code, output, _, _, _ = run_case(
+                scratch, name, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+                origin_files={RECORDED_SUITE: "print('ok')\n", STALE_SUITE: "print('ok')\n"},
+                before_the_program_runs=saved_apart_cannot_be_removed)
+        finally:
+            for held in (scratch / name / "outputs" / "hr" / "pr10" / "recorded-inputs").glob("*"):
+                held.chmod(0o755)
+        saved = scratch / name / "outputs" / "hr" / "pr10" / "recorded-inputs"
+        check("a hr/pr10/recorded-inputs that cannot be removed after its recordings are "
+              "adopted exits 3, naming it",
+              exit_code == 3
+              and f"STOP: merged, but {saved}, which no run reads any more, was not removed"
+              in output and len(runner_calls(scratch, name)) == 1, f"exit {exit_code}\n{output}")
 
         name = "since-merged-main-not-moved"
         exit_code, output, _, _, _ = run_case(

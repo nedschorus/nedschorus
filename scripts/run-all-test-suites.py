@@ -7,6 +7,7 @@ Usage:
                                  [--wait-for-lock-seconds N]
                                  [--only-suites-whose-recorded-inputs-changed-since COMMIT]
                                  [--recorded-inputs-directory DIR]
+                                 [--save-recorded-inputs-to-directory DIR]
                                  [--record-inputs-with-strace]
                                  [--suite-files-only-strace-saw-lists-directory DIR]
                                  [--leave-recorded-inputs-and-failure-history-unchanged]
@@ -45,6 +46,15 @@ Usage:
   --recorded-inputs-directory
                 where each suite's recorded inputs are kept; default
                 ~/.cache/nedschorus-test-suite-recorded-inputs
+  --save-recorded-inputs-to-directory
+                where this run saves the recordings of the suites it runs;
+                default, --recorded-inputs-directory. Selection, starting
+                order, time limits and the failure history still use
+                --recorded-inputs-directory. merge-lane-2's head test runs
+                pass a directory of each pull request's own, so a run on a
+                tree that never reaches main cannot replace the recordings
+                every other head run selects by; see RECORDINGS ADOPTED
+                AFTER A MERGE below
   --record-inputs-with-strace
                 on Linux, record with strace as well as the audit hook; see
                 RECORDED INPUTS below. scripts/scheduled-full-test-run-of-main.py
@@ -568,7 +578,24 @@ mix their contents, and a reader sees one whole recording. A run reads each
 recording once, when it starts, and both selection and starting order use
 what it read. A recording that cannot be saved removes the earlier one,
 unless another run saved a newer one since this run read it; that one
-records its own run's inputs, so it is kept.
+records its own run's inputs, so it is kept. A run given
+--save-recorded-inputs-to-directory saves, and on a failed save removes,
+there instead, and leaves --recorded-inputs-directory as it found it.
+
+RECORDINGS ADOPTED AFTER A MERGE. One recording per suite means the last run
+to save it wins, whatever tree it ran on: a run on another pull request's
+tree, or on one built on an older main, replaces the recording a merged pull
+request's run made, and every later run on main selects the suite again
+because its recording read another copy of a file than the checkout holds.
+adopt_passing_recordings_that_match_the_checkout() keeps a store that only
+states of main write: it replaces a suite's
+recording in one directory with the first recording, from a list of other
+directories, whose run passed and which matches the checkout exactly, as
+selection judges a match with no file differing, unless the recording already
+there matches. It runs no suite. merge-lane-2's merge program calls it in its
+worktree at the merge commit, so the recordings its head test runs keep
+apart, and its after-merge test run's, reach the store once their tree is
+main's.
 
 SELECTION, with --only-suites-whose-recorded-inputs-changed-since COMMIT.
 Two explicit allowlists set aside git calls that read no file of the
@@ -4008,6 +4035,39 @@ def selection_reason(suite, recording, checkout, commit, files_only_strace_saw=N
     return False, reason
 
 
+def adopt_passing_recordings_that_match_the_checkout(top, into_given, from_given):
+    """Adopt into into_given's recordings, for each suite git lists in top, the first recording
+    under from_given, a list of recorded-inputs directories, that passed and matches top's
+    files exactly; return [(suite, directory it came from)].
+
+    A suite whose recording under into_given already matches keeps it. Runs no suite, and
+    trusts no source: a recording counts as matching only when selection_reason, with no file
+    differing, would leave its suite out. A checkout with no suite adopts nothing. Raises
+    CouldNotRun when git cannot list the suites or files, and OSError when a recording cannot
+    be saved."""
+    into = recordings_directory_for(into_given, top)
+    sources = [recordings_directory_for(given, top) for given in from_given]
+    commit, _ = commit_and_state(top)
+    listed = git(top, "ls-files", "-z", "--", TEST_SUITE_PATHSPEC, SHELL_TEST_SUITE_PATHSPEC)
+    if listed.returncode != 0:
+        raise CouldNotRun(f"git ls-files failed in {top}: {listed.stderr.strip()}")
+    suites = [path for path in listed.stdout.split("\0") if path]
+    candidates = {suite: [(directory, load_recording(directory, suite))
+                          for directory in [into, *sources]] for suite in suites}
+    checkout = CheckoutComparedWithCommit(
+        top, commit, {}, [recording for found in candidates.values() for _, recording in found])
+    adopted = []
+    for suite in suites:
+        for directory, recording in candidates[suite]:
+            if recording is None or selection_reason(suite, recording, checkout, commit)[0]:
+                continue
+            if directory != into:
+                save_recording(into, recording)
+                adopted.append((suite, directory))
+            break
+    return adopted
+
+
 def suites_selected_since(top, suites, recordings, commit, files_only_strace_saw_by_suite):
     """[(suite, selected, why)] for every suite, in order."""
     differ = files_that_differ_since(top, commit)
@@ -4188,6 +4248,7 @@ def parse_arguments(argv):
                         dest="changed_since", metavar="COMMIT")
     parser.add_argument("--recorded-inputs-directory",
                         default=str(DEFAULT_RECORDED_INPUTS_DIRECTORY))
+    parser.add_argument("--save-recorded-inputs-to-directory")
     parser.add_argument("--record-inputs-with-strace", action="store_true")
     parser.add_argument("--suite-files-only-strace-saw-lists-directory",
                         default=str(DEFAULT_RECORDED_INPUTS_DIRECTORY))
@@ -4305,6 +4366,9 @@ def main(argv=None, platform=None):
         commit, state = commit_and_state(top)
         try:
             recordings_dir = recordings_directory_for(arguments.recorded_inputs_directory, top)
+            saved_recordings_dir = (
+                recordings_directory_for(arguments.save_recorded_inputs_to_directory, top)
+                if arguments.save_recorded_inputs_to_directory is not None else recordings_dir)
             files_only_strace_saw_dir = recordings_directory_for(
                 arguments.suite_files_only_strace_saw_lists_directory, top)
         except CouldNotRun as refusal:
@@ -4316,6 +4380,10 @@ def main(argv=None, platform=None):
         for suite in suites:
             recordings[suite], identities_read[suite] = load_recording_and_identity(
                 recordings_dir, suite)
+            if saved_recordings_dir != recordings_dir:
+                # A failed save removes the earlier recording where saves go, if unchanged.
+                identities_read[suite] = load_recording_and_identity(
+                    saved_recordings_dir, suite)[1]
             files_only_strace_saw_by_suite[suite] = load_files_only_strace_saw(
                 files_only_strace_saw_dir, suite)
         try:
@@ -4358,7 +4426,7 @@ def main(argv=None, platform=None):
         else:
             report.line(f"inputs recorded by {PYTHON_INPUT_RECORDER_METHOD}"
                         + (f" and {STRACE_INPUT_RECORDER_METHOD} ({strace})" if strace else "")
-                        + f", kept in {recordings_dir}")
+                        + f", kept in {saved_recordings_dir}")
         # Only Linux has strace; the Mac selects without these lists.
         if changed_since is not None and platform.startswith("linux"):
             notice = suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
@@ -4468,14 +4536,14 @@ def main(argv=None, platform=None):
                     files_only_strace_saw_by_suite.get(suite))
                 if strace is not None:
                     save_files_only_strace_saw(files_only_strace_saw_dir, recording)
-                save_recording(recordings_dir, recording)
+                save_recording(saved_recordings_dir, recording)
             except OSError as error:
                 # A failed save must not leave the previous run's recording usable; one
                 # another run saved meanwhile records that run's own inputs, so it stays.
-                earlier = recording_file_for(recordings_dir, suite)
+                earlier = recording_file_for(saved_recordings_dir, suite)
                 try:
                     outcome = remove_recording_if_unchanged(
-                        recordings_dir, suite, identities_read.get(suite))
+                        saved_recordings_dir, suite, identities_read.get(suite))
                 except OSError as removal_error:
                     report.line(f"inputs of {suite} not recorded: {error}. Its earlier "
                                 f"recording could not be removed either: {removal_error}. "

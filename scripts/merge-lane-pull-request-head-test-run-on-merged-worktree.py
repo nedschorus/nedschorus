@@ -9,8 +9,10 @@ For each pull request in turn, runs --review-tools-worktree-at-main's
 scripts/pull-request-head-test-run.py, not the pull request's, so a pull
 request cannot pass by changing its runner. It tests pr<n>-merged under the
 review worktrees directory and, under the worktrees and outputs directory,
-files the record under hr/pr<n>/log-store, uses hr/pr<n>/tmp as its temporary directory and
-hr/store as the recorded inputs, and writes its output to hr/pr<n>/stdout and
+files the record under hr/pr<n>/log-store, uses hr/pr<n>/tmp as its temporary directory,
+selects by the recordings in hr/store and saves its own in hr/pr<n>/recorded-inputs, so a
+pull request that does not merge, or merges onto a newer main, never replaces a recording
+of main's; the merge program adopts into hr/store those that match the merge commit. It writes its output to hr/pr<n>/stdout and
 hr/pr<n>/stderr; each line of the run's stderr, where it copies the
 runner's progress, is also printed on this program's stderr as it arrives,
 so a run stopped before it ends has shown how far it got. tripwire-bin/ goes first on PATH: its claude and codex log
@@ -86,7 +88,11 @@ def main(argv=None):
                  "--checkout", str(common.pull_request_merged_worktree(arguments, number)),
                  "--log-store-root", str(log_store),
                  "--temporary-directory", str(outputs / "tmp"),
-                 "--recorded-inputs-directory", str(helpers / "hr" / "store")],
+                 "--recorded-inputs-directory",
+                 str(common.merge_lane_head_test_run_recorded_inputs_store_directory(arguments)),
+                 "--save-recorded-inputs-to-directory",
+                 str(common.pull_request_head_test_run_saved_recorded_inputs_directory(
+                     arguments, number))],
                 cwd=helpers, env=environment, stdin=subprocess.DEVNULL,
                 stdout=stdout, stderr=subprocess.PIPE, text=True, errors="replace")
             copy_failures = {}
