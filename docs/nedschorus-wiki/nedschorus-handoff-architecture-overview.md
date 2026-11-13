@@ -143,7 +143,6 @@ Unless named otherwise, files are in `~/.claude/handoffs/` on the agent-seat's m
 - GHI [One design of record for the project's git checkouts, worktrees and branch rules](https://github.com/nedschorus/nedschorus/issues/1121)
 - GHI [Agent-seat retirement as a program: the agent-seat marks itself retired, the handoff-supervisor confirms with the user and retires it, and the launchers refuse a retired name](https://github.com/nedschorus/nedschorus/issues/1125)
 - GHI [Moving an agent-seat to the other machine in one handoff that stops it on the old machine and starts it on the new one without restart prompts](https://github.com/nedschorus/nedschorus/issues/1129)
-- GHI [Wake an agent-seat when its 5-hour session limit resets](https://github.com/nedschorus/nedschorus/issues/1152)
 - GHI [The handoff-supervisor restarts itself on main's current code at each handoff](https://github.com/nedschorus/nedschorus/issues/2036)
 - GHI [Hooks, skills and instructions load from one copy per machine kept at the last known good commit, so a fix reaches every agent-seat once a full test run passes it](https://github.com/nedschorus/nedschorus/issues/2408)
 - GHI [A session-handoff's next step carries forward a step that a later ruling or skill change removed](https://github.com/nedschorus/nedschorus/issues/2412)
