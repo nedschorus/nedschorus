@@ -387,7 +387,10 @@ is the item's when it was read under the item's number, whatever M; a read
 ahead of an unnumbered item is the item's once a read step uses it for the
 item, as its text stands, and until then whatever number close expected to
 give it, only when its title, the heading's text after the running count, is
-the item's title and no other item's. A text is left out when, without its
+the item's title and no other item's. A read outcome written before outcomes
+said whether their number was expected counts as such a read ahead. A text is
+kept from its first line that is not blank, its indentation and all, so an
+indented code block stays code. A text is left out when, without its
 heading line and with its whitespace runs squeezed, it is empty, is the live
 version's text, or is already below the live version, as an agent may have
 kept it by hand. So every text a fast read read, a text the agent then changed
@@ -1969,14 +1972,20 @@ def record_read(reads, key, item, text, outcome, number_predicted=False):
     until read_ahead_bound_to_item binds it to the item the read step uses it for."""
     (reads / f"{key}.md").write_text(text + "\n", encoding="utf-8")
     write_json(reads / f"{key}-outcome.json",
-               dict(outcome, item=item, finished=time.time(), **({NUMBER_PREDICTED: True} if number_predicted else {})))
+               dict(outcome, item=item, finished=time.time(), **{NUMBER_PREDICTED: number_predicted}))
+
+
+def read_number_predicted(outcome):
+    """Whether the outcome is a read ahead whose item number is only predicted. An outcome written before
+    record_read wrote NUMBER_PREDICTED on every outcome cannot say, so it counts as predicted: matched to an
+    item by its title, never by its number alone."""
+    return outcome.get(NUMBER_PREDICTED, True)
 
 
 def read_ahead_bound_to_item(reads, key, outcome, item):
-    """Write and return the outcome of the read ahead at key as item's own read, without NUMBER_PREDICTED: the read
+    """Write and return the outcome of the read ahead at key as item's own read, NUMBER_PREDICTED false: the read
     step used it for item, so it stays item's read whatever title, text or number the item has later."""
-    bound = dict(outcome, item=item)
-    del bound[NUMBER_PREDICTED]
+    bound = dict(outcome, item=item, **{NUMBER_PREDICTED: False})
     write_json(reads / f"{key}-outcome.json", bound)
     return bound
 
@@ -2103,7 +2112,7 @@ def latest_read(reads, item):
     done = []
     for path in reads.glob("*-outcome.json") if reads.is_dir() else []:
         outcome = json.loads(path.read_text(encoding="utf-8"))
-        if outcome["item"] == item and outcome["status"] == READ_DONE and not outcome.get(NUMBER_PREDICTED):
+        if outcome["item"] == item and outcome["status"] == READ_DONE and not read_number_predicted(outcome):
             done.append((outcome["finished"], path.name[:-len("-outcome.json")], outcome))
     return max(done)[1:] if done else None
 
@@ -2114,8 +2123,19 @@ def heading_body(walk_finder, text):
     recommendation."""
     first, _, rest = text.partition("\n")
     if first.lstrip().startswith("#"):
-        return rest.strip()
-    return (item_title(walk_finder, first) + "\n" + rest).strip()
+        return blank_lines_stripped(rest)
+    return blank_lines_stripped(item_title(walk_finder, first) + "\n" + rest)
+
+
+def blank_lines_stripped(text):
+    """The text without its leading and trailing blank lines; a first line's indentation stays, as an indented code
+    block needs it to stay code."""
+    lines = text.split("\n")
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines)
 
 
 def item_title(walk_finder, line):
@@ -2149,9 +2169,14 @@ def earlier_read_texts_of_item(walk_finder, minutes, value, numbers, total, pars
     if len(numbers) != 1 or not reads.is_dir():
         return []
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
-    text = document.read_text(encoding="utf-8")
-    units = walk_finder.item_unit_spans(text, parser)
-    unit = walk_finder.waiting_item_units(document, value, numbers, total, parser, units)[1][0]
+    # A walk-document missing, or without the item, is walk_document_items' refusal to give, naming the minutes'
+    # `#next_to_present` line.
+    try:
+        text = document.read_text(encoding="utf-8")
+        units = walk_finder.item_unit_spans(text, parser)
+        unit = walk_finder.waiting_item_units(document, value, numbers, total, parser, units)[1][0]
+    except (OSError, walk_finder.UnusableRange):
+        return []
     if len(unit[0]) != 1:
         return []
     lines = text.split("\n")
@@ -2161,7 +2186,7 @@ def earlier_read_texts_of_item(walk_finder, minutes, value, numbers, total, pars
     earlier = []
     for path in reads.glob("*-outcome.json"):
         outcome = json.loads(path.read_text(encoding="utf-8"))
-        predicted = outcome.get(NUMBER_PREDICTED)
+        predicted = read_number_predicted(outcome)
         # Every outcome's item was written by items_named, so it always parses.
         numbered = walk_finder.parse_items(outcome["item"])[0] == numbers
         if outcome["status"] != READ_DONE or not (numbered or (predicted and title_unique)):
@@ -2252,7 +2277,7 @@ def waiting_item_read(arguments):
     while read_outcome(reads, key) is None and worker_alive(reads, key):
         time.sleep(READ_POLL_SECONDS)
     outcome, ahead = read_outcome(reads, key), (reads / f"{key}-started.json").is_file()
-    if outcome and outcome["status"] == READ_DONE and outcome.get(NUMBER_PREDICTED):
+    if outcome and outcome["status"] == READ_DONE and read_number_predicted(outcome):
         outcome = read_ahead_bound_to_item(reads, key, outcome, item)
     why = ""
     if outcome and outcome["status"] == READ_DONE:

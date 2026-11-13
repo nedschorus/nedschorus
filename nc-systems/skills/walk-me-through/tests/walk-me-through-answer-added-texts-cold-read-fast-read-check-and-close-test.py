@@ -4233,6 +4233,62 @@ def test_a_bold_paragraph_items_changed_first_line_recommendation_is_kept_as_a_w
           document.read_text(), described(result) + document.read_text())
 
 
+def test_a_waiting_item_the_walk_document_no_longer_holds_is_refused_naming_the_next_to_present_line():
+    for how, broken in (("renumbered past the minutes' count",
+                         lambda document: document.write_text(
+                             document.read_text().replace("## Item 3 of 5: three", "## Item 30 of 5: three"))),
+                        ("a walk-document gone", lambda document: document.unlink())):
+        case = item_read_case()
+        answered_and_closed(case)
+        case.run(WAITING_ITEM_READ)
+        broken(case.checkout / "docs" / "walk" / f"{WALK_NAME}.md")
+        result = case.run(WAITING_ITEM_READ)
+        check(f"the read step of an item already read once, its walk-document {how}, refuses naming the "
+              "`#next_to_present` line, with no traceback",
+              result.returncode == 1 and "`#next_to_present` line" in result.stderr
+              and "Traceback" not in result.stderr, described(result))
+
+
+def test_a_kept_version_whose_first_block_is_indented_code_stays_code():
+    case = item_read_case()
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(document.read_text().replace(
+        ITEM_3_HEADING + "\n", ITEM_3_HEADING + "\n    ## Item 99 of 5: example\n\n", 1))
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    document.write_text(document.read_text().replace("Recommendation: leave it.\n\n## Item 4 of 5",
+                                                     "Recommendation: drop it.\n\n## Item 4 of 5", 1))
+    result = case.run(WAITING_ITEM_READ)
+    text = document.read_text()
+    finder = load_program().load_walk_finder()
+    units = finder.item_unit_spans(text, finder.markdown_parser())
+    check("an earlier text whose first block is indented code is kept with its indentation, so it is no heading",
+          result.returncode == 0 and "#### Withdrawn version 1 of item 3\n\n    ## Item 99 of 5: example\n" in text
+          and [unit[0] for unit in units] == [["1"], ["2"], ["3"], ["4"], ["5"]], described(result) + text)
+
+
+def test_a_read_outcome_written_before_number_predicted_existed_is_matched_by_its_title_never_its_number_alone():
+    for how, foreign in (("another item's text", True), ("the item's own text", False)):
+        case = item_read_case()
+        answered_and_closed(case)
+        case.run(WAITING_ITEM_READ)
+        for path in case.reads().glob("*-outcome.json"):
+            outcome = json.loads(path.read_text())
+            outcome.pop("number_predicted", None)
+            path.write_text(json.dumps(outcome))
+            copy = path.with_name(path.name[:-len("-outcome.json")] + ".md")
+            if foreign and outcome["item"] == "item 3 of 5":
+                copy.write_text(copy.read_text().replace("## Item 3 of 5: three", "## Item 3 of 5: inserted"))
+        document = rewritten_item_3(case, "drop it.")
+        result = case.run(WAITING_ITEM_READ)
+        text = document.read_text()
+        check(f"an outcome with no number_predicted field, holding {how} under the item's number, "
+              + ("is not kept as its withdrawn version" if foreign else "is still kept as its withdrawn version"),
+              result.returncode == 0 and ("Withdrawn" not in text if foreign
+                                          else "#### Withdrawn version 1 of item 3\n\n" in text),
+              described(result) + text)
+
+
 def test_a_kept_versions_first_line_loses_only_the_running_count_and_its_markup_never_a_code_spans_characters():
     program = load_program()
     finder = program.load_walk_finder()
