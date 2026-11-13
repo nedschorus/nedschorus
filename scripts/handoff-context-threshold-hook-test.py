@@ -2707,6 +2707,9 @@ check("asked to raise, the reader still skips a TaskStop or notification line th
       read_line(cut_stop_line, "here", should_raise_on_unparseable_spawn_or_resume_line=True) == []
       and read_line(cut_notification_line, "here",
                     should_raise_on_unparseable_spawn_or_resume_line=True) == [])
+check("the reader returns no events for a marker line that parses to something other than an object",
+      read_line('["async_launched", "resumedAgentId"]', "here",
+                should_raise_on_unparseable_spawn_or_resume_line=True) == [])
 try:
     read_line(spawn_line, "here")
     caller_must_choose = False

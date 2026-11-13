@@ -1263,6 +1263,21 @@ def run_threshold_hook_and_roster_agree_on_each_subagent_cases(workspace: Path):
               hook_in_flight == roster_still_working == expected_in_flight,
               f"hook {hook_in_flight}, roster {roster}, expected {expected_in_flight}")
 
+    # The roster counts a notification only as delivered; the hook reads one wherever its text is.
+    quoted_path = workspace / "roster-final-notification-quoted-in-tool-output.jsonl"
+    quoted_final = notification_body(first, "completed", f'Agent "{first}" finished')
+    quoted_path.write_text("\n".join(json.dumps(record) for record in [
+        spawn(first, "2026-11-13T10:00:00.000Z"),
+        {"type": "user", "timestamp": "2026-11-13T10:02:00.000Z",
+         "message": {"role": "user", "content": [{
+             "tool_use_id": "toolu_grep", "type": "tool_result", "content": quoted_final}]},
+         "toolUseResult": {"stdout": quoted_final, "stderr": ""}, "sessionId": FIXTURE_SESSION_ID},
+    ]) + "\n", encoding="utf-8")
+    quoted_roster = writer.spawned_subagent_roster(quoted_path)
+    check("the roster does not end a subagent on a notification quoted in a tool's output",
+          [entry["agent_id"] for entry in writer.still_working_subagent_entries(quoted_roster)]
+          == [first], str(quoted_roster))
+
     # The one rule the two keep apart: a spawn line that does not parse stops the hook, which
     # must not take a scan that missed a spawn to mean nothing runs, and the roster skips it.
     cut_spawn_path = workspace / "hook-and-roster-cut-spawn.jsonl"
