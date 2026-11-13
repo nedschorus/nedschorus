@@ -518,11 +518,12 @@ def outside_the_diff_comments_read_back_from_review_body(body):
     review body, each a dict of path, line and body. A comment starts at a line matching
     OUTSIDE_THE_DIFF_LINE_PATTERN after OUTSIDE_THE_DIFF_HEADING; each indented line after it continues
     it, with OUTSIDE_THE_DIFF_CONTINUATION_INDENT removed."""
-    lines = body.split("\n")
+    lines = iter(body.split("\n"))
+    # `in` consumes the iterator through the heading, so the loop below reads only the lines after it.
     if OUTSIDE_THE_DIFF_HEADING not in lines:
         return []
     comments = []
-    for line in lines[lines.index(OUTSIDE_THE_DIFF_HEADING) + 1:]:
+    for line in lines:
         match = OUTSIDE_THE_DIFF_LINE_PATTERN.match(line)
         if match:
             comments.append({"path": match.group("path"), "line": int(match.group("line")),
