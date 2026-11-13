@@ -1079,9 +1079,10 @@ def waiting_items(walk_finder, value, minutes):
 
 
 def item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_by=None):
-    """Return (walk-document path, its text, its tokens, the (first, end) line ranges of the items numbered),
-    finding the items as close does, so check refuses a walk-document close would refuse. A Failure names
-    named_by as what named the items, by default the walk-minutes' last `#next_to_present` line."""
+    """Return (walk-document path, its text, its tokens, the (first, end) line ranges of the items numbered, the
+    units of the items numbered as waiting_item_units returns them), finding the items as close does, so check
+    refuses a walk-document close would refuse. A Failure names named_by as what named the items, by default the
+    walk-minutes' last `#next_to_present` line."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     try:
         _, spans = walk_finder.waiting_item_units(document, value, numbers, total, parser)
@@ -1096,7 +1097,7 @@ def item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_
             first, end = walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
                 openings, first, end, numbers[0], unit_numbers, unit_total)
         ranges.append((first, end))
-    return document, text, tokens, ranges
+    return document, text, tokens, ranges, spans
 
 
 # CommonMark's open tag, as the Markdown parser reads one; no `<!--` in it opens a comment.
@@ -1113,7 +1114,7 @@ def item_lines(walk_finder, minutes, value, numbers, total, parser):
     """Return (walk-document path, the lines of the items numbered, outside fenced code, the items' marks as
     new_marks returns them, the problem line of each mark whose text would not be read whole, the same lines
     as the first read with no `<!--` inside an HTML open tag opening a comment)."""
-    document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
+    document, text, tokens, ranges, _ = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
     lines = walk_finder.prose_lines(text, parser, tokens)
     marks = new_marks(text, tokens, ranges, lines)
     tag_comments_kept = walk_finder.prose_lines(comment_openings_in_tags_escaped(text), parser)
@@ -1125,7 +1126,7 @@ def item_lines(walk_finder, minutes, value, numbers, total, parser):
 def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None, refused_unless_marks_read=None):
     """Return (walk-document path, the items' text as the user is shown it, heading and fenced code included).
     With refused_unless_marks_read, (item, command), a Failure when a mark's text would not be read whole."""
-    document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_by)
+    document, text, tokens, ranges, _ = item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_by)
     unreadable = (unreadable_new_marks(new_marks(text, tokens, ranges, walk_finder.prose_lines(text, parser, tokens)))
                   if refused_unless_marks_read else [])
     if unreadable:
@@ -1137,9 +1138,11 @@ def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None
 
 
 def approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parser, spans, numbers):
-    """Return the (first, end) line ranges counted for the items numbered, one per item the skill counts on its
-    own: each numbered item's own lines, even under a heading it shares with other items, and each of its
-    numbered sub-steps, such as `### Item 3.1 of 9`, which item_unit_spans reads as units of their own."""
+    """Return the (first, end) line ranges counted for the items numbered, one per text the skill counts on its
+    own: each numbered item's own lines, even under a heading it shares with other items; when several items
+    are shown together, the lines of their shared heading above the first item's opening; and each of the
+    item's numbered sub-steps, such as `### Item 3.1 of 9`, which item_unit_spans reads as units of their own,
+    taken from the units right after the item's own, so an older version's `3.1 of 9` elsewhere is not counted."""
     openings = walk_finder.item_opening_lines(text, parser, tokens)
     all_units = walk_finder.item_unit_spans(text, parser)
 
@@ -1150,11 +1153,24 @@ def approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parse
                 openings, first, end, number, unit_numbers, unit_total)
         return first, end
 
+    def sub_step_units(unit, number):
+        found = []
+        for each in [each for each in all_units if each[3] > unit[3]]:
+            if not each[0] or not all(part.startswith(number + ".") for part in each[0]):
+                break
+            found.append(each)
+        return found
+
     ranges = []
     for number in numbers:
-        ranges += [own_range(unit, number) for unit in spans if number in unit[0]][:1]
-        ranges += [own_range(unit, part) for unit in all_units for part in unit[0]
-                   if part.startswith(number + ".") and part not in numbers]
+        unit = next(unit for unit in spans if number in unit[0])
+        ranges.append(own_range(unit, number))
+        if len(numbers) > 1 and len(unit[0]) > 1:
+            first_opening = min(own_range(unit, part)[0] for part in unit[0])
+            if first_opening > unit[3]:
+                ranges.append((unit[3], first_opening))
+        ranges += [own_range(each, part) for each in sub_step_units(unit, number) for part in each[0]
+                   if part not in numbers]
     return sorted(set(ranges))
 
 
@@ -1162,8 +1178,7 @@ def approval_walk_item_text_over_word_limit_refused(walk_finder, minutes, value,
     """Raise Failure when an item's text up to its first `###` sub-step, or a sub-step, has more words than
     APPROVAL_WALK_ITEM_WORD_LIMIT, naming the first such text. A sub-step is a `###` heading, numbered or not;
     a deeper heading is part of the text it falls in."""
-    document, text, tokens, _ = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
-    _, spans = walk_finder.waiting_item_units(document, value, numbers, total, parser)
+    document, text, tokens, _, spans = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
     lines = text.split("\n")
     sub_steps = {token.map[0] for token in tokens if token.type == "heading_open" and token.level == 0
                  and token.map is not None and token.markup == APPROVAL_WALK_ITEM_SUB_STEP_HEADING_MARKUP}
@@ -1735,7 +1750,7 @@ def glossary_term_or_marker_problems(found, touched, top, item):
 def now_over_later_problems(walk_finder, minutes, value, numbers, total, parser):
     """Return (walk-document path, one line for each kind of choice besides now or later that the item holds:
     `Part N.` paragraphs, `Option N` lines and `#new_if_d` marks, each with its 1-based line numbers)."""
-    document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
+    document, text, tokens, ranges, _ = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
     lines = walk_finder.prose_lines(text, parser, tokens)
     hook = load_module("walk_me_through_user_short_answer_hook", SHORT_ANSWER_HOOK_FILE)
     found = {
