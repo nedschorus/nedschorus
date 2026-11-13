@@ -2542,6 +2542,14 @@ if os.environ.get("DRIVER_SIGTERM_AT_MAIN_THREAD_LOCK_REACQUIRE_IN_SECOND_SUBMIT
         submits.append(1)
         return submit(pool, *arguments, **keywords)
     module.concurrent.futures.ThreadPoolExecutor.submit = submit_counted
+if os.environ.get("DRIVER_SIGTERM_IN_CELLS_POOL_SHUTDOWN"):
+    import signal, threading
+    shutdown = module.concurrent.futures.ThreadPoolExecutor.shutdown
+    def sigterm_then_shutdown(pool, *arguments, **keywords):
+        if threading.current_thread() is threading.main_thread():
+            signal.raise_signal(signal.SIGTERM)
+        return shutdown(pool, *arguments, **keywords)
+    module.concurrent.futures.ThreadPoolExecutor.shutdown = sigterm_then_shutdown
 ship_hold = os.environ.get("DRIVER_HOLD_FIRST_SHIP")
 if ship_hold:
     ship = module.ship_record
@@ -2771,6 +2779,47 @@ sys.exit(module.main())
                   and left_in_copies_root(base) == [],
                   f"exit {process.returncode}, copies root {left_in_copies_root(base)}, "
                   f"stdout {out!r}, stderr {err!r}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 65: a SIGTERM the main thread takes inside the cells' pool's
+    # shutdown, as `with` exits once every cell has ended. The handler only
+    # records it there, so the raise after the pool is what makes the run end
+    # by the signal: without it the run ended with exit 0.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-in-the-cells-pool-shutdown.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        environment = runner_process_environment(
+            programs, recorded, codex="report", claude="report")
+        environment["DRIVER_SIGTERM_IN_CELLS_POOL_SHUTDOWN"] = "1"
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--adversarial-prompt", "cut"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            try:
+                out, err = process.communicate(timeout=60)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            records = sorted((repo / "sanity-check-records").glob("*"))
+            record = records[0] if len(records) == 1 else None
+            check("a SIGTERM the main thread takes in the cells' pool's shutdown, once every "
+                  "cell has ended, prints what a finished run prints and ends the run by the "
+                  "signal, its copy removed",
+                  record is not None
+                  and process.returncode == -signal.SIGTERM
+                  and "Traceback" not in err
+                  and "STOPPED:" not in out
+                  and f"sanity-check complete: reports in {record}." in out
+                  and left_in_copies_root(base) == [],
+                  f"record {record}, exit {process.returncode}, "
+                  f"copies root {left_in_copies_root(base)}, stdout {out!r}, stderr {err!r}")
         finally:
             if process.poll() is None:
                 process.kill()
