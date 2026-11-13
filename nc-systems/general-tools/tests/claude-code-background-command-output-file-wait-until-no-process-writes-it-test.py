@@ -133,6 +133,18 @@ else:
           process.returncode == wait.EXIT_TIME_LIMIT_REACHED and "Still running" in process.stderr,
           (process.returncode, process.stdout, process.stderr))
 
+    # The writer outlives the program's first look and ends within its first poll interval.
+    short_writer = writer("import time; time.sleep(1)")
+    try:
+        process = subprocess.run([sys.executable, str(PROGRAM), str(output_file),
+                                  "--time-limit-seconds", "60"], capture_output=True, text=True)
+    finally:
+        stop(short_writer)
+    # The literal 0, not wait.EXIT_NO_WRITER_LEFT, because the shell reads success as exit status 0.
+    check("as a process, the writer exiting during the wait exits 0 and prints its message on "
+          "standard output", process.returncode == 0 and "Finished" in process.stdout,
+          (process.returncode, process.stdout, process.stderr))
+
 def lister_answering(*answers):
     """Return a writer lister giving each answer in turn, raising one that is an exception, and the
     seconds each look was given."""
