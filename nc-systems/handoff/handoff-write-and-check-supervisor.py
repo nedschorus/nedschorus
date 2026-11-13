@@ -365,9 +365,25 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
     return roster
 
 
-def still_working_subagent_entries(roster) -> list:
-    return [entry for entry in roster
-            if entry["last_event"] in STILL_WORKING_SUBAGENT_LAST_EVENTS]
+def still_working_subagent_entries(roster, transcript_path: Path, now=None) -> list:
+    """Return the roster entries still working at now.
+
+    An entry whose last notice says it waits on its own background work counts only while its own
+    transcript shows work in flight, by the threshold hook's rule with its default wait. Raises
+    threshold_hook.TranscriptCouldNotBeFullyRead when that transcript cannot be read.
+    """
+    now = datetime.now(timezone.utc) if now is None else now
+
+    def still_working(entry):
+        if entry["last_event"] not in STILL_WORKING_SUBAGENT_LAST_EVENTS:
+            return False
+        if entry["last_event"] != WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT:
+            return True
+        return threshold_hook.subagent_own_transcript_shows_work_in_flight(
+            threshold_hook.subagent_transcript_path(transcript_path, entry["agent_id"]),
+            threshold_hook.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60, now)
+
+    return [entry for entry in roster if still_working(entry)]
 
 
 def spawned_subagent_field_lines(roster) -> list:
@@ -393,12 +409,12 @@ def spawned_subagent_roster_for_this_session(working_directory: Path):
             return [], (f"spawned-subagent roster: not derived — no single transcript found for session "
                         f"{session_id} under {PROJECTS_ROOT}. Name any subagents in the next step by hand.")
         roster = spawned_subagent_roster(transcript_path)
+        still_working = still_working_subagent_entries(roster, transcript_path)
     except Exception as error:  # noqa: BLE001 - the roster never blocks a handoff
         return [], (f"spawned-subagent roster: not derived — {type(error).__name__}: {error}. "
                     "Name any subagents in the next step by hand.")
     if not roster:
         return [], "spawned-subagent roster: this session spawned no subagents"
-    still_working = still_working_subagent_entries(roster)
     if not still_working:
         return [], (f"spawned-subagent roster: all {len(roster)} spawned subagent(s) had "
                     "ended by this handoff; none recorded (ended subagents are not "
