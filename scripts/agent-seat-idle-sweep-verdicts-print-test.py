@@ -348,12 +348,15 @@ try:
         check(f"not raised: {sentence!r}",
               [(s["kind"], s["code_reading"]) for s in verdicts["alpha"]["sentences"]]
               == [(kind, "not_raised")] and verdicts["alpha"].get("rule") == 4, verdicts["alpha"])
-    machine = Machine()
-    machine.seat("alpha", [user("go"), assistant("I'll merge it without pushing the tag."), turn_end()])
-    _, verdicts, _ = machine.run()
-    check("a negative sentence is not raised, and rules 3 to 5 decide",
-          [(s["kind"], s["code_reading"]) for s in verdicts["alpha"]["sentences"]]
-          == [("negative", "not_raised")] and verdicts["alpha"].get("rule") == 4, verdicts["alpha"])
+    for sentence in ("I'll merge it without pushing the tag.",
+                     "ned-box's load is near 22, so I'm starting nothing else for now."):
+        machine = Machine()
+        machine.seat("alpha", [user("go"), assistant(sentence), turn_end()])
+        _, verdicts, _ = machine.run()
+        check(f"a negative sentence is not raised, and rules 3 to 5 decide: {sentence!r}",
+              [(s["kind"], s["code_reading"]) for s in verdicts["alpha"]["sentences"]]
+              == [("negative", "not_raised")] and verdicts["alpha"].get("rule") == 4,
+              verdicts["alpha"])
     machine = Machine()
     machine.seat("alpha", [user("go"),
                            assistant("Here is the diff.\n```\n-old\n+new\n```\nI'll push it now."),

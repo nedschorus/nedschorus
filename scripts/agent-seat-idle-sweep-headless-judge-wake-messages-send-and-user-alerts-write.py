@@ -45,9 +45,10 @@ makes a tool call after the nudge that opened the wait or has nothing to do (rul
 case only when no rule 2 message was sent on the wait, stops at a usage limit (rule 1), starts a
 new agent-session, or spends tokens after the user was told. So an agent-seat that answers each
 rule 3 or rule 5 message with a tool call and goes idle again is nudged again, and never
-escalated; one that answers a rule 2 message with a tool call and a fresh promise is escalated,
-because a tool call that ended a promise wait would let an agent-seat that makes a fresh promise
-at each rule 2 message be nudged again forever and never escalated.
+escalated; one that answers a rule 2 message with a tool call and a fresh promise has the user
+told, because a tool call that ended a promise wait would let an agent-seat that makes a fresh
+promise at each rule 2 message be nudged again forever. Its escalation is logged and not sent:
+it quotes the nudge as not acted on, which the tool call makes false.
 
 How it fails, and what the user sees: a headless agent-session that fails, is stopped, answers
 JSON code cannot use, or sends to the wrong entry or the wrong text; a message missing from the
@@ -120,6 +121,8 @@ JUDGED_TEXT_CHARACTERS = 4000
 NUDGE, ESCALATE, TELL_USER = "nudge", "escalate", "tell_user"
 # A wait step recording that the wait carries a rule 2 message, which rule 4 does not settle.
 PROMISE = "promise"
+# On an escalate wait step that was logged and not sent: why not.
+NOT_SENT_BECAUSE = "not_sent_because"
 LIMIT_WAKE, ACCOUNT_NOTICE = "limit_wake", "account_notice"
 
 DO_NOT_REPLY_SENTENCE = "Do not reply to this message: its sender has exited, so a reply fails."
@@ -241,6 +244,11 @@ whose prerequisites or blockedBy name the event, so the idle check raises it.
 it, or by a task to build one together with a proposal to the user; a memory never backs it.
 - A hold, such as "I'll hold", is backed by a task whose prerequisites name what releases the hold.
 
+Judge each sentence by the rule of the kind the JSON gives it, because the message that names an \
+unbacked sentence is worded for that kind. A sentence that, read whole, declines or puts off an \
+action instead of promising one, such as "ned-box's load is near 22, so I'm starting nothing else \
+for now", leaves nothing undone: it is backed.
+
 The tool calls the agent-seat made from the earliest sentence's turn on are in the JSON below, with \
 the tasks they created or updated and the files they changed; so are its open tasks that have \
 prerequisites or blockedBy, whenever they were created, and what is running. Send nothing. \
@@ -321,6 +329,8 @@ class SweepLog:
                     wait[PROMISE] = event["at"]
             elif wait is not None:
                 wait[event["step"]] = event["at"]
+                if event["step"] == ESCALATE and NOT_SENT_BECAUSE in event:
+                    wait[NOT_SENT_BECAUSE] = event[NOT_SENT_BECAUSE]
         return wait
 
     def last_judge_answer(self, seat):
@@ -734,10 +744,18 @@ class Sweep:
         if ESCALATE in wait:
             if seconds_between(wait[ESCALATE], self.now) >= WAIT_STEP_SECONDS:
                 self.record({"event": "wait_step", "agent_seat": seat, "step": TELL_USER})
-                self.alert(f"tell-user:{seat}:{wait[NUDGE]}",
-                           f"{seat} has been idle {minutes} minutes after a nudge and an escalation",
-                           f"The idle sweep found {seat} idle with something to do, messaged it "
-                           f"at {wait[NUDGE]} and escalated at {wait[ESCALATE]}, and it is idle "
+                if NOT_SENT_BECAUSE in wait:
+                    title = (f"{seat} has been idle {minutes} minutes with a promise the idle "
+                             "sweep named to it not known to be backed")
+                    steps = (f"messaged it at {wait[NUDGE]}, and at {wait[ESCALATE]} did not "
+                             "escalate, because it had made a tool call after that message; "
+                             "nothing the idle sweep reads shows the promise backed, and it is idle")
+                else:
+                    title = f"{seat} has been idle {minutes} minutes after a nudge and an escalation"
+                    steps = (f"messaged it at {wait[NUDGE]} and escalated at {wait[ESCALATE]}, "
+                             "and it is idle")
+                self.alert(f"tell-user:{seat}:{wait[NUDGE]}", title,
+                           f"The idle sweep found {seat} idle with something to do, {steps} "
                            f"again. Its transcript is {verdict[fields.TRANSCRIPT_PATH]}. The idle "
                            "sweep sends it nothing more until it spends tokens and goes idle again.",
                            f"An agent on ned-box can read {seat}'s transcript and its tmux session "
@@ -745,6 +763,14 @@ class Sweep:
                            "user may want to look at it himself.", failure=False)
             return
         if seconds_between(wait[NUDGE], self.now) >= WAIT_STEP_SECONDS:
+            worked_at = verdict.get(fields.LAST_TOOL_CALL_AT)
+            if worked_at and parse_time(worked_at) > parse_time(wait[NUDGE]):
+                # Only a wait a rule 2 message was sent on outlives such a tool call. The
+                # escalation would quote the nudge as not acted on, which the tool call makes
+                # false; the step is still logged, so that the user is told on time.
+                self.record({"event": "wait_step", "agent_seat": seat, "step": ESCALATE,
+                             NOT_SENT_BECAUSE: "it made a tool call after the nudge"})
+                return
             text = ESCALATION_TEXT.format(
                 minutes=minutes, nudge_time=parse_time(wait[NUDGE]).strftime("%Y-%m-%d %H:%MZ"),
                 quoted_nudge="\n".join(f"> {line}" for line in wait["nudge_text"].split("\n")))

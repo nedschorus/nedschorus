@@ -171,7 +171,10 @@ RX_CONDITIONAL_ON_EVENT = re.compile(
 RX_NEGATED_ACTION = re.compile(
     r"\b(?:without|instead of|rather than|not yet|never|no longer|don't|won't|can't)\s+"
     r"(?:\w+\s+){0,2}?(?:push|pushing|commit|committing|dispatch|dispatching|fork|forking|file|"
-    r"filing|open|opening|send|sending|message|messaging|start|starting|spawn|spawning)\b", re.I)
+    r"filing|open|opening|send|sending|message|messaging|start|starting|spawn|spawning)\b"
+    # A negated object declines the action too, as in "I'm starting nothing else for now".
+    r"|\b(?:" + _VERBS + "|" + _GERUNDS + r")\s+(?:nothing|none|no\s+(?:more|other|new|further))\b",
+    re.I)
 
 
 def clean_text(text):

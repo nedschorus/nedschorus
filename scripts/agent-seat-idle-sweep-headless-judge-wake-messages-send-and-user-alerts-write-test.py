@@ -506,10 +506,20 @@ machine.run(7)
 machine.script(sent_ok())
 machine.run(16)
 check("rule 2: a tool call and a fresh promise in answer to the message do not end the wait, "
-      "and the escalation is sent",
-      not machine.events("wait_ended")
-      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
-      (machine.events("wait_step"), machine.events("wait_ended")))
+      "and the escalation, which would quote the nudge as not acted on, is logged and not sent",
+      not machine.events("wait_ended") and not machine.claude_calls()
+      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"]
+      and machine.events("wait_step")[1].get("not_sent_because")
+      and [event["step"] for event in machine.events("message_sent")] == ["nudge", "nudge"],
+      (machine.events("wait_step"), machine.events("message_sent"), machine.claude_calls()))
+machine.script()
+machine.run(32)
+told = [alert for alert in machine.alerts() if alert["title"].startswith("alpha has been idle")]
+check("rule 2: idle 15 minutes after the escalation not sent: the user is told, and not that it "
+      "was escalated",
+      [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate", "tell_user"]
+      and len(told) == 1 and "escalation" not in told[0]["title"]
+      and "did not escalate" in told[0]["alert_text"], (machine.events("wait_step"), told))
 
 # A promise sent on a wait a rule 5 or rule 3 message opened keeps that wait going through rule 4.
 for opener in ("rule 5", "rule 3"):
