@@ -390,7 +390,7 @@ def hidden_line(hidden):
     """The one line that stands for the entries open tasks hold; "" when none is hidden."""
     if not hidden:
         return ""
-    worktrees = sum(1 for kind, _ in hidden if kind == "worktree")
+    worktrees = sum(1 for kind, _ in hidden if kind == "worktree")  # pragma: no mutate, kind is "worktree" or "branch", and "branch" sorts before "worktree", so >= acts as ==
     branches = len(hidden) - worktrees
     parts = []
     if worktrees:
