@@ -46,7 +46,7 @@ and the numbers are listed on stderr instead, each with its line
 forbids bare numbers, and walk files had carried 33 and 35 of them
 unchecked). Bare file names and the walk's 300-word item cap are deliberately
 not checked, by the same rulings. Every cold-read-cell's own progress -- the
-launcher's stderr, the runtime's stderr, the stray-write and recovery lines --
+launcher's stderr, the agent-binary's stderr, the stray-write and recovery lines --
 is re-emitted on this program's stderr, so a caller watching stdout gets the
 one line and a caller reading stderr gets the whole account.
 
