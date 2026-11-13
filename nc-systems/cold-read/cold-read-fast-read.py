@@ -44,8 +44,10 @@ when the read itself failed there is no suggestions file, so that line says so
 and the numbers are listed on stderr instead, each with its line
 (user-ruled 2026-09-17, item 5 of nedschorus#418: the walk-me-through skill
 forbids bare numbers, and walk files had carried 33 and 35 of them
-unchecked). Bare file names and the walk's 300-word item cap are deliberately
-not checked, by the same rulings. Every cold-read-cell's own progress -- the
+unchecked). Bare file names are deliberately not checked, by the same rulings;
+the walk's 300-word item limit is checked by the walk check program,
+nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py,
+before it reads an item. Every cold-read-cell's own progress -- the
 launcher's stderr, the agent-binary's stderr, the stray-write and recovery lines --
 is re-emitted on this program's stderr, so a caller watching stdout gets the
 one line and a caller reading stderr gets the whole account.
