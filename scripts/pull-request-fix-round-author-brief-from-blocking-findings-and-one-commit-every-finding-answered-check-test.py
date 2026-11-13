@@ -1380,6 +1380,12 @@ def moved_into_body_cases(root, repository, base, frozen_head):
                                                 **comments_route(20, [])})
         check(f"in an ungraded round, a Block in the moved-comment section of {login}'s review body is not briefed",
               code == 0 and "Blocking findings (2)" in out and "another account's moved finding" not in out, err + out)
+
+    read_back = load_program().outside_the_diff_comments_read_back_from_review_body(
+        "REQUEST_CHANGES\n- `quoted.py:1`: **Blocks** a line above the heading.\n"
+        "Comments on lines outside this pull request's diff:\n- `setup.py:3`: **Blocks** the moved finding.")
+    check("a line in the moved-comment form above the moved-comment heading is not read back as a moved comment",
+          read_back == [{"path": "setup.py", "line": 3, "body": "**Blocks** the moved finding."}], repr(read_back))
     del base
 
 
