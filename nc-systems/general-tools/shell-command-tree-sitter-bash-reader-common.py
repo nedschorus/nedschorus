@@ -926,7 +926,7 @@ def _redirect_text_before_operator(node, operator, source, glob_markers):
     touching the operator before it. After a blank, bash reads that text as the
     operator's descriptor when it is decimal digits, and as a word otherwise.
     Text that touches the escaped blanks is the end of the word before, as the 2
-    of `>f\\<tab>2>&-`, which this reader does not read.
+    of `>f\\<tab>2>&-`: see _text_ending_word_before_redirect.
     """
     before = [child for child in node.named_children
               if child.type != "file_descriptor" and child.end_byte <= operator.start_byte]
@@ -943,6 +943,25 @@ def _redirect_text_before_operator(node, operator, source, glob_markers):
     if _digits_are_whole_token(source, first, operator.start_byte):
         return text.decode(), gap_words
     return "", gap_words + [prefix + _unescape_unquoted(text.decode("utf-8", SHELL_TEXT_ERRORS), glob_markers)]
+
+
+def _text_ending_word_before_redirect(node, source, word_end, glob_markers):
+    """Return the text inside a redirect before its operator that ends the word before it, or "".
+
+    tree-sitter-bash ends a word before an escaped tab and starts the redirect
+    after it at the backslash, so in `zzq a\\<tab>2>f` it puts the 2 inside the
+    redirect; bash passes the word "a<tab>2" and writes standard output to f.
+    word_end is where the word before ends, after the escaped blanks that continue it.
+    """
+    operator = next((child for child in node.children if not child.is_named), None)
+    if operator is None or node.start_byte >= word_end:
+        return ""
+    before = [child for child in node.named_children
+              if child.type != "file_descriptor" and child.end_byte <= operator.start_byte]
+    if not before or before[0].start_byte != word_end:
+        return ""
+    return _unescape_unquoted(source[word_end:operator.start_byte].decode("utf-8", SHELL_TEXT_ERRORS),
+                              glob_markers)
 
 
 def _digits_are_whole_token(source, start, end):
@@ -1115,23 +1134,43 @@ class _Collector:
                 unit_shell = (child_shell + (ChildShell(first.start_byte, PIPELINE_STAGE,
                                                         pipeline_start),)
                               if len(pipeline) > 1 else child_shell)
-                redirects, trailing_words = [], []
+                redirects, trailing_words, command_word_end = [], [], ""
                 previous_end = (_escaped_blanks_continuing_word(
                     self.source, unit["children"][-1].end_byte)[1] if unit["children"] else None)
+                # Where the word written last before the next redirection is held: the
+                # command's words, trailing_words, or the last redirection's target.
+                last_word = ("command" if unit["children"]
+                             and unit["children"][-1].type not in REDIRECT_NODE_TYPES else None)
                 for redirect, limit in unit["redirects"]:
                     if previous_end is not None:
-                        trailing_words.extend(_escaped_blank_words_before_operator(
-                            self.source[previous_end:redirect.start_byte]))
+                        gap_words = _escaped_blank_words_before_operator(
+                            self.source[previous_end:redirect.start_byte])
+                        trailing_words.extend(gap_words)
+                        last_word = "trailing" if gap_words else last_word
+                        text = _text_ending_word_before_redirect(
+                            redirect, self.source, previous_end, self.glob_markers)
+                        if text and last_word == "trailing":
+                            trailing_words[-1] = _word_with_text(trailing_words[-1], trailing_words[-1] + text)
+                        elif text and last_word == "target":
+                            redirects[-1] = (redirects[-1][0], redirects[-1][1] + text)
+                        elif text and last_word == "command":
+                            command_word_end += text
                         previous_end = _redirect_end_with_escaped_blanks_continuing_target(
                             self.source, redirect, limit)
+                    words_before, redirects_before = len(trailing_words), len(redirects)
                     shared_heredocs.extend(
                         self.redirect(redirect, unit_shell, redirects, trailing_words, limit))
+                    if len(trailing_words) > words_before:
+                        last_word = "trailing"
+                    elif len(redirects) > redirects_before:
+                        last_word = "target" if redirects[-1][1] else None
                 if previous_end is not None:
                     trailing_words.extend(_escaped_blank_words_ending_command(
                         self.source, previous_end))
                 if unit["children"] is not None:
                     self.simple_command(unit["node"], unit["children"], unit_shell,
-                                        list(shared_heredocs), redirects, trailing_words)
+                                        list(shared_heredocs), redirects, trailing_words,
+                                        command_word_end)
                 else:
                     self.visit(unit["node"], unit_shell, list(shared_heredocs))
 
@@ -1218,7 +1257,9 @@ class _Collector:
             self.expanded_heredoc_body(taken, child_shell)
         return [Heredoc(body, taken.expanded, taken.delimiter_as_written)]
 
-    def simple_command(self, node, children, child_shell, heredocs, redirects, trailing_words):
+    def simple_command(self, node, children, child_shell, heredocs, redirects, trailing_words,
+                       last_word_end=""):
+        """Read one simple command; last_word_end is text a redirection after it adds to its last word."""
         words, own_redirects, own_heredocs = [], [], []
         joined = None
         previous_end = None
@@ -1264,6 +1305,8 @@ class _Collector:
                 continues = previous_end > child.end_byte
         if joined is not None:
             words.append(word_value(joined, self.glob_markers, self.restored))
+        if last_word_end and words:
+            words[-1] = _word_with_text(words[-1], words[-1] + last_word_end)
         words.extend(trailing_words)
         if words:
             self.commands.append(SimpleCommand(words, child_shell, own_redirects + list(redirects),
@@ -1357,9 +1400,7 @@ def _escaped_blank_words_ending_command(source, start):
     """Return the words of the escaped blanks from start to the text that ends a command.
 
     tree-sitter-bash ends a command at its last word and leaves escaped blanks
-    after it outside every node, so `zzq \\ ;` loses the " " bash passes. The
-    blanks count only when a separator, a comment, a closing parenthesis or
-    backtick, a line end or the end of the source follows them.
+    after it outside every node, so `zzq \\ ;` loses the " " bash passes.
     """
     end = start
     while True:
@@ -1370,10 +1411,6 @@ def _escaped_blank_words_ending_command(source, start):
             end += 1
         else:
             break
-    # A # here starts a comment: the source corrections make a # just after an escaped blank
-    # part of a word.
-    if source[end:end + 1] not in (b"", b"\n", b";", b"&", b"|", b")", b"`", b"#"):
-        return []
     return _escaped_blank_words_before_operator(source[start:end])
 
 
