@@ -1153,9 +1153,8 @@ def main(argv=None) -> int:
     (full_name,) = candidate_names
     if is_same_name(full_name, name):
         return code
-    # A path query keeps its directory, so only a file at that path counts as found.
-    rerun_query = (os.path.join(os.path.dirname(query), full_name)
-                   if len(parts_of(query)) > 1 else full_name)
+    # A path query keeps its directory, so only a file at that path counts as found; a bare name has none.
+    rerun_query = os.path.join(os.path.dirname(query), full_name)
     write_text(f"\nNo copy was found, and every candidate is named "
                f"{full_name}, so this program runs again with "
                f"{rerun_query} in place of {query}.\n\n")
@@ -1205,8 +1204,8 @@ def search_and_report(query, plan):
             target.get("canonical", target["path"]), code == 1)
         if closing:
             write_text("\n" + "\n".join(closing) + "\n")
-    unreached = next((reason for machine, reason in not_searched
-                      if other and machine == other["machine"]), None)
+    # Only the other machine is ever left not searched.
+    unreached = next((reason for _, reason in not_searched), None)
     return code, candidate_names, unreached
 
 
