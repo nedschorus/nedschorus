@@ -829,9 +829,9 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
 
     kept_marker = supervisor.KEPT_FOR_RECORDS_MARKER + "cold-read-records/r-2026-10-19 "
     kept_summary = supervisor.summarize_worktree_cleanup_output([
-        "failed-ship-wt" + kept_marker + "(FAILED: r-2026-10-19 — ned-box unreachable)",
+        "failed-ship-wt" + kept_marker + "(FAILED: r-2026-10-19 — nedlern@ned-box unreachable)",
         "failed-ship-wt" + supervisor.KEPT_FOR_RECORDS_MARKER
-        + "sanity-check-records/s-2026-10-19 (FAILED: s-2026-10-19 — ned-box unreachable)",
+        + "sanity-check-records/s-2026-10-19 (FAILED: s-2026-10-19 — nedlern@ned-box unreachable)",
         "silent-ship-wt" + kept_marker
         + "(the shipper printed nothing (exit 1): NotADirectoryError: store)",
         "locked-wt: removal FAILED — locked",
@@ -966,7 +966,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
 
     # A printed failure explains a nonzero exit only when the cleaner went on to finish.
     kept_for_record_line = ("rec-wt" + supervisor.KEPT_FOR_RECORDS_MARKER
-                            + "cold-read-records/r (FAILED: ned-box unreachable)")
+                            + "cold-read-records/r (FAILED: nedlern@ned-box unreachable)")
     for kind, printed in (
             ("worktree kept for an unshipped record", f"print({kept_for_record_line!r})\n"),
             ("failed removal", "print('locked-wt: removal FAILED — locked')\n")):
