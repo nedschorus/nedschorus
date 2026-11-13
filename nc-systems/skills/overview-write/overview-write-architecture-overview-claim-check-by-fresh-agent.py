@@ -33,7 +33,8 @@ a program so that no step depends on an agent remembering it:
    exact text, to that file in the checkout the program runs from, creating
    the file when it is missing. The file is
    nc-systems/<system>/docs/<system>-architecture-overview-proposed-improvements-or-changes-entries.md,
-   outside the wiki folder, so the wiki shows no copies of the overview. A
+   outside the wiki folder, so the wiki no longer gains a file named after the
+   overview on every run. A
    follow-up pull request fixes the claims, except when the file on origin/main
    already holds a claim from this program, a line starting "Claim: ", which
    only this program writes: the run is then taken to be that follow-up, or a
@@ -42,8 +43,8 @@ a program so that no step depends on an agent remembering it:
 
 scripts/pull-request-review-plan.py refuses a pull request that adds or changes
 an overview until the newest report for the overview's blob at the pull
-request's head says OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_ALL_CLAIMS_SUPPORTED or
-OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_RESULT_NO_MUST_FIX_CLAIM_REMAINS; it reads reports with
+request's head says "all claims supported" or "no must-fix claim remains"; it
+reads reports with
 find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob() from this file.
 
 Does not handle: counting rounds (the page stops the check at round 3 and
@@ -82,7 +83,8 @@ that exit, so the overview-write skill's step 3 is only to do what it says.
 For exits 0, 5 and 6, when step 7 wrote a file, the line says to commit it
 and either to open a follow-up pull request for its claims once this one
 merges or that regular maintenance takes them, and, when the overview lacks
-the line pointing to such files, to add that line and run the program again.
+the line pointing to that file, to add that line under the overview's first
+heading and run the program again.
 For exit 5 the program tells a malformed report apart from claims ranked
 must fix. On the first malformed report for an overview text, its
 last line tells the agent to run the program again; on the second and each
