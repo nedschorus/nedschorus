@@ -32,7 +32,9 @@ To remove either, `crontab -l | grep -v transcript-mirror-to-log-store | crontab
 
 **First pass by hand, 2026-09-10, both exit 0.** Mac: 3,236 project files, and 158 handoffs against the store's 167, the nine extra being files the store kept after the Mac dropped them, which is the never-delete rule working. ned-box: 278 project files and 21 handoffs, matching exactly.
 
-**Next action.** Read `~/.claude/transcript-mirror.log` on each machine after the next few runs, every minute, and confirm each run stays quiet and exits 0. Then this class of scope item 2 is done and only the recovered archive below is unruled.
+**Checked 2026-11-13 on ned-box.** The job runs with `--failures-only`, so it writes `~/.claude/transcript-mirror.log` only when a run fails; ned-box's log was last written 2026-09-30 10:17 -0700, so no run there has failed since.
+
+**Next action.** On the Mac, which ned-box cannot reach, read the modification time of `~/.claude/transcript-mirror.log`; if it predates the switch to every minute, no Mac run has failed since, this class of scope item 2 is done, and only the recovered archive below is unruled.
 
 ## Added 2026-09-08 (cold-read-research): the recovered Time Machine merge is a fourth class, and a mirror will never pick it up
 
