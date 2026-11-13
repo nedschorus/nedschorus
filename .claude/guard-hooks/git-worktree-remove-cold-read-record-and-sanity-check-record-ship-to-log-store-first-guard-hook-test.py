@@ -104,7 +104,7 @@ def checkout_with_worktree(name):
     (cold_read_record / "fast-read.md").write_text(f"{name} report\n")
     sanity_check_record = worktree / "sanity-check-records" / f"2026-11-03-{name}-doc"
     sanity_check_record.mkdir(parents=True)
-    (sanity_check_record / "finding-dispositions.md").write_text(f"{name} dispositions\n")
+    (sanity_check_record / "sanity-check-finding-dispositions.md").write_text(f"{name} dispositions\n")
     (worktree / "cold-read-records" / "empty-record").mkdir()
     return checkout, worktree
 
@@ -179,7 +179,7 @@ other_record = other_worktree / "cold-read-records" / "shipped-other-doc-2026-11
 other_record.mkdir(parents=True)
 (other_record / "fast-read.md").write_text("other report\n")
 cold_read_copy = STORE / "cold-read-records" / "shipped-doc-2026-11-03" / "fast-read.md"
-sanity_check_copy = STORE / "sanity-check-records" / "2026-11-03-shipped-doc" / "finding-dispositions.md"
+sanity_check_copy = STORE / "sanity-check-records" / "2026-11-03-shipped-doc" / "sanity-check-finding-dispositions.md"
 code, output, stderr = run_hook_process(f"git worktree remove {worktree}", checkout)
 check("unshipped records reach the log-store and the removal is let through silently",
       code == 0 and output is None and cold_read_copy.is_file() and sanity_check_copy.is_file()
@@ -272,7 +272,7 @@ code, output, stderr = run_hook_process(f"git worktree remove {worktree}", check
 check("the removal run again ships the records and is let through",
       code == 0 and output is None
       and (STORE / "cold-read-records" / cold_read_record.name / "fast-read.md").is_file()
-      and (STORE / "sanity-check-records" / sanity_check_record.name / "finding-dispositions.md").is_file(),
+      and (STORE / "sanity-check-records" / sanity_check_record.name / "sanity-check-finding-dispositions.md").is_file(),
       (code, output, stderr))
 reruns = [subprocess.run(rerun.split(), capture_output=True, text=True, check=False)
           for rerun in (cold_read_rerun, sanity_check_rerun)]
@@ -320,7 +320,7 @@ check("once the refused record is renamed as the refusal says, a removal the hoo
       code == 0 and output is None
       and (STORE / "cold-read-records" / "clash-doc-2026-11-03-2" / "fast-read.md").read_text()
       == "clash report\n"
-      and (STORE / "sanity-check-records" / "2026-11-03-clash-doc" / "finding-dispositions.md").is_file(),
+      and (STORE / "sanity-check-records" / "2026-11-03-clash-doc" / "sanity-check-finding-dispositions.md").is_file(),
       (code, output, stderr))
 
 # A worktree with no records is let through silently, without running a shipper.

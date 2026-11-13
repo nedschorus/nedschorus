@@ -1312,7 +1312,7 @@ def main():
     check("and prints the shipper's line as `record:`",
           said.splitlines()[0] == "record: shipped: fine", said.splitlines()[:1])
     check("the closing line names the shipper for the dispositions round",
-          "scripts/sanity-check-record-ship.py" in said and "finding-dispositions.md" in said,
+          "scripts/sanity-check-record-ship.py" in said and "sanity-check-finding-dispositions.md" in said,
           said)
     check("and says the record is kept, not deleted",
           "not deleted" in said and "Delete the record directory" not in said, said)
@@ -1909,7 +1909,7 @@ def main():
         return (f"When a run of this sanity-check saved cut-adversarial-prompt-{other}'s report, "
                 f"triage the cut-adversarial-prompt from that report.\n"
                 f"When no run of this sanity-check saved a report of the "
-                f"cut-adversarial-prompt, write in finding-dispositions.md that the "
+                f"cut-adversarial-prompt, write in sanity-check-finding-dispositions.md that the "
                 f"cut-adversarial-prompt is unreviewed.\n")
 
     runner_relaunch = load_runner()
