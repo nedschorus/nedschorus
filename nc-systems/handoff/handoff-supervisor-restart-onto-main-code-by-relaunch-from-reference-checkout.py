@@ -28,7 +28,7 @@ In the foreground, the program:
   directory, so that ending the agent-seat's tmux session and agent-home processes does not end
   it, and prints what the agent-seat does next.
 
-The detached second half, whose output goes to detached-output.log in the restart's log
+The detached second half, whose output goes to HANDOFF_SUPERVISOR_RESTART_DETACHED_SECOND_HALF_OUTPUT_FILE_NAME in the restart's log
 directory:
 - waits up to SESSION_HANDOFF_WAIT_LIMIT_SECONDS for <handoff dir>/<seat>-handoff.md to be
   modified after the freeze;
@@ -67,7 +67,7 @@ file and an HTML page in the restart's log directory, the page opened in the Mac
 (through scripts/open-html-page-in-mac-browser-from-ned-box.py on ned-box, `open` on the Mac).
 A notice that cannot be opened is still on disk, and the log says why it did not open. A state
 file the second half cannot read, which the foreground writes just before starting it, is
-reported only in detached-output.log, with the old handoff-supervisor left frozen.
+reported only in HANDOFF_SUPERVISOR_RESTART_DETACHED_SECOND_HALF_OUTPUT_FILE_NAME, with the old handoff-supervisor left frozen.
 
 What it does not handle: a handoff-supervisor that runs from a checkout other than the
 reference-checkout keeps running there until step 4 ends it; the new one runs from the
@@ -100,6 +100,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 PROGRAM = "handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout"
+HANDOFF_SUPERVISOR_RESTART_SIGSTOP_FROZEN_HANDOFF_SUPERVISOR_DETAILS_FOR_DETACHED_SECOND_HALF_FILE_NAME = "handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout-frozen-handoff-supervisor-details-for-detached-second-half.json"
+HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME = "handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout-result.txt"
+HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_FILE_NAME = "handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout-failure-notice-to-user.txt"
+HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_HTML_PAGE_FILE_NAME = "handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout-failure-notice-to-user.html"
+HANDOFF_SUPERVISOR_RESTART_DETACHED_SECOND_HALF_OUTPUT_FILE_NAME = "handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout-detached-second-half-output.log"
 SYSTEM_DIRECTORY = Path(__file__).resolve().parent
 REPOSITORY = SYSTEM_DIRECTORY.parent.parent
 
@@ -339,7 +344,7 @@ def unfreeze(supervisor_id: int, supervisor_command: str) -> str:
 
 def start_second_half(state_path: Path) -> int:
     """Start the detached second half; return its process ID."""
-    output = (state_path.parent / "detached-output.log").open("a", encoding="utf-8")
+    output = (state_path.parent / HANDOFF_SUPERVISOR_RESTART_DETACHED_SECOND_HALF_OUTPUT_FILE_NAME).open("a", encoding="utf-8")
     try:
         process = subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve()), "--second-half", str(state_path)],
@@ -383,7 +388,7 @@ def foreground(seat: str, start_second_half=start_second_half, sleep=time.sleep)
     try:
         freeze(supervisor_id, sleep=sleep)
         frozen_at = time.time()
-        state_path = log_directory / "state.json"
+        state_path = log_directory / HANDOFF_SUPERVISOR_RESTART_SIGSTOP_FROZEN_HANDOFF_SUPERVISOR_DETAILS_FOR_DETACHED_SECOND_HALF_FILE_NAME
         state_path.write_text(json.dumps({
             "seat": seat, "supervisor_id": supervisor_id, "supervisor_command": supervisor_command,
             "claude_id": claude_id, "claude_command": claude_command, "frozen_at": frozen_at,
@@ -395,13 +400,13 @@ def foreground(seat: str, start_second_half=start_second_half, sleep=time.sleep)
                                     unfreeze(supervisor_id, supervisor_command) + "."),
               file=sys.stderr)
         return 1
-    result_path = log_directory / "result.txt"
+    result_path = log_directory / HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME
     print(f"step 2: the handoff-supervisor {supervisor_id} of {seat} is frozen, so it cannot start a "
           f"successor on its old code; its claude is process {claude_id}. The program's second half, "
           f"process {second_half_id}, waits up to {SESSION_HANDOFF_WAIT_LIMIT_SECONDS // 60} minutes "
           f"for a new session-handoff, then ends this agent-session and starts a new "
           f"handoff-supervisor from {REFERENCE_CHECKOUT}; the second half writes what it prints to "
-          f"{log_directory / 'detached-output.log'}.\n"
+          f"{log_directory / HANDOFF_SUPERVISOR_RESTART_DETACHED_SECOND_HALF_OUTPUT_FILE_NAME}.\n"
           f"If you are the agent-seat {seat}: write your session-handoff now with the /handoff skill, "
           f"without --ask-user-before-restart, because that flag makes the new handoff-supervisor wait for an "
           f"answer on the terminal. Add this sentence to the session-handoff's next step, keeping "
@@ -428,7 +433,7 @@ def not_restarted_message(seat: str, reason: str, what_was_changed: str) -> str:
 
 
 class SecondHalf:
-    """Steps 4 to 7, writing each outcome to result.txt and each failure to a notice."""
+    """Steps 4 to 7, writing each outcome to HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME and each failure to a notice."""
 
     def __init__(self, state_path: Path, sleep=time.sleep, now=time.time,
                  open_notice_page=None):
@@ -439,7 +444,7 @@ class SecondHalf:
         self.sleep = sleep
         self.now = now
         self.open_notice_page = open_notice_page or open_notice_page_for_the_user
-        self.result_path = self.log_directory / "result.txt"
+        self.result_path = self.log_directory / HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME
         self.step_4_started = False
 
     def record(self, line: str) -> None:
@@ -448,9 +453,9 @@ class SecondHalf:
             stream.write(line + "\n")
 
     def notice(self, text: str) -> None:
-        notice_path = self.log_directory / "notice.txt"
+        notice_path = self.log_directory / HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_FILE_NAME
         notice_path.write_text(text + "\n", encoding="utf-8")
-        page_path = self.log_directory / "notice.html"
+        page_path = self.log_directory / HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_HTML_PAGE_FILE_NAME
         title = f"{self.seat}: its handoff-supervisor restart needs you"
         page_path.write_text(
             f"<!doctype html><html><head><meta charset=\"utf-8\"><title>{html.escape(title)}</title>"
