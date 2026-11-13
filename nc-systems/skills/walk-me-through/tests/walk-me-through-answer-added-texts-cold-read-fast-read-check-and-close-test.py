@@ -4192,6 +4192,105 @@ def test_a_read_ahead_counts_for_the_item_it_read_and_never_for_an_item_that_tak
           described(result) + document.read_text())
 
 
+INSERTED_THREE = ("## three\n\n#approval_walk_item_in_category_must_fix_now\n\n#case_against none.\n\n"
+                  "Recommendation: drop it.\n\n")
+
+
+def read_ahead_of_three_case():
+    """An UNNUMBERED_ITEMS_DOCUMENT walk whose item 2 is read, so `## three` is read ahead as item 3 of 4."""
+    case = Case(next_to_present="item 1 of 4", document=UNNUMBERED_ITEMS_DOCUMENT)
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    return case, case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+
+
+def test_a_read_ahead_never_counts_for_another_item_of_the_same_title():
+    case, document = read_ahead_of_three_case()
+    document.write_text(document.read_text().replace("## three", INSERTED_THREE + "## three", 1))
+    answered_and_closed(case)
+    result = case.run(WAITING_ITEM_READ)
+    text = document.read_text()
+    check("an inserted item of the same title, which takes the number close expected to give the item read ahead, "
+          "is not given that item's text as a withdrawn version",
+          result.returncode == 0 and "## Item 3 of 5: three\n" in text and "Recommendation: drop it.\n\n## three\n" in text
+          and "Withdrawn" not in text, described(result) + text)
+    case, document = read_ahead_of_three_case()
+    text = document.read_text()
+    three = text.index("## three")
+    document.write_text(text[:three] + INSERTED_THREE
+                        + text[three:].replace("Recommendation: approve.", "Recommendation: keep it.", 1))
+    answered_and_closed(case)
+    result = case.run(WAITING_ITEM_READ)
+    text = document.read_text()
+    answered_and_closed(case)
+    later = case.run(WAITING_ITEM_READ)
+    later_text = document.read_text()
+    check("while two items share the title of an item read ahead and rewritten since, neither is given its text",
+          result.returncode == 0 and "## Item 3 of 5: three\n" in text and "Recommendation: drop it.\n\n## three\n" in text
+          and "Withdrawn" not in text and later.returncode == 0 and "## Item 4 of 5: three\n" in later_text
+          and "Withdrawn" not in later_text, described(result) + described(later) + later_text)
+
+
+def test_a_read_ahead_the_read_step_used_stays_the_items_read_once_the_item_is_retitled_or_renumbered():
+    case, document = read_ahead_of_three_case()
+    answered_and_closed(case)
+    used = case.run(WAITING_ITEM_READ)
+    reads = times_read(case, "## Item 3 of 4: three")
+    document.write_text(document.read_text().replace("## Item 3 of 4: three", "## Item 3 of 4: three, retitled", 1)
+                        .replace("Recommendation: approve.\n\n## Summary", "Recommendation: drop it.\n\n## Summary", 1))
+    result = case.run(WAITING_ITEM_READ)
+    text = document.read_text()
+    check("an item whose read ahead the read step used, then retitled and rewritten, keeps the text read ahead",
+          used.returncode == 0 and "was read ahead while the item before it was shown" in used.stdout.split("\n")[0]
+          and reads == 1 and result.returncode == 0
+          and "Recommendation: drop it.\n\n#### Withdrawn version 1 of item 3\n\n" in text
+          and "Recommendation: approve.\n\n## Summary" in text, described(used) + described(result) + text)
+    case, document = read_ahead_of_three_case()
+    text = document.read_text()
+    three = text.index("## three")
+    document.write_text(text[:three] + INSERTED_THREE.replace("## three", "## inserted")
+                        + text[three:].replace("Recommendation: approve.", "Recommendation: keep it.", 1))
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    answered_and_closed(case)
+    result = case.run(WAITING_ITEM_READ)
+    text = document.read_text()
+    check("an item read ahead, rewritten and then given another number than the one expected, keeps the text read "
+          "ahead, and the item that took its number does not",
+          result.returncode == 0 and "## Item 4 of 5: three" in text
+          and "Recommendation: keep it.\n\n#### Withdrawn version 1 of item 4\n\n" in text
+          and text.count("Withdrawn") == 1, described(result) + text)
+
+
+def test_a_read_ahead_under_another_number_whose_copy_is_missing_is_passed_over_without_a_refusal():
+    case, document = read_ahead_of_three_case()
+    text = document.read_text()
+    three = text.index("## three")
+    document.write_text(text[:three] + INSERTED_THREE.replace("## three", "## inserted")
+                        + text[three:].replace("Recommendation: approve.", "Recommendation: keep it.", 1))
+    copies = [path for path in case.reads().glob("*.md") if "## Item 3 of 4: three" in path.read_text()]
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    copies[0].unlink()
+    answered_and_closed(case)
+    result = case.run(WAITING_ITEM_READ)
+    check("a read ahead expected to be item 3, whose copy is missing, does not stop the read step of item 4",
+          len(copies) == 1 and result.returncode == 0 and "Withdrawn" not in document.read_text(),
+          described(result) + document.read_text())
+
+
+def test_a_read_ahead_the_read_step_has_not_used_is_no_items_latest_read():
+    program = load_program()
+    reads = SUITE_ROOT / "latest-read"
+    reads.mkdir(parents=True, exist_ok=True)
+    program.write_json(reads / "a-outcome.json", {"status": program.READ_DONE, "item": "item 3 of 4", "finished": 1})
+    program.write_json(reads / "b-outcome.json", {"status": program.READ_DONE, "item": "item 3 of 4", "finished": 2,
+                                                  program.NUMBER_PREDICTED: True})
+    latest = program.latest_read(reads, "item 3 of 4")
+    check("the latest read of an item leaves out a read ahead that no read step has used for it",
+          latest is not None and latest[0] == "a", repr(latest))
+
+
 def test_two_earlier_texts_kept_in_one_run_both_land_below_the_item_and_the_next_item_stays_whole():
     case = item_read_case()
     answered_and_closed(case)
@@ -4231,6 +4330,77 @@ def test_a_bold_paragraph_items_changed_first_line_recommendation_is_kept_as_a_w
           result.returncode == 0
           and "#### Withdrawn version 1 of item 3\n\nRecommendation: leave it.\n\n#case_against none." in
           document.read_text(), described(result) + document.read_text())
+
+
+def test_a_waiting_item_the_walk_document_no_longer_holds_is_refused_naming_the_next_to_present_line():
+    for how, broken in (("renumbered past the minutes' count",
+                         lambda document: document.write_text(
+                             document.read_text().replace("## Item 3 of 5: three", "## Item 30 of 5: three"))),
+                        ("a walk-document gone", lambda document: document.unlink())):
+        case = item_read_case()
+        answered_and_closed(case)
+        case.run(WAITING_ITEM_READ)
+        broken(case.checkout / "docs" / "walk" / f"{WALK_NAME}.md")
+        result = case.run(WAITING_ITEM_READ)
+        check(f"the read step of an item already read once, its walk-document {how}, refuses naming the "
+              "`#next_to_present` line, with no traceback",
+              result.returncode == 1 and "`#next_to_present` line" in result.stderr
+              and "Traceback" not in result.stderr, described(result))
+
+
+def test_a_kept_version_whose_first_block_is_indented_code_stays_code():
+    case = item_read_case()
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(document.read_text().replace(
+        ITEM_3_HEADING + "\n", ITEM_3_HEADING + "\n    ## Item 99 of 5: example\n\n", 1))
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    document.write_text(document.read_text().replace("Recommendation: leave it.\n\n## Item 4 of 5",
+                                                     "Recommendation: drop it.\n\n## Item 4 of 5", 1))
+    result = case.run(WAITING_ITEM_READ)
+    text = document.read_text()
+    finder = load_program().load_walk_finder()
+    units = finder.item_unit_spans(text, finder.markdown_parser())
+    check("an earlier text whose first block is indented code is kept with its indentation, so it is no heading",
+          result.returncode == 0 and "#### Withdrawn version 1 of item 3\n\n    ## Item 99 of 5: example\n" in text
+          and [unit[0] for unit in units] == [["1"], ["2"], ["3"], ["4"], ["5"]], described(result) + text)
+
+
+def test_a_read_outcome_with_no_number_predicted_field_is_the_items_own_read_even_after_a_retitle():
+    case = item_read_case()
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    for path in case.reads().glob("*-outcome.json"):
+        outcome = json.loads(path.read_text())
+        if not outcome.pop("number_predicted", False):
+            path.write_text(json.dumps(outcome))
+    document = rewritten_item_3(case, "drop it.")
+    document.write_text(document.read_text().replace("## Item 3 of 5: three\n", "## Item 3 of 5: three renamed\n", 1))
+    result = case.run(WAITING_ITEM_READ)
+    text = document.read_text()
+    check("a read outcome with no number_predicted field, as record_read wrote an ordinary read before the field was "
+          "always written, is the item's own read: its text is kept as a withdrawn version after a retitle",
+          result.returncode == 0 and "#### Withdrawn version 1 of item 3\n\n" in text, described(result) + text)
+
+
+def test_a_kept_versions_first_line_loses_only_the_running_count_and_its_markup_never_a_code_spans_characters():
+    program = load_program()
+    finder = program.load_walk_finder()
+    for first, kept in (
+            ("**Item 3 of 5** Recommendation: rename `__init__.py` and use `x ** 2`.",
+             "Recommendation: rename `__init__.py` and use `x ** 2`."),
+            ("__Item 3 of 5:__ Recommendation: rename `a__b.py`.", "Recommendation: rename `a__b.py`."),
+            ("**Item 3 of 5: rename `__init__.py`.** Recommendation: x ** 2 stays.",
+             "rename `__init__.py`. Recommendation: x ** 2 stays."),
+            ("**Item 3 of 5 (deferred: moved to just before the summary item)** Recommendation: `a**b`.",
+             "Recommendation: `a**b`."),
+            ("**Item 3 of 5: rename `a**b`, then x ** 2.** Recommendation: go.",
+             "rename `a**b`, then x ** 2. Recommendation: go.")):
+        result = program.heading_body(finder, first + "\n\n#case_against none.")
+        check(f"a kept version of the bold-paragraph item `{first}` keeps the rest of its first line as written",
+              result == kept + "\n\n#case_against none.", repr(result))
+    title = program.item_title(finder, "## Item 3 of 5: rename `__init__.py`")
+    check("an item's title keeps a code span's underscores", title == "rename `__init__.py`", repr(title))
 
 
 def test_a_missing_copy_refuses_before_anything_is_written_even_a_first_entered_line():

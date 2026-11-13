@@ -383,19 +383,28 @@ is always with the latest text read, wording fixes each let pass cannot add up
 to a changed fact unread.
 
 Before it reads, the step keeps each earlier version of the item: each text of
-the item, by its number whatever M, that a read wrote its report for, oldest
-first, goes below the item's live version, after the versions kept there
-already and before the next item, under `#### Withdrawn version <n> of item
-<N>`, n one more than the Withdrawn headings there that name the item, and the
-step prints a line for each. A text is left out when, without its heading line
-and with its whitespace runs squeezed, it is empty, is the live version's text,
-or is already below the live version, as an agent may have kept it by hand. So
-every text a fast read read, a text the agent then changed to apply that read's
-findings included, stays in the walk-document; the walk finder reads an item only
-up to its first Withdrawn heading. An item whose heading names other items too,
-or a `#next_to_present` line naming several items, keeps none. When the copy
-`<key>.md` of such a text is missing, the step refuses, writing nothing and
-reading nothing, and says where the read's cold-read-record keeps its own copy.
+the item that a read wrote its report for, oldest first, goes below the item's
+live version, after the versions kept there already and before the next item,
+under `#### Withdrawn version <n> of item <N>`, n one more than the Withdrawn
+headings there that name the item, and the step prints a line for each. A text
+is the item's when it was read under the item's number, whatever M; a read
+ahead of an unnumbered item is the item's once a read step uses it for the
+item, as its text stands, and until then whatever number close expected to
+give it, only when its title, the heading's text after the running count, is
+the item's title and no other item's. A read outcome written before outcomes
+said whether their number was expected counts as such a read ahead. A text is
+kept from its first line that is not blank, its indentation and all, so an
+indented code block stays code. A text is left out when, without its
+heading line and with its whitespace runs squeezed, it is empty, is the live
+version's text, or is already below the live version, as an agent may have
+kept it by hand. So every text a fast read read, a text the agent then changed
+to apply that read's findings included, stays in the walk-document, except a
+read ahead no read step used whose item another item now shares a title with;
+the walk finder reads an item only up to its first Withdrawn heading. An item
+whose heading names other items too, or a `#next_to_present` line naming
+several items, keeps none. When the copy `<key>.md` of a text read under the
+item's number is missing, the step refuses, writing nothing and reading
+nothing, and says where the read's cold-read-record keeps its own copy.
 
 Each text read is kept in the directory
 `docs/walk/<walk name>-item-cold-read-fast-read-review-status-per-text-hash/`,
@@ -1975,10 +1984,26 @@ def worker_alive(reads, key):
 
 def record_read(reads, key, item, text, outcome, number_predicted=False):
     """Keep the text read beside the read's outcome, for a later AFTER_FIXES_FLAG read to compare against.
-    number_predicted marks a read ahead of an unnumbered item, whose number is only the one close expects to give it."""
+    number_predicted marks a read ahead of an unnumbered item, whose number is only the one close expects to give it,
+    until read_ahead_bound_to_item binds it to the item the read step uses it for."""
     (reads / f"{key}.md").write_text(text + "\n", encoding="utf-8")
     write_json(reads / f"{key}-outcome.json",
-               dict(outcome, item=item, finished=time.time(), **({NUMBER_PREDICTED: True} if number_predicted else {})))
+               dict(outcome, item=item, finished=time.time(), **{NUMBER_PREDICTED: number_predicted}))
+
+
+def read_number_predicted(outcome):
+    """Whether the outcome is a read ahead whose item number is only predicted. An outcome without
+    NUMBER_PREDICTED is not one: record_read once wrote the field only when it was true, so every read step's
+    own read in a walk open then has none."""
+    return outcome.get(NUMBER_PREDICTED, False)
+
+
+def read_ahead_bound_to_item(reads, key, outcome, item):
+    """Write and return the outcome of the read ahead at key as item's own read, NUMBER_PREDICTED false: the read
+    step used it for item, so it stays item's read whatever title, text or number the item has later."""
+    bound = dict(outcome, item=item, **{NUMBER_PREDICTED: False})
+    write_json(reads / f"{key}-outcome.json", bound)
+    return bound
 
 
 def fast_read_outcome(text, name, fast_read_program):
@@ -2098,11 +2123,12 @@ def approval_walk_item_before_and_after_fixes_compare_for_changed_fact_words_nee
 
 
 def latest_read(reads, item):
-    """Return (key, outcome) of the latest read of the item that wrote its report, or None."""
+    """Return (key, outcome) of the latest read of the item that wrote its report, or None; a read ahead that no read
+    step has used is no item's read."""
     done = []
     for path in reads.glob("*-outcome.json") if reads.is_dir() else []:
         outcome = json.loads(path.read_text(encoding="utf-8"))
-        if outcome["item"] == item and outcome["status"] == READ_DONE:
+        if outcome["item"] == item and outcome["status"] == READ_DONE and not read_number_predicted(outcome):
             done.append((outcome["finished"], path.name[:-len("-outcome.json")], outcome))
     return max(done)[1:] if done else None
 
@@ -2113,49 +2139,86 @@ def heading_body(walk_finder, text):
     recommendation."""
     first, _, rest = text.partition("\n")
     if first.lstrip().startswith("#"):
-        return rest.strip()
-    return (item_title(walk_finder, first) + "\n" + rest).strip()
+        return blank_lines_stripped(rest)
+    return blank_lines_stripped(item_title(walk_finder, first) + "\n" + rest)
+
+
+def blank_lines_stripped(text):
+    """The text without its leading and trailing blank lines; a first line's indentation stays, as an indented code
+    block needs it to stay code."""
+    lines = text.split("\n")
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines)
 
 
 def item_title(walk_finder, line):
-    """The text of an item's heading line after its markup, running count and deferred note, which renumbering the
-    item does not change."""
+    """The text of an item's heading line without its `#` marks, running count, deferred note and the emphasis
+    delimiters around the count, which renumbering the item does not change; every other character stays."""
     line = walk_finder.approval_walk_item_heading_with_deferred_note_removed(line).lstrip("#").strip()
     count = walk_finder.HEADING_COUNT.match(line)
-    return re.sub(r"\*\*|__", "", line[count.end():] if count else line).lstrip(" :,.;").rstrip()
+    if not count:
+        return line
+    opener = re.match(r"[*_]*", line)[0]
+    title = line[count.end():].lstrip(" :,.;")
+    if opener and title.startswith(opener):
+        return title[len(opener):].lstrip(" :,.;").rstrip()
+    # The emphasis that opened before the count closes after the title; a delimiter inside a code span, or with
+    # a space before it, as in `x ** 2`, closes nothing.
+    code = [span.span() for span in walk_finder.CODE_SPAN.finditer(title)]
+    closer = next((found.start() for found in re.finditer(re.escape(opener), title) if opener
+                   and found.start() > 0 and not title[found.start() - 1].isspace()
+                   and not any(start <= found.start() < end for start, end in code)), None)
+    if closer is not None:
+        title = title[:closer] + title[closer + len(opener):]
+    return title.rstrip()
 
 
 def earlier_read_texts_of_item(walk_finder, minutes, value, numbers, total, parser, reads, command):
     """Return [(key, outcome, text)] for each text of the waiting item that a read wrote its report for, oldest read
-    first. A read ahead of an unnumbered item counts only when its text's title is the item's title now, because
-    the number it carries is only the one close expected to give it. An item that shares its heading with others,
-    or several waiting items, have none. Raise Failure, before anything is written, when a text's copy is missing."""
+    first. A read ahead of an unnumbered item that no read step has used, whatever number close expected to give
+    it, counts only when its text's title is the item's title now and no other item's. An item that shares its
+    heading with others, or several waiting items, have none. Raise Failure, before anything is written, when the
+    copy of a text read under the item's number is missing."""
     if len(numbers) != 1 or not reads.is_dir():
         return []
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
-    text = document.read_text(encoding="utf-8")
-    units = walk_finder.item_unit_spans(text, parser)
-    unit = walk_finder.waiting_item_units(document, value, numbers, total, parser, units)[1][0]
+    # A walk-document missing, or without the item, is walk_document_items' refusal to give, naming the minutes'
+    # `#next_to_present` line.
+    try:
+        text = document.read_text(encoding="utf-8")
+        units = walk_finder.item_unit_spans(text, parser)
+        unit = walk_finder.waiting_item_units(document, value, numbers, total, parser, units)[1][0]
+    except (OSError, walk_finder.UnusableRange):
+        return []
     if len(unit[0]) != 1:
         return []
     lines = text.split("\n")
     title = item_title(walk_finder, lines[unit[3]])
+    title_unique = [item_title(walk_finder, lines[other[3]]) for other in units].count(title) == 1
     item = items_named(numbers, total or unit[1])
     earlier = []
     for path in reads.glob("*-outcome.json"):
         outcome = json.loads(path.read_text(encoding="utf-8"))
+        predicted = read_number_predicted(outcome)
         # Every outcome's item was written by items_named, so it always parses.
-        if outcome["status"] != READ_DONE or walk_finder.parse_items(outcome["item"])[0] != numbers:
+        numbered = walk_finder.parse_items(outcome["item"])[0] == numbers
+        if outcome["status"] != READ_DONE or not (numbered or (predicted and title_unique)):
             continue
         key = path.name[:-len("-outcome.json")]
         copy = reads / f"{key}.md"
         if not copy.is_file():
+            # Without its copy, a read ahead under another number cannot be told to be this item's.
+            if not numbered:
+                continue
             raise Failure(EARLIER_TEXT_COPY_MISSING.format(
                 item=item, report=outcome["report"], document=document, copy=copy,
                 outcome=reads / f"{key}-outcome.json", target=Path(outcome["report"]).parent / "target",
                 command=command))
         copied = copy.read_text(encoding="utf-8")
-        if outcome.get(NUMBER_PREDICTED) and item_title(walk_finder, copied.split("\n", 1)[0]) != title:
+        if predicted and not (title_unique and item_title(walk_finder, copied.split("\n", 1)[0]) == title):
             continue
         earlier.append((outcome["finished"], key, outcome, copied))
     return [entry[1:] for entry in sorted(earlier)]
@@ -2255,6 +2318,8 @@ def waiting_item_read(arguments, sub_step_of=None):
     while read_outcome(reads, key) is None and worker_alive(reads, key):
         time.sleep(READ_POLL_SECONDS)
     outcome, ahead = read_outcome(reads, key), (reads / f"{key}-started.json").is_file()
+    if outcome and outcome["status"] == READ_DONE and read_number_predicted(outcome):
+        outcome = read_ahead_bound_to_item(reads, key, outcome, item)
     why = ""
     if outcome and outcome["status"] == READ_DONE:
         how = ITEM_READ_HOW_AHEAD if ahead else ITEM_READ_HOW_ALREADY
