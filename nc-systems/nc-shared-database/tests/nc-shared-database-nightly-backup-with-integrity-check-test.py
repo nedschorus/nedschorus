@@ -167,7 +167,7 @@ with tempfile.TemporaryDirectory() as scratch:
         raised = None
     except sqlite3.OperationalError as error:
         raised = error
-    check("a database that does not exist is an error, and no empty database is made",
-          raised is not None and not missing.exists(), raised)
+    check("a database that does not exist is an error, writes no user-alert, and no empty database is made",
+          raised is not None and not missing.exists() and pending_user_alerts() == [], raised)
 
 raise SystemExit(1 if failures else 0)
