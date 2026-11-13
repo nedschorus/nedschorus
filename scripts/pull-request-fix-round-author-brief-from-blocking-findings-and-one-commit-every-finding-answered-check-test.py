@@ -4,7 +4,9 @@
 Each case runs the program in a scratch git repository with a fake `gh` first on PATH. The fake
 answers from a routes file the case writes, keyed by its arguments joined with spaces, or by a
 prefix of them when the key ends with "*"; it exits 1 on an unarranged call, and appends each
-call's arguments to the calls file.
+call's arguments to the calls file. A fake `git` beside it answers `git ls-remote` with FAKE_GIT_LS_REMOTE_STDOUT,
+FAKE_GIT_LS_REMOTE_STDERR and FAKE_GIT_LS_REMOTE_EXIT, by default origin's branch at the head and branch the case's gh pr view route
+names, and hands every other git command to the real git.
 
 Run: python3 scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check-test.py
 """
@@ -13,6 +15,7 @@ import datetime
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -63,6 +66,18 @@ route = routes[key]
 sys.stdout.write(route.get("stdout", ""))
 sys.stderr.write(route.get("stderr", ""))
 sys.exit(route.get("exit", 0))
+'''
+
+FAKE_GIT = r'''#!/bin/sh
+for argument in "$@"; do
+    if [ "$argument" = ls-remote ]; then
+        printf '%s\n' "$*" >> "$FAKE_GIT_LS_REMOTE_CALLS"
+        printf '%s' "$FAKE_GIT_LS_REMOTE_STDOUT"
+        printf '%s' "$FAKE_GIT_LS_REMOTE_STDERR" >&2
+        exit "${FAKE_GIT_LS_REMOTE_EXIT:-0}"
+    fi
+done
+exec REAL_GIT "$@"
 '''
 
 # Stands in for scripts/run-all-test-suites.py in every scratch repository's base commit. The suites that
@@ -238,15 +253,31 @@ def routes_for(head, reviews, comments=BLOCKING_COMMENTS, review_id=11):
     }
 
 
+def origin_branch_line_of_pull_request_view_route(routes):
+    """git ls-remote's line for the head and branch the gh pr view route names, or "" when it names none."""
+    try:
+        facts = json.loads(routes.get(PR_VIEW, {}).get("stdout", ""))
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(facts, dict) or not facts.get("headRefOid") or not facts.get("headRefName"):
+        return ""
+    return f"{facts['headRefOid']}\trefs/heads/{facts['headRefName']}\n"
+
+
 def run(root, repository, routes, *arguments, path_has_gh=True, environment_extra=None):
     bin_directory = root / "bin"
     bin_directory.mkdir(exist_ok=True)
     (bin_directory / "gh").write_text(FAKE_GH)
     (bin_directory / "gh").chmod(0o755)
+    (bin_directory / "git").write_text(FAKE_GIT.replace("REAL_GIT", shlex.quote(shutil.which("git"))))
+    (bin_directory / "git").chmod(0o755)
     (root / "routes.json").write_text(json.dumps(routes))
     (root / "calls.jsonl").write_text("")
+    (root / "ls-remote-calls.txt").write_text("")
     environment = dict(os.environ, FAKE_GH_ROUTES=str(root / "routes.json"),
-                       FAKE_GH_CALLS=str(root / "calls.jsonl"))
+                       FAKE_GH_CALLS=str(root / "calls.jsonl"),
+                       FAKE_GIT_LS_REMOTE_CALLS=str(root / "ls-remote-calls.txt"),
+                       FAKE_GIT_LS_REMOTE_STDOUT=origin_branch_line_of_pull_request_view_route(routes))
     git_only_directory = root / "git-only-bin"
     if not git_only_directory.exists():
         git_only_directory.mkdir()
@@ -2061,6 +2092,38 @@ def suite_cases(root, repository, _base, _frozen_head):
     runner_calls(root)
 
 
+def pushed_head_read_from_origin_cases(root, repository, _base, frozen_head):
+    """GitHub's headRefOid can still name the frozen-head for seconds after the push moved origin's branch."""
+    reviews = [review(commit_id=frozen_head)]
+    answers = answers_file(root, GOOD_ANSWERS)
+    fix = commit_file(repository, "hook.py", "two\n", "fix")
+    stale_github = routes_for(frozen_head, reviews)
+
+    def check_with_origin(stdout, exit_code="0", stderr=""):
+        return run(root, repository, stale_github, "--check", "--answers", answers, environment_extra={
+            "FAKE_RUNNER_CALLS": str(root / "runner-calls.jsonl"), "FAKE_GIT_LS_REMOTE_STDOUT": stdout,
+            "FAKE_GIT_LS_REMOTE_STDERR": stderr, "FAKE_GIT_LS_REMOTE_EXIT": exit_code})
+
+    code, out, err = check_with_origin(f"{fix}\trefs/heads/{BRANCH}\n")
+    check("pushed head: origin's branch at the round's commit while GitHub's head is still the frozen-head is "
+          "pushed: the message for merge-lane-2, and no suite run",
+          code == 0 and f"New head {fix}" in out and "Not pushed yet" not in out and runner_calls(root) == []
+          and (root / "ls-remote-calls.txt").read_text() == f"-C . ls-remote origin refs/heads/{BRANCH}\n",
+          out + err)
+
+    code, out, err = check_with_origin(f"{fix}\trefs/heads/other/{BRANCH}\n")
+    check("pushed head: origin without the pull request's branch, only one whose name ends the same, fails with "
+          "exit 2, naming the branch",
+          code == 2 and out == "" and f"found no branch {BRANCH} on origin" in err
+          and f"\"The fix-round check of {URL} found no branch {BRANCH} on origin, so the round's commit is not "
+          "pushed.\"" in err, err + out)
+
+    code, out, err = check_with_origin("", exit_code="128", stderr="fatal: Could not read from remote repository.\n")
+    check("pushed head: git ls-remote that fails fails the check with exit 2, passing git's message on",
+          code == 2 and out == "" and f"git ls-remote origin refs/heads/{BRANCH} failed: fatal: Could not read "
+          "from remote repository." in err, err + out)
+
+
 def nit_cases(root, repository, base, frozen_head):
     """merge-lane-2's nits, posted opening with the nit mark beside its blocking findings, ride in the fix-round."""
     nit = comment("nit.txt", " **fix-in-maintenance, nit** nit.txt misspells the name.", line=20, comment_id=6)
@@ -2367,6 +2430,7 @@ case("brief", brief_cases)
 case("topic-worktree", topic_worktree_cases)
 case("conflict check", conflict_check_cases)
 case("check", check_cases)
+case("pushed head read from origin", pushed_head_read_from_origin_cases)
 case("commissioned reviewer", commissioned_reviewer_cases)
 case("split review", split_review_cases)
 case("rounds on one head", rounds_on_one_head_cases)

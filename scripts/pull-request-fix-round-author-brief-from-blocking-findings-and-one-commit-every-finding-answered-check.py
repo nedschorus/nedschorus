@@ -83,7 +83,9 @@ merge-lane-2's latest changes-requested review was submitted, as an earlier roun
 GitHub gives no submitted_at is not compared. --check refuses when the checked commit's tree holds
 an answers file the frozen-head's tree does not, since a branch cut before .gitignore named the file does not leave it out of
 commits. It prints the files the fix commit changes that no blocking
-finding or nit names. While GitHub's head is still the frozen-head and the round has a commit, it first
+finding or nit names. It reads the pushed head from origin's branch with git ls-remote, not from GitHub's
+headRefOid, which can lag a push by seconds; it fails when origin has no such branch. While that head is
+still the frozen-head and the round has a commit, it first
 lists the shared names the round adds, read by the new-shared-names lister from the worktree's files that
 the frozen-head to the checked commit changes, leaving out names the frozen-head's tree holds; unless
 --confirm-dispatching-agent-checked-new-shared-names is given, it refuses while that list is not empty, printing the
@@ -96,7 +98,7 @@ checkout's own runner, recording nothing. It refuses when a suite fails at the c
 at the frozen-head, which includes a suite the frozen-head does not have; a suite that fails at both is
 not the round's doing, so it passes, names the suite, and records it in
 PULL_REQUEST_FIX_ROUND_CHECK_TEST_SUITES_ALSO_FAILING_AT_FROZEN_HEAD_RECORD_FILE_NAME in the git directory under the checked commit. Once
-GitHub's head is the checked commit or the frozen-head, it prints the message for merge-lane-2, which
+the pushed head is the checked commit or the frozen-head, it prints the message for merge-lane-2, which
 the agent sends with SendMessage, since a program cannot, naming the suites that record holds for the
 checked commit; it runs no suite then. When the round has no commit, it first posts the round record,
 unless one already names the round's latest changes-requested review.
@@ -1146,9 +1148,25 @@ def refuse_answers_written_before_review(answers_path, review_submitted_at, revi
                       "run the check again.")
 
 
+def origin_branch_head(url, branch):
+    """The commit origin's branch points at now; GitHub's headRefOid can lag a push by seconds."""
+    ref = f"refs/heads/{branch}"
+    for line in git(["ls-remote", "origin", ref]).splitlines():
+        commit, _, name = line.partition("\t")
+        if name == ref:
+            return commit
+    raise StepFailed(f"git ls-remote origin {ref} found no branch {branch} on origin, though pull request {url} "
+                     "names it as its head branch, so the round's commit is not on origin, and whether the pull "
+                     "request still takes pushes to that branch is in doubt.\n"
+                     "Do not push.\n"
+                     "Send merge-lane-2 this message with Claude Code's SendMessage tool: \"The fix-round check of "
+                     f"{url} found no branch {branch} on origin, so the round's commit is not pushed.\" The round "
+                     "stops there, and merge-lane-2's answer says how it goes on.")
+
+
 def check_round(number, reviewer_login, answers_path, commit_name, after_conflict_merge,
                 confirm_dispatching_agent_checked_new_shared_names=False):
-    (url, head, branch, review_link, frozen_head, blocking, nits,
+    (url, _github_head, branch, review_link, frozen_head, blocking, nits,
      _fix_round_number, unrecorded_review_ids, review_submitted_at) = round_facts(number, reviewer_login)
     findings = blocking + nits
     answers_path = answers_path or default_answers_path(number)
@@ -1167,8 +1185,9 @@ def check_round(number, reviewer_login, answers_path, commit_name, after_conflic
         lines += ["Files the fix commit changes that no blocking finding or nit names; say in the message "
                   "why each belongs in this round, or take it out:"]
         lines += [f"  {path}" for path in leftovers]
+    head = origin_branch_head(url, branch)
     if head not in (commit, frozen_head):
-        raise Refused(f"GitHub's head of {url} is {head}, which is neither the checked commit "
+        raise Refused(f"origin's branch {branch} of {url} is at {head}, which is neither the checked commit "
                       f"{commit} nor the frozen-head {frozen_head}.\n"
                       "Check --commit names what you pushed; if someone else pushed, tell "
                       "merge-lane-2 with SendMessage.")
