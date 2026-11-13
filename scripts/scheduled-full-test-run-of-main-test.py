@@ -133,13 +133,13 @@ if behaviour.get("leaves_a_directory_its_owner_may_not_write_to"):
 if behaviour.get("removes_the_git_file_of_the_checkout"):
     (checkout / ".git").unlink()
 if exit_code == 3:
-    print("run-all-test-suites: waiting up to 3600 s for /a/lock", file=sys.stderr)
-    print("run-all-test-suites: not run — waited 3600 s for /a/lock, the lock that keeps "
+    print("scripts/run-all-test-suites.py: waiting up to 3600 s for /a/lock", file=sys.stderr)
+    print("scripts/run-all-test-suites.py: not run — waited 3600 s for /a/lock, the lock that keeps "
           "test runs on one machine apart, and it was still held by pid 1, checkout "
           "/a/checkout, started 2026-10-01T03:29:00Z.", file=sys.stderr)
     sys.exit(3)
 if exit_code == 2:
-    print("run-all-test-suites: not run — git lists no *-test.py file in " + str(checkout)
+    print("scripts/run-all-test-suites.py: not run — git lists no *-test.py file in " + str(checkout)
           + ".\nPass --checkout a checkout that has its suites committed or added.",
           file=sys.stderr)
     sys.exit(2)
@@ -147,7 +147,7 @@ if exit_code < 0:
     os.kill(os.getpid(), -exit_code)
 log_dir.mkdir(parents=True, exist_ok=True)
 (log_dir / ("log-of-call-%d.log" % len(calls))).write_text("a suite's output\n")
-print("run-all-test-suites: %s at %s (tracked files match that commit); 3 suites listed by "
+print("scripts/run-all-test-suites.py: %s at %s (tracked files match that commit); 3 suites listed by "
       "git; Python 3.14.4 (%s); -j 4; logs in %s" % (checkout, commit, sys.executable, log_dir))
 print("inputs recorded by python-audit-hook, kept in /a/recordings/directory")
 for line in behaviour["lines"]:
@@ -455,7 +455,7 @@ def run_cases_on_ned_box(workspace: Path):
           and result.ssh_calls == [], f"{fixture.record_files()} {result!r}")
     check("a passing run's record holds the SUMMARY line",
           record is not None and PASSING_SUMMARY_LINE in record.splitlines(), repr(record))
-    first_line = (f"run-all-test-suites: {fixture.worktree} at {fixture.commit_of_main} "
+    first_line = (f"scripts/run-all-test-suites.py: {fixture.worktree} at {fixture.commit_of_main} "
                   f"(tracked files match that commit); 3 suites listed by git; Python 3.14.4 "
                   f"({sys.executable}); -j 4; logs in {fixture.logs}")
     check("the whole record: this program's line, origin/main's commit, the runner's first "
@@ -569,8 +569,8 @@ def run_cases_on_ned_box(workspace: Path):
     check("the record says the lock was not released within the bound, with the runner's "
           "refusal",
           any(line.startswith("not run — the machine's lock was not released within 6 s: "
-                              "run-all-test-suites waited 0 s for it and exited 3; its "
-                              "refusal: run-all-test-suites: not run — waited 3600 s for "
+                              "scripts/run-all-test-suites.py waited 0 s for it and exited 3; its "
+                              "refusal: scripts/run-all-test-suites.py: not run — waited 3600 s for "
                               "/a/lock")
               for line in record_lines)
           and "runner exit code: 3" in record_lines
@@ -600,14 +600,14 @@ def run_cases_on_ned_box(workspace: Path):
           "and the program exits 2",
           result.code == 2 and "runner exit code: 2" in record_lines
           and "the runner printed no SUMMARY: line; its stderr:" in record_lines
-          and any(line.startswith("  run-all-test-suites: not run — git lists no")
+          and any(line.startswith("  scripts/run-all-test-suites.py: not run — git lists no")
                   for line in record_lines), f"{result!r}\n{record_lines!r}")
     result = fixture.run(exits=(0,), lines=["PASS scripts/a-test.py (0.1s)"])
     record_lines = (fixture.record("ned-box") or "").splitlines()
     check("a runner that exits 0 with no SUMMARY line gave no verdict: the record says so "
           "and the program exits 4",
           result.code == 4 and "runner exit code: 0" in record_lines
-          and "run-all-test-suites exited 0 and printed no SUMMARY: line, which is no "
+          and "scripts/run-all-test-suites.py exited 0 and printed no SUMMARY: line, which is no "
               "verdict" in record_lines, f"{result!r}\n{record_lines!r}")
 
     result = fixture.run(exits=(-9,))
@@ -615,7 +615,7 @@ def run_cases_on_ned_box(workspace: Path):
     check("a runner killed by a signal gave no verdict either: the record names the "
           "signal and the program exits 4",
           result.code == 4 and "runner exit code: -9" in record_lines
-          and "run-all-test-suites was killed by SIGKILL" in record_lines
+          and "scripts/run-all-test-suites.py was killed by SIGKILL" in record_lines
           and fixture.worktree_is_gone(), f"{result!r}\n{record_lines!r}")
 
     # --- The seams -------------------------------------------------------------
@@ -1107,7 +1107,7 @@ def run_not_run_suite_record_cases():
                      f"{runner.NOT_RUN_SUITE_LINE_PREFIX}{not_run['suite']} "
                      f"{runner.why_suite_failed(not_run)} — log /a/log/directory/scripts__b-test.py.log"]
     summary = "SUMMARY: 1 passed, 0 failed, 1 not run, 2 total"
-    printed = ["run-all-test-suites: /a/checkout at 0123456789ab", "PASS scripts/a-test.py (0.1s)",
+    printed = ["scripts/run-all-test-suites.py: /a/checkout at 0123456789ab", "PASS scripts/a-test.py (0.1s)",
                not_run_lines[0], "", "1 not run, because bwrap could not build the "
                "nc-test-sandbox; each log says why and what to do:", not_run_lines[1], summary]
     kept = program.runner_output_lines_for_the_record(

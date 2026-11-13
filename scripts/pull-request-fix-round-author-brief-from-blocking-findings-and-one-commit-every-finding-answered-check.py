@@ -1051,7 +1051,7 @@ def failing_suites_in_scratch_worktree(commit, command_for_checkout):
                         if suite not in failing:
                             failing.append(suite)
                     elif line.startswith((test_suite_runner.NOT_RUN_SUITE_LINE_PREFIX,
-                                          test_suite_runner.NOT_RUN_TO_THE_END_LINE_PREFIX)):
+                                          *test_suite_runner.TEST_RUNNER_WHOLE_RUN_NOT_RUN_TO_THE_END_LINE_PREFIXES_FILE_PATH_AND_BARE_NAME_FORMS)):
                         unfinished.append(line.strip())
             status = runner.returncode
         finally:
@@ -1063,8 +1063,9 @@ def failing_suites_in_scratch_worktree(commit, command_for_checkout):
                          "suite: it printed\n" + "".join(f"  {line}\n" for line in unfinished)
                          + "Its output is above. Nothing was pushed.\n"
                          "Run this --check again once, not the suite runner by itself.\n"
-                         "If the runner again prints a line opening 'NOT RUN' or 'run-all-test-suites: not "
-                         "run to the end', tell merge-lane-2 with SendMessage, quoting each such line, and do "
+                         "If the runner again prints a line opening 'NOT RUN' or "
+                         + " or ".join(f"'{prefix}'" for prefix in test_suite_runner.TEST_RUNNER_WHOLE_RUN_NOT_RUN_TO_THE_END_LINE_PREFIXES_FILE_PATH_AND_BARE_NAME_FORMS)
+                         + ", tell merge-lane-2 with SendMessage, quoting each such line, and do "
                          "not push.")
     if status == test_suite_runner.EXIT_ALL_PASSED or (status == test_suite_runner.EXIT_SOME_FAILED and failing):
         return failing

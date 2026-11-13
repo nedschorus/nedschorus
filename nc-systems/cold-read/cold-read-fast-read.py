@@ -226,7 +226,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 import typing
 
 # This file sits in nc-systems/cold-read/, two directories below the root.
@@ -1331,7 +1330,6 @@ class WhatShouldBeCodeQuestionCell(typing.NamedTuple):
     answer: pathlib.Path
     launcher_output: pathlib.Path
     target: pathlib.Path
-    deadline: float
     # The read is busy with Questions 1 to 3 until it waits for this cell, so
     # a timer, not that wait, stops the cell at its time limit.
     time_limit_timer: threading.Timer
@@ -1373,7 +1371,9 @@ def what_should_be_code_cell_start(target: pathlib.Path, scratch: pathlib.Path) 
           f"{COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS / 60:g} minutes, "
           f"while the fast-clarify cell answers Questions 1 to 3; if Questions 1 to 3 "
           f"finish first, the read waits for Question 4 up to that limit. "
-          f"If the Question 4 cell fails or runs past that limit, the report still holds "
+          f"If the Question 4 cell fails, or is still running "
+          f"{COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS / 60:g} minutes "
+          f"from its start, the report still holds "
           f"Questions 1 to 3, and its Question 4 section says why Question 4 was not answered.",
           file=sys.stderr)
     # A file, not a pipe: the launcher's output is read only after it exits.
@@ -1389,7 +1389,6 @@ def what_should_be_code_cell_start(target: pathlib.Path, scratch: pathlib.Path) 
     time_limit_timer.start()
     return WhatShouldBeCodeQuestionCell(
         process, answer, launcher_output, target,
-        time.monotonic() + COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS,
         time_limit_timer, stopped_at_time_limit, threading.Event())
 
 
@@ -1407,8 +1406,10 @@ def what_should_be_code_cell_abandon(cell: WhatShouldBeCodeQuestionCell) -> None
         how_it_ended = "its cell was stopped at its time limit."
     else:
         how_it_ended = "its cell had already exited."
-    print(f"{PROGRAM}: Question 4 was abandoned: the read failed, so there is no report "
-          f"to hold its answer; {how_it_ended}", file=sys.stderr)
+    print(f"{PROGRAM}: Question 4 was abandoned: this fast read ended without writing its "
+          f"report, so no report holds Question 4's answer; {how_it_ended}\n"
+          f"The lines above say why the fast read ended; fix that, then run the fast read again.",
+          file=sys.stderr)
 
 
 def what_should_be_code_section(cell: WhatShouldBeCodeQuestionCell) -> str:
@@ -1417,10 +1418,8 @@ def what_should_be_code_section(cell: WhatShouldBeCodeQuestionCell) -> str:
     the heading, then the cell's provenance stamp and answer, or, when the
     cell failed, a paragraph saying so and why, also printed on stderr. A
     failed cell never fails the read."""
-    try:
-        cell.process.wait(timeout=max(0.0, cell.deadline - time.monotonic()))
-    except subprocess.TimeoutExpired:
-        what_should_be_code_cell_stop_at_time_limit(cell.process, cell.stopped_at_time_limit)
+    # The timer stops the cell at its time limit, so this wait ends by then.
+    cell.process.wait()
     cell.time_limit_timer.cancel()
     # Waiting for the timer's thread makes sure it has finished stopping the
     # cell before its exit code and output are read.

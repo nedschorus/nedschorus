@@ -316,7 +316,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and any(line.startswith("FAIL killed-test.py killed by SIGTERM — log ")
                   for line in out), out)
     check("the first line names the checkout, its commit and the suite count",
-          out[0].startswith(f"run-all-test-suites: {repo.resolve()} at ")
+          out[0].startswith(f"scripts/run-all-test-suites.py: {repo.resolve()} at ")
           and "(tracked files match that commit); 6 suites listed by git;" in out[0],
           out[:1])
     check("the whole report is also written to test-run-report.txt in the log directory",
@@ -543,7 +543,7 @@ with tempfile.TemporaryDirectory() as scratch:
           (result.returncode, result.stdout[-500:], result.stderr))
     check("a run given a wait says on stderr that it is waiting for the lock, before "
           "anything else",
-          result.stderr.startswith(f"run-all-test-suites: waiting up to 1 s for "
+          result.stderr.startswith(f"scripts/run-all-test-suites.py: waiting up to 1 s for "
                                    f"{root / 'free.lock'}\n"), result.stderr)
 
 with tempfile.TemporaryDirectory() as scratch:
@@ -576,7 +576,7 @@ with tempfile.TemporaryDirectory() as scratch:
         run_stdout, run_stderr = waiting_run.communicate()
     check("a suite committed while the run waits for the lock is run: the run lists the "
           "suites after it takes the lock",
-          waiting_line.startswith("run-all-test-suites: waiting up to 60 s for ")
+          waiting_line.startswith("scripts/run-all-test-suites.py: waiting up to 60 s for ")
           and waiting_run.returncode == 0 and ran(root) == ["a-test.py", "b-test.py"],
           (waiting_line, waiting_run.returncode, ran(root), run_stderr))
 
@@ -606,7 +606,7 @@ with tempfile.TemporaryDirectory() as scratch:
         run_stdout, run_stderr = waiting_run.communicate()
     check("a checkout whose suites are all removed while the run waits is refused once the "
           "run holds the lock: exit 2, nothing run, and the refusal on stderr",
-          waiting_line.startswith("run-all-test-suites: waiting up to 60 s for ")
+          waiting_line.startswith("scripts/run-all-test-suites.py: waiting up to 60 s for ")
           and waiting_run.returncode == 2 and ran(root) == []
           and "git lists no" in run_stderr and run_stdout == "",
           (waiting_line, waiting_run.returncode, ran(root), run_stderr))
@@ -724,7 +724,7 @@ with tempfile.TemporaryDirectory() as scratch:
           (ran(root), result.stdout, result.stderr))
     check("with an ambient GIT_DIR, the first line names the checkout's own commit",
           bool(out) and out[0].startswith(
-              f"run-all-test-suites: {repo.resolve()} at {checkout_commit} "
+              f"scripts/run-all-test-suites.py: {repo.resolve()} at {checkout_commit} "
               f"(tracked files match that commit); 1 suites listed by git;"),
           (checkout_commit, out[:1]))
     check("with an ambient GIT_DIR, a checkout whose suites all pass exits 0",
@@ -738,6 +738,40 @@ with tempfile.TemporaryDirectory() as scratch:
 # deciding against them was a measured decision and widening the list later
 # should trip a case.
 module = load_program_module()
+
+# --- Output from a runner before the file-path opener is still read ----------
+# A frozen-head, or a saved result, can come from a runner whose lines open with the bare name.
+for opener in ("scripts/run-all-test-suites.py", "run-all-test-suites"):
+    check(f"a run whose output says '{opener}: not run to the end' is read as not ended, though a "
+          "suite's FAIL line precedes it",
+          not module.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(
+              f"FAIL a-test.py exit 1 (0.1s)\n{opener}: not run to the end — stopped by SIGTERM.\n"))
+
+# --- Files made in the temporary directory are named by the stem, not the path --
+# PROGRAM holds a "/", which would name a directory under TMPDIR that does not exist.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": PASSES})
+    temporary = root / "tmp"
+    temporary.mkdir()
+    environment = dict(os.environ, TMPDIR=str(temporary))
+    environment[RAN_FILE_VARIABLE] = str(root / "ran.txt")
+    result = subprocess.run(
+        [sys.executable, str(PROGRAM), "--checkout", str(root / "repo"), "--lock-file", str(root / "run.lock"),
+         "--recorded-inputs-directory", str(root / "recordings"),
+         "--suite-files-only-strace-saw-lists-directory", str(root / "recordings")],
+        capture_output=True, text=True, env=environment, stdin=subprocess.DEVNULL, check=False)
+    check("a run with no --log-dir makes its log directory in TMPDIR and passes",
+          result.returncode == 0 and ran(root) == ["a-test.py"], (result.returncode, result.stdout, result.stderr))
+    was_tempdir = tempfile.tempdir
+    try:
+        tempfile.tempdir = str(temporary)
+        covering = pathlib.Path(module.empty_file_bound_over_a_listening_socket_in_test_sandbox())
+    finally:
+        tempfile.tempdir = was_tempdir
+    check("the empty file covering a listening socket is made in the temporary directory, named by the stem",
+          covering.parent == temporary and covering.name.startswith("run-all-test-suites-empty-file-"), covering)
+
 check("the variable this file sets, so its fixture runs run as in a full run, is the one the "
       "program's signal sandbox sets",
       module.SIGNAL_SANDBOX_INSIDE_VARIABLE == "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX",
@@ -1395,7 +1429,7 @@ with tempfile.TemporaryDirectory() as scratch:
           (ran(root), selected.stdout))
     check("a selective run says, on Linux only, that suites have no list of files only strace "
           "saw",
-          any(line.startswith("run-all-test-suites: 2 of 2 suites have no list of the files "
+          any(line.startswith("scripts/run-all-test-suites.py: 2 of 2 suites have no list of the files "
                               "only strace saw them read from the last 36 hours")
               for line in lines(unlisted.stdout)) == sys.platform.startswith("linux"),
           unlisted.stdout)
@@ -1487,7 +1521,7 @@ notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_o
     {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(37)},
     pathlib.Path("/store"), NOW)
 check("a list older than the limit is named, with the time it was recorded",
-      notice is not None and notice.startswith("run-all-test-suites: 1 of 2 suites")
+      notice is not None and notice.startswith("scripts/run-all-test-suites.py: 1 of 2 suites")
       and "has not recorded every suite since 2026-11-02T23:00:00Z" in notice
       and "If you have not yet told the user in this agent-session that the scheduled full test "
           "run's lists are stale: tell him" in notice,
@@ -1495,7 +1529,7 @@ check("a list older than the limit is named, with the time it was recorded",
 notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
     ["a-test.py"], {}, pathlib.Path("/store"), NOW)
 check("a missing list is named, with the directory it was looked for in",
-      notice is not None and notice.startswith("run-all-test-suites: 1 of 1 suites")
+      notice is not None and notice.startswith("scripts/run-all-test-suites.py: 1 of 1 suites")
       and "36 hours in /store," in notice
       and "has not recorded every suite at all," in notice, notice)
 with tempfile.TemporaryDirectory() as scratch:
@@ -2078,8 +2112,11 @@ if linux_only_cases_run_here("the removal of what a killed run left, decided fro
                               ("it cannot write to", unwritable)):
             result = run(root, "--log-dir", str(log_dir), lock_file=root / "another.lock")
             check(f"a run given a --log-dir {case} says so and exits 2, with no traceback",
-                  result.returncode == 2 and "could not write to the log directory"
-                  in result.stderr and "Traceback" not in result.stderr,
+                  result.returncode == 2 and result.stderr.startswith(
+                      f"scripts/run-all-test-suites.py: not run — could not write to the log "
+                      f"directory {log_dir.resolve()} (")
+                  and "\nRun this again with a --log-dir that this account can create and "
+                  "write to.\n" in result.stderr and "Traceback" not in result.stderr,
                   (result.returncode, result.stderr))
 
 # --- Git calls that read no file of the checkout -----------------------------

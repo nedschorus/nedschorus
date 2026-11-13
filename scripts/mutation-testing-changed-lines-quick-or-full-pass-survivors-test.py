@@ -370,7 +370,7 @@ def runner_output_with_suites_timed_out(timed_out, others=()):
     runner = load_test_suite_runner()
     results = [{"suite": suite, "exit": -9, "seconds": limit + 1.0, "skips": [],
                 "timeout": {"limit": limit, "recorded": None}} for suite, limit in timed_out]
-    lines = ["run-all-test-suites: /tmp/worktree at abc (tracked files match that commit)"]
+    lines = ["scripts/run-all-test-suites.py: /tmp/worktree at abc (tracked files match that commit)"]
     lines += [runner.suite_line(result) for result in results] + list(others)
     lines += ["", f"{len(results)} failed:"]
     lines += [f"FAIL {result['suite']} {runner.why_suite_failed(result)} — log /tmp/a.log"
@@ -994,7 +994,7 @@ def log_directories_left_in(control):
     """(the suite runner's own log directories, this script's log directories parents) left in
     the case's temporary directory, resolved as the script resolves the paths it prints."""
     temporary_directory = (control / "temporary-directory").resolve()
-    return (sorted(temporary_directory.glob(f"{load_test_suite_runner().PROGRAM}-*")),
+    return (sorted(temporary_directory.glob(f"{load_test_suite_runner().PROGRAM_FILE_NAME_STEM}-*")),
             sorted(temporary_directory.glob(
                 f"{load_script_module().TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_PREFIX}*")))
 
@@ -1044,11 +1044,11 @@ def run_test_suite_runner_log_directories_cases():
         repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
         venv, control = fake_venv(scratch_name, {"run_test_command": True, "dump": [
             [work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
-             killed_with_output("run-all-test-suites: worktree; logs in {LOG_DIR}\n"
+             killed_with_output("scripts/run-all-test-suites.py: worktree; logs in {LOG_DIR}\n"
                                 + SUITE_FAILED_RUNNER_OUTPUT)],
             [work_item("scripts/thing.py", 2, "core/ReplaceBinaryOperator_Add_Mul", "b"),
-             killed_with_output("run-all-test-suites: worktree; logs in {LOG_DIR}\n"
-                                "run-all-test-suites: not run to the end — stopped by SIGTERM\n")],
+             killed_with_output("scripts/run-all-test-suites.py: worktree; logs in {LOG_DIR}\n"
+                                "scripts/run-all-test-suites.py: not run to the end — stopped by SIGTERM\n")],
         ]})
         completed = run_script(repository, control, "--head", head, "--base", base,
                                "--cosmic-ray-venv", str(venv))
@@ -1103,7 +1103,7 @@ def run_recorded_mutant_could_not_be_judged_log_directory_kept_case():
             runs.append(log_dir)
             return subprocess.CompletedProcess(
                 command, 0 if len(runs) == 1 else 3,
-                stdout="" if len(runs) == 1 else "run-all-test-suites: not run to the end\n")
+                stdout="" if len(runs) == 1 else "scripts/run-all-test-suites.py: not run to the end\n")
         real_verdict = survivors.recorded_mutant_verdict_without_a_suite_run
         survivors.recorded_mutant_verdict_without_a_suite_run = \
             lambda checkout, path, hunks, head, source, why, environment: (None, source)
@@ -2349,14 +2349,14 @@ def run_cases():
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
            killed_with_output(
                "FAIL scripts/thing-test.py exit 1 (0.4s)\n"
-               "run-all-test-suites: not run to the end — admission failed: gone\n")]],
+               "scripts/run-all-test-suites.py: not run to the end — admission failed: gone\n")]],
          1, "0 killed, 0 survived, 1 errored"),
         ("the ERRORED line for a run not run to the end quotes the runner's line",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
            killed_with_output(
                "PASS scripts/thing-test.py (0.4s)\n"
-               "run-all-test-suites: not run to the end — admission failed: gone\n")]],
-         1, "its output says: run-all-test-suites: not run to the end — admission failed: "
+               "scripts/run-all-test-suites.py: not run to the end — admission failed: gone\n")]],
+         1, "its output says: scripts/run-all-test-suites.py: not run to the end — admission failed: "
             "gone)"),
         ("a killed mutant the test command stopped at the limit on one run of the suites is "
          "ERRORED with the timeout, not killed",
@@ -2365,7 +2365,7 @@ def run_cases():
                f"{load_script_module().TEST_SUITE_RUNNER_STOPPED_AT_MUTANT_TIMEOUT_LINE_PREFIX}: it ran past "
                f"the limit of 45 s on one run of the suites\n"
                "FAIL scripts/thing-test.py exit 1 (0.4s)\n"
-               "run-all-test-suites: not run to the end — stopped by SIGTERM.\n")]],
+               "scripts/run-all-test-suites.py: not run to the end — stopped by SIGTERM.\n")]],
          1, "ERRORED   scripts/thing.py:2 core/NumberReplacer (timeout: the suites ran past "
             "the limit of"),
         ("a killed mutant the suite runner stopped at its run time limit is ERRORED with the "
@@ -2395,7 +2395,7 @@ def run_cases():
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
            killed_with_output(
                "PASS scripts/thing-test.py (0.4s)\n"
-               "run-all-test-suites: the run's case times, suite resources, JUnit XML or "
+               "scripts/run-all-test-suites.py: the run's case times, suite resources, JUnit XML or "
                "failure history could not be written: full\n"
                "SUMMARY: 1 passed, 0 failed, 1 total\n")]],
          1, "0 killed, 0 survived, 1 errored"),
@@ -2440,7 +2440,7 @@ def run_cases():
     check("while another run holds the machine lock, the test command exits nonzero with the "
           "suite runner's refusal on its standard output and nothing on its standard error",
           refused.returncode == 3 and refused.stderr == ""
-          and "run-all-test-suites: not run — another run holds" in refused.stdout
+          and "scripts/run-all-test-suites.py: not run — another run holds" in refused.stdout
           and "pid 7, the holder in this test" in refused.stdout,
           f"rc={refused.returncode} out={refused.stdout} err={refused.stderr}")
     with tempfile.TemporaryDirectory() as scratch_name:
@@ -2453,7 +2453,7 @@ def run_cases():
         check("a killed mutant whose run the machine's lock refused is ERRORED with the refusal",
               completed.returncode == 1
               and "(no verdict: the suite runner exited nonzero but judged no suite failing, "
-                  "so this mutant was not judged; its output says: run-all-test-suites: not "
+                  "so this mutant was not judged; its output says: scripts/run-all-test-suites.py: not "
                   "run — another run holds" in completed.stdout,
               f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
