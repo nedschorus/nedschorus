@@ -234,7 +234,7 @@ for redirect, sent_away in (("2>/dev/null", True), ("2>>log", True), ("&>/dev/nu
                             ("", False), (">/dev/null 2>&1", True), ("2>&1 >/dev/null", False),
                             ("2>/dev/null 2>&1", False), ("2>&2", False),
                             ("2>/dev/stdout", False), ("2>/dev/null >&2", True),
-                            (">/dev/null 2>&1-", True), ("2>&1-", False),
+                            (">/dev/null 2>&1-", True), ("2>&1-", False), ("3>&2-", True),
                             ("&>/dev/stdout", False), (">&/dev/stdout", False),
                             ("&>/dev/stderr", False), ("2<in", True)):
     command = check_module.split_into_simple_commands_with_the_machine_and_directory_each_runs_in(

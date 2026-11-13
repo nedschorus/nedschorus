@@ -602,6 +602,80 @@ def test_the_waiting_item_read_step_refuses_a_mark_whose_text_would_not_be_read_
           in again.stdout, described(again))
 
 
+# marks_document's heading, `#case_against` line and recommendation: 7 + 5 + 3 words.
+MARKS_DOCUMENT_WORDS_OUTSIDE_BODY = 15
+
+
+def words_of_body(count):
+    """A body of count words, ten to a line."""
+    words = [f"word{number}" for number in range(count)]
+    return "\n".join(" ".join(words[start:start + 10]) for start in range(0, count, 10)) + "\n"
+
+
+def test_the_waiting_item_read_step_refuses_an_item_over_300_words_and_reads_it_once_split_into_sub_steps():
+    # Two words of the body follow a `###` that is no sub-step heading: one in fenced code, one in a quotation.
+    body = (words_of_body(301 - MARKS_DOCUMENT_WORDS_OUTSIDE_BODY - 2) + "\n```\n### code\n```\n\n> ### quoted\n")
+    case = Case(document=marks_document(body))
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    command = (f"python3 {PROGRAM} {WAITING_ITEM_READ_STEP_NAME} --after-fixes-reread-only-when-facts-change "
+               f"--cwd {shlex.quote(str(case.checkout.resolve()))}")
+    check("the read step refuses an item of 301 words, counting code and marker lines, before any read",
+          result.returncode == 1
+          and "the text from line 3 of the walk-document" in result.stderr
+          and "`## Item 3 of 9: the opening sentence`, has 301 words, over the limit of 300 words" in result.stderr
+          and "\nSplit that text into `###` sub-steps, each within 300 words" in result.stderr
+          and f"\nThen run `{command}` again.\n" in result.stderr
+          and case.calls.read_text() == "" and not case.reads().exists(), described(result))
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(document.read_text().replace(
+        "word150 ", "\n### The second half\n\nword150 ").replace("word0 ", "### The first half\n\nword0 "))
+    again = case.run(*shlex.split(command)[2:-2])
+    check("once the item is split into `###` sub-steps, each counted on its own, the command the refusal gave reads it",
+          again.returncode == 0 and "had to be run now" in again.stdout, described(again))
+
+
+def test_the_waiting_item_read_step_reads_an_item_of_300_words_leaving_out_its_approval_walk_item_lines():
+    body = ("#approval_walk_item_first_entered 2026-11-12\n- #approval_walk_item_waits_on the opening paragraph\n\n"
+            + words_of_body(300 - MARKS_DOCUMENT_WORDS_OUTSIDE_BODY))
+    case = Case(document=marks_document(body))
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("the read step reads an item of exactly 300 words, its `#approval_walk_item_` lines not counted",
+          result.returncode == 0 and "had to be run now" in result.stdout
+          and "word284" in case.calls.read_text(), described(result))
+
+
+def test_the_waiting_item_read_step_counts_each_numbered_sub_step_of_the_item_the_minutes_name():
+    document = ("# A walk\n\n## Item 3 of 9: the opening sentence\n\n### Item 3.1 of 9: the first half\n\n"
+                + words_of_body(320) + "\n### Item 3.2 of 9: the second half\n\nShort.\n\n"
+                "#case_against weak: the page grows.\n\nRecommendation: change it.\n")
+    case = Case(document=document)
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("with `#next_to_present item 3 of 9`, the read step refuses the item's over-long numbered sub-step 3.1",
+          result.returncode == 1 and "the text from line 5 of the walk-document" in result.stderr
+          and "`### Item 3.1 of 9: the first half`, has 327 words" in result.stderr
+          and case.calls.read_text() == "", described(result))
+
+
+def test_the_waiting_item_read_step_counts_a_detail_heading_below_a_sub_step_as_part_of_its_text():
+    body = words_of_body(160) + "\n#### Details\n\n" + words_of_body(160)
+    case = Case(document=marks_document(body))
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("a `####` heading starts no sub-step, so 160 words, `#### Details` and 160 words are refused as one text",
+          result.returncode == 1 and "the text from line 3 of the walk-document" in result.stderr
+          and "has 336 words" in result.stderr and case.calls.read_text() == "", described(result))
+
+
+def test_the_waiting_item_read_step_counts_each_item_of_a_shared_heading_on_its_own():
+    document = ("# A walk\n\n## Items 6 and 7 of 9: two short items\n\n**Item 6 of 9:** the first.\n\n"
+                + words_of_body(200) + "\n#case_against weak: one.\n\nRecommendation: do one.\n\n"
+                "**Item 7 of 9:** the second.\n\n" + words_of_body(200)
+                + "\n#case_against weak: two.\n\nRecommendation: do two.\n")
+    case = Case(next_to_present="items 6 and 7 of 9", document=document)
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("items 6 and 7 of 9 under one heading, of about 200 words each, are counted on their own and read",
+          result.returncode == 0 and "had to be run now" in result.stdout, described(result))
+
+
 def test_a_failed_fast_read_stops_the_check():
     case = Case()
     before = case.minutes.read_text()
@@ -1965,6 +2039,31 @@ def test_close_posts_the_ruling_on_an_item_its_answer_decides_through_the_last_s
               and sorted(case.gh_comments()) == [("501", f"#ruling_given {WALK_NAME} item 2 {word}"),
                                                  ("502", f"#ruling_given {WALK_NAME} item 2.2 {word}")],
               described(closed) + repr(case.gh_comments()))
+
+
+def test_a_later_close_does_not_post_again_the_ruling_on_an_item_decided_through_its_last_sub_step():
+    pull_requests = held_pull_requests((501, [f"#held_on_ruling {WALK_NAME} item 2"]))
+    case = Case(next_to_present="item 2.2 of 2", document=SUB_STEPS_THEN_ITEMS_WAITING_ON_THEIR_ITEM_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n" + approved_line("item 1 of 2")
+                            + "item 2.1 of 2: moved on; the item asked for no decision. <moved on, no decision>\n"
+                            + "#next_to_present item 2.2 of 2\n")
+    case.run("check")
+    case.run("close", environment=gh_environment(pull_requests))
+    case.run("check")
+    closed = case.run("close", environment=gh_environment(pull_requests))
+    check("the close after the one that decided item 2 through its last sub-step does not post item 2's ruling again",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 4 of 4"
+          and case.gh_comments() == [("501", f"#ruling_given {WALK_NAME} item 2 approved")],
+          described(closed) + case.minutes.read_text() + repr(case.gh_comments()))
+
+
+def test_an_item_is_decided_through_a_sub_step_that_is_itself_decided_through_its_sub_steps():
+    program = load_program()
+    inferred = program.items_decided_through_sub_steps(
+        ["5", "5.1", "5.2", "5.2.1"], {"5.1": "approved", "5.2.1": "approved"})
+    check("in a three-level walk, 5.2 is decided through 5.2.1, and then 5 through 5.1 and 5.2, so item 5 is not named "
+          "again",
+          inferred == {"5.2": "approved", "5": "approved"}, repr(inferred))
 
 
 def test_close_numbers_the_new_item_a_finding_raised_and_holds_the_answer():

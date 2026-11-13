@@ -137,13 +137,13 @@ calls.append({
 })
 calls_file.write_text(json.dumps(calls))
 if exit_code == 3:
-    print("run-all-test-suites: waiting up to 3600 s for /a/lock", file=sys.stderr)
-    print("run-all-test-suites: not run — waited 3600 s for /a/lock, the lock that keeps "
+    print("scripts/run-all-test-suites.py: waiting up to 3600 s for /a/lock", file=sys.stderr)
+    print("scripts/run-all-test-suites.py: not run — waited 3600 s for /a/lock, the lock that keeps "
           "test runs on one machine apart, and it was still held by pid 1, checkout "
           "/a/checkout, started 2026-10-01T03:29:00Z.", file=sys.stderr)
     sys.exit(3)
 if exit_code == 2:
-    print("run-all-test-suites: not run — git lists no *-test.py file in " + str(checkout)
+    print("scripts/run-all-test-suites.py: not run — git lists no *-test.py file in " + str(checkout)
           + ".\nPass --checkout a checkout that has its suites committed or added.",
           file=sys.stderr)
     sys.exit(2)
@@ -158,7 +158,7 @@ log_dir.mkdir(parents=True, exist_ok=True)
 (log_dir / ("log-of-call-%d.log" % len(calls))).write_text("a suite's output\n")
 for line in behaviour.get("lines_printed_before_the_first_line", []):
     print(line)
-print("run-all-test-suites: %s at %s (%s); 3 suites listed by "
+print("scripts/run-all-test-suites.py: %s at %s (%s); 3 suites listed by "
       "git; 2 selected by inputs changed since %s; Python 3.14.4 (%s); -j 4; logs in %s"
       % (checkout,
          commit[:behaviour.get("characters_of_the_commit_named_in_the_first_line", 40)],
@@ -491,7 +491,7 @@ class Fixture:
         return records[-1] if records else None
 
     def runner_first_line(self, since=None) -> str:
-        return (f"run-all-test-suites: {self.checkout} at {self.head} (tracked files match "
+        return (f"scripts/run-all-test-suites.py: {self.checkout} at {self.head} (tracked files match "
                 f"that commit); 3 suites listed by git; 2 selected by inputs changed since "
                 f"{(since or self.merge_base)[:12]}; Python 3.14.4 ({sys.executable}); "
                 f"-j 4; logs in {self.logs()}")
@@ -819,8 +819,8 @@ def run_cases_on_ned_box(workspace: Path):
     check("the record says the lock was not released within the bound, with the runner's "
           "refusal, and holds no runner output",
           any(line.startswith("not run — the machine's lock was not released within 6 s: "
-                              "run-all-test-suites waited 0 s for it and exited 3; its "
-                              "refusal: run-all-test-suites: not run — waited 3600 s for "
+                              "scripts/run-all-test-suites.py waited 0 s for it and exited 3; its "
+                              "refusal: scripts/run-all-test-suites.py: not run — waited 3600 s for "
                               "/a/lock")
               for line in record_lines)
           and "runner exit code: 3" in record_lines
@@ -1037,7 +1037,7 @@ def run_cases_on_ned_box(workspace: Path):
           result.code == 2 and "runner exit code: 2" in record_lines
           and "the runner's output, 0 lines:" in record_lines
           and "the runner printed no SUMMARY: line; its stderr:" in record_lines
-          and any(line.startswith("  run-all-test-suites: not run — git lists no")
+          and any(line.startswith("  scripts/run-all-test-suites.py: not run — git lists no")
                   for line in record_lines)
           and result.stdout == citation_line, f"{result!r}\n{record_lines!r}")
     check("the record of a runner that exits 2 closes with this program's own exit code, "
@@ -1049,7 +1049,7 @@ def run_cases_on_ned_box(workspace: Path):
     check("a runner that exits 0 with no SUMMARY line gave no verdict: the record says so "
           "and the program exits 4",
           result.code == 4 and "runner exit code: 0" in record_lines
-          and "run-all-test-suites exited 0 and printed no SUMMARY: line, which is no "
+          and "scripts/run-all-test-suites.py exited 0 and printed no SUMMARY: line, which is no "
               "verdict" in record_lines, f"{result!r}\n{record_lines!r}")
     check("the record of a runner that exits 0 with no SUMMARY line, which holds the "
           "runner's exit code 0, closes with this program's own exit code, 4",
@@ -1061,7 +1061,7 @@ def run_cases_on_ned_box(workspace: Path):
     check("a runner killed by a signal gave no verdict either: the record names the "
           "signal and the program exits 4",
           result.code == 4 and "runner exit code: -9" in record_lines
-          and "run-all-test-suites was killed by SIGKILL" in record_lines
+          and "scripts/run-all-test-suites.py was killed by SIGKILL" in record_lines
           and record_lines[-1:] == ["pull-request-head-test-run exit code: 4"],
           f"{result!r}\n{record_lines!r}")
     result = fixture.run(stand_in_runner_behaviour={
@@ -1073,7 +1073,7 @@ def run_cases_on_ned_box(workspace: Path):
           result.code == 4 and len(result.runner_calls) == 1
           and PASSING_SUMMARY_LINE in record_lines
           and "runner exit code: -15" in record_lines
-          and "run-all-test-suites was killed by SIGTERM" in record_lines
+          and "scripts/run-all-test-suites.py was killed by SIGTERM" in record_lines
           and record_lines[-1:] == ["pull-request-head-test-run exit code: 4"],
           f"{result!r}\n{record_lines!r}")
 

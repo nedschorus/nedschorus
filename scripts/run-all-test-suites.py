@@ -730,7 +730,9 @@ import time
 import xml.etree.ElementTree
 from pathlib import Path
 
-PROGRAM = "run-all-test-suites"
+# Messages open with the path an agent can run; file names in the temporary directory cannot hold "/".
+PROGRAM = "scripts/run-all-test-suites.py"
+PROGRAM_FILE_NAME_STEM = "run-all-test-suites"
 
 TEST_SUITE_PATHSPEC = "*-test.py"
 # Python audit hooks cannot see shell reads; without strace, a shell recording
@@ -1859,7 +1861,7 @@ def remove_old_temporary_log_directories_without_run_records(
         with contextlib.suppress(OSError, ValueError, KeyError):
             named.add(Path(json.loads(path.read_text())["log_dir"]))
     removed, failures = [], []
-    for log_dir in sorted(temp_dir.glob(f"{PROGRAM}-*")):
+    for log_dir in sorted(temp_dir.glob(f"{PROGRAM_FILE_NAME_STEM}-*")):
         if log_dir in named or not log_dir.is_dir():
             continue
         if (log_dir / LOG_DIRECTORY_LOCK_FILE_NAME).exists():
@@ -2428,7 +2430,7 @@ def write_case_times_suite_resources_and_junit_xml_of_run(log_dir, results):
                 f"{'' if result.get('cpu_seconds') is None else format(result['cpu_seconds'], '.3f')}\t"
                 f"{'' if result.get('peak_memory_bytes') is None else result['peak_memory_bytes']}\t"
                 f"{result.get('resources_note') or ''}\n")
-    root = xml.etree.ElementTree.Element("testsuites", name=PROGRAM)
+    root = xml.etree.ElementTree.Element("testsuites", name=PROGRAM_FILE_NAME_STEM)
     for result in results:
         cases = result.get("cases") or []
         failed = sum(1 for case in cases if case["verdict"] == "FAIL")
@@ -2848,7 +2850,7 @@ def empty_file_bound_over_a_listening_socket_in_test_sandbox():
 
     Fails rather than return a file that is not empty, which would hand a suite that
     content."""
-    path = Path(tempfile.gettempdir()) / f"{PROGRAM}-empty-file-covering-sockets-{os.getuid()}"
+    path = Path(tempfile.gettempdir()) / f"{PROGRAM_FILE_NAME_STEM}-empty-file-covering-sockets-{os.getuid()}"
     descriptor = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW, 0o444)
     try:
         status = os.fstat(descriptor)
@@ -4090,6 +4092,10 @@ SUITE_FAILED_LINE = re.compile(
     r"^FAIL (?P<suite>\S.*?) (?:exit \d+|killed by (?:signal \d+|\S+))"
     r"(?:, OUT OF MEMORY: [^(]*?)?(?: \(| — log )")
 NOT_RUN_TO_THE_END_LINE_PREFIX = f"{PROGRAM}: not run to the end"
+# A runner from before its messages opened with the file path prints the bare-name form, and a
+# frozen-head or a saved result can come from such a runner, so a reader matches either.
+TEST_RUNNER_WHOLE_RUN_NOT_RUN_TO_THE_END_LINE_PREFIXES_FILE_PATH_AND_BARE_NAME_FORMS = (
+    NOT_RUN_TO_THE_END_LINE_PREFIX, "run-all-test-suites: not run to the end")
 RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX = f"{NOT_RUN_TO_THE_END_LINE_PREFIX} — the run passed its run time limit"
 TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX = (
     f"{NOT_RUN_TO_THE_END_LINE_PREFIX} — a suite could not get a test slot")
@@ -4101,7 +4107,7 @@ def run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_b
     A nonzero exit without that, such as an empty output, a run cut short, or records that
     could not be written after every suite passed, judged no suite."""
     lines = text.splitlines()
-    if any(line.startswith(NOT_RUN_TO_THE_END_LINE_PREFIX) for line in lines):
+    if any(line.startswith(TEST_RUNNER_WHOLE_RUN_NOT_RUN_TO_THE_END_LINE_PREFIXES_FILE_PATH_AND_BARE_NAME_FORMS) for line in lines):
         return False
     return any(SUITE_FAILED_LINE.match(line) for line in lines)
 
@@ -4287,8 +4293,8 @@ def main(argv=None, platform=None):
                 log_dir_handle = lock_explicit_log_directory(log_dir)
             except OSError as error:
                 print(f"{PROGRAM}: not run — could not write to the log directory {log_dir} "
-                      f"({error}).\nRun this again with a --log-dir this user can create and "
-                      f"write to.", file=sys.stderr)
+                      f"({error}).\nRun this again with a --log-dir that this account can create "
+                      f"and write to.", file=sys.stderr)
                 return EXIT_COULD_NOT_RUN
             if log_dir_handle is None:
                 print(f"{PROGRAM}: not run — another run is writing to the log directory "
@@ -4296,7 +4302,7 @@ def main(argv=None, platform=None):
                       f"run has finished.", file=sys.stderr)
                 return EXIT_LOCKED
         else:
-            log_dir = Path(tempfile.mkdtemp(prefix=f"{PROGRAM}-"))
+            log_dir = Path(tempfile.mkdtemp(prefix=f"{PROGRAM_FILE_NAME_STEM}-"))
         if platform.startswith("linux"):
             run_record = RunRecord(run_records_directory_for_lock_file(arguments.lock_file), log_dir,
                                    log_dir_is_temporary=not arguments.log_dir)

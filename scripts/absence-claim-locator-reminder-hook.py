@@ -374,7 +374,7 @@ def match_is_excluded(number, sentence, before, after):
     # A definition: "step 4 uses the word for another file: the old version kept beside a revised text that is not in the repository".
     # The defining verb stands before the colon that opens the definition, and the match sits in a relative clause of
     # the defining phrase; "This means the following: the transcript is not in the repository" makes a claim.
-    if (number == 6 and ":" in before and re.search(r"\b(?:uses?|means|refers? to|stands? for)\b", before.rsplit(":", 1)[0], re.I)
+    if (number == 6 and ":" in before and re.search(r"\b(?:uses?|means|refers? to|stands? for)\b", before.rsplit(":", 1)[0], re.I)  # pragma: no mutate, >= 6 adds only pattern 12, which the guard above already excludes before that or which
             and re.search(r"\b(?:that|which)\s+(?:(?:is|are|was|were)\s+)?$", before, re.I)):
         return True
     # "missing" as a verb: "the record is missing a field".
