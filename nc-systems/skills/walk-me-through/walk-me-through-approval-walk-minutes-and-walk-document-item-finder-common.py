@@ -613,6 +613,21 @@ def approval_walk_unit_is_unnumbered_item(unit):
     return not numbers and problem is None
 
 
+def approval_walk_document_new_item_insert_line_number_past_whole_item_sub_steps_and_withdrawn_versions(
+        units, unit, line_count):
+    """Return the 0-based line, of a walk-document of line_count lines whose item_unit_spans are units, where the
+    whole item that unit belongs to ends, and so where an item added after it goes: the first line of the first
+    later unit that is not a sub-step of that whole item, or line_count. For unit `### Item 50.1 of 96` that is
+    past sub-step 50.2 and every Withdrawn heading below either, since a unit ends at a Withdrawn heading and a
+    sub-step is a unit of its own."""
+    whole = {number.split(".")[0] for number in unit[0]}
+    for later in units:
+        if later[3] > unit[3] and not (later[0] and all("." in number and number.split(".")[0] in whole
+                                                        for number in later[0])):
+            return later[3]
+    return line_count
+
+
 def approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units):
     """M, as a string: the whole numbers the numbered items of units hold, a dotted number such as 6.1 counting
     as its item 6, plus the unnumbered items; so it counts the items shown and the items waiting."""

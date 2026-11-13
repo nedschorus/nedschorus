@@ -378,7 +378,8 @@ def test_the_block_message_says_what_to_do():
             ("the message names the waiting item", "goes to the waiting item, item 2,"),
             ("the message gives the interruption item a heading with no number, and names the script whose close "
              "step chooses when it is shown and numbers it",
-             "headed `## <the point of the question>`, with no number, placed right after item 2. Under the heading, "
+             "headed `## <the point of the question>`, with no number, placed after the whole of item 2, its "
+             "sub-steps and withdrawn versions included. Under the heading, "
              "give it a line of its own naming its category, the one for how soon its work must happen, one of "
              "`#approval_walk_item_in_category_must_fix_now`, "
              "`#approval_walk_item_in_category_fix_next`, `#approval_walk_item_in_category_fix_during_maintenance`, "
@@ -491,6 +492,14 @@ def test_a_line_about_only_the_waiting_items_decision_passes():
     check("a hashtag marker is dropped only when a word character follows `#`, so a heading keeps its text",
           hook.normalized("#new_if_d Alternative: x") == "alternative: x" and hook.normalized("## Item 3") == "item 3"
           and hook.normalized("#9 is closed") == "is closed", hook.normalized("#new_if_d Alternative: x"))
+
+
+def test_while_a_sub_step_waits_the_interruption_item_goes_after_the_whole_item():
+    case = Case(document=f"# A walk\n\n{REAL_ITEM_3_1_DOCUMENT_TEXT}\n", minutes="#next_to_present item 3.1 of 6")
+    case.reply("Should I merge the pull request now?")
+    check_blocked("while sub-step 3.1 waits, the interruption item goes after the whole of item 3, not between its "
+                  "sub-steps", case.run(model="yes"), "placed after the whole of item 3, its sub-steps",
+                  "later than right after item 3,")
 
 
 def test_a_question_about_something_other_than_the_waiting_item_still_blocks():
@@ -1043,7 +1052,8 @@ def test_two_waiting_items():
     case = Case(minutes="#next_to_present items 2 and 3 of 10")
     case.reply("Should I merge the pull request now?")
     check_blocked("with two items waiting, the interruption item follows the later one and both are named",
-                  case.run(), "`## <the point of the question>`, with no number, placed right after item 3. Under the heading",
+                  case.run(), "`## <the point of the question>`, with no number, placed after the whole of item 3, "
+                  "its sub-steps and withdrawn versions included. Under the heading",
                   "so it may come later than right after item 3,", "`I added the question to the walk as a new item.`",
                   "and then each waiting item's closing line, on a line of its own, as the walk-me-through skill "
                   f"writes it, as the last text of that message:\n`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the "

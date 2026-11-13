@@ -312,14 +312,15 @@ MODEL_CHECK_FAILED_NOTICE = ("the hook's `claude -p` call that has the model jud
 REFUSAL_INSTRUCTIONS = (
     "If the flagged text asks the user to decide or answer something, do these three steps:",
     "1. Add it to the walk-document {document} as an interruption item headed `## <the point of the question>`, "
-    "with no number, placed right after item {last_waiting}. Under the heading, give it a line of its own naming "
+    "with no number, placed after the whole of item {waiting_whole_item}, its sub-steps and withdrawn versions "
+    "included. Under the heading, give it a line of its own naming "
     "its category, the one for how soon its work must happen, one of {category_tags}, and a line "
     "`{waits_on_tag} <title>` for each item it must follow, as the walk-me-through skill's section "
     "\"Re-planning\" says. Do not number it yourself: the close step of "
     "nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py "
     "chooses when, among the items not yet shown, the user sees it, by the items it waits on, its category and the "
-    "day it first entered a walk, so it may come later than right after item {last_waiting}, and writes its number "
-    "into this heading then. "
+    "day it first entered a walk, so it may come later than right after item {waiting_whole_item}, and writes its "
+    "number into this heading then. "
     "Quote the question whole "
     "in the item, as its asker wrote it, whether you or another agent, giving each line of the flagged text a "
     "line of its own, word for word, and putting the rest of the question on other lines of the item. This hook passes the "
@@ -758,7 +759,8 @@ def output_for(payload, environment, model=model_judgement):
     check_and_close = load_module("walk_me_through_answer_added_texts_cold_read_fast_read_check_and_close",
                                   WALK_CHECK_PROGRAM)
     closing, without_page = closing_lines(pages, name, document_text, units, parser, numbers, new_total)
-    values = {"walk": name, "last_waiting": waiting, "sentence": sentence, "decided": decided, "waiting": waiting_label,
+    values = {"walk": name, "waiting_whole_item": waiting.split(".")[0], "sentence": sentence, "decided": decided,
+              "waiting": waiting_label,
               "document": document, "waits_on_tag": check_and_close.WALK_WAITS_ON_TAG,
               "category_tags": ", ".join(f"`{check_and_close.WALK_CATEGORY_TAG}{category}`"
                                          for category in check_and_close.WALK_CATEGORIES),
