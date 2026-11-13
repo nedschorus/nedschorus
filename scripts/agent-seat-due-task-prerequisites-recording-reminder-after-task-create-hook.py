@@ -40,11 +40,10 @@ PREREQUISITES_RECORD_INSTRUCTION_TEMPLATE = (
     'If this task{task_id_clause} waits on a pull request merging or a GHI closing, record each one now '
     'with TaskUpdate in the task\'s metadata, as "prerequisites": [{{"pr_merged": <number>}}, '
     '{{"issue_closed": <number>}}].\n'
-    'If it waits on the user\'s decision on an approval-walk item, record the item in the same list, as '
+    'If it waits on the user\'s decision on an approval-walk item, add the item to the same prerequisites list, as '
     '{{"approval_walk_item_decided": {{"approval_walk_minutes_file_path": "<absolute path of the walk-minutes file>", '
-    '"approval_walk_item_heading": "<the item\'s heading in the walk-document>"}}}}; the heading names the item '
-    "because its number can change while the walk runs, and any decision the walk-minutes record meets it, "
-    "approval or rejection, but a deferral does not.\n"
+    '"approval_walk_item_heading": "<the item\'s heading in the walk-document>"}}}}; any decision the walk-minutes '
+    "record meets it, approval, disapproval or moving on, but a deferral does not.\n"
     "If it waits on another task on your own task list, record that task with TaskUpdate's addBlockedBy.\n"
     "The due-task hook then raises this task when all of them are done.\n"
     "Record no other kind of dependency: one that is not a pull request, GHI, approval-walk item or task "
@@ -58,8 +57,8 @@ FAULT_LINE_TEMPLATE = ("{program}: the task was added, but this hook could not r
                        "Claude Code sent, which is not a JSON object ({error}); you did nothing wrong. If the task waits on a pull request or a GHI, "
                        "record each one with TaskUpdate in the task's metadata, as "
                        "\"prerequisites\": [{{\"pr_merged\": <number>}}, {{\"issue_closed\": <number>}}]; "
-                       "if it waits on the user's decision on an approval-walk item, record the item in "
-                       "the same list, as {{\"approval_walk_item_decided\": {{\"approval_walk_minutes_file_path\": "
+                       "if it waits on the user's decision on an approval-walk item, add the item to "
+                       "the same prerequisites list, as {{\"approval_walk_item_decided\": {{\"approval_walk_minutes_file_path\": "
                        "\"<absolute path of the walk-minutes file>\", \"approval_walk_item_heading\": "
                        "\"<the item's heading in the walk-document>\"}}}}; "
                        "if it waits on another task, record that task with TaskUpdate's addBlockedBy; "
