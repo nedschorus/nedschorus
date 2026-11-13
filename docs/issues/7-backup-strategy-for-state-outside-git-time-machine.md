@@ -21,7 +21,7 @@ The user, in the MD-skills seat's walk on where cold-read records live: "I think
 
 **How, as built and landed.** `scripts/transcript-mirror-to-log-store.py` with `scripts/transcript-mirror-to-log-store-test.py`, 20 cases, merged in PR [transcript-mirror-to-log-store.py: mirror ~/.claude/projects and handoffs into the log-store on ned-box, hourly by cron](https://github.com/nedschorus/nedschorus/pull/289) on 2026-09-08. `rsync -a` of the two directories, over ssh in batch mode from the Mac and locally on ned-box, never `--delete`, so a transcript that vanishes locally stays in the store. This is a mirror, not a record: a live session's transcript grows between runs and rsync sends the delta, so the record shipper's no-overwrite rule does not apply. The script's own docstring carries the rest, including why files vanishing mid-run are not a failure and why that exit code differs between the Mac's openrsync and ned-box's GNU rsync.
 
-**Scheduled 2026-09-10, hourly by cron on both machines.** Not launchd on the Mac: the project's escaped-bug dataset records that launchd never fires StartInterval jobs on this Mac. Cron does, verified the same day with a one-minute canary line that fired on time and was then removed. Both reference checkouts were brought to main first; ned-box's was 132 commits behind and did not have the script. The two lines, one per machine:
+**Scheduled 2026-09-10 by cron on both machines, hourly then; `nc-systems/general-tools/scheduled-jobs-on-each-machine.json` now runs it every minute.** Not launchd on the Mac: the project's escaped-bug dataset records that launchd never fires StartInterval jobs on this Mac. Cron does, verified the same day with a one-minute canary line that fired on time and was then removed. Both reference checkouts were brought to main first; ned-box's was 132 commits behind and did not have the script. The two lines, one per machine, as first installed:
 
 ```
 Mac:     17 * * * * /opt/homebrew/opt/python@3.13/libexec/bin/python3 /Users/el/Projects/nedschorus/scripts/transcript-mirror-to-log-store.py >> /Users/el/.claude/transcript-mirror.log 2>&1
@@ -32,7 +32,7 @@ To remove either, `crontab -l | grep -v transcript-mirror-to-log-store | crontab
 
 **First pass by hand, 2026-09-10, both exit 0.** Mac: 3,236 project files, and 158 handoffs against the store's 167, the nine extra being files the store kept after the Mac dropped them, which is the never-delete rule working. ned-box: 278 project files and 21 handoffs, matching exactly.
 
-**Next action.** Read `~/.claude/transcript-mirror.log` on each machine after the next few ticks at 17 minutes past the hour and confirm the hourly run stays quiet and exits 0. Then this class of scope item 2 is done and only the recovered archive below is unruled.
+**Next action.** Read `~/.claude/transcript-mirror.log` on each machine after the next few runs, every minute, and confirm each run stays quiet and exits 0. Then this class of scope item 2 is done and only the recovered archive below is unruled.
 
 ## Added 2026-09-08 (cold-read-research): the recovered Time Machine merge is a fourth class, and a mirror will never pick it up
 
