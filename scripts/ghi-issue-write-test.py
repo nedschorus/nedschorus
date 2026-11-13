@@ -296,15 +296,15 @@ _ghi_guide_agent_ask_spec.loader.exec_module(_ghi_guide_agent_ask)
 
 
 def ask_answer(exit_code=0, **fields):
-    """What ghi-guide-agent-ask.py --print-answer-json --ask-form
+    """What ghi-guide-agent-ask.py --print-answer-json --request-form
     draft-verdict prints for an answer with these fields, checked against
-    that ask form's schema, so a field or kind renamed or disallowed there
+    that request form's schema, so a field or kind renamed or disallowed there
     fails here rather than passing on stale words."""
     answer, problem = (_ghi_guide_agent_ask
                        .ghi_guide_agent_answer_extract_and_schema_check_from_claude_result(
                            {"structured_output": fields},
-                           _ghi_guide_agent_ask.GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_ASK_FORM_ALLOWS[
-                               _ghi_guide_agent_ask.GHI_GUIDE_AGENT_ASK_FORM_DRAFT_VERDICT]))
+                           _ghi_guide_agent_ask.GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_REQUEST_FORM_ALLOWS[
+                               _ghi_guide_agent_ask.GHI_GUIDE_AGENT_REQUEST_FORM_DRAFT_VERDICT]))
     assert answer is not None, problem
     return Completed(json.dumps(answer) + "\n", returncode=exit_code)
 
@@ -1438,12 +1438,12 @@ def run_cases(scratch: Path):
     recorder = Recorder({ASK: verdict_answer("unrelated")})
     tool.adjudicate(REPO, "t", FILE_TEXT, scratch, recorder, quiet)
     ask_call = next((call for call in recorder.calls if ASK in " ".join(call)), [])
-    check("the ask is run with --print-answer-json and --ask-form draft-verdict",
+    check("the ask is run with --print-answer-json and --request-form draft-verdict",
           "--print-answer-json" in ask_call
-          and ask_call[ask_call.index("--ask-form") + 1:][:1] == ["draft-verdict"],
+          and ask_call[ask_call.index("--request-form") + 1:][:1] == ["draft-verdict"],
           ask_call)
-    check("the ask form the writer names is one the ask program has",
-          "draft-verdict" in _ghi_guide_agent_ask.GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_ASK_FORM_ALLOWS)
+    check("the request form the writer names is one the ask program has",
+          "draft-verdict" in _ghi_guide_agent_ask.GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_REQUEST_FORM_ALLOWS)
 
     # The exit code is not read: an argument error exits 2 as
     # not-about-issues does.

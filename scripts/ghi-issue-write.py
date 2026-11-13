@@ -1112,7 +1112,7 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
             question_file.write(question)
         completed = runner([sys.executable, str(ask), "--question-file",
                             question_path, "--print-answer-json",
-                            "--ask-form", "draft-verdict"],
+                            "--request-form", "draft-verdict"],
                            timeout=ADJUDICATION_TIMEOUT_SECONDS, check=False)
     except Exception as failure:                      # noqa: BLE001
         report(f"adjudication skipped: ghi-guide-agent did not answer ({failure})")
@@ -1138,7 +1138,7 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
         report("adjudication skipped: ghi-guide-agent did not answer" +
                (f": {why}" if why else ""))
         return None
-    # The ask's --ask-form draft-verdict allows only a verdict or a ruling question.
+    # The ask's --request-form draft-verdict allows only a verdict or a ruling question.
     if answer.get("kind") == "ask-user-about-ruling":
         report("ghi-guide-agent raised a question about a ruling of the "
                "user's; the write goes ahead and records it in a "

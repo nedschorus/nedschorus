@@ -7,12 +7,12 @@ filing or editing an issue, to learn what already covers the ground.
 Usage:
   ghi-guide-agent-ask.py "<question>" [--include-closed]
   ghi-guide-agent-ask.py --question-file <path> [--include-closed]
-  ... [--print-answer-json] [--ask-form draft-verdict]
+  ... [--print-answer-json] [--request-form draft-verdict]
 
 ghi-guide-agent's answer is a JSON object that `claude -p --json-schema`
-constrains to ghi_guide_agent_answer_json_schema_for_kinds; its `kind` says
-which reply it is, and --ask-form says which kinds it may be
-(GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_ASK_FORM_ALLOWS). By default this program prints what ghi_guide_agent_answer_render_as_caller_stdout_stderr_and_exit_code makes of
+constrains to ghi_guide_agent_answer_json_schema_build_for_kinds; its `kind` says
+which reply it is, and --request-form says which kinds it may be
+(GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_REQUEST_FORM_ALLOWS). By default this program prints what ghi_guide_agent_answer_render_as_caller_stdout_stderr_and_exit_code makes of
 it, with the exit codes below. With --print-answer-json it prints the object
 itself on stdout instead, whatever the exit code, for a program such as
 scripts/ghi-issue-write.py that reads its fields; a failed ask prints nothing
@@ -23,9 +23,9 @@ Exit codes:
      --include-closed, OPEN_ISSUES_ONLY_INCLUDE_CLOSED_HINT_MESSAGE follows on
      stderr, so the caller learns the flag when the answer omits closed issues
   1  a failed ask — gh unreachable, the box unreachable, ghi-guide-agent's own run
-     erroring or timing out: one line on stderr, or, for an answer that is
-     not usable, GHI_GUIDE_AGENT_ANSWER_NOT_USABLE_MESSAGE_TEMPLATE's two
-     lines, the second saying what to do. A failed ask never blocks a
+     erroring or timing out, or its answer not usable. Stderr carries one
+     line, or, for an unusable answer, GHI_GUIDE_AGENT_ANSWER_NOT_USABLE_MESSAGE_TEMPLATE's
+     two lines, the second saying what to do. A failed ask never blocks a
      write (design's own words): the caller's job is to fall down the
      ghi-write skill's fallback ladder, not to treat exit 1 as fatal.
   2  ghi-guide-agent answered with kind `not-about-issues`: the question was not
@@ -287,22 +287,22 @@ GHI_GUIDE_AGENT_ANSWER_FIELDS_EACH_KIND_NEEDS = {
 GHI_GUIDE_AGENT_ANSWER_OPTIONAL_FIELDS_EACH_KIND_MAY_GIVE = {
     GHI_GUIDE_AGENT_ANSWER_KIND_READING_LIST: ("notes",),
 }
-# The answer kinds each --ask-form allows. No program sends form 4, a link
-# repair, so no ask form allows `repair`.
-GHI_GUIDE_AGENT_ASK_FORM_READING_LIST = "reading-list"
-GHI_GUIDE_AGENT_ASK_FORM_DRAFT_VERDICT = "draft-verdict"
-GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_ASK_FORM_ALLOWS = {
-    GHI_GUIDE_AGENT_ASK_FORM_READING_LIST: (
+# The answer kinds each --request-form allows. No program sends form 4, a link
+# repair, so no request form allows `repair`.
+GHI_GUIDE_AGENT_REQUEST_FORM_READING_LIST = "reading-list"
+GHI_GUIDE_AGENT_REQUEST_FORM_DRAFT_VERDICT = "draft-verdict"
+GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_REQUEST_FORM_ALLOWS = {
+    GHI_GUIDE_AGENT_REQUEST_FORM_READING_LIST: (
         GHI_GUIDE_AGENT_ANSWER_KIND_READING_LIST, GHI_GUIDE_AGENT_ANSWER_KIND_NOT_ABOUT_ISSUES,
         GHI_GUIDE_AGENT_ANSWER_KIND_ASK_USER_ABOUT_RULING),
     # scripts/ghi-issue-write.py's adjudication, whose question is always a
     # draft GHI-MD and so is always about issues.
-    GHI_GUIDE_AGENT_ASK_FORM_DRAFT_VERDICT: (
+    GHI_GUIDE_AGENT_REQUEST_FORM_DRAFT_VERDICT: (
         GHI_GUIDE_AGENT_ANSWER_KIND_VERDICT, GHI_GUIDE_AGENT_ANSWER_KIND_ASK_USER_ABOUT_RULING),
 }
 
 
-def ghi_guide_agent_answer_json_schema_for_kinds(kinds) -> dict:
+def ghi_guide_agent_answer_json_schema_build_for_kinds(kinds) -> dict:
     """The schema `claude -p --json-schema` holds an answer to: one of
     `kinds`, only the fields those kinds use, and each kind's needed fields
     required when `kind` names it.
@@ -451,7 +451,7 @@ def ghi_guide_agent_answer_extract_and_schema_check_from_claude_result(result: d
                       f"{json.dumps(answer)}); its text reply began: "
                       f"{str(result.get('result') or '')[:200]!r}")
     shown = json.dumps(answer)[:300]
-    properties = ghi_guide_agent_answer_json_schema_for_kinds(kinds)["properties"]
+    properties = ghi_guide_agent_answer_json_schema_build_for_kinds(kinds)["properties"]
     kind = answer.get("kind")
     if not isinstance(kind, str) or kind not in kinds:
         return None, f"the answer's kind {kind!r} is none the schema allows: {shown}"
@@ -728,15 +728,15 @@ def run_claude(prompt: str, resume_session_id, seat_dir: Path, timeout_seconds: 
 def ask(question: str, include_closed: bool, seat_dir: Path, repo: str,
        timeout_seconds: int = ASK_TIMEOUT_SECONDS,
        projects_root: Path = None,
-       ask_form: str = GHI_GUIDE_AGENT_ASK_FORM_READING_LIST):
+       request_form: str = GHI_GUIDE_AGENT_REQUEST_FORM_READING_LIST):
     """The whole ask path (design § The ask path, steps 1-5). Returns
     (answer, closed_on, error): the checked answer object, of a kind
-    `ask_form` allows, and closed_issue_dates of its issue numbers, or
+    `request_form` allows, and closed_issue_dates of its issue numbers, or
     (None, None, error)."""
-    kinds = GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_ASK_FORM_ALLOWS[ask_form]
+    kinds = GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_REQUEST_FORM_ALLOWS[request_form]
     # Every turn of the ask, the cold start and the drift recheck included,
     # gets the same schema.
-    json_schema = ghi_guide_agent_answer_json_schema_for_kinds(kinds)
+    json_schema = ghi_guide_agent_answer_json_schema_build_for_kinds(kinds)
     if projects_root is None:
         projects_root = Path.home() / ".claude" / "projects"
     state_path = seat_dir / STATE_FILE_NAME
@@ -994,7 +994,7 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
 def build_remote_command(question: str, include_closed: bool, repo: str,
                          question_on_stdin: bool = False,
                          print_answer_json: bool = False,
-                         ask_form: str = GHI_GUIDE_AGENT_ASK_FORM_READING_LIST) -> str:
+                         request_form: str = GHI_GUIDE_AGENT_REQUEST_FORM_READING_LIST) -> str:
     """The command the box runs, as one string: ssh hands it to the box's
     login shell, which parses it exactly once — no second parse layer here
     (unlike the launchers, which also cross tmux's pane-command parse), so
@@ -1026,8 +1026,8 @@ def build_remote_command(question: str, include_closed: bool, repo: str,
         invocation += " --include-closed"
     if print_answer_json:
         invocation += " --print-answer-json"
-    if ask_form != GHI_GUIDE_AGENT_ASK_FORM_READING_LIST:
-        invocation += " --ask-form " + shlex.quote(ask_form)
+    if request_form != GHI_GUIDE_AGENT_REQUEST_FORM_READING_LIST:
+        invocation += " --request-form " + shlex.quote(request_form)
     invocation += " --repo " + shlex.quote(repo)
     invocation += ' --seat-dir "$PWD"'
     return "\n".join([
@@ -1060,10 +1060,11 @@ def main(argv=None) -> int:
     parser.add_argument("--print-answer-json", action="store_true",
                         help="print ghi-guide-agent's answer as one JSON object on stdout, "
                              "whatever the exit code, instead of the text printed by default")
-    parser.add_argument("--ask-form", choices=list(GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_ASK_FORM_ALLOWS),
-                        default=GHI_GUIDE_AGENT_ASK_FORM_READING_LIST,
-                        help="draft-verdict: the question shows a draft GHI-MD, and the answer "
-                             "is a verdict or a ruling question; default reading-list")
+    parser.add_argument("--request-form", choices=list(GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_REQUEST_FORM_ALLOWS),
+                        default=GHI_GUIDE_AGENT_REQUEST_FORM_READING_LIST,
+                        help="reading-list (default): the answer is a reading list; draft-verdict: "
+                             "the question holds a draft GHI-MD, and the answer is a "
+                             "verdict or a ruling question")
     parser.add_argument("--repo", default=DEFAULT_REPO)
     parser.add_argument("--seat-dir", default=None,
                         help="run locally against this seat directory, skipping the "
@@ -1092,7 +1093,7 @@ def main(argv=None) -> int:
                                                   arguments.repo,
                                                   question_on_stdin,
                                                   arguments.print_answer_json,
-                                                  arguments.ask_form)
+                                                  arguments.request_form)
             try:
                 completed = subprocess.run(
                     ["ssh", AGENT_BOX, remote_command], capture_output=True, text=True,
@@ -1129,7 +1130,7 @@ def main(argv=None) -> int:
         return 1
 
     answer, closed_on, error = ask(question, arguments.include_closed, seat_dir,
-                                   arguments.repo, ask_form=arguments.ask_form)
+                                   arguments.repo, request_form=arguments.request_form)
     if answer is None:
         print(f"ghi-guide-agent-ask: {error}", file=sys.stderr)
         return 1

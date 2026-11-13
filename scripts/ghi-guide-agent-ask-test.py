@@ -525,8 +525,8 @@ check("--print-answer-json rides the remote command when requested, and "
       " --print-answer-json" in command_json
       and "--print-answer-json" not in command, command_json)
 command_form = ghi_ask.build_remote_command("q", False, "x/y", False, False, "draft-verdict")
-check("--ask-form rides the remote command when it is not the default, and only then",
-      " --ask-form draft-verdict" in command_form and "--ask-form" not in command,
+check("--request-form rides the remote command when it is not the default, and only then",
+      " --request-form draft-verdict" in command_form and "--request-form" not in command,
       command_form)
 
 # Quoting is measured by a real POSIX shell, not derived: the question is an
@@ -714,7 +714,7 @@ try:
         seat_verdict.mkdir()
         exit_code, out, err = main_with_answer(
             seat_verdict, {"kind": "verdict", "verdict": "related", "issues": [3, 4]},
-            ("--ask-form", "draft-verdict"))
+            ("--request-form", "draft-verdict"))
         check("a verdict prints as one `verdict:` line", exit_code == 0
               and out == "verdict: related #3,#4\n", (exit_code, out, err))
 
@@ -747,11 +747,11 @@ try:
           render(reading_list(notes=["Nothing covers this."]), {})
           == ("Nothing covers this.", "", 0))
 
-    # Each ask form's schema: only its kinds, only their fields, and each
+    # Each request form's schema: only its kinds, only their fields, and each
     # kind's needed fields required by an if/then link, since the API
     # refuses oneOf, anyOf and allOf at the top level.
-    for_kinds = ghi_ask.ghi_guide_agent_answer_json_schema_for_kinds
-    forms = ghi_ask.GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_ASK_FORM_ALLOWS
+    for_kinds = ghi_ask.ghi_guide_agent_answer_json_schema_build_for_kinds
+    forms = ghi_ask.GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_REQUEST_FORM_ALLOWS
     check("a reading-list ask allows a reading list and the two boundary answers",
           forms["reading-list"] == ("reading-list", "not-about-issues", "ask-user-about-ruling"),
           forms)
@@ -1078,7 +1078,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # then answered the checkout-freshness Stop hook 13 seconds later, and
     # the ask returned that last message. The answer is now read from
     # structured_output, so the text a hook drew out after it is not read.
-    def ask_with_one_reply(name, reply, question="q", ask_form="reading-list"):
+    def ask_with_one_reply(name, reply, question="q", request_form="reading-list"):
         seat_case = root / name
         seat_case.mkdir()
         ghi_ask.save_state(seat_case / ghi_ask.STATE_FILE_NAME,
@@ -1086,7 +1086,7 @@ with tempfile.TemporaryDirectory() as temporary:
                             "recent_matches": []})
         fake_refresh_queue([([], {}, None)])
         fake_claude_queue([(reply, None)])
-        return ghi_ask.ask(question, False, seat_case, "x/y", ask_form=ask_form)
+        return ghi_ask.ask(question, False, seat_case, "x/y", request_form=request_form)
 
     answer, closed_on, error = ask_with_one_reply("seat-hook-reply", {
         "session_id": "sess-U", "structured_output": reading_list(39, 29),
@@ -1113,7 +1113,7 @@ with tempfile.TemporaryDirectory() as temporary:
           answer is None and "structured_output is null" in error
           and "I could not record a verdict" in error, (answer, error))
 
-    for case_name, structured_output, expected, *ask_form in [
+    for case_name, structured_output, expected, *request_form in [
             ("a verdict answer that lacks its verdict field fails the ask",
              {"kind": "verdict", "issues": [3]}, "lacks its verdict field", "draft-verdict"),
             ("a ruling question that lacks the issue holding the ruling fails the ask",
@@ -1129,10 +1129,10 @@ with tempfile.TemporaryDirectory() as temporary:
             ("not-about-issues to a draft-verdict ask fails the ask",
              {"kind": "not-about-issues"}, "kind 'not-about-issues' is none the schema allows",
              "draft-verdict"),
-            ("a repair, which no ask form allows, fails the ask",
+            ("a repair, which no request form allows, fails the ask",
              {"kind": "repair", "outcome": "done", "sentence": "s"},
              "kind 'repair' is none the schema allows"),
-            ("a field no kind of the ask form uses fails the ask",
+            ("a field no kind of the request form uses fails the ask",
              {"kind": "reading-list", "issues": [1], "verdict": "related"},
              "fields the schema does not: verdict"),
             ("a kind outside the schema fails the ask",
@@ -1153,7 +1153,7 @@ with tempfile.TemporaryDirectory() as temporary:
         answer, closed_on, error = ask_with_one_reply(
             "seat-" + case_name.replace(" ", "-")[:60],
             {"session_id": "sess-U", "structured_output": structured_output},
-            ask_form=(ask_form or ["reading-list"])[0])
+            request_form=(request_form or ["reading-list"])[0])
         check(case_name, answer is None and error is not None and expected in error
               and json.dumps(structured_output)[:40] in error, (answer, error))
 
@@ -1187,11 +1187,11 @@ with tempfile.TemporaryDirectory() as temporary:
         ({"session_id": "sess-W", "structured_output": reading_list(14)}, None),
     ])
     answer, closed_on, error = ghi_ask.ask("q", False, seat_verdict_recheck, "x/y",
-                                           ask_form="draft-verdict")
+                                           request_form="draft-verdict")
     check("a drift recheck after a verdict that answers with a reading list keeps the verdict",
           len(verdict_recheck_calls) == 3 and answer == first_verdict and error is None,
           (verdict_recheck_calls, answer, error))
-    draft_verdict_schema = ghi_ask.ghi_guide_agent_answer_json_schema_for_kinds(
+    draft_verdict_schema = ghi_ask.ghi_guide_agent_answer_json_schema_build_for_kinds(
         ("verdict", "ask-user-about-ruling"))
     check("every turn of a draft-verdict ask, the cold start and the drift "
           "recheck included, is given the draft-verdict schema",
@@ -1247,7 +1247,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     def recording_ask(question, include_closed, seat_dir, repo, *rest, **keywords):
         asked["question"] = question
-        asked["ask_form"] = keywords.get("ask_form")
+        asked["request_form"] = keywords.get("request_form")
         return {"kind": "verdict", "verdict": "unrelated", "issues": []}, {}, None
 
     ask_orig = ghi_ask.ask
@@ -1261,13 +1261,13 @@ with tempfile.TemporaryDirectory() as temporary:
         check("--question-file asks the file's text, verbatim",
               exit_code == 0 and asked.get("question") == question_text,
               (exit_code, len(asked.get("question") or "")))
-        check("an ask without --ask-form is a reading-list ask",
-              asked.get("ask_form") == "reading-list", asked.get("ask_form"))
+        check("an ask without --request-form is a reading-list ask",
+              asked.get("request_form") == "reading-list", asked.get("request_form"))
         with contextlib.redirect_stdout(io.StringIO()), \
                 contextlib.redirect_stderr(io.StringIO()):
-            ghi_ask.main(["q", "--ask-form", "draft-verdict", "--seat-dir", str(seat_flag)])
-        check("--ask-form draft-verdict reaches the ask",
-              asked.get("ask_form") == "draft-verdict", asked.get("ask_form"))
+            ghi_ask.main(["q", "--request-form", "draft-verdict", "--seat-dir", str(seat_flag)])
+        check("--request-form draft-verdict reaches the ask",
+              asked.get("request_form") == "draft-verdict", asked.get("request_form"))
         hint = question_file_error.getvalue()
         check("a question from --question-file, asked without --include-closed, "
               "gets a hint naming neither the question nor the file, saying to "
@@ -1329,7 +1329,7 @@ with tempfile.TemporaryDirectory() as temporary:
                 plain_command = remote["argv"][-1]
                 ghi_ask.main(["a short question", "--print-answer-json"])
                 json_command = remote["argv"][-1]
-                ghi_ask.main(["a short question", "--ask-form", "draft-verdict"])
+                ghi_ask.main(["a short question", "--request-form", "draft-verdict"])
                 form_command = remote["argv"][-1]
         finally:
             patch("running_on_ned_box", running_on_ned_box_orig)
@@ -1342,9 +1342,9 @@ with tempfile.TemporaryDirectory() as temporary:
         check("off the box, --print-answer-json rides the remote command",
               "--print-answer-json" in json_command
               and "--print-answer-json" not in plain_command, json_command[-300:])
-        check("off the box, --ask-form rides the remote command",
-              "--ask-form draft-verdict" in form_command
-              and "--ask-form" not in plain_command, form_command[-300:])
+        check("off the box, --request-form rides the remote command",
+              "--request-form draft-verdict" in form_command
+              and "--request-form" not in plain_command, form_command[-300:])
         remote_command = (from_file.get("argv") or ["", "", ""])[-1]
         check("off the box, --question-file sends the text on ssh's stdin and "
               "the box reads it with --question-file /dev/stdin",
