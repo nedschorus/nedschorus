@@ -127,6 +127,7 @@ class BadInvocationArgumentParser(argparse.ArgumentParser):
 
 def build_argument_parser(
     description: str, model_help: str, tier_choices=tuple(TIER_CHOICES),
+    cold_read_cell_launcher_own_command_line_options_adder=None,
 ) -> argparse.ArgumentParser:
     parser = BadInvocationArgumentParser(
         description=description, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -180,6 +181,8 @@ def build_argument_parser(
              "exited 64 because the only template a cell would read was the "
              "one under prompts/. The stamp records the file's path.",
     )
+    if cold_read_cell_launcher_own_command_line_options_adder:
+        cold_read_cell_launcher_own_command_line_options_adder(parser)
     return parser
 
 
@@ -936,11 +939,16 @@ def run_cell(
     stage_report_outside_checkout: bool = False, child_environment=None,
     per_model_run_timeout_seconds=None, parse_agent_binary_final_result_from_stdout_line=None,
     report_wait_after_result_line_seconds: float = 0.0,
+    cold_read_cell_launcher_own_command_line_options_adder=None,
 ) -> int:
+    """cold_read_cell_launcher_own_command_line_options_adder, when given, adds
+    one launcher's own options to the parser, and invocation_builder then also
+    gets the parsed arguments as parsed_arguments=."""
     # Include failed attempts in the cell's total cost.
     cell_started_at = time.time()
     parser = build_argument_parser(
-        description, model_help, tier_choices=tuple(tier_to_model_chain))
+        description, model_help, tier_choices=tuple(tier_to_model_chain),
+        cold_read_cell_launcher_own_command_line_options_adder=cold_read_cell_launcher_own_command_line_options_adder)
     args = parser.parse_args()
 
     # Snapshot before execution so pre-existing edits are not reported as changes from this run.
@@ -986,8 +994,12 @@ def run_cell(
     # An explicit model must not silently fall back to a different model.
     chain = (args.model,) if args.model else tier_to_model_chain[args.tier]
     effort = args.effort or tier_to_effort[args.tier]
-    build_invocation = (invocation_builder(effort, staging_directory)
-                        if stage_report_outside_checkout else invocation_builder(effort))
+    launcher_own_option_arguments = (
+        {"parsed_arguments": args}
+        if cold_read_cell_launcher_own_command_line_options_adder else {})
+    build_invocation = (invocation_builder(effort, staging_directory, **launcher_own_option_arguments)
+                        if stage_report_outside_checkout
+                        else invocation_builder(effort, **launcher_own_option_arguments))
 
     try:
         exit_code = run_model_chain(
