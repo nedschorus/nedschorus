@@ -327,6 +327,8 @@ for case_name, text in [
      "The files containing code are missing."),
     ("pattern 2: that is the match's subject, the sentence's own verb follows",
      "The transcript that is gone is the only copy."),
+    ("pattern 2: a defining verb before a colon, the match in a relative clause",
+     "The report uses two sources: the mirror, and the transcript that is missing."),
 ]:
     check(f"trigger: {case_name}", bool(hook.absence_claim_matches(text)), text)
 
@@ -391,6 +393,8 @@ for case_name, text in [
     ("an -ing word in a compound noun before an edited-element word", "The file naming rules are gone."),
     ("an -ing word in a compound noun before code", "The log formatting code is gone."),
     ("a search tool as the subject, an adverb before the match", "We know the locator still cannot find branch names."),
+    ("an artifact word ending in -ing after the subject's first noun is a participle",
+     "The guard ruling out stale files is gone."),
 ]:
     check(f"trigger: silent on {case_name}", not hook.absence_claim_matches(text),
           hook.absence_claim_matches(text))
