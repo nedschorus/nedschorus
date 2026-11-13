@@ -202,6 +202,13 @@ check("a sleep that overruns the time limit starts no look after it, and exits 1
       "the last look",
       sleeps == [wait.POLL_SECONDS] and given == [10] and code == wait.EXIT_TIME_LIMIT_REACHED
       and "process 7 still has" in message, (sleeps, given, code, message))
+list_writers, given = lister_answering({7}, set())
+clock_values = iter([100.0, 101.0, 109.5])
+code, message = wait.wait_until_no_process_writes(
+    str(output_file), 10, list_writers, clock=lambda: next(clock_values), sleep=no_sleep)
+check("a sleep that leaves less than a second before the time limit is still followed by a look, given "
+      "the time that remains",
+      code == wait.EXIT_NO_WRITER_LEFT and given == [10, 0.5], (code, message, given))
 list_writers, given = lister_answering({7}, wait.WritersLookTimeLimitReached("lsof had not listed them"))
 clock_values = iter([100.0, 101.0, 107.0])
 code, message = wait.wait_until_no_process_writes(
