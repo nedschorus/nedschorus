@@ -466,6 +466,16 @@ def foreground_cases():
     check("foreground: the state for the second half names both processes and the agent-home's processes",
           state.get("supervisor_id") == supervisor_id and state.get("claude_id") == claude_id
           and str(claude_id) in state.get("agent_home_processes", {}), state)
+    check("foreground: the state for the second half is written under its own file name",
+          started and started[0].name
+          == program.HANDOFF_SUPERVISOR_RESTART_SIGSTOP_FROZEN_HANDOFF_SUPERVISOR_DETAILS_FOR_DETACHED_SECOND_HALF_FILE_NAME,
+          started)
+    check("foreground: the state names the result file the agent-seat is told to read, and both notice files",
+          started and "result_path" in state and state["result_path"] in output
+          and state.get("result_path") == str(started[0].parent / program.HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME)
+          and state.get("notice_path") == str(started[0].parent / program.HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_FILE_NAME)
+          and state.get("notice_page_path") == str(started[0].parent / program.HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_HTML_PAGE_FILE_NAME),
+          state)
     return supervisor_id, claude_id, started[0] if started else None
 
 
@@ -908,6 +918,26 @@ def notice_cases():
           and "&lt;badly&gt;" in page, output.getvalue())
     stop_fake(claude_id)
     stop_fake(supervisor_id)
+
+    directory = Path(tempfile.mkdtemp())
+    supervisor_id, claude_id, state_path = fresh_state(
+        result_path=str(directory / "result-named-by-the-foreground.txt"),
+        notice_path=str(directory / "notice-named-by-the-foreground.txt"),
+        notice_page_path=str(directory / "notice-named-by-the-foreground.html"))
+    half = program.SecondHalf(state_path, open_notice_page=lambda page: (0, ""))
+    with contextlib.redirect_stdout(io.StringIO()):
+        half.fail("a step failed")
+    check("the second half writes its result and notices where the foreground's state file says, "
+          "so a fast-forward between the two halves cannot move them",
+          (directory / "result-named-by-the-foreground.txt").is_file()
+          and (directory / "result-named-by-the-foreground.txt").read_text().startswith("FAILED: a step failed")
+          and (directory / "notice-named-by-the-foreground.txt").is_file()
+          and (directory / "notice-named-by-the-foreground.html").is_file()
+          and not (state_path.parent / program.HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME).exists(),
+          sorted(path.name for path in directory.iterdir()))
+    stop_fake(claude_id)
+    stop_fake(supervisor_id)
+    shutil.rmtree(directory, ignore_errors=True)
 
 
 def mac_cases():

@@ -355,6 +355,17 @@ def start_second_half(state_path: Path) -> int:
     return process.pid
 
 
+def second_half_paths(log_directory: Path) -> dict:
+    """The files the foreground names to the agent-seat and the second half writes. The foreground
+    passes them in the state file, because step 0's fast-forward can give the second half newer code
+    whose own file names differ."""
+    return {
+        "result_path": str(log_directory / HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME),
+        "notice_path": str(log_directory / HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_FILE_NAME),
+        "notice_page_path": str(log_directory / HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_HTML_PAGE_FILE_NAME),
+    }
+
+
 def restart_log_directory(seat: str, log_root: Path) -> Path:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     directory = log_root / f"{stamp}-{seat}"
@@ -393,6 +404,7 @@ def foreground(seat: str, start_second_half=start_second_half, sleep=time.sleep)
             "seat": seat, "supervisor_id": supervisor_id, "supervisor_command": supervisor_command,
             "claude_id": claude_id, "claude_command": claude_command, "frozen_at": frozen_at,
             "agent_home_processes": {str(key): value for key, value in agent_home_processes.items()},
+            **second_half_paths(log_directory),
         }, indent=2) + "\n", encoding="utf-8")
         second_half_id = start_second_half(state_path)
     except (RestartFailure, OSError) as error:
@@ -400,7 +412,7 @@ def foreground(seat: str, start_second_half=start_second_half, sleep=time.sleep)
                                     unfreeze(supervisor_id, supervisor_command) + "."),
               file=sys.stderr)
         return 1
-    result_path = log_directory / HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME
+    result_path = second_half_paths(log_directory)["result_path"]
     print(f"step 2: the handoff-supervisor {supervisor_id} of {seat} is frozen, so it cannot start a "
           f"successor on its old code; its claude is process {claude_id}. The program's second half, "
           f"process {second_half_id}, waits up to {SESSION_HANDOFF_WAIT_LIMIT_SECONDS // 60} minutes "
@@ -444,7 +456,10 @@ class SecondHalf:
         self.sleep = sleep
         self.now = now
         self.open_notice_page = open_notice_page or open_notice_page_for_the_user
-        self.result_path = self.log_directory / HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME
+        paths = {**second_half_paths(self.log_directory), **self.state}
+        self.result_path = Path(paths["result_path"])
+        self.notice_path = Path(paths["notice_path"])
+        self.notice_page_path = Path(paths["notice_page_path"])
         self.step_4_started = False
 
     def record(self, line: str) -> None:
@@ -453,9 +468,9 @@ class SecondHalf:
             stream.write(line + "\n")
 
     def notice(self, text: str) -> None:
-        notice_path = self.log_directory / HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_FILE_NAME
+        notice_path = self.notice_path
         notice_path.write_text(text + "\n", encoding="utf-8")
-        page_path = self.log_directory / HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_HTML_PAGE_FILE_NAME
+        page_path = self.notice_page_path
         title = f"{self.seat}: its handoff-supervisor restart needs you"
         page_path.write_text(
             f"<!doctype html><html><head><meta charset=\"utf-8\"><title>{html.escape(title)}</title>"
