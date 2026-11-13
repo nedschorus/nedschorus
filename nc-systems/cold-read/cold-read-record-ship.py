@@ -1511,7 +1511,7 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
 
     RULE 4 REACHES THAT KIND ONLY THROUGH THE NAME triage.md, which a
     sanity-check record does not use: its twice-written file is
-    finding-dispositions.md, written at the run's close and updated as the
+    sanity-check-finding-dispositions.md, written at the run's close and updated as the
     findings' status moves, and it stays add-only and refused on difference.
     That is the same defect rule 4 fixes here, left open in that kind.
 

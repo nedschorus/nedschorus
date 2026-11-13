@@ -81,7 +81,7 @@ Operating rules:
   `scripts/sanity-check-record-ship.py`, which this runner calls when the run
   ends. They are logs, kept and citable, not deleted when the work they served
   lands (user-ruled 2026-08-25, and 2026-09-15 for this kind). Ship again
-  after writing `finding-dispositions.md` and the add-only copy sends only
+  after writing `sanity-check-finding-dispositions.md` and the add-only copy sends only
   that file; a file already in the store whose content differs is refused, so
   finish the triage before shipping it rather than editing it afterwards.
 - Each review agent is given a scratch directory of its own, made by the
@@ -160,7 +160,7 @@ Running a sanity-check, and reading its output:
   the user what the line says, and after the user has cleared the cause run
   the command printed there, which runs that one agent again into a new
   record directory. For every other failure: triage that audit from the other
-  agent-binary's report when a run saved one, and write in finding-dispositions.md
+  agent-binary's report when a run saved one, and write in sanity-check-finding-dispositions.md
   that the audit is unreviewed when none did. A report saved by an agent's
   second launch carries `relaunched_after=<cause class>` in its provenance
   line.
@@ -1708,7 +1708,7 @@ def failed_cell_lines(adversarial_prompt: str, runtime: str, failure: FailedLaun
         f"When a run of this sanity-check saved {other_cell}'s report, triage "
         f"the {adversarial_prompt}-adversarial-prompt from that report.",
         f"When no run of this sanity-check saved a report of the "
-        f"{adversarial_prompt}-adversarial-prompt, write in finding-dispositions.md "
+        f"{adversarial_prompt}-adversarial-prompt, write in sanity-check-finding-dispositions.md "
         f"that the {adversarial_prompt}-adversarial-prompt is unreviewed.",
     ]
 
@@ -2156,7 +2156,7 @@ def print_run_completion(out_dir: pathlib.Path, ship=None) -> bool:
             "time for his ruling (the walk-me-through skill). "
             "The record was shipped to the log-store when this run ended (the "
             "`record:` line above says whether it arrived); once "
-            "finding-dispositions.md is written, run "
+            "sanity-check-finding-dispositions.md is written, run "
             f"`scripts/sanity-check-record-ship.py {out_dir}` so it joins the "
             "reports there. Leave the record directory in place: these are logs, "
             "kept, not deleted when the work they served lands. A file already in "
