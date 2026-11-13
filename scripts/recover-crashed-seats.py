@@ -117,9 +117,9 @@ where a box seat lives by rule rather than because nothing sets it.
 Checkout: a seat this tool launches runs its supervisor from the durable
 checkout — --checkout, default ~/Projects/nedschorus, the name and default the
 login restart's install scripts give it — whichever checkout this tool itself
-runs from. On the Mac it runs that checkout's launch-claude-mac, which takes
-the supervisor from its own checkout; off macOS the tmux command names that
-checkout's supervisor, as launch-claude-ubuntu does. Until 2026-09-29 both
+runs from. On the Mac it runs that checkout's launch-claude-mac with
+--supervisor-checkout naming that checkout; off macOS the tmux command names
+that checkout's supervisor, as launch-claude-ubuntu does. Until 2026-09-29 both
 came from this tool's own checkout, so a recovery run by hand from a worktree
 left the seat's supervisor running that worktree's code for the rest of its
 life, and the seat stopped at its next handoff once the worktree was removed,
@@ -739,6 +739,11 @@ def agents_root_is_movable_on_this_machine() -> bool:
     return launcher_path() is not None
 
 
+def mac_launcher_supervisor_checkout_arguments() -> list:
+    """Return the launcher arguments that pin the seat's supervisor to the durable checkout."""
+    return ["--supervisor-checkout", str(durable_checkout)]
+
+
 def compose_supervisor_arguments_for_seat_launch(handoff_directory: Path,
                                                  extra_supervisor_arguments: str) -> str:
     # The supervisor must consume the same handoff directory recovery assessed.
@@ -761,6 +766,8 @@ def by_hand_launch_command_for_seat(name: str, seat_directory: Path, handoff_dir
         "launch-claude-ubuntu" if launcher is None else shlex.quote(str(launcher)),
         shlex.quote(name),
     ]
+    if launcher is not None:
+        words += [shlex.quote(word) for word in mac_launcher_supervisor_checkout_arguments()]
     if first_prompt_file is not None:
         words += ["--first-prompt-file", shlex.quote(str(first_prompt_file))]
     command = " ".join(words)
@@ -788,7 +795,7 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
     if launcher is not None:
         environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = supervisor_arguments
         environment["NEDSCHORUS_AGENTS_ROOT"] = str(seat_directory.parent)
-        command = [str(launcher), name, "--no-attach"]
+        command = [str(launcher), name, "--no-attach", *mac_launcher_supervisor_checkout_arguments()]
         if first_prompt_file is not None:
             command += ["--first-prompt-file", str(first_prompt_file)]
         return subprocess.run(command, env=environment, check=False).returncode
@@ -872,7 +879,7 @@ def iterm_window_command_text(name: str, seat_directory: Path, handoff_directory
              + compose_supervisor_arguments_for_seat_launch(
                  handoff_directory, extra_supervisor_arguments),
              f"NEDSCHORUS_AGENTS_ROOT={seat_directory.parent}",
-             str(launcher_path()), name]
+             str(launcher_path()), name, *mac_launcher_supervisor_checkout_arguments()]
     if first_prompt_file is not None:
         words += ["--first-prompt-file", str(first_prompt_file)]
     for word in words:
