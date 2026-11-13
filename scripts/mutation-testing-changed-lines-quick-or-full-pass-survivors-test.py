@@ -2749,13 +2749,37 @@ def run_cases():
             ("the flag and its value as two words", ["s.py", "--cosmic-ray-venv", "/v", "--head", "h"],
              ["s.py", "--head", "h"]),
             ("the flag with =", ["s.py", "--cosmic-ray-venv=/v", "--head", "h"], ["s.py", "--head", "h"]),
-            ("an abbreviated flag, given twice", ["s.py", "--cos", "/v", "--cosmic-ray=/w"], ["s.py"]),
+            ("the shortest abbreviation argparse accepts, given twice",
+             ["s.py", "--cosmic-ray-v", "/v", "--cosmic-ray-ve=/w"], ["s.py"]),
             ("--checkout is kept, though it shares --c with the flag",
-             ["s.py", "--checkout", "/c"], ["s.py", "--checkout", "/c"])]:
+             ["s.py", "--checkout", "/c"], ["s.py", "--checkout", "/c"]),
+            ("an empty option value is kept, with the option after it",
+             ["s.py", "--base", "", "--checkout", "/c"], ["s.py", "--base", "", "--checkout", "/c"]),
+            ("a - option value is kept, with the option after it",
+             ["s.py", "--base", "-", "--checkout", "/c"], ["s.py", "--base", "-", "--checkout", "/c"]),
+            ("--cosmic-ray-sessions-directory-kept-to-resume is kept",
+             ["s.py", "--cosmic-ray-sessions-directory-kept-to-resume", "/s"],
+             ["s.py", "--cosmic-ray-sessions-directory-kept-to-resume", "/s"])]:
         got = placeholder_command(argv)
         check(f"rerun command with the venv placeholder, {case_name}: every venv flag taken out "
               "and one placeholder flag put at the end",
               got == expected + ["--cosmic-ray-venv", "<that venv>"], got)
+
+    # The length the function matches from must be the shortest abbreviation parse_arguments
+    # accepts, so a parser option added later that shares more of the flag's name fails here.
+    script = load_script_module()
+    shortest = "--cosmic-ray-venv"[:script.SHORTEST_COSMIC_RAY_VENV_FLAG_ABBREVIATION_LENGTH]
+    for abbreviation, accepted in ((shortest, True), (shortest[:-1], False)):
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                parsed = script.parse_arguments(
+                    ["--quick-mutation-pass", "--head", "h", "--base", "b", abbreviation, "/v"])
+            got = parsed.cosmic_ray_venv == "/v"
+        except SystemExit:
+            got = False
+        check(f"parse_arguments {'accepts' if accepted else 'refuses'} {abbreviation!r}, so the "
+              "rerun command's flag matching starts at the shortest abbreviation it accepts",
+              got == accepted, f"accepted={got}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
         repository, base, head = scratch_repository(scratch_name, HEAD_FILES)

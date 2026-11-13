@@ -413,9 +413,10 @@ def run_or_raise(command, cwd, environment=None, what=None):
 
 COSMIC_RAY_VENV_FLAG = "--cosmic-ray-venv"
 COSMIC_RAY_VENV_PLACEHOLDER = "<that venv>"
-# argparse accepts an unambiguous abbreviation; "--co" also opens --checkout, so the shortest
-# abbreviation of --cosmic-ray-venv it accepts is "--cos".
-SHORTEST_COSMIC_RAY_VENV_FLAG_ABBREVIATION_LENGTH = len("--cos")
+# argparse accepts only an unambiguous abbreviation, and --cosmic-ray-sessions-directory-kept-to-resume
+# shares "--cosmic-ray-" with this flag, so the shortest abbreviation parse_arguments accepts is
+# "--cosmic-ray-v". A shorter word, such as an empty option value, is never this flag.
+SHORTEST_COSMIC_RAY_VENV_FLAG_ABBREVIATION_LENGTH = len("--cosmic-ray-v")
 
 
 def build_argv_with_cosmic_ray_venv_flags_replaced_by_placeholder(argv):
