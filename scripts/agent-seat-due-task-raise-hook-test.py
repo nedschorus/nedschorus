@@ -16,6 +16,7 @@ import importlib.util
 import json
 import os
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -102,6 +103,8 @@ def seat_session_environment():
     """This process's environment as an agent-seat's own attended session
     gives it to a Stop hook: attended, and no caller owning the session."""
     environment = dict(os.environ)
+    # The cases move HOME, from which Python finds the user's site-packages; on the Mac markdown-it-py is there.
+    environment["PYTHONUSERBASE"] = site.getuserbase()
     environment["CLAUDE_CODE_SESSION_ATTENDED"] = "1"
     environment.pop("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER", None)
     return environment

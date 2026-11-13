@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -215,6 +216,8 @@ class Machine:
     def run(self, minutes, *extra, path_has_fake=True):
         environment = dict(os.environ)
         environment["HOME"] = str(self.home)
+        # Python finds the user's site-packages from HOME, and on the Mac markdown-it-py is installed there.
+        environment["PYTHONUSERBASE"] = site.getuserbase()
         if path_has_fake:
             environment["PATH"] = f"{self.bin}{os.pathsep}{environment['PATH']}"
         else:
