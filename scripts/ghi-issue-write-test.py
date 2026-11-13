@@ -1555,9 +1555,8 @@ def run_cases(scratch: Path):
                   "ghi-guide-agent reviewed the GHI-MD \"A statusline\" when "
                   "scripts/ghi-issue-write.py filed it. The agent that ran "
                   "the tool dispatches a forked subagent to settle each "
-                  "entry in this file by rules 3 to 7 of § The design in "
-                  "docs/issues/1132-concerns-about-a-ghi-are-handled-by-"
-                  "agents.md. This file stays in the log-store; only the "
+                  "entry in this file by "
+                  "docs/agents/queue/proposed-improvements-or-changes-file-reviewer-entries-settling-subagent-instructions.md. This file stays in the log-store; only the "
                   "change an entry calls for goes to main, such as an edit "
                   "of the GHI-MD through "
                   "`scripts/ghi-issue-write.py edit`.\n\n"
@@ -1570,11 +1569,16 @@ def run_cases(scratch: Path):
                   "Goes wrong when: the proposal is carried out while that "
                   "user-ruling still applies.\n"
                   "State: open\n"))
-        check("the GHI-MD the file points the subagent at is on main",
+        check("the GHI-MD the file names for the entry form is on main",
               (Path(__file__).resolve().parents[1]
                / tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD)
               .is_file(),
               tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD)
+        check("the instructions the file points the subagent at exist",
+              (Path(__file__).resolve().parents[1]
+               / tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE_ENTRIES_SETTLING_SUBAGENT_INSTRUCTIONS)
+              .is_file(),
+              tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE_ENTRIES_SETTLING_SUBAGENT_INSTRUCTIONS)
         check("a question naming no GHI says so in the file",
               "may go against a user-ruling for which ghi-guide-agent named no "
               "GHI\n" in tool.proposed_improvements_or_changes_file_text(
@@ -1825,9 +1829,8 @@ def run_cases(scratch: Path):
                       f"{clean_store / proposed_name}, in the log-store, not "
                       "in the pull request.\n"
                       "Dispatch a forked subagent now to settle the entry in "
-                      "that file by rules 3 to 7 of § The design in "
-                      "docs/issues/1132-concerns-about-a-ghi-are-handled-by-"
-                      "agents.md; do not wait for the user's answer.\n"
+                      "that file by "
+                      "docs/agents/queue/proposed-improvements-or-changes-file-reviewer-entries-settling-subagent-instructions.md; do not wait for the user's answer.\n"
                       "If the subagent marks the entry as needing the user, "
                       "bring the entry to him in your agent-seat's next "
                       "approval-walk.")
