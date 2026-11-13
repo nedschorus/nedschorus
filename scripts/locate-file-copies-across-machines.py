@@ -1148,10 +1148,11 @@ def main(argv=None) -> int:
 
     plan = plan_for_this_run()
     code, candidate_names, unreached = search_and_report(query, plan)
-    if code == 0 or not candidate_names or len(candidate_names) != 1 \
-            or is_same_name(candidate_names[0], name):
+    if code == 0 or not candidate_names or len(candidate_names) != 1:
         return code
-    full_name = candidate_names[0]
+    (full_name,) = candidate_names
+    if is_same_name(full_name, name):
+        return code
     # A path query keeps its directory, so only a file at that path counts as found.
     rerun_query = (os.path.join(os.path.dirname(query), full_name)
                    if len(parts_of(query)) > 1 else full_name)
