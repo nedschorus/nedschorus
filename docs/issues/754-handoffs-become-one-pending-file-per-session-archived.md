@@ -106,7 +106,7 @@ Each of these bears on the build. None of them reverses the direction.
 
 ## Every consumer of the counter on main
 
-The search: `git grep -n -E "restart-counter|restart_counter|consumed_counter|counter_from|next_restart_counter" origin/main -- scripts/ nc-systems/ .claude/`, on 2026-09-28. The counts use the specification's own method, so they compare with its 2026-08-31 table: matching lines, `grep -Ec` per pattern, per file. A line may mention a pattern twice, and some mentions are docstring prose. The counts size the change. They do not scope it.
+The search: `git grep -n -E "restart-counter|restart_counter|consumed_counter|counter_from|next_restart_counter" origin/main -- scripts/ nc-systems/ .claude/`, on 2026-09-28. The counts use the specification's own method, so they compare with its 2026-08-31 table: matching lines, `grep -Ec` per pattern, per file. The search predates the field's rename to `session-handoff-sequence-number`. A line may mention a pattern twice, and some mentions are docstring prose. The counts size the change. They do not scope it.
 
 | file | what it does with the counter | `restart-counter` or `counter_from` | `next_restart_counter` | `consumed_counter` | `prune_old_generations` or `GENERATIONS_KEPT` |
 |---|---|---|---|---|---|
@@ -115,7 +115,7 @@ The search: `git grep -n -E "restart-counter|restart_counter|consumed_counter|co
 | `scripts/resupervise-seat.py` | `handoff_is_waiting`: refuses a handoff with no readable counter, and one not above the consumed counter | 6 | 0 | 1 | 0 |
 | `scripts/recover-crashed-seats.py` | `assess_seat`: refuses a handoff with no readable counter; above the consumed counter it is `seat-asked-to-be-consulted` or `defer-to-boot-ignition` | 3 | 0 | 1 | 0 |
 | `scripts/restart-live-seats-at-login.py` | no direct use; runs `scripts/recover-crashed-seats.py` for each seat (`recovery_command_for_seat`) | 0 | 0 | 0 | 0 |
-| `nc-systems/handoff/tests/handoff-supervisor-test.py` | tests | 26 | 0 | 17 | 4 |
+| `nc-systems/handoff/tests/handoff-supervisor-test.py`, since split into `handoff-supervisor-successor-prompt-test.py`, `handoff-supervisor-session-end-and-resume-test.py` and `handoff-supervisor-session-launch-and-seat-lock-test.py`, with `handoff-supervisor-test-fixture.py`, in the same directory | tests | 26 | 0 | 17 | 4 |
 | `nc-systems/handoff/tests/handoff-write-and-check-supervisor-test.py` | tests | 9 | 6 | 3 | 0 |
 | `scripts/recover-crashed-seats-test.py` | tests | 19 | 0 | 6 | 0 |
 | `scripts/resupervise-seat-test.py` | tests | 5 | 0 | 4 | 0 |
