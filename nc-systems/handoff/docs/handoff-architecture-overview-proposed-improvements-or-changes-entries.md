@@ -647,3 +647,54 @@ The claim check's evidence:
 > - The branch may also be an existing leftovers branch rather than a new dated one: :19-20 `the leftovers branch HEAD is already on, else a new branch reference-checkout-leftovers-<YYYY-MM-DD>`
 > - The rest of the row is supported: launch-claude-ubuntu:335, launch-claude-mac:288, handoff-supervisor.py:2381, restart program :19
 State: open
+
+## E56 — possible problem: an assertion of the overview is contradicted
+
+Claim: Back-on-main program: it saves the leftovers to a branch it pushes, "and only then puts the checkout back on main."
+Found by: the overview claim check of 2026-11-13 against commit 37a1c062c8844fead0714d47caeb08918a1ecb4e; its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/ee73c1ca39b9ff08542df8cb54c437b9534257a8-2026-11-13T00-44-55-143108Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> - nc-systems/handoff/handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py:27-29 ``runs `git switch --no-overwrite-ignore -C main origin/main` ... whether or not every push succeeded``
+> - handoff-supervisor.py:2288-2290 `which it can be even after a failed push, so a leftovers branch the program could not push stays only in that checkout`
+> - "only then" suggests the switch waits for a successful push; it does not.
+State: open
+
+## E57 — possible problem: an assertion of the overview is contradicted
+
+Claim: Shared state `worktree-owner.json`: the overview says agent-made worktrees get it from `agent-seat-worktree-create-with-owner-file.py`, other `git worktree add` worktrees from the post-checkout hook, and subagent worktrees "the hook left without one" from the snapshot hook or `clean-worktrees.py`.
+Found by: the overview claim check of 2026-11-13 against commit 37a1c062c8844fead0714d47caeb08918a1ecb4e; its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/ee73c1ca39b9ff08542df8cb54c437b9534257a8-2026-11-13T00-44-55-143108Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> - .claude/settings.json:17-22 registers `"WorktreeCreate"` → `nc-systems/general-tools/agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook.py`.
+> - That hook's file, lines 6-8: `Claude Code runs this hook in place of its own `git worktree add` whenever it makes a worktree: for a subagent started with isolation "worktree", for `claude --worktree`, and for the EnterWorktree tool.`
+> - Same file, 13-15: `with --owned-by-agent-session, writes its owner file naming the agent-session`; 19 `A worktree it made carries no Claude Code lock`
+> - scripts/agent-seat-worktree-create-with-owner-file.py:31-32: `git worktree add` runs with core.hooksPath emptied, so the post-checkout hook writes nothing there.
+> - So subagent and `claude --worktree` worktrees get their owner file from this `WorktreeCreate` hook through the creator, not from the post-checkout hook or the snapshot hook. The hook appears nowhere in the overview. An agent tracing or changing who writes a subagent worktree's owner file would open the post-checkout or snapshot-hook path instead.
+State: open
+
+## E58 — possible problem: an assertion of the overview is contradicted
+
+Claim: Shared state, the task list under `~/.claude/tasks/`: "written by Claude Code, and on ned-box by the agent-crash-watcher; completed tasks removed by the writer script, which compares each with its copy in the log-store, ... written by `transcript-mirror-to-log-store.py`."
+Found by: the overview claim check of 2026-11-13 against commit 37a1c062c8844fead0714d47caeb08918a1ecb4e; its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/ee73c1ca39b9ff08542df8cb54c437b9534257a8-2026-11-13T00-44-55-143108Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> - handoff-write-and-check-supervisor.py:52-54 `The writer first copies each completed task it would remove into the log-store`; 776 `copy_task_files_to_log_store(`. The writer writes the log-store copy itself.
+> - uncommitted-work-snapshots.py:34-35 `opens a task naming the branch on the task list ~/.claude/tasks/<CLAUDE_CODE_TASK_LIST_ID>`
+> - clean-worktrees.py:221-230 `it closes the tasks that uncommitted-work-snapshots.py restore opens, in every task list on the machine ... marks the task completed`
+> - The list of writers is incomplete.
+State: open
+
+## E59 — possible problem: an assertion of the overview is contradicted
+
+Claim: Shared state, the reference-checkout `~/Projects/nedschorus`: "fast-forwarded to main by launch-claude-ubuntu ..., by launch-claude-mac ..., and, at each session-handoff ..., by every handoff-supervisor that runs from it, and by the restart program."
+Found by: the overview claim check of 2026-11-13 against commit 37a1c062c8844fead0714d47caeb08918a1ecb4e; its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/ee73c1ca39b9ff08542df8cb54c437b9534257a8-2026-11-13T00-44-55-143108Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> - scripts/checkout-freshness-catch-up.py:63-65 `The machine's reference checkout ... gets a fast-forward-only pull on the same rhythm`
+> - Same file, 1896-1899 `reference = reference_checkout_of(root) ... fast_forward_reference_checkout(reference, ...)`, in the Stop-hook path (settings.json:83)
+> - Every agent-session's Stop hook also fast-forwards the reference-checkout, and this row leaves it out.
+State: open
