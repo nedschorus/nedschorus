@@ -471,6 +471,22 @@ with tempfile.TemporaryDirectory() as workspace_name:
           git(["show", "main:README.md"], remote).stdout == "seed\nracer one\n"
           and git(["show", "main:keep.txt"], remote).stdout == "racer two\n")
 
+    # A racer's push holds its incoming objects in a quarantine directory inside the remote's
+    # object store, which a file-by-file copy of that store can catch half-written. A planted
+    # quarantine makes the copy visible without needing the race's timing.
+    remote, work, base = make_fixture(workspace, "quarantine")
+    quarantine = remote / "objects" / "tmp_objdir-incoming-planted" / "53"
+    quarantine.mkdir(parents=True)
+    (quarantine / "tmp_obj_planted").write_bytes(b"a push still being received")
+    screening = workspace / "quarantine-screening"
+    screening.mkdir()
+    clone = gatekeeper.prepare_clone(screening, str(remote))
+    check("T4 the candidate clone does not copy a push still in a local remote's quarantine",
+          not list((clone / ".git" / "objects").glob("tmp_objdir-incoming-*")),
+          sorted(path.name for path in (clone / ".git" / "objects").iterdir()))
+    check("T4 the candidate clone still holds main",
+          git(["rev-parse", "origin/main"], clone).stdout.strip() == base)
+
     # --- T5: a real conflict refuses rather than guessing -------------------
     remote, work, base = make_fixture(workspace, "conflict")
     rival = workspace / "conflict-rival"
