@@ -100,11 +100,42 @@ spec_three = chain_text('X_MESSAGE = "Elapsed: " + f"{seconds:.3f}"\n')
 check("an f-string field in a chain keeps its format spec, so .1f and .3f differ",
       spec_one == "Elapsed: {seconds:.1f}" and spec_three == "Elapsed: {seconds:.3f}", (spec_one, spec_three))
 check("an f-string field in a chain keeps its conversion", chain_text('X_MESSAGE = "v " + f"{x!r}"\n') == "v {x!r}")
+in_chain = chain_text('X_MESSAGE = "x" + f"{seconds:.1f}"\n')
+standalone = chain_text('X_MESSAGE = f"x{seconds:.1f}"\n')
 check("a chain's field text matches the field in the same standalone f-string",
-      "{seconds:.1f}" in chain_text('X_MESSAGE = f"{seconds:.1f}"\n'))
+      in_chain == "x{seconds:.1f}" and standalone == "f'x{seconds:.1f}'", (in_chain, standalone))
 found = entries('print(report.render() + "\\n")\nprint("Failed: " + name + f" {n!r}")\n')
-check("literal_text leaves out every {...} placeholder",
+check("literal_text leaves out a placeholder that carries no string",
       [entry["literal_text"] for entry in found] == ["\n", "Failed:  "], found)
+
+NESTED_STRINGS = (
+    ("a conditional expression in an f-string field",
+     'print(f"    {\'came up\' if came_up else \'DID NOT COME BACK\'}: {report}")\n',
+     "    came up DID NOT COME BACK: "),
+    ("a conditional expression as a + operand",
+     'print(f"{PROGRAM}: " + (missing if missing else f"the suite used {cpu_seconds:.1f} CPU seconds"))\n',
+     ": the suite used  CPU seconds"),
+    ("a join's fallback in an f-string field", 'print(f"| {\', \'.join(flagged) or \'none\'} |")\n', "| none |"),
+)
+for case_name, source, expected in NESTED_STRINGS:
+    found = [entry["literal_text"] for entry in entries(source)]
+    check(f"literal_text holds the words of a string nested in a placeholder: {case_name}",
+          found == [expected], found)
+
+NO_NESTED_WORDS = (
+    ("a placeholder that names a value", 'print(f"{msg}")\n'),
+    ("a subscript's key", 'print(f"| {s[\'findings\']} | {s[\'hit_findings\']} |")\n'),
+    ("a format spec", 'print(f"{now:%Y-%m-%d} {x:>{width}}")\n'),
+    ("a join's separator", 'print(f"{\' + \'.join(names)}: {count}")\n'),
+)
+for case_name, source in NO_NESTED_WORDS:
+    found = [entry["literal_text"] for entry in entries(source)]
+    check(f"literal_text holds no letter from {case_name}",
+          len(found) == 1 and not any(character.isalpha() for character in found[0]), found)
+
+found = entries('X_TEMPLATE_MESSAGE = "{path}: {error}"\n')
+check("literal_text of a plain string keeps its braces as written, since they reach the agent as written",
+      [entry["literal_text"] for entry in found] == ["{path}: {error}"], found)
 
 NOT_RECOGNIZED_FORMS = (
     ("a systemMessage, which the user sees and the agent does not",
