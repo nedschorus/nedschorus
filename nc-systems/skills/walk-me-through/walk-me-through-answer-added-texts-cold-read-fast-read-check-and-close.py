@@ -981,6 +981,8 @@ ITEM_READ_LINES = (
 ITEM_READ_NOT_RUN_NEXT = "Present {item}."
 MARKDOWN_HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+(.*)$")
 WITHDRAWN_VERSION_HEADING = "#### Withdrawn version {version} of item {number}"
+NUMBER_PREDICTED = "number_predicted"
+ITEM_NUMBER_PREDICTED_FLAG = "--item-number-predicted"
 EARLIER_TEXT_KEPT = ("{item}: its earlier text, which the cold-read-fast-read {report} read, is now kept below its "
                      "live version in {document}, under `{heading}`; leave it there.")
 EARLIER_TEXT_COPY_MISSING = (
@@ -1872,10 +1874,12 @@ def worker_alive(reads, key):
     return True
 
 
-def record_read(reads, key, item, text, outcome):
-    """Keep the text read beside the read's outcome, for a later AFTER_FIXES_FLAG read to compare against."""
+def record_read(reads, key, item, text, outcome, number_predicted=False):
+    """Keep the text read beside the read's outcome, for a later AFTER_FIXES_FLAG read to compare against.
+    number_predicted marks a read ahead of an unnumbered item, whose number is only the one close expects to give it."""
     (reads / f"{key}.md").write_text(text + "\n", encoding="utf-8")
-    write_json(reads / f"{key}-outcome.json", dict(outcome, item=item, finished=time.time()))
+    write_json(reads / f"{key}-outcome.json",
+               dict(outcome, item=item, finished=time.time(), **({NUMBER_PREDICTED: True} if number_predicted else {})))
 
 
 def fast_read_outcome(text, name, fast_read_program):
@@ -1895,11 +1899,12 @@ def read_ahead_worker(arguments):
     """The detached process close starts: fast-read the text kept at --text-file and write its outcome."""
     reads, key = arguments.text_file.parent, arguments.text_file.stem
     text = arguments.text_file.read_text(encoding="utf-8").rstrip("\n")
-    record_read(reads, key, arguments.item, text, fast_read_outcome(text, arguments.name, arguments.fast_read_program))
+    record_read(reads, key, arguments.item, text, fast_read_outcome(text, arguments.name, arguments.fast_read_program),
+                arguments.item_number_predicted)
     return 0
 
 
-def start_read_ahead(reads, item, text, name, fast_read_program, top):
+def start_read_ahead(reads, item, text, name, fast_read_program, top, number_predicted=False):
     """Start a detached read-ahead worker on the text, unless a read of the same text was started or written
     before, whatever its outcome: a read ahead is never retried, so a failed one leaves the read to the read step."""
     key = text_key(text)
@@ -1912,7 +1917,8 @@ def start_read_ahead(reads, item, text, name, fast_read_program, top):
     with open(reads / f"{key}.log", "w", encoding="utf-8") as log:
         worker = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), READ_AHEAD_WORKER_STEP,
                                    "--text-file", str(text_file), "--item", item, "--name", name,
-                                   "--fast-read-program", str(fast_read_program)],
+                                   "--fast-read-program", str(fast_read_program)]
+                                  + ([ITEM_NUMBER_PREDICTED_FLAG] if number_predicted else []),
                                   stdin=subprocess.DEVNULL, stdout=log, stderr=log, cwd=top, start_new_session=True)
     write_json(reads / f"{key}-started.json", {"pid": worker.pid, "item": item})
 
@@ -1942,7 +1948,8 @@ def start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, t
                                 named_by=f"the item after {named}")
         walk_name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
         start_read_ahead(item_reads_directory(walk_finder, minutes), after_named, text,
-                         walk_fast_read_name(walk_name, after_named), fast_read_program, top)
+                         walk_fast_read_name(walk_name, after_named), fast_read_program, top,
+                         number_predicted=isinstance(after[0], int))
     except Failure as problem:
         return READ_AHEAD_NOT_STARTED.format(item=named, problem=problem)
     return None
@@ -2001,45 +2008,78 @@ def latest_read(reads, item):
     return max(done)[1:] if done else None
 
 
-def heading_body(text):
-    """Return an item's text without its heading line, which changes with M and the deferred note alone."""
-    return text.split("\n", 1)[1].strip() if "\n" in text else ""
+def heading_body(walk_finder, text):
+    """Return an item's text without its heading, which changes with M and the deferred note alone: a `#` heading
+    line goes whole; a bold paragraph's first line keeps its text after the running count, which can hold the item's
+    recommendation."""
+    first, _, rest = text.partition("\n")
+    if first.lstrip().startswith("#"):
+        return rest.strip()
+    return (item_title(walk_finder, first) + "\n" + rest).strip()
 
 
-def earlier_read_texts_kept_as_withdrawn_versions(walk_finder, minutes, value, numbers, total, parser, reads, item,
-                                                  live_text, command):
-    """Put each text of the item that a read wrote its report for, and that is neither the live text nor already
-    below it, under a WITHDRAWN_VERSION_HEADING after the item's live version, oldest read first; return a line for
-    each. An item that shares its heading with others, or several waiting items, keep none."""
+def item_title(walk_finder, line):
+    """The text of an item's heading line after its markup, running count and deferred note, which renumbering the
+    item does not change."""
+    line = walk_finder.approval_walk_item_heading_with_deferred_note_removed(line).lstrip("#").strip()
+    count = walk_finder.HEADING_COUNT.match(line)
+    return re.sub(r"\*\*|__", "", line[count.end():] if count else line).lstrip(" :,.;").rstrip()
+
+
+def earlier_read_texts_of_item(walk_finder, minutes, value, numbers, total, parser, reads, command):
+    """Return [(key, outcome, text)] for each text of the waiting item that a read wrote its report for, oldest read
+    first. A read ahead of an unnumbered item counts only when its text's title is the item's title now, because
+    the number it carries is only the one close expected to give it. An item that shares its heading with others,
+    or several waiting items, have none. Raise Failure, before anything is written, when a text's copy is missing."""
     if len(numbers) != 1 or not reads.is_dir():
         return []
-    number = numbers[0]
-    earlier = []
-    for path in reads.glob("*-outcome.json"):
-        outcome = json.loads(path.read_text(encoding="utf-8"))
-        # Every outcome's item was written by items_named, so it always parses.
-        if outcome["status"] == READ_DONE and walk_finder.parse_items(outcome["item"])[0] == [number]:
-            earlier.append((outcome["finished"], path.name[:-len("-outcome.json")], outcome))
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     text = document.read_text(encoding="utf-8")
     units = walk_finder.item_unit_spans(text, parser)
     unit = walk_finder.waiting_item_units(document, value, numbers, total, parser, units)[1][0]
     if len(unit[0]) != 1:
         return []
-    lines, kept = text.split("\n"), []
-    for _, key, outcome in sorted(earlier):
+    lines = text.split("\n")
+    title = item_title(walk_finder, lines[unit[3]])
+    item = items_named(numbers, total or unit[1])
+    earlier = []
+    for path in reads.glob("*-outcome.json"):
+        outcome = json.loads(path.read_text(encoding="utf-8"))
+        # Every outcome's item was written by items_named, so it always parses.
+        if outcome["status"] != READ_DONE or walk_finder.parse_items(outcome["item"])[0] != numbers:
+            continue
+        key = path.name[:-len("-outcome.json")]
         copy = reads / f"{key}.md"
         if not copy.is_file():
             raise Failure(EARLIER_TEXT_COPY_MISSING.format(
                 item=item, report=outcome["report"], document=document, copy=copy,
                 outcome=reads / f"{key}-outcome.json", target=Path(outcome["report"]).parent / "target",
                 command=command))
-        body = heading_body(copy.read_text(encoding="utf-8"))
+        copied = copy.read_text(encoding="utf-8")
+        if outcome.get(NUMBER_PREDICTED) and item_title(walk_finder, copied.split("\n", 1)[0]) != title:
+            continue
+        earlier.append((outcome["finished"], key, outcome, copied))
+    return [entry[1:] for entry in sorted(earlier)]
+
+
+def earlier_read_texts_kept_as_withdrawn_versions(walk_finder, minutes, value, numbers, total, parser, earlier, item,
+                                                  live_text):
+    """Put each of earlier, as earlier_read_texts_of_item returns them, that is neither the live text nor already
+    below it, under a WITHDRAWN_VERSION_HEADING after the item's live version; return a line for each."""
+    if not earlier:
+        return []
+    number = numbers[0]
+    document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
+    text = document.read_text(encoding="utf-8")
+    unit = walk_finder.waiting_item_units(document, value, numbers, total, parser)[1][0]
+    lines, kept = text.split("\n"), []
+    for _, outcome, copied in earlier:
+        body = heading_body(walk_finder, copied)
         spans = walk_finder.item_unit_spans("\n".join(lines), parser)
         # From the live version's end to the next item: the versions already kept there, and any notes.
         start = next(other[4] for other in spans if other[3] == unit[3])
         below = min([other[3] for other in spans if other[3] > unit[3]] + [len(lines)])
-        if squeezed(body) in (squeezed(heading_body(live_text)), "") or squeezed(body) in squeezed(
+        if squeezed(body) in (squeezed(heading_body(walk_finder, live_text)), "") or squeezed(body) in squeezed(
                 "\n".join(lines[start:below])):
             continue
         prose = walk_finder.prose_lines("\n".join(lines), parser)
@@ -2050,7 +2090,8 @@ def earlier_read_texts_kept_as_withdrawn_versions(walk_finder, minutes, value, n
         while below > 0 and not lines[below - 1].strip():
             below -= 1
         heading = WITHDRAWN_VERSION_HEADING.format(version=version, number=number)
-        lines[below:below] = ["", heading, "", body]
+        # One element per line: item_unit_spans counts lines, so a later span must see each of them.
+        lines[below:below] = ["", heading, ""] + body.split("\n")
         kept.append(EARLIER_TEXT_KEPT.format(item=item, report=outcome["report"], document=document,
                                              heading=heading))
     if kept:
@@ -2063,20 +2104,22 @@ def waiting_item_read(arguments):
     walk_finder = load_walk_finder()
     top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
     _, numbers, total = waiting_items(walk_finder, value, minutes)
-    count, _, _, _, _ = walk_document_items(walk_finder, minutes, value, numbers, total, parser,
-                                            WAITING_ITEM_READ_STEP, top)
-    total = total or count
-    item = items_named(numbers, total)
     program = Path(__file__).resolve()
-    command = READ_STEP_COMMAND.format(program=program, flags=" " + AFTER_FIXES_FLAG, top=shlex.quote(str(top)))
-    document, text = item_text(walk_finder, minutes, value, numbers, total, parser,
-                               refused_unless_marks_read=(item, command))
     reads = item_reads_directory(walk_finder, minutes)
     rerun = READ_STEP_COMMAND.format(
         program=program, flags=" " + AFTER_FIXES_FLAG if arguments.after_fixes_reread_only_when_facts_change else "",
         top=shlex.quote(str(top)))
+    # Before walk_document_items, which can write: a missing copy refuses with nothing written.
+    earlier = earlier_read_texts_of_item(walk_finder, minutes, value, numbers, total, parser, reads, rerun)
+    count, _, _, _, _ = walk_document_items(walk_finder, minutes, value, numbers, total, parser,
+                                            WAITING_ITEM_READ_STEP, top)
+    total = total or count
+    item = items_named(numbers, total)
+    command = READ_STEP_COMMAND.format(program=program, flags=" " + AFTER_FIXES_FLAG, top=shlex.quote(str(top)))
+    document, text = item_text(walk_finder, minutes, value, numbers, total, parser,
+                               refused_unless_marks_read=(item, command))
     for line in earlier_read_texts_kept_as_withdrawn_versions(walk_finder, minutes, value, numbers, total, parser,
-                                                              reads, item, text, rerun):
+                                                              earlier, item, text):
         print(line)
     not_started = start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, total,
                                                  arguments.fast_read_program)
@@ -2816,6 +2859,7 @@ def main(argv=None):
     parser.add_argument("--text-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--item", help=argparse.SUPPRESS)
     parser.add_argument("--name", help=argparse.SUPPRESS)
+    parser.add_argument(ITEM_NUMBER_PREDICTED_FLAG, action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--cwd", default=os.getcwd(), help="a directory in the walk's checkout")
     parser.add_argument("--cold-read-records", type=Path, action="append",
                         help="a cold-read-records directory to search instead of the defaults; repeatable")
