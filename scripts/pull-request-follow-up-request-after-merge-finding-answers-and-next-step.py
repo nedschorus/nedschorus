@@ -4,7 +4,7 @@
 Usage:
   PROGRAM <number> next-step
   PROGRAM <number> start-topic-branch <topic-branch> --finding-numbers <n>[,<n>...]
-  PROGRAM <number> open-pull-request [--handled-finding-numbers <n>[,<n>...]]
+  PROGRAM <number> open-pull-request [--handled-finding-numbers <n>[,<n>...]] [--confirm-dispatching-agent-checked-new-shared-names]
   PROGRAM <number> record-finding-leave-out-reason <n> --reason "<why>"
   PROGRAM <number> record-finding-as-waiting-for-user-ruling <n> --what-it-would-change "<what>"
   PROGRAM <number> reopen-waiting-finding-with-user-ruling <n> --user-ruling "<his words>"
@@ -51,7 +51,11 @@ branch for, a worktree whose checked-out branch, or detached HEAD, is not one st
 and a FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME at the worktree's root that is
 missing, is not a title, a blank line and a description, or whose description
 has no defect line, the rule scripts/merge-gate.sh applies, read by the same
-reader; then git push -u origin <branch>, where <branch> is the recorded topic branch the worktree has
+reader; unless --confirm-dispatching-agent-checked-new-shared-names is given, refuse while the new-shared-names
+lister lists names the worktree adds beside origin/main, leaving out the topic branch's name, which is not
+checked, and fail when git cannot list them, since the subagent cannot start the naming fresh-agent and must
+hand the names to the agent that dispatched it before the push; it waits until the topic branch holds a commit,
+because the agent harness removes a worktree with no change when its subagent ends; then git push -u origin <branch>, where <branch> is the recorded topic branch the worktree has
 checked out, and whose pre-push hook runs the test suites; gh pr create against main; record the pull request's link against each
 finding in FINDING_ANSWERS_FILE_NAME_FORMAT; then remove FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME, so the
 next topic branch's pull request cannot take this one's title and description. A gh pr create that fails, other than
@@ -83,8 +87,17 @@ recorded worktree with git worktree remove, unless the agent harness still
 locks it (a lock reason starting HARNESS_LOCK_REASON_START), something else
 locks it, or it holds changed or untracked files; then delete each recorded
 topic branch whose commits are all on a remote-tracking branch of origin.
-Each worktree or branch left in place is printed with what the author should
+Every git command after the worktree list runs in the main worktree, the
+first git worktree list names, so the step works from any worktree of the
+checkout, one it removes included. Each worktree or branch left in place is printed with what the author should
 do, and the exit code is 1.
+
+In remove-topic-branches-and-worktrees, a lock in the form Claude Code writes,
+"claude agent agent-<id> (pid N start T)", whose claude process has ended, as
+scripts/worktree-owner-file-read-and-write.py's
+claude_code_subagent_worktree_lock_dispatching_process_running_state() finds it,
+is unlocked first, and the worktree is then judged as an unlocked one; while
+whether that process runs cannot be read, the lock is kept as the harness's.
 
 print-follow-up-request-block-from-merge-lane-2-reviews, run by merge-lane-2 after the merge: read every
 review of the pull request that merge-lane-2's GitHub account posted, with its inline comments, replies left out, and
@@ -147,9 +160,11 @@ def load_script_beside_this_one(file_name):
     return module
 
 
+owner_file = load_script_beside_this_one("worktree-owner-file-read-and-write.py")
 defect_line_reader = load_script_beside_this_one(
     "pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
 pre_push_conflict_check = load_script_beside_this_one("git-client-side-hooks-pre-push-conflict-check.py")
+new_shared_names_lister = load_script_beside_this_one("new-shared-names-in-changed-files-list.py")
 
 PROGRAM = "scripts/" + Path(__file__).name
 REPOSITORY = "nedschorus/nedschorus"
@@ -545,7 +560,7 @@ def unanswered_started_findings(record, branch=None):
                   if finding not in answers and branch in (None, started))
 
 
-def open_pull_request(number, findings):
+def open_pull_request(number, findings, confirm_dispatching_agent_checked_new_shared_names=False):
     states = state_directory()
     request = saved_follow_up_request(states, number)
     answers_file = state_file(states, FINDING_ANSWERS_FILE_NAME_FORMAT, number)
@@ -589,6 +604,8 @@ def open_pull_request(number, findings):
                              "author, who decides whether to keep them.")))
     description_file = Path(worktree) / FOLLOW_UP_PULL_REQUEST_TITLE_AND_DESCRIPTION_FILE_NAME
     title, description = read_title_and_description(description_file)
+    if not confirm_dispatching_agent_checked_new_shared_names:
+        refuse_new_shared_names_the_dispatching_agent_has_not_checked(number, worktree)
     try:
         # --quiet leaves on stderr only errors and what the hooks and the remote print.
         _, push_warnings = git_output.run_git(".", ["push", "--quiet", "-u", "origin", branch], return_stderr=True,
@@ -623,6 +640,20 @@ def open_pull_request(number, findings):
           "request, and recorded it.")
     remove_file(description_file)
     print(still_unanswered_text(number, request, answers))
+
+
+def refuse_new_shared_names_the_dispatching_agent_has_not_checked(number, worktree):
+    try:
+        names = new_shared_names_lister.new_shared_names(Path(worktree))
+    except new_shared_names_lister.GitFailure as failure:
+        raise StepFailed(f"the new shared names of the topic branch could not be listed, so open-pull-request "
+                         f"pushed nothing: {failure}") from None
+    if names:
+        raise Refused(new_shared_names_lister.unchecked_new_shared_names_refusal_text(
+            names, "open-pull-request pushed nothing",
+            "Make each rename in a commit on the topic branch.",
+            "the same open-pull-request command again, with "
+            f"{new_shared_names_lister.CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG} added"))
 
 
 def gh_pr_create_tried_twice(arguments):
@@ -842,14 +873,23 @@ def remove_topic_branches_and_worktrees(number):
               "nothing.")
         return 0
     again = command(number, "remove-topic-branches-and-worktrees")
-    worktrees = {worktree.path.rstrip("/"): worktree for worktree in git_output.worktree_records(
-        git(".", ["worktree", "list", "--porcelain", "-z"]))}
+    listed_worktrees = git_output.worktree_records(git(".", ["worktree", "list", "--porcelain", "-z"]))
+    # The worktree this program runs in may be one it removes; git run there after the removal fails at os.getcwd.
+    main_worktree = listed_worktrees[0].path
+    worktrees = {worktree.path.rstrip("/"): worktree for worktree in listed_worktrees}
     left_paths, left = set(), []
     for path in dict.fromkeys(record["worktree"] for record in records):
         worktree = worktrees.get(path.rstrip("/"))
         if worktree is None:
             continue
         reason = worktree.locked_reason
+        lock = owner_file.claude_code_subagent_worktree_lock_reason_parse(reason)
+        if lock is not None:
+            state, explanation = owner_file.claude_code_subagent_worktree_lock_dispatching_process_running_state(lock)
+            if state == owner_file.STOPPED:
+                git(path, ["worktree", "unlock", path])
+                print(f"Unlocked worktree {path}, since {explanation}.")
+                reason = None
         if reason is not None and reason.startswith(HARNESS_LOCK_REASON_START):
             left.append(f"Worktree {path} is locked by the agent harness (lock reason: {reason}), so "
                         "remove-topic-branches-and-worktrees left it and the topic branches recorded with it: the subagent may still be running.\n"
@@ -883,7 +923,7 @@ def remove_topic_branches_and_worktrees(number):
                             "SendMessage.\n"
                             f"Then run: git worktree remove --force {path}")
             else:
-                git(".", ["worktree", "remove", path])
+                git(main_worktree, ["worktree", "remove", path])
                 print(f"Removed worktree {path}.")
                 continue
         left_paths.add(path)
@@ -891,18 +931,18 @@ def remove_topic_branches_and_worktrees(number):
         branch = record["branch"]
         if record["worktree"] in left_paths:
             continue
-        if not git(".", ["rev-parse", "--verify", "--quiet", "refs/heads/" + branch],
+        if not git(main_worktree, ["rev-parse", "--verify", "--quiet", "refs/heads/" + branch],
                    accepted_exit_codes=(0, 1)).strip():
             continue
-        if not git(".", ["for-each-ref", "--contains", "refs/heads/" + branch, "refs/remotes/origin/"]).strip():
-            commits = git(".", ["log", "--oneline", "refs/heads/" + branch, "--not", "--remotes=origin"]).rstrip("\n")
+        if not git(main_worktree, ["for-each-ref", "--contains", "refs/heads/" + branch, "refs/remotes/origin/"]).strip():
+            commits = git(main_worktree, ["log", "--oneline", "refs/heads/" + branch, "--not", "--remotes=origin"]).rstrip("\n")
             left.append(f"Branch {branch} holds commits on no branch of origin, so remove-topic-branches-and-worktrees left it:\n"
                         f"{commits}\n"
                         f"Read them with git log -p {branch} --not --remotes=origin, copy out any that is work to keep, "
                         "and tell merge-lane-2 about it with SendMessage.\n"
                         f"Then run: git branch -D {branch}")
             continue
-        git(".", ["branch", "-D", branch])
+        git(main_worktree, ["branch", "-D", branch])
         print(f"Deleted branch {branch}.")
     if left:
         print("\n".join(left))
@@ -922,8 +962,8 @@ def gh_api_pages(path):
     try:
         return [item for page in json.loads(output) for item in page]
     except (ValueError, TypeError) as error:
-        raise StepFailed(f"gh api {path} exited 0 but printed output that is not the JSON list of result pages "
-                         f"--paginate --slurp prints: {error}") from None
+        raise StepFailed(f"gh api {path} exited 0, but its output is not the JSON list of result pages that "
+                         f"--paginate --slurp prints. The JSON decode error: {error}") from None
 
 
 def merge_lane_2_reviews_and_their_comments(number, posting, account):
@@ -987,7 +1027,7 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
                 f"finding, write the block by hand at the end of {MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR}: "
                 "the line "
                 f"{FOLLOW_UP_REQUEST_LINE_START} pull request {number}, then one line for each such finding, numbered "
-                "from 1, such as: 1. fix-next: <path>:<line>: <the finding on one line>\n"
+                "from 1, such as: 1. fix-next: `<path>:<line>`: <the finding on one line>\n"
                 "If merge-lane-2's reviews hold no such finding, write no block.")
         category, text, _nit = marked
         finding = (category, comment["path"], " ".join(text.split()))
@@ -1007,7 +1047,7 @@ def print_follow_up_request_block_from_merge_lane_2_reviews(number):
         raise StepFailed(f"the block built from {account}'s reviews does not read back as itself, so the hook "
                          f"{FOLLOW_UP_REQUEST_BLOCK_SAVE_HOOK_PATH}, which saves the block from merge-lane-2's message for the author, would "
                          f"save something else: the block reads back as {read_back!r}.\n"
-                         f"Do not paste the block; write the block by hand at the end of {MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR}.")
+                         f"The block was not printed; write it by hand at the end of {MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR}.")
     print(block, end="")
 
 
@@ -1047,6 +1087,9 @@ def main(argv=None):
     open_parser.add_argument("--handled-finding-numbers", type=finding_numbers,
                              help="the findings the pull request handles, such as 1,3; by default those "
                                   "start-topic-branch recorded for the branch that have no answer")
+    open_parser.add_argument(new_shared_names_lister.CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG, action="store_true",
+                             help="the agent that dispatched you has checked the new shared names the topic "
+                                  "branch adds, and the renames are committed")
     leave_out_parser = subcommands.add_parser("record-finding-leave-out-reason", help="record why a finding is left out")
     leave_out_parser.add_argument("finding", type=int)
     leave_out_parser.add_argument("--reason", required=True)
@@ -1078,7 +1121,8 @@ def main(argv=None):
         elif arguments.subcommand == "start-topic-branch":
             start_topic_branch(arguments.number, arguments.branch, arguments.finding_numbers)
         elif arguments.subcommand == "open-pull-request":
-            open_pull_request(arguments.number, arguments.handled_finding_numbers)
+            open_pull_request(arguments.number, arguments.handled_finding_numbers,
+                              arguments.confirm_dispatching_agent_checked_new_shared_names)
         elif arguments.subcommand == "record-finding-leave-out-reason":
             record_finding_leave_out_reason(arguments.number, arguments.finding, arguments.reason)
         elif arguments.subcommand == "record-finding-as-waiting-for-user-ruling":

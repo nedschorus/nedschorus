@@ -59,7 +59,7 @@ check("a file that does not exist exits 2, saying so",
       code == wait.EXIT_CANNOT_WAIT and "does not exist" in message, (code, message))
 
 if not os.path.isdir("/proc/self/fd"):
-    print("SKIP  the cases on real processes need /proc [this machine cannot run it]")
+    print("SKIP  [this machine cannot run it] the cases on real processes: they need /proc")
 else:
     linux = wait.linux_processes_writing_file
     with open(output_file) as read_only:
@@ -133,22 +133,70 @@ else:
           process.returncode == wait.EXIT_TIME_LIMIT_REACHED and "Still running" in process.stderr,
           (process.returncode, process.stdout, process.stderr))
 
+def lister_answering(*answers):
+    """Return a writer lister giving each answer in turn, raising one that is an exception, and the
+    seconds each look was given."""
+    given = []
+    remaining_answers = iter(answers)
+
+    def list_writers(_path, seconds_left):
+        given.append(seconds_left)
+        answer = next(remaining_answers)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+    return list_writers, given
+
+
 sleeps = []
-calls = iter([{7}, {7}, set()])
-clock_values = iter([100.0, 101.0, 103.0])
+list_writers, given = lister_answering({7}, {7}, set())
+clock_values = iter([100.0, 101.0, 106.0, 107.0, 112.0])
 code, message = wait.wait_until_no_process_writes(
-    str(output_file), 10, lambda _path: next(calls), clock=lambda: next(clock_values), sleep=sleeps.append)
-check("the wait sleeps the poll interval between looks while time remains",
-      code == wait.EXIT_NO_WRITER_LEFT and sleeps == [wait.POLL_SECONDS, wait.POLL_SECONDS], (code, sleeps))
+    str(output_file), 20, list_writers, clock=lambda: next(clock_values), sleep=sleeps.append)
+check("the wait sleeps the poll interval between looks while time remains, and gives each look the time "
+      "that remains", code == wait.EXIT_NO_WRITER_LEFT and sleeps == [wait.POLL_SECONDS, wait.POLL_SECONDS]
+      and given == [20, 14.0, 8.0], (code, sleeps, given))
 sleeps = []
-clock_values = iter([100.0, 108.0])
-code, _ = wait.wait_until_no_process_writes(
-    str(output_file), 10, lambda _path: {7} if not sleeps else set(), clock=lambda: next(clock_values),
-    sleep=sleeps.append)
-check("the last sleep is cut to the time that remains", sleeps == [2.0], sleeps)
+list_writers, given = lister_answering({7}, set())
+clock_values = iter([100.0, 105.0])
+code, message = wait.wait_until_no_process_writes(
+    str(output_file), 10, list_writers, clock=lambda: next(clock_values), sleep=sleeps.append)
+check("with no more than one poll interval left, the wait neither sleeps nor looks again, and exits 1 "
+      "naming the writers of the last look",
+      sleeps == [] and given == [10] and code == wait.EXIT_TIME_LIMIT_REACHED and "process 7 still has" in message,
+      (sleeps, given, code, message))
+sleeps = []
+list_writers, given = lister_answering({7})
+clock_values = iter([100.0, 101.0, 111.0])
+code, message = wait.wait_until_no_process_writes(
+    str(output_file), 10, list_writers, clock=lambda: next(clock_values), sleep=sleeps.append)
+check("a sleep that overruns the time limit starts no look after it, and exits 1 naming the writers of "
+      "the last look",
+      sleeps == [wait.POLL_SECONDS] and given == [10] and code == wait.EXIT_TIME_LIMIT_REACHED
+      and "process 7 still has" in message, (sleeps, given, code, message))
+list_writers, given = lister_answering({7}, wait.WritersLookTimeLimitReached("lsof had not listed them"))
+clock_values = iter([100.0, 101.0, 107.0])
+code, message = wait.wait_until_no_process_writes(
+    str(output_file), 10, list_writers, clock=lambda: next(clock_values), sleep=no_sleep)
+check("the time limit running out during a later look exits 1, naming the writers of the last look",
+      code == wait.EXIT_TIME_LIMIT_REACHED and "process 7 still has" in message and given == [10, 3.0],
+      (code, message, given))
+list_writers, _ = lister_answering(wait.WritersLookTimeLimitReached("lsof had not listed them"))
+code, message = wait.wait_until_no_process_writes(str(output_file), 1, list_writers, sleep=no_sleep)
+check("the time limit running out during the first look exits 2, giving the command that runs with the default limit, "
+      "which is longer than one lsof look",
+      code == wait.EXIT_CANNOT_WAIT and "lsof had not listed them" in message
+      and f"Run python3 {PROGRAM} {os.path.realpath(output_file)} instead, without --time-limit-seconds"
+      in message and wait.DEFAULT_TIME_LIMIT_SECONDS > wait.LSOF_TIMEOUT_SECONDS, (code, message))
+list_writers, _ = lister_answering({7}, wait.WritersCannotBeListed("lsof exited 2"))
+clock_values = iter([100.0, 101.0, 102.0])
+code, message = wait.wait_until_no_process_writes(
+    str(output_file), 10, list_writers, clock=lambda: next(clock_values), sleep=no_sleep)
+check("writers that cannot be listed at a later look exit 2, saying so",
+      code == wait.EXIT_CANNOT_WAIT and "cannot be listed: lsof exited 2" in message, (code, message))
 
 code, message = wait.wait_until_no_process_writes(
-    str(output_file), 60, lambda path: wait.linux_processes_writing_file(path, proc_root=root / "no-proc"))
+    str(output_file), 60, lambda path, _seconds: wait.linux_processes_writing_file(path, proc_root=root / "no-proc"))
 check("a /proc that cannot be read exits 2, saying the writers cannot be listed",
       code == wait.EXIT_CANNOT_WAIT and "cannot be listed" in message and "no-proc" in message,
       (code, message))
@@ -196,11 +244,15 @@ class Completed:
         self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
 
 
+timeouts = []
+
+
 def lsof_answering(completed):
     called = []
 
     def runner(arguments, **options):
         called.append(arguments)
+        timeouts.append(options["timeout"])
         if isinstance(completed, Exception):
             raise completed
         return completed
@@ -226,6 +278,22 @@ for name, completed in [("lsof is not installed", FileNotFoundError("lsof")),
         raised = str(error)
     check(f"{name}: reported as writers that cannot be listed", raised is not None and "lsof" in raised,
           raised)
+
+timeouts.clear()
+runner, _ = lsof_answering(Completed(1))
+wait.macos_processes_writing_file(target, seconds_left=12.5, runner=runner)
+wait.macos_processes_writing_file(target, seconds_left=100, runner=runner)
+check("lsof is given the time that remains, up to its own limit", timeouts == [12.5, wait.LSOF_TIMEOUT_SECONDS],
+      timeouts)
+for seconds_left, expected in [(12.5, wait.WritersLookTimeLimitReached), (100, wait.WritersCannotBeListed)]:
+    runner, _ = lsof_answering(subprocess.TimeoutExpired("lsof", seconds_left))
+    try:
+        wait.macos_processes_writing_file(target, seconds_left=seconds_left, runner=runner)
+        raised = None
+    except Exception as error:
+        raised = error
+    check(f"lsof timing out when given {seconds_left:g} seconds raises {expected.__name__}",
+          type(raised) is expected, repr(raised))
 
 check("macOS lists writers with lsof, Linux with /proc",
       wait.processes_writing_file_lister("darwin") is wait.macos_processes_writing_file

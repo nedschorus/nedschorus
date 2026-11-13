@@ -8,7 +8,7 @@ adds, a Bash hook in the head's .claude/settings.json but not the base's, is rea
 and each recorded command it refuses blocks the merge until the reviewer accepts the refusal.
 
 Usage:
-  python3 nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py \\
+  python3 nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py \\
       --base-ref origin/main --head-ref <commit or branch>
 
 Steps:
@@ -34,7 +34,7 @@ Steps:
   4. Compare the two refs row by row and print each difference, then the recorded commands the
      guards the head adds refuse, in refusal groups: one guard and one refusal message each, with
      a few of its commands; every group in full is in added-guard-refusal-groups.json, and every group's
-     "refusal right" answer line, ready to copy, is in added-guard-refusal-right-lines.txt.
+     "refusal right" answer line, ready to copy, is in added-guard-refusal-group-rightly-refused-review-answer-lines.txt.
 
 Exit status: 0 when no verdict differs and no added guard refuses a recorded command; 1 when a
 verdict differs or an added guard refuses a recorded command; 2 when the replay itself
@@ -53,7 +53,7 @@ raised for any other reason is not read again. A message that differs while its 
 Files: the run log directory holds the files a reader needs to see why a run exited 1 or 2, each step's log
 and each mode's differences-<mode>.json. By default it is a new directory under --log-store-runs-directory, in
 the log-store on ned-box, removed after an exit 0 and kept after an exit 1 or 2. It also holds
-added-guard-refusal-groups.json and added-guard-refusal-right-lines.txt when an added guard refuses a recorded
+added-guard-refusal-groups.json and added-guard-refusal-group-rightly-refused-review-answer-lines.txt when an added guard refuses a recorded
 command. Everything else, the
 checkouts and the pairs and verdicts files, goes in a scratch directory, by default a temporary directory that
 is removed whenever the replay exits, on an exception, SIGTERM or SIGHUP too, unless its checkouts could not be
@@ -114,27 +114,31 @@ PRINTED_TEXT_LENGTH = 300
 REFUSAL_GROUPS_PRINTED = 10
 REFUSED_COMMANDS_PRINTED_PER_GROUP = 3
 REFUSAL_GROUPS_FILE_NAME = "added-guard-refusal-groups.json"
-REFUSAL_RIGHT_LINES_FILE_NAME = "added-guard-refusal-right-lines.txt"
+ADDED_GUARD_REFUSAL_GROUP_RIGHTLY_REFUSED_REVIEW_ANSWER_LINES_FILE_NAME = "added-guard-refusal-group-rightly-refused-review-answer-lines.txt"
 SCRATCH_OR_RUN_LOG_DIRECTORY_NOT_REMOVED_MESSAGE = (
-    "REPLAY FAILED: the paths listed below could not be removed, so this Bash guards replay exits 2; any verdicts "
-    "it printed above stand. Each path is in the replay's scratch directory, made under TMPDIR, or, after a replay that "
+    "REPLAY FAILED: the paths listed below could not be removed, so "
+    "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check exits 2; any verdicts it printed above "
+    "stand. Each path is in the replay's scratch directory, made under TMPDIR, or, after a replay that "
     "found nothing to report, in its run log directory.\n"
     "Remove each listed path with rm -rf <path>, because nothing else removes it, and the disk it is on can "
     "fill.\n  ")
 REGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE = (
     "{checkout} already exists, and git lists it as a worktree of {repository}, most likely one an earlier replay "
-    "in this --scratch-directory could not remove; so this Bash guards replay adds no worktree there, leaves the "
-    "path as it is, and exits 2 before it replays any recorded command.\n"
+    "in this --scratch-directory could not remove; so "
+    "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check adds no worktree there, leaves the path "
+    "as it is, and exits 2 before it replays any recorded command.\n"
     "Remove it with {remove_command}, then run the replay again with "
     "the same arguments. A replay's worktree holds only the commit it read, so removing it loses no work.")
 UNREGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE = (
     "{checkout} already exists, and git does not list it as a worktree of {repository}, so it is no worktree an "
-    "earlier replay left, and it may hold someone's files; this Bash guards replay adds no worktree there, leaves "
-    "the path as it is, and exits 2 before it replays any recorded command.\n"
+    "earlier replay left, and it may hold someone's files; "
+    "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check adds no worktree there, leaves the path "
+    "as it is, and exits 2 before it replays any recorded command.\n"
     "Run the replay again with the same arguments, except a --scratch-directory that does not exist yet.")
 CHECKOUTS_NOT_REMOVED_MESSAGE = (
-    "REPLAY FAILED: these worktrees could not be removed, so this Bash guards replay exits 2; any verdicts it "
-    "printed above stand.\n"
+    "REPLAY FAILED: these worktrees could not be removed, so "
+    "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check exits 2; any verdicts it printed above "
+    "stand.\n"
     "Run the command each line ends with, which removes that line's worktree; if the command fails, its own error "
     "says why.\n  ")
 DEFAULT_LOG_STORE_RUNS_DIRECTORY = (
@@ -212,9 +216,13 @@ _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
     Path(__file__).resolve().with_name("git-redirecting-environment-variables-removal-common.py"))
 _git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
 _git_redirecting_removal_spec.loader.exec_module(_git_redirecting_removal)
-ENVIRONMENT_VARIABLES_REMOVED = _git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES + (
-    "CLAUDE_CODE_SESSION_ATTENDED", "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
-)
+_attendance_check_spec = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().with_name("agent-session-unattended-by-user-check-common.py"))
+_attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
+_attendance_check_spec.loader.exec_module(_attendance_check)
+ENVIRONMENT_VARIABLES_REMOVED = (_git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
+                                 + _attendance_check.AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES)
 
 
 class ReplayFailed(Exception):
@@ -520,6 +528,23 @@ def fixed_clock():
     return 1000.0
 
 
+SEARCH_FILE_CLOCK_SECONDS_PER_READ = 0.001
+
+
+def search_file_clock():
+    """Return a clock for one search-file reading that advances SEARCH_FILE_CLOCK_SECONDS_PER_READ each time it is read.
+
+    The guard's glob-expansion budget is measured in seconds, so on the wall clock a loaded machine spends it on
+    one ref's reading and not the other's. On this clock the budget is a count of clock reads, the same at both refs.
+    """
+    reads = [0]
+
+    def clock():
+        reads[0] += 1
+        return reads[0] * SEARCH_FILE_CLOCK_SECONDS_PER_READ
+    return clock
+
+
 def is_failed_reading(verdict):
     return isinstance(verdict, str) and (verdict.startswith("EXCEPTION") or verdict == "TIMEOUT")
 
@@ -552,7 +577,7 @@ def read_pkill_pattern_kill(guard, command, working_directory, search_file_direc
 
 
 def read_search_file(guard, command, working_directory, search_file_directory):
-    reason = guard.analyze_command_text(command, search_file_directory, time.monotonic)
+    reason = guard.analyze_command_text(command, search_file_directory, search_file_clock())
     return "refused" if reason else "passed", reason
 
 
@@ -705,7 +730,7 @@ def search_file_main_outcome(guard, command, working_directory):
     payload = json.dumps({"tool_name": "Bash", "cwd": working_directory, "tool_input": {"command": command}})
     printed = io.StringIO()
     with contextlib.redirect_stdout(printed):
-        exit_status = guard.main(stdin=io.StringIO(payload))
+        exit_status = guard.main(stdin=io.StringIO(payload), clock=search_file_clock())
     text = printed.getvalue().strip()
     if not text:
         return ["silent", exit_status], None
@@ -1182,8 +1207,8 @@ def run_log_directory_made(runs_directory):
         return Path(tempfile.mkdtemp(prefix=time.strftime("%Y-%m-%dT%H%M%SZ-", time.gmtime()), dir=runs_directory))
     except OSError as error:
         raise ReplayFailed(
-            f"this Bash guards replay made no run log directory, the directory that keeps the step logs and "
-            f"differences files a reviewer reads after a changed verdict or a failed replay, because it could not "
+            f"bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check made no run log directory, the "
+            f"directory that keeps the step logs and differences files a reviewer reads after a changed verdict or a failed replay, because it could not "
             f"make one under {runs_directory}: {error}.\n"
             f"On ned-box, where the log-store is, check that {runs_directory} can be written to, then run the "
             f"replay again.\n"
@@ -1326,7 +1351,7 @@ def replay_with_sigterm_handled(arguments):
         if added_guard_refused:
             groups = added_guard_refusal_groups(refusals_by_mode)
             (run_log_directory / REFUSAL_GROUPS_FILE_NAME).write_text(json.dumps(groups, indent=1))
-            (run_log_directory / REFUSAL_RIGHT_LINES_FILE_NAME).write_text(
+            (run_log_directory / ADDED_GUARD_REFUSAL_GROUP_RIGHTLY_REFUSED_REVIEW_ANSWER_LINES_FILE_NAME).write_text(
                 "".join(refusal_right_line(group) + "\n" for group in groups))
             print_added_guard_refusal_groups(groups, run_log_directory / REFUSAL_GROUPS_FILE_NAME)
         if all_failed:
@@ -1339,7 +1364,7 @@ def replay_with_sigterm_handled(arguments):
             if added_guard_refused:
                 print(NEW_GUARD_REFUSES_MESSAGE.format(
                     groups_file=run_log_directory / REFUSAL_GROUPS_FILE_NAME,
-                    refusal_right_lines_file=run_log_directory / REFUSAL_RIGHT_LINES_FILE_NAME)
+                    refusal_right_lines_file=run_log_directory / ADDED_GUARD_REFUSAL_GROUP_RIGHTLY_REFUSED_REVIEW_ANSWER_LINES_FILE_NAME)
                       + (NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING if verdict_changed
                          else NEW_GUARD_REFUSES_ONLY_ENDING))
             status = 1

@@ -23,7 +23,7 @@ The statement says "three categories" and lists four; this page uses four, defin
 
 A finding filed in category 4 stays visible, with the reason for filing it rather than fixing it, a defined follow-up, its prerequisites, and what it unblocks; prerequisites are done first. An improvement or an addition a review finds, rather than a defect, is a finding like any other, and falls in category 4: the user's words in S35 answer the question he asked in S34.
 
-An agent fixes what must be fixed and leaves the rest to its category, because an agent that works on a few things does them well. In a pull request review, a finding that the review-scope bullet of `CLAUDE.md` says blocks the merge is must fix now. The agent that runs a review or a test files what it defers. Where maintenance findings are held, and how a finding is placed among categories 2 to 4, are still open, listed in the section Deferred-decisions of [GHI 2522](https://github.com/nedschorus/nedschorus/issues/2522). Sources: S6 to S9, S34, S35.
+An agent fixes what must be fixed and leaves the rest to its category, because an agent that works on a few things does them well. In a pull request review, a finding that the "Review scope" section of `docs/agents/pr-reviewer-instructions.md` says blocks the merge is must fix now. The agent that runs a review or a test files what it defers. Where maintenance findings are held, and how a finding is placed among categories 2 to 4, are still open, listed in the section Deferred-decisions of [GHI 2522](https://github.com/nedschorus/nedschorus/issues/2522). Sources: S6 to S9, S34, S35.
 
 ### 3. Keep a checked claim, and reopen it only for a reason
 

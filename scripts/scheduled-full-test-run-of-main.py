@@ -2,7 +2,7 @@
 """Run every nc-test-suite on main once a day on this machine, and record the result in the log-store.
 
 Usage:
-  scripts/daily-full-test-run-of-main.py [--clone DIR] [--log-store-root DIR]
+  scripts/scheduled-full-test-run-of-main.py [--clone DIR] [--log-store-root DIR]
                                          [--test-suite-runner-program PATH]
                                          [--temporary-directory DIR]
                                          [--recorded-inputs-directory DIR]
@@ -26,7 +26,7 @@ Usage:
                 not passed, so the runner uses the machine's own recordings
                 store
 
-Every option is a seam for scripts/daily-full-test-run-of-main-test.py, and
+Every option is a seam for scripts/scheduled-full-test-run-of-main-test.py, and
 for a run made by hand that must not write to the real log-store or the real
 recordings store. A scheduled run passes none.
 
@@ -37,10 +37,10 @@ head, and main after a merge, run only the suites the change reaches, chosen
 by `scripts/run-all-test-suites.py
 --only-suites-whose-recorded-inputs-changed-since`. A failure caused by a file
 left on a machine shows up in no code diff, so no selection finds it. Each
-machine therefore runs every suite on main once a day. The daily run blocks
+machine therefore runs every suite on main once a day. The scheduled run blocks
 no merge: it writes a record, and whoever reads the record acts on it. It is
 also the run that records every suite's inputs afresh at main, which the
-runner's docstring calls the daily full run.
+runner's docstring calls the scheduled full run.
 
 WHAT ONE RUN DOES, in order.
 
@@ -72,7 +72,7 @@ WHAT ONE RUN DOES, in order.
 
 THE RECORD is one text file per machine and day in the log-store:
 
-  nedlern@ned-box:/home/nedlern/nedschorus-logs/daily-full-test-runs/<machine>/<YYYY-MM-DD>.txt
+  nedlern@ned-box:/home/nedlern/nedschorus-logs/scheduled-full-test-runs-of-main/<machine>/<YYYY-MM-DD>.txt
 
 <machine> is `ned-box` or `mac`, the spellings the log-store's agent-session-files-by-machine/
 directory uses. The date is the date in America/Los_Angeles when the run
@@ -92,7 +92,7 @@ the record in the line's place.
 On ned-box the record is written locally. On the Mac it is written over ssh,
 with the options the log-store's other writers pass. Before either, the
 record is written beside the logs as its local copy,
-daily-full-test-run-record-<YYYY-MM-DD>.txt, named by the record's own date,
+scheduled-full-test-run-record-<YYYY-MM-DD>.txt, named by the record's own date,
 so a record that could not reach the log-store is still on the machine that
 made it, and the refusal names the one command that writes it once ned-box
 answers. A later run on the same day replaces the day's local copy, as it
@@ -103,14 +103,14 @@ run was made, each about a kilobyte, until the machine clears its temporary
 directory.
 
 THE LOGS stay on the machine: <temporary directory>/
-nedschorus-daily-full-test-run-of-main/logs, which each run replaces and the
+nedschorus-scheduled-full-test-run-of-main/logs, which each run replaces and the
 record names. They are not copied into the log-store.
 
-ONE DAILY RUN AT A TIME PER MACHINE. The worktree and the logs are at fixed
+ONE SCHEDULED RUN AT A TIME PER MACHINE. The worktree and the logs are at fixed
 paths, so that the next run replaces what a killed run left instead of adding
 to it. A second run started by hand while the scheduled one is going would
 therefore remove the worktree the first is testing. So a run holds an
-exclusive lock on daily-full-test-run-of-main.lock in its directory, and a
+exclusive lock on scheduled-full-test-run-of-main.lock in its directory, and a
 second run exits 6 having done nothing.
 
 WHAT IS REUSED. nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py is loaded by
@@ -136,7 +136,7 @@ a machine has installed with the table.
   ned-box: one cron line, run from the reference clone with the system's
   Python. ned-box's clock is America/Los_Angeles.
 
-    0 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/daily-full-test-run-of-main.py >> /home/nedlern/.claude/daily-full-test-run-of-main.log 2>&1
+    0 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/scheduled-full-test-run-of-main.py >> /home/nedlern/.claude/scheduled-full-test-run-of-main.log 2>&1
 
   Both streams are appended to that file because ned-box has no mail
   transfer agent, so cron discards what a job prints: a refusal that writes
@@ -158,7 +158,7 @@ the runner gave no full verdict, such as a suite whose test sandbox did not
 start or a run that could not start; 2 also for a bad invocation of this
 program; 4 a step of this program failed, which the record names, the
 runner was killed by a signal, or it exited 0 or 1 without a `SUMMARY:`
-line, which is no verdict; 5 the record was not written; 6 another daily
+line, which is no verdict; 5 the record was not written; 6 another scheduled
 run holds this program's lock.
 """
 # A machine-local failure may have no code diff, so selected suites cannot cover it.
@@ -179,7 +179,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-PROGRAM = "daily-full-test-run-of-main"
+PROGRAM = "scheduled-full-test-run-of-main"
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
@@ -197,30 +197,30 @@ handoff_user_review_of_agent_memory_stores_mark = module_loaded_by_path(
 run_all_test_suites = module_loaded_by_path(
     "run_all_test_suites", Path(__file__).resolve().with_name("run-all-test-suites.py"))
 
-DAILY_FULL_TEST_RUN_DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
+SCHEDULED_FULL_TEST_RUN_DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
 # Use the log-store’s established machine and kind names.
-DAILY_FULL_TEST_RUNS_KIND_DIRECTORY_NAME = "daily-full-test-runs"
-DAILY_FULL_TEST_RUN_MACHINE_NAME_ON_NED_BOX = "ned-box"
-DAILY_FULL_TEST_RUN_MACHINE_NAME_ELSEWHERE = "mac"
+SCHEDULED_FULL_TEST_RUNS_KIND_DIRECTORY_NAME = "scheduled-full-test-runs-of-main"
+SCHEDULED_FULL_TEST_RUN_MACHINE_NAME_ON_NED_BOX = "ned-box"
+SCHEDULED_FULL_TEST_RUN_MACHINE_NAME_ELSEWHERE = "mac"
 
-DAILY_FULL_TEST_RUN_DIRECTORY_NAME = "nedschorus-daily-full-test-run-of-main"
-DAILY_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME = "worktree-of-main"
-DAILY_FULL_TEST_RUN_LOGS_DIRECTORY_NAME = "logs"
-DAILY_FULL_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME_PREFIX = "daily-full-test-run-record-"
-DAILY_FULL_TEST_RUN_LOCK_FILE_NAME = "daily-full-test-run-of-main.lock"
+SCHEDULED_FULL_TEST_RUN_DIRECTORY_NAME = "nedschorus-scheduled-full-test-run-of-main"
+SCHEDULED_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME = "worktree-of-main"
+SCHEDULED_FULL_TEST_RUN_LOGS_DIRECTORY_NAME = "logs"
+SCHEDULED_FULL_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME_PREFIX = "scheduled-full-test-run-record-"
+SCHEDULED_FULL_TEST_RUN_LOCK_FILE_NAME = "scheduled-full-test-run-of-main.lock"
 
-DAILY_FULL_TEST_RUN_RUNNER_PATH_IN_WORKTREE = Path("scripts") / "run-all-test-suites.py"
+SCHEDULED_FULL_TEST_RUN_RUNNER_PATH_IN_WORKTREE = Path("scripts") / "run-all-test-suites.py"
 
 # Read at runtime so tests can shorten it.
-DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = 3600
+SCHEDULED_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = 3600
 
-DAILY_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS = 30
+SCHEDULED_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS = 30
 
 RUNNER_SKIPPED_CASE_LINE = re.compile(r"^(?:\S+: )?SKIP\s")
 
 EXIT_STEP_OF_THIS_PROGRAM_FAILED = 4
 EXIT_RECORD_NOT_WRITTEN = 5
-EXIT_ANOTHER_DAILY_RUN_HOLDS_THE_LOCK = 6
+EXIT_ANOTHER_SCHEDULED_RUN_HOLDS_THE_LOCK = 6
 
 
 def git(clone: Path, *arguments):
@@ -243,7 +243,7 @@ def first_fatal_or_error_stderr_line_or_no_detail(text: str) -> str:
     return first_stderr_line_or_no_detail(text)
 
 
-def take_daily_full_test_run_lock(lock_file: Path):
+def take_scheduled_full_test_run_lock(lock_file: Path):
     """Return the locked handle, or None if another run holds the lock."""
     handle = open(lock_file, "a")
     try:
@@ -361,7 +361,7 @@ def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, 
     there as it arrives, so a run killed before the runner exits has shown how far it got."""
     started = monotonic()
     arguments = [*command, "--wait-for-lock-seconds",
-                 f"{DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS:g}"]
+                 f"{SCHEDULED_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS:g}"]
     environment = run_all_test_suites.environment_without_git_redirecting_variables()
     if stream_to is None:
         completed = subprocess.run(
@@ -390,7 +390,7 @@ def runner_refusal_line(stderr):
 def lock_never_taken_step_failed(completed, seconds_waiting_for_lock):
     """The failed step recorded when the runner waited for the machine's lock in vain."""
     return (f"not run — the machine's lock was not released within "
-            f"{DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS:g} s: "
+            f"{SCHEDULED_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS:g} s: "
             f"{run_all_test_suites.PROGRAM} waited {seconds_waiting_for_lock:.0f} s for it and "
             f"exited {run_all_test_suites.EXIT_LOCKED}; its refusal: "
             f"{runner_refusal_line(completed.stderr)}",
@@ -434,7 +434,7 @@ def runner_output_lines_for_the_record(completed):
 
 def write_record_command(log_store_root: str, machine: str, file_name: str) -> str:
     """Return a shell command that replaces the day’s record with stdin."""
-    directory = f"{log_store_root}/{DAILY_FULL_TEST_RUNS_KIND_DIRECTORY_NAME}/{machine}"
+    directory = f"{log_store_root}/{SCHEDULED_FULL_TEST_RUNS_KIND_DIRECTORY_NAME}/{machine}"
     return f"mkdir -p {shlex.quote(directory)} && cat > {shlex.quote(f'{directory}/{file_name}')}"
 
 
@@ -444,7 +444,7 @@ def parse_arguments(argv):
         description="Run every nc-test-suite on main on this machine and record the result "
                     "in the log-store.")
     parser.add_argument("--clone", default=str(REPOSITORY_ROOT))
-    parser.add_argument("--log-store-root", default=DAILY_FULL_TEST_RUN_DEFAULT_LOG_STORE_ROOT)
+    parser.add_argument("--log-store-root", default=SCHEDULED_FULL_TEST_RUN_DEFAULT_LOG_STORE_ROOT)
     parser.add_argument("--test-suite-runner-program")
     parser.add_argument("--temporary-directory")
     parser.add_argument("--recorded-inputs-directory")
@@ -456,32 +456,32 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
     now = now or datetime.now(timezone.utc)
     mark = handoff_user_review_of_agent_memory_stores_mark
     on_ned_box = mark.this_machine_is_ned_box()
-    machine = (DAILY_FULL_TEST_RUN_MACHINE_NAME_ON_NED_BOX if on_ned_box
-               else DAILY_FULL_TEST_RUN_MACHINE_NAME_ELSEWHERE)
+    machine = (SCHEDULED_FULL_TEST_RUN_MACHINE_NAME_ON_NED_BOX if on_ned_box
+               else SCHEDULED_FULL_TEST_RUN_MACHINE_NAME_ELSEWHERE)
     pacific_date = mark.pacific_time_of(now).date().isoformat()
     clone = Path(arguments.clone).resolve()
     directory = (Path(arguments.temporary_directory or tempfile.gettempdir()).resolve()
-                 / DAILY_FULL_TEST_RUN_DIRECTORY_NAME)
+                 / SCHEDULED_FULL_TEST_RUN_DIRECTORY_NAME)
     directory.mkdir(parents=True, exist_ok=True)
-    lock_file = directory / DAILY_FULL_TEST_RUN_LOCK_FILE_NAME
-    lock_handle = take_daily_full_test_run_lock(lock_file)
+    lock_file = directory / SCHEDULED_FULL_TEST_RUN_LOCK_FILE_NAME
+    lock_handle = take_scheduled_full_test_run_lock(lock_file)
     if lock_handle is None:
-        print(f"{PROGRAM}: not run — another daily full test run holds {lock_file}.\n"
+        print(f"{PROGRAM}: not run — another scheduled full test run holds {lock_file}.\n"
               f"Run this again after that run has finished.", file=sys.stderr)
-        return EXIT_ANOTHER_DAILY_RUN_HOLDS_THE_LOCK
+        return EXIT_ANOTHER_SCHEDULED_RUN_HOLDS_THE_LOCK
     try:
-        return daily_full_test_run_under_lock(
+        return scheduled_full_test_run_under_lock(
             arguments, now, monotonic, on_ned_box, machine, pacific_date, clone,
             directory)
     finally:
         lock_handle.close()
 
 
-def daily_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, machine,
+def scheduled_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, machine,
                                    pacific_date, clone, directory) -> int:
     mark = handoff_user_review_of_agent_memory_stores_mark
-    worktree = directory / DAILY_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME
-    logs = directory / DAILY_FULL_TEST_RUN_LOGS_DIRECTORY_NAME
+    worktree = directory / SCHEDULED_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME
+    logs = directory / SCHEDULED_FULL_TEST_RUN_LOGS_DIRECTORY_NAME
     run_started = monotonic()
     steps_failed = []
     commit = None
@@ -517,7 +517,7 @@ def daily_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, machin
                 command = [
                     sys.executable,
                     arguments.test_suite_runner_program
-                    or str(worktree / DAILY_FULL_TEST_RUN_RUNNER_PATH_IN_WORKTREE),
+                    or str(worktree / SCHEDULED_FULL_TEST_RUN_RUNNER_PATH_IN_WORKTREE),
                     "--log-dir", str(logs), "--record-inputs-with-strace"]
                 if arguments.recorded_inputs_directory:
                     command += ["--recorded-inputs-directory",
@@ -577,11 +577,11 @@ def daily_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, machin
 
     file_name = f"{pacific_date}.txt"
     citation = (f"{mark.NED_BOX_SSH_TARGET}:{arguments.log_store_root}/"
-                f"{DAILY_FULL_TEST_RUNS_KIND_DIRECTORY_NAME}/{machine}/{file_name}")
+                f"{SCHEDULED_FULL_TEST_RUNS_KIND_DIRECTORY_NAME}/{machine}/{file_name}")
     ssh_target = None if on_ned_box else mark.NED_BOX_SSH_TARGET
     write_command = write_record_command(arguments.log_store_root, machine, file_name)
     local_copy = directory / (
-        f"{DAILY_FULL_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME_PREFIX}{pacific_date}.txt")
+        f"{SCHEDULED_FULL_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME_PREFIX}{pacific_date}.txt")
     try:
         local_copy.write_text(record + "\n", encoding="utf-8")
     except OSError as error:
@@ -592,7 +592,7 @@ def daily_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, machin
         return EXIT_RECORD_NOT_WRITTEN
     try:
         mark.run_on_ned_box_or_here(
-            write_command, ssh_target, DAILY_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS,
+            write_command, ssh_target, SCHEDULED_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS,
             stdin_text=record + "\n")
     except mark.DailyMemoryReviewReadOrWriteFailed as error:
         by_hand = ([*mark.NED_BOX_SSH_COMMAND, ssh_target, write_command] if ssh_target

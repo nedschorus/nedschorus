@@ -143,6 +143,8 @@ _walk_finder_spec.loader.exec_module(walk_finder)
 STOP_HOOKS_STAY_SILENT_RULE_FILE = (
     walk_finder.REPOSITORY_TOP / "nc-systems" / "general-tools"
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+ATTENDANCE_CHECK_FILE = (walk_finder.REPOSITORY_TOP / "nc-systems" / "general-tools"
+                         / "agent-session-unattended-by-user-check-common.py")
 TRANSCRIPT_READER_FILE = (walk_finder.REPOSITORY_TOP / "scripts"
                           / "claude-code-session-transcript-records-read-backward-common.py")
 # The answer hook holds the closing line's answer letters, which its test checks against the walk-me-through skill.
@@ -377,8 +379,8 @@ def run(stdin_text, environment):
 
 def output_for(payload, environment):
     """A block naming the waiting items the reply leaves out, or why they are unknown; or None."""
-    if (environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
-            or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0"):
+    if walk_finder.load_module("agent_session_unattended_by_user_check_common",
+                               ATTENDANCE_CHECK_FILE).agent_session_unattended_by_user(environment):
         return None
     transcript_path = payload.get("transcript_path")
     if not transcript_path or not Path(transcript_path).expanduser().is_file():

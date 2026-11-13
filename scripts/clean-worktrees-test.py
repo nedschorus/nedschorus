@@ -431,7 +431,7 @@ with tempfile.TemporaryDirectory() as scratch:
             cwd=str(occupied_wt), stdin=subprocess.PIPE,
         )
     else:
-        print("SKIP  occupied cases: lsof is not installed on this machine")
+        print("SKIP  [this machine cannot run it] occupied cases: lsof is not installed on this machine")
 
     try:
         # --- The report classifies every worktree ---------------------------
@@ -1409,8 +1409,7 @@ with tempfile.TemporaryDirectory() as scratch:
         check(f"a failed worktree listing{' under ' + flags[0] if flags else ''} gives the "
               "shared next steps, naming the command that was run",
               stderr_lines[1:] == load_clean_worktrees_module().next_step_lines.git_failure_next_step_lines(
-                  rerun, text_the_failure_line_contains="clean-worktrees: stopped, because",
-                  include_the_misspelt_branch_commit_or_path_line=False).splitlines(),
+                  rerun, text_the_failure_line_contains="clean-worktrees: stopped, because").splitlines(),
               failed_listing.stderr)
 
     module = load_clean_worktrees_module()
@@ -2494,8 +2493,9 @@ with tempfile.TemporaryDirectory() as scratch:
         check("a worktree with no owner file outside the merge-lane review checkouts directory is "
               "kept, though its name holds a merged pull request's number",
               outside_checkout.exists()
-              and "it has no owner file, and the cleaner removes only a worktree holding one"
-              in review_line(removal.stdout, "pr16-head"), removal.stdout)
+              and "it has no owner file and is not idle" in review_line(removal.stdout,
+                                                                       "pr16-head"),
+              removal.stdout)
         check("a merge-lane review checkout of a pull request merged an hour ago is kept, while "
               "merge-lane-2's merge program may still be testing main in it",
               recently_merged_checkout.exists()
@@ -2815,49 +2815,52 @@ with tempfile.TemporaryDirectory() as scratch:
               "scripts/clean-worktrees.py --remove was stopped partway" in undeletable.stdout,
           undeletable.stdout + undeletable.stderr)
 
-    sought = managed / "zz-sought-wt"
-    git(checkout, "worktree", "add", "-b", "zz-sought-wt-branch", str(sought), "origin/main")
-    unreadable_first = managed / "aa-unreadable-gitdir-wt"
-    git(checkout, "worktree", "add", "-b", "aa-unreadable-gitdir-wt-branch", str(unreadable_first),
-        "origin/main")
-    gitdir_file = Path(git(unreadable_first, "rev-parse", "--absolute-git-dir").strip()) / "gitdir"
-    gitdir_file.chmod(0o000)
-    try:
-        found = load_clean_worktrees_module().worktree_own_git_directory_find_even_with_its_dot_git_file_gone(checkout, sought)
-    finally:
-        gitdir_file.chmod(0o644)
-    check("a registration whose gitdir file cannot be read is passed over, and the search goes on",
-          found is not None and (found / "gitdir").read_text(encoding="utf-8").strip()
-          == str((sought / ".git").resolve()), str(found))
-
-    relative = managed / "relative-gitdir-wt"
-    git(checkout, "worktree", "add", "-b", "relative-gitdir-wt-branch", str(relative), "origin/main")
-    relative_registration = Path(git(relative, "rev-parse", "--absolute-git-dir").strip())
-    (relative_registration / "gitdir").write_text(
-        os.path.relpath(relative / ".git", relative_registration) + "\n", encoding="utf-8")
     module = load_clean_worktrees_module()
-    found_relative = module.worktree_own_git_directory_find_even_with_its_dot_git_file_gone(
-        checkout, relative)
-    check("a registration whose gitdir is relative, as --relative-paths writes it, is found",
-          found_relative == relative_registration, f"{found_relative} {relative_registration}")
 
-    undecodable = Path(git(checkout, "rev-parse", "--path-format=absolute",
-                           "--git-common-dir").strip()) / "worktrees" / "aa-undecodable-gitdir"
-    undecodable.mkdir()
-    (undecodable / "gitdir").write_bytes(b"/tmp/not-utf-8-\xff/.git\n")
-    try:
-        found_past_undecodable = module.worktree_own_git_directory_find_even_with_its_dot_git_file_gone(
-            checkout, sought)
-    finally:
-        shutil.rmtree(undecodable)
-    check("a registration whose gitdir is not valid UTF-8 is read, and the search goes on",
-          found_past_undecodable is not None
-          and (found_past_undecodable / "gitdir").read_text(encoding="utf-8").strip()
-          == str((sought / ".git").resolve()), str(found_past_undecodable))
+    def record_of(path):
+        record_file = module.unfinished_worktree_removal_record_file(checkout, path)
+        return json.loads(record_file.read_text(encoding="utf-8")) if record_file.exists() else None
+
+    def registration_of(path):
+        return Path(record_of(path)["registration"])
+
+    detached_after, _ = stopped_partway("stopped-partway-head-gone-wt")
+    after_registration = registration_of(detached_after)
+    # The case of a finish that deleted HEAD and commondir and then failed on logs/: git then
+    # lists the registration as detached, but the record still holds the branch.
+    (after_registration / "HEAD").unlink()
+    (after_registration / "commondir").unlink()
+    head_gone = run_clean(checkout, "--remove-worktree-and-force-delete-its-branch", str(detached_after))
+    check("a finish after the registration's HEAD went still deletes the branch the record names",
+          head_gone.returncode == 0 and not detached_after.exists()
+          and not after_registration.exists()
+          and git(checkout, "branch", "--list", "stopped-partway-head-gone-wt-branch").strip() == ""
+          and "branch stopped-partway-head-gone-wt-branch deleted" in head_gone.stdout
+          and record_of(detached_after) is None,
+          head_gone.stdout + head_gone.stderr)
+
+    emptied, _ = stopped_partway("stopped-partway-registration-emptied-wt")
+    emptied_registration = registration_of(emptied)
+    # The case of a finish that deleted every entry of the registration, gitdir included, and
+    # then failed to delete the directory: the record outside the registration is still there.
+    for entry in list(emptied_registration.iterdir()):
+        shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+    emptied_log = scratch / "emptied-removals-log.txt"
+    emptied_environment = dict(os.environ)
+    emptied_environment[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(emptied_log)
+    emptied_run = subprocess.run(
+        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), "--remove"],
+        capture_output=True, text=True, check=False, env=emptied_environment)
+    emptied_logged = emptied_log.read_text(encoding="utf-8") if emptied_log.is_file() else ""
+    check("a registration emptied of every entry is found by its record, removed and logged",
+          emptied_run.returncode == 0 and not emptied_registration.exists()
+          and not emptied.exists() and record_of(emptied) is None
+          and f"path={emptied}\t" in emptied_logged
+          and "discarded-files=1" in emptied_logged,
+          emptied_run.stdout + emptied_run.stderr + emptied_logged)
 
     held, _ = stopped_partway("stopped-partway-registration-held-wt")
-    held_registration = module.worktree_own_git_directory_find_even_with_its_dot_git_file_gone(
-        checkout, held)
+    held_registration = registration_of(held)
     (held_registration / "logs").mkdir(exist_ok=True)
     (held_registration / "logs" / "HEAD").write_text("x\n", encoding="utf-8")
     (held_registration / "logs").chmod(0o500)
@@ -2865,36 +2868,490 @@ with tempfile.TemporaryDirectory() as scratch:
         held_run = run_clean(checkout, "--remove")
     finally:
         (held_registration / "logs").chmod(0o755)
-    check("a finish that cannot delete all of the registration keeps its gitdir and marker",
-          held_run.returncode == 1 and (held_registration / "gitdir").exists()
-          and (held_registration / module.REMOVAL_STARTED_MARKER_FILE_NAME).exists(),
+    check("a finish that cannot delete all of the registration fails and keeps the record",
+          held_run.returncode == 1 and record_of(held) is not None
+          and "stopped-partway-registration-held-wt: removal FAILED" in held_run.stdout,
           held_run.stdout + held_run.stderr)
-    held_log = scratch / "held-removals-log.txt"
-    held_environment = dict(os.environ)
-    held_environment[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(held_log)
-    held_again = subprocess.run(
-        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), "--remove"],
-        capture_output=True, text=True, check=False, env=held_environment)
-    held_logged = held_log.read_text(encoding="utf-8") if held_log.is_file() else ""
-    check("the next --remove then finishes it, logging the files deleted with it as unknown",
+    held_again = run_clean(checkout, "--remove")
+    check("the next --remove then finishes it, branch included",
           held_again.returncode == 0 and not held_registration.exists() and not registered(held)
-          and f"path={held}\t" in held_logged and "discarded-files=unknown" in held_logged,
-          held_again.stdout + held_again.stderr + held_logged)
+          and git(checkout, "branch", "--list", "stopped-partway-registration-held-wt-branch").strip() == ""
+          and record_of(held) is None,
+          held_again.stdout + held_again.stderr)
+
+    unreadable_gitdir_wt, _ = stopped_partway("stopped-partway-gitdir-unreadable-wt")
+    unreadable_gitdir_of = registration_of(unreadable_gitdir_wt)
+    # A gitdir that is a directory stands in for any gitdir file that exists but cannot be read.
+    (unreadable_gitdir_of / "gitdir").unlink()
+    (unreadable_gitdir_of / "gitdir").mkdir()
+    unreadable_gitdir_run = run_clean(checkout, "--remove")
+    check("a finish whose registration's gitdir cannot be read fails, exit 1, and keeps record and "
+          "registration",
+          unreadable_gitdir_run.returncode == 1 and unreadable_gitdir_of.exists()
+          and record_of(unreadable_gitdir_wt) is not None
+          and "stopped-partway-gitdir-unreadable-wt: removal FAILED" in unreadable_gitdir_run.stdout
+          and "stopped-partway-gitdir-unreadable-wt: removed" not in unreadable_gitdir_run.stdout,
+          unreadable_gitdir_run.stdout + unreadable_gitdir_run.stderr)
+    (unreadable_gitdir_of / "gitdir").rmdir()
+
+    rev_parse_failing, _ = stopped_partway("stopped-partway-rev-parse-fails-wt")
+    rev_parse_failing_git = scratch / "rev-parse-failing-git"
+    # Longer than the 120 characters of stderr the FAILED line quotes, so the cut is checked.
+    rev_parse_stand_in_stderr = "fatal: stand-in rev-parse failure " + "".join(
+        str(index % 10) for index in range(200))
+    rev_parse_failing_git.mkdir()
+    (rev_parse_failing_git / "git").write_text(
+        f"#!{sys.executable}\n"
+        "import os, signal, sys\n"
+        "if 'rev-parse' in sys.argv and '--verify' in sys.argv:\n"
+        "    if os.environ.get('REV_PARSE_STAND_IN_KILLED'):\n"
+        "        os.kill(os.getpid(), signal.SIGKILL)\n"
+        f"    sys.stderr.write({rev_parse_stand_in_stderr!r} + '\\n')\n"
+        "    sys.exit(128)\n"
+        f"os.execv({shutil.which('git')!r}, ['git'] + sys.argv[1:])\n", encoding="utf-8")
+    (rev_parse_failing_git / "git").chmod(0o755)
+    rev_parse_environment = dict(os.environ)
+    rev_parse_environment["PATH"] = f"{rev_parse_failing_git}{os.pathsep}{rev_parse_environment['PATH']}"
+    rev_parse_run = subprocess.run(
+        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout),
+         "--remove-worktree-and-force-delete-its-branch", str(rev_parse_failing)],
+        capture_output=True, text=True, check=False, env=rev_parse_environment)
+    check("a finish whose branch lookup fails, rather than finding no branch, fails, exit 1, and "
+          "keeps the record and the branch",
+          rev_parse_run.returncode == 1 and record_of(rev_parse_failing) is not None
+          and git(checkout, "branch", "--list", "stopped-partway-rev-parse-fails-wt-branch").strip() != ""
+          and "stopped-partway-rev-parse-fails-wt: removal FAILED" in rev_parse_run.stdout
+          and f"(exit 128): {rev_parse_stand_in_stderr[:120]}\n" in rev_parse_run.stdout,
+          rev_parse_run.stdout + rev_parse_run.stderr)
+    rev_parse_killed_run = subprocess.run(
+        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout),
+         "--remove-worktree-and-force-delete-its-branch", str(rev_parse_failing)],
+        capture_output=True, text=True, check=False,
+        env=dict(rev_parse_environment, REV_PARSE_STAND_IN_KILLED="1"))
+    check("a finish whose branch lookup is killed by a signal fails, exit 1, and keeps the record "
+          "and the branch",
+          rev_parse_killed_run.returncode == 1 and record_of(rev_parse_failing) is not None
+          and git(checkout, "branch", "--list", "stopped-partway-rev-parse-fails-wt-branch").strip() != ""
+          and "stopped-partway-rev-parse-fails-wt: removal FAILED" in rev_parse_killed_run.stdout
+          and "(exit -9)" in rev_parse_killed_run.stdout,
+          rev_parse_killed_run.stdout + rev_parse_killed_run.stderr)
+
+    records_directory = module.unfinished_worktree_removal_records_directory(checkout)
+    undeleted, _ = stopped_partway("stopped-partway-record-undeletable-wt")
+    records_directory.chmod(0o500)
+    try:
+        undeleted_run = run_clean(checkout, "--remove")
+    finally:
+        records_directory.chmod(0o755)
+    check("a finish whose record cannot be deleted removes the worktree and its branch, then "
+          "fails naming the record",
+          undeleted_run.returncode == 1 and not undeleted.exists() and not registered(undeleted)
+          and git(checkout, "branch", "--list", "stopped-partway-record-undeletable-wt-branch").strip() == ""
+          and "stopped-partway-record-undeletable-wt: deleting its removal record" in undeleted_run.stdout
+          and record_of(undeleted) is not None,
+          undeleted_run.stdout + undeleted_run.stderr)
+    undeleted_again = run_clean(checkout, "--remove")
+    check("the next --remove deletes that record, naming no branch, since its branch is already "
+          "gone, and prints no FAILED line",
+          undeleted_again.returncode == 0 and record_of(undeleted) is None
+          and "FAILED" not in undeleted_again.stdout
+          and "stopped-partway-record-undeletable-wt: removed" in undeleted_again.stdout.splitlines(),
+          undeleted_again.stdout + undeleted_again.stderr)
+
+    def never_began_record(name):
+        # No owner file, so --remove keeps the worktree without a failure of its own.
+        path = managed / name
+        git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
+        record_file = module.unfinished_worktree_removal_record_file(checkout, path)
+        record_file.parent.mkdir(exist_ok=True)
+        record_file.write_text(json.dumps({
+            "worktree": str(path.resolve()),
+            "registration": git(path, "rev-parse", "--absolute-git-dir").strip(),
+            "branch": f"{name}-branch", "head": "unknown", "discarded": []}), encoding="utf-8")
+        return path, record_file
+
+    for flag, name in (("--remove", "never-began-record-undeletable-wt"),
+                       ("--remove-worktree-and-force-delete-its-branch",
+                        "never-began-record-undeletable-named-wt")):
+        path, record_file = never_began_record(name)
+        records_directory.chmod(0o500)
+        try:
+            stuck_run = run_clean(checkout, flag, *([] if flag == "--remove" else [str(path)]))
+        finally:
+            records_directory.chmod(0o755)
+        check(f"{flag} fails, exit 1, when the record of a removal that never began cannot "
+              f"be deleted, and keeps the worktree",
+              stuck_run.returncode == 1 and (path / ".git").exists() and record_file.exists()
+              and f"{name}: deleting its removal record" in stuck_run.stdout
+              and "whose removal never began, FAILED" in stuck_run.stdout,
+              stuck_run.stdout + stuck_run.stderr)
+        record_file.unlink()
+
+    never_began = managed / "removal-never-began-wt"
+    git(checkout, "worktree", "add", "-b", "removal-never-began-wt-branch", str(never_began),
+        "origin/main")
+    stale_record = module.unfinished_worktree_removal_record_file(checkout, never_began)
+    stale_record.parent.mkdir(exist_ok=True)
+    stale_record.write_text(json.dumps({
+        "worktree": str(never_began.resolve()),
+        "registration": git(never_began, "rev-parse", "--absolute-git-dir").strip(),
+        "branch": "removal-never-began-wt-branch", "head": "unknown", "discarded": []}),
+        encoding="utf-8")
+    dropped = run_clean(checkout, "--remove")
+    check("a record of a removal that never began is dropped, and the worktree judged as any other",
+          (never_began / ".git").exists() and not stale_record.exists()
+          and "removal-never-began-wt: removed" not in dropped.stdout,
+          dropped.stdout + dropped.stderr)
+
+    broken_record = module.unfinished_worktree_removal_records_directory(checkout) / "0123456789abcdef.json"
+    broken_record.write_text("{not json", encoding="utf-8")
+    broken_run = run_clean(checkout, "--remove")
+    broken_record.unlink()
+    check("a removal record that cannot be read is a failure naming the file, exit 1",
+          broken_run.returncode == 1
+          and "0123456789abcdef.json: FAILED — scripts/clean-worktrees.py cannot read this "
+              "removal record" in broken_run.stdout,
+          broken_run.stdout + broken_run.stderr)
+
+    records_directory = module.unfinished_worktree_removal_records_directory(checkout)
+    (records_directory / "a-no-worktree.json").write_text(json.dumps({"registration": "x"}),
+                                                          encoding="utf-8")
+    (records_directory / "b-a-list.json").write_text("[]", encoding="utf-8")
+    (records_directory / "c-a-directory.json").mkdir()
+    try:
+        _, unreadable_records = module.unfinished_worktree_removal_records(checkout)
+    finally:
+        (records_directory / "a-no-worktree.json").unlink()
+        (records_directory / "b-a-list.json").unlink()
+        (records_directory / "c-a-directory.json").rmdir()
+    check("a record missing a field, one that is not an object and one that cannot be read "
+          "are each named as unreadable, with their error",
+          [(record_file.name, error.split(":")[0]) for record_file, error in unreadable_records]
+          == [("a-no-worktree.json", "KeyError"), ("b-a-list.json", "TypeError"),
+              ("c-a-directory.json", "IsADirectoryError")],
+          str(unreadable_records))
+
+    reused = managed / "registration-reused-wt"
+    git(checkout, "worktree", "add", "-b", "registration-reused-wt-branch", str(reused), "origin/main")
+    reused_registration = Path(git(reused, "rev-parse", "--absolute-git-dir").strip())
+    (reused_registration / "gitdir").write_text(
+        os.path.relpath(reused / ".git", reused_registration) + "\n", encoding="utf-8")
+    check("a registration whose relative gitdir names the worktree is the worktree's own",
+          module.registration_points_to_worktree_or_has_no_gitdir_file(reused_registration, reused), "")
+    check("a registration whose gitdir names another worktree is not the worktree's",
+          not module.registration_points_to_worktree_or_has_no_gitdir_file(reused_registration, managed / "other-wt"),
+          "")
+    unreadable_gitdir_registration = scratch / "unreadable-gitdir-registration"
+    (unreadable_gitdir_registration / "gitdir").mkdir(parents=True)
+    try:
+        module.registration_points_to_worktree_or_has_no_gitdir_file(unreadable_gitdir_registration, reused)
+        unreadable_gitdir_raised = False
+    except OSError:
+        unreadable_gitdir_raised = True
+    check("a registration whose gitdir file cannot be read raises, rather than being judged",
+          unreadable_gitdir_raised, "")
+    check("a registration whose gitdir file is gone is deleted as the worktree's",
+          module.registration_points_to_worktree_or_has_no_gitdir_file(scratch / "no-such-registration", reused), "")
 
     unwritable = managed / "removal-file-unwritable-wt"
     git(checkout, "worktree", "add", "-b", "removal-file-unwritable-wt-branch", str(unwritable),
         "origin/main")
     give_stopped_owner(unwritable)
-    registration = Path(git(unwritable, "rev-parse", "--absolute-git-dir").strip())
-    registration.chmod(0o500)
+    records_directory = module.unfinished_worktree_removal_records_directory(checkout)
+    records_directory.mkdir(exist_ok=True)
+    records_directory.chmod(0o500)
     try:
         refused = run_clean(checkout, "--remove")
     finally:
-        registration.chmod(0o755)
-    check("a removal whose removal-started file cannot be written is not begun, and fails",
+        records_directory.chmod(0o755)
+    check("a removal whose removal record cannot be written is not begun, and fails",
           refused.returncode == 1 and (unwritable / ".git").exists()
-          and "removal-file-unwritable-wt: removal FAILED, worktree kept" in refused.stdout,
+          and "removal-file-unwritable-wt: removal FAILED, worktree kept — "
+              "scripts/clean-worktrees.py could not write its removal record" in refused.stdout,
           refused.stdout + refused.stderr)
+
+# --- Idle worktrees: removed, owner file or not, when nothing unsaved is in them ---
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch).resolve()
+    checkout = scratch / "checkout"
+    origin = scratch / "origin.git"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    (checkout / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    (checkout / "tracked").mkdir()
+    (checkout / "tracked" / "file.txt").write_text("tracked\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
+    git(checkout, "remote", "add", "origin", str(origin))
+    git(checkout, "push", "-u", "origin", "main")
+    idle_home = scratch / "home"
+    (idle_home / ".claude" / "handoffs").mkdir(parents=True)
+    worktrees_directory = scratch / "worktrees"
+    three_days_ago = float(int(time.time()) - 3 * 86400)
+
+    def idle_git_directory(worktree):
+        return Path(git(worktree, "rev-parse", "--absolute-git-dir").strip())
+
+    def age(worktree):
+        """Set the mtime of every file and directory in the worktree and its own git directory to
+        three days ago."""
+        for root in (worktree, idle_git_directory(worktree)):
+            for directory, directory_names, file_names in os.walk(root, topdown=False):
+                for name in directory_names + file_names:
+                    os.utime(os.path.join(directory, name), (three_days_ago, three_days_ago),
+                             follow_symlinks=False)
+            os.utime(root, (three_days_ago, three_days_ago))
+        return worktree
+
+    def idle_candidate(name, where=None, pushed=True, detach=False):
+        path = (where or worktrees_directory) / name
+        if detach:
+            git(checkout, "worktree", "add", "--detach", str(path), "origin/main")
+        else:
+            git(checkout, "worktree", "add", "-b", name, str(path), "origin/main")
+            if pushed:
+                git(path, "push", "-q", "origin", name)
+        return path
+
+    def run_idle_cleanup(*flags, pull_requests=(), gh_exit=None):
+        environment = dict(os.environ, HOME=str(idle_home),
+                           FAKE_GH_PULL_REQUESTS=json.dumps(list(pull_requests)))
+        if gh_exit is not None:
+            environment["FAKE_GH_EXIT_CODE"] = str(gh_exit)
+        return subprocess.run([sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), *flags],
+                              capture_output=True, text=True, check=False, env=environment)
+
+    def idle_line(output, name):
+        return next((line for line in output.splitlines() if line.startswith(f"{name}:")), "")
+
+    idle_done_start = ("done — nothing in it, its git directory included, has changed for 2 days, "
+                       "it holds no uncommitted or untracked file, GitHub holds every commit of its "
+                       "HEAD, and no open pull request is its")
+    no_owner_kept = ("kept — it has no owner file and is not idle: the cleaner removes a worktree "
+                     "with no owner file only once nothing in it has changed for 2 days and it "
+                     "holds no uncommitted or untracked file")
+
+    idle_worktree = idle_candidate("idle-wt")
+    (idle_worktree / "build-output.log").write_text("ignored\n", encoding="utf-8")
+    age(idle_worktree)
+    owned_idle_worktree = age(give_stopped_owner(idle_candidate("owned-idle-wt")))
+    detached_idle_worktree = age(idle_candidate("detached-idle-wt", detach=True))
+    fresh_worktree = idle_candidate("fresh-wt")
+    touched_worktree = age(idle_candidate("touched-wt"))
+    os.utime(touched_worktree / "tracked" / "file.txt")
+    git_touched_worktree = age(idle_candidate("git-touched-wt"))
+    os.utime(idle_git_directory(git_touched_worktree) / "HEAD")
+    untracked_worktree = idle_candidate("untracked-wt")
+    (untracked_worktree / "notes.txt").write_text("unsaved\n", encoding="utf-8")
+    age(untracked_worktree)
+    modified_worktree = idle_candidate("modified-wt")
+    (modified_worktree / "README.md").write_text("changed\n", encoding="utf-8")
+    age(modified_worktree)
+    unpushed_worktree = idle_candidate("unpushed-wt")
+    (unpushed_worktree / "new.txt").write_text("new\n", encoding="utf-8")
+    git(unpushed_worktree, "add", "-A")
+    git(unpushed_worktree, "commit", "-q", "-m", "not on origin")
+    age(unpushed_worktree)
+    unborn_head_worktree = idle_candidate("unborn-head-wt")
+    (idle_git_directory(unborn_head_worktree) / "HEAD").write_text("ref: refs/heads/gone\n",
+                                                                   encoding="utf-8")
+    age(unborn_head_worktree)
+    open_pull_request_worktree = age(idle_candidate("open-pr-wt"))
+    git(checkout, "switch", "-q", "-c", "elsewhere")
+    (checkout / "elsewhere.txt").write_text("elsewhere\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-q", "-m", "an open pull request's head commit")
+    git(checkout, "push", "-q", "origin", "elsewhere")
+    git(checkout, "switch", "-q", "main")
+    open_head_worktree = idle_candidate("open-head-wt", detach=True)
+    git(open_head_worktree, "switch", "-q", "--detach", "origin/elsewhere")
+    age(open_head_worktree)
+    marked_home = idle_candidate("marked-home-wt", detach=True)
+    (idle_git_directory(marked_home) / "agent-home-marker").write_text("", encoding="utf-8")
+    age(marked_home)
+    (idle_home / "agents").mkdir()
+    located_home = age(idle_candidate("some-seat", where=idle_home / "agents", detach=True))
+    merging_worktree = idle_candidate("merging-wt")
+    (idle_git_directory(merging_worktree) / "MERGE_HEAD").write_text(
+        git(checkout, "rev-parse", "origin/main"), encoding="utf-8")
+    age(merging_worktree)
+    locked_idle_worktree = idle_candidate("locked-idle-wt")
+    git(checkout, "worktree", "lock", "--reason", "kept by hand", str(locked_idle_worktree))
+    age(locked_idle_worktree)
+    occupied_idle_worktree = age(idle_candidate("occupied-idle-wt"))
+    unreadable_worktree = idle_candidate("unreadable-wt")
+    (unreadable_worktree / "sealed").mkdir()
+    age(unreadable_worktree)
+    (unreadable_worktree / "sealed").chmod(0)
+    # A tracked file whose mtime differs from the index's record of it: a status that refreshed the
+    # index would rewrite it, and the worktree would look changed today to the next run.
+    stale_index_worktree = age(idle_candidate("stale-index-wt"))
+    os.utime(stale_index_worktree / "README.md", (three_days_ago - 3600, three_days_ago - 3600))
+
+    open_pull_request = {"number": 30, "state": "OPEN", "headRefName": "open-pr-wt",
+                         "headRefOid": "a" * 40, "closedAt": None}
+    open_head_pull_request = {"number": 31, "state": "OPEN", "headRefName": "renamed-elsewhere",
+                              "headRefOid": git(checkout, "rev-parse", "origin/elsewhere").strip(),
+                              "closedAt": None}
+
+    occupant = subprocess.Popen(["sleep", "600"], cwd=occupied_idle_worktree)
+    try:
+        report = run_idle_cleanup(pull_requests=[open_pull_request, open_head_pull_request])
+        index_mtime_after_report = os.stat(idle_git_directory(stale_index_worktree) / "index").st_mtime
+        removal = run_idle_cleanup("--remove", pull_requests=[open_pull_request,
+                                                              open_head_pull_request])
+    finally:
+        occupant.kill()
+        occupant.wait()
+        if unreadable_worktree.exists():
+            (unreadable_worktree / "sealed").chmod(0o755)
+
+    check("the report calls an idle worktree with no owner file done, naming the ignored file "
+          "its removal discards",
+          idle_line(report.stdout, "idle-wt").startswith(f"idle-wt: {idle_done_start}")
+          and "build-output.log" in idle_line(report.stdout, "idle-wt"), report.stdout)
+    check("the report calls an idle worktree with a stopped owner done by the idle rule",
+          idle_line(report.stdout, "owned-idle-wt").startswith(f"owned-idle-wt: {idle_done_start}"),
+          report.stdout)
+    check("a report's git status does not refresh an idle worktree's index",
+          index_mtime_after_report == three_days_ago
+          and idle_line(removal.stdout, "stale-index-wt").startswith("stale-index-wt: removed"),
+          f"{index_mtime_after_report} {three_days_ago}\n{removal.stdout}")
+    check("--remove removes idle worktrees, owner file or not, on a branch or detached",
+          not idle_worktree.exists() and not owned_idle_worktree.exists()
+          and not detached_idle_worktree.exists() and removal.returncode == 0,
+          removal.stdout + removal.stderr)
+    check("an idle worktree's branch keeps its commits on origin",
+          "idle-wt" in git(origin, "branch", "--list", "idle-wt"), removal.stdout)
+    for worktree, why in ((fresh_worktree, "it was made today"),
+                          (touched_worktree, "one of its files changed today"),
+                          (git_touched_worktree, "a file in its own git directory changed today"),
+                          (untracked_worktree, "it holds an untracked file"),
+                          (modified_worktree, "it holds an uncommitted change"),
+                          (unpushed_worktree, "it holds a commit GitHub lacks"),
+                          (unborn_head_worktree, "git cannot list the commits of its HEAD"),
+                          (open_pull_request_worktree, "its branch is an open pull request's"),
+                          (open_head_worktree,
+                           "its detached HEAD is an open pull request's head commit"),
+                          (merging_worktree, "a merge is in progress in it"),
+                          (unreadable_worktree, "a directory in it cannot be read"),
+                          (marked_home, "it is an agent-home by its marker file"),
+                          (located_home, "it is an agent-home by its place in ~/agents")):
+        check(f"a worktree with no owner file is not idle, and is kept, when {why}",
+              worktree.exists()
+              and idle_line(removal.stdout, worktree.name) == f"{worktree.name}: {no_owner_kept}",
+              idle_line(removal.stdout, worktree.name) or removal.stdout)
+    check("a locked idle worktree is kept for its lock",
+          locked_idle_worktree.exists()
+          and idle_line(removal.stdout, "locked-idle-wt").startswith(
+              "locked-idle-wt: kept — locked with git worktree lock (kept by hand)"), removal.stdout)
+    check("an idle worktree a live process works in is kept, saying so",
+          occupied_idle_worktree.exists()
+          and idle_line(removal.stdout, "occupied-idle-wt").endswith(
+              "no open pull request is its, but a live process is rooted inside it"), removal.stdout)
+
+    gh_failed_worktree = age(idle_candidate("gh-failed-wt"))
+    gh_failed = run_idle_cleanup("--remove", gh_exit=1)
+    check("when gh cannot list the pull requests, no worktree is idle",
+          gh_failed_worktree.exists()
+          and idle_line(gh_failed.stdout, "gh-failed-wt") == f"gh-failed-wt: {no_owner_kept}",
+          gh_failed.stdout + gh_failed.stderr)
+
+    # A file written after the idle rule judged a worktree, here by a stub lsof during the vacancy
+    # check, must keep it: the removal would delete the file unsaved. Each run holds one idle
+    # worktree, so the stub's one write lands after that worktree was judged; this first run
+    # removes the idle worktrees the cases above left.
+    run_idle_cleanup("--remove")
+    # os.utime, not touch -d: BSD touch on the Mac rejects -d @<epoch>. A stub that cannot set the
+    # time exits 1, so the case fails instead of passing without the backdating it relies on.
+    backdate = (f"'{sys.executable}' -c 'import os, sys; "
+                f"[os.utime(p, ({three_days_ago}, {three_days_ago})) for p in sys.argv[1:]]'")
+    for name, written, stub_line in (
+            ("written-ignored-wt", "late-output.log", "echo late > '{wt}/late-output.log'"),
+            ("written-untracked-wt", "late-notes.txt", "echo late > '{wt}/late-notes.txt'"),
+            # Backdated, file and directory both, so only git status still sees the new file.
+            ("backdated-untracked-wt", "backdated-notes.txt",
+             "echo late > '{wt}/backdated-notes.txt' && " + backdate
+             + " '{wt}/backdated-notes.txt' '{wt}' || exit 1"),
+            # A commit GitHub lacks, made after rev-list checked HEAD: no file in the worktree
+            # changes, so only the HEAD comparison sees it.
+            ("committed-late-idle-wt", None,
+             "git -C '{wt}' commit -q --allow-empty -m 'made during the vacancy check'"),
+            ("still-idle-wt", None, "")):
+        worktree = age(idle_candidate(name))
+        stub_directory = scratch / f"writing-lsof-{name}"
+        stub_directory.mkdir()
+        write_line = stub_line.format(wt=worktree) + "\n" if stub_line else ""
+        (stub_directory / "lsof").write_text(
+            f"#!/bin/sh\n{write_line}printf 'p1\\nn/\\n'\n", encoding="utf-8")
+        (stub_directory / "lsof").chmod(0o755)
+        written_removal = subprocess.run(
+            [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), "--remove"],
+            capture_output=True, text=True, check=False,
+            env=dict(os.environ, HOME=str(idle_home), FAKE_GH_PULL_REQUESTS="[]",
+                     PATH=f"{stub_directory}{os.pathsep}{os.environ['PATH']}"))
+        if written:
+            check(f"--remove keeps an idle worktree in which {written} was written after the idle "
+                  f"rule judged it, and says why",
+                  (worktree / written).exists()
+                  and idle_line(written_removal.stdout, name).startswith(
+                      f"{name}: kept — the idle rule judged it done, but "),
+                  written_removal.stdout + written_removal.stderr)
+        elif stub_line:
+            check("--remove keeps an idle worktree whose HEAD gained a commit after the idle rule "
+                  "checked it, and says why",
+                  worktree.exists()
+                  and idle_line(written_removal.stdout, name).startswith(
+                      f"{name}: kept — the idle rule judged it done, but its HEAD changed during "
+                      f"this run"),
+                  written_removal.stdout + written_removal.stderr)
+        else:
+            check("--remove still removes an idle worktree in which nothing was written during "
+                  "the run", not worktree.exists(), written_removal.stdout + written_removal.stderr)
+
+    # A HEAD that cannot be resolved reads as "unknown", which rev-list fails on: the idle rule then
+    # leaves the worktree to the other rules, which keep it.
+    unknown_head_worktree = idle_candidate("unknown-head-wt")
+    (idle_git_directory(unknown_head_worktree) / "HEAD").write_text(
+        "ref: refs/heads/no-such-branch-for-this-case\n", encoding="utf-8")
+    age(unknown_head_worktree)
+    unknown_head_removal = run_idle_cleanup("--remove")
+    check("--remove keeps an idle worktree whose HEAD cannot be resolved",
+          unknown_head_worktree.exists()
+          and idle_line(unknown_head_removal.stdout, "unknown-head-wt").startswith(
+              "unknown-head-wt: kept")
+          and "Traceback" not in unknown_head_removal.stderr,
+          unknown_head_removal.stdout + unknown_head_removal.stderr)
+
+    # A directory that becomes unreadable after the judgment leaves the re-check unable to tell
+    # whether anything in it changed, so the worktree is kept.
+    sealed_worktree = idle_candidate("sealed-later-wt")
+    (sealed_worktree / "sealed").mkdir()
+    (sealed_worktree / "sealed" / "kept.log").write_text("ignored\n", encoding="utf-8")
+    age(sealed_worktree)
+    sealing_stub = scratch / "sealing-lsof"
+    sealing_stub.mkdir()
+    (sealing_stub / "lsof").write_text(
+        f"#!/bin/sh\nchmod 0 '{sealed_worktree}/sealed'\nprintf 'p1\\nn/\\n'\n", encoding="utf-8")
+    (sealing_stub / "lsof").chmod(0o755)
+    try:
+        sealed_removal = subprocess.run(
+            [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), "--remove"],
+            capture_output=True, text=True, check=False,
+            env=dict(os.environ, HOME=str(idle_home), FAKE_GH_PULL_REQUESTS="[]",
+                     PATH=f"{sealing_stub}{os.pathsep}{os.environ['PATH']}"))
+    finally:
+        (sealed_worktree / "sealed").chmod(0o755)
+    check("--remove keeps an idle worktree in which a directory became unreadable after the idle "
+          "rule judged it, and says so",
+          sealed_worktree.exists()
+          and idle_line(sealed_removal.stdout, "sealed-later-wt").startswith(
+              "sealed-later-wt: kept — the idle rule judged it done, but a file in it cannot be read"),
+          sealed_removal.stdout + sealed_removal.stderr)
 
 # --- The machine's task lists stay out of the suite's runs ---
 with tempfile.TemporaryDirectory() as scratch:

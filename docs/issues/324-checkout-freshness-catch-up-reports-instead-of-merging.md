@@ -193,6 +193,8 @@ the next turn, as the user observed.
 
 ## Next, proposed and not built: warn on the obsolete FILE, not the branch
 
+Built after this issue closed, as the Outcome section says.
+
 The line above is orientation — it tells a seat that it is behind, in general.
 The user asked the better question: "is there any easy way to tell if any agent
 has read or edited an obsolete file — that would be a good place to say
@@ -290,4 +292,4 @@ None was pushed. Nine in five days on one seat is the rate.
 
 ## Outcome
 
-Closed as completed on 2026-09-15. Three pull requests carried the work: [checkout-freshness catch-up reports instead of merging into the working branch (#324)](https://github.com/nedschorus/nedschorus/pull/372) and [ghi-info-ask fast-forwards its own checkout before each ask (#324's open question, answered)](https://github.com/nedschorus/nedschorus/pull/375), both merged on 2026-09-15, and [The hook rebases a never-pushed branch onto main and tells the agent what moved](https://github.com/nedschorus/nedschorus/pull/388), merged the same day, which built the walk's ruling. One leftover went to GHI [checkout-freshness catch-up: pin the two git rebase --abort shapes healthy git cannot produce](https://github.com/nedschorus/nedschorus/issues/389), filed just before this issue closed. The section "Next, proposed and not built: warn on the obsolete FILE, not the branch" was not built when this issue closed.
+Closed as completed on 2026-09-15. Three pull requests carried the work: [checkout-freshness catch-up reports instead of merging into the working branch (#324)](https://github.com/nedschorus/nedschorus/pull/372) and [ghi-info-ask fast-forwards its own checkout before each ask (#324's open question, answered)](https://github.com/nedschorus/nedschorus/pull/375), both merged on 2026-09-15, and [The hook rebases a never-pushed branch onto main and tells the agent what moved](https://github.com/nedschorus/nedschorus/pull/388), merged the same day, which built the walk's ruling. One leftover went to GHI [checkout-freshness catch-up: pin the two git rebase --abort shapes healthy git cannot produce](https://github.com/nedschorus/nedschorus/issues/389), filed just before this issue closed. The section "Next, proposed and not built: warn on the obsolete FILE, not the branch" was not built when this issue closed. It was built afterwards, as `scripts/obsolete-file-edit-warning-hook.py`, a `PostToolUse` hook registered in `.claude/settings.json`, by PR [Warn the agent when it edits a file origin/main has already changed](https://github.com/nedschorus/nedschorus/pull/463), merged on 2026-09-17.

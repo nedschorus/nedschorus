@@ -64,6 +64,14 @@ The Mac-side survey, ruled 2026-08-14, asked six questions about the Mac's backu
 
 **Next action.** None from these answers. Scope item 3 below, testing one restore path, now has a command-line route to test: `scripts/find-deleted-path-across-backups.py` against a file known to be in a Mac backup.
 
+## Ruled 2026-10-11: a wiki page on backup procedures
+
+While ruling on how long the worktree cleaner keeps old work, the user said: "I don't know if there is a wiki page or design for our backup procedures, but there should be." In item 5b of the approval-walk git-checkouts-worktrees-and-branch-rules-design-draft-2026-10-09-2, he approved, with "y y", adding that page to this issue as work (walk-minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/git-checkouts-worktrees-and-branch-rules-design-draft-2026-10-09-2-minutes.md`, lines 20 and 21). The same ruling is decision 5 of the design draft for GHI [One design of record for the project's git checkouts, worktrees and branch rules](https://github.com/nedschorus/nedschorus/issues/1121).
+
+**The work.** A wiki page on the project's backup procedures: what is backed up, where, how often, how long each backup is kept, and how to restore a file. It is built from this issue's measurements and from `scripts/find-deleted-path-across-backups.py`. No such page exists: `git ls-tree -r --name-only origin/main docs/nedschorus-wiki | grep -i backup` printed nothing on 2026-11-11.
+
+**Next action for this part.** Write the page.
+
 ---
 
 Boss-raised 2026-07-21: is a backup strategy for state that matters but is not in git worth a GHI? Ruling implicit in this issue's existence: yes, as future work — the machine currently has Time Machine coverage (boss-operated; no agent has been taught to use it), so nothing is unprotected today; what is missing is a ruled inventory and tested restore paths.
@@ -78,7 +86,7 @@ Legacy references (existence verified 2026-07-21, contents NOT vetted — the bo
 - `~/Projects/nedlern/docs/working/proposed/agent-state-outside-git-design.md`
 - `~/Projects/nedlern/docs/working/proposed/nedlern-machine-state-repo-and-sweep-2026-07-17.md`
 
-Ladder position: the transcript mirror is authorized (2026-09-07) and now built and scheduled (2026-09-10); the Mac's Time Machine survey is answered (2026-10-01, above); nothing else under this issue is authorized.
+Ladder position: the transcript mirror is authorized (2026-09-07) and now built and scheduled (2026-09-10); the Mac's Time Machine survey is answered (2026-10-01, above); the wiki page on backup procedures is authorized (2026-10-11, above); nothing else under this issue is authorized.
 
 —
 Session: f5081355-c3fd-4271-956c-68ffeb99e4ae (new-vp); revised 2026-09-10 by md-skills-9e; Time Machine answers added 2026-10-01 by cold-read-research

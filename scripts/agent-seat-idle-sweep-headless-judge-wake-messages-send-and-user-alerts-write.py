@@ -22,22 +22,32 @@ Each invocation, under a lock that keeps two from overlapping:
 5. For each idle agent-seat, applies the verdict's rule: rule 1 wakes it once its limit has ended;
    rule 2 has unbacked promises and announced actions judged and named to it; rule 3 sends the
    handoff text; rule 4 ends a wait no rule 2 message was sent on; rule 5 has the judge
-   decide whether to message it. A message starts a wait, unless a wait is already open: 15 minutes
-   later, if the agent-seat is idle, code sends the escalation, and 15 minutes after that writes the
-   user a user-alert, once.
+   decide whether to message it, and write the message. A message starts a wait, unless a wait is
+   already open: 15 minutes later, if the agent-seat is idle, code sends the escalation, which
+   quotes the message that opened the wait, and 15 minutes after that writes the user a
+   user-alert, once.
+
+Every message to an agent-seat goes through Sweep.send_wake_message, which ends it with
+DO_NOT_REPLY_SENTENCE: the headless agent-session that sends it has exited by the time the
+agent-seat reads it, so a reply fails.
 
 Headless agent-sessions: `claude -p --model sonnet` in an empty working directory under the state
-directory, allowed only SendMessage, ListAgents and ToolSearch, or no tool for the rule 2 judge,
-which sends nothing. Each answers JSON through --json-schema, and code reads its SendMessage calls
-from its stream-json output and checks each against the agent-seat and the text code wrote. Each
-is stopped after 5 minutes.
+directory. A sender is allowed only SendMessage, ListAgents and ToolSearch; the rule 2 and rule 5
+judges get no tool and send nothing. Each answers JSON through --json-schema, and code reads a
+sender's SendMessage calls from its stream-json output and checks each against the agent-seat and
+the text code wrote. Each is stopped after 5 minutes.
 
 What it does not handle: it runs only on ned-box and reads only ned-box's agent-seats. One
 invocation runs its headless agent-sessions one after another, so a slow judge delays every other
 agent-seat's step, and the lock makes the next minute's invocation skip, until it ends. A wait
-does not end when the agent-seat answers a message; it ends when the agent-seat has nothing to do
-(rule 4) and no rule 2 message was sent on the wait, stops at a usage limit (rule 1), starts a new
-agent-session, or spends tokens after the user was told.
+does not end when the agent-seat only replies to a message in text; it ends when the agent-seat
+makes a tool call after the nudge that opened the wait or has nothing to do (rule 4), in either
+case only when no rule 2 message was sent on the wait, stops at a usage limit (rule 1), starts a
+new agent-session, or spends tokens after the user was told. So an agent-seat that answers each
+rule 3 or rule 5 message with a tool call and goes idle again is nudged again, and never
+escalated; one that answers a rule 2 message with a tool call and a fresh promise is escalated,
+because a tool call that ended a promise wait would let an agent-seat that makes a fresh promise
+at each rule 2 message be nudged again forever and never escalated.
 
 How it fails, and what the user sees: a headless agent-session that fails, is stopped, answers
 JSON code cannot use, or sends to the wrong entry or the wrong text; a message missing from the
@@ -112,7 +122,10 @@ NUDGE, ESCALATE, TELL_USER = "nudge", "escalate", "tell_user"
 PROMISE = "promise"
 LIMIT_WAKE, ACCOUNT_NOTICE = "limit_wake", "account_notice"
 
-ESCALATION_TEXT = "You've given this {minutes} minutes, please check; if not sure, hand off"
+DO_NOT_REPLY_SENTENCE = "Do not reply to this message: its sender has exited, so a reply fails."
+ESCALATION_TEXT = ("You've given this {minutes} minutes, please check; if not sure, hand off. At "
+                   "{nudge_time} the idle sweep wrote this, which you have not acted on:\n\n"
+                   "{quoted_nudge}")
 LIMIT_WAKE_TEXT = ("The usage limit that stopped you has ended: {why}. Carry on with the work the "
                    "limit stopped.")
 LIMIT_ENDED_BY_RESET = "its reset time has passed"
@@ -142,6 +155,10 @@ UNBACKED_SENTENCE_LINES = {
 
 SEND_ANSWER_SCHEMA = {"type": "object", "required": ["sent", "reason"],
                       "properties": {"sent": {"type": "boolean"}, "reason": {"type": "string"}}}
+IDLE_JUDGE_ANSWER_SCHEMA = {
+    "type": "object", "required": ["send", "message", "reason"],
+    "properties": {"send": {"type": "boolean"}, "message": {"type": "string"},
+                   "reason": {"type": "string"}}}
 SENTENCES_ANSWER_SCHEMA = {
     "type": "object", "required": ["sentences"],
     "properties": {"sentences": {"type": "array", "items": {
@@ -191,8 +208,8 @@ case: something may be left for it to do, or it may rightly be waiting. The fact
 the JSON below. An approval-walk item waiting on the user holds back only that walk, not the \
 agent-seat's other work.
 
-Judge whether the agent-seat could act now. If it could, send it one short message with SendMessage \
-saying what you saw. Name each background command and subagent that has not finished or reported, \
+Judge whether the agent-seat could act now. If it could, write it one short message saying what you \
+saw. Name each background command and subagent that has not finished or reported, \
 with how long it has run, and ask whether it is taking longer than expected, such as "Your \
 test-suite run started 25 minutes ago and has not finished. Is it taking longer than expected?". \
 A subagent with stopped_at has stopped and reported: it is not running, and only the background \
@@ -201,13 +218,12 @@ those commands with how long it has run, such as "Your subagent ae10c20d94ca876c
 minutes ago, but background command bgyicuvln, which it started 131 minutes ago, has not \
 finished. Is it still needed?". \
 With nothing running, ask what is going on, such as "You said "I'm starting the PR 1633 work now" 6 \
-minutes ago and have made no tool call since. What's going on?". If it could not act now, send \
-nothing.
+minutes ago and have made no tool call since. What's going on?". If it could not act now, write \
+no message. Send nothing yourself: the program sends the message.
 
-{find_the_entry}
-
-Then answer: sent, whether you sent the message, and reason, one sentence on why, such as "a \
-subagent started 3 minutes ago is still running".
+Answer: send, whether the agent-seat should get a message; message, the message, or an empty string \
+when send is false; and reason, one sentence on why, such as "a subagent started 3 minutes ago is \
+still running".
 
 {facts}"""
 
@@ -300,7 +316,7 @@ class SweepLog:
                 wait = None
             elif event["step"] == NUDGE:
                 wait = {"session_id": event["session_id"], "first_idle_at": event["first_idle_at"],
-                        NUDGE: event["at"]}
+                        NUDGE: event["at"], "nudge_text": event["text"]}
                 if event.get("rule") == 2:
                     wait[PROMISE] = event["at"]
             elif wait is not None:
@@ -459,7 +475,7 @@ def send_problems(outcome, seats, text):
                 for send in outcome.sends if entry_seat(send["to"]) not in seats]
     for send in outcome.sends:
         # Compared as the delivery check compares: a sender may reflow the lines of the text.
-        if (entry_seat(send["to"]) in seats and text is not None
+        if (entry_seat(send["to"]) in seats
                 and " ".join(send["message"].split()) != " ".join(text.split())):
             problems.append(f"sent {entry_seat(send['to'])} a text other than the one code wrote")
     for seat in seats:
@@ -514,14 +530,26 @@ class Sweep:
                    f"{self.log.path}, and the cron output log, and check whether {seat} needs a "
                    "message; run `claude -p` by hand on ned-box to see whether claude is logged out.")
 
-    def send(self, seat, verdict, text, step):
-        """Have a headless agent-session send code's text as written; log the send for the
-        delivery check."""
-        prompt = SENDER_PROMPT.format(seat=seat, text=text,
-                                      find_the_entry=FIND_THE_ENTRY.format(seat=seat))
+    def send_wake_message(self, seats, text):
+        """The one way a message reaches an agent-seat: end the text with DO_NOT_REPLY_SENTENCE and
+        have one headless agent-session send it to each of the seats. Returns the text as sent,
+        the headless outcome and the time the send started."""
+        text = f"{text}\n\n{DO_NOT_REPLY_SENTENCE}"
+        if len(seats) == 1:
+            prompt = SENDER_PROMPT.format(seat=seats[0], text=text,
+                                          find_the_entry=FIND_THE_ENTRY.format(seat=seats[0]))
+        else:
+            prompt = NOTICE_SENDER_PROMPT.format(
+                seats=", ".join(seats), text=text,
+                find_the_entry=FIND_THE_ENTRY.format(seat="<agent-seat>"))
         started_at = self.current()
         outcome = run_headless(prompt, SEND_ANSWER_SCHEMA, SENDING_TOOLS, self.working_directory,
                                self.timeout_seconds)
+        return text, outcome, started_at
+
+    def send(self, seat, verdict, text, step):
+        """Send code's text to one agent-seat; log the send for the delivery check."""
+        text, outcome, started_at = self.send_wake_message([seat], text)
         problems = [outcome.error] if outcome.error else send_problems(outcome, [seat], text)
         if problems:
             self.headless_failed(seat, f"send its {step} message", "; ".join(problems))
@@ -559,11 +587,7 @@ class Sweep:
                      "agent_seats": seats})
         if not seats:
             return
-        prompt = NOTICE_SENDER_PROMPT.format(seats=", ".join(seats), text=text,
-                                             find_the_entry=FIND_THE_ENTRY.format(seat="<agent-seat>"))
-        started_at = self.current()
-        outcome = run_headless(prompt, SEND_ANSWER_SCHEMA, SENDING_TOOLS, self.working_directory,
-                               self.timeout_seconds)
+        text, outcome, started_at = self.send_wake_message(seats, text)
         if outcome.error:
             self.headless_failed(", ".join(seats), "send the account-change notice", outcome.error)
             return
@@ -658,6 +682,12 @@ class Sweep:
                 self.end_wait(seat, "a usage limit")
             self.usage_limit(seat, verdict)
             return
+        # A tool call does not settle a promise a rule 2 message named, as rule 4 below does not.
+        worked_at = verdict.get(fields.LAST_TOOL_CALL_AT)
+        if (wait and PROMISE not in wait and worked_at
+                and parse_time(worked_at) > parse_time(wait[NUDGE])):
+            self.end_wait(seat, "it made a tool call after the nudge")
+            wait = None
         if wait and TELL_USER in wait and stretch and parse_time(stretch) > parse_time(wait[TELL_USER]):
             self.end_wait(seat, "it spent tokens after the user was told")
             wait = None
@@ -715,7 +745,9 @@ class Sweep:
                            "user may want to look at it himself.", failure=False)
             return
         if seconds_between(wait[NUDGE], self.now) >= WAIT_STEP_SECONDS:
-            text = ESCALATION_TEXT.format(minutes=minutes)
+            text = ESCALATION_TEXT.format(
+                minutes=minutes, nudge_time=parse_time(wait[NUDGE]).strftime("%Y-%m-%d %H:%MZ"),
+                quoted_nudge="\n".join(f"> {line}" for line in wait["nudge_text"].split("\n")))
             self.record({"event": "wait_step", "agent_seat": seat, "step": ESCALATE, "text": text})
             self.send(seat, verdict, text, ESCALATE)
 
@@ -755,31 +787,21 @@ class Sweep:
         facts = dict(self.facts(seat, verdict), step=NUDGE)
         idle_minutes = int(seconds_between(stretch, self.now) // 60) if stretch else None
         prompt = IDLE_JUDGE_PROMPT.format(seat=seat, idle_minutes=idle_minutes,
-                                          find_the_entry=FIND_THE_ENTRY.format(seat=seat),
                                           facts=json.dumps(facts, indent=1, ensure_ascii=False))
-        started_at = self.current()
-        outcome = run_headless(prompt, SEND_ANSWER_SCHEMA, SENDING_TOOLS, self.working_directory,
+        outcome = run_headless(prompt, IDLE_JUDGE_ANSWER_SCHEMA, "", self.working_directory,
                                self.timeout_seconds)
-        sends = [send for send in outcome.sends if send["succeeded"]]
-        problems = [outcome.error] if outcome.error else []
-        problems += [f"a SendMessage call to {send['to']!r} failed: {send['result']}"
-                     for send in outcome.sends if not send["succeeded"]]
-        if sends:
-            problems += send_problems(outcome, [seat], None)
+        problem = outcome.error or idle_judge_answer_problem(outcome.answer)
         answer = outcome.answer or {}
-        if not outcome.error and answer.get("sent") and not sends:
-            problems.append("the judge answered that it sent a message, but no SendMessage call "
-                            "succeeded")
         self.record({"event": "judge_answer", "agent_seat": seat, "rule": 5,
                      "session_id": verdict[fields.SESSION_ID], "last_activity": stretch,
-                     "sent": bool(sends), "reason": answer.get("reason"),
-                     "failed": bool(problems)})
-        if problems:
-            self.headless_failed(seat, "judge whether it could act now", "; ".join(problems))
-        if sends and not any(problem.startswith("sent to") for problem in problems):
-            text = sends[-1]["message"]
-            self.start_wait(seat, verdict, stretch, text, 5)
-            self.message_sent(seat, verdict, text, NUDGE, started_at)
+                     "send": not problem and answer["send"], "reason": answer.get("reason"),
+                     "failed": bool(problem)})
+        if problem:
+            self.headless_failed(seat, "judge whether it could act now", problem)
+            return
+        if answer["send"]:
+            self.start_wait(seat, verdict, stretch, answer["message"], 5)
+            self.send(seat, verdict, answer["message"], NUDGE)
 
     def sentences(self, seat, verdict):
         """Rule 2: judge what code could not settle, and word one message naming every unbacked
@@ -858,6 +880,14 @@ def sentence_answer_problem(answer, count):
             isinstance(item.get("backed"), bool) for item in answer["sentences"]):
         return f"the judge's answer does not give backed true or false once for each of {count} " \
                f"sentences: {json.dumps(answer)[:500]}"
+    return None
+
+
+def idle_judge_answer_problem(answer):
+    if not isinstance(answer.get("send"), bool) or not isinstance(answer.get("message"), str) or (
+            answer["send"] and not answer["message"].strip()):
+        return f"the judge's answer does not give send true or false, with a message when true: " \
+               f"{json.dumps(answer)[:500]}"
     return None
 
 

@@ -45,8 +45,9 @@ Each worktree of the clone with no owner file is handled as follows:
     fits <name>.
 
 FOR THE USER. Each worktree listed for the user is named on a line of its own with the facts that
-decide whether to keep or delete it. To keep one, do nothing: scripts/clean-worktrees.py never
-removes a listed worktree while it has no owner file. The facts are how many uncommitted, untracked or ignored files it holds, how many
+decide whether to keep or delete it. To keep one, lock it with
+git worktree lock --reason <why> <worktree>:
+scripts/clean-worktrees.py removes a worktree with no owner file once nothing in it has changed for 2 days and it holds no uncommitted or untracked file. The facts are how many uncommitted, untracked or ignored files it holds, how many
 commits its HEAD has that its branch's upstream lacks, or origin/main when the branch has no
 upstream or the worktree is on a detached HEAD, and whether its branch is merged into origin/main,
 as git reads origin/main without fetching, or that it is on a detached HEAD and has no branch. A
@@ -245,11 +246,11 @@ def main(argv=None):
         print(f"{len(for_the_user)} worktree(s) for the user to keep or delete, owned by no "
               f"agent-seat this program can tell: "
               + ", ".join(str(worktree) for worktree in for_the_user))
-        print("To keep one, do nothing: scripts/clean-worktrees.py never removes a listed worktree "
-              "while it has no owner file.")
+        print("To keep one, lock it with `git worktree lock --reason <why> <worktree>`: "
+              "scripts/clean-worktrees.py removes a worktree with no owner file once nothing in "
+              "it has changed for 2 days and it holds no uncommitted or untracked file.")
         print("To delete one with its branch, give it an owner file naming the agent-seat to be "
-              "told of the work-snapshot that keeps its uncommitted files, since "
-              "scripts/clean-worktrees.py removes only a worktree holding one, then remove it:\n"
+              "told of the work-snapshot that keeps its uncommitted files, then remove it:\n"
               f"  scripts/worktree-owner-file-read-and-write.py write --agent-seat <agent-seat> "
               f"--worktree <worktree>\n"
               f"  scripts/clean-worktrees.py --repo {shlex.quote(str(repo))} "

@@ -318,6 +318,15 @@ for case_name, text in [
     ("pattern 6: a colon after the following announces, not defines",
      "This means the following: the transcript is not in the repository."),
     ("pattern 2: a participle after the artifact word ends the subject's head", "The logs showing parser failures are missing."),
+    ("pattern 2: an edited-element word as the object in a relative clause after the artifact",
+     "The file that contains the parser is gone."),
+    ("pattern 2: an artifact word and an edited-element word joined by and", "The transcript and the parser are gone."),
+    ("pattern 2: an artifact word with a prepositional phrase, joined by and",
+     "The logs for the scan and the parser are missing."),
+    ("pattern 2: a participle after a plural artifact word, before an edited-element word",
+     "The files containing code are missing."),
+    ("pattern 2: that is the match's subject, the sentence's own verb follows",
+     "The transcript that is gone is the only copy."),
 ]:
     check(f"trigger: {case_name}", bool(hook.absence_claim_matches(text)), text)
 
@@ -371,8 +380,17 @@ for case_name, text in [
     ("where records belong", "Records like these belong in the log-store on ned-box, not in the repository."),
     ("a kind of commit", "Its one weakness, a commit on no branch, is guarded three ways."),
     ("an edited-element word ending in -ing heads the subject", "The tmux waker, transcript parsing and reset-time arithmetic are gone."),
-    ("pattern 2 inside a relative clause that has its own subject",
+    ("pattern 2 inside a clause the sentence's own verb follows",
      "The log that confirms the parser is gone is still on disk."),
+    ("pattern 2 inside a clause the sentence's own verb, has, follows",
+     "The log that confirms the parser is gone has been kept."),
+    ("an artifact word as a verb's object before and, a pronoun subject", "I edited the file and the guard is gone."),
+    ("an artifact word as a verb's object before and, a second determiner",
+     "The commit touched the log and the fallback is gone."),
+    ("an edited-element word heads the subject, its relative clause names an artifact", "The parser that reads the log is gone."),
+    ("an -ing word in a compound noun before an edited-element word", "The file naming rules are gone."),
+    ("an -ing word in a compound noun before code", "The log formatting code is gone."),
+    ("a search tool as the subject, an adverb before the match", "We know the locator still cannot find branch names."),
 ]:
     check(f"trigger: silent on {case_name}", not hook.absence_claim_matches(text),
           hook.absence_claim_matches(text))

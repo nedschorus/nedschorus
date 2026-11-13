@@ -921,6 +921,112 @@ def run_fast_read_command_cases(fixture):
           == review_plan_module._message_reminder_hook.fast_read_target_file_name("scripts/a.py", "text"), unplaced)
 
 
+def write_named_cold_read_record(records_directory, name, target_text, *, report=True):
+    """A cold-read-record as cold-read-fast-read.py leaves one: the frozen target under target/
+    at its outside path, and the report when the read finished. target_text None leaves target/ empty."""
+    record = records_directory / "cold-read-records" / name
+    (record / "target").mkdir(parents=True)
+    if target_text is not None:
+        frozen = record / "target" / "tmp" / "tool-message-to-agent-fast-read-targets" / (name + ".md")
+        frozen.parent.mkdir(parents=True)
+        if isinstance(target_text, bytes):
+            frozen.write_bytes(target_text)
+        else:
+            frozen.write_text(target_text, encoding="utf-8")
+    if report:
+        (record / "cold-read-fast-read.md").write_text("report\n", encoding="utf-8")
+    return str(record)
+
+
+def run_named_cold_read_record_cases(fixture):
+    records_directory = fixture.repository.parent / "named-records-log-store"
+    shutil.rmtree(records_directory, ignore_errors=True)
+    matching = write_named_cold_read_record(records_directory, "sibling-message-2026-11-11", "  Sibling message\n   to reuse\n")
+    superset = write_named_cold_read_record(records_directory, "nested-message-superset-2026-11-11",
+                                            "Nested message kept, and more text the message does not hold\n")
+    unfinished = write_named_cold_read_record(records_directory, "nested-message-unfinished-2026-11-11",
+                                              "Nested message kept\n", report=False)
+    empty_target = write_named_cold_read_record(records_directory, "empty-target-2026-11-11", None)
+    undecodable = write_named_cold_read_record(records_directory, "undecodable-target-2026-11-11", b"\xff\xfe not text\n")
+    absent = str(records_directory / "cold-read-records" / "never-written-2026-11-11")
+    description = (f"Records: `nedlern@ned-box:{matching}`.\nAgain {matching}/ and {superset}: "
+                   f"{unfinished}, ({empty_target}) {undecodable}; {absent}.\nAn abbreviation: .../nested-message-2026-11-11")
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("scripts/sibling-program.py", 'print("Sibling message to reuse")\n')
+    fixture.write_fixture_file("scripts/nested-program.py", 'print("Nested message kept")\n')
+    head = fixture.commit_fixture_changes("messages with named records")
+    fixture.configure_github_answers(head, description=description)
+    plan = fixture.read_review_plan()
+    entries = {entry["path"]: entry for entry in plan["tool_message_to_agent_text_whole_pull_request"]}
+    sibling, nested = entries.get("scripts/sibling-program.py", {}), entries.get("scripts/nested-program.py", {})
+    sibling_target = (fixture.message_target_temporary_directory / "tool-message-to-agent-fast-read-targets"
+                      / sibling.get("fast_read_target_file_name", "absent"))
+    check("a string whose named record's target file matches it once whitespace runs are one space gets the record's path, "
+          "no command and no target file",
+          sibling.get("cold_read_record") == matching and sibling.get("fast_read_command") is None
+          and sibling.get("fast_read_target_error") is None and not sibling_target.exists(), sibling)
+    check("a string that is only part of a named record's target file, or matches only a record with no report, keeps its command",
+          nested.get("cold_read_record") is None and bool(nested.get("fast_read_command")), nested)
+    problems = {record["path"]: record["problem"] for record in plan["named_cold_read_records"]}
+    check("each named record is read once, its path cut at the backtick, slash, colon, comma, semicolon, bracket or full stop "
+          "that follows it, and an abbreviated path is not read",
+          list(problems) == [matching, superset, unfinished, empty_target, undecodable, absent], list(problems))
+    check("a named record that is used, or matches nothing, has no problem",
+          problems.get(matching) is None and problems.get(superset) is None, problems)
+    check("a named record with no report, an empty target/, an undecodable target or no directory is listed with its reason",
+          problems.get(unfinished) == "it holds no cold-read-fast-read.md, so its cold-read-fast-read did not finish"
+          and problems.get(empty_target) == "its target/ directory holds no file"
+          and (problems.get(undecodable) or "").startswith("it could not be read: UnicodeDecodeError: ")
+          and problems.get(absent) == "it is not a directory on this machine", problems)
+    text_result = fixture.run_review_plan(json_output=False)
+    check("the text plan gives the record's path in place of the command and names each record it could not use, "
+          "and exits 0",
+          text_result.returncode == 0
+          and f"    cold-read-record named in the description: {matching}\n" in text_result.stdout
+          and f"named cold-read-record not used: {absent}, because it is not a directory on this machine; "
+              "the strings it would cover keep their cold-read-fast-read commands\n" in text_result.stdout
+          and f"named cold-read-record not used: {matching}" not in text_result.stdout, text_result)
+
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace("return 1", "return 2"))
+    earlier = fixture.commit_fixture_changes("first reviewed head")
+    fixture.write_fixture_file("scripts/sibling-program.py", 'print("Sibling message to reuse")\n')
+    head = fixture.commit_fixture_changes("message added in the fix round")
+    fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]], description=f"Record: {matching}")
+    plan = fixture.read_review_plan()
+    delta = plan["tool_message_to_agent_text_delta"]
+    check("a fix round's delta string gets its named record's path too",
+          len(delta) == 1 and delta[0]["cold_read_record"] == matching and delta[0]["fast_read_command"] is None, delta)
+
+    second = write_named_cold_read_record(records_directory, "second-message-2026-11-11", "Second message\n")
+    adjacent = review_plan_module.named_cold_read_records_with_target_texts(f"Records: {matching},{second}.")
+    check("two record paths joined by a comma and no space are read as two records",
+          [record["path"] for record in adjacent] == [matching, second]
+          and all(record["problem"] is None for record in adjacent), adjacent)
+    for delimiter in (";", ":"):
+        joined = review_plan_module.named_cold_read_records_with_target_texts(f"Records: {matching}{delimiter}{second}.")
+        check(f"two record paths joined by {delimiter!r} and no space are read as two records",
+              [record["path"] for record in joined] == [matching, second]
+              and all(record["problem"] is None for record in joined), joined)
+
+    names = review_plan_module.cold_read_record_names
+    saved_lookup = names.cold_read_record_file_path_prefixed_name_else_name_before_prefix
+
+    def lookup_denied(record_dir, name):
+        raise PermissionError(13, "Permission denied", str(record_dir))
+    names.cold_read_record_file_path_prefixed_name_else_name_before_prefix = lookup_denied
+    try:
+        try:
+            denied = review_plan_module.named_cold_read_records_with_target_texts(f"Record: {matching}")
+        except OSError as escaped:
+            denied = [{"escaped": f"{type(escaped).__name__}: {escaped}"}]
+    finally:
+        names.cold_read_record_file_path_prefixed_name_else_name_before_prefix = saved_lookup
+    check("a named record whose report lookup raises an OSError is listed with the reason instead of ending the run",
+          len(denied) == 1 and denied[0].get("target_texts") == set()
+          and (denied[0].get("problem") or "").startswith("it could not be read: PermissionError: "), denied)
+
+
 def run_repository_and_output_cases(fixture):
     fixture.reset_fixture_to_base()
     fixture.write_fixture_file("scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace('"old"', '"open branch"'))
@@ -1373,6 +1479,7 @@ def main():
         run_hook_registration_and_delta_boundary_cases(fixture)
         run_agent_text_cases(fixture)
         run_fast_read_command_cases(fixture)
+        run_named_cold_read_record_cases(fixture)
         run_repository_and_output_cases(fixture)
         run_refusal_and_call_shape_cases(fixture)
         run_git_failure_cases(fixture)

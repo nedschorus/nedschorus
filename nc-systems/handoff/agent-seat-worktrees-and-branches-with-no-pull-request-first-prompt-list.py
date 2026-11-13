@@ -365,7 +365,7 @@ def branch_entries(repo, branches, by_head_branch, by_head_commit, deleted,
 
 
 INSTRUCTIONS = """\
-An earlier agent-session of this agent-seat left each worktree and branch listed above. Carry each on, by working on it or by naming in your session-handoff the agent-seat that will, or delete it with the command printed beside it; that command keeps a worktree whose pull request is open. For a branch marked "not on origin", read `git log origin/main..<branch>` first. If the command prints a line opening FAILED or exits nonzero, keep that item, tell the user what it printed, and go on with the others. Tell the user in your next message which worktrees and branches you kept and which you deleted."""
+An earlier agent-session of this agent-seat left each worktree and branch listed above. Carry each on, by working on it or by naming in your session-handoff the agent-seat that will, or delete it with the command printed beside it; that command keeps a worktree whose pull request is open. For a branch marked "not on origin", read `git log origin/main..<branch>` first. If the command prints a line opening FAILED or exits nonzero, keep that item, tell the user what it printed, and go on with the others."""
 
 
 def section(heading, entries, agent_seat, entries_at_most):

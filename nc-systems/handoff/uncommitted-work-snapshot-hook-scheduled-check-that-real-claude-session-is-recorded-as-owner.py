@@ -2,7 +2,7 @@
 """Once a week, run the work-snapshot hook under a real claude session and check that it found that session.
 
 Usage:
-  nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py
+  nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py
       [--claude-program PATH] [--record-directory DIR] [--timeout-seconds N]
 
   --claude-program    the program run as claude; default, `claude` on PATH, else
@@ -20,17 +20,23 @@ nc-systems/general-tools/scheduled-jobs-on-each-machine.json.
 
 WHAT ONE RUN DOES, in order.
 
-  1. Makes a scratch clone holding the hook and the two modules it loads,
-     with one commit, in a temporary directory.
+  1. Makes a scratch clone holding the hook and the four modules it needs:
+     nc-systems/handoff/uncommitted-work-snapshots.py and
+     scripts/worktree-owner-file-read-and-write.py, which the hook loads, and
+     nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py
+     and nc-systems/general-tools/agent-seat-task-list-new-pending-task-write-common.py,
+     which the first of those loads. The clone has one commit and sits in a
+     temporary directory.
   2. Runs `claude -p` on Haiku from that clone, with the hook registered for
      Bash calls through --settings, and asks it to run one shell command that
-     writes LIVE_CHECK_FILE_NAME.
+     writes the file live-check.txt.
   3. Checks that claude exited 0 with a result that is not an error; that the
      clone has exactly one work-snapshot; that the work-snapshot holds the
      file; that its owner key names the process this program started as
      claude; and that its transcript trailer names claude's session id.
-  4. Writes the record, the day's lines below, to the log-store:
-     nedlern@ned-box:/home/nedlern/nedschorus-logs/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-checks/<machine>/<YYYY-MM-DD>.txt,
+  4. Writes the record, a header line, step 3's PASS and FAIL lines and a
+     VERDICT line, to the log-store:
+     nedlern@ned-box:/home/nedlern/nedschorus-logs/uncommitted-work-snapshot-hook-scheduled-checks-that-real-claude-session-is-recorded-as-owner/<machine>/<YYYY-MM-DD>.txt,
      where <machine> is ned-box or mac and the date is in America/Los_Angeles;
      from the Mac it is written over ssh.
   5. Prints the record and its citation, removes the scratch clone, and exits
@@ -48,12 +54,15 @@ schedule is made.
 
   ned-box: one cron line.
 
-    30 4 * * 0 /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py >> /home/nedlern/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log 2>&1
+    30 4 * * 0 /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py >> /home/nedlern/.claude/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.log 2>&1
 
   the Mac: a launchd job at the same time; a run missed while the Mac
   sleeps starts at the next wake.
 
-A record that could not be written leaves the run's lines in that log file.
+Both jobs append their output to
+~/.claude/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.log
+on their own machine, so a record that could not be written leaves the run's
+lines there.
 """
 
 import argparse
@@ -70,7 +79,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-PROGRAM = "uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check"
+PROGRAM = "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner"
 SYSTEM_DIRECTORY = Path(__file__).resolve().parent
 REPOSITORY_ROOT = SYSTEM_DIRECTORY.parent.parent
 MODULE_RELATIVE = Path("nc-systems/handoff/uncommitted-work-snapshots.py")
@@ -78,6 +87,8 @@ HOOK_RELATIVE = Path("scripts/uncommitted-work-snapshot-hook.py")
 OWNER_FILE_MODULE_RELATIVE = Path("scripts/worktree-owner-file-read-and-write.py")
 GIT_OUTPUT_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
+TASK_WRITE_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/agent-seat-task-list-new-pending-task-write-common.py")
 LIVE_CHECK_FILE_NAME = "live-check.txt"
 LIVE_CHECK_PROMPT = (f"Run this one shell command and nothing else: "
                      f"echo live > {LIVE_CHECK_FILE_NAME}")
@@ -85,7 +96,7 @@ LIVE_CHECK_MODEL = "haiku"
 LIVE_CHECK_AGENT_SEAT = PROGRAM
 DEFAULT_TIMEOUT_SECONDS = 300
 LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
-RECORDS_KIND_DIRECTORY_NAME = "uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-checks"
+RECORDS_KIND_DIRECTORY_NAME = "uncommitted-work-snapshot-hook-scheduled-checks-that-real-claude-session-is-recorded-as-owner"
 RECORD_WRITE_TIMEOUT_SECONDS = 60
 EXIT_PASSED, EXIT_CHECK_FAILED, EXIT_RECORD_NOT_WRITTEN = 0, 1, 2
 
@@ -128,7 +139,7 @@ def default_claude_program():
 def make_scratch_clone(clone):
     git(clone.parent, "init", "-q", str(clone))
     for relative in (MODULE_RELATIVE, HOOK_RELATIVE, GIT_OUTPUT_MODULE_RELATIVE,
-                     OWNER_FILE_MODULE_RELATIVE):
+                     TASK_WRITE_MODULE_RELATIVE, OWNER_FILE_MODULE_RELATIVE):
         (clone / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPOSITORY_ROOT / relative, clone / relative)
     (clone / ".gitignore").write_text("__pycache__/\n")

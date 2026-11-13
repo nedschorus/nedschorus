@@ -6,13 +6,16 @@ Run: python3 nc-systems/handoff/tests/handoff-write-and-check-supervisor-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 # This suite sits at nc-systems/handoff/tests/; the system it tests is one
 # directory up. A with_name() lookup here would resolve inside tests/.
@@ -152,6 +155,8 @@ def run_multi_line_next_step_cases(workspace: Path):
           "END-OF-NEXT-STEP" in refused.stderr, refused.stderr)
     check("the terminator refusal writes nothing",
           not (workspace / "terminatorcase-handoff.md").exists())
+    check("the terminator refusal's last stdout line is the nothing-written verdict",
+          last_stdout_line(refused) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, refused.stdout)
 
     # The refusal is on an EXACT line match, matching the reader. An indented
     # lookalike is ordinary content and must be written, not refused.
@@ -277,6 +282,8 @@ def run_invocation_cases(workspace: Path):
 
     result = run_writer(workspace, "   \n\t  ")
     check("an empty next step is refused", result.returncode == 2, result.stdout)
+    check("a refusal's last stdout line is the nothing-written verdict",
+          last_stdout_line(result) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, result.stdout)
     check("the refusal explains why", "empty" in result.stderr, result.stderr)
     fields = writer.supervisor.parse_handoff_file(handoff_path)
     check("a refused write leaves the previous handoff intact",
@@ -289,9 +296,64 @@ def run_invocation_cases(workspace: Path):
         capture_output=True, text=True, check=False,
     )
     check("a missing next-step file is refused", result.returncode == 2, result.stdout)
+    check("a missing next-step file prints the nothing-written verdict",
+          last_stdout_line(result) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, result.stdout)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--handoff-dir", str(workspace)],
+        capture_output=True, text=True, check=False,
+    )
+    check("an invocation argparse rejects exits 2 with the nothing-written verdict",
+          result.returncode == 2 and last_stdout_line(result) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    result = subprocess.run([sys.executable, str(SCRIPT_PATH), "--help"],
+                            capture_output=True, text=True, check=False)
+    check("--help exits 0 without a verdict",
+          result.returncode == 0 and "VERDICT: nothing written" not in result.stdout.splitlines()[-1:],
+          f"exit {result.returncode}")
+
+    # Only argparse's own stop, status 2, is a refusal before anything is written; any other
+    # SystemExit status must reach the caller unchanged and print no verdict.
+    printed = io.StringIO()
+    with mock.patch.object(writer, "write_handoff_and_report_supervisor", side_effect=SystemExit(3)), \
+            contextlib.redirect_stdout(printed):
+        try:
+            writer.main([])
+            stopped_with = None
+        except SystemExit as stop:
+            stopped_with = stop.code
+    check("a SystemExit other than argparse's status 2 passes through, without a verdict",
+          stopped_with == 3 and "VERDICT" not in printed.getvalue(),
+          f"stopped with {stopped_with}: {printed.getvalue()!r}")
 
     check("no partial file is left behind",
           not list(workspace.glob("*.partial")), str(list(workspace.glob("*.partial"))))
+
+
+def last_stdout_line(result) -> str:
+    lines = result.stdout.strip().splitlines()
+    return lines[-1] if lines else ""
+
+
+def check_cannot_tell(result, workspace: Path, situation: str):
+    """The handoff is on disk, so the agent stops and does not rerun; exit 2 says so."""
+    check(f"{situation}, the writer exits 2", result.returncode == 2,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    check(f"{situation}, the handoff is still written",
+          (workspace / "tester-handoff.md").is_file(), "handoff missing")
+    check(f"{situation}, the last stdout line is the cannot-tell verdict",
+          last_stdout_line(result) == writer.HANDOFF_WRITTEN_CANNOT_TELL_WHETHER_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE,
+          result.stdout)
+    check(f"{situation}, the agent is told to stop, not to wait or to keep working",
+          "stop working now, so that" in result.stderr
+          and result.stderr.index("First tell the user") < result.stderr.index("stop working now")
+          and "Stop working now and wait" not in result.stdout
+          and "keep working" not in result.stdout, result.stdout + result.stderr)
+    check(f"{situation}, the agent is told not to rerun", "Do not rerun" in result.stderr,
+          result.stderr)
+    check(f"{situation}, resupervise-seat.py is to be run on the Mac, where it works for a seat of either machine",
+          "--machine ubuntu` in a Terminal on the Mac" in result.stderr
+          or "--machine mac` in a Terminal on the Mac" in result.stderr, result.stderr)
 
 
 def run_liveness_report_cases(workspace: Path):
@@ -308,6 +370,9 @@ def run_liveness_report_cases(workspace: Path):
           "resupervise-seat.py tester --machine " in result.stdout
           and str(workspace / "tester-handoff.md") in result.stdout,
           result.stdout)
+    check("with no supervisor, resupervise-seat.py is to be run on the Mac, where it works for a seat of either machine",
+          "run, in a Terminal on the Mac, `scripts/resupervise-seat.py tester --machine " in result.stdout
+          and "on the ubuntu machine" not in result.stdout, result.stdout)
     check("with no supervisor, the by-hand relaunch is named as the wrong path",
           "another unsupervised seat" in result.stdout, result.stdout)
     check("no supervisor is started for an unseated session",
@@ -335,14 +400,22 @@ def run_liveness_report_cases(workspace: Path):
         check("with a live supervisor, the writer exits 0", result.returncode == 0, result.stderr)
         check("with a live supervisor, the agent is told to stop and wait",
               "Stop working now and wait" in result.stdout, result.stdout)
-        # Conditional, not promised. alive can be yes-by-assumption: with ps
-        # unavailable and some process holding the lock, a supervisor is
-        # assumed rather than identified, and this agent has just written a
-        # handoff. "It takes over within seconds" would strand it on a sentence
-        # instead of a fact (#328 follow-up round, nedschorus#242).
-        check("and the takeover is stated conditionally, since alive can be an assumption",
-              "if it is watching, it takes over within seconds" in result.stdout,
-              result.stdout)
+        check("with a live supervisor, the last stdout line is the watching verdict",
+              last_stdout_line(result) == writer.HANDOFF_WRITTEN_AND_HANDOFF_SUPERVISOR_IS_WATCHING_VERDICT_LINE, result.stdout)
+
+        # ps fails while a live process holds the lock: the writer cannot tell
+        # whether that process is the supervisor, so it guesses neither way.
+        failing_ps_directory = workspace / "failing-ps"
+        failing_ps_directory.mkdir(parents=True, exist_ok=True)
+        failing_ps = failing_ps_directory / "ps"
+        failing_ps.write_text("#!/bin/sh\necho 'ps: fork failed' >&2\nexit 3\n", encoding="utf-8")
+        failing_ps.chmod(0o755)
+        result = run_writer(workspace, "Continue the walk.", environment_overrides={
+            "PATH": f"{failing_ps_directory}{os.pathsep}{os.environ.get('PATH', '')}"})
+        check_cannot_tell(result, workspace, "when ps fails")
+        check("when ps fails, the user is given the command that checks the supervisor",
+              "ps -ww -e -o pid=,args=" in result.stderr and "--agent tester" in result.stderr,
+              result.stderr)
     finally:
         watcher.kill()
         watcher.wait()
@@ -353,6 +426,14 @@ def run_liveness_report_cases(workspace: Path):
     check("a fresh stamp with no supervisor process does not tell the agent to wait",
           result.returncode == 1 and "Stop working now and wait" not in result.stdout,
           result.stdout)
+    check("with no supervisor, the last stdout line is the nothing-watching verdict",
+          last_stdout_line(result) == writer.HANDOFF_WRITTEN_AND_NO_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE, result.stdout)
+
+    (workspace / "tester-supervisor.lock").write_text("not a process id\n", encoding="utf-8")
+    result = run_writer(workspace, "Continue the walk.")
+    check_cannot_tell(result, workspace, "when the lock is unreadable")
+    check("when the lock is unreadable, the cause is named",
+          "is unreadable" in result.stderr, result.stderr)
     (workspace / "tester-supervisor.lock").unlink(missing_ok=True)
 
     writer.supervisor.write_supervisor_state(
@@ -460,6 +541,8 @@ def run_agent_name_and_claim_cases(workspace: Path):
     check("the refusal teaches the fix", "--claim" in foreign.stderr, foreign.stderr)
     check("and, with no supervised name here, says what else --claim waives",
           "also waives" in foreign.stderr, foreign.stderr)
+    check("the foreign-directory refusal's last stdout line is the nothing-written verdict",
+          last_stdout_line(foreign) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, foreign.stdout)
     check("nothing was written on the refusal",
           (handoffs / "seat-one-handoff.md").read_text(encoding="utf-8") == first_body)
 
@@ -536,6 +619,8 @@ def run_seat_name_the_supervisor_does_not_answer_to_cases(workspace: Path):
     check("the refusal says why it matters -- the handoff would never be read",
           "never reincarnated" in refused.stderr, refused.stderr)
     check("the refusal teaches both exits", "--claim" in refused.stderr, refused.stderr)
+    check("the unwatched-name refusal's last stdout line is the nothing-written verdict",
+          last_stdout_line(refused) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, refused.stdout)
     check("nothing was written on the refusal",
           stray.read_text(encoding="utf-8") == stray_body)
 
@@ -1002,6 +1087,95 @@ def run_spawned_subagent_roster_cases(workspace: Path):
           and final_roster[0]["last_event_at"] == "2026-10-27T21:45:00Z",
           str(final_roster))
 
+    # Claude Code writes no task-notification for a subagent TaskStop stops, only this result,
+    # trimmed from a real transcript.
+    stop_result = {"message": f"Successfully stopped task: {incident_agent} (Fix-round for PR 2045)",
+                   "task_id": incident_agent, "task_type": "local_agent",
+                   "command": "Fix-round for PR 2045"}
+    stopped_path = workspace / "roster-task-stop-after-interim.jsonl"
+    stopped_path.write_text("\n".join(json.dumps(record) for record in [
+        incident_spawn, *delivered(interim_body, "2026-10-27T21:31:58.572Z"),
+        {"type": "user", "timestamp": "2026-10-27T21:50:00.000Z",
+         "message": {"role": "user", "content": [{
+             "tool_use_id": "toolu_stop", "type": "tool_result",
+             "content": json.dumps(stop_result)}]},
+         "toolUseResult": stop_result, "sessionId": FIXTURE_SESSION_ID},
+    ]) + "\n", encoding="utf-8")
+    stopped_roster = writer.spawned_subagent_roster(stopped_path)
+    check("a TaskStop of a subagent after its interim notification ends the subagent",
+          writer.still_working_subagent_entries(stopped_roster) == []
+          and stopped_roster[0]["last_event"] == "stopped"
+          and stopped_roster[0]["last_event_at"] == "2026-10-27T21:50:00Z",
+          str(stopped_roster))
+    stopped_then_resumed_path = workspace / "roster-task-stop-then-resume.jsonl"
+    stopped_then_resumed_path.write_text(
+        stopped_path.read_text(encoding="utf-8")
+        + json.dumps(resume_record(incident_agent, "2026-10-27T21:55:00.000Z")) + "\n",
+        encoding="utf-8")
+    stopped_then_resumed_roster = writer.spawned_subagent_roster(stopped_then_resumed_path)
+    check("a subagent resumed after a TaskStop stopped it counts as still working",
+          [entry["agent_id"]
+           for entry in writer.still_working_subagent_entries(stopped_then_resumed_roster)]
+          == [incident_agent]
+          and stopped_then_resumed_roster[0]["last_event"] == "resumed",
+          str(stopped_then_resumed_roster))
+
+    resumed_then_stopped_path = workspace / "roster-resume-then-task-stop.jsonl"
+    resumed_then_stopped_path.write_text("\n".join(json.dumps(record) for record in [
+        incident_spawn, *delivered(final_body, "2026-10-27T21:45:00.000Z"),
+        resume_record(incident_agent, "2026-10-27T21:47:00.000Z"),
+        {"type": "user", "timestamp": "2026-10-27T21:50:00.000Z",
+         "message": {"role": "user", "content": [{
+             "tool_use_id": "toolu_stop", "type": "tool_result",
+             "content": json.dumps(stop_result)}]},
+         "toolUseResult": stop_result, "sessionId": FIXTURE_SESSION_ID},
+    ]) + "\n", encoding="utf-8")
+    resumed_then_stopped_roster = writer.spawned_subagent_roster(resumed_then_stopped_path)
+    check("a subagent a TaskStop stopped after a resume is not still working",
+          writer.still_working_subagent_entries(resumed_then_stopped_roster) == []
+          and resumed_then_stopped_roster[0]["last_event"] == "stopped",
+          str(resumed_then_stopped_roster))
+    interim_copy_after_stop_path = workspace / "roster-interim-copy-after-task-stop.jsonl"
+    interim_copy_after_stop_path.write_text(
+        stopped_path.read_text(encoding="utf-8")
+        + "\n".join(json.dumps(record)
+                    for record in delivered(interim_body, "2026-10-27T21:51:00.000Z")) + "\n",
+        encoding="utf-8")
+    interim_copy_roster = writer.spawned_subagent_roster(interim_copy_after_stop_path)
+    check("an interim notification delivered after a TaskStop leaves the subagent stopped",
+          writer.still_working_subagent_entries(interim_copy_roster) == []
+          and interim_copy_roster[0]["last_event"] == "stopped"
+          and interim_copy_roster[0]["last_event_at"] == "2026-10-27T21:50:00Z",
+          str(interim_copy_roster))
+    echo_then_interim_copy_path = workspace / "roster-final-echo-then-interim-copy-after-task-stop.jsonl"
+    echo_then_interim_copy_path.write_text(
+        stopped_path.read_text(encoding="utf-8")
+        + "\n".join(json.dumps(record) for record in [
+            *delivered(final_body, "2026-10-27T21:50:30.000Z"),
+            *delivered(interim_body, "2026-10-27T21:51:00.000Z")]) + "\n",
+        encoding="utf-8")
+    echo_then_interim_roster = writer.spawned_subagent_roster(echo_then_interim_copy_path)
+    check("an interim copy after a TaskStop and a final-notification echo leaves the subagent "
+          "not working",
+          writer.still_working_subagent_entries(echo_then_interim_roster) == [],
+          str(echo_then_interim_roster))
+    resumed_final_then_interim_path = workspace / "roster-task-stop-resume-final-then-interim.jsonl"
+    resumed_final_then_interim_path.write_text(
+        stopped_path.read_text(encoding="utf-8")
+        + "\n".join(json.dumps(record) for record in [
+            resume_record(incident_agent, "2026-10-27T21:55:00.000Z"),
+            *delivered(final_body, "2026-10-27T21:58:00.000Z"),
+            *delivered(interim_body, "2026-10-27T22:01:00.000Z")]) + "\n",
+        encoding="utf-8")
+    resumed_final_then_interim_roster = writer.spawned_subagent_roster(
+        resumed_final_then_interim_path)
+    check("a resume lifts a TaskStop, so a later interim notification counts the subagent "
+          "as working again",
+          [entry["agent_id"]
+           for entry in writer.still_working_subagent_entries(resumed_final_then_interim_roster)]
+          == [incident_agent],
+          str(resumed_final_then_interim_roster))
+
     # An empty transcript is not an error: a session may spawn nothing.
     empty_path = workspace / "roster-empty.jsonl"
     empty_path.write_text("", encoding="utf-8")
@@ -1418,16 +1592,23 @@ def run_completed_task_prune_cases(workspace: Path):
     fixture.task("3.json", task_bytes(3, "in_progress"))
     fixture.task("4.json", task_bytes(4, "completed"), stored=task_bytes(4, "pending"))
     fixture.task("5.json", task_bytes(5, "completed"), stored=False)
+    fixture.task("6.json", task_bytes(6, "pending"), stored=False)
     completed = fixture.run()
     line = prune_line(completed)
     check("a completed task whose log-store copy matches is removed",
-          not fixture.present("1.json") and "removed 1 of 3 completed tasks" in line, line)
+          not fixture.present("1.json") and "removed 3 of 3 completed tasks" in line, line)
     check("pending and in-progress tasks with matching log-store copies remain",
           fixture.present("2.json") and fixture.present("3.json"), line)
-    check("a completed task whose log-store copy still has its older status is kept",
-          fixture.present("4.json"), line)
-    check("a completed task with no log-store copy is kept, and counted as not yet copied",
-          fixture.present("5.json") and "2 not yet in the log-store copy" in line, line)
+    # The mirror runs on a timer, so a task completed since its last run has an older copy, or none.
+    check("a completed task whose log-store copy still has its older status is copied there, then removed",
+          not fixture.present("4.json")
+          and (fixture.store_list_directory / "4.json").read_bytes() == task_bytes(4, "completed"), line)
+    check("a completed task with no log-store copy is copied there, then removed",
+          not fixture.present("5.json")
+          and (fixture.store_list_directory / "5.json").read_bytes() == task_bytes(5, "completed")
+          and "0 not yet in the log-store copy" in line, line)
+    check("an open task is not copied by the prune",
+          fixture.present("6.json") and not (fixture.store_list_directory / "6.json").exists(), line)
     check("the prune line says where the removed tasks stay",
           str(fixture.store_list_directory) in line, line)
     check("a pruning handoff is still written", fixture.handoff_written(), completed.stderr)
@@ -1550,18 +1731,30 @@ def run_completed_task_prune_cases(workspace: Path):
           fixture.present("1.json") and "could not be read" in line and "2.json" in line
           and fixture.handoff_written(), line)
 
-    fixture = PruneFixture(workspace, "store-copy-unreadable")
+    fixture = PruneFixture(workspace, "store-folder-unwritable")
     fixture.task("1.json", task_bytes(1, "completed"))
-    (fixture.store_list_directory / "1.json").chmod(0o000)
+    fixture.task("2.json", task_bytes(2, "completed"), stored=False)
+    fixture.store_list_directory.chmod(0o555)
     try:
         completed = fixture.run()
     finally:
-        (fixture.store_list_directory / "1.json").chmod(0o644)
+        fixture.store_list_directory.chmod(0o755)
     line = prune_line(completed)
-    check("an unexpected failure inside the prune keeps every task, says so, and still writes the handoff",
-          fixture.present("1.json") and "failed, every completed task kept" in line
-          and "PermissionError" in line and fixture.handoff_written()
-          and completed.returncode == 1, f"exit {completed.returncode}: {line}")
+    check("a copy to the log-store that fails keeps every completed task, names rsync's exit, and still writes the handoff",
+          fixture.present("1.json") and fixture.present("2.json") and "failed, every completed task kept" in line
+          and "RuntimeError: rsync of the completed tasks" in line and "exited 23" in line
+          and fixture.handoff_written() and completed.returncode == 1, f"exit {completed.returncode}: {line}")
+
+    # subprocess gives a negative exit for a signal, so a check for nonzero exits alone would miss it.
+    fixture = PruneFixture(workspace, "copy-killed")
+    fixture.task("1.json", task_bytes(1, "completed"))
+    stubs = fixture.root / "copy-killed-stubs"
+    stubs.mkdir()
+    (stubs / "rsync").write_text("#!/bin/sh\nkill -9 $$\n", encoding="utf-8")
+    (stubs / "rsync").chmod(0o755)
+    line = prune_line(fixture.run(PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+    check("an rsync killed by a signal is a failed copy, and every completed task is kept",
+          fixture.present("1.json") and "exited -9" in line and "every completed task kept" in line, line)
 
     fixture = PruneFixture(workspace, "unset")
     fixture.task("1.json", task_bytes(1, "completed"))
@@ -1590,6 +1783,12 @@ def run_completed_task_prune_cases(workspace: Path):
           refused.returncode == 2 and fixture.present("1.json"), refused.stdout + refused.stderr)
 
 
+# Runs the command ssh was given on this machine, after the options and the host.
+RUN_REMOTE_COMMAND_HERE_SSH_STUB = 'while [ "$1" = -o ]; do shift 2; done\nshift\nexec sh -c "$*"\n'
+# Lets the prune's rsync through, so that what follows in a stub answers only the sha256sum.
+RSYNC_ONLY_SSH_STUB_PREFIX = 'case "$*" in *"rsync --server"*) ' + RUN_REMOTE_COMMAND_HERE_SSH_STUB.replace("\n", "; ") + ';; esac\n'
+
+
 def run_completed_task_prune_remote_store_cases(workspace: Path):
     """On the Mac the log-store is checked over ssh, which can fail."""
     fixture = PruneFixture(workspace, "unreachable")
@@ -1614,22 +1813,24 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
     check("the log-store is checked before the handoff file exists",
           calls == ["absent"], str(calls))
 
-    # The stub runs the remote command here, so sha256sum reads the local store directory.
+    # The stub runs the remote command here, so rsync and sha256sum reach the local store directory.
     fixture = PruneFixture(workspace, "remote")
     fixture.task("1.json", task_bytes(1, "completed"))
     fixture.task("2.json", task_bytes(2, "completed"), stored=False)
-    stubs = stub_ssh_directory(fixture.root / "remote-stubs", 'for last; do :; done\nexec sh -c "$last"\n')
+    stubs = stub_ssh_directory(fixture.root / "remote-stubs", RUN_REMOTE_COMMAND_HERE_SSH_STUB)
     line = prune_line(fixture.run(
         "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
         PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
     check("over ssh, a completed task whose copy matches is removed", not fixture.present("1.json"), line)
-    check("over ssh, a completed task the log-store lacks is kept", fixture.present("2.json"), line)
+    check("over ssh, a completed task the log-store lacks is copied there, then removed",
+          not fixture.present("2.json")
+          and (fixture.store_list_directory / "2.json").read_bytes() == task_bytes(2, "completed"), line)
     check("over ssh, the prune line names the store in scp form",
           f"stubhost:{fixture.store_list_directory}" in line, line)
 
     fixture = PruneFixture(workspace, "remote-unreadable")
     fixture.task("1.json", task_bytes(1, "completed"))
-    stubs = stub_ssh_directory(fixture.root / "remote-unreadable-stubs",
+    stubs = stub_ssh_directory(fixture.root / "remote-unreadable-stubs", RSYNC_ONLY_SSH_STUB_PREFIX +
                                'echo "sha256sum: 1.json: Permission denied" >&2\nexit 1\n')
     line = prune_line(fixture.run(
         "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
@@ -1643,13 +1844,45 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
     fixture = PruneFixture(workspace, "remote-unreadable-one-of-two")
     fixture.task("1.json", task_bytes(1, "completed"))
     fixture.task("11.json", task_bytes(11, "completed"))
-    stubs = stub_ssh_directory(fixture.root / "remote-unreadable-one-of-two-stubs",
+    stubs = stub_ssh_directory(fixture.root / "remote-unreadable-one-of-two-stubs", RSYNC_ONLY_SSH_STUB_PREFIX +
                                'echo "sha256sum: 11.json: Permission denied" >&2\nexit 1\n')
     line = prune_line(fixture.run(
         "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
         PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
     check("over ssh, the remedy names only the copy sha256sum could not read, not a readable copy whose name it contains",
           f"`ls -l` on 11.json in {fixture.store_list_directory}" in line and "1.json," not in line, line)
+
+    # rsync reaches the store over ssh but cannot write there, so it exits 23 after connecting.
+    fixture = PruneFixture(workspace, "remote-store-unwritable")
+    fixture.task("1.json", task_bytes(1, "completed"), stored=False)
+    stubs = stub_ssh_directory(fixture.root / "remote-store-unwritable-stubs", RUN_REMOTE_COMMAND_HERE_SSH_STUB)
+    fixture.store_list_directory.chmod(0o555)
+    try:
+        line = prune_line(fixture.run(
+            "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
+            PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+    finally:
+        fixture.store_list_directory.chmod(0o755)
+    check("over ssh, an rsync that cannot write the store keeps every completed task",
+          fixture.present("1.json") and "kept every completed task" in line and "exited 23" in line, line)
+    check("over ssh, an rsync that cannot write the store gets the log-store remedy, not the ssh remedy",
+          "could not be updated" in line and f"`ls -ld {fixture.store_list_directory}`" in line
+          and "ssh stubhost true" not in line, line)
+
+    # rsync exits 3 and 11 after connecting too, and need the same remedy as 23.
+    for exit_code in (3, 11):
+        fixture = PruneFixture(workspace, f"remote-rsync-exit-{exit_code}")
+        fixture.task("1.json", task_bytes(1, "completed"), stored=False)
+        stubs = stub_ssh_directory(fixture.root / f"remote-rsync-exit-{exit_code}-stubs", RUN_REMOTE_COMMAND_HERE_SSH_STUB)
+        (stubs / "rsync").write_text(f"#!/bin/sh\nexit {exit_code}\n", encoding="utf-8")
+        (stubs / "rsync").chmod(0o755)
+        line = prune_line(fixture.run(
+            "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
+            PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+        check(f"over ssh, an rsync that exits {exit_code} keeps every completed task and gets the log-store remedy, "
+              "not the ssh remedy",
+              fixture.present("1.json") and f"exited {exit_code}" in line and "could not be updated" in line
+              and f"`ls -ld {fixture.store_list_directory}`" in line and "ssh stubhost true" not in line, line)
 
     stubs = stub_ssh_directory(workspace / "prune-silent-stubs", "sleep 5\n")
     original_path, original_timeout = os.environ.get("PATH", ""), writer.LOG_STORE_TASK_FILE_COPIES_HASH_SSH_TIMEOUT_SECONDS
@@ -1795,9 +2028,17 @@ def run_handoff_deferral_fields_cases(workspace: Path):
           == 'blate00001 "Fast read started during the deferral" command: '
              + json.dumps("python3 nc-systems/cold-read/cold-read-fast-read.py --target a.md"),
           body)
-    check("a background task started before the deferral, or one that finished, is not listed",
-          "bearly0001" not in body and "blate00002" not in body
+    late_field_values = " ".join(value for key, value in fields.items()
+                                 if key.startswith("background-task-started-during-handoff-deferral-"))
+    check("a background task started before the deferral, or one that finished, is not listed as "
+          "started during the deferral",
+          "bearly0001" not in late_field_values and "blate00002" not in body
           and "background-task-started-during-handoff-deferral-3" not in body, body)
+    check("a task the deferral did not wait for is not also listed as past its wait-limit, and the "
+          "task it waited for is",
+          "blate00001" not in fields.get("background-task-past-wait-limit-1", "")
+          and fields.get("background-task-past-wait-limit-1", "").startswith("bearly0001 ")
+          and "background-task-past-wait-limit-2" not in body, body)
     check("a background task launched at the moment the deferral began is listed, with what its "
           "Bash call ran and nothing from other blocks",
           fields.get("background-task-started-during-handoff-deferral-2")
@@ -1881,6 +2122,89 @@ def run_handoff_deferral_fields_cases(workspace: Path):
         missing_ok=True)
     clear()
     run_threshold_hook_defer_then_fire_then_writer_case(workspace)
+
+
+def run_background_task_past_wait_limit_cases(workspace: Path):
+    """A background task other than a waiting-task still running past its kind's wait-limit when
+    the session-handoff is written is listed with its command, kind, wait-limit, run time and the
+    wait-limit table's location, and the successor's first prompt carries all five."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)
+
+    def ago(minutes):
+        return (now - timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    suite_command = "python3 scripts/run-all-test-suites.py"
+    records = [
+        *background_bash_launch_records("bsuite0097", "Test suites", suite_command, ago(97)),
+        *background_bash_launch_records("bsuite0090", "At its limit", "pytest -q", ago(90)),
+        *background_bash_launch_records("bsuite0089", "Under its limit", "pytest -q", ago(89)),
+        *background_bash_launch_records("bwaits0200", "Waiting", "sleep 600", ago(200)),
+        *background_bash_launch_records("bnokind086", "Matches no kind", "python3 early.py", ago(86)),
+        *background_bash_launch_records("bdone00200", "Finished", "pytest -q", ago(200)),
+        background_bash_completion_record("bdone00200", ago(100)),
+        *background_bash_launch_records("bundated01", "Undated", "pytest -q", "not a time"),
+        *background_bash_launch_records("blater0080", "Launched in the deferral", "python3 late.py", ago(80)),
+    ]
+    transcript = workspace / "past-wait-limit.jsonl"
+    transcript.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    past = writer.background_tasks_past_wait_limit_still_running(
+        transcript, deferral_began_at=now - timedelta(minutes=85), now=now)
+    check("only the tasks past their kind's wait-limit are listed, leaving out a waiting-task, one "
+          "under its limit, a finished one, an undated one and one launched during the deferral",
+          [task[0] for task in past] == ["bsuite0097", "bsuite0090", "bnokind086"], past)
+    check("a task past its wait-limit carries its description, command, kind, wait-limit and run time",
+          past[:1] == [("bsuite0097", "Test suites", suite_command, "test-suite", 90.0, 97.0)], past)
+    check("a command no kind matches is named so, with the no-match wait-limit",
+          past[2][3:5] == (writer.threshold_hook.BACKGROUND_TASK_KIND_WHEN_NO_KIND_MATCHES, 75.0), past)
+    check("with no handoff-deferral, a task launched at any time is listed",
+          "blater0080" in [task[0] for task in writer.background_tasks_past_wait_limit_still_running(
+              transcript, now=now)])
+
+    # The writer, run as the agent runs it, on a transcript stamped by the real clock.
+    home = workspace / "past-wait-limit-home"
+    projects = home / ".claude" / "projects" / "-fixture-project"
+    projects.mkdir(parents=True, exist_ok=True)
+    handoffs = workspace / "past-wait-limit-handoffs"
+    handoffs.mkdir(parents=True, exist_ok=True)
+    session_id = "00000000-0000-4000-8000-0000000a0097"
+    real_now = datetime.now(timezone.utc)
+    (projects / f"{session_id}.jsonl").write_text("".join(
+        json.dumps(record) + "\n" for record in background_bash_launch_records(
+            "bsuite0097", "Test suites", suite_command,
+            (real_now - timedelta(minutes=97)).strftime("%Y-%m-%dT%H:%M:%S.000Z"))), encoding="utf-8")
+    written = run_writer(handoffs, "carry on\n", "--agent", "pastwaitlimitcase",
+                         environment_overrides={"HOME": str(home), "CLAUDE_CODE_SESSION_ID": session_id})
+    fields = writer.supervisor.parse_handoff_file(handoffs / "pastwaitlimitcase-handoff.md")
+    expected_field = ('bsuite0097 "Test suites" command: ' + json.dumps(suite_command)
+                      + "; kind: test-suite; wait-limit: 90 minutes; ran: 97 minutes; wait-limit table: "
+                      + "BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND in scripts/handoff-context-threshold-hook.py")
+    check("the session-handoff lists a test suite past its wait-limit with every field",
+          fields.get("background-task-past-wait-limit-1") == expected_field,
+          handoff_text(handoffs, "pastwaitlimitcase"))
+    check("the writer reports the tasks past their wait-limit it recorded",
+          "background tasks past their wait-limit: 1 recorded" in written.stdout, written.stdout)
+    prompt = writer.supervisor.build_ignition_prompt(Path("/x/dialog.md"), fields)
+    check("the successor's first prompt carries the task's five fields and asks for a speed-up "
+          "before a raised wait-limit",
+          expected_field in prompt and "Run each again, then look first for a way to make it faster"
+          in prompt and "raise its kind's wait-limit in the wait-limit table only when you find none"
+          in prompt, prompt[:1200])
+
+    lost = run_writer(handoffs, "carry on\n", "--agent", "pastwaitlimitlostcase",
+                      environment_overrides={"HOME": str(home),
+                                             "CLAUDE_CODE_SESSION_ID": "00000000-0000-0000-0000-0000000a0dea"})
+    check("a transcript that cannot be found is reported, with what to do, and the handoff is written",
+          (handoffs / "pastwaitlimitlostcase-handoff.md").is_file()
+          and "background tasks past their wait-limit: not listed (LookupError: no single transcript found"
+          in lost.stdout and "run this script again" in lost.stdout, lost.stdout)
+
+    with mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": ""}):
+        no_session_lines, no_session_status = writer.background_task_past_wait_limit_fields_for_this_session(
+            handoffs, workspace)
+    check("with no session id, nothing is listed and the status says to name the tasks in the next step",
+          no_session_lines == [] and "CLAUDE_CODE_SESSION_ID is unset" in no_session_status
+          and "Name in the next step each background task" in no_session_status, no_session_status)
 
 
 THRESHOLD_HOOK_SCRIPT = SYSTEM_DIRECTORY.parent.parent / "scripts" / "handoff-context-threshold-hook.py"
@@ -1997,6 +2321,7 @@ with tempfile.TemporaryDirectory() as temporary_directory_name:
     run_completed_task_prune_cases(temporary_directory)
     run_completed_task_prune_remote_store_cases(temporary_directory)
     run_handoff_deferral_fields_cases(temporary_directory)
+    run_background_task_past_wait_limit_cases(temporary_directory)
 
 print()
 if failures:

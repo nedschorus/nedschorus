@@ -406,8 +406,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # A conflict with main is the one case a commit on top cannot clear; the
     # pushed-branch advice sends it to scripts/branch-conflict-check.py's report.
     check("a pushed branch is told how to clear a conflict with main, byte for byte",
-          "If the branch conflicts with main, as python3 scripts/branch-conflict-check.py "
-          "run in its checkout reports, do what that report says." in agent_text(result),
+          "To learn whether the branch conflicts with main, run python3 "
+          "scripts/branch-conflict-check.py in this checkout. If it prints `VERDICT: "
+          "CONFLICT`, do what its report says. If it exits 2, it has no answer: do what "
+          "its lines say, then run it again." in agent_text(result),
           agent_text(result))
     check("the pushed head's status says how a conflict is cleared, byte for byte",
           "(frozen: a fix is a new commit on top, never an amend; for a conflict with "
@@ -836,6 +838,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("--reference-pull reports the same blocked reference every time",
           "left alone" in operator.stdout and "left alone" in operator_again.stdout,
           operator.stdout + operator_again.stdout)
+    check("--reference-pull exits 1 when local work left the reference behind origin/main",
+          operator.returncode == 1 and operator_again.returncode == 1,
+          f"rc={operator.returncode}, {operator_again.returncode}")
     git(["checkout", "--", "shared.txt"], reference)
 
     # A session seated outside any repository does nothing, silently.
@@ -972,7 +977,10 @@ with tempfile.TemporaryDirectory() as unknowable_scratch:
 
     # There is no origin/main here at all, so the comparison is unknowable.
     seed_stale_counts(lone)
-    run_catch_up(["--reference-pull", "--repo", str(lone)])
+    uncounted = run_catch_up(["--reference-pull", "--repo", str(lone)])
+    check("--reference-pull exits 1 and says why when git cannot count against origin/main",
+          uncounted.returncode == 1 and "could not count" in uncounted.stdout,
+          f"rc={uncounted.returncode} {uncounted.stdout}")
     stamp = stamp_of(lone)
     check("an unknowable count nulls the reference checkout's recorded behind",
           stamp.get("behind") is None, json.dumps(stamp))
@@ -1102,6 +1110,12 @@ with tempfile.TemporaryDirectory() as reference_pull_scratch:
           NOT_FOR_THE_USER_LINE not in pulled.stdout, pulled.stdout)
     check("a successful pull clears the reference's reason key",
           "last_reference_blockers" not in stamp_of(reference), str(stamp_of(reference)))
+    check("--reference-pull exits 0 when it moved the reference to origin/main",
+          pulled.returncode == 0, f"rc={pulled.returncode} {pulled.stdout}")
+    already_current = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    check("--reference-pull exits 0, silently, when the reference is already at origin/main",
+          already_current.returncode == 0 and already_current.stdout == "",
+          f"rc={already_current.returncode} {already_current.stdout}")
 
     # Git exits 0 after a fast-forward whatever post-merge returns, so the
     # hook's FAILED line reaches nobody unless the catch-up relays it.
@@ -1177,6 +1191,9 @@ with tempfile.TemporaryDirectory() as reference_fetch_scratch:
           "fetch failed at" in unreachable_operator.stdout
           and "fetch failed at" in unreachable_operator_again.stdout,
           unreachable_operator.stdout + unreachable_operator_again.stdout)
+    check("--reference-pull exits 1 when the fetch failed, though local refs say 0 behind",
+          unreachable_operator.returncode == 1 and unreachable_operator_again.returncode == 1,
+          f"rc={unreachable_operator.returncode}, {unreachable_operator_again.returncode}")
 
     git(["remote", "set-url", "origin", str(origin)], reference)
     reachable_hook = run_catch_up(["--cwd", str(seat)])
@@ -2721,15 +2738,14 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
           and "not a git checkout" not in run.stdout
           and catch_up_module.next_step_lines.git_failure_next_step_lines(
               f"`python3 {SCRIPT_PATH.resolve()} --report --repo {level_seat.resolve()}`",
-              text_the_failure_line_contains="because a git command failed",
-              include_the_misspelt_branch_commit_or_path_line=False) in run.stdout
+              text_the_failure_line_contains="because a git command failed") in run.stdout
           and "you gave" not in run.stdout
           and "Nothing needs rerunning" not in run.stdout, run.stdout + run.stderr)
     worktree_list_fails = failing_git_shim("worktree-list-fails-in-modes", '*" worktree list "*')
     run = run_catch_up_once(["--reference-pull", "--repo", str(level_seat)], worktree_list_fails)
     check("--reference-pull prints the git failure instead of saying nothing, "
-          "with the command that runs it again",
-          run.returncode == 0 and INJECTED_STDERR in run.stdout
+          "with the command that runs it again, and exits 1",
+          run.returncode == 1 and INJECTED_STDERR in run.stdout
           and "--reference-pull --repo" in run.stdout and "once more." in run.stdout
           and "Nothing needs rerunning" not in run.stdout, run.stdout + run.stderr)
 
@@ -2945,6 +2961,101 @@ with tempfile.TemporaryDirectory() as ignored_scratch:
         check(f"and the failed `git {failing_listing}` is reported, git's error included",
               f"fatal: injected {failing_listing} failure" in result.stdout
               and "because a git command failed" in result.stdout, result.stdout)
+
+# ---------------------------------------------------------------------------
+# --reference-pull exits 1 whenever the reference checkout did not end at
+# origin/main, so the launchers' warning prints; each such exit prints a line
+# first, because the launchers' warning says an exit with no line above it
+# was a kill.
+# ---------------------------------------------------------------------------
+
+with tempfile.TemporaryDirectory() as reference_pull_exit_scratch:
+    tmp = Path(reference_pull_exit_scratch).resolve()
+    real_git = shutil.which("git")
+
+    def worktree_listing_git_shim(name, listing_printf_text):
+        """A git that answers `worktree list` with listing_printf_text, a
+        printf format, and passes every other call to the real git."""
+        directory = tmp / name
+        directory.mkdir()
+        (directory / "git").write_text(
+            "#!/bin/sh\n"
+            f"case \" $* \" in *\" worktree list \"*) printf '{listing_printf_text}'; exit 0;; esac\n"
+            f'exec "{real_git}" "$@"\n', encoding="utf-8")
+        (directory / "git").chmod(0o755)
+        return str(directory)
+
+    def origin_and_reference(name):
+        """(origin, reference): a clone of origin, parked on main, and current."""
+        origin_repo = tmp / name / "origin"
+        origin_repo.mkdir(parents=True)
+        git(["init", "-q", "-b", "main"], origin_repo)
+        configure_identity(origin_repo)
+        commit_file(origin_repo, "shared.txt", "first\n", "first commit")
+        reference_clone = tmp / name / "reference"
+        git(["clone", "-q", str(origin_repo), str(reference_clone)], tmp)
+        configure_identity(reference_clone)
+        return origin_repo, reference_clone
+
+    outside = tmp / "outside-any-repository"
+    outside.mkdir()
+    run = run_catch_up_once(["--reference-pull", "--repo", str(outside)])
+    check("--reference-pull exits 1, saying so, when --repo is in no git checkout",
+          run.returncode == 1 and "is not in a git checkout" in run.stdout,
+          f"rc={run.returncode} {run.stdout} {run.stderr}")
+
+    _, listed_nothing = origin_and_reference("listed-nothing")
+    run = run_catch_up_once(["--reference-pull", "--repo", str(listed_nothing)],
+                            worktree_listing_git_shim("lists-no-worktree", ""))
+    check("--reference-pull exits 1, saying so, when git lists no worktree to use as the reference",
+          run.returncode == 1 and "git listed no worktrees" in run.stdout,
+          f"rc={run.returncode} {run.stdout} {run.stderr}")
+
+    _, listed_missing = origin_and_reference("listed-missing")
+    missing_reference = tmp / "no-such-reference-checkout"
+    run = run_catch_up_once(["--reference-pull", "--repo", str(listed_missing)],
+                            worktree_listing_git_shim(
+                                "lists-a-missing-worktree",
+                                f"worktree {missing_reference}\\000HEAD 0\\000\\000"))
+    check("--reference-pull exits 1, saying so, when the listed reference is not a git checkout",
+          run.returncode == 1 and f"{missing_reference} is not a git checkout" in run.stdout,
+          f"rc={run.returncode} {run.stdout} {run.stderr}")
+
+    refused_origin, refused_reference = origin_and_reference("fast-forward-refused")
+    commit_file(refused_origin, "arrives.txt", "from main\n", "add arrives.txt")
+    (refused_reference / "arrives.txt").write_text("untracked here\n", encoding="utf-8")
+    run = run_catch_up_once(["--reference-pull", "--repo", str(refused_reference)])
+    check("--reference-pull exits 1 when git refuses the fast-forward",
+          run.returncode == 1 and "could not fast-forward" in run.stdout,
+          f"rc={run.returncode} {run.stdout} {run.stderr}")
+
+    stale_origin, stale_reference = origin_and_reference("moved-to-a-stale-origin-main")
+    commit_file(stale_origin, "fetched.txt", "fetched\n", "a commit the fetch saw")
+    git(["fetch", "-q", "origin"], stale_reference)
+    commit_file(stale_origin, "unfetched.txt", "unfetched\n", "a commit no fetch saw")
+    git(["remote", "set-url", "origin", str(tmp / "no-such-remote")], stale_reference)
+    run = run_catch_up_once(["--reference-pull", "--repo", str(stale_reference)])
+    check("--reference-pull exits 1 when it moved the reference to an origin/main whose "
+          "fetch failed, and its line says the fetch failed",
+          run.returncode == 1 and (stale_reference / "fetched.txt").exists()
+          and "fast-forwarded 1 commit(s)" in run.stdout and "fetch failed at" in run.stdout,
+          f"rc={run.returncode} {run.stdout} {run.stderr}")
+
+    _, ahead_reference = origin_and_reference("zero-behind-one-ahead")
+    commit_file(ahead_reference, "local.txt", "local\n", "a commit main does not have")
+    run = run_catch_up_once(["--reference-pull", "--repo", str(ahead_reference)])
+    check("--reference-pull exits 1, saying so, when the reference is 0 behind but has "
+          "a commit main does not have",
+          run.returncode == 1 and "1 local commit(s) main does not have" in run.stdout,
+          f"rc={run.returncode} {run.stdout} {run.stderr}")
+
+    _, branch_reference = origin_and_reference("zero-behind-on-another-branch")
+    git(["switch", "-q", "-c", "some-feature"], branch_reference)
+    run = run_catch_up_once(["--reference-pull", "--repo", str(branch_reference)])
+    check("--reference-pull exits 1, saying so, when the reference is 0 behind but on "
+          "a branch other than main",
+          run.returncode == 1 and "on some-feature, not main" in run.stdout,
+          f"rc={run.returncode} {run.stdout} {run.stderr}")
 
 print()
 if failures:

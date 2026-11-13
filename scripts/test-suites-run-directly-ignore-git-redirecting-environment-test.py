@@ -86,6 +86,8 @@ RUNNER_PATH = "scripts/run-all-test-suites.py"
 FIXTURE_PATH = "scripts/git-redirecting-environment-removal-test-fixture.py"
 # The runner and the fixture both read the list from this module.
 REMOVAL_MODULE_PATH = "nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py"
+# The runner reads the attendance variable names from this module.
+ATTENDANCE_CHECK_MODULE_PATH = "nc-systems/general-tools/agent-session-unattended-by-user-check-common.py"
 REMOVAL_CALL = "remove_git_redirecting_environment_variables_from_this_process()"
 
 # A git `init` argument as the suites write it, in a list or as a helper's
@@ -105,7 +107,7 @@ REMOVE_THE_VARIABLES_ANOTHER_WAY = {
         "it removes the six from its own environment before it runs git",
     "scripts/branch-conflict-check-test.py":
         "its git runs with every GIT_ variable removed",
-    "scripts/daily-full-test-run-of-main-test.py":
+    "scripts/scheduled-full-test-run-of-main-test.py":
         "its fixture_git() runs with the runner's own stripped environment",
     "scripts/git-client-side-hooks-pre-push-test.py":
         "every GIT_ variable is removed from each case's environment",
@@ -113,8 +115,6 @@ REMOVE_THE_VARIABLES_ANOTHER_WAY = {
         "its git() removes the same six from the environment of every git it runs",
     "scripts/pull-request-head-test-run-test.py":
         "its fixture_git() runs with the runner's own stripped environment",
-    "scripts/unvalidated-negative-result-check-test.py":
-        "its git runs with every GIT_ variable removed",
     "scripts/test-suites-run-directly-ignore-git-redirecting-environment-test.py":
         "this suite: it removes the runner's list from its own environment, below",
 }
@@ -265,7 +265,10 @@ runs = [(suite, "GIT_DIR") for suite in SUITES_RUN_WITH_GIT_DIR]
 runs += [(SUITE_RUN_WITH_EVERY_VARIABLE, variable)
          for variable in NAMED_REPOSITORY_PATH_FOR_VARIABLE]
 
-files_to_copy = [RUNNER_PATH, FIXTURE_PATH, REMOVAL_MODULE_PATH, SUITE_RUN_WITH_EVERY_VARIABLE,
+files_to_copy = [RUNNER_PATH,
+                 str(runner.ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH.relative_to(REPO_ROOT)),
+                 FIXTURE_PATH, REMOVAL_MODULE_PATH, ATTENDANCE_CHECK_MODULE_PATH,
+                 SUITE_RUN_WITH_EVERY_VARIABLE,
                  *FILES_THE_SUITE_RUN_WITH_EVERY_VARIABLE_READS]
 for suite, files_it_reads in SUITES_RUN_WITH_GIT_DIR.items():
     files_to_copy += [suite, *files_it_reads]

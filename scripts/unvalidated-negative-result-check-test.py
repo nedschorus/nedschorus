@@ -1,19 +1,13 @@
 #!/usr/bin/env python3
 """Tests for unvalidated-negative-result-check.py.
 
-Every signal is tested as a pair, the positive first: the command with the
-fault fires, and the same command with the fault removed is silent. A check
-that cannot be made to fire on a case known to be wrong is worth nothing, and
-a check that fires on everything is worth less; both halves are the test.
-
-The four fixtures are replayed here too, controls and all, because the
-fixtures are the reason this program exists and a change that stops one of
-them firing is the regression that matters.
-
-Every corpus and transcript the suite makes lives under one scratch directory
-of its own, removed when the suite exits, and the measurement case reads only
-that directory: reading the system temp directory would count other programs'
-.jsonl files.
+The firings of the sorted table are replayed with the machines' answers of their day put
+in: the dash-named directories, rg missing on ned-box before it was installed, and the grep
+arguments the agent's grep refused. A stand-in for the agent's grep gives the refusals the
+fixture records, because the test sandbox holds no claude binary; where the real one runs,
+the last section checks the record against it, and prints a SKIP line where it does not.
+Each of the 16 firings with a cause must name that cause; every NOISE firing, and the 5
+SELF-CAUGHT firings that have none of the three causes, must stay silent.
 
 Run: python3 scripts/unvalidated-negative-result-check-test.py
 """
@@ -24,25 +18,26 @@ import io
 import json
 import os
 import pathlib
-import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 
-CHECK_SCRIPT = pathlib.Path(__file__).resolve().with_name(
-    "unvalidated-negative-result-check.py")
-CHECKOUT_ROOT = CHECK_SCRIPT.parent.parent
+CHECK_SCRIPT = pathlib.Path(__file__).resolve().with_name("unvalidated-negative-result-check.py")
+FIXTURE = CHECK_SCRIPT.with_name("unvalidated-negative-result-check-fixtures") \
+    / "firings-classified-by-hand-as-real-self-caught-or-noise-2026-10-01.json"
 
-SUITE_SCRATCH = pathlib.Path(tempfile.mkdtemp(
-    prefix="unvalidated-negative-result-check-test-"))
-atexit.register(shutil.rmtree, SUITE_SCRATCH, ignore_errors=True)
-TRANSCRIPTS_ROOT = SUITE_SCRATCH / "transcripts"
+SCRATCH = pathlib.Path(tempfile.mkdtemp(prefix="unvalidated-negative-result-check-test-"))
+atexit.register(shutil.rmtree, SCRATCH, ignore_errors=True)
 
-_spec = importlib.util.spec_from_file_location(
-    "unvalidated_negative_result_check", CHECK_SCRIPT)
+_spec = importlib.util.spec_from_file_location("unvalidated_negative_result_check", CHECK_SCRIPT)
 check_module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(check_module)
+
+GLOB_DASH_NAME = check_module.GLOB_DASH_NAME
+PATTERN_TOO_COMPLEX = check_module.PATTERN_TOO_COMPLEX
+PROGRAM_MISSING = check_module.PROGRAM_MISSING
+SIGNAL_OF_SHAPE = {"S1": GLOB_DASH_NAME, "S2": PATTERN_TOO_COMPLEX, "S3": PROGRAM_MISSING}
 
 failures = []
 
@@ -57,1009 +52,668 @@ def check(case_name, condition, detail=""):
         print(f"      {detail}")
 
 
-def judge(command, **keywords):
-    return check_module.judge_command_result(command, **keywords)
+DASH_NAMED_ENTRIES = ["-Users-el-agents-merge-lane", "-Users-el-agents-reboot-test",
+                      "-home-nedlern-agents-merge-lane-2"]
+PLAIN_ENTRIES = ["README.md", "docs", "scripts", "a.jsonl"]
+
+REFUSED_IN_THESE_TESTS = [["-oE", ".{0,180}(a|b).{0,180}"], ["-oE", "--", ".{0,180}(a|b).{0,180}"],
+                          ["-o", "-e", ".{0,180}(a|b).{0,180}", "-E"],
+                          ["-oE", "--regexp=.{0,180}(a|b).{0,180}.*"],
+                          ["-oE", "-e.{0,180}(a|b).{0,180}.*"]]
+firings = json.loads(FIXTURE.read_text(encoding="utf-8"))["firings"]
+REFUSALS_FILE = SCRATCH / "arguments-the-agents-grep-refuses.json"
+REFUSALS_FILE.write_text(json.dumps(
+    REFUSED_IN_THESE_TESTS
+    + [arguments for firing in firings for arguments in firing["arguments_the_agents_grep_refuses"]]))
+STAND_IN_AGENTS_GREP = SCRATCH / "stand-in-agents-grep"
+STAND_IN_AGENTS_GREP.write_text(
+    f"#!{sys.executable}\n"
+    "import json, sys\n"
+    f"leading = {len(check_module.AGENTS_GREP_LEADING_OPTIONS)}\n"
+    f"refused = json.load(open({str(REFUSALS_FILE)!r}))\n"
+    "if sys.argv[1 + leading:-1] in refused:\n"
+    "    sys.stderr.write('ugrep: error: error at position 9\\n  exceeds complexity limits\\n')\n"
+    "    sys.exit(2)\n"
+    "sys.exit(1)\n")
+STAND_IN_AGENTS_GREP.chmod(0o755)
 
 
-# ---------------------------------------------------------------- the gate
+def machines_with_the_stand_in_agents_grep():
+    """Machines answering for real, but with the stand-in as the agent's grep."""
+    return check_module.Machines(environment={"CLAUDE_CODE_EXECPATH": str(STAND_IN_AGENTS_GREP)})
 
-check("a search whose result is empty is judged",
-      judge("grep -n needle haystack.txt", exit_code=1, stdout="").applicable)
-check("a search that found something is not judged",
-      not judge("grep -n needle haystack.txt", exit_code=0,
-                stdout="4:needle\n").applicable)
-check("a command with no search stage is not judged",
-      not judge("cp a b", exit_code=0, stdout="", stderr="cp: no such file"
-                ).applicable,
-      "without this gate every ordinary command with a quiet stdout fires")
-check("git grep counts as a search stage",
-      judge("git grep -n needle main", exit_code=1, stdout="").applicable)
-check("git log --grep counts as a search stage",
-      judge("git log --grep=needle --oneline", exit_code=0, stdout="").applicable)
-check("git log -S with its pattern attached counts as a search stage",
-      judge("git log -Sneedle --oneline", exit_code=0, stdout="").applicable
-      and judge("git log -Gneedle --oneline", exit_code=0, stdout="").applicable,
-      "-Sneedle is how the pickaxe is usually written; no word boundary "
-      "follows the S")
-
-check("a bare 0 is an empty result",
-      check_module.empty_shape_of("0\n") == "zero-count")
-check("count lines with a zero among them are an empty result",
-      check_module.empty_shape_of("a.md:0\nb.md:12\n") == "zero-count-lines")
-check("count lines with no zero are not an empty result",
-      check_module.empty_shape_of("a.md:3\nb.md:12\n") is None)
-check("the paths a count result called empty are read back",
-      check_module.zero_counted_inputs("a.md:0\nb.md:12\nc.md:0\n")
-      == ["a.md", "c.md"])
+RIPGREP_INSTALLED_ON_NED_BOX = "2026-10-01T17:44"
 
 
-# ------------------------------------------------- truncation, failure 2
+class MachinesOfTheDay(check_module.Machines):
+    """The answers each machine gave on the day of one firing."""
 
-truncated = judge("sed -n '14p' CLAUDE.md | cut -c1-220 | grep -n 'phrase'",
-                  exit_code=1, stdout="")
-check("a cut -c stage ahead of the search fires",
-      "truncating-stage-upstream-of-the-search" in truncated.signals,
-      str(truncated.signals))
-check("the same search with the cut removed is silent",
-      not judge("sed -n '14p' CLAUDE.md | grep -n 'phrase'", exit_code=1,
-                stdout="").fires)
-check("a truncating stage after the search does not fire",
-      "truncating-stage-upstream-of-the-search" not in
-      judge("grep -n 'phrase' CLAUDE.md | cut -c1-220", exit_code=1,
-            stdout="").signals,
-      "it truncates the answer, not the question")
-check("head -c ahead of the search fires",
-      "truncating-stage-upstream-of-the-search" in
-      judge("cat big.md | head -c 500 | grep needle", exit_code=1,
-            stdout="").signals)
-check("tail -n ahead of the search fires, as head -n does",
-      "truncating-stage-upstream-of-the-search" in
-      judge("cat big.md | tail -n 50 | grep needle", exit_code=1,
-            stdout="").signals)
-check("tail -n after the search does not fire",
-      "truncating-stage-upstream-of-the-search" not in
-      judge("grep needle big.md | tail -n 5", exit_code=1, stdout="").signals)
-check("cut -f, which keeps whole fields, does not fire",
-      "truncating-stage-upstream-of-the-search" not in
-      judge("cat rows.tsv | cut -f2 | grep needle", exit_code=1,
-            stdout="").signals)
+    def __init__(self, machine="mac", timestamp="2026-10-02", missing=()):
+        super().__init__(runner=self.refuse_other_programs,
+                         environment={"CLAUDE_CODE_EXECPATH": str(STAND_IN_AGENTS_GREP)})
+        self.machine = machine
+        self.timestamp = timestamp
+        self.missing = set(missing)
+        self.asked = []
 
+    @staticmethod
+    def refuse_other_programs(argv, **keywords):
+        if argv[0] != "ugrep":
+            raise AssertionError(f"the test machines ran {argv}")
+        return subprocess.run(argv, **keywords)
 
-# ------------------------------------------ discarded stderr, failure 3
+    def on_ned_box(self, host):
+        return "ned-box" in host if host else self.machine == "ned-box"
 
-discarded = judge("grep -rn needle docs/ 2>/dev/null", exit_code=1, stdout="")
-check("a search that discards its stderr fires",
-      "stderr-discarded-by-the-search-stage" in discarded.signals,
-      str(discarded.signals))
-check("the same search keeping its stderr is silent",
-      not judge("grep -rn needle docs/", exit_code=1, stdout="").fires)
-check("a search FOR the text 2>/dev/null is not read as discarding stderr",
-      not judge("grep -n '2>/dev/null' notes.md", exit_code=1,
-                stdout="").fires,
-      "a quoted pattern is the thing searched for, not a redirect")
+    def directory_entries(self, host, directory):
+        self.asked.append(("entries", host, directory))
+        if directory.endswith((".claude/projects", "transcripts/mac/projects")):
+            return DASH_NAMED_ENTRIES
+        return PLAIN_ENTRIES
 
-remote = judge("ssh nedlern@ned-box 'rg -n needle ~/agents' 2>/dev/null | head -5",
-               exit_code=0, stdout="")
-check("a search run over ssh is judged through the ssh stage",
-      "stderr-discarded-by-the-search-stage" in remote.signals,
-      str(remote.signals))
-check("the same remote search keeping its stderr is silent",
-      not judge("ssh nedlern@ned-box 'rg -n needle ~/agents'", exit_code=0,
-                stdout="").fires)
-check("the remote command inside ssh is found",
-      check_module.remote_command_of(
-          "ssh nedlern@ned-box 'rg -n needle ~/agents' 2>/dev/null")
-      == "rg -n needle ~/agents")
+    def program_installed(self, host, program):
+        self.asked.append(("installed", host, program))
+        if (host, program) in self.missing:
+            return False
+        return not (program == "rg" and self.on_ned_box(host)
+                    and self.timestamp < RIPGREP_INSTALLED_ON_NED_BOX)
 
 
-# ----------------------------------------------- a missing search program
-
-not_found = judge("rg -n needle .", exit_code=127,
-                  stdout="bash: line 1: rg: command not found\n",
-                  stderr_was_captured=False)
-check("a merged result saying the program was not found fires",
-      "search-program-missing-on-this-machine" in not_found.signals,
-      "a transcript merges the streams for a non-zero command, so the "
-      "not-found line arrives on stdout and the gate must see past it")
-check("a merged result holding real matches is silent",
-      not judge("rg -n needle .", exit_code=1,
-                stdout="notes.md:4:needle\n",
-                stderr_was_captured=False).fires)
-check("zsh's form of the not-found line fires too",
-      "search-program-missing-on-this-machine" in
-      judge("rg -n needle .", exit_code=127,
-            stdout="zsh:1: command not found: rg\n",
-            stderr_was_captured=False).signals)
-missing_path = judge("grep -rn needle missing/", exit_code=2, stdout="",
-                     stderr="grep: missing/: No such file or directory\n")
-check("a missing path is reported as a failed search, not a missing program",
-      "search-program-missing-on-this-machine" not in missing_path.signals
-      and "exit-status-reports-an-error-not-an-absence" in missing_path.signals,
-      f"{missing_path.signals}: grep is installed; telling the agent to "
-      f"install it is a wrong instruction")
-check("a not-found line naming a program outside the search's pipeline is "
-      "silent",
-      not judge("grep -n needle notes.md; frobnicate", exit_code=127,
-                stdout="bash: line 1: frobnicate: command not found\n",
-                stderr_was_captured=False).fires)
-check("a program off PATH but present as a shell function does not fire",
-      not judge("rg -n needle .", exit_code=1, stdout="").fires,
-      "measured 2026-09-23: Claude Code installs `rg` as a shell function on "
-      "the user's Mac, so shutil.which('rg') is None while rg searches "
-      "perfectly; PATH is not evidence of absence and is not consulted")
+def judge(command, cwd="/work", output="", exit_code=0, machines=None):
+    return check_module.judge_command_result(command, cwd, output, exit_code,
+                                             machines or MachinesOfTheDay())
 
 
-# ------------------------- a matched line that quotes an error is a result
+# --------------------------------------------- the firings of the sorted table
 
-quoted_complaints = judge(
-    'grep -n "Permission denied" run.log | head -5; false', exit_code=1,
-    stdout="3:find: /tmp/x: Permission denied\n"
-           "7:find: /tmp/y: Permission denied\n",
-    stderr_was_captured=False)
-check("grep -n lines that quote an error message are results, not complaints",
-      not quoted_complaints.applicable,
-      f"{quoted_complaints.empty_kind} {quoted_complaints.signals}: the "
-      f"result held two matches, so it is not empty")
-looped_complaints = judge(
-    'for i in 1 2; do grep -c needle run$i.log | head -1; done; cat .',
-    exit_code=1,
-    stdout="run1 exit=3   ned-box checkouts: find in /tmp/timeshift-x exited "
-           "1: find: '/tmp/timeshift-x': Permission denied\n",
-    stderr_was_captured=False)
-check("a printed result that quotes a find complaint mid-line is a result",
-      not looped_complaints.applicable,
-      f"{looped_complaints.empty_kind} {looped_complaints.signals}: the "
-      f"ned-box shape that fired on 2026-09-24")
-indented_match = judge(
-    'grep -rn "No such file or directory" scripts/ | head -5; false',
-    exit_code=1, stderr_was_captured=False,
-    stdout='scripts/unvalidated-negative-result-check.py:372:    '
-           'r"(?:command not found|No such file or directory"\n')
-check("a path:line match whose text starts with a space is a result",
-      not indented_match.applicable,
-      f"{indented_match.empty_kind} {indented_match.signals}: grep -rn over "
-      f"indented source prints `path:N:    text`, which a program's "
-      f"complaint never opens with")
-absolute_indented_match = judge(
-    'grep -rn "No such file" /Users/el/x/ | head -5; false', exit_code=1,
-    stderr_was_captured=False,
-    stdout='/Users/el/x/notes.md:3:    see No such file or directory\n')
-check("an absolute path:line match whose text starts with a space is a result",
-      not absolute_indented_match.applicable,
-      f"{absolute_indented_match.empty_kind} "
-      f"{absolute_indented_match.signals}")
-missing_on_ned_box = judge("fd needle .", exit_code=127,
-                           stdout="/bin/bash: line 1: fd: command not found\n",
-                           stderr_was_captured=False)
-check("ned-box's shell, which names itself /bin/bash, reports a missing "
-      "search program",
-      "search-program-missing-on-this-machine" in missing_on_ned_box.signals
-      and "exit-status-reports-an-error-not-an-absence" in
-      missing_on_ned_box.signals,
-      f"{missing_on_ned_box.applicable} {missing_on_ned_box.signals}: "
-      f"ned-box's Bash tool opens every complaint of its shell with "
-      f"`/bin/bash: line 1: `")
-failed_cd_on_ned_box = judge(
-    "cd md-review-records/x/ && for f in a b; do grep -n needle $f "
-    "| head -3; done", exit_code=1,
-    stdout="/bin/bash: line 1: cd: md-review-records/x/: No such file or "
-           "directory\n", stderr_was_captured=False)
-check("a failed cd ahead of a search on ned-box leaves an empty result",
-      failed_cd_on_ned_box.applicable and failed_cd_on_ned_box.fires,
-      f"{failed_cd_on_ned_box.applicable} {failed_cd_on_ned_box.signals}: "
-      f"the shape of prof's ned-box session of 2026-08-28")
-by_its_path = judge("/usr/bin/grep -rn needle missing/", exit_code=2,
-                    stdout="/usr/bin/grep: missing/: No such file or "
-                           "directory\n", stderr_was_captured=False)
-check("a search program run by its path reports its own error",
-      "exit-status-reports-an-error-not-an-absence" in by_its_path.signals,
-      f"{by_its_path.applicable} {by_its_path.signals}")
-for complaint in (
-        "grep: missing/: No such file or directory",
-        "bash: line 1: rg: command not found",
-        "zsh:1: command not found: rg",
-        "/bin/bash: line 1: fd: command not found",
-        "/bin/bash: line 1: cd: md-review-records/x/: No such file or directory",
-        "/usr/bin/grep: missing/: No such file or directory",
-        "./find-it.sh: line 3: rg: command not found",
-        "zsh: command not found: rg",
-        "(eval):1: command not found: timeout",
-        "(eval):cd:1: no such file or directory: /tmp/gone",
-        "ugrep: warning: /tmp/gone/*.md: No such file or directory",
-        "ls: cannot access '/tmp/gone': No such file or directory",
-        "find: '/tmp/x': Permission denied",
-        "ssh: Could not resolve hostname ned-box: Name or service not known",
-        "fatal: not a git repository (or any of the parent directories): .git",
-        "usage: grep [-abcdDEFGHhIiJLlMmnOopqRSsUVvwXxZz] [pattern] [file ...]"):
-    check(f"a program's complaint is still set aside: {complaint[:40]}",
-          check_module.split_diagnostics(complaint) == ("", complaint))
+check("the fixture holds the 83 sorted firings", len(firings) == 83, len(firings))
+verdicts = {}
+for firing in firings:
+    verdicts[firing["id"]] = judge(
+        firing["command"], firing["cwd"], firing["output"], firing["exit_code"],
+        MachinesOfTheDay(firing["machine"], firing["timestamp"]))
+
+for firing in firings:
+    verdict = verdicts[firing["id"]]
+    label = f"{firing['id']} ({firing['verdict']}, {firing['shape'] or firing['noise_class'] or '-'})"
+    if firing["shape"]:
+        check(f"{label} fires and names its cause, {SIGNAL_OF_SHAPE[firing['shape']]}",
+              set(verdict.signals) == {SIGNAL_OF_SHAPE[firing["shape"]]},
+              f"signals {verdict.signals} unchecked {verdict.unchecked}")
+    else:
+        check(f"{label} stays silent",
+              not verdict.fires and not verdict.unchecked,
+              f"signals {verdict.signals} unchecked {verdict.unchecked}")
+
+fired = [firing for firing in firings if verdicts[firing["id"]].fires]
+check("16 firings in all: 4 REAL, 12 SELF-CAUGHT, 0 NOISE",
+      len(fired) == 16
+      and sum(firing["verdict"] == "REAL" for firing in fired) == 4
+      and sum(firing["verdict"] == "SELF-CAUGHT" for firing in fired) == 12,
+      [firing["id"] for firing in fired])
+
+# The REAL firings G046 and G047 hold only because rg was missing on ned-box that day.
+g046 = next(firing for firing in firings if firing["id"] == "G046")
+check("G046 is silent once rg is installed on ned-box",
+      not judge(g046["command"], g046["cwd"], g046["output"], 0,
+                MachinesOfTheDay("mac", "2026-10-02")).fires)
 
 
-# --------------------------------------------------------- exit statuses
+# ------------------------------------------------------- near misses, cause S1
 
-check("grep's 2, which means it errored, fires",
-      "exit-status-reports-an-error-not-an-absence" in
-      judge("grep -rn needle missing-directory/", exit_code=2,
-            stdout="").signals)
-check("grep's 1, which means no match, is silent",
-      not judge("grep -rn needle docs/", exit_code=1, stdout="").fires,
-      "1 is a clean no-match and must not fire, or every search fires")
-check("ssh's 255, which means the connection failed, fires",
-      "exit-status-reports-an-error-not-an-absence" in
-      judge("ssh nedlern@ned-box 'grep -rn needle agents'", exit_code=255,
-            stdout="").signals)
-check("a later command's error status is not blamed on the search",
-      not judge("grep -n needle notes.md; ls missing", exit_code=2,
-                stdout="ls: cannot access 'missing': No such file or "
-                       "directory\n",
-                stderr_was_captured=False).fires,
-      "the status of `a; b` is b's, and grep ran fine and found nothing")
-check("the search's own error status fires after a cd",
-      "exit-status-reports-an-error-not-an-absence" in
-      judge("cd docs && grep -rn needle missing/", exit_code=2,
-            stdout="grep: missing/: No such file or directory\n",
-            stderr_was_captured=False).signals)
-
-
-# ------------------------------------------------------ stderr and stdout
-
-check("stderr written while stdout was empty fires",
-      "stderr-written-while-stdout-was-empty" in
-      judge("grep -rn needle docs/", exit_code=0, stdout="",
-            stderr="grep: docs/: No such file or directory\n").signals)
-check("a stderr holding only the harness's cwd note is silent",
-      not judge("grep -rn needle docs/", exit_code=0, stdout="",
-                stderr="\nShell cwd was reset to /Users/el/agents/merge-lane"
-                ).fires,
-      "measured 2026-09-23: twelve empty search results had anything at all "
-      "on stderr, and in all twelve it was this note, which is the harness "
-      "talking rather than the search failing")
+PROJECTS = "/home/nedlern/.claude/projects"
+check("S1 fires on a dash-named directory's relative glob",
+      judge(f"cd {PROJECTS} && grep -l x */*.jsonl").signals == [GLOB_DASH_NAME])
+for near_miss in (f"cd {PROJECTS} && grep -l x -- */*.jsonl",
+                  f"cd {PROJECTS} && grep -l x '*/*.jsonl'",
+                  f"cd {PROJECTS} && grep -l x {PROJECTS}/*/*.jsonl",
+                  f"cd {PROJECTS} && grep -l x ./*/*.jsonl",
+                  "cd /work/docs && grep -l x */*.md",
+                  "cd \"$DIR\" && grep -l x */*.jsonl",
+                  f"cd {PROJECTS} && for f in */*.jsonl; do grep -l x \"$f\"; done"):
+    check(f"S1 stays silent: {near_miss}", not judge(near_miss).fires)
+check("S1 reads a cwd that is itself dash-named, with no cd",
+      judge("grep -l x */*.jsonl", cwd=PROJECTS).signals == [GLOB_DASH_NAME])
+check("S1 keeps a substitution's cd inside it",
+      not judge(f"echo $(cd {PROJECTS}); grep -l x */*.jsonl").fires)
+check("S1 reads ls feeding a search, which the leading-dash guard does not read",
+      judge(f"cd {PROJECTS} && ls -d *merge-lane*/ | xargs grep -l x").signals
+      == [GLOB_DASH_NAME])
+remote = MachinesOfTheDay()
+check("S1 reads a command ssh runs, in the directory it cds into there",
+      judge("ssh nedlern@ned-box 'cd ~/.claude/projects && grep -l x */*.jsonl'",
+            machines=remote).signals == [GLOB_DASH_NAME]
+      and ("entries", "nedlern@ned-box", "~/.claude/projects") in remote.asked, remote.asked)
+check("S1 reads ssh's destination past an option that takes a value",
+      judge("ssh -p 22 nedlern@ned-box 'cd ~/.claude/projects && grep -l x */*.jsonl'",
+            machines=remote).signals == [GLOB_DASH_NAME])
 
 
-# ---------------------------- a swallowed exit status, alone, is not enough
+# ------------------------------------------------------- near misses, cause S2
 
-swallowed = judge("grep -n needle notes.md | head -12", exit_code=0, stdout="",
-                  stderr="", stderr_was_captured=True)
-check("a swallowed exit status alone does not fire when stderr was empty",
-      not swallowed.fires and
-      check_module.CORROBORATING_ONLY in swallowed.corroboration,
-      "measured 2026-09-23: this was the only signal on 39 of 67 firings, and "
-      "in every one stderr was recorded and empty, which proves no error")
-check("a swallowed exit status fires when stderr was not captured",
-      check_module.CORROBORATING_ONLY in
-      judge("grep -n needle notes.md | head -12", exit_code=0, stdout="",
-            stderr="", stderr_was_captured=False).signals)
-check("a swallowed exit status alone is silent when the streams were merged",
-      not judge("grep -n needle notes.md | head", exit_code=1, stdout="",
-                stderr_was_captured=False).fires,
-      "a merged empty output already proves an empty stderr, so the same "
-      "reasoning applies as when stderr was captured")
-check("a swallowed exit status is reported beside a signal that does fire",
-      check_module.CORROBORATING_ONLY in
-      judge("grep -n needle notes.md 2>/dev/null | head -12", exit_code=0,
-            stdout="", stderr="").signals)
-check("PIPESTATUS recovers the status, so it does not fire",
-      check_module.CORROBORATING_ONLY not in
-      judge("grep -n needle notes.md | head -12; echo ${PIPESTATUS[0]}",
-            exit_code=0, stdout="", stderr="",
-            stderr_was_captured=False).signals)
+check("S2 fires on a bare grep whose pattern the agent's grep refuses",
+      judge("grep -oE '.{0,180}(a|b).{0,180}' notes.md").signals == [PATTERN_TOO_COMPLEX])
+check("S2 fires with the refused pattern given after --",
+      judge("grep -oE -- '.{0,180}(a|b).{0,180}' notes.md").signals == [PATTERN_TOO_COMPLEX])
+check("S2 fires with the refused pattern given by -e",
+      judge("grep -o -e '.{0,180}(a|b).{0,180}' -E notes.md").signals == [PATTERN_TOO_COMPLEX])
+for near_miss in ("grep -oE '.{0,80}link-type' notes.md",
+                  "xargs grep -oE '.{0,180}(a|b).{0,180}' < list",
+                  "command grep -oE '.{0,180}(a|b).{0,180}' notes.md",
+                  "/usr/bin/grep -oE '.{0,180}(a|b).{0,180}' notes.md",
+                  "grep -zoE '.{0,180}(a|b).{0,180}' notes.md",
+                  "ssh nedlern@ned-box \"grep -oE '.{0,180}(a|b).{0,180}' notes.md\""):
+    check(f"S2 stays silent: {near_miss}", not judge(near_miss).fires,
+          judge(near_miss).signals)
+check("S2 stays silent when the agent saw the refusal on one line",
+      not judge("grep -oE '.{0,180}(a|b).{0,180}' notes.md", exit_code=2,
+                output="ugrep: error at position 9: exceeds complexity limits\n").fires)
+refused_grep = "grep -oE '.{0,180}(a|b).{0,180}'"
+hidden_and_shown = judge(f"{refused_grep} notes.md 2>/dev/null; {refused_grep} other.md",
+                         exit_code=2,
+                         output="ugrep: error at position 9: exceeds complexity limits\n")
+check("S2 still warns of a grep whose own 2>/dev/null hid its refusal, when another grep's "
+      "refusal was shown",
+      hidden_and_shown.signals == [PATTERN_TOO_COMPLEX] and len(hidden_and_shown.causes) == 1
+      and "notes.md" not in hidden_and_shown.causes[0].instruction,
+      f"{hidden_and_shown.signals} {[cause.instruction for cause in hidden_and_shown.causes]}")
+shown_after_stdout_and_stderr_sent_away = judge(
+    f"{refused_grep} notes.md >/dev/null 2>&1; {refused_grep} other.md", exit_code=2,
+    output="ugrep: error at position 9: exceeds complexity limits\n")
+check("S2 still warns of a grep whose >/dev/null 2>&1 hid its refusal, when another grep's "
+      "refusal was shown",
+      shown_after_stdout_and_stderr_sent_away.signals == [PATTERN_TOO_COMPLEX]
+      and len(shown_after_stdout_and_stderr_sent_away.causes) == 1,
+      f"{shown_after_stdout_and_stderr_sent_away.signals}")
+check("S2 stays silent for a grep whose 2>/dev/null 2>&1 left its shown refusal on the screen",
+      not judge(f"{refused_grep} notes.md 2>/dev/null 2>&1", exit_code=2,
+                output="ugrep: error at position 9: exceeds complexity limits\n").fires)
+for redirect, sent_away in (("2>/dev/null", True), ("2>>log", True), ("&>/dev/null", True),
+                            ("&>>log", True), (">&/dev/null", True), ("2>&-", True),
+                            ("2>&1", False), (">&2", False), ("1>&2", False), (">out", False),
+                            ("", False), (">/dev/null 2>&1", True), ("2>&1 >/dev/null", False),
+                            ("2>/dev/null 2>&1", False), ("2>&2", False),
+                            ("2>/dev/stdout", False), ("2>/dev/null >&2", True)):
+    command = check_module.split_into_simple_commands_with_the_machine_and_directory_each_runs_in(
+        f"grep needle notes.md {redirect}", "/work")[0]
+    check(f"`{redirect}` sends stderr away: {sent_away}",
+          check_module.does_command_own_redirect_send_stderr_elsewhere_than_stdout(command) == sent_away)
+check("S2's warning quotes the grep as the shell needs, so it can be run again as written",
+      "`grep -oE '.{0,180}(a|b).{0,180}'`"
+      in judge("grep -oE '.{0,180}(a|b).{0,180}' notes.md").causes[0].instruction,
+      judge("grep -oE '.{0,180}(a|b).{0,180}' notes.md").causes[0].instruction)
+check("S2 leaves the file names out of the probe",
+      check_module.agents_grep_options_and_patterns_without_file_names(check_module.Placed(
+          None, "/work", ["grep", "-rn", "--include", "*.md", "-A", "2", "needle", "docs",
+                          "notes.md"], 0, ()), MachinesOfTheDay(), [])
+      == ["-rn", "--include", "*.md", "-A", "2", "needle"])
 
 
-# ------------------------------------------------- the weakened control run
-
-def in_a_scratch_corpus(files):
-    directory = tempfile.mkdtemp(prefix="control-corpus-", dir=SUITE_SCRATCH)
-    for name, body in files.items():
-        path = pathlib.Path(directory) / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(body, encoding="utf-8")
-    return directory
+def probes_of(command, cwd="/work", machines=None, unchecked=None):
+    return [check_module.agents_grep_options_and_patterns_without_file_names(
+                placed, machines or MachinesOfTheDay(), [] if unchecked is None else unchecked)
+            for placed in check_module.split_into_simple_commands_with_the_machine_and_directory_each_runs_in(
+                command, cwd)
+            if placed.program == "grep"]
 
 
-corpus = in_a_scratch_corpus({
-    "composed.py": 'MODULE = with_name("handoff-supervisor.py")\n',
-    "quiet.md": "nothing to see\n",
-})
-over_specific = judge('grep -rn "scripts/handoff-supervisor.py" .',
-                      exit_code=1, stdout="", control_corpus_root=corpus)
-check("a path pattern the corpus only holds by its last segment fires",
-      "weakened-pattern-control-run-found-matches" in over_specific.signals,
-      str(over_specific.signals))
-check("the control names the weakened pattern it ran",
-      over_specific.control and
-      over_specific.control["pattern"] == "handoff-supervisor.py",
-      str(over_specific.control))
-check("a pattern the corpus really does not hold is silent",
-      not judge('grep -rn "no-such-string-anywhere" .', exit_code=1,
-                stdout="", control_corpus_root=corpus).fires)
+dash_glob_grep = f"cd {PROJECTS} && grep -l needle -r -Users-el-agents-*/ 2>/dev/null"
+check("S2 leaves an unquoted glob that expanded to names beginning with - out of the probe, "
+      "and keeps a quoted one",
+      probes_of(dash_glob_grep + " '-x*'") == [["-l", "needle", "-r", "-x*"]],
+      probes_of(dash_glob_grep + " '-x*'"))
+check("S2 keeps in the probe a dash-led unquoted glob that matched no name, which grep read "
+      "as an option",
+      probes_of("grep -l needle -r -Users-el-agents-*/") == [["-l", "needle", "-r", "-Users-el-agents-*/"]],
+      probes_of("grep -l needle -r -Users-el-agents-*/"))
+check("S2 keeps in the probe an option, or an option's value, that holds an unquoted glob "
+      "character",
+      probes_of("grep -rn --include=*.md --include -foo* --regexp=foo.*bar -efoo.*bar docs")
+      == [["-rn", "--include=*.md", "--include", "-foo*", "--regexp=foo.*bar", "-efoo.*bar"]],
+      probes_of("grep -rn --include=*.md --include -foo* --regexp=foo.*bar -efoo.*bar docs"))
+check("S2 keeps in the probe an unquoted pattern that does not begin with -",
+      probes_of("grep -c foo.*bar notes.md") == [["-c", "foo.*bar"]],
+      probes_of("grep -c foo.*bar notes.md"))
+for partly_unquoted in ("grep -oE --regexp='.{0,180}(a|b).{0,180}'.* notes.md",
+                        "grep -oE -e'.{0,180}(a|b).{0,180}'.* notes.md"):
+    check(f"S2 fires with the refused pattern given partly unquoted through an option: "
+          f"{partly_unquoted}",
+          judge(partly_unquoted).signals == [PATTERN_TOO_COMPLEX], judge(partly_unquoted).signals)
 
-anchored_corpus = in_a_scratch_corpus({
-    "one.md": "### 1. a finding\n### 2. another\n",
-    "two.md": "**1.** a finding written another way\n**2.** and another\n",
-})
-anchored = judge("grep -c '^### [0-9]\\+\\.' one.md two.md", exit_code=0,
-                 stdout="one.md:2\ntwo.md:0\n",
-                 control_corpus_root=anchored_corpus)
-check("an input counted zero that the weakened pattern matches fires",
-      "weakened-pattern-control-run-found-matches" in anchored.signals,
-      str(anchored.signals))
-check("the same count with no zero among it is not judged at all",
-      not judge("grep -c '^### [0-9]\\+\\.' one.md two.md", exit_code=0,
-                stdout="one.md:2\ntwo.md:3\n",
-                control_corpus_root=anchored_corpus).applicable)
 
-absolute_corpus = in_a_scratch_corpus({
-    "one.md": "### 1. a finding\n",
-    "two.md": "**1.** a finding written another way\n",
-})
+class MachinesWhoseDirectoryCannotBeListed(MachinesOfTheDay):
+    def directory_entries(self, host, directory):
+        self.asked.append(("entries", host, directory))
+        raise check_module.MachineStateQueryGotNoAnswer(f"listing {directory} failed")
+
+
+unlisted = judge("grep -oE --regexp='.{0,180}(a|b).{0,180}'.* notes.md",
+                 machines=MachinesWhoseDirectoryCannotBeListed())
+check("a directory that cannot be listed keeps the dash-led word in the probe, and is "
+      "reported once",
+      unlisted.signals == [PATTERN_TOO_COMPLEX] and len(unlisted.unchecked) == 1
+      and "listing /work failed" in unlisted.unchecked[0],
+      f"signals {unlisted.signals} unchecked {unlisted.unchecked}")
+unlisted_unchecked = []
+unlisted_probes = probes_of("grep -c -x* /tmp/n*.md foo.*bar",
+                            machines=MachinesWhoseDirectoryCannotBeListed(),
+                            unchecked=unlisted_unchecked)
+check("the probe asks whether a word expanded only for a word that begins with -",
+      unlisted_probes == [["-c", "-x*", "/tmp/n*.md"]] and len(unlisted_unchecked) == 1
+      and "`-x*`" in unlisted_unchecked[0],
+      f"{unlisted_probes} unchecked {unlisted_unchecked}")
+after_double_dash_unchecked = []
+after_double_dash_machines = MachinesWhoseDirectoryCannotBeListed()
+after_double_dash_probes = probes_of("grep -e needle -- -x*", machines=after_double_dash_machines,
+                                     unchecked=after_double_dash_unchecked)
+check("the probe asks about no word after --, where a word can only be a pattern or a file "
+      "name",
+      after_double_dash_probes == [["-e", "needle"]] and after_double_dash_unchecked == []
+      and after_double_dash_machines.asked == [],
+      f"{after_double_dash_probes} unchecked {after_double_dash_unchecked} "
+      f"asked {after_double_dash_machines.asked}")
+
+
+class MachinesWhoseDirectoryHoldsDashX(MachinesOfTheDay):
+    def directory_entries(self, host, directory):
+        self.asked.append(("entries", host, directory))
+        return ["-x", "notes.md"]
+
+
+double_dash_value_machines = MachinesWhoseDirectoryHoldsDashX()
+double_dash_value_probes = probes_of("grep -e -- -x*", machines=double_dash_value_machines)
+check("a -- that is -e's value does not end the options: the probe asks whether -x* expanded, "
+      "and leaves it out when it did",
+      double_dash_value_probes == [["-e", "--"]]
+      and ("entries", None, "/work") in double_dash_value_machines.asked,
+      f"{double_dash_value_probes} asked {double_dash_value_machines.asked}")
+check("S1 reads a dash-led glob after a -- that is -e's value",
+      judge("grep -e -- -x*", machines=MachinesWhoseDirectoryHoldsDashX()).signals
+      == [GLOB_DASH_NAME])
+check("S1 still stops at the -- that ends grep's options",
+      not judge("grep -e needle -- -x*", machines=MachinesWhoseDirectoryHoldsDashX()).fires)
+for arguments, expected in ((["-e", "--", "-x*"], (3, {1})),
+                            (["--regexp", "--", "--", "-x*"], (2, {1})),
+                            (["-A2", "--", "-x*"], (1, set())), (["-A", "--", "-x*"], (3, {1})),
+                            (["--include=--", "--", "-x*"], (1, set())), (["-", "--"], (1, set())),
+                            (["needle", "file"], (2, set())), (["-e"], (1, set())),
+                            (["-e", "--", "-e", "-x*", "notes.md"], (5, {1, 3}))):
+    found = check_module.grep_arguments_options_end_and_option_value_positions(arguments)
+    check(f"grep's options end, and its option values sit, at {expected} in {arguments}",
+          found == expected, found)
+value_glob_machines = MachinesWhoseDirectoryHoldsDashX()
+value_glob = "grep -e -- -e -x* notes.md"
+check("S1 skips a dash-led glob that is an option's value, which grep reads as the pattern",
+      not judge(value_glob, machines=MachinesWhoseDirectoryHoldsDashX()).fires,
+      judge(value_glob, machines=MachinesWhoseDirectoryHoldsDashX()).signals)
+check("the probe keeps a dash-led glob that is an option's value, and asks no listing for it",
+      probes_of(value_glob, machines=value_glob_machines) == [["-e", "--", "-e", "-x*"]]
+      and value_glob_machines.asked == [],
+      f"{probes_of(value_glob, machines=MachinesWhoseDirectoryHoldsDashX())} "
+      f"asked {value_glob_machines.asked}")
+check("S1 ends another program's options at its first --, though grep would read that -- as "
+      "-A's value",
+      not judge("ls -A -- -x* | grep needle", machines=MachinesWhoseDirectoryHoldsDashX()).fires,
+      judge("ls -A -- -x* | grep needle", machines=MachinesWhoseDirectoryHoldsDashX()).signals)
+unknown_directory_unchecked = []
+unknown_directory_machines = MachinesOfTheDay()
+unknown_directory_probes = probes_of('cd "$D" && grep -l needle -r -Users-el-agents-*/',
+                                     cwd=PROJECTS, machines=unknown_directory_machines,
+                                     unchecked=unknown_directory_unchecked)
+check("a dash-led unquoted glob of a grep run in a directory that is not known stays in the "
+      "probe, with no listing asked and no line in unchecked",
+      unknown_directory_probes == [["-l", "needle", "-r", "-Users-el-agents-*/"]]
+      and unknown_directory_unchecked == []
+      and not [asked for asked in unknown_directory_machines.asked if asked[0] == "entries"],
+      f"{unknown_directory_probes} unchecked {unknown_directory_unchecked} "
+      f"asked {unknown_directory_machines.asked}")
+
+
+class MachinesWhoseGrepRejectsUnknownOptions(MachinesOfTheDay):
+    """The real agent's grep reads an argument beginning with - as an option, and exits 2
+    without its refusal on one it does not know."""
+
+    @staticmethod
+    def refuse_other_programs(argv, **keywords):
+        if argv[0] == "ugrep" and any(argument.startswith("-U") for argument in argv[1:]):
+            return subprocess.CompletedProcess(argv, 2, "", "ugrep: invalid option -U\n")
+        return MachinesOfTheDay.refuse_other_programs(argv, **keywords)
+
+
+dash_glob_verdict = judge(dash_glob_grep, machines=MachinesWhoseGrepRejectsUnknownOptions())
+check("S1 alone speaks on a dash-led glob, with no unchecked S2 line from the probe",
+      dash_glob_verdict.signals == [GLOB_DASH_NAME] and dash_glob_verdict.unchecked == [],
+      f"signals {dash_glob_verdict.signals} unchecked {dash_glob_verdict.unchecked}")
+
+
+# ------------------------------------------------------- near misses, cause S3
+
+missing_fd = MachinesOfTheDay(missing={(None, "fd")})
+check("S3 fires on a search program missing on this machine",
+      judge("fd needle docs", machines=missing_fd).signals == [PROGRAM_MISSING])
+check("S3 stays silent when the program is installed", not judge("fd needle docs").fires)
+for shown in ("bash: line 1: fd: command not found", "zsh: command not found: fd",
+              "sh: 1: fd: not found"):
+    check(f"S3 stays silent when the agent saw the error: {shown}",
+          not judge("fd needle docs", output=shown + "\n", exit_code=127,
+                    machines=MachinesOfTheDay(missing={(None, "fd")})).fires)
+for shown in ("bash: line 1: fdx: command not found", "sh: 1: fdx: not found"):
+    check(f"S3 still fires when the error shown names another program: {shown}",
+          judge("fd needle docs", output=shown + "\n", exit_code=127,
+                machines=MachinesOfTheDay(missing={(None, "fd")})).signals == [PROGRAM_MISSING])
+check("S3 asks once per program and machine",
+      judge("rg a docs; rg b docs", machines=MachinesOfTheDay(
+          missing={(None, "rg")})).signals == [PROGRAM_MISSING])
+
+
+# ------------------------------------------------- what makes the check apply
+
+check("a result that is not empty is not judged",
+      not judge(f"cd {PROJECTS} && grep -l x */*.jsonl", output="a.jsonl\n").applicable)
+check("a command with no search is not judged",
+      not judge(f"cd {PROJECTS} && ls */*.jsonl").applicable)
+check("a failed command's diagnostics alone are an empty result",
+      judge(f"cd {PROJECTS} && grep -l x */*.jsonl", exit_code=2,
+            output="grep: invalid option -- 'U'\n").signals == [GLOB_DASH_NAME])
+check("grep -c counts that are all zero are an empty result",
+      check_module.empty_shape_of("a.md:0\nb.md:0") == "zero-count-lines"
+      and check_module.empty_shape_of("a.md:0\nb.md:3") is None)
+
+
+# ------------------------------------------------- the questions to a machine
+
+class Answer:
+    def __init__(self, returncode, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def runner_answering(*answers):
+    calls = []
+
+    def runner(argv, **keywords):
+        calls.append(argv)
+        answer = answers[min(len(calls), len(answers)) - 1]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+    return runner, calls
+
+
+runner, calls = runner_answering(Answer(0, "-a\nb\n"))
+machines = check_module.Machines(runner=runner)
+check("a remote listing is asked over ssh, its ~ left to the remote shell",
+      machines.directory_entries("nedlern@ned-box", "~/x y") == ["-a", "b"]
+      and calls[0][-2:] == ["nedlern@ned-box", "ls -A -- \"$HOME\"/'x y'"], calls)
+machines.directory_entries("nedlern@ned-box", "~/x y")
+check("an answer is kept, so the question is asked once", len(calls) == 1, calls)
+
+for answer, expected in ((Answer(0, "/usr/bin/rg\n"), True), (Answer(1), False)):
+    runner, _ = runner_answering(answer)
+    check(f"command -v exiting {answer.returncode} over ssh means installed is {expected}",
+          check_module.Machines(runner=runner).program_installed("h", "rg") is expected)
+
+for what, ask_it in (
+        ("a remote listing", lambda m: m.directory_entries("h", "/d")),
+        ("a remote program question", lambda m: m.program_installed("h", "rg"))):
+    for failure in (Answer(255, stderr="connect to host h: refused"),
+                    Answer(-15, stderr="killed by a signal"),
+                    subprocess.TimeoutExpired("x", 15), OSError("no such file")):
+        runner, calls = runner_answering(failure)
+        machines = check_module.Machines(runner=runner)
+        raised = []
+        for _ in range(2):
+            try:
+                ask_it(machines)
+            except check_module.MachineStateQueryGotNoAnswer as error:
+                raised.append(str(error))
+        named = (f"exited {failure.returncode}" in raised[0] if isinstance(failure, Answer)
+                 else raised[0].startswith("ssh could not run")) if raised else False
+        check(f"{what} that fails ({type(failure).__name__} "
+              f"{getattr(failure, 'returncode', '')}) raises MachineStateQueryGotNoAnswer, "
+              f"once asked, saying how it failed",
+              len(raised) == 2 and len(calls) == 1 and named, f"{raised} {calls}")
+
 try:
-    absolute_outcome = judge(
-        f"grep -c '^### [0-9]\\+\\.' {absolute_corpus}/*.md", exit_code=0,
-        stdout=f"{absolute_corpus}/one.md:1\n{absolute_corpus}/two.md:0\n",
-        control_corpus_root=absolute_corpus).signals
-except Exception as error:  # the failure this case exists to catch
-    absolute_outcome = f"raised {error!r}"
-check("a control over an absolute glob expands it and fires",
-      "weakened-pattern-control-run-found-matches" in absolute_outcome,
-      f"{absolute_outcome}: the log-store is cited by its absolute path, so "
-      f"failure 1's real shape is an absolute glob")
+    check_module.Machines().directory_entries(None, str(SCRATCH / "absent"))
+    check("a local listing of a missing directory raises MachineStateQueryGotNoAnswer", False)
+except check_module.MachineStateQueryGotNoAnswer:
+    check("a local listing of a missing directory raises MachineStateQueryGotNoAnswer", True)
 
-for cleanup in ("find ./build/sub -name '*.tmp' -delete",
-                "find ./build/sub -name '*.tmp' -exec rm {} +",
-                "fd 'build/one' -x rm"):
-    cleanup_corpus = in_a_scratch_corpus({
-        "sub/one.tmp": "", "sub/two.tmp": "", "one-x": "",
-    })
-    judge(cleanup, exit_code=0, stdout="", control_corpus_root=cleanup_corpus)
-    check(f"a control run never carries out the action of: {cleanup}",
-          all((pathlib.Path(cleanup_corpus) / name).exists()
-              for name in ("sub/one.tmp", "sub/two.tmp", "one-x")),
-          str(sorted(str(path.relative_to(cleanup_corpus))
-                     for path in pathlib.Path(cleanup_corpus).rglob("*"))))
+dash_directory = SCRATCH / "projects"
+(dash_directory / "-Users-el-agents-x").mkdir(parents=True)
+(dash_directory / "-Users-el-agents-x" / "a.jsonl").write_text("needle\n")
+check("a local listing reads the directory",
+      check_module.Machines().directory_entries(None, str(dash_directory))
+      == ["-Users-el-agents-x"])
+check("a local program question finds an installed program and not an absent one",
+      check_module.Machines().program_installed(None, "sh")
+      and not check_module.Machines().program_installed(None, "no-such-program-here"))
 
-piped_corpus = in_a_scratch_corpus({
-    "notes.txt": "nothing here\n", "other.txt": "needle\n",
-})
-piped = judge('cat notes.txt | grep -rn "x/needle"', exit_code=1, stdout="",
-              control_corpus_root=piped_corpus)
-check("a search fed by a pipe is never re-run over the corpus",
-      piped.control is None and
-      "weakened-pattern-control-run-found-matches" not in piped.signals,
-      f"{piped.control}: it read the pipe, so a re-run over the corpus "
-      f"searches files the original never read")
+for answer, expected in ((Answer(0), False), (Answer(1), False),
+                         (Answer(2, stderr="ugrep: error at position 9\n  exceeds complexity limits"), True)):
+    runner, _ = runner_answering(answer)
+    check(f"the agent's grep exiting {answer.returncode} means refuses is {expected}",
+          check_module.Machines(runner=runner, environment={
+              "CLAUDE_CODE_EXECPATH": str(STAND_IN_AGENTS_GREP)}).agents_grep_refuses(["x"], None)
+          is expected)
 
-check("the control refuses a command carrying a pipe",
-      check_module.run_control("grep -rn 'a/b' . | head", "a/b", corpus, [], [])
-      is None,
-      "only a bare read-only search is ever re-run")
-check("the control refuses a command carrying a redirect",
-      check_module.run_control("grep -rn 'a/b' . > out.txt", "a/b", corpus, [], [])
-      is None)
-check("a path pattern weakens to its last segment",
-      ("last path segment", "handoff-supervisor.py") in
-      check_module.weaken_pattern("scripts/handoff-supervisor.py"))
-check("an anchored pattern weakens to an unanchored one",
-      ("unanchored", "needle") in check_module.weaken_pattern("^needle$"))
-check("a literal head before a regex element is dropped",
-      any(name == "literal head dropped"
-          for name, _ in check_module.weaken_pattern("^### [0-9]\\+\\.")))
+for failure in (Answer(-15), Answer(2, stderr="ugrep: error: invalid option -Q"), Answer(137)):
+    runner, _ = runner_answering(failure)
+    unanswered = check_module.judge_command_result(
+        "grep -oE '.{0,180}(a|b).{0,180}' notes.md", str(SCRATCH), "", 0,
+        check_module.Machines(runner=runner,
+                              environment={"CLAUDE_CODE_EXECPATH": str(STAND_IN_AGENTS_GREP)}))
+    check(f"the agent's grep exiting {failure.returncode} without its refusal leaves S2 unchecked "
+          f"and says how it exited",
+          not unanswered.fires and len(unanswered.unchecked) == 1
+          and f"exited {failure.returncode}" in unanswered.unchecked[0], unanswered.unchecked)
 
-# A glob the shell left alone is left alone. `--include "*.py"` reaches grep
-# as `*.py`; expanding it made `b.py` the pattern and the weakened pattern a
-# file name, and failure 4's shape went silent on how one option was spelled.
-quoted_include_corpus = in_a_scratch_corpus({
-    "a.py": "x = 1\n", "b.py": "y = 2\n",
-    "tools/composed.py": 'MODULE = with_name("handoff-supervisor.py")\n',
-})
-for spelling in ('--include "*.py"', "--include '*.py'", '--include="*.py"'):
-    quoted_include = judge(
-        f'grep -rn {spelling} "scripts/handoff-supervisor.py" .', exit_code=1,
-        stdout="", control_corpus_root=quoted_include_corpus)
-    check(f"a quoted glob, {spelling}, is passed on as the shell passed it",
-          "weakened-pattern-control-run-found-matches" in quoted_include.signals,
-          f"{quoted_include.signals} {quoted_include.control}")
-words_of = getattr(check_module, "shell_words_marking_globs", None)
-check("a word is expanded only where its glob character stood outside quotes",
-      words_of is not None and words_of("grep -c x '*.py' *.md a\\*b") == [
-          ("grep", None), ("-c", None), ("x", None), ("*.py", None),
-          ("*.md", "*.md"), ("a*b", None)],
-      "the shell expands *.md; '*.py' and a\\*b reach grep as written")
+no_agents_grep = check_module.Machines(environment={"HOME": str(SCRATCH)})
+verdict = check_module.judge_command_result(
+    "grep -oE '.{0,180}(a|b).{0,180}' notes.md", str(SCRATCH), "", 0, no_agents_grep)
+check("an agent's grep that cannot be found leaves S2 unchecked and says so",
+      not verdict.fires and len(verdict.unchecked) == 1
+      and "was not found" in verdict.unchecked[0], verdict.unchecked)
+home_with_claude = SCRATCH / "home-with-claude"
+(home_with_claude / ".local" / "bin").mkdir(parents=True)
+(home_with_claude / ".local" / "bin" / "claude").symlink_to(STAND_IN_AGENTS_GREP)
+check("the agent's grep is found through $CLAUDE_CODE_EXECPATH first",
+      check_module.Machines(environment={"CLAUDE_CODE_EXECPATH": str(STAND_IN_AGENTS_GREP),
+                                         "HOME": str(SCRATCH)}).agents_grep()
+      == str(STAND_IN_AGENTS_GREP))
+check("the agent's grep is found at ~/.local/bin/claude without $CLAUDE_CODE_EXECPATH",
+      check_module.Machines(environment={"HOME": str(home_with_claude)}).agents_grep()
+      == str(home_with_claude / ".local" / "bin" / "claude"))
+
+failed_listing = check_module.judge_command_result(
+    "grep -l x */*.jsonl", str(SCRATCH / "absent"), "", 0, machines_with_the_stand_in_agents_grep())
+check("a listing that fails leaves S1 unchecked and says which glob",
+      not failed_listing.fires and len(failed_listing.unchecked) == 1
+      and "`*/*.jsonl`" in failed_listing.unchecked[0], failed_listing.unchecked)
+two_globs = check_module.judge_command_result(
+    "grep -l x */*.jsonl *.md", str(SCRATCH / "absent"), "", 0,
+    machines_with_the_stand_in_agents_grep())
+check("a listing that fails is reported once, not once per glob in the command",
+      sum("to a name beginning with -" in line for line in two_globs.unchecked) == 1,
+      two_globs.unchecked)
 
 
-def git_in_scratch_repository(directory, *arguments):
-    """Run git in a scratch repository, never in the checkout around it."""
-    environment = {key: value for key, value in os.environ.items()
-                   if not key.startswith("GIT_")}
-    subprocess.run(["git", "-c", "user.email=test@example.invalid",
-                    "-c", "user.name=test", *arguments], cwd=directory,
-                   env=environment, check=True, capture_output=True)
+class LocalFdMissing(check_module.Machines):
+    def program_installed(self, host, program):
+        if host is None:
+            return program != "fd"
+        return super().program_installed(host, program)
 
 
-def a_repository_that_moved_a_file(extra_tracked_files):
-    """A scratch repository whose history, and nothing the agent reads,
-    names scripts/old-helper.py: two commit messages in .git/logs/HEAD, a
-    gitignored build output, and a binary file."""
-    directory = in_a_scratch_corpus({"scripts/old-helper.py": "print(1)\n"})
-    git_in_scratch_repository(directory, "init", "-q")
-    git_in_scratch_repository(directory, "add", ".")
-    git_in_scratch_repository(directory, "commit", "-qm", "add scripts/old-helper.py")
-    git_in_scratch_repository(directory, "mv", "scripts/old-helper.py", "scripts/new-helper.py")
-    git_in_scratch_repository(directory, "commit", "-qm", "move scripts/old-helper.py away")
-    root = pathlib.Path(directory)
-    (root / ".gitignore").write_text("build/\n", encoding="utf-8")
-    (root / "build").mkdir()
-    (root / "build" / "out.txt").write_text(
-        "copied from scripts/old-helper.py\n", encoding="utf-8")
-    (root / "blob.bin").write_bytes(b"\0\1scripts/old-helper.py\0\2")
-    for name, body in extra_tracked_files.items():
-        (root / name).parent.mkdir(parents=True, exist_ok=True)
-        (root / name).write_text(body, encoding="utf-8")
-    git_in_scratch_repository(directory, "add", ".")
-    git_in_scratch_repository(directory, "commit", "-qm", "ignore build output")
-    return directory
+runner, _ = runner_answering(Answer(255, stderr="refused"))
+after_failed_ssh = check_module.judge_command_result(
+    "ssh h 'rg x docs'; fd y docs", "/work", "", 0, LocalFdMissing(runner=runner))
+check("a program question that fails does not stop the check asking about the next",
+      after_failed_ssh.signals == [PROGRAM_MISSING] and len(after_failed_ssh.unchecked) == 1,
+      f"{after_failed_ssh.signals} {after_failed_ssh.unchecked}")
+runner, _ = runner_answering(Answer(255, stderr="refused"))
+failed_ssh = check_module.judge_command_result(
+    "ssh h 'rg x docs'", "/work", "", 0, check_module.Machines(runner=runner))
+check("an ssh that fails leaves S3 unchecked and says which program",
+      not failed_ssh.fires and len(failed_ssh.unchecked) == 1
+      and "whether rg is installed on h" in failed_ssh.unchecked[0], failed_ssh.unchecked)
 
 
-history_only = judge(
-    'grep -rn "scripts/old-helper.py" .', exit_code=1, stdout="",
-    control_corpus_root=a_repository_that_moved_a_file({}))
-check("the control reads only what the agent's grep read: not .git/, not "
-      "gitignored files, not binary files",
-      "weakened-pattern-control-run-found-matches" not in history_only.signals,
-      f"{history_only.control}: the agent's grep is Claude Code's ugrep "
-      f"function, which skips all three, so it could not have found these")
-composed_reference = judge(
-    'grep -rn "scripts/old-helper.py" .', exit_code=1, stdout="",
-    control_corpus_root=a_repository_that_moved_a_file({
-        "tools/composed.py": 'HELPER = with_name("old-helper.py")\n'}))
-check("the same repository holding a composed reference still fires, on that "
-      "reference alone",
-      "weakened-pattern-control-run-found-matches" in
-      composed_reference.signals and composed_reference.control and
-      all("tools/composed.py" in line
-          for line in composed_reference.control["matched"]),
-      str(composed_reference.control))
-ledgers_repository = a_repository_that_moved_a_file({})
-(pathlib.Path(ledgers_repository) / ".gitignore").write_text(
-    "build/\nledgers/\n*.log\n", encoding="utf-8")
-(pathlib.Path(ledgers_repository) / "ledgers").mkdir()
-(pathlib.Path(ledgers_repository) / "ledgers" / "walk.log").write_text(
-    'HELPER = with_name("old-helper.py")\n', encoding="utf-8")
-ignored_but_named = judge(
-    'grep -rn "scripts/old-helper.py" ledgers/', exit_code=1, stdout="",
-    control_corpus_root=ledgers_repository)
-check("a gitignored directory named as the search root is read, as the "
-      "agent's grep reads it",
-      "weakened-pattern-control-run-found-matches" in ignored_but_named.signals,
-      f"{ignored_but_named.control}: ugrep applies only the .gitignore files "
-      f"at or below the directory it was given, so the top .gitignore's "
-      f"ledgers/ and *.log rules do not apply inside ledgers/")
-(pathlib.Path(ledgers_repository) / "deeper" / "inner").mkdir(parents=True)
-(pathlib.Path(ledgers_repository) / "deeper" / ".gitignore").write_text(
-    "*.tmp\n", encoding="utf-8")
-(pathlib.Path(ledgers_repository) / "deeper" / "inner" / "kept.log").write_text(
-    'HELPER = with_name("old-helper.py")\n', encoding="utf-8")
-(pathlib.Path(ledgers_repository) / "deeper" / "inner" / "skipped.tmp").write_text(
-    'HELPER = with_name("old-helper.py")\n', encoding="utf-8")
-from_a_subdirectory = judge(
-    'grep -rn "scripts/old-helper.py" .', exit_code=1, stdout="",
-    control_corpus_root=str(pathlib.Path(ledgers_repository) / "deeper"))
-check("a control run from a subdirectory applies only the .gitignore files "
-      "at or below it, as the agent's grep does",
-      "weakened-pattern-control-run-found-matches" in
-      from_a_subdirectory.signals and from_a_subdirectory.control and
-      [line.split(":", 1)[0] for line in from_a_subdirectory.control["matched"]]
-      == ["./inner/kept.log"],
-      f"{from_a_subdirectory.control}: git names the top .gitignore relative "
-      f"to the repository's top, not to the corpus, and its *.log rule is "
-      f"above the search root; deeper/.gitignore's *.tmp rule is not")
+# --------------------------------------------------------------- the hook mode
+
+def hook(payload, machines=None):
+    out = io.StringIO()
+    code = check_module.unvalidated_negative_result_warning_post_tool_use_hook(
+        io.StringIO(payload if isinstance(payload, str) else json.dumps(payload)), out,
+        machines or MachinesOfTheDay())
+    return code, out.getvalue()
 
 
-def a_committed_scratch_repository(files, ignore_rules, tracked, force_added=()):
-    """A committed scratch repository: files, a .gitignore, and what is tracked."""
-    directory = in_a_scratch_corpus(dict(files, **{".gitignore": ignore_rules}))
-    git_in_scratch_repository(directory, "init", "-q")
-    git_in_scratch_repository(directory, "add", ".gitignore", *tracked)
-    if force_added:
-        git_in_scratch_repository(directory, "add", "-f", *force_added)
-    git_in_scratch_repository(directory, "commit", "-qm", "scratch")
-    return directory
+firing_command = f"cd {PROJECTS} && grep -l x */*.jsonl 2>/dev/null"
+code, out = hook({"hook_event_name": "PostToolUse", "tool_name": "Bash", "cwd": "/work",
+                  "tool_input": {"command": firing_command},
+                  "tool_response": {"stdout": "", "stderr": "", "interrupted": False}})
+context = json.loads(out)["hookSpecificOutput"] if out else {}
+check("a PostToolUse payload that fires gives the warning as additionalContext",
+      code == 0 and context.get("hookEventName") == "PostToolUse"
+      and "names beginning with -" in context.get("additionalContext", ""), out)
+code, out = hook({"hook_event_name": "PostToolUseFailure", "tool_name": "Bash",
+                  "cwd": "/work", "tool_input": {"command": f"cd {PROJECTS} && grep -l x */*.jsonl"},
+                  "error": "Exit code 2\ngrep: invalid option -- 'U'\n"})
+context = json.loads(out)["hookSpecificOutput"] if out else {}
+check("a PostToolUseFailure payload is read from its Exit code line",
+      code == 0 and context.get("hookEventName") == "PostToolUseFailure"
+      and "names beginning with -" in context.get("additionalContext", ""), out)
+for case, payload in (
+        ("a payload that is not JSON", "{"),
+        ("a tool that is not Bash", {"tool_name": "Read", "tool_input": {}}),
+        ("an interrupted command", {"tool_name": "Bash", "cwd": "/work",
+                                    "tool_input": {"command": firing_command},
+                                    "tool_response": {"stdout": "", "interrupted": True}}),
+        ("a failure that was an abort", {"hook_event_name": "PostToolUseFailure",
+                                         "tool_name": "Bash", "is_interrupt": True,
+                                         "tool_input": {"command": firing_command},
+                                         "error": "Exit code 1\n"}),
+        ("a failure with no Exit code line", {"hook_event_name": "PostToolUseFailure",
+                                              "tool_name": "Bash", "error": "timed out",
+                                              "tool_input": {"command": firing_command}}),
+        ("a search that found something", {"tool_name": "Bash", "cwd": "/work",
+                                           "tool_input": {"command": firing_command},
+                                           "tool_response": {"stdout": "a.jsonl\n"}})):
+    check(f"the hook says nothing for {case}", hook(payload) == (0, ""), hook(payload))
+
+real_simple_commands = check_module.shell_reader.simple_commands
 
 
-hyphen_neighbour = judge(
-    'grep -rn "x/needle" .', exit_code=1, stdout="",
-    control_corpus_root=a_committed_scratch_repository(
-        {"helper": "unrelated\n", "helper-test.py": "needle\n"},
-        "helper\n", tracked=["helper-test.py"]))
-check("a match in helper-test.py is not taken for the ignored file helper",
-      "weakened-pattern-control-run-found-matches" in hyphen_neighbour.signals
-      and hyphen_neighbour.control and
-      hyphen_neighbour.control["matched"] == ["./helper-test.py:1:needle"],
-      f"{hyphen_neighbour.control}: the agent's grep prints "
-      f"helper-test.py:1:needle here; the longest prefix naming a file is the "
-      f"file the line came from")
-force_added = judge(
-    'grep -rn "x/needle" .', exit_code=1, stdout="",
-    control_corpus_root=a_committed_scratch_repository(
-        {"forced.txt": "needle\n"}, "forced.txt\n", tracked=[],
-        force_added=["forced.txt"]))
-check("a tracked file that a .gitignore lists is skipped, as the agent's "
-      "grep skips it",
-      "weakened-pattern-control-run-found-matches" not in force_added.signals,
-      f"{force_added.control}: ugrep's --ignore-files reads the rules, not "
-      f"git's index")
-outside_any_repository = judge(
-    'grep -rn "scripts/old-helper.py" .', exit_code=1, stdout="",
-    control_corpus_root=in_a_scratch_corpus({
-        ".gitignore": "build/\n",
-        "build/out.txt": "copied from scripts/old-helper.py\n"}))
-check("a .gitignore outside any repository is obeyed, as the agent's grep "
-      "obeys it",
-      "weakened-pattern-control-run-found-matches" not in
-      outside_any_repository.signals,
-      f"{outside_any_repository.control}: an extracted tree with no .git still "
-      f"has its .gitignore read by ugrep")
-another_repository = a_committed_scratch_repository(
-    {"build/out.txt": "copied from scripts/old-helper.py\n"}, "build/\n",
-    tracked=[])
-from_elsewhere = judge(
-    f'grep -rn "scripts/old-helper.py" {another_repository}', exit_code=1,
-    stdout="",
-    control_corpus_root=a_committed_scratch_repository({}, "", tracked=[]))
-check("a search root in another repository has that repository's "
-      ".gitignore obeyed",
-      "weakened-pattern-control-run-found-matches" not in
-      from_elsewhere.signals,
-      f"{from_elsewhere.control}: the search named an absolute directory "
-      f"outside the corpus root's repository")
-
-no_file_names_corpus = a_committed_scratch_repository(
-    {"ignored/path.txt": "x\n", "src.txt": "ignored/path.txt\n"},
-    "ignored/\n", tracked=["src.txt"])
-without_file_names = judge(
-    "grep -rh 'old/path.txt' .", exit_code=1, stdout="",
-    control_corpus_root=no_file_names_corpus)
-check("with -h a matched line is text, even text that spells an ignored path",
-      without_file_names.control and
-      without_file_names.control["matched"] == ["ignored/path.txt"],
-      f"{without_file_names.control}: the agent's grep prints "
-      f"ignored/path.txt, matched in src.txt")
-one_named_file = judge(
-    "grep 'old/path.txt' src.txt", exit_code=1, stdout="",
-    control_corpus_root=no_file_names_corpus)
-check("over one named file a matched line is text, and is kept",
-      one_named_file.control and
-      one_named_file.control["matched"] == ["ignored/path.txt"],
-      f"{one_named_file.control}: grep prints no file name for one file")
-pattern_names_a_directory = judge(
-    'grep -rn "old/docs" .', exit_code=1, stdout="",
-    control_corpus_root=a_committed_scratch_repository(
-        {"docs/x.log": "see docs here\n"}, "*.log\n", tracked=[]))
-check("a weakened pattern that names a directory is not taken for a search "
-      "root",
-      "weakened-pattern-control-run-found-matches" not in
-      pattern_names_a_directory.signals,
-      f"{pattern_names_a_directory.control}: the top .gitignore's *.log "
-      f"rule applies to docs/x.log, as the agent's grep applies it")
-overlapping_roots = judge(
-    'grep -rn "x/needle" . sub', exit_code=1, stdout="",
-    control_corpus_root=a_committed_scratch_repository(
-        {"sub/.gitignore": "a.txt\n", "sub/a.txt": "needle\n"}, "",
-        tracked=["sub/.gitignore"]))
-check("a file found under two overlapping roots is skipped under both "
-      "spellings",
-      "weakened-pattern-control-run-found-matches" not in
-      overlapping_roots.signals,
-      f"{overlapping_roots.control}: the control prints ./sub/a.txt and "
-      f"sub/a.txt, and the agent's grep skipped both")
-null_separated_corpus = a_committed_scratch_repository(
-    {"build/out.txt": "needle\n"}, "build/\n", tracked=[])
-check("a -Z line, the file name ended by a NUL, is kept: the agent's grep "
-      "hands -Z to the system grep, which reads ignored files",
-      check_module.lines_the_agents_grep_could_read(
-          ["./build/out.txt\0needle"], null_separated_corpus,
-          ["grep", "-rZ", "needle", "."]) == ["./build/out.txt\0needle"],
-      "GNU grep -rZ prints ./build/out.txt, a NUL, then the match; Claude "
-      "Code's grep function runs the system grep for -Z, which does not skip "
-      "the gitignored build/")
-flags_and_operands = getattr(check_module, "grep_flags_and_file_operands", None)
-check("an option's argument and the pattern are not file operands",
-      flags_and_operands is not None and flags_and_operands(
-          ["grep", "-rn", "--exclude-dir", "docs", "-m", "5", "needle",
-           "src", "lib"])[1] == ["src", "lib"] and flags_and_operands(
-          ["grep", "-rne", "needle", "-A3", "src"])[1] == ["src"] and
-      flags_and_operands(["grep", "-r", "--", "-x", "."])[1] == ["."],
-      "a word after --exclude-dir or -m is that option's, not a directory "
-      "to search")
-
-count_corpus = in_a_scratch_corpus({"a.py": "needle\n", "b.py": "nothing\n"})
-spelled_by_ugrep = judge(
-    'grep -rc "x/needle" .', exit_code=0, stdout="a.py:0\nb.py:0\n",
-    control_corpus_root=count_corpus)
-check("a zero count the weakened search really recovers fires, whatever the "
-      "path's spelling",
-      spelled_by_ugrep.control and spelled_by_ugrep.control["matched"] == [
-          "a.py: counted 0 by the original, matched by the weakened search"],
-      f"{spelled_by_ugrep.control}: the agent's ugrep prints a.py:0 where "
-      f"the system grep prints ./a.py:1")
-nothing_recovered = judge(
-    'grep -rc "x/absent" .', exit_code=0, stdout="a.py:0\nb.py:0\n",
-    control_corpus_root=count_corpus)
-check("a zero count the weakened search does not recover is silent, whatever "
-      "the path's spelling",
-      "weakened-pattern-control-run-found-matches" not in
-      nothing_recovered.signals,
-      f"{nothing_recovered.control}: ./a.py:0 and a.py:0 are one file counted "
-      f"zero twice")
+def unreadable(*_arguments, **_keywords):
+    raise check_module.shell_reader.ShellCommandUnreadable("a reader failure this case made")
 
 
-# --------------------------------------------- reading a session transcript
-
-def transcript_holding(records, root=TRANSCRIPTS_ROOT, where="project"):
-    """Write the records as one transcript under root/where; return its path."""
-    directory = pathlib.Path(root) / where
-    directory.mkdir(parents=True, exist_ok=True)
-    handle = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".jsonl", delete=False, encoding="utf-8",
-        dir=directory)
-    for record in records:
-        handle.write(json.dumps(record) + "\n")
-    handle.close()
-    return handle.name
-
-
-def assistant_bash(tool_id, command):
-    return {"type": "assistant", "message": {"content": [
-        {"type": "tool_use", "id": tool_id, "name": "Bash",
-         "input": {"command": command}}]}}
-
-
-def result_block(tool_id, tool_use_result):
-    return {"type": "user", "toolUseResult": tool_use_result,
-            "message": {"content": [
-                {"type": "tool_result", "tool_use_id": tool_id, "content": ""}]}}
-
-
-exit_zero_shape = transcript_holding([
-    assistant_bash("t1", "grep -n needle notes.md"),
-    result_block("t1", {"stdout": "", "stderr": "grep: notes.md: No such file",
-                        "interrupted": False, "isImage": False,
-                        "noOutputExpected": False}),
-])
-pairs = list(check_module.bash_pairs_in_transcript(exit_zero_shape))
-check("an exit-0 pair is read with its two streams apart",
-      pairs == [("grep -n needle notes.md", 0, "",
-                 "grep: notes.md: No such file")],
-      str(pairs))
-
-exit_nonzero_shape = transcript_holding([
-    assistant_bash("t2", "grep -rn needle missing/"),
-    result_block("t2", "Error: Exit code 2\ngrep: missing/: No such file"),
-])
-pairs = list(check_module.bash_pairs_in_transcript(exit_nonzero_shape))
-check("a non-zero pair is read with its status and its merged output",
-      pairs == [("grep -rn needle missing/", 2,
-                 "grep: missing/: No such file", "")],
-      str(pairs))
-
-refusal_shape = transcript_holding([
-    assistant_bash("t3", "grep -rn needle ."),
-    result_block("t3", "Error: Permission for this action was denied"),
-])
-check("a refusal, which never ran, is not a pair",
-      list(check_module.bash_pairs_in_transcript(refusal_shape)) == [],
-      "a command that never ran has no result to trust or distrust")
-
-background_shape = transcript_holding([
-    assistant_bash("t4", "grep -rn needle ."),
-    result_block("t4", {"stdout": "", "stderr": "", "backgroundTaskId": "abc",
-                        "interrupted": False, "isImage": False,
-                        "noOutputExpected": False}),
-])
-check("a backgrounded command is not a pair",
-      list(check_module.bash_pairs_in_transcript(background_shape)) == [],
-      "its empty stdout is the launch, not the search")
-
-measured_root = SUITE_SCRATCH / "measured-transcripts"
-transcript_holding([
-    assistant_bash("m1", "rg -n needle ."),
-    result_block("m1", "Error: Exit code 127\nbash: line 1: rg: command not found"),
-    assistant_bash("m2", "grep -rn needle missing/"),
-    result_block("m2", "Error: Exit code 2\n"
-                       "grep: missing/: No such file or directory"),
-], root=measured_root)
-transcript_holding([
-    assistant_bash("m3", "grep -n needle notes.md"),
-    result_block("m3", {"stdout": "", "stderr": "", "interrupted": False,
-                        "isImage": False, "noOutputExpected": False}),
-], root=measured_root, where="project/session-one/subagents")
-
-
-def funnel(measurement):
-    return {key: measurement.get(key) for key in (
-        "pairs", "from_subagents", "search_shaped", "empty", "fired")}
-
-
-measurement = check_module.measure_transcripts(
-    [str(measured_root)], limit=None, top=3, out=io.StringIO())
-check("the measurement reads subagent transcripts",
-      measurement["pairs"] == 3 and measurement.get("from_subagents") == 1,
-      f"{funnel(measurement)}: review cells and reviewers are subagents, and "
-      f"they run most of this fleet's searches")
-check("the measurement judges a failure whose merged output is only error lines",
-      measurement["empty"] == 3 and measurement["fired"] == 2,
-      f"{funnel(measurement)}: a transcript merges the streams of a non-zero "
-      f"command, so failure 3's shape has a stdout that is not empty")
-limited = check_module.measure_transcripts(
-    [str(measured_root)], limit=1, top=3, out=io.StringIO())
-check("--limit stops the replay at that many pairs across transcripts",
-      limited["pairs"] == 1, str(funnel(limited)))
-
-
-# ------------------------------------------------------- the four fixtures
-
-fixtures = check_module.load_fixtures(check_module.default_fixtures_directory())
-check("all four recorded failures are present as fixtures",
-      len(fixtures) == 4, f"{len(fixtures)} fixtures")
-for fixture in fixtures:
-    for field in ("case", "provenance", "command", "stdout", "must_fire"):
-        check(f"the fixture {os.path.basename(fixture['fixture_path'])} "
-              f"carries its {field}", field in fixture)
-
-_results, every_one_fired = check_module.replay_fixtures(
-    check_module.default_fixtures_directory(), run_control=True,
-    checkout_root=CHECKOUT_ROOT, out=io.StringIO())
-check("every recorded failure fires when replayed", every_one_fired,
-      "; ".join(f"{fixture['case']}: {verdict.signals}"
-                for fixture, verdict in _results if not verdict.fires))
-for fixture, verdict in _results:
-    check(f"the check hands an agent an instruction for: {fixture['case'][:60]}",
-          bool(verdict.instructions), str(verdict.signals))
-
-
-# ------------------------------------------------ the program at the command line
-
-def run_program(*arguments):
-    finished = subprocess.run(
-        [sys.executable, str(CHECK_SCRIPT), *arguments],
-        capture_output=True, text=True, cwd=str(CHECKOUT_ROOT))
-    return finished.returncode, finished.stdout, finished.stderr
-
-
-code, out, _err = run_program("--command", "grep -rn needle docs/ 2>/dev/null",
-                              "--exit-code", "1")
-check("a firing command exits 1 and prints its instructions",
-      code == 1 and "2>/dev/null" in out, f"{code} {out!r}")
-
-code, out, _err = run_program("--command", "grep -rn needle docs/",
-                              "--exit-code", "1")
-check("a clean command exits 0 and says nothing to report",
-      code == 0 and "nothing to report" in out, f"{code} {out!r}")
-
-code, out, _err = run_program("--replay-fixtures", "--run-control",
-                              "--control-corpus-root", str(CHECKOUT_ROOT))
-check("the fixture replay exits 0 while every fixture fires",
-      code == 0 and "4 of 4 fixtures fired" in out, f"{code} {out[-300:]!r}")
-
-code, _out, err = run_program("--command", "grep x", "--replay-fixtures")
-check("two modes at once is a bad invocation, not a silent default",
-      code == 2 and "exactly one of" in err, f"{code} {err!r}")
-
-code, _out, err = run_program("--replay-fixtures", "/no/such/fixtures")
-check("a fixtures directory that does not exist is a bad invocation",
-      code == 2, f"{code} {err!r}")
-
-
-# ------------------------------------------- a search or control that failed
-
-for error_status in (2, 124, 126, 130, 137, 141, 143, 255):
-    check(f"the search's own exit status {error_status} reports an error",
-          "exit-status-reports-an-error-not-an-absence" in
-          judge("grep -rn needle docs/", exit_code=error_status, stdout="").signals)
-check("the search's own exit status 1 is grep's no match, not an error",
-      "exit-status-reports-an-error-not-an-absence" not in
-      judge("grep -rn needle docs/", exit_code=1, stdout="").signals)
-
-REAL_GIT = shutil.which("git")
-STAND_INS = pathlib.Path(tempfile.mkdtemp(prefix="stand-ins-", dir=SUITE_SCRATCH))
-(STAND_INS / "grep").write_text(
-    "#!/bin/sh\n"
-    'printf "%s" "$STAND_IN_GREP_PRINTS"\n'
-    "echo 'grep: a failure this case made' >&2\n"
-    "exit 2\n", encoding="utf-8")
-(STAND_INS / "git").write_text(
-    "#!/bin/sh\n"
-    'for argument in "$@"; do\n'
-    '    if [ "$argument" = "$STAND_IN_GIT_FAILS" ]; then\n'
-    "        echo 'fatal: a failure this case made' >&2; exit 128\n"
-    "    fi\n"
-    "done\n"
-    f'exec {shlex.quote(REAL_GIT)} "$@"\n', encoding="utf-8")
-for stand_in in ("grep", "git"):
-    (STAND_INS / stand_in).chmod(0o755)
-NO_PROGRAMS = SUITE_SCRATCH / "a-directory-holding-no-programs"
-NO_PROGRAMS.mkdir()
-
-
-def judged_with(environment, command, corpus_root):
-    saved = dict(os.environ)
-    os.environ.update(environment)
-    try:
-        return judge(command, exit_code=1, stdout="", control_corpus_root=corpus_root)
-    finally:
-        os.environ.clear()
-        os.environ.update(saved)
-
-
-failing_corpus = in_a_scratch_corpus({"composed.py": "needle\n"})
-with_stand_ins = {"PATH": f"{STAND_INS}{os.pathsep}{os.environ['PATH']}"}
-failed_control = judged_with(dict(with_stand_ins, STAND_IN_GREP_PRINTS=""),
-                             "grep -rn 'x/needle' .", failing_corpus)
-check("a control search that exits 2 with no match is reported, not read as "
-      "the weakened pattern finding nothing",
-      not failed_control.fires and len(failed_control.control_errors) == 1
-      and "exited 2: grep: a failure this case made" in failed_control.control_errors[0],
-      f"{failed_control.signals} {failed_control.control_errors}")
-matched_control = judged_with(
-    dict(with_stand_ins, STAND_IN_GREP_PRINTS="./composed.py:1:needle\n"),
-    "grep -rn 'x/needle' .", failing_corpus)
-check("a control search that matched and also exits 2 still fires on its match",
-      "weakened-pattern-control-run-found-matches" in matched_control.signals,
-      f"{matched_control.signals} {matched_control.control_errors}")
-unstartable_control = judged_with({"PATH": str(NO_PROGRAMS)},
-                                  "grep -rn 'x/needle' .", failing_corpus)
-check("a control search whose program cannot be started is reported",
-      not unstartable_control.fires
-      and any("could not run" in error for error in unstartable_control.control_errors),
-      f"{unstartable_control.signals} {unstartable_control.control_errors}")
-unfiltered_control = judged_with(dict(
-    with_stand_ins, STAND_IN_GREP_PRINTS="./composed.py:1:needle\n", STAND_IN_GIT_FAILS="check-ignore"),
-    "grep -rn 'x/needle' .", failing_corpus)
-check("a control whose matches git check-ignore cannot filter is reported, not "
-      "taken as a match",
-      not unfiltered_control.fires
-      and any("git check-ignore exited 128" in error
-              for error in unfiltered_control.control_errors),
-      f"{unfiltered_control.signals} {unfiltered_control.control_errors}")
-
-for failing_subcommand in ("init", "check-ignore"):
-    saved_environment = dict(os.environ)
-    os.environ.update(with_stand_ins, STAND_IN_GIT_FAILS=failing_subcommand)
-    try:
-        ignored = check_module.gitignore_rules_ignoring(["composed.py"], failing_corpus)
-        raised = None
-    except check_module.ControlSearchCouldNotRun as error:
-        ignored, raised = None, error
-    finally:
-        os.environ.clear()
-        os.environ.update(saved_environment)
-    check(f"a git {failing_subcommand} that fails is raised, not read as no path ignored",
-          raised is not None and "a failure this case made" in str(raised),
-          f"returned {ignored!r}")
-
-saved_environment = dict(os.environ)
-os.environ["PATH"] = str(NO_PROGRAMS)
+check_module.shell_reader.simple_commands = unreadable
 try:
-    ignored = check_module.gitignore_rules_ignoring(["composed.py"], failing_corpus)
-    raised = None
-except check_module.ControlSearchCouldNotRun as error:
-    ignored, raised = None, error
+    code, out = hook({"tool_name": "Bash", "cwd": "/work",
+                      "tool_input": {"command": firing_command},
+                      "tool_response": {"stdout": ""}})
 finally:
-    os.environ.clear()
-    os.environ.update(saved_environment)
-check("a git that cannot be started is raised, not read as no path ignored",
-      raised is not None and "could not run" in str(raised), f"returned {ignored!r}")
+    check_module.shell_reader.simple_commands = real_simple_commands
+check("a command the shell reader cannot read is said to be unchecked",
+      code == 0 and "could not read this command" in out
+      and "a reader failure this case made" in out, out)
 
 
-def run_program_with(environment, *arguments):
-    finished = subprocess.run(
-        [sys.executable, str(CHECK_SCRIPT), *arguments],
-        capture_output=True, text=True, cwd=str(CHECKOUT_ROOT),
-        env=dict(os.environ, **environment))
-    return finished.returncode, finished.stdout, finished.stderr
+# ------------------------------------------------------------ the command line
+
+def run_main(*arguments, machines=None):
+    out = io.StringIO()
+    code = check_module.main(list(arguments), stdout=out,
+                             machines=machines or MachinesOfTheDay())
+    return code, out.getvalue()
 
 
-code, out, _err = run_program_with(
-    dict(with_stand_ins, STAND_IN_GREP_PRINTS=""),
-    "--command", "grep -rn 'x/needle' .", "--exit-code", "1", "--run-control",
-    "--control-corpus-root", failing_corpus)
-check("a command whose control search failed exits 2 and says the control could not run",
-      code == 2 and "could not run" in out and "a failure this case made" in out,
-      f"{code} {out!r}")
-failing_fixtures = SUITE_SCRATCH / "fixtures-whose-control-fails"
-failing_fixtures.mkdir()
-(failing_fixtures / "silent.json").write_text(json.dumps({
-    "case": "a quiet search whose control fails", "provenance": "this suite",
-    "command": "grep -rn 'x/needle' .", "exit_code": 1, "stdout": "",
-    "must_fire": False, "control_corpus_root": "."}), encoding="utf-8")
-code, out, _err = run_program_with(
-    dict(with_stand_ins, STAND_IN_GREP_PRINTS=""),
-    "--replay-fixtures", str(failing_fixtures), "--run-control",
-    "--control-corpus-root", failing_corpus)
-check("a fixture replay whose control search failed exits 2 and says so",
-      code == 2 and "could not run" in out, f"{code} {out!r}")
+code, out = run_main("--command", "grep -l x */*.jsonl", "--cwd", PROJECTS)
+check("a firing command exits 1 and prints its instruction",
+      code == 1 and "with ./ in front of the glob" in out, f"{code} {out!r}")
+code, out = run_main("--command", "grep -l x docs", "--cwd", "/work")
+check("a silent command exits 0 and says nothing to report",
+      code == 0 and "nothing to report" in out, f"{code} {out!r}")
+code, out = run_main("--command", "grep -l x */*.jsonl", "--cwd", str(SCRATCH / "absent"),
+                     machines=machines_with_the_stand_in_agents_grep())
+check("a cause that could not be checked exits 3 and says what",
+      code == 3 and "could not check" in out, f"{code} {out!r}")
+output_file = SCRATCH / "output.txt"
+output_file.write_text("a.jsonl\n")
+code, out = run_main("--command", "grep -l x */*.jsonl", "--cwd", PROJECTS,
+                     "--output-file", str(output_file), "--json")
+check("--output-file and --json report a result that is not empty as not applicable",
+      code == 0 and json.loads(out)["applicable"] is False, f"{code} {out!r}")
+finished = subprocess.run([sys.executable, str(CHECK_SCRIPT), "--command", "x",
+                           "--transcripts", str(SCRATCH)], capture_output=True, text=True)
+check("two modes at once is a bad invocation",
+      finished.returncode == 2 and "exactly one of" in finished.stderr, finished.stderr)
+
+transcripts = SCRATCH / "transcripts" / "project"
+transcripts.mkdir(parents=True)
+records = [
+    {"cwd": PROJECTS, "message": {"content": [
+        {"type": "tool_use", "name": "Bash", "id": "t1",
+         "input": {"command": "grep -l x */*.jsonl 2>/dev/null"}}]}},
+    {"toolUseResult": {"stdout": "", "stderr": ""}, "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "t1"}]}},
+    {"cwd": "/work", "message": {"content": [
+        {"type": "tool_use", "name": "Bash", "id": "t2",
+         "input": {"command": "grep -l x docs"}}]}},
+    {"toolUseResult": "Error: Exit code 1\n", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "t2"}]}},
+]
+(transcripts / "s.jsonl").write_text("\n".join(json.dumps(r) for r in records) + "\n")
+code, out = run_main("--transcripts", str(SCRATCH / "transcripts"))
+check("the measurement counts recorded runs and the ones that fire",
+      code == 0 and "pairs           : 2" in out and "fired           : 1" in out
+      and GLOB_DASH_NAME in out, out)
+check_module.shell_reader.simple_commands = unreadable
+try:
+    code, out = run_main("--transcripts", str(SCRATCH / "transcripts"))
+finally:
+    check_module.shell_reader.simple_commands = real_simple_commands
+check("the measurement counts each run the shell reader cannot read as unreadable",
+      code == 0 and "unreadable      : 2" in out and "fired           : 0" in out, out)
+check_module.shell_reader.simple_commands = unreadable
+try:
+    code, out = run_main("--command", "grep -l x docs", "--cwd", "/work")
+finally:
+    check_module.shell_reader.simple_commands = real_simple_commands
+check("a command the shell reader cannot read exits 3 on the command line",
+      code == 3, f"{code} {out!r}")
 
 
-# A weakening grep rejects as a regex is the check's own fault: the agent's
-# `\(zzz/qqq\)` is valid, its last segment `qqq\)` is not.
-broken_weakening_corpus = in_a_scratch_corpus({"src/a.txt": "nothing here\n"})
-broken_weakening_command = "grep -rn '\\(zzz/qqq\\)' src"
-broken_weakening = judge(broken_weakening_command, exit_code=1, stdout="",
-                         control_corpus_root=broken_weakening_corpus)
-check("a weakened pattern grep rejects is skipped and said so, not reported as "
-      "the agent's search failing",
-      not broken_weakening.fires and broken_weakening.control_errors == []
-      and len(broken_weakening.control_skips) == 1
-      and "qqq\\)" in broken_weakening.control_skips[0],
-      f"{broken_weakening.signals} errors {broken_weakening.control_errors} "
-      f"skips {broken_weakening.control_skips}")
-code, out, _err = run_program_with(
-    {}, "--command", broken_weakening_command, "--exit-code", "1", "--run-control",
-    "--control-corpus-root", broken_weakening_corpus)
-check("a command whose weakened pattern grep rejects exits 0 and says the "
-      "control was skipped, not that the search is at fault",
-      code == 0 and "was skipped" in out and "not a fault in your search" in out
-      and "not yet evidence of absence" in out and "stands on the signals" not in out,
-      f"{code} {out!r}")
-check("a search with the agent's pattern that cannot be started does not count as "
-      "running, so the weakened search's failure is still reported",
-      not check_module.search_with_the_agents_pattern_runs(
-          [str(NO_PROGRAMS / "grep"), "-rn", "needle", "."], broken_weakening_corpus))
-broken_weakening_fixtures = SUITE_SCRATCH / "fixtures-whose-weakening-grep-rejects"
-broken_weakening_fixtures.mkdir()
-(broken_weakening_fixtures / "skipped.json").write_text(json.dumps({
-    "case": "a quiet search whose weakening grep rejects", "provenance": "this suite",
-    "command": broken_weakening_command, "exit_code": 1, "stdout": "",
-    "must_fire": False, "control_corpus_root": "."}), encoding="utf-8")
-code, out, _err = run_program_with(
-    {}, "--replay-fixtures", str(broken_weakening_fixtures), "--run-control",
-    "--control-corpus-root", broken_weakening_corpus)
-check("a fixture replay whose weakened pattern grep rejects exits 0 and says "
-      "the control was skipped",
-      code == 0 and "was skipped" in out, f"{code} {out!r}")
+# --------------------------------------- the record against the real agent's grep
 
+try:
+    real_machines = check_module.Machines()
+    real_machines.agents_grep()
+except check_module.MachineStateQueryGotNoAnswer as error:
+    print(f"SKIP  [this machine cannot run it] the fixture's refusals checked against the "
+          f"real agent's grep: {error}")
+else:
+    def real_agents_grep_answer(arguments):
+        try:
+            return real_machines.agents_grep_refuses(arguments, None)
+        except check_module.MachineStateQueryGotNoAnswer:
+            return None
 
-# A search killed by a signal returns a negative code, which is below 2 but is
-# not an answer. The stand-in is killed when its arguments hold the pattern
-# named in KILL_GREP_WHEN, and exits 1 otherwise.
-SIGNAL_STAND_INS = SUITE_SCRATCH / "a-grep-that-a-signal-kills"
-SIGNAL_STAND_INS.mkdir()
-(SIGNAL_STAND_INS / "grep").write_text(
-    "#!/bin/bash\n"
-    'for argument in "$@"; do\n'
-    '  if [ "$KILL_GREP_WHEN" = any ] || [ "$argument" = "$KILL_GREP_WHEN" ]; then kill -TERM $$; fi\n'
-    "done\n"
-    "exit 1\n", encoding="utf-8")
-(SIGNAL_STAND_INS / "grep").chmod(0o755)
-signal_corpus = in_a_scratch_corpus({"src/a.txt": "nothing here\n"})
-with_signal_stand_in = {"PATH": f"{SIGNAL_STAND_INS}{os.pathsep}{os.environ['PATH']}"}
-code, out, _err = run_program_with(
-    dict(with_signal_stand_in, KILL_GREP_WHEN="any"),
-    "--command", "grep -rn 'zzz/qqq' src", "--exit-code", "1", "--run-control",
-    "--control-corpus-root", signal_corpus)
-check("a weakened search and the agent's own search both killed by a signal exit 2, "
-      "not 0 with the weakening skipped",
-      code == 2 and "could not run" in out and "was skipped" not in out, f"{code} {out!r}")
-killed_weakening = judged_with(dict(with_signal_stand_in, KILL_GREP_WHEN="qqq"),
-                               "grep -rn 'zzz/qqq' src", signal_corpus)
-check("a weakened search killed by a signal, while the agent's own search runs, is "
-      "skipped and said so, not read as the weakening finding nothing",
-      killed_weakening.control_errors == [] and len(killed_weakening.control_skips) == 1
-      and "exited -15" in killed_weakening.control_skips[0],
-      f"errors {killed_weakening.control_errors} skips {killed_weakening.control_skips}")
-
-
-# ------------------------------------------------ what a control never runs
-
-for refused_stage in ("find . -name 'x/needle'",
-                      "fd 'x/needle' -x rm",
-                      "rg --pre ./decompress 'x/needle' .",
-                      "ugrep --filter='*:cat' 'x/needle' .",
-                      "git grep -O 'x/needle'",
-                      "git grep --open-files-in-pager=vim 'x/needle'"):
-    check(f"a control run is refused for: {refused_stage}",
-          check_module.control_refusal(refused_stage) is not None)
-check("a control run is allowed for a bare grep",
-      check_module.control_refusal("grep -rn 'x/needle' .") is None)
+    for firing in firings:
+        # The directories are the day's, as recorded; only the grep is this machine's.
+        answers = [(arguments, real_agents_grep_answer(arguments))
+                   for command in check_module.split_into_simple_commands_with_the_machine_and_directory_each_runs_in(
+                       firing["command"], firing["cwd"])
+                   if (arguments := check_module.agents_grep_options_and_patterns_without_file_names(
+                       command, MachinesOfTheDay(firing["machine"], firing["timestamp"]), []))]
+        refused = [arguments for arguments, answer in answers if answer]
+        unanswered = [arguments for arguments, answer in answers if answer is None]
+        check(f"{firing['id']}: the real agent's grep answers every probe and refuses what the "
+              f"fixture records",
+              refused == firing["arguments_the_agents_grep_refuses"] and unanswered == [],
+              f"{refused} unanswered {unanswered}")
 
 
 if failures:
