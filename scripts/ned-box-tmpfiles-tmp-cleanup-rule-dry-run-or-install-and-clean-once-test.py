@@ -277,6 +277,34 @@ check("the install command's fast-forward over an ignored file at a path main tr
       (fast_forward, ran.returncode, ran.stderr))
 check("and the ignored file survives", survived == "the only copy\n", survived)
 
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+
+    def git(arguments, cwd):
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                               *arguments], cwd=cwd, check=True, capture_output=True,
+                              text=True).stdout.strip()
+
+    origin = root / "origin"
+    origin.mkdir()
+    git(["init", "-q", "-b", "main"], origin)
+    git(["commit", "-q", "--allow-empty", "-m", "first"], origin)
+    clone = root / "clone"
+    git(["clone", "-q", str(origin), str(clone)], root)
+    git(["commit", "-q", "--allow-empty", "-m", "main moves on"], origin)
+    git(["switch", "-q", "-c", "some-topic-branch"], clone)
+    topic_before = git(["rev-parse", "HEAD"], clone)
+    on_ned_box = installer.USER_INSTALL_COMMAND_LINE.split("'")[1]
+    fast_forward = on_ned_box.split(" && python3 ")[0].replace(
+        "~/Projects/nedschorus", str(clone), 1)
+    ran = subprocess.run(fast_forward, shell=True, capture_output=True, text=True)
+    topic_after = git(["rev-parse", "HEAD"], clone)
+check("the install command stops when the reference-checkout is on a branch other than main, "
+      "saying so",
+      ran.returncode != 0 and "is not on main" in ran.stderr, (ran.returncode, ran.stderr))
+check("and that branch is not fast-forwarded", topic_after == topic_before,
+      (topic_before, topic_after))
+
 if failures:
     print(f"\n{len(failures)} failed: {', '.join(failures)}")
     sys.exit(1)

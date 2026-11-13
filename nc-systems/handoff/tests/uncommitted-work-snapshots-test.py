@@ -1169,7 +1169,9 @@ def git_client_side_hooks_installed_for_agent_seat(main, agent_seat):
     record.write_text("# session-handoff\n")
     identity = {"GIT_AUTHOR_NAME": agent_seat, "GIT_COMMITTER_NAME": agent_seat,
                 "GIT_AUTHOR_EMAIL": f"{agent_seat}@nedschorus.invalid",
-                "GIT_COMMITTER_EMAIL": f"{agent_seat}@nedschorus.invalid"}
+                "GIT_COMMITTER_EMAIL": f"{agent_seat}@nedschorus.invalid",
+                # The Mac's own NEDSCHORUS_AGENTS_ROOT would point the hook past HOME's agents.
+                "NEDSCHORUS_AGENTS_ROOT": str(home / "agents")}
     real = {name: os.environ.get(name) for name in identity}
     os.environ.update(identity)
 

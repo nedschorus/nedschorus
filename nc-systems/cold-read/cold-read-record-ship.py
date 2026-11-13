@@ -533,7 +533,7 @@ def record_directory_being_written_lock_is_held_by_any_process(record_dir: pathl
     descriptor = os.open(record_dir, os.O_RDONLY)
     try:
         # Exclusive, since every writer holds the lock shared.
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)  # pragma: no mutate, the two flags are distinct bits, so + and ^ give the same as |
     except BlockingIOError:
         return True
     finally:
@@ -1511,7 +1511,7 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
 
     RULE 4 REACHES THAT KIND ONLY THROUGH THE NAME triage.md, which a
     sanity-check record does not use: its twice-written file is
-    finding-dispositions.md, written at the run's close and updated as the
+    sanity-check-finding-dispositions.md, written at the run's close and updated as the
     findings' status moves, and it stays add-only and refused on difference.
     That is the same defect rule 4 fixes here, left open in that kind.
 

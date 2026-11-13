@@ -397,6 +397,10 @@ def schema_driven_cases(scratch):
     with_summary["properties"]["summary"] = {"type": "string"}
     check("a field the schema adds as required is required of the answer, with no code change",
           lambda: program.answer_problems(answer, with_summary) == ["the answer has no summary"])
+    extra_keys_allowed = json.loads(SCHEMA.read_text())
+    del extra_keys_allowed["additionalProperties"]
+    check("a schema object without additionalProperties accepts a key it does not list, with no code change",
+          lambda: program.answer_problems({**answer, "summary": "Fine."}, extra_keys_allowed) == [])
 
     not_enforced = program.review_schema_keywords_and_types_the_answer_check_does_not_enforce
     check("the schema file uses only keywords and types the answer check enforces",

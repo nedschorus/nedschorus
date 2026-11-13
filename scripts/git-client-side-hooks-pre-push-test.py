@@ -1923,13 +1923,17 @@ def run_worktree_without_checks_cases(scratch):
              {"conflict_check": FAKE_CHECK_ALWAYS_CLEAN, "revert_check": None},
              ((HAND_REVERT_CHECK_LINE, REAL_REVERT_CHECK, no_copy_text),)))
     # The first case's command comes from the sh hook, the second's from the Python file; a
-    # reference checkout whose path holds a space must still give a command that runs.
-    spaced_cases = tuple((label + ", with a space in the reference checkout's path", arguments,
-                          lines, True) for label, arguments, lines in cases[:2])
-    for case_number, (label, layout_arguments, expected_lines, spaced) in enumerate(
-            tuple(case + (False,) for case in cases) + spaced_cases):
+    # reference checkout whose path holds a space or a single quote must still give a command
+    # that runs. A single quote is what the sh hook's sed escape handles.
+    quoting_cases = tuple(
+        (label + ", with %s in the reference checkout's path" % what, arguments, lines, parent)
+        for what, parent in (("a space", "reference checkout parent"),
+                             ("a single quote", "reference checkout's parent"))
+        for label, arguments, lines in cases[:2])
+    for case_number, (label, layout_arguments, expected_lines, parent) in enumerate(
+            tuple(case + (None,) for case in cases) + quoting_cases):
         name = "worktree-without-checks-%d" % case_number
-        layout_parent = scratch / "reference checkout parent" if spaced else scratch
+        layout_parent = scratch / parent if parent else scratch
         hooks = make_layout(layout_parent, "layout-" + name, **layout_arguments)
         scenario = Scenario(scratch, name, hooks, worktree_has_checks=False)
         scenario.git(scenario.clone, "switch", "--quiet", "clean")

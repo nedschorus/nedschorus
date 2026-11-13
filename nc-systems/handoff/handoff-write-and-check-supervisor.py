@@ -574,6 +574,16 @@ def background_task_past_wait_limit_field_lines(past_tasks) -> list:
     return lines
 
 
+def past_wait_limit_tasks_by_hand_instruction() -> str:
+    """What the agent does when the tasks past their wait-limit could not be listed."""
+    return ("The session-handoff is already written. Find in your own conversation each background "
+            "task, other than a waiting-task, still running past its kind's wait-limit. If there "
+            "is any, run this script again with a next step that names each, with its command, how "
+            f"long it ran, and its kind and wait-limit from {threshold_hook.WAIT_LIMIT_TABLE_LOCATION}. "
+            "When the rerun prints this not-listed line again, you are done: the next step you "
+            "wrote carries the tasks.")
+
+
 def background_task_past_wait_limit_fields_for_this_session(handoff_directory: Path,
                                                             working_directory: Path, now=None):
     """Return (field lines, console status) for the background tasks past their wait-limit.
@@ -585,10 +595,7 @@ def background_task_past_wait_limit_fields_for_this_session(handoff_directory: P
     if not session_id:
         return [], ("background tasks past their wait-limit: not listed, because "
                     "CLAUDE_CODE_SESSION_ID is unset and this script cannot find this session's "
-                    "transcript without it. Name in the next step each background task, other than "
-                    "a waiting-task, still running past its kind's wait-limit, with its command, "
-                    f"its kind, its wait-limit and how long it ran, from {threshold_hook.WAIT_LIMIT_TABLE_LOCATION}, "
-                    "and run this script again.")
+                    "transcript without it. " + past_wait_limit_tasks_by_hand_instruction())
     try:
         marker = deferred_marker_files.handoff_deferral_record_read_from_marker_or_moved_at_fire(
             handoff_directory, session_id)
@@ -603,9 +610,7 @@ def background_task_past_wait_limit_fields_for_this_session(handoff_directory: P
             transcript_path, marker.deferral_began_at if marker is not None else None, now=now)
     except Exception as error:  # noqa: BLE001 - these fields never block a handoff
         return [], (f"background tasks past their wait-limit: not listed ({type(error).__name__}: "
-                    f"{error}). Find them in this session's dialog, and run this script again with "
-                    "a next step that names each, with its command, its kind, its wait-limit and "
-                    f"how long it ran, from {threshold_hook.WAIT_LIMIT_TABLE_LOCATION}.")
+                    f"{error}). " + past_wait_limit_tasks_by_hand_instruction())
     return (background_task_past_wait_limit_field_lines(past_tasks),
             f"background tasks past their wait-limit: {len(past_tasks)} recorded")
 

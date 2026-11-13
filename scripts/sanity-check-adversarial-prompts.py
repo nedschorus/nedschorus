@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a sanity-check: independent audits, each on both runtimes, over one document.
+"""Run a sanity-check: independent audits, each on both agent-binaries, over one document.
 
 The sanity-check is this project's second review instrument, separate from
 the cold read (`nc-systems/cold-read/cold-read-grid.py`, the prose-and-clarity review) and
@@ -35,10 +35,10 @@ fails before any model cost is spent.
 
 Operating rules:
 
-- Both runtimes on every audit — the claude CLI (claude-fable-5-1, falling
+- Both agent-binaries on every audit — the claude CLI (claude-fable-5-1, falling
   back to claude-opus-5 when Fable produces no review) and
   gpt-6.1-sol (the codex CLI), at xhigh reasoning effort. Each audit
-  therefore runs as two review agents, one per runtime, named
+  therefore runs as two review agents, one per agent-binary, named
   `<audit>-adversarial-prompt-<runtime>`, such as `cut-adversarial-prompt-claude`
   (the `--adversarial-prompt` flag still takes the short `<audit>`, such as
   `cut`), in this runner's output; each agent's report file is that name with `.md` added,
@@ -52,7 +52,7 @@ Operating rules:
   whether a document deserves its sanity-check; a PR carrying an actionable MD with
   no sign of a past sanity-check may have one suggested — a note, never a gate.
 - The requesting agent triages: follows up the warnings described below,
-  settles hedged claims about code by reading the code, merges the runtimes' reports, and
+  settles hedged claims about code by reading the code, merges the agent-binaries' reports, and
   presents the surviving findings to the user one at a time for his ruling
   (the walk-me-through skill). Findings are design changes; none is applied
   without the user's ruling. Triage is complete when every warning and every
@@ -81,7 +81,7 @@ Operating rules:
   `scripts/sanity-check-record-ship.py`, which this runner calls when the run
   ends. They are logs, kept and citable, not deleted when the work they served
   lands (user-ruled 2026-08-25, and 2026-09-15 for this kind). Ship again
-  after writing `finding-dispositions.md` and the add-only copy sends only
+  after writing `sanity-check-finding-dispositions.md` and the add-only copy sends only
   that file; a file already in the store whose content differs is refused, so
   finish the triage before shipping it rather than editing it afterwards.
 - Each review agent is given a scratch directory of its own, made by the
@@ -107,7 +107,7 @@ the target. `--adversarial-prompt` (repeatable; default all three) runs a
 subset — the fresh-eyes second pass is `--adversarial-prompt fresh-eyes
 --problem-statement <variant>`, and a failed audit reruns without repeating
 the others. `--runtime` (repeatable, `claude` or `codex`; default both) does
-the same for runtimes: a rerun of the one agent that failed is this run's
+the same for agent-binaries: a rerun of the one agent that failed is this run's
 command with `--adversarial-prompt <audit> --runtime <runtime>` as its only
 `--adversarial-prompt` and `--runtime`, and the runner prints that command
 whole under the agent's `FAILED:` line when a rerun is what the
@@ -160,7 +160,7 @@ Running a sanity-check, and reading its output:
   the user what the line says, and after the user has cleared the cause run
   the command printed there, which runs that one agent again into a new
   record directory. For every other failure: triage that audit from the other
-  runtime's report when a run saved one, and write in finding-dispositions.md
+  agent-binary's report when a run saved one, and write in sanity-check-finding-dispositions.md
   that the audit is unreviewed when none did. A report saved by an agent's
   second launch carries `relaunched_after=<cause class>` in its provenance
   line.
@@ -179,7 +179,7 @@ Running a sanity-check, and reading its output:
   there. Withholding the tools was never the protection it looked like: on
   2026-08-21 a claude agent wrote a file to the worktree while carrying no
   write tools at all (nedschorus#161) — so the check below runs after every agent
-  that completes, on both runtimes: a write to the review copy outside the
+  that completes, on both agent-binaries: a write to the review copy outside the
   agents' scratch directories is reported as
   `WARNING: the review copy was modified outside the cells' scratch
   directories, seen when <audit>-adversarial-prompt-<runtime> finished: <paths>`. The agents
@@ -230,8 +230,8 @@ Running a sanity-check, and reading its output:
   see the line. The class decides whether the runner relaunches, because a
   relaunch of a logged-out CLI is a wasted launch and its failure sends the audit to triage
   with one report. The instructions do not depend on which agent finished
-  first, or on whether this run launched the other runtime: a rerun of one
-  agent is a run that launched one runtime, and the other runtime's report is
+  first, or on whether this run launched the other agent-binary: a rerun of one
+  agent is a run that launched one agent-binary, and the other agent-binary's report is
   then in the first run's record.
 - WHEN A RUN IS STOPPED. The /sanity-check skill starts this runner as a
   background task, and a seat's handoff ends that seat's background tasks, so
@@ -348,7 +348,7 @@ def _cold_read_cell_program(file_name: str):
 
 
 # What each agent-binary prints when a launch fails for a reason it can name
-# (logged out, a usage limit), per runtime: a function from the model to the
+# (logged out, a usage limit), per agent-binary: a function from the model to the
 # texts, which common.classify_failed_attempt matches against the start of
 # each line the agent-binary wrote. Each text was captured from a real run and
 # is kept, with its source, beside the cold-read cell that met it; taken from
@@ -370,6 +370,18 @@ STOPPED_PROCESS_GRACE_SECONDS = 10.0
 # How long the main thread waits for a cell at a time, and so the longest a
 # stop signal can wait for its handler: see run_cells_in_review_copy.
 MAIN_THREAD_WAIT_STEP_SECONDS = 0.25
+# Set while the main thread runs the cells' thread pool: submitting the
+# cells, waiting for them and shutting the pool down, all of which run the
+# threading module's lock code. stop_run_on_signal does not raise there: an
+# exception raised between a condition's wait and its re-acquire of the lock
+# leaves the lock released, `with` releases it again, and RuntimeError
+# replaces the stop. It records the signal in
+# STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL instead, and run_cells_in_review_copy
+# raises it after each wait step and after the pool has shut down, where the
+# main thread holds no such lock. A stop taken while a cell is submitted waits
+# for the next wait step: a cell submitted after the stop launches nothing.
+MAIN_THREAD_RUNS_THE_CELLS_POOL = False
+STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL = None
 # Set by the first stop signal, and read by every thread before it launches an
 # agent-binary: a cell stopped with its run is not relaunched, and the claude
 # chain does not go on to its next model.
@@ -477,7 +489,7 @@ IGNORED_PATHS_WATCHED_FOR_WRITES = (RECORDS_DIRECTORY_NAME,)
 # write detection alone and belong to no commit — see reviewed_revision.
 IGNORED_PATH_STATUS_CODE = "!!"
 
-# The claude runtime's chain, tried in order until one produces a review.
+# The claude agent-binary's chain, tried in order until one produces a review.
 # "claude-fable-5" is obsolete, and Fable is sometimes unavailable, so Opus 5
 # stands behind it and ends the chain.
 #
@@ -491,7 +503,7 @@ CLAUDE_MODEL_CHAIN = ("claude-fable-5-1", "claude-opus-5")
 # Matches cold-read-codex-cell.py's `deep` tier; the id needs codex-cli 0.159.1
 # or later.
 CODEX_MODEL = "gpt-6.1-sol"
-# xhigh for both runtimes, by the user's calibration and a tier probe of both:
+# xhigh for both agent-binaries, by the user's calibration and a tier probe of both:
 # max earned neither slot.
 REASONING_EFFORT = "xhigh"
 CELL_TIMEOUT_SECONDS = 3600
@@ -654,14 +666,14 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
         except OSError as error:
             # A CLI that will not launch is one failed attempt, not the end of
             # the run. run_cell's own OSError handler still covers the codex
-            # runtime, which has no chain to advance.
+            # agent-binary, which has no chain to advance.
             failed_attempts.append(f"{model}({type(error).__name__})")
             print(f"WARNING: {model} could not be run: {error}", flush=True)
             last_cause = common.classify_failed_attempt(
                 stdout="", stderr="", exit_code=None, recognised_texts=(),
                 start_error=str(error))
             continue
-        # The runtime's own words survive every ending, the house chain's rule
+        # The agent-binary's own words survive every ending, the house chain's rule
         # (BOTH STREAMS ARE CAPTURED, in run_model_chain,
         # nc-systems/cold-read/cold-read-cell-common.py). A CLI that is logged out or out of
         # credits explains itself on one of these streams and nowhere else, so
@@ -672,7 +684,7 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
         # the only trace of the degradation in the output. Re-emitted before any
         # branch below, so no ending drops them. This program's log is its
         # stdout -- the review itself is returned to run_cell, never printed --
-        # so the runtime's words go there too, and not to stderr as in the
+        # so the agent-binary's words go there too, and not to stderr as in the
         # house tool, whose log is the other stream.
         if completed is None or RUN_STOPPED.is_set():
             # The run was stopped: this model was never started, or its launch
@@ -838,13 +850,13 @@ def run_codex(prompt: str, checkout: pathlib.Path = None) -> tuple:
 
 
 def captured_stream_as_text(captured) -> str:
-    """A stream a runtime wrote, as text, in whichever form it was handed back.
+    """A stream an agent-binary wrote, as text, in whichever form it was handed back.
 
     subprocess.TimeoutExpired carries what the child had written before it was
     cut off, and CPython raises it before the decoding step, so a call that
     asked for text still gets bytes (measured on Python 3.13); a stream
     that was never piped, and a piped one the child wrote nothing to, arrive
-    as None. Undecodable bytes are replaced, never raised on: a runtime cut off
+    as None. Undecodable bytes are replaced, never raised on: an agent-binary cut off
     partway through a character must not turn a timeout into a crash.
     """
     if captured is None:
@@ -986,7 +998,7 @@ CLI_VERSION_CACHE = {}
 
 
 def runtime_cli_version(runtime: str) -> str:
-    """The reviewing CLI's version, measured by this runner, once per runtime.
+    """The reviewing CLI's version, measured by this runner, once per agent-binary.
 
     In each report's provenance line because a cell's self-reported CLI version
     is not one to lean on for a cross-version fact; the runner measures it
@@ -1014,7 +1026,7 @@ def runtime_cli_version(runtime: str) -> str:
             )
         except (OSError, subprocess.TimeoutExpired):
             measured = "unknown"
-        # A probe the stop may have ended is not cached as the runtime's version.
+        # A probe the stop may have ended is not cached as the agent-binary's version.
         if RUN_STOPPED.is_set():
             return measured
         CLI_VERSION_CACHE[runtime] = measured
@@ -1091,7 +1103,7 @@ def reviewed_worktree_state(baseline: dict) -> str:
 
 def stray_paths(baseline: dict, now: dict) -> list:
     """Paths whose status or fingerprint changed while the cells ran — a cell
-    writing to the worktree, which its prompt forbids on either runtime.
+    writing to the worktree, which its prompt forbids on either agent-binary.
     Compared over the union of both snapshots, so a file that appears,
     changes, or disappears all count."""
     return sorted(path for path in set(now) | set(baseline)
@@ -1289,7 +1301,9 @@ def processes_under_this_one() -> dict:
 
 class RunStoppedBySignal(BaseException):
     """A stop signal ended this run: raised in the main thread by
-    stop_run_on_signal, after the agents' processes were stopped, so that
+    stop_run_on_signal, or by run_cells_in_review_copy for a signal taken
+    while the main thread ran the cells' thread pool, after the agents' processes
+    were stopped, so that
     every `finally` and context manager between the run and main() does its
     work, the review copy's removal among them. A BaseException, so that no
     `except Exception` on the way takes it for an error of its own."""
@@ -1391,7 +1405,9 @@ def stop_run_on_signal(signal_number: int, _frame) -> None:
     way: see WHEN A RUN IS STOPPED in the module docstring. Every later stop
     signal does nothing from here on (stop_signal_after_the_first_does_nothing),
     so the stopping and the removal of the review copy are not themselves cut
-    short."""
+    short. While the main thread runs the cells' thread pool it records the
+    signal instead of raising RunStoppedBySignal: see
+    MAIN_THREAD_RUNS_THE_CELLS_POOL."""
     for number in RUN_STOP_SIGNALS:
         signal.signal(number, stop_signal_after_the_first_does_nothing)
     # Under the lock a cell's thread holds from reading RUN_STOPPED to
@@ -1405,6 +1421,10 @@ def stop_run_on_signal(signal_number: int, _frame) -> None:
     global STOP_PROCESS_LISTING_FAILURE
     STOP_PROCESS_LISTING_FAILURE = None
     stop_processes_this_run_started()
+    if MAIN_THREAD_RUNS_THE_CELLS_POOL:
+        global STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL
+        STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL = signal_number
+        return
     raise RunStoppedBySignal(signal_number)
 
 
@@ -1539,9 +1559,9 @@ def launch_cell_once(cell: str, adversarial_prompt: str, runtime: str, prompt: s
         # do. The cause is then read off the exit code alone.
         code, output, model, fallback_from, *cause = runner(prompt, checkout)
     except subprocess.TimeoutExpired as timeout:
-        # What the runtime wrote before it was cut off, printed before the
+        # What the agent-binary wrote before it was cut off, printed before the
         # cell's FAILED line, both streams in run_claude's order: every other
-        # ending keeps a failed runtime's words, and this one dropped them. The
+        # ending keeps a failed agent-binary's words, and this one dropped them. The
         # exception holds the streams of the attempt that timed out and no
         # other — run_claude prints each earlier failed attempt's words as that
         # attempt ends, so they are already out and are not repeated here. A
@@ -1583,7 +1603,7 @@ def launch_cell_once(cell: str, adversarial_prompt: str, runtime: str, prompt: s
     # After the worktree check, so a cell that ran to the end has its writes
     # compared whatever it returned; before the quote scan and the write, so a
     # text that is not a report raises no warnings to triage, never lands as a
-    # report, and is printed so the runtime's words survive.
+    # report, and is printed so the agent-binary's words survive.
     missing = missing_report_phrases(adversarial_prompt, output)
     if missing:
         print(output, flush=True)
@@ -1642,7 +1662,7 @@ def rerun_command_for_cell(adversarial_prompt: str, runtime: str, target: str, c
     """The command that runs this one cell again, as one line a shell takes
     as it stands: this run's target, every context document and the
     sanity-check-request when one was passed, with the cell's adversarial prompt and
-    runtime as the only `--adversarial-prompt` and `--runtime`. Both flags are repeatable,
+    agent-binary as the only `--adversarial-prompt` and `--runtime`. Both flags are repeatable,
     so a command that kept the first run's would run more than the one cell.
     The program and the request are named by absolute path and the documents
     by their repository-relative names, which the program resolves against its
@@ -1688,7 +1708,7 @@ def failed_cell_lines(adversarial_prompt: str, runtime: str, failure: FailedLaun
         f"When a run of this sanity-check saved {other_cell}'s report, triage "
         f"the {adversarial_prompt}-adversarial-prompt from that report.",
         f"When no run of this sanity-check saved a report of the "
-        f"{adversarial_prompt}-adversarial-prompt, write in finding-dispositions.md "
+        f"{adversarial_prompt}-adversarial-prompt, write in sanity-check-finding-dispositions.md "
         f"that the {adversarial_prompt}-adversarial-prompt is unreviewed.",
     ]
 
@@ -1866,7 +1886,7 @@ def main() -> int:
             return 2
         # A print surface is per audit while a scratch directory is per cell,
         # so the shape is shown with its varying parts left as names: a real
-        # path would claim one runtime's directory for both of the audit's
+        # path would claim one agent-binary's directory for both of the audit's
         # cells, and a reader would take it for the literal path.
         illustrative_scratch = (RECORDS_ROOT / "<date>-<target-stem>"
                                 / CELL_SCRATCH_DIRECTORY_NAME
@@ -2020,33 +2040,45 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
         copy_record_dir = checkout / RECORDS_DIRECTORY_NAME / out_dir.name
         CELLS_FINISHED.clear()
         GIT_CHECKS_FAILED_AFTER_A_CELL.clear()
-        global CELLS_FINISHED_AT_THE_STOP
+        global CELLS_FINISHED_AT_THE_STOP, STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL
+        global MAIN_THREAD_RUNS_THE_CELLS_POOL
         CELLS_FINISHED_AT_THE_STOP = None
+        STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL = None
+
+        def raise_stop_taken_in_the_cells_pool():
+            if STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL is not None:
+                raise RunStoppedBySignal(STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL)
+
         futures = []
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells)) as pool:
-                futures = [
-                    pool.submit(run_cell, adversarial_prompt, runtime, args.target, args.context,
-                                args.problem_statement, out_dir, baseline_status, corpus,
-                                checkout, copy_record_dir)
-                    for adversarial_prompt, runtime in cells
-                ]
-                # Waited for in short steps, not with as_completed: Python runs
-                # stop_run_on_signal only in the main thread, and when Linux
-                # hands a stop signal to a cell's thread, a main thread blocked
-                # with no timeout runs the handler only when some cell
-                # finishes, which can be minutes later. Each step's end lets
-                # the handler run.
-                waiting = set(futures)
-                while waiting:
-                    finished, waiting = concurrent.futures.wait(
-                        waiting, timeout=MAIN_THREAD_WAIT_STEP_SECONDS,
-                        return_when=concurrent.futures.FIRST_COMPLETED)
-                    for future in finished:
-                        _, cell_ok = future.result()
-                        ok = ok and cell_ok
-                        saved_count += 1 if cell_ok else 0
-                run_log.reports_saved_once_cells_ended = saved_count
+            MAIN_THREAD_RUNS_THE_CELLS_POOL = True
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells)) as pool:
+                    for adversarial_prompt, runtime in cells:
+                        futures.append(pool.submit(
+                            run_cell, adversarial_prompt, runtime, args.target, args.context,
+                            args.problem_statement, out_dir, baseline_status, corpus,
+                            checkout, copy_record_dir))
+                    # Waited for in short steps, not with as_completed: Python
+                    # runs stop_run_on_signal only in the main thread, and when
+                    # Linux hands a stop signal to a cell's thread, a main
+                    # thread blocked with no timeout runs the handler only when
+                    # some cell finishes, which can be minutes later. Each
+                    # step's end lets the handler run.
+                    waiting = set(futures)
+                    while waiting:
+                        finished, waiting = concurrent.futures.wait(
+                            waiting, timeout=MAIN_THREAD_WAIT_STEP_SECONDS,
+                            return_when=concurrent.futures.FIRST_COMPLETED)
+                        raise_stop_taken_in_the_cells_pool()
+                        for future in finished:
+                            _, cell_ok = future.result()
+                            ok = ok and cell_ok
+                            saved_count += 1 if cell_ok else 0
+                    run_log.reports_saved_once_cells_ended = saved_count
+            finally:
+                MAIN_THREAD_RUNS_THE_CELLS_POOL = False
+            raise_stop_taken_in_the_cells_pool()
         except RunStoppedBySignal:
             # A stop that came after every cell had finished, saving its
             # report or saying why it could not, cut nothing short: that run
@@ -2124,7 +2156,7 @@ def print_run_completion(out_dir: pathlib.Path, ship=None) -> bool:
             "time for his ruling (the walk-me-through skill). "
             "The record was shipped to the log-store when this run ended (the "
             "`record:` line above says whether it arrived); once "
-            "finding-dispositions.md is written, run "
+            "sanity-check-finding-dispositions.md is written, run "
             f"`scripts/sanity-check-record-ship.py {out_dir}` so it joins the "
             "reports there. Leave the record directory in place: these are logs, "
             "kept, not deleted when the work they served lands. A file already in "

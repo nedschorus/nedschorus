@@ -521,6 +521,18 @@ def run_cases(scratch: Path):
     check("a bracket that opens no link is kept as text",
           tool.slug("Match [a-z] (letters) only") == "match-a-z-letters-only",
           repr(tool.slug("Match [a-z] (letters) only")))
+    # Odd index for the closing bracket: label_end | 1 would then read past the end.
+    check("a title ending in a bracket that opens no link keeps it as text",
+          tool.slug("Ab [c]") == "ab-c", repr(tool.slug("Ab [c]")))
+    check("a parenthesis outside any link is text, not a link's address",
+          tool.markdown_links_reduced_to_their_text("(draft plan)") == "(draft plan)",
+          repr(tool.markdown_links_reduced_to_their_text("(draft plan)")))
+    check("a link whose address never closes is kept as text",
+          tool.slug("See [a](b") == "see-a-b", repr(tool.slug("See [a](b")))
+    check("a backslash at the end of a link's text ends the text, not the title",
+          tool.slug("See [a\\") == "see-a", repr(tool.slug("See [a\\")))
+    check("a backslash escapes the one character after it, not two",
+          tool.slug("See [a\\b](x)") == "see-a-b", repr(tool.slug("See [a\\b](x)")))
     long_title = " ".join(["word"] * 60)
     long_slug = tool.slug(long_title)
     check("a slug over the character limit is cut at a hyphen, inside it",
@@ -529,6 +541,10 @@ def run_cases(scratch: Path):
           repr(long_slug))
     check("a single word over the character limit is cut at the limit",
           tool.slug("x" * 300) == "x" * tool.GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT)
+    word_ending_at_limit_slug = tool.slug("x" * 10 + " " + "y" * 169 + " z")
+    check("a word that ends exactly at the 180-character limit is kept whole",
+          word_ending_at_limit_slug == "x" * 10 + "-" + "y" * 169,
+          repr(word_ending_at_limit_slug))
     log_store_name = (f"99999-{long_slug}"
                       f"{tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX}"
                       f"{tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_GUIDE_AGENT}"
@@ -4466,7 +4482,10 @@ def run_close_cases(scratch: Path):
               refusal.code == 1 and "HTTP 502" in str(refusal), str(refusal))
 
     # A reason the close would reject is refused before anything runs.
+    # "wontfix" and "not planned yet" sort after "not planned", so an
+    # ordering comparison there would accept them.
     for bad in (["fixed"], ["duplicate"], ["duplicate", "570"],
+                ["wontfix"], ["not", "planned", "yet"],
                 ["duplicate", "0"], ["completed", "now"], ["not"],
                 ["duplicate", "twelve"], ["duplicate", "#570"],
                 ["duplicate", "##12"]):

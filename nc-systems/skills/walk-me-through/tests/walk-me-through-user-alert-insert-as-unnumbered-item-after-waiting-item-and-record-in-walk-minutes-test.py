@@ -8,6 +8,7 @@ in-process because a title it would prefix differently ends in the same refusal 
 import importlib.util
 import json
 import os
+import site
 import subprocess
 import sys
 import tempfile
@@ -89,8 +90,10 @@ def claimed_alert(home, alert_id, title):
 
 
 def run(checkout, home, *alert_ids):
+    # Python finds the user's site-packages from HOME, and on the Mac markdown-it-py is installed there.
+    environment = {**os.environ, "HOME": str(home), "PYTHONUSERBASE": site.getuserbase()}
     return subprocess.run([sys.executable, str(PROGRAM), "--cwd", str(checkout), *alert_ids],
-                          capture_output=True, text=True, env={**os.environ, "HOME": str(home)}, check=False)
+                          capture_output=True, text=True, env=environment, check=False)
 
 
 def files(checkout):

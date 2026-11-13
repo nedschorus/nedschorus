@@ -633,6 +633,13 @@ with tempfile.TemporaryDirectory() as workspace:
               str(two_compactions)) - 45.0) < 0.01,
           str(hook.context_used_plus_compaction_dropped_percentage_from_transcript(
               str(two_compactions))))
+    fractional_count = transcript_of(workspace, "fractional-count.jsonl", [
+        compaction_record(255_000), usage_record(200_000)])
+    check("that count keeps its fraction",
+          abs(hook.context_used_plus_compaction_dropped_percentage_from_transcript(
+              str(fractional_count)) - 45.5) < 0.01,
+          str(hook.context_used_plus_compaction_dropped_percentage_from_transcript(
+              str(fractional_count))))
     check("that count is None for a transcript with no usage",
           hook.context_used_plus_compaction_dropped_percentage_from_transcript(
               str(Path(workspace) / "not-there.jsonl")) is None)
@@ -859,6 +866,9 @@ with tempfile.TemporaryDirectory() as workspace:
     for command, expected_minutes in (
             ("python3 scripts/run-all-test-suites.py", 90),
             ("python3 scripts/handoff-context-threshold-hook-test.py", 90),
+            # A work kind's name is found past a line break and in any case.
+            ("cd /home/nedlern/x\npython3 scripts/run-all-test-suites.py", 90),
+            ("PYTHON3 SCRIPTS/RUN-ALL-TEST-SUITES.PY", 90),
             ("python3 scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py --quick", 105),
             ("gh pr checks 3101 --watch --interval 30", 0),
             ("gh run watch 12345", 0),
@@ -992,6 +1002,45 @@ with tempfile.TemporaryDirectory() as workspace:
     flight = hook.work_in_flight(str(torn_call), now=grid_at_13_minutes)
     check("a Bash call line that does not parse leaves its task the no-match wait-limit",
           flight.background_task_ids == ["b27dndn4c"], str(flight.background_task_ids))
+
+    # Only a tool_use block whose run_in_background is the boolean true is a background Bash call,
+    # wherever it stands among the line's blocks. The other block types sort before and after
+    # "tool_use", so an ordering comparison in place of != would let one of them through.
+    background_call = {"type": "tool_use", "id": "toolu_late",
+                       "input": {"command": "sleep 1", "run_in_background": True}}
+    for content, expected in (
+            ([{"type": "text", "text": "Launching."}, background_call], {"toolu_late": "sleep 1"}),
+            ([{"type": "server_tool_use", "id": "toolu_server",
+               "input": {"command": "sleep 1", "run_in_background": True}}], {}),
+            ([{"type": "web_search_tool_result", "id": "toolu_result",
+               "input": {"command": "sleep 1", "run_in_background": True}}], {}),
+            ([{"type": "tool_use", "id": "toolu_one",
+               "input": {"command": "sleep 1", "run_in_background": 1}}], {})):
+        line = json.dumps({"type": "assistant", "message": {"role": "assistant", "content": content}})
+        commands = hook.background_bash_commands_by_tool_use_id_from_line(line)
+        check(f"the background Bash calls in content {content!r} are {expected!r}",
+              commands == expected, str(commands))
+
+    # The tool_use id is the first tool_result block's, past blocks of types that sort before
+    # and after "tool_result".
+    for content, expected in (
+            ([{"type": "text", "text": "x"}, {"type": "tool_result", "tool_use_id": "toolu_answered"}],
+             "toolu_answered"),
+            ([{"type": "tool_use", "id": "toolu_call"}, {"type": "tool_result", "tool_use_id": "toolu_answered"}],
+             "toolu_answered"),
+            ([{"type": "text", "text": "x"}], None)):
+        answered = hook.tool_result_tool_use_id({"type": "user", "message": {"role": "user", "content": content}})
+        check(f"the tool_result in content {content!r} answers {expected!r}",
+              answered == expected, str(answered))
+
+    # A limit of 0 or below means the task is never waited for; any positive limit, however
+    # short, waits for a task whose age cannot be read and for one younger than the limit.
+    for age_seconds, wait_limit_seconds, expected in (
+            (None, -60, False), (None, 0, False), (None, 1, True), (0, 1, True), (0.5, 0.75, True),
+            (1, 1, False)):
+        within = hook.background_task_still_within_wait(age_seconds, wait_limit_seconds)
+        check(f"a task aged {age_seconds!r} s under a {wait_limit_seconds!r} s wait-limit is "
+              f"{'within' if expected else 'past'} its wait", within is expected, str(within))
 
     # A launch whose age cannot be read fails closed, like everything else the
     # scan cannot tell: it counts, and the ceiling bounds it.
@@ -1306,6 +1355,24 @@ with tempfile.TemporaryDirectory() as workspace:
                   "table can be updated."),
               f"code {result.returncode}, stderr {result.stderr!r}")
 
+        # At the 200,000 default, // 999 also gives 200, so only a larger default tells a
+        # wrong divisor from the right one.
+        unlisted_model_at_a_million = transcript_with_usage(
+            workspace, "unlisted-model-at-a-million.jsonl", 350_000, model="claude-something-unreleased")
+        marker_file.unlink(missing_ok=True)
+        real_default_window = hook.DEFAULT_CONTEXT_WINDOW_TOKENS
+        hook.DEFAULT_CONTEXT_WINDOW_TOKENS = 1_000_000
+        try:
+            code, stderr = run_hook_in_process(
+                {"session_id": PROBE_SESSION_ID, "transcript_path": str(unlisted_model_at_a_million)})
+        finally:
+            hook.DEFAULT_CONTEXT_WINDOW_TOKENS = real_default_window
+        check("for a model id not in the table, the default window it names is the default in "
+              "thousands, whatever the default is",
+              code == 2 and "so the 35% of its context window this session has used assumes a "
+                            "1000K window;" in stderr,
+              f"code {code}, stderr {stderr!r}")
+
         marker_file.unlink(missing_ok=True)
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(loud)},
                           ("--threshold-used-percentage", "75"))
@@ -1346,6 +1413,24 @@ with tempfile.TemporaryDirectory() as workspace:
         check("the compacted handoff gives both shares",
               ("used 20% (33% counting the tokens its compactions dropped, the figure compared "
                "with the threshold and the ceiling)") in result.stderr,
+              result.stderr[:200])
+        compacted_fractional = transcript_of(workspace, "compacted-fractional.jsonl", [
+            compaction_record(137_000), usage_record(200_000)])  # 20% + 13.7% = 33.7%
+        marker_file.unlink(missing_ok=True)
+        result = run_hook({"session_id": PROBE_SESSION_ID,
+                           "transcript_path": str(compacted_fractional)})
+        check("the compacted handoff rounds the count with the dropped tokens, not truncates it",
+              "used 20% (34% counting the tokens its compactions dropped" in result.stderr,
+              result.stderr[:200])
+        # 90.6% is the context used alone: it truncates to 90, a 1% larger factor gives 91.5 and
+        # a 1% smaller one 89.7, so the share must be computed exactly to read 91%.
+        compacted_used_fractional = transcript_of(workspace, "compacted-used-fractional.jsonl", [
+            compaction_record(10_000), usage_record(906_000)])  # 90.6% + 1% = 91.6%
+        marker_file.unlink(missing_ok=True)
+        result = run_hook({"session_id": PROBE_SESSION_ID,
+                           "transcript_path": str(compacted_used_fractional)})
+        check("the compacted handoff rounds the context used alone, not truncates it",
+              "used 91% (92% counting the tokens its compactions dropped" in result.stderr,
               result.stderr[:200])
 
         # --- A session its caller reincarnates is left alone ---------------

@@ -576,11 +576,11 @@ BACKGROUND_TASKS_STARTED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
 )
 
 BACKGROUND_TASKS_PAST_WAIT_LIMIT_SENTENCE_TEMPLATE = (
-    "The session you are replacing had {task_count} background Bash task(s), none of them a "
-    "waiting-task, still running past its kind's wait-limit when it ended, so they were stopped: "
+    "When the session you are replacing ended, it had {task_count} background Bash task(s), none "
+    "of them a waiting-task, each still running past its kind's wait-limit, so they were stopped: "
     "{joined_tasks}. Run each again, then look first for a way to make it faster, such as removing "
     "repeated work or running its steps in parallel, and raise its kind's wait-limit in the "
-    "wait-limit table only when you find none."
+    "wait-limit table only when you find no such way."
 )
 
 COLD_READ_FULL_RUN_COMMANDS_REFUSED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
@@ -2619,9 +2619,9 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                                                          session_id, error), file=sys.stderr)
                 return 5
         else:
-            consecutive_resumes_without_new_work = 0
+            consecutive_resumes_without_new_work = 0  # pragma: no mutate, the None below makes the death path reset the count before any read of it
             substantive_turns_at_the_last_resume = None
-        verb = "resuming" if next_launch_resumes_the_session else "launching"
+        verb ="resuming" if next_launch_resumes_the_session else "launching"
         print(f"handoff-supervisor: {verb} session {session_id} (generation {generation})")
         # Read at each launch: a resume after a crash is when a dead agent's work-snapshots appear.
         leftover_work_snapshots = uncommitted_work_snapshot_text(

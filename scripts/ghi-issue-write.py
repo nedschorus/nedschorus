@@ -758,7 +758,7 @@ def balanced_close(text: str, start: int, opening: str, closing: str) -> int:
         if text[index] == "\\":
             index += 2
             continue
-        if text[index] == opening:
+        if text[index] == opening:  # pragma: no mutate, CPython keeps one object per one-character Latin-1 string, so is acts as ==
             depth += 1
         elif text[index] == closing:
             depth -= 1
@@ -811,7 +811,7 @@ def slug(title: str) -> str:
     text = re.sub(r"['\u2019]", "", text)
     joined = "-".join(re.sub(r"[^a-z0-9]+", " ", text).split())
     if len(joined) > GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT:
-        head = joined[:GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT + 1]
+        head = joined[:GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT + 1]  # pragma: no mutate, the limit is even, so ^ 1 gives + 1
         joined = (head.rsplit("-", 1)[0] if "-" in head
                   else joined[:GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT])
     return joined or "issue"
@@ -3249,7 +3249,7 @@ def main_with_stop_signals_raising_system_exit(argv):
         if arguments.operation == "create":
             create(path, arguments.repo, root, run, report)
             return 0
-        if arguments.operation == "close":
+        if arguments.operation == "close":  # pragma: no mutate, create returned above and argparse allows only edit or close here, and "edit" sorts after "close", so <= matches only close
             close_ghi_after_its_outcome_edit_merges_to_main(
                 path, arguments.reason, arguments.repo, root, run, report)
             return 0

@@ -102,6 +102,8 @@ def run_page_cases(scratch):
           and page.rstrip().endswith("</main>"), page[:300])
     check("the heading becomes the <h1>, without the deferred note",
           "<h1>Item 3 of 9: the opening sentence</h1>" in main, main)
+    check("the heading is not repeated in the body below the <h1>",
+          main.count("Item 3 of 9") == 1 and "<h2>" not in main, main)
     check("the walk's name is on the page", f'<div class="eyebrow">Approval-walk {WALK}</div>' in main, main)
     check("a paragraph opening with Recommendation: gets the class rec",
           '<p class="rec">Recommendation: change it.</p>' in main, main)

@@ -406,6 +406,22 @@ def test_lines_inside_code_are_neither_an_items_start_nor_its_recommendation():
               f"lines {lines!r}")
 
 
+def test_a_code_span_holding_comment_text_outside_any_comment_stays_in_the_recommendation():
+    # Only an HTML block, or a paragraph holding a real comment, has comments cut; a list or a plain paragraph
+    # that only shows comment text in a code span keeps it.
+    for shape, recommendation in (("a paragraph", "Recommendation: keep the `<!-- x -->` marker.\n"),
+                                  ("a list item", "- Recommendation: keep the `<!-- x -->` marker.\n")):
+        document = WALK_DOCUMENT.replace(
+            "Item 5 of 9 fixes a path. Recommendation: fix the path.\n",
+            f"Item 5 of 9 fixes a path.\n\n{recommendation}")
+        lines = Case(next_to_present="item 5 of 9", document=document).lines("a")
+        check(f"in {shape}, a code span with comment text is not cut from the recommendation",
+              lines is not None and lines[1].startswith(
+                  "A means approve: the user agrees with the recommendation of item 5 of 9 "
+                  "(keep the `<!-- x -->` marker)."),
+              f"lines {lines!r}")
+
+
 def test_a_withdrawn_version_below_the_item_is_not_read_for_its_recommendation():
     # The withdrawn version comes last, since the last recommendation of an item is the one read.
     for level in ("###", "####"):

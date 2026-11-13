@@ -6,7 +6,7 @@ nc-systems/cold-read/tests/cold-read-record-ship-test.py; what is tested here is
 program adds: the store's kind is `sanity-check-records/`, the checkout's
 directory of the same name is what --all reads, and the consequences the
 runner's closing line promises — a second ship sends only the new
-finding-dispositions.md, and one edited after it was shipped is refused rather
+sanity-check-finding-dispositions.md, and one edited after it was shipped is refused rather
 than replaced.
 
 LOCAL MODE only: the destination override names a scratch directory and the
@@ -125,26 +125,26 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
           in (store / "README.md").read_text(encoding="utf-8"),
           (store / "README.md").read_text(encoding="utf-8")[:1200])
 
-    # --- The second ship sends only finding-dispositions.md -------------------
+    # --- The second ship sends only sanity-check-finding-dispositions.md ------
     # What the runner's closing line promises the requesting agent.
-    (record / "finding-dispositions.md").write_text(DISPOSITIONS, encoding="utf-8")
+    (record / "sanity-check-finding-dispositions.md").write_text(DISPOSITIONS, encoding="utf-8")
     result = ship(local_destination, str(record))
     check("shipping again adds only the new dispositions file",
           result.returncode == 0 and "1 file(s) added" in result.stdout,
           f"exit {result.returncode}: {result.stdout}")
     check("and that file is in the store",
-          (shipped_dir / "finding-dispositions.md").read_text(encoding="utf-8") == DISPOSITIONS)
+          (shipped_dir / "sanity-check-finding-dispositions.md").read_text(encoding="utf-8") == DISPOSITIONS)
 
     # --- An edited dispositions file is refused, not replaced -----------------
-    (record / "finding-dispositions.md").write_text(
+    (record / "sanity-check-finding-dispositions.md").write_text(
         DISPOSITIONS + "finding two: set aside.\n", encoding="utf-8")
     result = ship(local_destination, str(record))
     check("a dispositions file edited after it shipped is REFUSED, exit 2",
           result.returncode == 2 and result.stdout.startswith("REFUSED: "),
           f"exit {result.returncode}: {result.stdout}")
     check("the refusal names the differing file and leaves the store's copy alone",
-          "finding-dispositions.md" in result.stdout
-          and (shipped_dir / "finding-dispositions.md").read_text(encoding="utf-8") == DISPOSITIONS,
+          "sanity-check-finding-dispositions.md" in result.stdout
+          and (shipped_dir / "sanity-check-finding-dispositions.md").read_text(encoding="utf-8") == DISPOSITIONS,
           result.stdout)
 
     # --- A replaced triage names this kind's directory ------------------------

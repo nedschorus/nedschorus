@@ -15,7 +15,7 @@ alone, because what is under test is the module both legs share. The ones
 that launch the Codex leg do so for a reason named where they sit: a token
 total is a figure only the Codex CLI prints, the near-miss accident below
 happened to a Codex cell, and the stray-write detector is driven once through
-each launcher because a check that runs for one runtime and not the other is
+each launcher because a check that runs for one agent-binary and not the other is
 precisely the defect nedschorus#161 records.
 
 WHAT IS PINNED HERE.
@@ -88,10 +88,10 @@ WHAT IS PINNED HERE.
     this attempt's report, and the cell fails rather than taking it.
 
   - The stamp carries what the cell cost. `duration_s=` on every stamp, and
-    `tokens=` when the runtime reported a total. Absent is absent: a claude
+    `tokens=` when the agent-binary reported a total. Absent is absent: a claude
     cell, and a codex cell whose CLI printed no total, carry no `tokens=`
     field rather than a guessed zero, because a zero would read as "this cell
-    cost nothing". The total is read from the runtime's stderr and never from
+    cost nothing". The total is read from the agent-binary's stderr and never from
     its stdout, which is the model talking — a reviewer of a document about
     model costs can write "tokens used: N" in its findings, and that sentence
     is not what the run cost.
@@ -107,12 +107,12 @@ WHAT IS PINNED HERE.
     stamped `checkout=no-commits-yet`. `target=` stays the last field in
     every one of those cases.
 
-  - The runtime's stderr survives a successful run. It used to be passed
+  - The agent-binary's stderr survives a successful run. It used to be passed
     straight through to the log nc-systems/cold-read/cold-read-grid.py deletes on success,
     which is why the only token figure recoverable from six cold-read runs on
     2026-08-25 came from the one cell that failed.
 
-  - And the runtime's stdout survives a model that exits 0 having written
+  - And the agent-binary's stdout survives a model that exits 0 having written
     nothing. That path used to discard it, so the cold-read runs of 2026-08-31 and
     2026-09-01 recorded claude-hunt-floor's silence with none of the model's
     own words to explain it.
@@ -133,7 +133,7 @@ WHAT IS PINNED HERE.
     still exits 64: the validation moved out of argparse, and this pins
     that it did not move out of the cell.
 
-  - The stray-write detector runs for both runtimes. The cases above drive
+  - The stray-write detector runs for both agent-binaries. The cases above drive
     the Claude launcher; the one at the end of the file drives the Codex
     launcher through the same shared call. The fleet's other review
     instrument gated the same comparison on `runtime == "codex"`, and on
@@ -209,7 +209,7 @@ CONCURRENT_RUN_REVIEW_TEXT = (
 # post-run check cannot run, "near_miss" reproduces the 2026-08-25 accident
 # (see below), "report_at_records_root" and "concurrent_run_report" are the
 # other two places a report can turn up, "stderr" and "stdout" are the
-# runtime's own words on each stream, "dump_prompt" is a path to write the
+# agent-binary's own words on each stream, "dump_prompt" is a path to write the
 # prompt the stub received to -- the whole of stdin on the Claude leg, which
 # is how a case reads what the cell composed -- "dump_argv" is a path to
 # write the argv the cell built, as JSON, and "exit" is the code to
@@ -402,9 +402,9 @@ def dirty_the_target(repository):
 def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
                       runtime="claude", environment_overrides=None, cell="defect-hunt", pass_fds=(),
                       background=False):
-    """One cell launcher, run against a stub standing in for its runtime.
+    """One cell launcher, run against a stub standing in for its agent-binary.
 
-    The stub is installed under the runtime's own name, because that is how
+    The stub is installed under the agent-binary's own name, because that is how
     each launcher finds its CLI: `cold-read-claude-cell.py` execs `claude`
     and `cold-read-codex-cell.py` execs `codex`, and a stub on PATH under
     that name is the whole seam. Both legs share this one function so a case
@@ -1063,7 +1063,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- The quiet death keeps the model's own account --------------------
     # A model that exits 0 having written nothing is the ending that explains
     # itself least, and it was the one keeping no evidence: the non-zero path
-    # printed the runtime's stdout, this one dropped it. claude-hunt-floor
+    # printed the agent-binary's stdout, this one dropped it. claude-hunt-floor
     # produced no report on the cold-read runs of 2026-08-31 and 2026-09-01 and left
     # three refusal lines and nothing of the model's in either log, while the
     # same argv rerun by hand put 512 bytes on stdout. What the model said
@@ -1969,7 +1969,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- One prompt per pass, read by both agent-binaries -----------------
     # Until 2026-09-19 a sibling `<cell>.<runtime>.md` was read in place of
-    # the shared `<cell>.md` by that runtime's cell. The user ended the split
+    # the shared `<cell>.md` by that agent-binary's cell. The user ended the split
     # on 2026-09-18 ("we just should have one prompt for both") and the lookup
     # went with it, so a file left at the old name is now ignored: the case
     # plants one, with a marker the shared file lacks, and reads what each

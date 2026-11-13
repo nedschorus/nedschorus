@@ -33,7 +33,8 @@ THE TEXT CHECKED is the reply, line by line, without:
   `Item N of M` alone naming that item, whatever M it gives; and then every
   reply line matching its unit's heading or a line of the item is left out,
   and, when a reply line matches the unit's heading, one matching a line
-  between that heading and the unit's first item.
+  between that heading and the unit's first item or first Withdrawn
+  heading, a `#new` or `#new_if_d` line there included as shown below.
   The item's lines are those the approval-walk finder's line-range helper
   gives it, which leave out a Withdrawn version's lines, up to its answer
   line; an item without an opening under a heading shared by several items
@@ -457,10 +458,10 @@ def new_text_as_shown(line):
 
 def shown_item_lines(reply_lines, document_lines, units, openings):
     """The normalized lines of every item the reply shows, as the module docstring's THE TEXT CHECKED says: the
-    heading of its unit, the unit's lines before its first item's when the reply holds that heading, and its lines
-    as the approval-walk finder's line-range helper gives them, up to its answer line, or, for an item without an
-    opening under a heading shared by several items, the whole unit; with each answer line's answer sentence alone
-    and each `#new` or `#new_if_d` line as the agent shows it."""
+    heading of its unit, the unit's lines before its first item's or its first Withdrawn heading when the reply
+    holds that heading, and its lines as the approval-walk finder's line-range helper gives them, up to its answer
+    line, or, for an item without an opening under a heading shared by several items, the whole unit; with each
+    answer line's answer sentence alone and each `#new` or `#new_if_d` line as the agent shows it."""
     reply_set = normalized_lines(reply_lines)
     own_headings = {heading[1] for heading in map(ITEM_OWN_HEADING.match, reply_set) if heading}
     shown = set()
@@ -470,13 +471,15 @@ def shown_item_lines(reply_lines, document_lines, units, openings):
             openings, first, end, number, numbers, total) if len(numbers) > 1 else (first, end)))
                  for number in numbers or [None]]
         if unit_shown:
-            shown |= normalized_lines(document_lines[first:min(start for _, start, _ in spans)])
+            # A Withdrawn heading, an opening that names no item, ends the lead-in as it ends an item's lines.
+            withdrawn = [line for line in openings if first < line < end and not openings[line][0]]
+            for line in document_lines[first:min([start for _, start, _ in spans] + withdrawn)]:
+                shown |= normalized_lines([line, new_text_as_shown(line) or ""])
         for number, start, stop in spans:
             if not (unit_shown or number in own_headings or normalized(document_lines[start]) in reply_set):
                 continue
             # The whole unit stands for each of its items, so no item's answer line ends it.
             whole_shared_unit = len(numbers) > 1 and start == first
-            shown |= normalized_lines([document_lines[first]])
             for line in document_lines[start:stop]:
                 shown |= normalized_lines([line, new_text_as_shown(line) or ""])
                 if normalized(line).startswith(ANSWER_LINE_START):
