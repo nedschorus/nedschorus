@@ -121,9 +121,9 @@ with tempfile.TemporaryDirectory() as scratch:
     alerts = pending_user_alerts()
     check("a copy that fails its integrity check writes one user-alert carrying the failure "
           "as printed",
-          len(alerts) == 1 and alerts[0]["title"] == backup.FAILED_CHECK_TITLE
+          len(alerts) == 1 and alerts[0]["title"] == backup.BACKUP_COPY_FAILED_INTEGRITY_CHECK_USER_ALERT_TITLE
           and alerts[0]["alert_text"] == errors.rstrip("\n")
-          and alerts[0]["action"] == backup.FAILED_CHECK_ACTION, alerts)
+          and alerts[0]["action"] == backup.BACKUP_COPY_FAILED_INTEGRITY_CHECK_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO, alerts)
     for alert_file in (backup.user_alerts.user_alerts_directory() / "pending").glob("*.json"):
         alert_file.unlink()
     commands = [line.strip() for line in errors.splitlines()
@@ -172,10 +172,10 @@ with tempfile.TemporaryDirectory() as scratch:
     alerts = pending_user_alerts()
     check("a database that cannot be opened writes one user-alert naming the database, the error "
           "and that the file does not exist",
-          len(alerts) == 1 and alerts[0]["title"] == backup.FAILED_TITLE
+          len(alerts) == 1 and alerts[0]["title"] == backup.NC_SHARED_DATABASE_NIGHTLY_BACKUP_STOPPED_BY_AN_ERROR_USER_ALERT_TITLE
           and str(missing) in alerts[0]["alert_text"]
           and "unable to open database file" in alerts[0]["alert_text"]
           and "does not exist" in alerts[0]["alert_text"]
-          and alerts[0]["action"] == backup.FAILED_ACTION, alerts)
+          and alerts[0]["action"] == backup.NC_SHARED_DATABASE_NIGHTLY_BACKUP_STOPPED_BY_AN_ERROR_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO, alerts)
 
 raise SystemExit(1 if failures else 0)

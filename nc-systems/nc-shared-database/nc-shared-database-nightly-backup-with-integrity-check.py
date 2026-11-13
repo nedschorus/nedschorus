@@ -64,12 +64,12 @@ user_alerts = _load(
     Path(__file__).resolve().parents[1] / "general-tools"
     / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
 
-FAILED_CHECK_TITLE = "The nightly backup copy of the nc-shared-database failed its integrity check"
-FAILED_CHECK_ACTION = (
+BACKUP_COPY_FAILED_INTEGRITY_CHECK_USER_ALERT_TITLE = "The nightly backup copy of the nc-shared-database failed its integrity check"
+BACKUP_COPY_FAILED_INTEGRITY_CHECK_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO = (
     "An agent on ned-box can follow the 'What to do' steps in the alert text. If the database itself "
     "fails its check, only the user can decide on a restore.")
-FAILED_TITLE = "The nightly backup of the nc-shared-database on ned-box failed, so no new copy was kept"
-FAILED_ACTION = (
+NC_SHARED_DATABASE_NIGHTLY_BACKUP_STOPPED_BY_AN_ERROR_USER_ALERT_TITLE = "The nightly backup of the nc-shared-database on ned-box failed, so no new copy was kept"
+NC_SHARED_DATABASE_NIGHTLY_BACKUP_STOPPED_BY_AN_ERROR_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO = (
     f"An agent on ned-box can run python3 {PROGRAM} by hand, read the error it prints, and fix its cause; "
     "until then each night's run fails the same way and the newest backup copy grows older.")
 
@@ -88,12 +88,12 @@ def main(argv=None):
     except Exception as error:
         database = Path(arguments.database)
         user_alerts.user_alert_write_to_pending(
-            FAILED_TITLE,
+            NC_SHARED_DATABASE_NIGHTLY_BACKUP_STOPPED_BY_AN_ERROR_USER_ALERT_TITLE,
             f"{PROGRAM} stopped with {error!r} while backing up {database} into "
             f"{arguments.backup_directory}. The database file "
             f"{'exists' if database.exists() else 'does not exist'}. The traceback is in "
             f"/home/nedlern/.claude/nc-shared-database-nightly-backup-with-integrity-check.log on ned-box.",
-            FAILED_ACTION)
+            NC_SHARED_DATABASE_NIGHTLY_BACKUP_STOPPED_BY_AN_ERROR_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO)
         raise
 
 
@@ -147,7 +147,9 @@ def back_up_and_check(arguments):
                    f"output; a restore is his decision. If you are a subagent, tell the agent that "
                    f"dispatched you instead, with the same quotes.")
         print(failure, file=sys.stderr)
-        user_alerts.user_alert_write_to_pending(FAILED_CHECK_TITLE, failure, FAILED_CHECK_ACTION)
+        user_alerts.user_alert_write_to_pending(
+            BACKUP_COPY_FAILED_INTEGRITY_CHECK_USER_ALERT_TITLE, failure,
+            BACKUP_COPY_FAILED_INTEGRITY_CHECK_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO)
         return EXIT_COPY_FAILED_ITS_CHECK
 
     partial_path.rename(copy_path)
