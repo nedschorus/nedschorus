@@ -1202,6 +1202,40 @@ def run_quick_mutation_pass_cases():
           "not an if on another name",
           survivors.failure_handling_line_ranges(source) == [(4, 5), (6, 7), (8, 8), (11, 14)],
           survivors.failure_handling_line_ranges(source))
+    source = ("import os, subprocess\n"
+              "def f(process, completed, response, waited):\n"
+              "    status = process.wait()\n"
+              "    if status != 0:\n"
+              "        g()\n"
+              "    code = os.system('true')\n"
+              "    word = 'failed' if code else 'passed'\n"
+              "    rc = subprocess.call(['true'])\n"
+              "    while rc:\n"
+              "        g()\n"
+              "    held = completed.returncode\n"
+              "    if held < 0:\n"
+              "        g()\n"
+              "    if subprocess.call(['true']) != 0 or os.waitstatus_to_exitcode(waited):\n"
+              "        g()\n"
+              "    reply = response.status\n"
+              "    if reply:\n"
+              "        g()\n"
+              "    wrapped = str(process.wait())\n"
+              "    if wrapped:\n"
+              "        g()\n"
+              "    if process.poll() is None:\n"
+              "        g()\n"
+              "def h(status, rc):\n"
+              "    if status or rc:\n"
+              "        g()\n"
+              "    late = lambda: 'failed' if process.wait() else 'passed'\n")
+    check("failure-handling code: an if, while or conditional expression whose test reads a name "
+          "the same function assigned from wait(), os.system, subprocess.call or a returncode, "
+          "or calls one of those or os.waitstatus_to_exitcode itself; not a name assigned from "
+          "another value or in another function, nor a test of poll()",
+          survivors.failure_handling_line_ranges(source)
+          == [(4, 5), (7, 7), (9, 10), (12, 13), (14, 15), (27, 27)],
+          survivors.failure_handling_line_ranges(source))
     # cosmic-ray 8.7.0's cr-filter-pragma skips a mutation when its LAST line carries the
     # pragma, or the line before when the mutation ends at a line's start; the survivor
     # task names "line", so "line" must be that line.
