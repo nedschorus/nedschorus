@@ -1175,6 +1175,18 @@ def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None
     return document, "\n".join(line for first, end in ranges for line in lines[first:end]).strip()
 
 
+def approval_walk_item_sub_step_units_right_after(all_units, unit):
+    """Return the units of all_units, as item_unit_spans gives them, right after unit that are sub-steps of any
+    item unit names, such as `### Item 3.1 of 9` and `### Item 3.1.1 of 9` after item 3, up to the first that is
+    not, so an older version's `3.1 of 9` elsewhere in the walk-document is not among them."""
+    found = []
+    for each in [each for each in all_units if each[3] > unit[3]]:
+        if not each[0] or not all(any(part.startswith(number + ".") for number in unit[0]) for part in each[0]):
+            break
+        found.append(each)
+    return found
+
+
 def approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parser, spans, numbers):
     """Return the (first, end) line ranges counted for the items numbered, one per text the skill counts on its
     own: each numbered item's own lines, even under a heading it shares with other items; when several items
@@ -1197,21 +1209,13 @@ def approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parse
         first_opening = min(own_range(unit, part)[0] for part in unit[0])
         return [(unit[3], first_opening)] if first_opening > unit[3] else []
 
-    def sub_step_units(unit):
-        found = []
-        for each in [each for each in all_units if each[3] > unit[3]]:
-            if not each[0] or not all(any(part.startswith(number + ".") for number in unit[0]) for part in each[0]):
-                break
-            found.append(each)
-        return found
-
     ranges = []
     for number in numbers:
         unit = next(unit for unit in spans if number in unit[0])
         ranges.append(own_range(unit, number))
         if len(numbers) > 1 and len(unit[0]) > 1:
             ranges += shared_heading_text(unit)
-        for each in sub_step_units(unit):
+        for each in approval_walk_item_sub_step_units_right_after(all_units, unit):
             parts = [part for part in each[0] if part.startswith(number + ".") and part not in numbers]
             ranges += [own_range(each, part) for part in parts]
             if parts and len(each[0]) > 1:
@@ -2198,25 +2202,35 @@ def earlier_read_texts_kept_as_withdrawn_versions(walk_finder, minutes, value, n
     return kept
 
 
-def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minutes, parser, numbers, order):
-    """Return the first sub-step in order, such as 3.1, of the one item numbers names, such as 3, that the
-    walk-minutes do not decide, as next_item counts an item decided; None when numbers names several items or no
-    such sub-step exists."""
+def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minutes, value, numbers, total, parser,
+                                                              order):
+    """Return the first sub-step, such as 3.1, of the one item numbers names, such as 3, taken from the
+    walk-document's units right after the item's own, that the walk-minutes neither decide, as next_item counts an
+    item decided, nor defer twice; as next_item does, a sub-step deferred once comes after the ones never deferred.
+    None when numbers names several items or no such sub-step exists."""
     if len(numbers) != 1:
         return None
+    document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
+    all_units = walk_finder.item_unit_spans(document.read_text(encoding="utf-8"), parser)
+    unit = walk_finder.waiting_item_units(document, value, numbers, total, parser, all_units)[1][0]
+    sub_steps = [part for each in approval_walk_item_sub_step_units_right_after(all_units, unit)
+                 for part in each[0] if part.rsplit(".", 1)[0] == numbers[0]]
     text = minutes.read_text(encoding="utf-8")
+    decided, deferrals = minutes_record(walk_finder, text, parser)
     decided = decided_with_items_whose_sub_steps_are_all_decided(
-        order, minutes_record(walk_finder, text, parser)[0], held_answers_unresolved(walk_finder, text, parser))
-    return next((item for item in order if isinstance(item, str) and "." in item
-                 and item.rsplit(".", 1)[0] == numbers[0] and item not in decided), None)
+        order, decided, held_answers_unresolved(walk_finder, text, parser))
+    waiting = [part for part in sub_steps if part not in decided and deferrals[part] <= 1]
+    return next(iter([part for part in waiting if not deferrals[part]] + waiting), None)
 
 
 def waiting_item_read(arguments, sub_step_of=None):
     """Give the item the `#next_to_present` line names its cold-read-fast-read, as its text stands.
 
-    sub_step_of is (the sub-step's `#next_to_present` value, the item it is a sub-step of) when the line names an
-    item split into numbered sub-steps: the sub-step is read in its place, and its line is added to the walk-minutes
-    only once every refusal has passed, so a refused read leaves the walk-minutes as they were."""
+    sub_step_of is (the sub-step's `#next_to_present` value, the item it is a sub-step of, the arguments of
+    earlier_read_texts_kept_as_withdrawn_versions for that item and each item above it) when the line names an
+    item split into numbered sub-steps: the sub-step is read in its place, and its line is added to the walk-minutes,
+    and each such item's earlier read texts are kept as withdrawn versions, only once every refusal has passed, so a
+    refused read leaves the walk-minutes and the walk-document as they were."""
     walk_finder = load_walk_finder()
     top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
     if sub_step_of:
@@ -2238,10 +2252,17 @@ def waiting_item_read(arguments, sub_step_of=None):
                                refused_unless_marks_read=(item, command))
     # Before the kept versions are written, so a refused item's document is left as it was.
     approval_walk_item_text_over_word_limit_refused(walk_finder, minutes, value, numbers, total, parser, item, command)
-    sub_step = approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minutes, parser, numbers, order)
+    sub_step = approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minutes, value, numbers, total,
+                                                                         parser, order)
+    keep = (walk_finder, minutes, value, numbers, total, parser, earlier, item, text)
     if sub_step:
-        return waiting_item_read(arguments, (items_named([sub_step], total), item))
+        return waiting_item_read(arguments, (items_named([sub_step], total), item,
+                                             (sub_step_of[2] if sub_step_of else []) + [keep]))
     if sub_step_of:
+        # An item read before it was split keeps that text, as an item revised after its read does.
+        for above in sub_step_of[2]:
+            for line in earlier_read_texts_kept_as_withdrawn_versions(*above):
+                print(line)
         append_to_minutes(minutes, [NEXT_MARKER_LINE.format(value=item)])
         print(ITEM_READ_SUB_STEP_NAMED.format(item=sub_step_of[1], sub_step=item, minutes=minutes))
     for line in earlier_read_texts_kept_as_withdrawn_versions(walk_finder, minutes, value, numbers, total, parser,
