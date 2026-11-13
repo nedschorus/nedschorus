@@ -1294,7 +1294,7 @@ def cold_read_target_text_at_merge_base_with_origin_main_or_none(target: pathlib
     return git_stdout("show", f"{commit}:{relative}")
 
 
-def edit_added_or_changed_sentence_ids_and_removed_text_units(text: str, base_text: str):
+def cold_read_target_compare_with_base_text_returning_added_or_changed_sentence_ids_and_removed_text_units(text: str, base_text: str):
     """(the ids in `text` the edit added or changed, the units of `base_text`
     it removed or replaced). Each base unit matches at most one unit of
     `text`, so a moved unit is unchanged and a duplicated one is added."""
@@ -1695,7 +1695,7 @@ def main() -> int:
 
     edit_changed_ids, edit_removed_units = (
         ([], []) if base_text is None
-        else edit_added_or_changed_sentence_ids_and_removed_text_units(
+        else cold_read_target_compare_with_base_text_returning_added_or_changed_sentence_ids_and_removed_text_units(
             target.read_text(encoding="utf-8"), base_text))
 
     with tempfile.TemporaryDirectory(prefix="cold-read-fast-read-") as scratch:

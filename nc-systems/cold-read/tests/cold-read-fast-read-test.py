@@ -2979,7 +2979,7 @@ check("on the walk route the changed-during-read line says the reviewer's copy i
 
 # --- The edit: what changed against origin/main --------------------------
 # Called in-process: the comparison is a pure function of the two texts.
-edit_comparison = _fast_read.edit_added_or_changed_sentence_ids_and_removed_text_units
+edit_comparison = _fast_read.cold_read_target_compare_with_base_text_returning_added_or_changed_sentence_ids_and_removed_text_units
 EDIT_COMPARISON_CASES = (
     ("a changed sentence is named, and its old text is removed",
      "One. Two changed.\n", "One. Two.\n", (["s2"], ["Two."])),
