@@ -84,6 +84,11 @@
           },
           {
             "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/agent-seat-owned-nc-topic-branches-push-and-draft-pull-request-open-stop-hook.py",
+            "timeout": 180
+          },
+          {
+            "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/checkout-freshness-changed-skill-invoke-again-refusal-stop-hook.py",
             "timeout": 30
           },
