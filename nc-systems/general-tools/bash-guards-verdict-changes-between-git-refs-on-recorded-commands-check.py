@@ -916,13 +916,12 @@ def run_git(repository, *arguments):
     return completed.stdout.strip()
 
 
-def head_merged_with_base_commit_make_or_raise_on_conflict(repository, base_commit, head_commit):
+def head_merged_with_base_commit_make_or_raise_on_conflict(repository, base_commit, head_commit, rerun):
     """Return a commit whose tree is head_commit merged with base_commit: what the pull request's merge puts on
-    the base, which, for a head cut before the base gained a guard, has that guard where the bare head does not."""
+    the base, which, for a head cut before the base gained a guard, has that guard where the bare head does not.
+    rerun is the command that runs this check again with the same options, for the messages to print."""
     completed = run_git_returning_completed_process_without_exit_code_check(
         repository, "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", base_commit, head_commit)
-    this_file = Path(__file__).resolve()
-    this_check = f"python3 {this_file.relative_to(this_file.parents[2])}"
     if completed.returncode == 1:
         conflicted = [name for name in completed.stdout.split("\0")[1:] if name]
         # Agent-seat launchers set git's author name to the agent-seat, so the head's author is the one to tell.
@@ -934,9 +933,9 @@ def head_merged_with_base_commit_make_or_raise_on_conflict(repository, base_comm
             f"{conflicted or 'no file; git named none, as for a conflict between directory renames'}.\n"
             "When you are the pull request's author: run python3 scripts/branch-conflict-check.py in the pull "
             "request's checkout and do what its report says, which may be to replace the pull request; then run "
-            f"this check, {this_check}, from the repository's top directory again with the same options, but with "
-            "--head-ref set to the head of the pull request that report's steps leave open: this pull request's "
-            "new head, or, when the report had you replace this pull request, the head of the new one.\n"
+            "this check again with this command, its --head-ref changed to the head of the pull request that "
+            "report's steps leave open: this pull request's new head, or, when the report had you replace this pull "
+            f"request, the head of the new one:\n  {rerun}\n"
             f"When you are not the author, such as merge-lane-2: the head's commit names {head_author} as its author. "
             f"When ListAgents lists {head_author}, use SendMessage to send {head_author} the head, the base and the "
             "conflicted files above, and ask it to run python3 scripts/branch-conflict-check.py in the checkout of the pull request "
@@ -946,14 +945,13 @@ def head_merged_with_base_commit_make_or_raise_on_conflict(repository, base_comm
         reason = completed.stderr.strip() or "git printed no reason"
         if "refusing to merge unrelated histories" in reason:
             next_step = (
-                f"Run this check, {this_check}, from the repository's top directory again, with --base-ref and "
-                "--head-ref naming commits that share history, such as --base-ref origin/main and --head-ref <the pull "
-                "request's head commit>, and your other options unchanged. Two commits share history when git "
-                "merge-base, given both commits in either order, prints a commit.")
+                "Run this check again with this command, its --base-ref and --head-ref changed to commits that share "
+                "history, such as origin/main and the pull request's head commit. Two commits share history when git "
+                f"merge-base, given both commits in either order, prints a commit:\n  {rerun}")
         else:
             next_step = (
-                f"Run this check, {this_check}, from the repository's top directory again once, with every option "
-                "you gave it this time unchanged. If it fails again with this same reason, stop and give the reason "
+                f"Run this check again once, with every option you gave it this time unchanged:\n  {rerun}\n"
+                "If it fails again with this same reason, stop and give the reason "
                 "to the agent or the user who asked for the check.")
         raise ReplayFailed(
             f"git merge-tree of the base {base_commit} and the head {head_commit} exited {completed.returncode}, so "
@@ -1301,7 +1299,8 @@ def replay_with_sigterm_handled(arguments):
         for label, ref in (("base", arguments.base_ref), ("head", arguments.head_ref)):
             commits[label] = commit = run_git(repository, "rev-parse", "--verify", ref + "^{commit}")
             checked_out = commit if label == "base" else \
-                head_merged_with_base_commit_make_or_raise_on_conflict(repository, commits["base"], commit)
+                head_merged_with_base_commit_make_or_raise_on_conflict(repository, commits["base"], commit,
+                                                                       rerun_command(arguments))
             checkout = scratch / f"checkout-{label}"
             checkouts[label] = checkout  # Before the add, so a stop in the middle of the add is cleaned up too.
             run_git(repository, "worktree", "add", "--detach", str(checkout), checked_out)

@@ -928,6 +928,14 @@ try:
           status == 2 and "does not merge cleanly with the base" in err and f"in: ['{TMUX_KILL_GUARD}']" in err
           and "the head's commit names replay test as its author." in err
           and "VERDICT" not in out, f"status {status}\n{out}\n{err}")
+    rerun = printed_rerun_command(err.replace("pull request's new head, or, when the report had you replace this pull "
+                                              "request, the head of the new one:\n  ", "RERUN: "), "RERUN: ")
+    ran_again = subprocess.run(rerun, shell=True, capture_output=True, text=True)
+    check("a head that does not merge cleanly with the base: the printed command reruns the check with the same "
+          "--head-ref, and gets the same refusal",
+          f"--head-ref {conflicting_head} " in rerun and ran_again.returncode == 2
+          and f"in: ['{TMUX_KILL_GUARD}']" in ran_again.stderr,
+          f"{err}\n{rerun}\n{ran_again.returncode}\n{ran_again.stderr[-2000:]}")
 
     unrelated_head = git("-c", "user.name=replay test", "-c", "user.email=replay@test.invalid", "commit-tree",
                          "--no-gpg-sign", "HEAD^{tree}", "-m", "replay test: a head with no history in common")
@@ -936,15 +944,22 @@ try:
           "the step for unrelated histories",
           status == 2 and "git merge-tree of the base" in err
           and "no guard was replayed: fatal: refusing to merge unrelated histories.\n" in err
-          and "naming commits that share history" in err and "with every option you gave it" not in err,
+          and "changed to commits that share history" in err and "with every option you gave it" not in err,
           f"status {status}\n{out}\n{err}")
+    rerun = printed_rerun_command(err.replace("prints a commit:\n  ", "RERUN: "), "RERUN: ")
+    ran_again = subprocess.run(rerun, shell=True, capture_output=True, text=True)
+    check("a head that shares no history with the base: the printed command reruns the check with the same refs, "
+          "and gets the same refusal",
+          f"--head-ref {unrelated_head} " in rerun and ran_again.returncode == 2
+          and "refusing to merge unrelated histories" in ran_again.stderr,
+          f"{err}\n{rerun}\n{ran_again.returncode}\n{ran_again.stderr[-2000:]}")
 
     # Injected: no real pair of commits makes git merge-tree fail for any reason but unrelated histories.
     real_run_git = replay.run_git_returning_completed_process_without_exit_code_check
     replay.run_git_returning_completed_process_without_exit_code_check = (
         lambda *_: subprocess.CompletedProcess([], 128, "", "fatal: unable to read tree 1234\n"))
     try:
-        replay.head_merged_with_base_commit_make_or_raise_on_conflict(Path("."), "base1", "head1")
+        replay.head_merged_with_base_commit_make_or_raise_on_conflict(Path("."), "base1", "head1", "the rerun")
         raised = ""
     except replay.ReplayFailed as error:
         raised = str(error)
@@ -952,8 +967,8 @@ try:
         replay.run_git_returning_completed_process_without_exit_code_check = real_run_git
     check("git merge-tree failing for another reason: the message gives only the run-once-more step",
           "no guard was replayed: fatal: unable to read tree 1234.\n" in raised
-          and "with every option you gave it this time unchanged" in raised
-          and "naming commits that share history" not in raised, raised)
+          and "with every option you gave it this time unchanged:\n  the rerun\n" in raised
+          and "changed to commits that share history" not in raised, raised)
 
     uncallable = commit_with_guard_changed(ISSUE_WRITE_GUARD, "del analyze_command_text", scratch)
     status, out, err = run_replay(uncallable, scratch)
