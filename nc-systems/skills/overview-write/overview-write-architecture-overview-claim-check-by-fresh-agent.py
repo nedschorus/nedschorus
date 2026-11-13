@@ -484,7 +484,7 @@ def check_overview_claims(arguments):
                                                           directory).stdout.strip())) is None:
         raise ClaimCheckRefusal(
             f"{overview_path} is not an nc-architecture-overview at {revision[:12]}: an overview is at "
-            f"{overview_path_reader.PROJECT_ARCHITECTURE_OVERVIEW_PATH}, at {overview_path_reader.PATH_TEMPLATE}, "
+            f"{overview_path_reader.PROJECT_ARCHITECTURE_OVERVIEW_PATH}, at {overview_path_reader.SYSTEM_ARCHITECTURE_OVERVIEW_PATH_TEMPLATE}, "
             "where nc-systems/<system> is a directory, or at "
             f"{overview_path_reader.SUBSYSTEM_ARCHITECTURE_OVERVIEW_PATH_TEMPLATE}, where nc-systems/<system>/<subsystem> "
             "is a directory.\n"

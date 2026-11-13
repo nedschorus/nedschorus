@@ -478,7 +478,7 @@ def choose_branch_state_instruction_from_working_directory_push_state(working_di
 # Overview refreshes are this agent-seat's job; other agent-seats have jobs of their own.
 AGENT_SEAT_GIVEN_OVERVIEW_REFRESH_LINES = "agent-instructions-editor"
 
-SYSTEM_OVERVIEW_PATH_TEMPLATE = architecture_overview_path_template_and_checked_against_commit_reader.PATH_TEMPLATE
+SYSTEM_OVERVIEW_PATH_TEMPLATE = architecture_overview_path_template_and_checked_against_commit_reader.SYSTEM_ARCHITECTURE_OVERVIEW_PATH_TEMPLATE
 
 OVERVIEW_PURPOSE_HEADING = "## Purpose"
 

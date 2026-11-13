@@ -83,8 +83,8 @@ check("a path elsewhere is not an overview",
 # The page is where the path and the line are defined; this module must say the same.
 page = PAGE_PATH.read_text(encoding="utf-8")
 check("the page names the overview path this module builds",
-      architecture_overview_path_template_and_checked_against_commit_reader.PATH_TEMPLATE.replace("{system}", "<system>") in page,
-      architecture_overview_path_template_and_checked_against_commit_reader.PATH_TEMPLATE)
+      architecture_overview_path_template_and_checked_against_commit_reader.SYSTEM_ARCHITECTURE_OVERVIEW_PATH_TEMPLATE.replace("{system}", "<system>") in page,
+      architecture_overview_path_template_and_checked_against_commit_reader.SYSTEM_ARCHITECTURE_OVERVIEW_PATH_TEMPLATE)
 check("the page names the project overview's path",
       architecture_overview_path_template_and_checked_against_commit_reader.PROJECT_ARCHITECTURE_OVERVIEW_PATH in page,
       architecture_overview_path_template_and_checked_against_commit_reader.PROJECT_ARCHITECTURE_OVERVIEW_PATH)

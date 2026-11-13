@@ -7,14 +7,14 @@ import them from here, so a change to the page is made in one place in code.
 """
 import re
 
-PATH_TEMPLATE = "docs/nedschorus-wiki/nedschorus-{system}-architecture-overview.md"
+SYSTEM_ARCHITECTURE_OVERVIEW_PATH_TEMPLATE = "docs/nedschorus-wiki/nedschorus-{system}-architecture-overview.md"
 
 PROJECT_ARCHITECTURE_OVERVIEW_PATH = "docs/nedschorus-wiki/nedschorus-project-architecture-overview.md"
 
 SUBSYSTEM_ARCHITECTURE_OVERVIEW_PATH_TEMPLATE = "docs/nedschorus-wiki/nedschorus-{system}-{subsystem}-architecture-overview.md"
 
 _OVERVIEW_NAME = re.compile(
-    re.escape(PATH_TEMPLATE).replace(re.escape("{system}"), r"(?P<name>[^/]+)"))
+    re.escape(SYSTEM_ARCHITECTURE_OVERVIEW_PATH_TEMPLATE).replace(re.escape("{system}"), r"(?P<name>[^/]+)"))
 
 CHECKED_AGAINST_PREFIX = "**Checked against:** commit ["
 
