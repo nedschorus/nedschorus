@@ -1420,6 +1420,22 @@ def run_architecture_overview_checked_against_commit_cases(fixture):
           refused_for_checked_against(result, subsystem_overview_path)
           and "nc-systems/example/part/part-program.py." in result.stderr, result.stderr)
 
+    fixture.reset_fixture_to_base()
+    code_commit = change_and_commit("nc-systems/example/part/part-program.py", 'print("first")\n')
+    write_overview_with_report(code_commit)
+    write_overview_with_report(code_commit, path=subsystem_overview_path)
+    fixture.configure_github_answers(fixture.commit_fixture_changes("the system's and subsystem's overviews"))
+    change_and_commit("nc-systems/example/part/part-program.py", 'print("second")\n')
+    result = fixture.run_review_plan(*flag)
+    check("a later change in a subsystem's directory that has an overview of its own refuses that overview, not its system's",
+          refused_for_checked_against(result, subsystem_overview_path)
+          and f"--overview {FIXTURE_OVERVIEW_PATH}\n" not in result.stderr, result.stderr)
+    change_and_commit("nc-systems/example/other/other-program.py", 'print("new")\n')
+    result = fixture.run_review_plan(*flag)
+    check("a later change in a subsystem's directory with no overview of its own refuses the system's overview",
+          refused_for_checked_against(result, FIXTURE_OVERVIEW_PATH)
+          and "nc-systems/example/other/other-program.py." in result.stderr, result.stderr)
+
     project_overview_path = "docs/nedschorus-wiki/nedschorus-project-architecture-overview.md"
     fixture.reset_fixture_to_base()
     code_commit = change_and_commit("nc-systems/example/unlisted-program.py", 'print("first")\n')

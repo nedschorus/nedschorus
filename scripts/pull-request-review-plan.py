@@ -104,7 +104,8 @@ overview-write-architecture-overview-claim-check-reports by default.
 
 The code an overview describes is every path its Components section names in
 backticks, whatever the path's extension, and every file under the system's
-or subsystem's directory other than a .md file. Rule 4 also refuses such a pull
+or subsystem's directory other than a .md file; a system's overview leaves out
+each subsystem directory that has an overview of its own. Rule 4 also refuses such a pull
 request in either of these cases:
   1. The commit the overview's **Checked against:** line names is on
      origin/main, and the pull request changes code the overview describes.
@@ -870,8 +871,10 @@ def merged_tree_against_origin_main(repository, head):
 
 
 def changed_architecture_overview_paths_and_code_directories(repository, head, changed_files):
-    """(path, code directory) for each nc-architecture-overview the pull request
-    adds or changes, as at head; the project overview's code directory is None."""
+    """(path, code directory, excluded directories) for each nc-architecture-overview
+    the pull request adds or changes, as at head; the project overview's code
+    directory is None, and a system overview's excluded directories are its
+    subsystem directories that have an overview of their own at head."""
     overviews = []
     for entry in changed_files:
         if entry["status"] == "D":
@@ -879,8 +882,19 @@ def changed_architecture_overview_paths_and_code_directories(repository, head, c
         level_and_code_directory = overview_path_reader.architecture_overview_level_and_described_code_directory_from_path(
             entry["path"], lambda directory: bool(git_result_or_refuse(
                 repository, "ls-tree", "-d", "--name-only", head, directory).stdout.strip()))
-        if level_and_code_directory is not None:
-            overviews.append((entry["path"], level_and_code_directory[1]))
+        if level_and_code_directory is None:
+            continue
+        level, code_directory = level_and_code_directory
+        excluded_directories = []
+        if level == "system":
+            system = code_directory.split("/", 1)[1]
+            for subsystem_directory in git_result_or_refuse(
+                    repository, "ls-tree", "-d", "--name-only", head, f"{code_directory}/").stdout.splitlines():
+                subsystem_overview_path = overview_path_reader.SUBSYSTEM_ARCHITECTURE_OVERVIEW_PATH_TEMPLATE.format(
+                    system=system, subsystem=subsystem_directory.rsplit("/", 1)[-1])
+                if git_result_or_refuse(repository, "ls-tree", "--name-only", head, subsystem_overview_path).stdout.strip():
+                    excluded_directories.append(subsystem_directory)
+        overviews.append((entry["path"], code_directory, excluded_directories))
     return overviews
 
 
@@ -897,9 +911,10 @@ def architecture_overview_component_paths(overview_text):
     return paths
 
 
-def path_is_architecture_overview_described_code(path, code_directory, component_paths):
+def path_is_architecture_overview_described_code(path, code_directory, excluded_directories, component_paths):
     # The project overview has no directory of its own: its components are the systems' overviews.
-    if code_directory is not None and path.startswith(f"{code_directory}/") and not path.endswith(".md"):
+    if (code_directory is not None and path.startswith(f"{code_directory}/") and not path.endswith(".md")
+            and not any(path.startswith(f"{excluded}/") for excluded in excluded_directories)):
         return True
     return any(path == component or path.startswith(component + "/") for component in component_paths)
 
@@ -909,7 +924,8 @@ def architecture_overview_checked_against_commit_problems(repository, head, chan
     its **Checked against:** commit does not hold the code the overview
     describes at head; an empty list lets the plan go on."""
     problems = []
-    for path, code_directory in changed_architecture_overview_paths_and_code_directories(repository, head, changed_files):
+    for path, code_directory, excluded_directories in changed_architecture_overview_paths_and_code_directories(
+            repository, head, changed_files):
         text = required_git_output(repository, "show", f"{head}:{path}")
         named = overview_path_reader.checked_against_commit(text)
         # An overview with no such line is refused by the claim check, which names the fix.
@@ -920,7 +936,8 @@ def architecture_overview_checked_against_commit_problems(repository, head, chan
         if named_is_present and commit_is_ancestor_of(repository, named, "refs/remotes/origin/main"):
             # Main's own commits after the named one are a refresh's concern; only this pull request's are checked.
             changed_here = sorted(entry["path"] for entry in changed_files
-                                  if path_is_architecture_overview_described_code(entry["path"], code_directory, component_paths))
+                                  if path_is_architecture_overview_described_code(entry["path"], code_directory, excluded_directories,
+                                                                                 component_paths))
             if changed_here:
                 problems.append({"path": path, "named": named, "named_is_on_main": True, "later_changed_paths": changed_here})
             continue
@@ -931,7 +948,8 @@ def architecture_overview_checked_against_commit_problems(repository, head, chan
         changed_since = git_result_or_refuse(repository, "diff", "--no-renames", "--name-only", "-z",
                                              named, head).stdout.split("\0")
         later = sorted(changed for changed in changed_since
-                       if changed and path_is_architecture_overview_described_code(changed, code_directory, component_paths))
+                       if changed and path_is_architecture_overview_described_code(changed, code_directory, excluded_directories,
+                                                                                         component_paths))
         if later:
             problems.append({"path": path, "named": named, "named_is_on_main": False, "later_changed_paths": later})
     return problems
@@ -971,7 +989,7 @@ def architecture_overview_claim_check_shortfalls(repository, head, changed_files
     shows a must-fix claim remaining, or is missing or malformed; an empty list
     lets the plan go on."""
     shortfalls = []
-    for path, _code_directory in changed_architecture_overview_paths_and_code_directories(repository, head, changed_files):
+    for path, _code_directory, _excluded_directories in changed_architecture_overview_paths_and_code_directories(repository, head, changed_files):
         blob = required_git_output(repository, "rev-parse", f"{head}:{path}")
         newest = overview_claim_check.find_newest_architecture_overview_claim_check_report_path_and_result_for_overview_git_blob(report_directory, path, blob)
         if newest is None or newest[1] not in (

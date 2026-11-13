@@ -1462,12 +1462,15 @@ def shell_words(arguments: list) -> str:
 
 
 def overview_refresh_due_reason_and_commit_listing_command(code_directory: str, subsystem_overview_paths: list,
+                                                           subsystem_directories_with_overviews: list,
                                                            commit_range: str, working_directory: Path):
     """Return why a system's or subsystem's overview is due and the command listing the commits, or None.
 
+    A change inside a subsystem directory with an overview of its own makes only that overview due, not its system's.
     A system's overview is also due for a commit adding or removing one of its subsystems' overviews."""
     code_command = git_log_commit_listing_command(
-        commit_range, [f"{code_directory}/", f":(exclude){code_directory}/*.md"])
+        commit_range, [f"{code_directory}/", f":(exclude){code_directory}/*.md"]
+        + [f":(exclude){directory}/" for directory in subsystem_directories_with_overviews])
     moved = set(overview_check_git_output(code_command[:2] + ["--format=%h"] + code_command[2:],
                                           working_directory).split())
     commands = [code_command]
@@ -1582,9 +1585,9 @@ def overview_refresh_due_lines(working_directory: Path,
         if len(names) == 1:
             system_names.append(names[0])
         else:
-            subsystem_overview_paths_by_system.setdefault(names[0], []).append(
+            subsystem_overview_paths_by_system.setdefault(names[0], {})[
                 architecture_overview_path_template_and_checked_against_commit_reader.SUBSYSTEM_ARCHITECTURE_OVERVIEW_PATH_TEMPLATE.format(
-                    system=names[0], subsystem=names[1]))
+                    system=names[0], subsystem=names[1])] = code_directory
         overviews.append(("-".join(names), code_directory))
     due = []
     for system, code_directory in overviews:
@@ -1614,9 +1617,15 @@ def overview_refresh_due_lines(working_directory: Path,
                 reason_and_commit_listing_command = project_overview_refresh_due_reason_and_commit_listing_command(
                     checked_commit, main_commit_full, commit_range, system_names, working_directory)
             else:
+                subsystem_directories_by_overview_path = (
+                    subsystem_overview_paths_by_system.get(system, {}) if system in system_names else {})
+                subsystem_overview_paths_on_main = overview_check_git_output(
+                    ["ls-tree", "--full-tree", "--name-only", main_commit_full, "--",
+                     *subsystem_directories_by_overview_path], working_directory,
+                    timeout=timeout).splitlines() if subsystem_directories_by_overview_path else []
                 reason_and_commit_listing_command = overview_refresh_due_reason_and_commit_listing_command(
-                    code_directory,
-                    subsystem_overview_paths_by_system.get(system, []) if system in system_names else [],
+                    code_directory, list(subsystem_directories_by_overview_path),
+                    [subsystem_directories_by_overview_path[path] for path in subsystem_overview_paths_on_main],
                     commit_range, working_directory)
             if reason_and_commit_listing_command is None:
                 continue

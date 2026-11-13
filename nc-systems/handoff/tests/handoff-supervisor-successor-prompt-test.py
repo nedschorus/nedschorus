@@ -1451,15 +1451,27 @@ def run_overview_refresh_hierarchy_cases(workspace: Path):
           and "docs/nedschorus-wiki/queue/nedschorus-general-tools-walk-me-through-architecture-overview-draft.md"
           in subsystem_line
           and f"`git log --no-merges {landed[:7]}" in subsystem_line, repr(due))
-    check("the change makes the system's overview due too, as the page's rule reads, but not the project's",
-          "overview refresh due: general-tools" in due and "overview refresh due: project" not in due, repr(due))
+    check("a change in a subsystem's directory with an overview of its own makes neither the system's overview nor "
+          "the project's due",
+          set(due) == {"overview refresh due: general-tools-walk-me-through"}, repr(due))
 
-    commit({walk: overview("Walk", "Walks.", moved), tools: overview("General tools", "Tools.", moved)},
+    explain_moved = commit({"nc-systems/general-tools/explain/explain.py": "print(2)\n"}, "the explain grows")
+    publish()
+    due = due_lines()
+    system_line = due.get("overview refresh due: general-tools", "")
+    check("a change in a subsystem's directory with no overview of its own makes the system's overview due, and its "
+          "command leaves out the subsystem directories with overviews of their own",
+          system_line.startswith("overview refresh due: general-tools — 1 commit(s) under nc-systems/general-tools/ "
+                                 "since the commit its overview was checked against")
+          and "':(exclude)nc-systems/general-tools/walk-me-through/'" in system_line
+          and "':(exclude)nc-systems/general-tools/explain/'" not in system_line, repr(due))
+
+    commit({walk: overview("Walk", "Walks.", explain_moved), tools: overview("General tools", "Tools.", explain_moved)},
            "both refreshed")
     publish()
     check("refreshed overviews are not due", due_lines() == {}, repr(due_lines()))
     added = commit({wiki + "nedschorus-general-tools-explain-architecture-overview.md":
-                    overview("Explain", "Explains.", moved)}, "the explain subsystem gets an overview")
+                    overview("Explain", "Explains.", explain_moved)}, "the explain subsystem gets an overview")
     main = publish()
     due = due_lines()
     system_line = due.get("overview refresh due: general-tools", "")
