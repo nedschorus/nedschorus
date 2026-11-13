@@ -22,17 +22,14 @@ PRAGMA integrity_check:
     and older ones deleted;
   - when the check fails, the older copies stay as they are, the copy is
     renamed to end in .failed-integrity-check, and the program prints the
-    check's output, writes it as a user-alert and exits 1.
+    check's output, writes the same text as a user-alert through
+    nc-systems/general-tools/user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py,
+    because cron appends this program's output to a log no one reads, and
+    exits 1.
 
-Any other failure, such as a database that cannot be opened, writes a user-alert
-naming the error, then ends with Python's traceback and exit 1. A user-alert is
-written through
-nc-systems/general-tools/user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py,
-because cron appends this program's output to a log no one reads. When the
-user-alert cannot be written either, both tracebacks go to that log.
-
-Exit codes: 0 a copy was made and passed its check; 1 the copy failed its check,
-or any other failure.
+Exit codes: 0 a copy was made and passed its check; 1 the copy failed its check;
+any other failure, such as a database that cannot be opened, ends with Python's
+traceback and exit 1.
 """
 
 import argparse
@@ -68,10 +65,6 @@ BACKUP_COPY_FAILED_INTEGRITY_CHECK_USER_ALERT_TITLE = "The nightly backup copy o
 BACKUP_COPY_FAILED_INTEGRITY_CHECK_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO = (
     "An agent on ned-box can follow the 'What to do' steps in the alert text. If the database itself "
     "fails its check, only the user can decide on a restore.")
-NC_SHARED_DATABASE_NIGHTLY_BACKUP_STOPPED_BY_AN_ERROR_USER_ALERT_TITLE = "The nightly backup of the nc-shared-database on ned-box failed, so no new copy was kept"
-NC_SHARED_DATABASE_NIGHTLY_BACKUP_STOPPED_BY_AN_ERROR_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO = (
-    f"An agent on ned-box can run python3 {PROGRAM} by hand, read the error it prints, and fix its cause; "
-    "until then each night's run fails the same way and the newest backup copy grows older.")
 
 
 def integrity_check(connection):
@@ -83,21 +76,6 @@ def main(argv=None):
     parser.add_argument("--database", default=str(service.NC_SHARED_DATABASE_FILE_PATH))
     parser.add_argument("--backup-directory", default=str(BACKUP_DIRECTORY))
     arguments = parser.parse_args(argv)
-    try:
-        return back_up_and_check(arguments)
-    except Exception as error:
-        database = Path(arguments.database)
-        user_alerts.user_alert_write_to_pending(
-            NC_SHARED_DATABASE_NIGHTLY_BACKUP_STOPPED_BY_AN_ERROR_USER_ALERT_TITLE,
-            f"{PROGRAM} stopped with {error!r} while backing up {database} into "
-            f"{arguments.backup_directory}. The database file "
-            f"{'exists' if database.exists() else 'does not exist'}. The traceback is in "
-            f"/home/nedlern/.claude/nc-shared-database-nightly-backup-with-integrity-check.log on ned-box.",
-            NC_SHARED_DATABASE_NIGHTLY_BACKUP_STOPPED_BY_AN_ERROR_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO)
-        raise
-
-
-def back_up_and_check(arguments):
     backup_directory = Path(arguments.backup_directory)
     backup_directory.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

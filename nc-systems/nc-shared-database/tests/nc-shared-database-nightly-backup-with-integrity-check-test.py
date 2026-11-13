@@ -7,7 +7,7 @@ fails its integrity check, which is injected because SQLite's backup does not
 make one, with the check command its message prints run as printed, an event
 stored between the backup and the read of the copy's highest sequence number,
 and a database that does not exist. HOME points into the temporary directory,
-so the user-alerts the two failures write never reach the user's real
+so the user-alert the failed integrity check writes never reaches the user's real
 user-alerts directory.
 
 Run: python3 nc-systems/nc-shared-database/tests/nc-shared-database-nightly-backup-with-integrity-check-test.py
@@ -169,13 +169,5 @@ with tempfile.TemporaryDirectory() as scratch:
         raised = error
     check("a database that does not exist is an error, and no empty database is made",
           raised is not None and not missing.exists(), raised)
-    alerts = pending_user_alerts()
-    check("a database that cannot be opened writes one user-alert naming the database, the error "
-          "and that the file does not exist",
-          len(alerts) == 1 and alerts[0]["title"] == backup.NC_SHARED_DATABASE_NIGHTLY_BACKUP_STOPPED_BY_AN_ERROR_USER_ALERT_TITLE
-          and str(missing) in alerts[0]["alert_text"]
-          and "unable to open database file" in alerts[0]["alert_text"]
-          and "does not exist" in alerts[0]["alert_text"]
-          and alerts[0]["action"] == backup.NC_SHARED_DATABASE_NIGHTLY_BACKUP_STOPPED_BY_AN_ERROR_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO, alerts)
 
 raise SystemExit(1 if failures else 0)
