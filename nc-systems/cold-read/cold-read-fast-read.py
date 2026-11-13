@@ -135,9 +135,27 @@ a `prompt_file=` field naming that temporary file; its basename
 says where the text came from. The template is the user's own text:
 .claude/skills/cold-read/prompts/fast-clarify-prompt.md as he walked and ruled
 it, landed by PR #274 on 2026-09-07, copied here verbatim. A change to the
-instructions is a one-hunk change to that one constant; nothing else in this
-file knows what the text says. The prompt file under the skill is not read by
-this program, so the two are kept in step by hand.
+instructions is a one-hunk change to that one constant; outside it, this file
+knows only the two placeholders it fills itself (see THE EDIT). The prompt
+file under the skill is not read by this program, so the two are kept in step
+by hand.
+
+THE EDIT. The template's placeholders {CHANGED_SENTENCE_IDS} and
+{REMOVED_TEXT} tell the reviewer what the edit changed, so it can label each
+finding #edit or #kept_text. The edit is the cold-read-target against its own
+path at `git merge-base HEAD origin/main` in the checkout that holds it,
+compared unit by unit: a unit is what one sentence id covers, with its
+heading hashes, list marker or table pipe, the lines a wrapped sentence
+continues on, and any following line with no id of its own, such as a table's
+separator row. Prose units are compared with whitespace collapsed, code
+blocks exactly, and each unit of the base matches at most one unit of the
+cold-read-target, so a duplicated sentence is still an addition. Both
+placeholders become `none`, and the reviewer gives no labels, for a file git
+does not track, such as a walk draft; for a document absent at that commit,
+such as one new or renamed on its branch; and for one identical to that
+version. When a git command fails, the read stops before it creates a record
+or launches a cell, with FAILED on stdout: telling the reviewer that nothing
+changed would be false.
 
 AN EDIT DURING THE READ IS NAMED, NOT HIDDEN. The cold-read-target's sha256
 is taken just before the reviewer is given its copy and again when the report
@@ -214,10 +232,12 @@ its own, so a signal to the read's process group does not reach it.
 from __future__ import annotations
 
 import argparse
+import collections
 import datetime
 import hashlib
 import os
 import importlib.util
+import json
 import pathlib
 import re
 import shlex
@@ -295,7 +315,8 @@ EMBEDDED_PROMPT_FILE_NAME = "cold-read-fast-read-embedded-fast-clarify-prompt.md
 
 # The user's text (see the docstring): .claude/skills/cold-read/prompts/fast-clarify-prompt.md,
 # verbatim. {TARGET_PATH} and {REPORT_PATH} are substituted by the
-# cold-read-cell launcher.
+# cold-read-cell launcher; {CHANGED_SENTENCE_IDS} and {REMOVED_TEXT} by
+# fast_clarify_prompt_with_edit_placeholders_filled.
 FAST_CLARIFY_PROMPT_TEMPLATE = """\
 Read {TARGET_PATH} in full, including any YAML frontmatter, and answer three questions about it, in three sections, in the order below. Before the documents, read `CLAUDE.md` at the repository's root and the project glossary at `docs/nedschorus-wiki/nedschorus-glossary.md`: every agent that acts on the documents has read both. For a term the project glossary does not list, look in the system glossary it names, as `CLAUDE.md` says. Your context is deliberately minimal — what your runtime already loaded, those files, the document or documents under review, and what the documents reference, which you follow as far as you need to understand them, the way a reader would. A reference is a repository path; a bare file name that matches exactly one file in the repository, which you may search the repository for; or a web page they link to, GitHub issue and pull request pages included. A bare file name that matches no file or several is reported, not guessed at. Nothing else: do not go looking beyond what the documents reference. Report findings only about the document or documents under review, not about what you read along the way. Never open a credential file, even when the document names it: a `.token` file, anything under `~/.config/nedschorus/` or `~/.ssh/`, a program's login file, a keychain item, or a `.env` file. That limit is the point, because {TARGET_PATH} must be usable by a future agent who has only this info. {TARGET_PATH} is read-only: do not edit it or anything else in the checkout. The one file you create is your report. If {TARGET_PATH} contains multiple documents, treat them like chapters of one book: any one of them can define or explain what the others rely on, and they should be consistent amongst themselves; repetition is fine, gaps or inconsistencies are not. Read all of them, then answer the 3 questions for each document in the report.
 
@@ -319,6 +340,8 @@ BE CONCISE: for each issue, quote the exact phrase and then a sentence naming th
 ## Question 3: What it does not cover that it implies it should
 
 The text explains something or tells its reader what to do. Find the gaps within its logic, situations it covers incompletely, likely cases or states that are not covered, or are covered in conflicting ways. Take each rule, instruction, case, or definition the document states, and ask what a reader needs to know that is not explained — a boundary value falling between two cases, a state the document's own machinery could reach but never names, a step with no stopping point, a failure the text neither handles nor rules out. BE CONCISE here too: for each gap, quote the relevant text and describe its gap. Ask this only of what {TARGET_PATH} sets out to cover; a subject it never takes up is not a gap.
+
+Sentences the edit added or changed: {CHANGED_SENTENCE_IDS}. Text the edit removed or replaced, which {TARGET_PATH} no longer holds: {REMOVED_TEXT}. When either of these names something, {TARGET_PATH} is an edit of a document on main. Begin each item in Questions 2 and 3 with one label. `#edit`: the item is about a sentence the edit added or changed, a conflict between such a sentence and the rest of the document, or a gap that the removed or replaced text leaves. `#kept_text`: the item is about sentences the edit did not change, and the edit did not cause it; end the item by saying whether the document already records the problem, citing where, such as "open question 6", or with "not recorded". When both say none, the document is read whole: give no labels.
 
 Number the items in sections 2 and 3 separately, ORDERED MOST IMPORTANT FIRST — the issue most likely to stop a fresh-reader leads its section. If there are no issues, say "No issues".
 
@@ -376,6 +399,9 @@ WHAT_SHOULD_BE_CODE_QUESTION_LAUNCHER_OUTPUT_SCRATCH_FILE_NAME = (
 COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60
 
 PROGRAM = "cold-read-fast-read"
+CHANGED_SENTENCE_IDS_PLACEHOLDER = "{CHANGED_SENTENCE_IDS}"
+REMOVED_TEXT_PLACEHOLDER = "{REMOVED_TEXT}"
+NOTHING_IN_THE_EDIT = "none"
 WALK_DRAFT_SUFFIX = "-draft.md"
 # Both endings are the walk-me-through skill's to name; this program only
 # follows them, and nc-systems/skills/walk-me-through/tests/walk-file-endings-match-the-skill-test.py fails
@@ -919,8 +945,13 @@ def strip_sentence_ids(text: str) -> str:
     return re.sub(r" \[s\d+\]$", "", text, flags=re.MULTILINE)
 
 
-def sentence_id_markup(text: str):
+def sentence_id_markup(text: str, units: dict = None):
     """Return (the marked copy, {id: original sentence}).
+
+    When `units` is given, it is filled with {id: comparison text} for the
+    edit comparison: what the id covers, with its line's markup, its wrapped
+    continuation and any following line that has no id of its own; prose
+    with whitespace collapsed, a code block exactly.
 
     Every line of the input survives in the output. Ids are inserted after a
     heading's hashes, after a list item's marker, after a table row's opening
@@ -940,26 +971,39 @@ def sentence_id_markup(text: str):
     index = 0
     in_frontmatter = bool(lines) and lines[0].strip() == "---"
     continues_previous = False
+    unit_pieces = {}
+    code_units = set()
 
-    def take(sentence: str):
+    def take(sentence: str, unit_text: str = None, code: bool = False):
         """The id marker for this sentence, or None when there is nothing to
-        restate; a caller that gets None emits the line unchanged."""
+        restate; a caller that gets None emits the line unchanged. The
+        sentence's unit starts as `unit_text`, or the sentence itself; text
+        with no id of its own joins the last unit."""
         nonlocal counter
         if not carries_words(sentence):
+            join_last_unit(unit_text if unit_text is not None else sentence)
             return None
         counter += 1
         name = f"s{counter}"
         sentences[name] = sentence.strip()
+        unit_pieces[name] = [unit_text if unit_text is not None else sentence]
+        if code:
+            code_units.add(name)
         return f"[{name}]"
 
-    def mark_prose(content: str, already_open: bool) -> str:
+    def join_last_unit(piece: str):
+        if unit_pieces:
+            unit_pieces[next(reversed(unit_pieces))].append(piece)
+
+    def mark_prose(content: str, already_open: bool, prefix: str = "") -> str:
         """Insert an id before each sentence of one line's content."""
         out = []
         for position, piece in enumerate(split_into_sentences(content)):
             if position == 0 and already_open:
+                join_last_unit(piece)
                 out.append(piece)
                 continue
-            marker = take(piece)
+            marker = take(piece, prefix + piece if position == 0 else None)
             if marker is None:
                 out.append(piece)
                 continue
@@ -985,7 +1029,7 @@ def sentence_id_markup(text: str):
                 marked.append(line)
             else:
                 field = FRONTMATTER_FIELD_PATTERN.match(line)
-                marker = take(field.group(2)) if field else None
+                marker = take(field.group(2), line) if field else None
                 marked.append(f"{field.group(1)}{marker} {field.group(2)}"
                               if marker else line)
             index += 1
@@ -996,7 +1040,7 @@ def sentence_id_markup(text: str):
             while closing < len(lines) and not CODE_FENCE_PATTERN.match(lines[closing]):
                 closing += 1
             block = lines[index:closing + 1]
-            marker = take(chr(10).join(block))
+            marker = take(chr(10).join(block), code=True)
             marked.append(line if marker is None else f"{line} {marker}")
             marked.extend(block[1:])
             index = closing + 1
@@ -1012,12 +1056,12 @@ def sentence_id_markup(text: str):
         heading = HEADING_PATTERN.match(line)
         table_row = TABLE_ROW_PATTERN.match(line)
         if heading:
-            marker = take(heading.group(2))
+            marker = take(heading.group(2), line)
             marked.append(line if marker is None
                           else f"{heading.group(1)}{marker} {heading.group(2)}")
             continues_previous = False
         elif table_row:
-            marker = take(table_row.group(2))
+            marker = take(table_row.group(2), line)
             marked.append(line if marker is None
                           else f"{table_row.group(1)}{marker} {table_row.group(2)}")
             continues_previous = False
@@ -1026,10 +1070,14 @@ def sentence_id_markup(text: str):
             prefix = prefix_match.group(1) if prefix_match else ""
             content = prefix_match.group(2) if prefix_match else line
             open_here = continues_previous and not prefix_match
-            marked.append(prefix + mark_prose(content, open_here))
+            marked.append(prefix + mark_prose(content, open_here, prefix))
             continues_previous = ends_open(content)
         index += 1
 
+    if units is not None:
+        for name, pieces in unit_pieces.items():
+            joined = "\n".join(pieces)
+            units[name] = joined if name in code_units else " ".join(joined.split())
     return "\n".join(marked), sentences
 
 
@@ -1203,6 +1251,80 @@ def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> None:
     frozen = record_names.frozen_target_path(target, record_dir)
     frozen.parent.mkdir(parents=True, exist_ok=True)
     frozen.write_bytes(target.read_bytes())
+
+
+class MergeBaseWithOriginMainTextNotFound(Exception):
+    """A git command failed while finding the cold-read-target's text at
+    `git merge-base HEAD origin/main`."""
+
+    def __init__(self, message: str, checkout_root: pathlib.Path):
+        super().__init__(message)
+        self.checkout_root = checkout_root
+
+
+def cold_read_target_text_at_merge_base_with_origin_main_or_none(target: pathlib.Path):
+    """The cold-read-target's text at `git merge-base HEAD origin/main` in the
+    checkout holding it, or None when git does not track it or that commit
+    does not hold it. Raises MergeBaseWithOriginMainTextNotFound when a git
+    command fails."""
+    root = checkout_root_holding(target)
+    try:
+        relative = target.relative_to(root).as_posix()
+    except ValueError:
+        return None
+    environment = git_redirecting_removal.environment_without_git_redirecting_variables()
+    environment["LC_ALL"] = "C"
+
+    def git_stdout(*arguments: str) -> str:
+        completed = subprocess.run(
+            ["git", "-C", str(root), *arguments], capture_output=True,
+            stdin=subprocess.DEVNULL, text=True, env=environment, check=False)
+        if completed.returncode != 0:
+            raise MergeBaseWithOriginMainTextNotFound(
+                f"git {' '.join(arguments)} failed in {root} "
+                f"(exit {completed.returncode}): {completed.stderr.strip() or 'no message'}",
+                root)
+        return completed.stdout
+
+    if not git_stdout("ls-files", "--", relative).strip():
+        return None
+    commit = git_stdout("merge-base", "HEAD", "origin/main").strip()
+    if not git_stdout("ls-tree", "--name-only", commit, "--", relative).strip():
+        return None
+    return git_stdout("show", f"{commit}:{relative}")
+
+
+def cold_read_target_compare_with_base_text_returning_added_or_changed_sentence_ids_and_removed_text_units(text: str, base_text: str):
+    """(the ids in `text` the edit added or changed, the units of `base_text`
+    it removed or replaced). Each base unit matches at most one unit of
+    `text`, so a moved unit is unchanged and a duplicated one is added."""
+    units, base_units = {}, {}
+    sentence_id_markup(text, units)
+    sentence_id_markup(base_text, base_units)
+    unmatched = collections.Counter(base_units.values())
+    changed = []
+    for name, unit in units.items():
+        if unmatched[unit] > 0:
+            unmatched[unit] -= 1
+        else:
+            changed.append(name)
+    removed = []
+    for unit in base_units.values():
+        if unmatched[unit] > 0:
+            unmatched[unit] -= 1
+            removed.append(unit)
+    return changed, removed
+
+
+def fast_clarify_prompt_with_edit_placeholders_filled(changed: list, removed: list) -> str:
+    """FAST_CLARIFY_PROMPT_TEMPLATE with the edit's two placeholders filled;
+    the launcher fills {TARGET_PATH} and {REPORT_PATH}."""
+    return (FAST_CLARIFY_PROMPT_TEMPLATE
+            .replace(CHANGED_SENTENCE_IDS_PLACEHOLDER,
+                     ", ".join(f"[{name}]" for name in changed) or NOTHING_IN_THE_EDIT)
+            .replace(REMOVED_TEXT_PLACEHOLDER,
+                     "; ".join(json.dumps(unit, ensure_ascii=False) for unit in removed)
+                     or NOTHING_IN_THE_EDIT))
 
 
 def ship_record(record_dir: pathlib.Path) -> str:
@@ -1460,7 +1582,8 @@ def fast_read_report_finish_and_print_path(
     *, report: pathlib.Path, cell_report: pathlib.Path, target: pathlib.Path, sentences: dict,
     marked_copy_kept, full_run_class_name, bare_references, launch_sha256: str,
     on_records_route: bool, backup_line: str,
-    question_4_cell: WhatShouldBeCodeQuestionCell, quota_line: str = "",
+    question_4_cell: WhatShouldBeCodeQuestionCell, edit_changed_ids: list,
+    edit_removed_units: list, quota_line: str = "",
 ) -> int:
     """Turn the cell's report, cell_report, into the read's, written once at
     report: wait for the Question 4 cell and add its section, attach the sentences, the
@@ -1475,6 +1598,10 @@ def fast_read_report_finish_and_print_path(
     attached = attach_sentences_and_coverage(
         cell_report.read_text(encoding="utf-8"), sentences, target,
         marked_copy_kept, full_run_class_name, question_4_section)
+    if edit_changed_ids or edit_removed_units:
+        attached += (f"- The reviewer was told what the edit did: sentences added or "
+                     f"changed, {len(edit_changed_ids)}; text removed or replaced, "
+                     f"{len(edit_removed_units)}.\n")
     if bare_references is not None:
         attached += bare_references_section(bare_references)
     changed_line = target_changed_during_read_line(target, launch_sha256, marked_copy_kept)
@@ -1526,7 +1653,20 @@ def main() -> int:
 
     try:
         full_run_class_name = full_run_class_of_target(target)
+        # Before the report path, which creates and claims the record: a
+        # comparison that fails leaves no record behind.
+        base_text = cold_read_target_text_at_merge_base_with_origin_main_or_none(target)
         report = fast_read_report_path_for_target(target, record_clock_reading())
+    except MergeBaseWithOriginMainTextNotFound as error:
+        print(f"{PROGRAM}: no fast read ran and no report was written: the read tells "
+              f"the reviewer what the edit changed by comparing the cold-read-target "
+              f"with its text at `git merge-base HEAD origin/main`, and {error}\n"
+              f"If git's words above name origin/main or a merge base: run "
+              f"`git -C {error.checkout_root} fetch origin main`, then run this read again.\n"
+              f"Otherwise: give git's words above to the user, or, if you are a subagent, "
+              f"to the agent that dispatched you.", file=sys.stderr)
+        print(f"FAILED (no fast read ran: git could not find what the edit changed: {error})")
+        return 1
     except NedBoxWorktreeUnreadableThroughMacMount as error:
         return cold_read_fast_read_run_on_ned_box_over_ssh(error.ned_box_target)
     except CheckoutRootUnreadable as error:
@@ -1553,9 +1693,15 @@ def main() -> int:
     bare_references = (None if on_records_route
                        else bare_references_in(target.read_text(encoding="utf-8")))
 
+    edit_changed_ids, edit_removed_units = (
+        ([], []) if base_text is None
+        else cold_read_target_compare_with_base_text_returning_added_or_changed_sentence_ids_and_removed_text_units(
+            target.read_text(encoding="utf-8"), base_text))
+
     with tempfile.TemporaryDirectory(prefix="cold-read-fast-read-") as scratch:
         prompt_file = pathlib.Path(scratch) / EMBEDDED_PROMPT_FILE_NAME
-        prompt_file.write_text(FAST_CLARIFY_PROMPT_TEMPLATE, encoding="utf-8")
+        prompt_file.write_text(fast_clarify_prompt_with_edit_placeholders_filled(
+            edit_changed_ids, edit_removed_units), encoding="utf-8")
         # What the reviewer actually reads: the cold-read-target with an id on
         # every sentence. On the records route it is kept beside the report,
         # as the evidence of what was put in front of the reviewer; on the
@@ -1582,7 +1728,8 @@ def main() -> int:
             marked_copy_kept=marked_copy if on_records_route else None,
             full_run_class_name=full_run_class_name, bare_references=bare_references,
             launch_sha256=launch_sha256, on_records_route=on_records_route,
-            question_4_cell=question_4_cell)
+            question_4_cell=question_4_cell, edit_changed_ids=edit_changed_ids,
+            edit_removed_units=edit_removed_units)
         try:
             quota_error_line = ""
             for attempt in range(1, FAST_READ_ATTEMPTS + 1):  # pragma: no mutate, FAST_READ_ATTEMPTS is even, so | 1 gives + 1
