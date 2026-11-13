@@ -43,7 +43,7 @@ transcript when the saved file is missing or unreadable.
 
 It does not check afterwards that Remote Control came back. A failure it meets
 in one agent-seat, such as a session record it cannot read or a tmux command
-that fails or times out, is written to DECISIONS_FILE_NAME in LOG_DIRECTORY and
+that fails or times out, is written to REMOTE_CONTROL_RECONNECT_WATCHER_DECISIONS_FILE_NAME in LOG_DIRECTORY and
 printed to stderr; the run goes on to the next agent-seat and, once every
 agent-seat is checked, exits 1. The first time a failure is met, it is also
 shown to the user in a terminal window on his Mac running --show-notice,
@@ -53,13 +53,13 @@ time" counts once per agent-seat, claude process and kind of failure; once per
 disconnect line for a failed typing; and once per error text for a failure that
 stops the whole run. When the notice cannot be written or the window cannot be
 opened, that is printed to stderr too, and a later run that meets the same
-failure tries the notice again. Each typing is also written to DECISIONS_FILE_NAME, which is what
+failure tries the notice again. Each typing is also written to REMOTE_CONTROL_RECONNECT_WATCHER_DECISIONS_FILE_NAME, which is what
 keeps a later run from typing again for the same disconnect line. A log directory may also hold
-DECISIONS_FILE_NAME_BEFORE_PROGRAM_PREFIX, the same log under its earlier name; each run reads
-it too, and writes only DECISIONS_FILE_NAME.
+REMOTE_CONTROL_RECONNECT_WATCHER_DECISIONS_FILE_ITS_NAME_BEFORE_PROGRAM_PREFIX_STILL_READ, the same log under its earlier name; each run reads
+it too, and writes only REMOTE_CONTROL_RECONNECT_WATCHER_DECISIONS_FILE_NAME.
 
 On ned-box the log directory is LOG_DIRECTORY, in the log-store. On the Mac it
-is MAC_LOG_DIRECTORY, on the Mac's own disk: DECISIONS_FILE_NAME there is also what
+is MAC_LOG_DIRECTORY, on the Mac's own disk: REMOTE_CONTROL_RECONNECT_WATCHER_DECISIONS_FILE_NAME there is also what
 keeps a later run from typing twice, and a run each minute must neither hang
 on nor write under the Mac's network mount of ned-box's home when that mount
 is hung or missing. scripts/transcript-mirror-to-log-store.py copies the
@@ -145,13 +145,13 @@ MAC_TMUX_DIRECTORIES_CRON_PATH_LACKS = ("/opt/homebrew/bin", "/usr/local/bin")
 # Longer than the opener's own ssh time limit, so the opener reports its timeout itself.
 MAC_WINDOW_OPENER_TIMEOUT_SECONDS = 90
 PANE_IN_MODE = "1"
-DECISIONS_FILE_NAME = "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher-decisions.jsonl"
-DECISIONS_FILE_NAME_BEFORE_PROGRAM_PREFIX = "decisions.jsonl"
+REMOTE_CONTROL_RECONNECT_WATCHER_DECISIONS_FILE_NAME = "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher-decisions.jsonl"
+REMOTE_CONTROL_RECONNECT_WATCHER_DECISIONS_FILE_ITS_NAME_BEFORE_PROGRAM_PREFIX_STILL_READ = "decisions.jsonl"
 TRANSCRIPT_READ_POSITIONS_FILE_NAME = "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher-transcript-read-positions.json"
-REPORTED_RUN_FAILURES_FILE_NAME = "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher-reported-run-failures.txt"
-RUN_LOCK_FILE_NAME = "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.lock"
+REMOTE_CONTROL_RECONNECT_WATCHER_RUN_FAILURES_REPORTED_TO_USER_FILE_NAME = "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher-reported-run-failures.txt"
+REMOTE_CONTROL_RECONNECT_WATCHER_RUN_LOCK_FILE_NAME = "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.lock"
 WHOLE_READ_TYPES_NOTHING_TWICE = ("A whole read types nothing twice, "
-                                  f"because {DECISIONS_FILE_NAME} records each disconnect already typed for.")
+                                  f"because {REMOTE_CONTROL_RECONNECT_WATCHER_DECISIONS_FILE_NAME} records each disconnect already typed for.")
 # Enough to tell a transcript rewritten in place from the one an earlier run read.
 BYTES_COMPARED_BEFORE_SAVED_OFFSET = 4096
 CRON_LOG = Path.home() / ".claude" / f"{PROGRAM}.log"
@@ -192,9 +192,9 @@ class Run:
 
     def __init__(self, log_directory: Path):
         self.log_directory = log_directory
-        self.decisions_path = log_directory / DECISIONS_FILE_NAME
+        self.decisions_path = log_directory / REMOTE_CONTROL_RECONNECT_WATCHER_DECISIONS_FILE_NAME
         text = ""
-        for path in (log_directory / DECISIONS_FILE_NAME_BEFORE_PROGRAM_PREFIX, self.decisions_path):
+        for path in (log_directory / REMOTE_CONTROL_RECONNECT_WATCHER_DECISIONS_FILE_ITS_NAME_BEFORE_PROGRAM_PREFIX_STILL_READ, self.decisions_path):
             try:
                 text += path.read_text(encoding="utf-8")
             except FileNotFoundError:
@@ -232,7 +232,7 @@ def notice_show(log_directory: Path, seat, kind, template, **fields) -> bool:
     path = log_directory / "notices" / f"{stamp}-{seat}-{kind}.txt"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(template.format(seat=seat, record=log_directory / DECISIONS_FILE_NAME,
+        path.write_text(template.format(seat=seat, record=log_directory / REMOTE_CONTROL_RECONNECT_WATCHER_DECISIONS_FILE_NAME,
                                         machine=this_machine_name(), **fields), encoding="utf-8")
     except OSError as error:
         print(f"{PROGRAM}: the notice to the user about {seat} was not written ({error}). If the failure "
@@ -447,7 +447,7 @@ def transcript_read_positions_save(log_directory: Path, positions) -> bool:
     except OSError as error:
         print(f"{PROGRAM}: the read positions were not saved to {path} ({error}), so the next run reads "
               "every transcript whole again. Every run still checks every agent-seat, then exits 1 until a save "
-              f"succeeds. The one exception is a run that starts while an earlier run still holds {log_directory / RUN_LOCK_FILE_NAME}: "
+              f"succeeds. The one exception is a run that starts while an earlier run still holds {log_directory / REMOTE_CONTROL_RECONNECT_WATCHER_RUN_LOCK_FILE_NAME}: "
               "that new run exits 0 without saving.\n"
               f"{WHOLE_READ_TYPES_NOTHING_TWICE}\n"
               f"When the error says No space left on device: free space on the disk that holds {log_directory}.\n"
@@ -558,7 +558,7 @@ def report_typing_failure(run: Run, seat, event, disconnect, problem):
 
 def report_run_failure(log_directory: Path, error_text):
     """Show the user a notice the first time this error is met; the scheduled job's log keeps every one."""
-    reported_path = log_directory / REPORTED_RUN_FAILURES_FILE_NAME
+    reported_path = log_directory / REMOTE_CONTROL_RECONNECT_WATCHER_RUN_FAILURES_REPORTED_TO_USER_FILE_NAME
     try:
         reported = reported_path.read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
@@ -581,7 +581,7 @@ def run_once(environment) -> int:
     process_table_directory = Path(environment.get(PROCESS_TABLE_DIRECTORY_ENVIRONMENT_VARIABLE)
                                    or PROCESS_TABLE_DIRECTORY)
     log_directory.mkdir(parents=True, exist_ok=True)
-    with (log_directory / RUN_LOCK_FILE_NAME).open("w") as lock_stream:
+    with (log_directory / REMOTE_CONTROL_RECONNECT_WATCHER_RUN_LOCK_FILE_NAME).open("w") as lock_stream:
         try:
             fcntl.flock(lock_stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
