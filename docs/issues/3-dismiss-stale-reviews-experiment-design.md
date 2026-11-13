@@ -1,3 +1,7 @@
+---
+supports-issues: 3
+---
+
 # Experiment design — what enabling `dismiss_stale_reviews` on main would do
 
 Issue: issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3) ·
