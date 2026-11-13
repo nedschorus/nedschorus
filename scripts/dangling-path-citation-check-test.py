@@ -193,6 +193,10 @@ A backticked path that is absent: `scripts/absent-program.py`.
 
 A backticked path that is present: `scripts/already-here.py`.
 
+An absent path cited with a line range: `scripts/absent-ranged.py:40-44`.
+
+A present path cited with a line range: `scripts/already-here.py:40-44`.
+
 A bare name with no directory: `dispositions.md`, which the user ruled on
 2026-09-17 is not checked at all.
 
@@ -205,6 +209,10 @@ scripts/inside-a-fence.py
           "scripts/absent-program.py" in out, out)
     check("a present backticked path is not reported",
           "already-here" not in out, out)
+    check("an absent path cited with a line range is reported",
+          "scripts/absent-ranged.py" in out, out)
+    check("a present path cited with a line range is not reported",
+          "already-here.py:40" not in out, out)
     check("a bare name with no directory is not reported (user-ruled 2026-09-17)",
           "dispositions.md" not in out, out)
     check("a path inside a code fence is not reported",
