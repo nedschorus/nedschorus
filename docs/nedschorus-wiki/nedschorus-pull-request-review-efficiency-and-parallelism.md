@@ -53,7 +53,7 @@ merge-lane-2 starts these for every open pull request together, so the slowest o
 - the Claude reviewer, for each pull request whose set of reviewers includes one;
 - the Codex review, for each pull request that is not prose only, run through `scripts/merge-lane-code-review-codex-cell-run-on-pull-request-head.py`, a step of the per-pull-request program the head test runs bullet below names; the Codex reviews of different pull requests run side by side, and within one pull request the head test run starts after its Codex review: on ned-box on 2026-10-02, seven Codex reviews ran together in about nine minutes, through the helper that program later replaced.
 
-Meanwhile authors run the fix-rounds of other pull requests; an author's own fix-round starts only after merge-lane-2 posts a changes-requested review on that pull request, as `CLAUDE.md` says. The author dispatches a forked subagent for the fix-round, in a git worktree of its own, so the author keeps working in the author's own checkout while the subagent fixes and pushes.
+Meanwhile authors run the fix-rounds of other pull requests; an author's own fix-round starts only after merge-lane-2 posts a changes-requested review on that pull request, as `CLAUDE.md` says. The author dispatches a forked subagent for the fix-round, without Claude Code's worktree isolation, to work in the pull request's own topic-worktree, so the author keeps working in the author's own checkout while the subagent fixes and pushes.
 
 Three things wait their turn:
 

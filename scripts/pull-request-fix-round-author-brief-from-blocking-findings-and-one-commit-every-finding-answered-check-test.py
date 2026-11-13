@@ -42,12 +42,20 @@ CARRYING_OUT_USER_RULING_PARAGRAPH = (
     "When a finding asks you to change a file the instruction-file guard protects, and the fix only makes the "
     "file do what a ruling of the user's already says, the change is a user-approved-change: before each edit, "
     "write the ruling's words, quoted from the walk-minutes item or the agent-session where he gave it, with "
-    "its time, into the `.walk-approved` marker file at the root of the checkout your agent-session started in, "
-    "which the instruction-file guard reads it from, not the topic-worktree's: the root git rev-parse --show-toplevel "
-    "prints when run without the cd this brief puts before other commands; and cite the ruling in the "
+    "its time, into {marker}; and cite the ruling in the "
     "commit message. A change the guard's refusal lets through without a ruling, such as an obvious-error-fix, "
     "goes as that refusal says. Leave out any other change to such a file, go on with the other findings, and "
     "name that change in your report to the agent that dispatched you.")
+MARKER_AT_PATH = ("the `.walk-approved` marker file {path}, where the instruction-file guard reads it for your "
+                  "agent-session")
+MARKER_FOUND_BY_HAND = (
+    "the `.walk-approved` marker file at the root of the checkout your agent-session started in, "
+    "which the instruction-file guard reads it from, not the topic-worktree's: the root git rev-parse --show-toplevel "
+    "prints when run without the cd this brief puts before other commands")
+STEP_5_START = ("5. Fill in the answers file {path}, which this program wrote with a line \"<n>. \" for each finding "
+                "above: after each number, on the same line, write what you fixed, why the finding does not hold, or, "
+                "for a change moved as step 3 says, the new pull request; further lines of an entry may follow. "
+                "Never commit it: ")
 
 FAKE_GH = r'''#!/usr/bin/env python3
 import json, os, sys
@@ -306,7 +314,13 @@ def brief_cases(root, repository, base, frozen_head):
           and "A non-blocking note" not in out and "1. hook.py:12" in out and "2. test.py (" in out, out)
     in_worktree = f"cd {repository} && "
     check("brief: step 5 names the answers file at the root of the pull request's topic-worktree, by its whole path",
-          f"5. Write the answers file {repository / ANSWERS_NAME}, replacing any earlier round's file there," in out, out)
+          STEP_5_START.format(path=repository / ANSWERS_NAME) in out, out)
+    check("brief: writes the answers file with a line \"<n>. \" per finding and nothing else",
+          (repository / ANSWERS_NAME).read_text() == "1. \n2. \n", (repository / ANSWERS_NAME).read_text())
+    code, check_out, err = run(root, repository, routes_for(frozen_head, [review(commit_id=frozen_head)]), "--check")
+    check("check: the answers file as the brief wrote it, with no answer filled in, refuses with exit 1, naming "
+          "each finding without an entry",
+          code == 1 and "has no entry for finding 1, 2;" in err, err + check_out)
     check("brief: names no path in git's directory, where the write guard refuses the answers file",
           "/.git/" not in out, out)
     check("brief: the check command has no --answers, and starts in the topic-worktree",
@@ -325,16 +339,20 @@ def brief_cases(root, repository, base, frozen_head):
           and "entry that starts \"Moved to pull request \"" in out
           and out.index("3. Change nothing else") < out.index("Moved to pull request")
           < out.index("4. Put every change")
-          and "or, for a change moved as step 3 says, the new pull request." in out
+          and "or, for a change moved as step 3 says, the new pull request;" in out
           and f"{NUMBER} --move-change-to-own-pull-request-cut-new-topic-branch <new topic branch> [<path> ...]" in out
           and f"{NUMBER} --move-change-to-own-pull-request-finish --title <title> --body-file <description file>" in out
           and f"puts you back on {BRANCH}." in out
           and f"run: {in_worktree}python3 scripts/{PROGRAM.name} {NUMBER} --move-change-to-own-pull-request-cut" in out
           and f"run: {in_worktree}python3 scripts/{PROGRAM.name} {NUMBER} --move-change-to-own-pull-request-finish" in out
           and "git switch" not in out.split("3. Change nothing else")[1].split("4. Put every change")[0], out)
+    # This test and the program it runs have the same parent processes, apart from the program's own.
+    marker_path = load_program().instruction_file_guard_walk_approved_marker_file_path_for_nearest_claude_parent_process()
+    paragraph = CARRYING_OUT_USER_RULING_PARAGRAPH.format(
+        marker=MARKER_AT_PATH.format(path=marker_path) if marker_path else MARKER_FOUND_BY_HAND)
     check("brief: rule 2 says a fix that carries out a user ruling in a guarded-file is a user-approved-change",
-          "\n   " + CARRYING_OUT_USER_RULING_PARAGRAPH + "\n3. Change nothing else" in out
-          and out.index("2. Check each finding") < out.index(CARRYING_OUT_USER_RULING_PARAGRAPH), out)
+          "\n   " + paragraph + "\n3. Change nothing else" in out
+          and out.index("2. Check each finding") < out.index(paragraph), out)
     check("brief: a replace answer found during the round stops the subagent, which hands it back to the author",
           "If it reports VERDICT: CONFLICT with ANSWER: replace, stop and tell the agent that dispatched you what "
           f"it printed: that agent runs python3 scripts/{PROGRAM.name} {NUMBER} again" in out
@@ -535,8 +553,9 @@ def brief_cases(root, repository, base, frozen_head):
           code == 1 and "is COMMENTED on commit" in err, err)
 
     code, out, err = run(root, repository, routes_for(base, [review(commit_id=frozen_head)]))
-    check("brief: a head that moved past the reviewed commit refuses with exit 1",
-          code == 1 and "already pushed" in err, err)
+    check("brief: a head that moved past the reviewed commit refuses with exit 1, and with the topic-worktree "
+          "elsewhere names no --check command",
+          code == 1 and "already pushed" in err and "--check" not in err, err)
 
     code, out, err = run(root, repository, routes_for(
         frozen_head, [review(commit_id=frozen_head)], comments=[BLOCKING_COMMENTS[1]]))
@@ -630,6 +649,184 @@ def brief_cases(root, repository, base, frozen_head):
           code == 2 and "could not start gh" in err, err)
 
 
+FAKE_PS = r'''#!/usr/bin/env python3
+import json, os, sys
+processes = json.load(open(os.environ["FAKE_PS_PROCESSES"]))
+process_id = sys.argv[sys.argv.index("-p") + 1]
+if process_id not in processes:
+    sys.exit(1)
+print(processes[process_id])
+'''
+
+FAKE_LSOF = r'''#!/usr/bin/env python3
+import os, sys
+if os.environ.get("FAKE_LSOF_FAIL"):
+    sys.exit(1)
+if os.environ.get("FAKE_LSOF_SLEEP"):
+    import time
+    time.sleep(float(os.environ["FAKE_LSOF_SLEEP"]))
+print("p" + sys.argv[sys.argv.index("-p") + 1])
+print("fcwd")
+print("n" + os.environ["FAKE_LSOF_CWD"])
+'''
+
+
+def fake_linux_process(proc_root, process_id, name, parent, cwd=None):
+    directory = proc_root / str(process_id)
+    directory.mkdir(parents=True)
+    (directory / "comm").write_text(name + "\n")
+    (directory / "stat").write_text(f"{process_id} ({name}) S {parent} 0 0\n")
+    if cwd is not None:
+        (directory / "cwd").symlink_to(cwd)
+
+
+def walk_approved_marker_cases(root, agent_home, made, instruction_file_guard):
+    program = load_program()
+    find = program.instruction_file_guard_walk_approved_marker_file_path_for_nearest_claude_parent_process
+    started_in = agent_home / "started-in"
+    started_in.mkdir()
+    expected = instruction_file_guard.marker_root({"cwd": str(started_in)}, str(made / "CLAUDE.md")) / ".walk-approved"
+    proc_root = root / "fake-proc"
+    fake_linux_process(proc_root, 200, "python3", 150)
+    fake_linux_process(proc_root, 150, "claude", 1, cwd=started_in)
+    fake_linux_process(proc_root, 300, "python3", 1)
+    fake_linux_process(proc_root, 210, "python3", 160)
+    fake_linux_process(proc_root, 160, "claude", 1, cwd=root)
+    fake_linux_process(proc_root, 220, "python3", 170)
+    fake_linux_process(proc_root, 170, "claude", 1, cwd=root / "gone")
+    found = find(200, proc_root, "linux")
+    check("walk-approved marker: on Linux, the marker file is at the root of the checkout the nearest claude "
+          "process runs in, where the instruction-file guard reads it for that agent-session",
+          found == expected == agent_home / ".walk-approved", f"{found} {expected}")
+    check("walk-approved marker: with no claude process among the parents, there is no path",
+          find(300, proc_root, "linux") is None)
+    check("walk-approved marker: a claude process running outside any checkout gives no path",
+          find(210, proc_root, "linux") is None)
+    check("walk-approved marker: a claude process whose working directory cannot be read gives no path",
+          find(220, proc_root, "linux") is None)
+
+    bin_directory = root / "fake-process-tools"
+    bin_directory.mkdir()
+    for name, text in (("ps", FAKE_PS), ("lsof", FAKE_LSOF)):
+        (bin_directory / name).write_text(text)
+        (bin_directory / name).chmod(0o755)
+    (root / "ps-processes.json").write_text(json.dumps({"400": "350 /usr/bin/python3", "350": "1 /opt/bin/claude",
+                                                         "401": "351 /usr/bin/python3"}))
+    saved = dict(os.environ)
+    os.environ.update(PATH=f"{bin_directory}{os.pathsep}{os.environ['PATH']}",
+                      FAKE_PS_PROCESSES=str(root / "ps-processes.json"), FAKE_LSOF_CWD=str(started_in))
+    try:
+        found_with_lsof = find(400, proc_root, "darwin")
+        found_when_ps_fails = find(401, proc_root, "darwin")
+        os.environ["FAKE_LSOF_SLEEP"] = "5"
+        program.LSOF_TIMEOUT_SECONDS = 0.5
+        found_when_lsof_times_out = find(400, proc_root, "darwin")
+        os.environ["FAKE_LSOF_FAIL"] = "1"
+        found_when_lsof_fails = find(400, proc_root, "darwin")
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+    check("walk-approved marker: off Linux, lsof reads the claude process's working directory",
+          found_with_lsof == expected, str(found_with_lsof))
+    check("walk-approved marker: off Linux, a ps that cannot read a parent process gives no path",
+          found_when_ps_fails is None, str(found_when_ps_fails))
+    check("walk-approved marker: off Linux, an lsof that runs past its time limit gives no path",
+          found_when_lsof_times_out is None, str(found_when_lsof_times_out))
+    check("walk-approved marker: off Linux, an lsof that fails gives no path",
+          found_when_lsof_fails is None, str(found_when_lsof_fails))
+
+    check("walk-approved marker: rule 2 names the marker file by its path when it is known",
+          program.fix_round_brief_guarded_file_change_carrying_out_user_ruling_paragraph_compose(expected)
+          == "   " + CARRYING_OUT_USER_RULING_PARAGRAPH.format(marker=MARKER_AT_PATH.format(path=expected)))
+    check("walk-approved marker: rule 2 says how to find the marker file when its path is not known",
+          program.fix_round_brief_guarded_file_change_carrying_out_user_ruling_paragraph_compose(None)
+          == "   " + CARRYING_OUT_USER_RULING_PARAGRAPH.format(marker=MARKER_FOUND_BY_HAND))
+
+
+def stopped_round_cases(root, repository, made, frozen_head, dated_routes, submitted_seconds):
+    """A fix-round subagent stopped in the topic-worktree made, at the frozen-head; dated_routes give the round's
+    review a submitted_at of submitted_seconds."""
+    answers = made / ANSWERS_NAME
+
+    def write_answers(text, seconds_after_review):
+        answers.write_text(text)
+        os.utime(answers, (submitted_seconds + seconds_after_review, submitted_seconds + seconds_after_review))
+
+    fix = commit_file(made, "hook.py", "fixed\n", "the round's fix")
+    write_answers(GOOD_ANSWERS, 60)
+    code, out, err = run(root, repository, dated_routes)
+    finish = f"Otherwise finish the round: run cd {made} && python3 scripts/{PROGRAM.name} {NUMBER} --check, and do what it says."
+    check("stopped round: an unpushed commit on the frozen-head with every answer written refuses the brief, "
+          "exit 1, saying to finish the round with --check, and leaves the answers file as it was",
+          code == 1 and out == ""
+          and f"holds the unpushed commit {fix[:12]} on top of the frozen-head {frozen_head[:12]}, and its answers "
+          f"file {answers} answers every finding of this round, so a fix-round subagent stopped after step 5.\n"
+          "If that subagent is still working there, wait for it to finish.\n" + finish in err
+          and "keep those commits on a branch" not in err and answers.read_text() == GOOD_ANSWERS, err + out)
+    code, check_out, check_err = run(root, made, dated_routes, "--check")
+    check("stopped round: the --check command that refusal names, run where its cd goes, passes and says to push",
+          code == 0 and "Not pushed yet" in check_out, check_out + check_err)
+
+    for text, seconds_after_review, routes, why in (
+            ("1. Fixed.\n", 60, dated_routes, "an answers file missing an entry"),
+            (GOOD_ANSWERS, -60, dated_routes, "an answers file written before the review"),
+            (GOOD_ANSWERS, 60, routes_for(frozen_head, [review(commit_id=frozen_head)]),
+             "a review with no submitted_at")):
+        write_answers(text, seconds_after_review)
+        code, out, err = run(root, repository, routes)
+        check(f"stopped round: an unpushed commit with {why} keeps the refusal that names both ways on",
+              code == 1 and "holds commits that the frozen-head" in err and "stopped after step 5" not in err
+              and answers.read_text() == text, err + out)
+
+    answers.write_bytes(b"1. \xff\n")
+    os.utime(answers, (submitted_seconds + 60, submitted_seconds + 60))
+    code, out, err = run(root, repository, dated_routes)
+    check("stopped round: an answers file that is not text fails the brief with exit 2, naming it",
+          code == 2 and out == "" and f"could not read the answers file {answers}" in err, err + out)
+    answers.unlink()
+    answers.mkdir()
+    os.utime(answers, (submitted_seconds + 60, submitted_seconds + 60))
+    code, out, err = run(root, repository, dated_routes)
+    check("stopped round: an answers file that cannot be read fails the brief with exit 2, naming it",
+          code == 2 and out == "" and f"could not read the answers file {answers}" in err, err + out)
+
+    write_routes = dict(dated_routes)
+    write_routes[PR_VIEW] = {"stdout": json.dumps({"url": URL, "headRefOid": fix, "headRefName": BRANCH})}
+    answers.rmdir()
+    write_answers(GOOD_ANSWERS, 60)
+    code, out, err = run(root, repository, write_routes)
+    sent = ("already pushed.\nIf the fix-round subagent sent merge-lane-2 the message --check prints, wait for "
+            "merge-lane-2's review of the new head, and run this again if it requests changes.\n"
+            f"Otherwise run cd {made} && python3 scripts/{PROGRAM.name} {NUMBER} --check and send merge-lane-2 what it "
+            "prints, with SendMessage.")
+    check("stopped round: a pushed fix-round commit the topic-worktree is at refuses the brief, exit 1, naming "
+          "the --check command that prints merge-lane-2's message",
+          code == 1 and "already pushed" in err and sent in err, err + out)
+    code, check_out, check_err = run(root, made, write_routes, "--check")
+    check("stopped round: that --check command, run where its cd goes, prints the message for merge-lane-2",
+          code == 0 and "Send merge-lane-2 this message with SendMessage" in check_out
+          and f"New head {fix}" in check_out, check_out + check_err)
+
+    git(made, "reset", "-q", "--hard", frozen_head)
+    answers.unlink()
+    answers.mkdir()
+    code, out, err = run(root, repository, dated_routes)
+    check("stopped round: an answers file the brief cannot write fails the brief with exit 2, naming it, with no brief",
+          code == 2 and out == "" and f"could not write the answers file {answers}" in err, err + out)
+    answers.rmdir()
+    code, out, err = run(root, repository, dated_routes)
+    check("stopped round: the brief replaces a file the stopped subagent left with a line per finding",
+          code == 0 and answers.read_text() == "1. \n2. \n", err + out)
+    unignoring = commit_file(made, ".gitignore", "", "a branch whose .gitignore does not name the answers file")
+    unignoring_routes = routes_for(unignoring, [review(commit_id=unignoring)])
+    run(root, repository, unignoring_routes)
+    code, out, err = run(root, repository, unignoring_routes)
+    check("stopped round: on a branch whose .gitignore does not name the answers file, the file the brief wrote "
+          "does not stop the next brief",
+          code == 0 and "untracked files" not in err and answers.read_text() == "1. \n2. \n", err + out)
+    git(made, "reset", "-q", "--hard", frozen_head)
+
+
 def topic_worktree_cases(root, repository, base, frozen_head):
     routes = routes_for(frozen_head, [review(commit_id=frozen_head)])
     creator_calls = root / "creator-calls.jsonl"
@@ -653,7 +850,7 @@ def topic_worktree_cases(root, repository, base, frozen_head):
     check("topic-worktree: the write guard lets a fork whose working directory is a detached agent-home edit a "
           "tracked file in the topic-worktree", run_write_guard(agent_home, str(made / "hook.py")) == 0)
     check("topic-worktree: the write guard lets that fork Write the answers file at the path step 5 names",
-          f"5. Write the answers file {made / ANSWERS_NAME}," in out
+          STEP_5_START.format(path=made / ANSWERS_NAME) in out
           and run_write_guard(agent_home, str(made / ANSWERS_NAME), tool_name="Write") == 0, out)
     instruction_file_guard_specification = importlib.util.spec_from_file_location(
         "instruction_file_guard", WRITE_GUARD.with_name("instruction-file-guard.py"))
@@ -662,7 +859,8 @@ def topic_worktree_cases(root, repository, base, frozen_head):
     check("topic-worktree: the instruction-file guard reads a fork's .walk-approved marker at the root of the "
           "checkout its agent-session started in, as rule 2 of the brief says, not the topic-worktree's",
           instruction_file_guard.marker_root({"cwd": str(agent_home)}, str(made / "CLAUDE.md")) == agent_home
-          and "marker file at the root of the checkout your agent-session started in" in out, out)
+          and (MARKER_AT_PATH.split("{path}")[0] in out or MARKER_FOUND_BY_HAND in out), out)
+    walk_approved_marker_cases(root, agent_home, made, instruction_file_guard)
     (made / ANSWERS_NAME).write_text(GOOD_ANSWERS)
     check_line = next((line for line in out.splitlines() if line.startswith("6. Run the check: ")), "")
     change_directory, _, command = check_line.removeprefix("6. Run the check: ").partition(" && ")
@@ -717,6 +915,8 @@ def topic_worktree_cases(root, repository, base, frozen_head):
     submitted = "2026-11-11T12:00:00Z"
     submitted_seconds = datetime.datetime.fromisoformat(submitted).timestamp()
     dated_routes = routes_for(frozen_head, [dict(review(commit_id=frozen_head), submitted_at=submitted)])
+    stopped_round_cases(root, repository, made, frozen_head, dated_routes, submitted_seconds)
+    (made / ANSWERS_NAME).write_text(GOOD_ANSWERS)
     os.utime(made / ANSWERS_NAME, (submitted_seconds - 60, submitted_seconds - 60))
     code, out, err = run(root, made, dated_routes, "--check")
     check("topic-worktree: --check refuses, exit 1, an answers file written before the round's review was submitted",
@@ -758,7 +958,8 @@ def check_cases(root, repository, base, frozen_head):
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers)
     check("check: one commit not yet pushed passes and says to push", code == 0
-          and "Not pushed yet" in out and "Send merge-lane-2" not in out, out + err)
+          and "Not pushed yet" in out and "Send merge-lane-2" not in out
+          and f"Push once, with git push origin {fix}:{BRANCH}, then run this same command again" in out, out + err)
     check("check: a file the findings name is not listed", "  hook.py" not in out, out)
 
     code, out, err = run(root, repository, routes_for(fix, reviews), "--check", "--answers", answers)
