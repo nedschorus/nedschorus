@@ -68,8 +68,9 @@ sys.exit(route.get("exit", 0))
 # Stands in for scripts/run-all-test-suites.py in every scratch repository's base commit. The suites that
 # fail are those failing-suites.txt names in the checkout the fake sits in, so each commit decides its own;
 # --only-suites-named narrows them. FAKE_RUNNER_EXIT makes it stop without a verdict. FAKE_RUNNER_NOT_RUN names
-# the suites printed NOT RUN, space-separated, and FAKE_RUNNER_STOPPED prints the runner's "not run to the end" line; the exit
-# code stays the real runner's, 1 when a suite failed.
+# the suites printed NOT RUN, space-separated, and FAKE_RUNNER_STOPPED prints the runner's "not run to the end" line, opening
+# with FAKE_RUNNER_OPENER when set, as a runner from before the file-path opener does; the exit code stays the real
+# runner's, 1 when a suite failed.
 FAKE_SUITE_RUNNER = r'''import json, os, sys
 from pathlib import Path
 checkout = Path(__file__).resolve().parents[1]
@@ -78,7 +79,7 @@ if os.environ.get("FAKE_RUNNER_CALLS"):
     with open(os.environ["FAKE_RUNNER_CALLS"], "a") as calls:
         calls.write(json.dumps({"checkout": str(checkout), "arguments": arguments}) + "\n")
 if os.environ.get("FAKE_RUNNER_EXIT"):
-    print("run-all-test-suites: could not run")
+    print("scripts/run-all-test-suites.py: could not run")
     sys.exit(int(os.environ["FAKE_RUNNER_EXIT"]))
 listed = checkout / "failing-suites.txt"
 failing = listed.read_text().split() if listed.exists() else []
@@ -87,7 +88,8 @@ if "--only-suites-named" in arguments:
 for suite in failing:
     print(f"FAIL {suite} exit 1 (0.1s)")
 if os.environ.get("FAKE_RUNNER_STOPPED"):
-    print("run-all-test-suites: not run to the end — stopped by SIGTERM.")
+    opener = os.environ.get("FAKE_RUNNER_OPENER", "scripts/run-all-test-suites.py")
+    print(f"{opener}: not run to the end — stopped by SIGTERM.")
     sys.exit(1 if failing else 2)
 print(f"{len(failing)} failed:")
 for suite in failing:
@@ -1996,6 +1998,16 @@ def suite_cases(root, repository, _base, _frozen_head):
     code, out, err = check_with_head(frozen_head, {"FAKE_RUNNER_STOPPED": "1"})
     check("suites: a run stopped before its end beside a failure the frozen-head shares fails the check "
           "with exit 2, before any push",
+          code == 2 and "did not judge every suite: it printed\n  scripts/run-all-test-suites.py: not run to the end" in err
+          and "Not pushed yet" not in out, out + err)
+    check("suites: the refusal for a run stopped before its end names both openers a stopped runner prints",
+          "'scripts/run-all-test-suites.py: not run to the end' or 'run-all-test-suites: not run to the end', "
+          "tell merge-lane-2" in err, err)
+    runner_calls(root)
+    code, out, err = check_with_head(frozen_head, {"FAKE_RUNNER_STOPPED": "1",
+                                                   "FAKE_RUNNER_OPENER": "run-all-test-suites"})
+    check("suites: a run stopped before its end by a runner from before the file-path opener, as a frozen-head "
+          "runs, fails the check with exit 2 too, before any push",
           code == 2 and "did not judge every suite: it printed\n  run-all-test-suites: not run to the end" in err
           and "Not pushed yet" not in out, out + err)
     runner_calls(root)
