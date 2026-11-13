@@ -133,11 +133,27 @@ else:
           process.returncode == wait.EXIT_TIME_LIMIT_REACHED and "Still running" in process.stderr,
           (process.returncode, process.stdout, process.stderr))
 
-    # The writer outlives the program's first look and ends within its first poll interval.
-    short_writer = writer("import time; time.sleep(1)")
+    # The writer ends only once the program's first look has seen it, however slowly either starts:
+    # the program runs as a process whose lister writes a marker after its first look, and the
+    # writer exits when the marker appears.
+    first_look_done = root / "first-look-done"
+    short_writer = writer(f"import os, time\nwhile not os.path.exists({str(first_look_done)!r}): time.sleep(0.05)")
+    program_noting_its_first_look = f"""
+import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location("background_command_wait", {str(PROGRAM)!r})
+program = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(program)
+lister = program.linux_processes_writing_file
+def list_writers_then_mark_the_first_look(path, seconds_left=None):
+    writers = lister(path, seconds_left)
+    pathlib.Path({str(first_look_done)!r}).touch()
+    return writers
+program.processes_writing_file_lister = lambda: list_writers_then_mark_the_first_look
+sys.exit(program.main([{str(output_file)!r}, "--time-limit-seconds", "60"]))
+"""
     try:
-        process = subprocess.run([sys.executable, str(PROGRAM), str(output_file),
-                                  "--time-limit-seconds", "60"], capture_output=True, text=True)
+        process = subprocess.run([sys.executable, "-c", program_noting_its_first_look],
+                                 capture_output=True, text=True)
     finally:
         stop(short_writer)
     # The literal 0, not wait.EXIT_NO_WRITER_LEFT, because the shell reads success as exit status 0.
