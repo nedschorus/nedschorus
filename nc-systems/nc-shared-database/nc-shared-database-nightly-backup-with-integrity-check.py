@@ -18,14 +18,11 @@ The copy is made with SQLite's online backup, never a plain file copy, which
 can catch the file mid-write, into nc-shared-database-<UTC time>.sqlite3, as
 a single file the Mac's nightly job can copy. The copy is checked with
 PRAGMA integrity_check:
-  - when the check passes, the copy is kept, the 14 newest copies are kept and
-    older ones deleted, and the copy's own highest sequence number and generation
-    ID are written into the database's newest_backup table, which every answer
-    of the service gives, so the machines delete sent rows the copy holds;
-  - when the check fails, the older copies stay as they are, newest_backup is
-    not changed, the copy is renamed to end in .failed-integrity-check, which
-    the page the sending job writes names, and the program prints the check's
-    output and exits 1.
+  - when the check passes, the copy is kept, and the 14 newest copies are kept
+    and older ones deleted;
+  - when the check fails, the older copies stay as they are, the copy is
+    renamed to end in .failed-integrity-check, and the program prints the
+    check's output and exits 1.
 
 Exit codes: 0 a copy was made and passed its check; 1 the copy failed its check;
 any other failure, such as a database that cannot be opened, ends with Python's
@@ -79,15 +76,13 @@ def main(argv=None):
         passed = check == ["ok"]
         if passed:
             highest_sequence = copy.execute("SELECT max(sequence) FROM event").fetchone()[0]
-            generation = copy.execute(
-                "SELECT generation_id FROM database_generation").fetchone()[0]
     finally:
         copy.close()
+        source.close()
 
     if not passed:
         failed_path = copy_path.with_name(copy_path.name + FAILED_CHECK_SUFFIX)
         partial_path.rename(failed_path)
-        source.close()
         # Double quotes only, so the same command also works inside ssh's single quotes.
         check_command = (f'python3 -c "import sqlite3, sys; print(sqlite3.connect(sys.argv[1])'
                          f'.execute(sys.argv[2]).fetchall())" "{arguments.database}" '
@@ -116,13 +111,6 @@ def main(argv=None):
         return EXIT_COPY_FAILED_ITS_CHECK
 
     partial_path.rename(copy_path)
-    try:
-        source.execute("BEGIN IMMEDIATE")
-        source.execute("DELETE FROM newest_backup")
-        source.execute("INSERT INTO newest_backup VALUES (?, ?)", (generation, highest_sequence))
-        source.execute("COMMIT")
-    finally:
-        source.close()
     for old_copy in sorted(backup_directory.glob("nc-shared-database-*.sqlite3"))[:-COPIES_KEPT]:
         old_copy.unlink()
     print(f"{PROGRAM}: kept {copy_path}, highest sequence number {highest_sequence}")

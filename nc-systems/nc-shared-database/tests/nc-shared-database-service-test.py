@@ -3,11 +3,10 @@
 
 Each case starts the service on a loopback port with a database and an
 accepted-tokens file under a temporary directory, sends real HTTP requests,
-and reads the database back: tokens and 401, the generation ID and 412, the
-400, 422 and 409 answers, values of the wrong type, an event sent twice, the
-state each operation leaves, the newest backup's mark in every answer, the
-500 answer to an error no check foresaw, and that a request which gets no
-answer fails only its own case.
+and reads the database back: tokens and 401, the 400, 422 and 409 answers,
+values of the wrong type, an event sent twice, the state each operation
+leaves, the 500 answer to an error no check foresaw, and that a request which
+gets no answer fails only its own case.
 
 Run: python3 nc-systems/nc-shared-database/tests/nc-shared-database-service-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -66,15 +65,11 @@ with tempfile.TemporaryDirectory() as scratch:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
     db = sqlite3.connect(str(database), isolation_level=None)
-    generation = db.execute("SELECT generation_id FROM database_generation").fetchone()[0]
 
-    def request(path, body=None, token=TOKEN, generation_id="current", raw=None, scheme="Bearer"):
+    def request(path, body=None, token=TOKEN, raw=None, scheme="Bearer"):
         headers = {}
         if token is not None:
             headers["Authorization"] = f"{scheme} {token}"
-        if generation_id is not None:
-            headers[service.events_file.NC_SHARED_DATABASE_GENERATION_ID_HTTP_HEADER] = (
-                generation if generation_id == "current" else generation_id)
         data = raw if raw is not None else (
             json.dumps(body).encode("utf-8") if body is not None else None)
         call = urllib.request.Request(base + path, data=data, headers=headers,
@@ -90,15 +85,17 @@ with tempfile.TemporaryDirectory() as scratch:
     def events_stored():
         return db.execute("SELECT count(*) FROM event").fetchone()[0]
 
-    check("a new database is made with WAL and a generation ID that is a UUID",
-          db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-          and str(uuid.UUID(generation)) == generation)
+    check("a new database is made with WAL",
+          db.execute("PRAGMA journal_mode").fetchone()[0] == "wal")
     beside = scratch / "beside.sqlite3"
     service.create_nc_shared_database_if_absent(beside)
     check("a database is made in a directory that already exists", beside.exists())
+    db.execute("INSERT INTO agent_seat (seat_id, machine, seat_name) "
+               "VALUES ('kept', 'mac', 'kept-seat')")
     service.create_nc_shared_database_if_absent(database)
-    check("an existing database keeps its generation ID",
-          db.execute("SELECT generation_id FROM database_generation").fetchall() == [(generation,)])
+    check("an existing database is left as it is",
+          db.execute("SELECT seat_id FROM agent_seat").fetchall() == [("kept",)])
+    db.execute("DELETE FROM agent_seat")
 
     # 401
     for name, token in (("no token", None), ("an unknown token", "nobody"),
@@ -120,19 +117,8 @@ with tempfile.TemporaryDirectory() as scratch:
           status == 401, status)
     (scratch / "moved").rename(tokens)
 
-    # 412
-    before = events_stored()
-    for name, sent_generation in (("no generation ID", None), ("another generation ID", "old")):
-        status, answer = request("/events", event("agent-seat-created", SEAT_FIELDS),
-                                 generation_id=sent_generation)
-        check(f"412: {name} stores nothing and is answered with the current generation ID",
-              status == 412 and answer == {"generation_id": generation}
-              and events_stored() == before, (status, answer))
-    status, answer = request("/agent-seats", generation_id="old")
-    check("412: a list request with another generation ID is answered 412 too",
-          status == 412 and answer == {"generation_id": generation}, (status, answer))
-
     # 400
+    before = events_stored()
     for name, raw in (("a body that is not JSON", b"{not json"),
                       ("an event_id that is a string holding a lone surrogate", json.dumps(
                           event("agent-seat-paused", {}, event_id="\udc80")).encode()),
@@ -228,10 +214,8 @@ with tempfile.TemporaryDirectory() as scratch:
     # 200, and an event sent twice
     created = event("agent-seat-created", SEAT_FIELDS, at="2026-10-26T09:00:00+00:00")
     status, first = request("/events", created)
-    check("200: an event is stored and answered with its sequence number, the generation ID "
-          "and no backup yet",
-          status == 200 and first["sequence"] == 1 and first["generation_id"] == generation
-          and first["newest_backup"] is None, (status, first))
+    check("200: an event is stored and answered with its sequence number alone",
+          status == 200 and first == {"sequence": 1}, (status, first))
     status, again = request("/events", created)
     check("an event ID already held is stored once and answered with its first sequence number",
           status == 200 and again["sequence"] == 1 and events_stored() == 1, (status, again))
@@ -351,9 +335,9 @@ with tempfile.TemporaryDirectory() as scratch:
           == [("ned-box", "boot-9", "t0", "boot-1", "t-1", "newest heartbeat")], (status, answer))
 
     status, listed = request("/agent-seats")
-    check("list agent-seats gives every agent-seat, with the generation ID",
+    check("list agent-seats gives every agent-seat, and nothing else",
           status == 200 and len(listed["agent_seats"]) == 3
-          and listed["generation_id"] == generation, (status, listed))
+          and set(listed) == {"agent_seats"}, (status, listed))
     status, listed = request("/agent-seats?machine=ned-box")
     check("list agent-seats by machine gives only that machine's", status == 200
           and listed["agent_seats"] == [], (status, listed))
@@ -363,7 +347,7 @@ with tempfile.TemporaryDirectory() as scratch:
           status == 200 and one["agent_seat"]["seat_id"] == reborn
           and [run["run_id"] for run in one["supervisor_runs"]] == ["run-2"]
           and len(one["agent_sessions"]) == 2 and len(one["session_handoffs"]) == 2
-          and len(one["restart_attempts"]) == 1 and one["generation_id"] == generation,
+          and len(one["restart_attempts"]) == 1,
           (status, one))
     status, answer = request("/agent-seats/no-such-seat")
     check("get one agent-seat answers 404 for a seat ID it does not hold", status == 404,
@@ -374,15 +358,6 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a POST to a path that takes GET is answered 404", status == 404, (status, answer))
     status, answer = request(f"/agent-seats/{reborn}", body={})
     check("a POST to one agent-seat's path is answered 404", status == 404, (status, answer))
-
-    db.execute("INSERT INTO newest_backup VALUES ('gen-of-backup', 12)")
-    status, answer = request("/events", event("agent-seat-paused", {}, seat_id=reborn))
-    check("every answer gives the newest backup's generation ID and highest sequence number",
-          status == 200 and answer["newest_backup"]
-          == {"generation_id": "gen-of-backup", "highest_sequence": 12}, (status, answer))
-    status, answer = request("/agent-seats")
-    check("a list answer gives the newest backup too",
-          status == 200 and answer["newest_backup"]["highest_sequence"] == 12, answer)
 
     sequences = [row[0] for row in db.execute("SELECT sequence FROM event ORDER BY sequence")]
     check("sequence numbers rise by one per stored event, in the order stored",
