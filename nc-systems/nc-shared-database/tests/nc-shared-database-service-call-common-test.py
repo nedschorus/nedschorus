@@ -124,8 +124,10 @@ with tempfile.TemporaryDirectory() as scratch:
         check(f"{status} raises a FAILED line with the service's answer, as a refusal",
               failure is not None and failure.service_answered
               and str(failure).startswith(f"FAILED: the nc-shared-database service on ned-box "
-                                          f"refused POST {fake.url}/events with {status}")
-              and f"answer {status}" in str(failure) and "Correct the program" in str(failure),
+                                          f"refused POST {fake.url}/events the event ")
+              and f"with {status}, and stored nothing" in str(failure)
+              and f"answer {status}" in str(failure) and "correct the program that sent" in str(failure)
+              and '"operation": "agent-seat-paused"' in str(failure),
               failure and str(failure))
 
     fake.statuses = [401]
@@ -136,7 +138,7 @@ with tempfile.TemporaryDirectory() as scratch:
           failure is not None and failure.service_answered and str(token_file) in str(failure)
           and caller.NC_SHARED_DATABASE_SERVICE_ACCEPTED_TOKENS_FILE_ON_NED_BOX in str(failure)
           and "one line of its accepted-tokens file" in str(failure)
-          and caller.NC_SHARED_DATABASE_SERVICE_INSTALL_COMMAND_ON_THE_MAC in str(failure),
+          and caller.NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND in str(failure),
           failure and str(failure))
 
     for status in (409, 500):

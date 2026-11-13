@@ -68,9 +68,9 @@ def utc_now():
 
 # Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 SUBAGENT_PASSES_IT_TO_DISPATCHING_AGENT_LINE = (
-    "If you are a subagent, pass the same fact to the agent that dispatched you instead of "
-    "telling the user.")
-NC_SHARED_DATABASE_SERVICE_INSTALL_COMMAND_ON_THE_MAC = (
+    "If you are a subagent, send the quoted sentence above to the agent that dispatched you "
+    "instead of telling the user.")
+NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND = (
     "python3 ~/Projects/nedschorus/nc-systems/nc-shared-database/"
     "nc-shared-database-service-on-ned-box-and-jobs-on-both-machines-install-from-the-mac.py")
 NC_SHARED_DATABASE_SERVICE_STATUS_COMMAND_ON_NED_BOX = (
@@ -88,13 +88,14 @@ def _not_reached(method, url, what_happened):
         f"Then tell the user: \"The nc-shared-database service on ned-box did not answer "
         f"{method} {url} ({what_happened}); nothing was recorded. The check of the service "
         f"printed: <the first lines the check printed, or ssh's error>.\" Do not record or read "
-        f"the agent-seat records another way, such as from files: the step waits until ned-box "
-        f"answers.\n"
+        f"the agent-seat records another way, such as from files, and do not call again in a "
+        f"loop: leave the step that needs the service until ned-box answers, and go on with work "
+        f"that does not need ned-box.\n"
         f"{SUBAGENT_PASSES_IT_TO_DISPATCHING_AGENT_LINE}",
         service_answered=False)
 
 
-def _refused(method, url, status, answer, token_file):
+def _refused(method, url, status, answer, token_file, body):
     if status == 401:
         return NcSharedDatabaseServiceCallFailed(
             f"FAILED: the nc-shared-database service on ned-box refused {method} {url} with "
@@ -102,22 +103,27 @@ def _refused(method, url, status, answer, token_file):
             f"whose token is one line of its accepted-tokens file, "
             f"{NC_SHARED_DATABASE_SERVICE_ACCEPTED_TOKENS_FILE_ON_NED_BOX} on ned-box, and this "
             f"machine sent the token in {token_file}.\n"
-            f"If you are on the Mac: run `{NC_SHARED_DATABASE_SERVICE_INSTALL_COMMAND_ON_THE_MAC}` "
+            f"If you are on the Mac: run `{NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND}` "
             f"once, which writes both machines' tokens into that file, and follow what it prints "
             f"if it stops.\n"
             f"If you are on ned-box: tell the user: \"The nc-shared-database service on ned-box "
             f"refuses ned-box's token in {token_file}. Running "
-            f"`{NC_SHARED_DATABASE_SERVICE_INSTALL_COMMAND_ON_THE_MAC}` in a Terminal on the Mac "
+            f"`{NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND}` in a Terminal on the Mac "
             f"puts it into the service's accepted-tokens file.\"\n"
             f"{SUBAGENT_PASSES_IT_TO_DISPATCHING_AGENT_LINE}",
             service_answered=True)
+    sent = f" the event {json.dumps(body)}" if body is not None else ""
     return NcSharedDatabaseServiceCallFailed(
-        f"FAILED: the nc-shared-database service on ned-box refused {method} {url} with "
-        f"{status}, and stored nothing: {answer}. The service refuses a request it cannot parse "
-        f"or place, so the same request sent again is refused again.\n"
-        f"Correct the program that built the request, using the service's answer above; the "
-        f"operations and the fields each takes are OPERATION_FIELDS in "
-        f"nc-systems/nc-shared-database/nc-shared-database-service.py.",
+        f"FAILED: the nc-shared-database service on ned-box refused {method} {url}{sent}, sent by "
+        f"{sys.argv[0] or 'python3 -c'}, with {status}, and stored nothing. The service's answer: "
+        f"{answer}. A 400 or 422 means the service could not read the request or found a value "
+        f"it does not accept, such as an unknown machine or a seat_id it holds no agent-seat "
+        f"for; the same request sent again is refused again.\n"
+        f"Find the cause from the service's answer, and correct the program that sent the "
+        f"request. The docstring of nc-systems/nc-shared-database/nc-shared-database-service.py "
+        f"says what each answer means and which keys and fields each operation takes; an event "
+        f"about an agent-seat needs that agent-seat's agent-seat-created or agent-seat-seen "
+        f"event stored first.",
         service_answered=True)
 
 
@@ -140,11 +146,11 @@ def nc_shared_database_service_http_request_single_attempt(
             f"machine's token file for the nc-shared-database service, {token_file}, cannot be "
             f"read ({error}). Every call to the service carries this machine's token from that "
             f"file.\n"
-            f"If you are on the Mac: run `{NC_SHARED_DATABASE_SERVICE_INSTALL_COMMAND_ON_THE_MAC}` "
+            f"If you are on the Mac: run `{NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND}` "
             f"once, which writes the token file, and follow what it prints if it stops.\n"
             f"If you are on ned-box: tell the user: \"The nc-shared-database service cannot be "
             f"called from ned-box: its token file {token_file} cannot be read ({error}). Running "
-            f"`{NC_SHARED_DATABASE_SERVICE_INSTALL_COMMAND_ON_THE_MAC}` in a Terminal on the Mac "
+            f"`{NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND}` in a Terminal on the Mac "
             f"writes it.\"\n"
             f"{SUBAGENT_PASSES_IT_TO_DISPATCHING_AGENT_LINE}", service_answered=True)
     request = urllib.request.Request(
@@ -157,7 +163,7 @@ def nc_shared_database_service_http_request_single_attempt(
     except urllib.error.HTTPError as error:
         answer = error.read().decode("utf-8", "replace").strip()
         if error.code in STATUSES_THE_SERVICE_REFUSES_WITH:
-            raise _refused(method, url, error.code, answer, token_file)
+            raise _refused(method, url, error.code, answer, token_file, body)
         raise _not_reached(method, url, f"was answered {error.code}: {answer}")
     except (OSError, http.client.HTTPException) as error:
         # urllib.error.URLError, a timeout and a refused connection are all OSError.
