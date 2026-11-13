@@ -24,6 +24,7 @@ program = importlib.util.module_from_spec(_specification)
 _specification.loader.exec_module(program)
 
 FAILURES = []
+MESSAGES_NAMING_THE_PATTERNS = {}
 
 
 def check(name, condition, detail=""):
@@ -82,10 +83,12 @@ with scratch_home() as home:
           and alerts[0]["title"] == program.FOUND_TITLE and alerts[0]["action"] == program.FOUND_ACTION
           and alerts[0]["alert_text"].splitlines()[1:] == [str(path) for path in sorted(reported)],
           (result, alerts))
+    MESSAGES_NAMING_THE_PATTERNS["the user-alert naming the files found"] = alerts[0]["alert_text"] if alerts else ""
 
 with scratch_home() as home:
     make_file(home, ".ssh/id.token")
     result = run(home)
+    MESSAGES_NAMING_THE_PATTERNS["the report that no file was found"] = result.stdout
     check("with no credential file outside the listed folders, no user-alert is written and the exit is 0",
           result.returncode == 0 and pending_alerts(home) == [] and "The search found no file" in result.stdout,
           result)
@@ -135,6 +138,8 @@ try:
         check("when the walk fails, a user-alert says so and the exit is 1",
               exit_code == 1 and len(alerts) == 1 and alerts[0]["title"] == program.FAILED_TITLE
               and "Input/output error" in alerts[0]["alert_text"], (exit_code, alerts, errors.getvalue()))
+        MESSAGES_NAMING_THE_PATTERNS["the user-alert saying the walk failed"] = alerts[0]["alert_text"] if alerts else ""
+        MESSAGES_NAMING_THE_PATTERNS["the error printed when the walk failed"] = errors.getvalue()
 
     real_write = program.user_alerts.user_alert_write_to_pending
 
@@ -155,6 +160,11 @@ try:
         program.user_alerts.user_alert_write_to_pending = real_write
 finally:
     program.credential_files_outside_denied_directories = real_search
+
+unnamed = {message: pattern for message, text in MESSAGES_NAMING_THE_PATTERNS.items()
+           for pattern in program.cell_common.CREDENTIAL_FILE_NAME_PATTERNS if pattern not in text}
+check("each message that says what the search looked for names every pattern of CREDENTIAL_FILE_NAME_PATTERNS",
+      len(MESSAGES_NAMING_THE_PATTERNS) == 4 and not unnamed, (sorted(MESSAGES_NAMING_THE_PATTERNS), unnamed))
 
 if FAILURES:
     print(f"\n{len(FAILURES)} case(s) FAILED:")
