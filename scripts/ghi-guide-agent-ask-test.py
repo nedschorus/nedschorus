@@ -696,7 +696,9 @@ try:
     check("any other reply has no caller message",
           ghi_ask.caller_message_for_passthrough_reply("read #1, #2") is None
           and ghi_ask.caller_message_for_passthrough_reply(
-              "Out-of-scope reasons are listed in #5") is None)
+              "Out-of-scope reasons are listed in #5") is None
+          and ghi_ask.caller_message_for_passthrough_reply(
+              "Not-about-issues reasons are listed in #5") is None)
     check("the two bare replies are still recognized case-insensitively",
           ghi_ask.caller_message_for_passthrough_reply("NOT-ABOUT-ISSUES")[1] == 2
           and ghi_ask.caller_message_for_passthrough_reply("Ask-User-About-Ruling: x")[1] == 3
