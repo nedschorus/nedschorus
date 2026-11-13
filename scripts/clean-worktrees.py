@@ -1875,6 +1875,22 @@ ONE_NAMED_FAILED_LINE_TEMPLATE = (
     "and why the rest was not")
 
 
+def commits_the_clone_holds(repo, shas):
+    """The ones of shas whose objects the clone holds."""
+    present = subprocess.run(["git", "-C", str(repo), "cat-file", "--batch-check=%(objectname)"],
+                             input="".join(f"{sha}\n" for sha in shas),
+                             capture_output=True, text=True, check=False)
+    return {line for line in present.stdout.splitlines() if not line.endswith(" missing")}
+
+
+def commit_unreached_from(repo, tip, tips):
+    """git rev-list's run naming tip when none of tips reaches it, and nothing when one does."""
+    # --not on the command line does not reach revisions read from --stdin, so each carries its own ^.
+    return subprocess.run(["git", "-C", str(repo), "rev-list", "--max-count=1", tip, "--stdin"],
+                          input="".join(f"^{sha}\n" for sha in sorted(tips)),
+                          capture_output=True, text=True, check=False)
+
+
 def push_branch_unless_origin_holds_its_last_commit_failure(repo, branch):
     """Push the branch to origin with a plain push, skipping the clone's client hooks, when no ref of origin, a pull request's
     refs/pull/<number>/head included, holds its last commit, as git ls-remote finds origin now;
@@ -1885,17 +1901,23 @@ def push_branch_unless_origin_holds_its_last_commit_failure(repo, branch):
     if listing.returncode != 0:
         return (f"git ls-remote origin exited {listing.returncode}, so whether origin holds its "
                 f"last commit {tip} is unknown: {listing.stderr.strip()[:160] or 'no error text'}")
-    remote_tips = {line.split("\t", 1)[0] for line in listing.stdout.splitlines() if line}
-    # rev-list refuses an object it lacks; a tip it lacks cannot be this branch's commit, nor hold
-    # it unless someone pushed onto it, and then the plain push below is refused and the branch kept.
-    present = subprocess.run(["git", "-C", str(repo), "cat-file", "--batch-check=%(objectname)"],
-                             input="".join(f"{sha}\n" for sha in remote_tips),
-                             capture_output=True, text=True, check=False)
-    known = [line for line in present.stdout.splitlines() if not line.endswith(" missing")]
-    # --not on the command line does not reach revisions read from --stdin, so each carries its own ^.
-    unreached = subprocess.run(["git", "-C", str(repo), "rev-list", "--max-count=1", tip,
-                                "--stdin"], input="".join(f"^{sha}\n" for sha in known),
-                               capture_output=True, text=True, check=False)
+    ref_of_tip = {}
+    for line in listing.stdout.splitlines():
+        if line:
+            sha, _, ref = line.partition("\t")
+            ref_of_tip.setdefault(sha, ref)
+    known = commits_the_clone_holds(repo, ref_of_tip)
+    unreached = commit_unreached_from(repo, tip, known)
+    missing = sorted(set(ref_of_tip) - known)
+    if unreached.returncode == 0 and unreached.stdout.strip() and missing:
+        # rev-list refuses an object the clone lacks, and a tip it has not fetched, such as a pull
+        # request ref another machine moved, may hold the commit: fetch those tips and look again.
+        fetch = run_git(repo, "fetch", "--no-write-fetch-head", "origin",
+                        *sorted({ref_of_tip[sha] for sha in missing}))
+        if fetch.returncode != 0:
+            return (f"git fetch origin exited {fetch.returncode}, so whether origin holds its "
+                    f"last commit {tip} is unknown: {fetch.stderr.strip()[:160] or 'no error text'}")
+        unreached = commit_unreached_from(repo, tip, commits_the_clone_holds(repo, ref_of_tip))
     if unreached.returncode != 0:
         return (f"git rev-list exited {unreached.returncode}, so whether origin holds its last "
                 f"commit {tip} is unknown: {unreached.stderr.strip()[:160] or 'no error text'}")
@@ -1983,8 +2005,10 @@ def remove_one_named_worktree(repo, main_checkout, path):
             if branch and branch != MAIN_BRANCH and commit_of(repo, f"refs/heads/{branch}") != "unknown":
                 failure = push_branch_unless_origin_holds_its_last_commit_failure(repo, branch)
                 if failure is not None:
-                    print(f"{Path(path).name}: kept — an earlier run stopped partway through "
-                          f"removing it, and its branch {branch} is kept too: {failure}")
+                    print(f"{Path(path).name}: kept — an earlier run of scripts/clean-worktrees.py "
+                          f"stopped partway through removing this worktree; this run keeps what "
+                          f"is left of it and its branch {branch}, because this run could not make sure "
+                          f"origin holds the branch's last commit: {failure}")
                     return False
             return finish_recorded_removal(record, repo, one_named=True)
         try:
