@@ -1987,15 +1987,8 @@ def record_read(reads, key, item, text, outcome, number_predicted=False):
     number_predicted marks a read ahead of an unnumbered item, whose number is only the one close expects to give it,
     until read_ahead_bound_to_item binds it to the item the read step uses it for."""
     (reads / f"{key}.md").write_text(text + "\n", encoding="utf-8")
-    write_json(reads / f"{key}-outcome.json",
-               dict(outcome, item=item, finished=time.time(), **{NUMBER_PREDICTED: number_predicted}))
-
-
-def read_number_predicted(outcome):
-    """Whether the outcome is a read ahead whose item number is only predicted. An outcome without
-    NUMBER_PREDICTED is not one: record_read once wrote the field only when it was true, so every read step's
-    own read in a walk open then has none."""
-    return outcome.get(NUMBER_PREDICTED, False)
+    predicted = {NUMBER_PREDICTED: True} if number_predicted else {}
+    write_json(reads / f"{key}-outcome.json", dict(outcome, item=item, finished=time.time(), **predicted))
 
 
 def read_ahead_bound_to_item(reads, key, outcome, item):
@@ -2128,7 +2121,7 @@ def latest_read(reads, item):
     done = []
     for path in reads.glob("*-outcome.json") if reads.is_dir() else []:
         outcome = json.loads(path.read_text(encoding="utf-8"))
-        if outcome["item"] == item and outcome["status"] == READ_DONE and not read_number_predicted(outcome):
+        if outcome["item"] == item and outcome["status"] == READ_DONE and not outcome.get(NUMBER_PREDICTED):
             done.append((outcome["finished"], path.name[:-len("-outcome.json")], outcome))
     return max(done)[1:] if done else None
 
@@ -2202,7 +2195,7 @@ def earlier_read_texts_of_item(walk_finder, minutes, value, numbers, total, pars
     earlier = []
     for path in reads.glob("*-outcome.json"):
         outcome = json.loads(path.read_text(encoding="utf-8"))
-        predicted = read_number_predicted(outcome)
+        predicted = outcome.get(NUMBER_PREDICTED)
         # Every outcome's item was written by items_named, so it always parses.
         numbered = walk_finder.parse_items(outcome["item"])[0] == numbers
         if outcome["status"] != READ_DONE or not (numbered or (predicted and title_unique)):
@@ -2318,7 +2311,7 @@ def waiting_item_read(arguments, sub_step_of=None):
     while read_outcome(reads, key) is None and worker_alive(reads, key):
         time.sleep(READ_POLL_SECONDS)
     outcome, ahead = read_outcome(reads, key), (reads / f"{key}-started.json").is_file()
-    if outcome and outcome["status"] == READ_DONE and read_number_predicted(outcome):
+    if outcome and outcome["status"] == READ_DONE and outcome.get(NUMBER_PREDICTED):
         outcome = read_ahead_bound_to_item(reads, key, outcome, item)
     why = ""
     if outcome and outcome["status"] == READ_DONE:
