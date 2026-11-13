@@ -86,21 +86,26 @@ def emit(payload: dict, exit_code: int) -> int:
     return exit_code
 
 
+def git_command_failed_refusal(arguments: list[str], stderr: str) -> Refusal:
+    # The cause is not checked, so the label names none and git's stderr names it instead.
+    return Refusal(
+        "git-command-failed",
+        f"git {' '.join(arguments)} failed: {stderr.strip() or 'no stderr'}",
+        "Resubmit the same request; this class of failure is safe to retry.",
+    )
+
+
 def run_git(arguments: list[str], cwd: Path | None = None, check: bool = True,
             answers: tuple[int, ...] = ()):
     """Return the git process result with stdout and stderr as text. With check, an exit other
     than 0 and the exits in answers, which the command uses for an answer such as "absent",
-    raises the workspace-io-error refusal."""
+    raises the git-command-failed refusal."""
     completed = subprocess.run(
         ["git", *arguments], cwd=str(cwd) if cwd else None,
         capture_output=True, text=True, check=False,
     )
     if check and completed.returncode not in (0, *answers):
-        raise Refusal(
-            "workspace-io-error",
-            f"git {' '.join(arguments)} failed: {completed.stderr.strip() or 'no stderr'}",
-            "Resubmit the same request; this class of failure is safe to retry.",
-        )
+        raise git_command_failed_refusal(arguments, completed.stderr)
     return completed
 
 
@@ -293,16 +298,11 @@ def read_legacy_content(legacy_repository: str, import_declaration: dict) -> byt
 
 
 def git_show_bytes(arguments: list[str], cwd: Path | None = None) -> bytes:
-    """Return git show's output as bytes; any failure raises the workspace-io-error refusal."""
+    """Return git show's output as bytes; any failure raises the git-command-failed refusal."""
     shown = subprocess.run(["git", *arguments], cwd=str(cwd) if cwd else None,
                            capture_output=True, check=False)
     if shown.returncode != 0:
-        raise Refusal(
-            "workspace-io-error",
-            f"git {' '.join(arguments)} failed: "
-            f"{shown.stderr.decode(errors='replace').strip() or 'no stderr'}",
-            "Resubmit the same request; this class of failure is safe to retry.",
-        )
+        raise git_command_failed_refusal(arguments, shown.stderr.decode(errors="replace"))
     return shown.stdout
 
 
@@ -548,16 +548,7 @@ def prepare_clone(workspace: Path, remote: str) -> Path:
     clone = workspace / "candidate"
     # A plain-path remote is otherwise cloned by copying its object store file by file, which
     # copies, and can die on, a concurrent push's half-received quarantine.
-    cloned = subprocess.run(
-        ["git", "clone", "--quiet", "--no-checkout", "--no-local", remote, str(clone)],
-        capture_output=True, text=True, check=False,
-    )
-    if cloned.returncode != 0:
-        raise Refusal(
-            "network-down",
-            f"could not read main from {remote!r}: {cloned.stderr.strip() or 'no stderr'}",
-            "Resubmit once the remote is reachable; this failure is safe to retry.",
-        )
+    run_git(["clone", "--quiet", "--no-checkout", "--no-local", remote, str(clone)])
     run_git(["config", "user.name", "nedschorus-main-gatekeeper"], cwd=clone)
     run_git(["config", "user.email", "gatekeeper@nedschorus.invalid"], cwd=clone)
     return clone
@@ -597,11 +588,7 @@ def build_candidate(
         input=message, capture_output=True, text=True, check=False,
     )
     if committed.returncode != 0:
-        raise Refusal(
-            "workspace-io-error",
-            f"the candidate commit failed: {committed.stderr.strip() or 'no stderr'}",
-            "Resubmit the same request; this class of failure is safe to retry.",
-        )
+        raise git_command_failed_refusal(["commit", "--quiet", "--file", "-"], committed.stderr)
     return run_git(["rev-parse", "HEAD"], cwd=clone).stdout.strip()
 
 
@@ -621,7 +608,7 @@ def classify_push_failure(stderr: str) -> str:
         return "lost-the-race"
     if "authentication" in lowered or "permission" in lowered or "denied" in lowered:
         return "push-auth-failed"
-    return "network-down"
+    return "git-command-failed"
 
 
 def fetch_main_tip(clone: Path) -> str:
@@ -666,9 +653,9 @@ def integrate_and_push(
                 "Resubmit once the pushing credential is available; this failure is "
                 "safe to retry and changed nothing.",
             )
-        if failure == "network-down":
+        if failure == "git-command-failed":
             raise Refusal(
-                "network-down", f"the push failed: {stderr or 'no stderr'}",
+                "git-command-failed", f"the push failed: {stderr or 'no stderr'}",
                 "Resubmit; this failure is safe to retry and changed nothing.",
             )
 
@@ -850,10 +837,10 @@ def fetch_and_find(repository: Path, digest: str) -> str | None:
                       cwd=repository, check=False)
     if fetched.returncode != 0:
         raise Refusal(
-            "network-down",
-            f"main could not be fetched, so whether this work reached it is "
+            "git-command-failed",
+            f"git fetch of main failed, so whether this work reached it is "
             f"unknown: {fetched.stderr.strip() or 'no stderr'}",
-            "Ask again once the remote is reachable; resubmitting is always safe, "
+            "Ask again once git fetch succeeds; resubmitting is always safe, "
             "and a request that did reach main answers already-checked-in.",
         )
     return find_existing_check_in(repository, digest)

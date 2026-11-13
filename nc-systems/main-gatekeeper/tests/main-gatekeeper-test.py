@@ -487,6 +487,29 @@ with tempfile.TemporaryDirectory() as workspace_name:
     check("T4 the candidate clone still holds main",
           git(["rev-parse", "origin/main"], clone).stdout.strip() == base)
 
+    # A clone that fails for a local cause, here a corrupt object in the remote's store, is
+    # labelled by what is known, that git failed, and carries git's words rather than a guess.
+    remote, work, base = make_fixture(workspace, "corrupt-object")
+    corrupt = remote / "objects" / base[:2] / base[2:]
+    corrupt.chmod(0o644)
+    corrupt.write_bytes(b"not a zlib stream")
+    screening = workspace / "corrupt-object-screening"
+    screening.mkdir()
+    try:
+        gatekeeper.prepare_clone(screening, str(remote))
+        refusal = None
+    except gatekeeper.Refusal as raised:
+        refusal = raised
+    check("a candidate clone failing on a corrupt local object is git-command-failed, "
+          "not network-down, and carries git's stderr",
+          refusal is not None and refusal.error == "git-command-failed"
+          and "git clone" in refusal.facts and base in refusal.facts
+          and "reachable" not in refusal.next_action, refusal and vars(refusal))
+    check("a push failure that is neither a lost race nor refused credentials is "
+          "git-command-failed, not network-down",
+          gatekeeper.classify_push_failure("fatal: loose object 5215e8b4 is corrupt")
+          == "git-command-failed")
+
     # --- T5: a real conflict refuses rather than guessing -------------------
     remote, work, base = make_fixture(workspace, "conflict")
     rival = workspace / "conflict-rival"
@@ -930,16 +953,16 @@ with tempfile.TemporaryDirectory() as workspace_name:
     # A failed fetch is never read as absence (ruled 2026-08-12): status and
     # cancel used to grep a stale origin/main and assert 'unknown' or
     # 'cancelled — nothing reached main' for work that had reached it. The
-    # catalog already carries network-down, documented as safely resubmittable.
+    # catalog carries git-command-failed, documented as safely resubmittable.
     remote, work, base = make_fixture(workspace, "unreachable-remote")
     git(["remote", "set-url", "origin", str(workspace / "no-such-remote.git")], work)
     for subcommand in ("status", "cancel"):
         code, payload = run_gatekeeper(
             [subcommand, "1" * 64, "--repo", str(work)], state_home
         )
-        check(f"{subcommand} answers network-down rather than asserting absence",
-              payload.get("error") == "network-down", payload)
-        check(f"{subcommand} exits 1 on network-down", code == 1, code)
+        check(f"{subcommand} answers git-command-failed rather than asserting absence",
+              payload.get("error") == "git-command-failed", payload)
+        check(f"{subcommand} exits 1 on git-command-failed", code == 1, code)
 
     # The advisory names real files (ruled 2026-08-12). Plain --porcelain
     # collapses a wholly-new directory to one entry, so a declared new file
@@ -1543,8 +1566,8 @@ with tempfile.TemporaryDirectory() as workspace_name:
              "the base, when main cannot be fetched")):
         with git_on_path(failing_git(name, pattern)):
             refusal = refusal_of(call)
-        check(f"a git failure reading {what} is reported as workspace-io-error with git's stderr",
-              refusal is not None and refusal.error == "workspace-io-error"
+        check(f"a git failure reading {what} is reported as git-command-failed with git's stderr",
+              refusal is not None and refusal.error == "git-command-failed"
               and "stand-in failure" in refusal.facts, refusal)
 
     check("a path absent at the base still reads as absent",
@@ -1567,19 +1590,19 @@ with tempfile.TemporaryDirectory() as workspace_name:
         refusal = refusal_of(lambda: gatekeeper.read_legacy_content(
             str(legacy), {"commit": legacy_commit, "source": "old-tool.py", "dest": "x.py"}))
     check("a git failure checking the legacy commit is reported, not read as \"no such commit\"",
-          refusal is not None and refusal.error == "workspace-io-error"
+          refusal is not None and refusal.error == "git-command-failed"
           and "stand-in failure" in refusal.facts, refusal)
     with git_on_path(failing_git("legacy-show", " show " + legacy_commit)):
         refusal = refusal_of(lambda: gatekeeper.read_legacy_content(
             str(legacy), {"commit": legacy_commit, "source": "old-tool.py", "dest": "x.py"}))
     check("a git failure reading the legacy path is reported, not read as \"no such path\"",
-          refusal is not None and refusal.error == "workspace-io-error"
+          refusal is not None and refusal.error == "git-command-failed"
           and "stand-in failure" in refusal.facts, refusal)
     with git_on_path(failing_git("legacy-verify-path", "--verify " + legacy_commit + ":")):
         refusal = refusal_of(lambda: gatekeeper.read_legacy_content(
             str(legacy), {"commit": legacy_commit, "source": "old-tool.py", "dest": "x.py"}))
     check("a git failure checking the legacy path is reported, not read as \"no such path\"",
-          refusal is not None and refusal.error == "workspace-io-error"
+          refusal is not None and refusal.error == "git-command-failed"
           and "stand-in failure" in refusal.facts, refusal)
     refusal = refusal_of(lambda: gatekeeper.read_legacy_content(
         str(legacy), {"commit": legacy_commit, "source": "no-such-path.py", "dest": "x.py"}))
