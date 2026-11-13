@@ -80,13 +80,13 @@ if mode == "breaks-clone":
     print(json.dumps({"is_error": False, "result": "done", "session_id": session}))
     sys.exit(0)
 if mode == "hook":
-    (clone / "live-check.txt").write_text("live\n")
+    (clone / "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner-marker-file-created-by-real-claude-session.txt").write_text("live\n")
     hook = subprocess.run(
         settings["hooks"]["PostToolUse"][0]["hooks"][0]["command"], shell=True, text=True,
         capture_output=True, input=json.dumps({
             "session_id": session, "transcript_path": f"/transcripts/{session}.jsonl",
             "cwd": str(clone), "hook_event_name": "PostToolUse", "tool_name": "Bash",
-            "tool_input": {"command": "echo live > live-check.txt"}}))
+            "tool_input": {"command": "echo live > uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner-marker-file-created-by-real-claude-session.txt"}}))
     print(f"hook exited {hook.returncode}: {hook.stdout}{hook.stderr}", file=sys.stderr)
     print(json.dumps({"is_error": False, "result": "done", "session_id": session}))
     sys.exit(0)
@@ -94,7 +94,7 @@ spec = importlib.util.spec_from_file_location(
     "m", clone / "nc-systems" / "handoff" / "uncommitted-work-snapshots.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-(clone / ("other.txt" if mode == "no-file" else "live-check.txt")).write_text("live\n")
+(clone / ("other.txt" if mode == "no-file" else "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner-marker-file-created-by-real-claude-session.txt")).write_text("live\n")
 owner = os.getppid() if mode == "other-owner" else os.getpid()
 transcript_session = "99999999-0000-0000-0000-000000000000" if mode == "wrong-session" else session
 if mode != "no-snapshot":
@@ -197,7 +197,7 @@ def test_failures_are_recorded():
          "output that is not JSON fails the check"),
         ("no-snapshot", "the hook wrote 0 work-snapshots, not 1",
          "a session whose hook wrote no work-snapshot fails the check"),
-        ("no-file", "FAIL the work-snapshot holds live-check.txt",
+        ("no-file", "FAIL the work-snapshot holds uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner-marker-file-created-by-real-claude-session.txt",
          "a work-snapshot without the file the session wrote fails the check"),
         ("other-owner", "FAIL its owner key names process",
          "a work-snapshot owned by another process than the session fails the check"),

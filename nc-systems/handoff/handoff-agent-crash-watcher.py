@@ -89,8 +89,9 @@ AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER):
 the seat runs, but outside the user's systemd manager, so the test suites' low CPU weight does
 not reach it, and that gets a notice, with no alert. A page or window the Mac cannot be reached for,
 a notice's or a restarted seat's, stays pending and is tried again on every run. Every decision, each restart
-and each task included, is appended to decisions.jsonl in LOG_DIRECTORY; the notices are
-kept beside it.
+and each task included, is appended to AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME in LOG_DIRECTORY; the notices are
+kept beside it. LOG_DIRECTORY may also hold decisions.jsonl, the same log under an earlier
+name, which no run writes.
 
 Off ned-box the program refuses: the agents root it reads is ned-box's.
 
@@ -145,6 +146,7 @@ agent_seat_task_list = importlib.util.module_from_spec(_agent_seat_task_list_spe
 _agent_seat_task_list_specification.loader.exec_module(agent_seat_task_list)
 
 LOG_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedschorus-logs" / PROGRAM
+AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME = "handoff-agent-seat-died-without-session-handoff-restart-watcher-decisions.jsonl"
 STATE_DIRECTORY = Path("~/.local/state/nedschorus").expanduser()
 STATE_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_STATE_DIRECTORY"
 LOG_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_LOG_DIRECTORY"
@@ -563,7 +565,7 @@ class Watcher:
 
     @property
     def decisions_path(self) -> Path:
-        return self.log_directory / "decisions.jsonl"
+        return self.log_directory / AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME
 
     def log(self, seat, decision, **details):
         self.log_directory.mkdir(parents=True, exist_ok=True)

@@ -3,7 +3,7 @@
 
 Usage:
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number>
-  scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --check [--answers FILE] [--commit REV] [--after-conflict-merge] [--confirm-dispatching-agent-checked-new-shared-names]
+  scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --check [--answers FILE] [--commit REV] [--confirm-dispatching-agent-checked-new-shared-names]
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --move-change-to-own-pull-request-cut-new-topic-branch NEW_TOPIC_BRANCH [PATH ...]
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --move-change-to-own-pull-request-finish --title TITLE --body-file FILE
 
@@ -71,8 +71,7 @@ topic-worktree's path.
 
 With --check, run in the topic-worktree, and refuse anywhere else, naming the topic-worktree when this
 clone has one: the commits from the frozen-head to --commit (default
-HEAD) must be none, or one non-merge commit, or with --after-conflict-merge a merge of origin/main
-followed by at most one non-merge commit. The answers file holds one entry per blocking finding
+HEAD) must be none, or one non-merge commit. The answers file holds one entry per blocking finding
 and per nit, each starting "<n>. " on its own line; an entry that starts with MOVED_TO_PULL_REQUEST_PREFIX_PATTERN,
 in any case, must go on with MOVED_TO_PULL_REQUEST_PATTERN naming a pull request gh pr view finds, or --check refuses it;
 --check also refuses when, for any file of that pull request's gh pr diff, the file's whole patch reversed
@@ -83,7 +82,9 @@ merge-lane-2's latest changes-requested review was submitted, as an earlier roun
 GitHub gives no submitted_at is not compared. --check refuses when the checked commit's tree holds
 an answers file the frozen-head's tree does not, since a branch cut before .gitignore named the file does not leave it out of
 commits. It prints the files the fix commit changes that no blocking
-finding or nit names. While GitHub's head is still the frozen-head and the round has a commit, it first
+finding or nit names. It reads the pushed head from origin's branch with git ls-remote, not from GitHub's
+headRefOid, which can lag a push by seconds; it fails when origin has no such branch. While that head is
+still the frozen-head and the round has a commit, it first
 lists the shared names the round adds, read by the new-shared-names lister from the worktree's files that
 the frozen-head to the checked commit changes, leaving out names the frozen-head's tree holds; unless
 --confirm-dispatching-agent-checked-new-shared-names is given, it refuses while that list is not empty, printing the
@@ -96,7 +97,7 @@ checkout's own runner, recording nothing. It refuses when a suite fails at the c
 at the frozen-head, which includes a suite the frozen-head does not have; a suite that fails at both is
 not the round's doing, so it passes, names the suite, and records it in
 PULL_REQUEST_FIX_ROUND_CHECK_TEST_SUITES_ALSO_FAILING_AT_FROZEN_HEAD_RECORD_FILE_NAME in the git directory under the checked commit. Once
-GitHub's head is the checked commit or the frozen-head, it prints the message for merge-lane-2, which
+the pushed head is the checked commit or the frozen-head, it prints the message for merge-lane-2, which
 the agent sends with SendMessage, since a program cannot, naming the suites that record holds for the
 checked commit; it runs no suite then. When the round has no commit, it first posts the round record,
 unless one already names the round's latest changes-requested review.
@@ -960,39 +961,24 @@ def commits_since(frozen_head, commit):
                       "its history, so the round rewrote or replaced the reviewed commits.\n"
                       "Put the fix in one commit on top of the frozen-head; never amend or rebase "
                       "a pushed head.")
-    # --first-parent leaves out the commits a merge of origin/main brings in.
+    # --first-parent lists a merge as one commit with two parents, which the round's rule refuses,
+    # instead of listing every commit the merge brings in.
     listing = git(["rev-list", "--reverse", "--first-parent", "--parents", f"{frozen_head}..{commit}"])
     return [(fields[0], fields[1:]) for fields in (line.split() for line in listing.splitlines())]
 
 
-def fix_commit_range(frozen_head, commits, after_conflict_merge):
+def fix_commit_range(frozen_head, commits):
     """Check the shape of the round; return (base, fix commit) for its file list, or None."""
-    described = ", ".join(f"{sha[:12]} ({len(parents)} parent{'' if len(parents) == 1 else 's'})"
-                          for sha, parents in commits)
     if not commits:
         return None
-    if after_conflict_merge:
-        merge_sha, merge_parents = commits[0]
-        shape_holds = (len(merge_parents) == 2 and merge_parents[0] == frozen_head
-                       and len(commits) <= 2
-                       and all(len(parents) == 1 for _, parents in commits[1:]))
-        if shape_holds:
-            if not is_ancestor(merge_parents[1], "origin/main"):
-                raise Refused(f"The merge {merge_sha[:12]} brings in {merge_parents[1][:12]}, "
-                              "which is not on origin/main.\n"
-                              "If origin/main is out of date, run git fetch origin and check again; "
-                              "otherwise merge origin/main itself.")
-            return (merge_sha, commits[1][0]) if len(commits) == 2 else None
-        rule = ("a merge of origin/main whose first parent is the frozen-head, followed by at most "
-                "one non-merge commit")
-    else:
-        if len(commits) == 1 and commits[0][1] == [frozen_head]:
-            return frozen_head, commits[0][0]
-        rule = "one non-merge commit whose parent is the frozen-head"
+    if len(commits) == 1 and commits[0][1] == [frozen_head]:
+        return frozen_head, commits[0][0]
+    described = ", ".join(f"{sha[:12]} ({len(parents)} parent{'' if len(parents) == 1 else 's'})"
+                          for sha, parents in commits)
     raise Refused(f"The round has {len(commits)} commits after the frozen-head {frozen_head[:12]}: "
-                  f"{described}. A fix-round is {rule}.\n"
+                  f"{described}. A fix-round is one non-merge commit whose parent is the frozen-head.\n"
                   "If the commits are not pushed, squash them into one commit on top of the "
-                  "frozen-head.\n"
+                  "frozen-head; drop any merge of main.\n"
                   "If they are pushed, tell merge-lane-2 with SendMessage; do not force-push.")
 
 
@@ -1146,9 +1132,25 @@ def refuse_answers_written_before_review(answers_path, review_submitted_at, revi
                       "run the check again.")
 
 
-def check_round(number, reviewer_login, answers_path, commit_name, after_conflict_merge,
+def origin_branch_head(url, branch):
+    """The commit origin's branch points at now; GitHub's headRefOid can lag a push by seconds."""
+    ref = f"refs/heads/{branch}"
+    for line in git(["ls-remote", "origin", ref]).splitlines():
+        commit, _, name = line.partition("\t")
+        if name == ref:
+            return commit
+    raise StepFailed(f"git ls-remote origin {ref} found no branch {branch} on origin, though pull request {url} "
+                     "names it as its head branch, so the round's commit is not on origin, and whether the pull "
+                     "request still takes pushes to that branch is in doubt.\n"
+                     "Do not push.\n"
+                     "Send merge-lane-2 this message with Claude Code's SendMessage tool: \"The fix-round check of "
+                     f"{url} found no branch {branch} on origin, so the round's commit is not pushed.\" The round "
+                     "stops there, and merge-lane-2's answer says how it goes on.")
+
+
+def check_round(number, reviewer_login, answers_path, commit_name,
                 confirm_dispatching_agent_checked_new_shared_names=False):
-    (url, head, branch, review_link, frozen_head, blocking, nits,
+    (url, _github_head, branch, review_link, frozen_head, blocking, nits,
      _fix_round_number, unrecorded_review_ids, review_submitted_at) = round_facts(number, reviewer_login)
     findings = blocking + nits
     answers_path = answers_path or default_answers_path(number)
@@ -1159,7 +1161,7 @@ def check_round(number, reviewer_login, answers_path, commit_name, after_conflic
     commit = git(["rev-parse", "--verify", f"{commit_name}^{{commit}}"]).strip()
     refuse_moved_change_still_here(answers, commit, answers_path)
     git(["cat-file", "-e", f"{frozen_head}^{{commit}}"])
-    fix_range = fix_commit_range(frozen_head, commits_since(frozen_head, commit), after_conflict_merge)
+    fix_range = fix_commit_range(frozen_head, commits_since(frozen_head, commit))
     refuse_committed_answers_file(frozen_head, commit)
     leftovers = unnamed_files(*(fix_range or (None, None)), findings)
     lines = [f"PASS: the fix-round on {url} keeps to its rules; {len(findings)} findings answered."]
@@ -1167,8 +1169,9 @@ def check_round(number, reviewer_login, answers_path, commit_name, after_conflic
         lines += ["Files the fix commit changes that no blocking finding or nit names; say in the message "
                   "why each belongs in this round, or take it out:"]
         lines += [f"  {path}" for path in leftovers]
+    head = origin_branch_head(url, branch)
     if head not in (commit, frozen_head):
-        raise Refused(f"GitHub's head of {url} is {head}, which is neither the checked commit "
+        raise Refused(f"origin's branch {branch} of {url} is at {head}, which is neither the checked commit "
                       f"{commit} nor the frozen-head {frozen_head}.\n"
                       "Check --commit names what you pushed; if someone else pushed, tell "
                       "merge-lane-2 with SendMessage.")
@@ -1424,9 +1427,6 @@ def main(argv=None):
                              + " at the root of this worktree)")
     parser.add_argument("--commit", default="HEAD",
                         help="with --check: the round's last commit (default: HEAD)")
-    parser.add_argument("--after-conflict-merge", action="store_true",
-                        help="with --check: the round starts with a merge of origin/main, made "
-                             "because branch-conflict-check.py reported a conflict")
     parser.add_argument(new_shared_names_lister.CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG, action="store_true",
                         help="with --check: the agent that dispatched the round has checked the shared names "
                              "the round's commit adds, and its renames are in that commit")
@@ -1452,7 +1452,7 @@ def main(argv=None):
             move_finish(arguments.number, arguments.title, arguments.body_file)
         elif arguments.check:
             check_round(arguments.number, arguments.reviewer_login, arguments.answers,
-                        arguments.commit, arguments.after_conflict_merge,
+                        arguments.commit,
                         arguments.confirm_dispatching_agent_checked_new_shared_names)
         else:
             print_brief(arguments.number, arguments.reviewer_login)

@@ -1154,6 +1154,22 @@ with scratch() as directory:
 with scratch() as directory:
     base = pathlib.Path(directory)
     make_stand_in_bin(base)
+    full_name = "rerun-root-probe-minutes.md"
+    write(base / "mac" / "agents" / "c" / full_name, "x")
+    code, stdout, stderr = run(base, "/rerun-root-probe")
+    first, _, second = stdout.partition(RERUN_LINE_OPENING)
+    same_second, other_second, _ = sections(second)
+    check("a path query in the root directory, which has one part, reruns in "
+          "the root directory, not by name, so a file elsewhere is still only "
+          "a candidate, and exits 1",
+          code == 1 and second.startswith(
+              f"{full_name}, so this program runs again with /{full_name} "
+              f"in place of /rerun-root-probe.")
+          and not same_second and full_name in other_second, stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
     write(base / "mac" / "agents" / "c" / "found-probe.md", "the file")
     write(base / "mac" / "agents" / "c" / "found-probe-minutes.md", "other")
     code, stdout, stderr = run(base, "found-probe.md")

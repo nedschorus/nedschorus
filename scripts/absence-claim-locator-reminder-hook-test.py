@@ -329,6 +329,10 @@ for case_name, text in [
      "The transcript that is gone is the only copy."),
     ("pattern 2: a defining verb before a colon, the match in a relative clause",
      "The report uses two sources: the mirror, and the transcript that is missing."),
+    ("pattern 6: a search tool as the subject, a can't elsewhere in the sentence",
+     "The locator isn't in the repository, so we can't run it."),
+    ("pattern 2: an artifact word and an edited-element word joined by a second and",
+     "Ned left and the transcript and the guard are gone."),
 ]:
     check(f"trigger: {case_name}", bool(hook.absence_claim_matches(text)), text)
 
@@ -395,6 +399,12 @@ for case_name, text in [
     ("a search tool as the subject, an adverb before the match", "We know the locator still cannot find branch names."),
     ("an artifact word ending in -ing after the subject's first noun is a participle",
      "The guard ruling out stale files is gone."),
+    ("an artifact word before a clause-opening word other than and", "Nobody touched the transcript because the parser is gone."),
+    ("an artifact word in the clause before and, not right before it", "The transcript went stale and the parser is gone."),
+    ("an artifact word as a verb's object before the second and, a pronoun subject",
+     "Ned left and I edited the transcript and the guard is gone."),
+    ("an artifact word as a verb's object before the second and, a second determiner",
+     "Ned left and the commit touched the transcript and the guard is gone."),
 ]:
     check(f"trigger: silent on {case_name}", not hook.absence_claim_matches(text),
           hook.absence_claim_matches(text))
