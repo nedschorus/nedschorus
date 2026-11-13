@@ -22,20 +22,28 @@ import sys
 import time
 from pathlib import Path
 
-_shell_reader_spec = importlib.util.spec_from_file_location(
-    "shell_command_tree_sitter_bash_reader_common",
-    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
-    / "shell-command-tree-sitter-bash-reader-common.py")
-shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
-_shell_reader_spec.loader.exec_module(shell_reader)
-is_program = shell_reader.is_program
+_crash_notice_spec = importlib.util.spec_from_file_location(
+    "guard_hook_crash_fail_open_with_notice_common",
+    Path(__file__).resolve().parent / "guard-hook-crash-fail-open-with-notice-common.py")
+_crash_notice = importlib.util.module_from_spec(_crash_notice_spec)
+_crash_notice_spec.loader.exec_module(_crash_notice)
 
-_rebase_or_replace_spec = importlib.util.spec_from_file_location(
-    "pull_request_conflict_with_main_rebase_or_replace_answer_common",
-    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
-    / "pull-request-conflict-with-main-rebase-or-replace-answer-common.py")
-rebase_or_replace = importlib.util.module_from_spec(_rebase_or_replace_spec)
-_rebase_or_replace_spec.loader.exec_module(rebase_or_replace)
+with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
+        __file__, __name__ == "__main__"):
+    _shell_reader_spec = importlib.util.spec_from_file_location(
+        "shell_command_tree_sitter_bash_reader_common",
+        Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+        / "shell-command-tree-sitter-bash-reader-common.py")
+    shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
+    _shell_reader_spec.loader.exec_module(shell_reader)
+
+    _rebase_or_replace_spec = importlib.util.spec_from_file_location(
+        "pull_request_conflict_with_main_rebase_or_replace_answer_common",
+        Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+        / "pull-request-conflict-with-main-rebase-or-replace-answer-common.py")
+    rebase_or_replace = importlib.util.module_from_spec(_rebase_or_replace_spec)
+    _rebase_or_replace_spec.loader.exec_module(rebase_or_replace)
+is_program = shell_reader.is_program
 
 # Stay below the hook timeout: overrunning it fails open silently.
 # Cap individual probes so one slow answer cannot consume the whole budget.
@@ -503,4 +511,5 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(__file__, True):
+        sys.exit(main())

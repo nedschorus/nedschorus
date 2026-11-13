@@ -411,8 +411,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     (broken_tree / "scripts").mkdir()
     import shutil as _copier
     _copier.copy(SCRIPT_PATH, broken_tree / ".claude" / "guard-hooks" / SCRIPT_PATH.name)
-    _copier.copy(SCRIPT_PATH.resolve().parent / "guard-approval-marker-common.py",
-                 broken_tree / ".claude" / "guard-hooks" / "guard-approval-marker-common.py")
+    for shared_module in ("guard-approval-marker-common.py",
+                          "guard-hook-crash-fail-open-with-notice-common.py"):
+        _copier.copy(SCRIPT_PATH.resolve().parent / shared_module,
+                     broken_tree / ".claude" / "guard-hooks" / shared_module)
     (broken_tree / "scripts" / "checkout-freshness-catch-up.py").write_text(
         "raise RuntimeError('stand-in broken module')\n", encoding="utf-8")
     result = run_hook(detached, str(detached / "notes.md"), decoy,
@@ -565,6 +567,15 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook(seat, str(seat / "analysis.ipynb"), decoy, notebook=True)
     check("a seat's own notebook write passes through notebook_path",
           result.returncode == 0, result.stderr)
+
+# Stdin that is not JSON crashes the guard: the call goes ahead, and the agent and the user are told.
+result = subprocess.run([sys.executable, str(SCRIPT_PATH)], input="not json",
+                        capture_output=True, text=True, check=False)
+notice = json.loads(result.stdout) if result.returncode == 0 and result.stdout else {}
+check("stdin that is not JSON lets the call go ahead and tells the agent and the user",
+      "JSONDecodeError" in notice.get("systemMessage", "")
+      and "JSONDecodeError" in notice.get("hookSpecificOutput", {}).get("additionalContext", ""),
+      (result.returncode, result.stdout, result.stderr))
 
 print()
 if failures:

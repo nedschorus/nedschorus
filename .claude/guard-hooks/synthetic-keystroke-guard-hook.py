@@ -14,20 +14,32 @@ import sys
 import time
 from pathlib import Path
 
-_shell_reader_spec = importlib.util.spec_from_file_location(
-    "shell_command_tree_sitter_bash_reader_common",
-    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
-    / "shell-command-tree-sitter-bash-reader-common.py")
-shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
-_shell_reader_spec.loader.exec_module(shell_reader)
-is_program = shell_reader.is_program
+_crash_notice_spec = importlib.util.spec_from_file_location(
+    "guard_hook_crash_fail_open_with_notice_common",
+    Path(__file__).resolve().parent / "guard-hook-crash-fail-open-with-notice-common.py")
+_crash_notice = importlib.util.module_from_spec(_crash_notice_spec)
+_crash_notice_spec.loader.exec_module(_crash_notice)
 
-_tmux_error_pattern_spec = importlib.util.spec_from_file_location(
-    "tmux_target_or_server_does_not_exist_error_pattern_common",
-    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
-    / "tmux-target-or-server-does-not-exist-error-pattern-common.py")
-tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
-_tmux_error_pattern_spec.loader.exec_module(tmux_error_pattern)
+# The check mode is run by an agent, not by the harness, so it can wait longer than the hook.
+CHECK_MODE_FLAG = "--is-target-detached"
+
+# The check mode is no hook: its crash must exit nonzero, not fail open.
+with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
+        __file__, __name__ == "__main__" and sys.argv[1:2] != [CHECK_MODE_FLAG]):
+    _shell_reader_spec = importlib.util.spec_from_file_location(
+        "shell_command_tree_sitter_bash_reader_common",
+        Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+        / "shell-command-tree-sitter-bash-reader-common.py")
+    shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
+    _shell_reader_spec.loader.exec_module(shell_reader)
+
+    _tmux_error_pattern_spec = importlib.util.spec_from_file_location(
+        "tmux_target_or_server_does_not_exist_error_pattern_common",
+        Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+        / "tmux-target-or-server-does-not-exist-error-pattern-common.py")
+    tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
+    _tmux_error_pattern_spec.loader.exec_module(tmux_error_pattern)
+is_program = shell_reader.is_program
 
 OPENER = "scripts/open-iterm-window-running-command"
 
@@ -147,8 +159,6 @@ NO_TARGET_REASON = (
     "to do."
 )
 
-# The check mode is run by an agent, not by the harness, so it can wait longer than the hook.
-CHECK_MODE_FLAG = "--is-target-detached"
 CHECK_MODE_PROBE_BUDGET_SECONDS = 60.0
 CHECK_MODE_PER_PROBE_TIMEOUT_SECONDS = 30.0
 CHECK_MODE_EXIT_DETACHED = 0
@@ -675,4 +685,5 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
 if __name__ == "__main__":
     if sys.argv[1:2] == [CHECK_MODE_FLAG]:
         sys.exit(run_check_mode(sys.argv[2:]))
-    sys.exit(main())
+    with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(__file__, True):
+        sys.exit(main())
