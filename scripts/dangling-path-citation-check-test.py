@@ -507,6 +507,20 @@ echo hello
           code == 1 and "absent-under-a-name-ending-tested" in out,
           f"{code} {out!r} {err!r}")
 
+    # A GHI-MD's name comes from its issue's title, so it can end -test
+    # without being a test: docs/issues/2263-the-test-runner-s-history-of-failing-test.md.
+    commit_change(root, "docs/issues/9999-a-title-ending-in-failing-test.md",
+                  "# a GHI-MD\n\nSee `scripts/absent-under-a-markdown-name-ending-test.py`.\n")
+    code, out, err = run_check(root, base)
+    check("a Markdown file whose stem ends -test is not a test file, and is still reported",
+          code == 1 and "absent-under-a-markdown-name-ending-test" in out,
+          f"{code} {out!r} {err!r}")
+    commit_change(root, "scripts/subsystem/tests/fixture-page.md",
+                  "# a fixture\n\nSee `scripts/absent-under-a-markdown-fixture.py`.\n")
+    code, out, err = run_check(root, base)
+    check("a Markdown file in a tests directory is still exempt forward",
+          "absent-under-a-markdown-fixture" not in out, f"{code} {out!r} {err!r}")
+
     # --- BACKWARD: a citation carrying a leading or dotted slash --------
     # The six hook commands in .claude/settings.json are written
     # `"$CLAUDE_PROJECT_DIR"/scripts/<name>.py`, and a launcher runs a
