@@ -13,14 +13,17 @@ N and M are the running count of the item's heading; the walk name is the walk-d
 
 The item is found as the walk-me-through hooks and the walk check program find it, through
 walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py: its unit runs from the heading that
-names it to the next item, a sub-step such as `### Item 4.1 of 9` being an item of its own, and an item that
-shares a heading with others keeps only its own lines, under that heading. The text is rendered with the shared
+names it to the next item or the next `Withdrawn` heading, a sub-step such as `### Item 4.1 of 9` being an item of
+its own, and an item that shares a heading with others keeps only its own lines, under that heading. Since a
+sub-step's closing line links to its item's page, item 4's page also carries, after its own lines, each of its
+sub-steps' units, in the walk-document's order, each under its own heading; a sub-step's page, built with 4.1,
+holds that sub-step alone. A version under a `Withdrawn` heading is on no page. The text is rendered with the shared
 CommonMark parser, each line break kept, as the walk-document shows it. A paragraph that opens with
 `Recommendation:` gets the class `rec`, and one that opens with `#approval_walk` gets the class `tag`.
 
 It does not copy the files an item links into the page: each link stays as the walk-document writes it, so a
 `file:///Volumes/nedhome/...` link opens only on the user's Mac. It does not leave out any line, the hashtag lines
-meant for agents included. HTML in the walk-document is shown as text, so a placeholder such as `<walk name>`
+meant for agents included, apart from the versions under `Withdrawn` headings. HTML in the walk-document is shown as text, so a placeholder such as `<walk name>`
 written outside backquotes shows as written. It refuses an item number
 that no heading names or that more than one heading names. It overwrites the output file without asking.
 """
@@ -92,6 +95,12 @@ def item_lines_and_count(walk_finder, document, text, number, parser):
         start, end = walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
             openings, first, end, number, numbers, total)
     body = lines[start + 1:end] if start == first else lines[start:end]
+    # The skill links a sub-step's closing line to its item's page, so the item's page carries its sub-steps.
+    # Each sub-step's unit already ends at its first Withdrawn heading, so withdrawn versions stay off the page.
+    for sub_numbers, _, _, sub_first, sub_end in units:
+        if sub_numbers and all(each.startswith(number + ".") for each in sub_numbers):
+            body += ["", walk_finder.approval_walk_item_heading_with_deferred_note_removed(lines[sub_first])]
+            body += lines[sub_first + 1:sub_end]
     return body, heading, total
 
 

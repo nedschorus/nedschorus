@@ -122,8 +122,9 @@ def run_page_cases(scratch):
 
 def run_unit_cases(scratch):
     _, page = built(scratch, "4")
-    check("an item's page stops at its sub-step", "A filter would hide old rows." in page
-          and "Off by default." not in page, page)
+    check("an item's page carries its sub-step under the sub-step's own heading, and stops before the next item",
+          "A filter would hide old rows." in page and "<h3>Item 4.1 of 9: the filter's default</h3>" in page
+          and "Off by default." in page and "two small corrections" not in page, page)
     result, page = built(scratch, "4.1")
     check("a sub-step's page holds the sub-step alone, its ### heading as the <h1>",
           result.returncode == 0 and "<h1>Item 4.1 of 9: the filter's default</h1>" in page
@@ -135,6 +136,83 @@ def run_unit_cases(scratch):
     result, page = built(scratch, "3", "--version", "2")
     check("--version 2 opens the title with Version 2", result.returncode == 0
           and page.startswith(f"<title>Version 2, Item 3 of 9: {WALK}</title>"), page[:200])
+
+
+# Item 45 of the walk-document agent-seat-git-worktrees-branches-checkout-refresh-and-cleanup-redesign-approval-walk-2026-11-03:
+# the item's own text is only its tags, and each version replaced later sits under a Withdrawn heading.
+PARENT_WITH_WITHDRAWN_VERSIONS_AND_SUB_STEPS = """# A walk
+
+## Item 44 of 46: the item before
+
+Recommendation: keep it.
+
+## Item 45 of 46: the paused walk: refresh its rewrite, or drop it
+
+#approval_walk_item_first_entered 2026-11-11
+
+#approval_walk_item_in_category_fix_next
+
+#### Withdrawn version 1 of item 45
+
+#approval_walk_item_first_entered 2026-11-12
+
+Withdrawn one: the search-file guard names one dash-name.
+
+Recommendation: approve both, from withdrawn one.
+
+#### Withdrawn version 2 of item 45
+
+Withdrawn two: the two rulings disagree here.
+
+Recommendation: refresh, from withdrawn two.
+
+### Item 45.1 of 46: what the paused walk holds
+
+Current 45.1: the first ruling has you answer 31 items one by one.
+
+No decision here; type N or next to continue.
+
+#### Withdrawn version 1 of item 45.1
+
+Withdrawn 45.1: the first ruling has you review this rewrite item by item.
+
+### Item 45.2 of 46: refresh the rewrite, or drop it
+
+Current 45.2: the paused walk closes, and 27 of the 30 items are settled.
+
+#case_against medium: nothing starts until PR 2958 merges.
+
+Recommendation: refresh the rewrite.
+
+#### Withdrawn version 1 of item 45
+
+Withdrawn three: a third withdrawn version of item 45, after its sub-steps.
+
+#### Withdrawn version 1 of item 45.2
+
+Withdrawn 45.2: the old walk closes.
+
+## The next, unnumbered item
+
+The next item's text.
+"""
+
+
+def run_parent_with_sub_steps_case(scratch):
+    result, page = built(scratch, "45", document=PARENT_WITH_WITHDRAWN_VERSIONS_AND_SUB_STEPS)
+    main = page[page.find("<main>"):]
+    check("an item whose own text is only tags gets a page with its current sub-steps in full, in order",
+          result.returncode == 0 and "<h1>Item 45 of 46: the paused walk: refresh its rewrite, or drop it</h1>" in main
+          and main.find("<h3>Item 45.1 of 46: what the paused walk holds</h3>")
+          < main.find("Current 45.1: the first ruling has you answer 31 items")
+          < main.find("<h3>Item 45.2 of 46: refresh the rewrite, or drop it</h3>")
+          < main.find("Current 45.2: the paused walk closes")
+          < main.find('<p class="rec">Recommendation: refresh the rewrite.</p>')
+          and main.find("<h3>Item 45.1") > main.find("#approval_walk_item_in_category_fix_next") > 0, main)
+    check("the item's page leaves out every withdrawn version, of the item and of its sub-steps, and the next items",
+          not any(text in main for text in ("Withdrawn", "withdrawn one", "withdrawn two", "Withdrawn three",
+                                            "Withdrawn 45.1", "Withdrawn 45.2", "2026-11-12", "the item before",
+                                            "The next item's text")), main)
 
 
 def run_refusal_cases(scratch):
@@ -220,6 +298,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     scratch = Path(temporary_directory)
     run_page_cases(scratch)
     run_unit_cases(scratch)
+    run_parent_with_sub_steps_case(scratch)
     run_refusal_cases(scratch)
     run_parser_missing_case(scratch)
 
