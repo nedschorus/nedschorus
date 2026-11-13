@@ -258,7 +258,8 @@ sys.exit(step.get("exit", 0))
 # plan, counts in a counter of its own and writes the report path its prompt
 # names; otherwise, with no plan it fails, so a case that does not plan the
 # backup sees it fail. "report" writes the report and succeeds; "fail_stderr"
-# is what a failure prints; "dump_prompt" saves the prompt; "pid_file" saves
+# is what a failure prints; "dump_prompt" saves the prompt; "dump_settings"
+# saves the value of --settings; "pid_file" saves
 # the stub's process ID, first thing; "wait_for_file" fails unless that file
 # appears within 20 s; "sleep_seconds" sleeps that long after it; "hang"
 # sleeps past any deadline a case sets; "concurrent_read_answer" exits 0 without writing its own report, after
@@ -284,6 +285,8 @@ if "pid_file" in plan:
     pathlib.Path(plan["pid_file"]).write_text(str(os.getpid()), encoding="utf-8")
 if "dump_prompt" in plan:
     pathlib.Path(plan["dump_prompt"]).write_text(prompt, encoding="utf-8")
+if "dump_settings" in plan:
+    pathlib.Path(plan["dump_settings"]).write_text(argv[argv.index("--settings") + 1], encoding="utf-8")
 if "wait_for_file" in plan:
     for _ in range(200):
         if pathlib.Path(plan["wait_for_file"]).exists():
@@ -810,6 +813,36 @@ with tempfile.TemporaryDirectory() as scratch:
           and "stub agy: the gemini cause" in result.stderr
           and "cold-read-fast-read: #cold_read_fast_read_sonnet_backup_ran " in result.stderr,
           repr(result.stderr))
+
+    # The Gemini cell runs agy, not Claude Code, so its run has no Claude Code settings to check.
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    sonnet_backup_settings = scratch / "sonnet-backup-settings.json"
+    question_4_settings = scratch / "question-4-settings.json"
+    sonnet_backup_settings.unlink(missing_ok=True)
+    question_4_settings.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: of the walk item\n",
+                     "dump_settings": str(sonnet_backup_settings)},
+        question_4_plan={"report": QUESTION_4_STUB_ANSWER,
+                         "dump_settings": str(question_4_settings)},
+    )
+    sonnet_backup_settings_read = (json.loads(sonnet_backup_settings.read_text(encoding="utf-8"))
+                                   if sonnet_backup_settings.is_file() else None)
+    question_4_settings_read = (json.loads(question_4_settings.read_text(encoding="utf-8"))
+                                if question_4_settings.is_file() else None)
+    check("Question 4's claude run, and no other claude run of the same fast read, "
+          'gets "promptCacheTtl": "5m" in its --settings',
+          result.returncode == 0
+          and question_4_settings_read is not None
+          and question_4_settings_read.get("promptCacheTtl") == "5m"
+          and sonnet_backup_settings_read is not None
+          and "promptCacheTtl" not in sonnet_backup_settings_read,
+          f"exit {result.returncode}; Question 4 settings={question_4_settings_read!r}; "
+          f"Sonnet backup settings={sonnet_backup_settings_read!r}; stderr={result.stderr!r}")
 
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"

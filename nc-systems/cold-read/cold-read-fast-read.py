@@ -1349,6 +1349,7 @@ def what_should_be_code_cell_start(target: pathlib.Path, scratch: pathlib.Path) 
         "--effort", WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_EFFORT,
         "--target", str(target), "--report", str(answer),
         "--prompt-file", str(prompt_file),
+        "--prompt-cache-five-minute-ttl",
     ]
     print(f"{PROGRAM}: asking Question 4, What should be code, about {target}, of "
           f"{WHAT_SHOULD_BE_CODE_QUESTION_REVIEWER_MODEL_ID} at "
