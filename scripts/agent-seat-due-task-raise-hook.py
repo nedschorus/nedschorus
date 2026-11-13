@@ -397,8 +397,8 @@ def approval_walk_item_decided_or_problem(condition: dict) -> dict:
     matching = [unit for unit in units
                 if answer_program.heading_title(walk_finder, lines[unit[3]]) == title]
     if len(matching) != 1:
-        found = "no item heading" if not matching else f"{len(matching)} item headings"
-        return {"met": False, "problem": f'the walk-document {document} holds {found} that reads '
+        found = "no item heading that reads" if not matching else f"{len(matching)} item headings that read"
+        return {"met": False, "problem": f'the walk-document {document} holds {found} '
                                          f'"{single_line(heading)}" once its running count is left out'}
     numbers = matching[0][0]
     if not numbers or not minutes.exists():

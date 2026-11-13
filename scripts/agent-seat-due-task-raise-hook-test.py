@@ -1077,6 +1077,16 @@ check("approval-walk item whose heading is not in the walk-document: named, not 
       repr(context_of(result)))
 check("approval-walk item whose heading is not found: named once, then silent", silent(seat.run()))
 
+seat = WalkSeat(WALK_DOCUMENT + "\n## Item 4 of 4: " + ITEM_1 + "\n")
+seat.waiting_task("79", ITEM_1)
+seat.minutes_say("item 1 of 3: approved; every text the change adds has had a fast read. <accepted>")
+result = seat.run()
+check("approval-walk item whose heading two items share, the first decided: named, not raised",
+      context_of(result) == problem_text(
+          "79", f"the walk-document {seat.document} holds 2 item headings that read \"{ITEM_1}\" "
+                "once its running count is left out"),
+      repr(context_of(result)))
+
 seat = WalkSeat()
 seat.waiting_task("76", ITEM_1)
 seat.minutes_say("item 1 of 3: approved; every text the change adds has had a fast read. <accepted>")
