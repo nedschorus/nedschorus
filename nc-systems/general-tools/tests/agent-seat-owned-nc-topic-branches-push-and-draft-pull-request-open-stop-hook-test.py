@@ -36,9 +36,18 @@ sys.exit(int(os.environ.get("FAKE_GH_" + kind.upper() + "_STATUS", "0")))
 """
 
 
+# The tests' git runs with this identity and no global or system configuration, whatever the
+# machine running them has.
+GIT_ENVIRONMENT = {
+    "GIT_AUTHOR_NAME": SEAT, "GIT_AUTHOR_EMAIL": "t@example.invalid",
+    "GIT_COMMITTER_NAME": SEAT, "GIT_COMMITTER_EMAIL": "t@example.invalid",
+    "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+
+
 def git(directory, *arguments):
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     return subprocess.run(["git", *arguments], cwd=directory, check=True, capture_output=True,
-                          text=True).stdout.strip()
+                          text=True, env={**environment, **GIT_ENVIRONMENT}).stdout.strip()
 
 
 class StopHookTest(unittest.TestCase):
@@ -60,14 +69,12 @@ class StopHookTest(unittest.TestCase):
         self.calls.write_text("")
         self.environment = environment = {
             key: value for key, value in os.environ.items()
-            if not key.startswith(("GIT_", "FAKE_GH_", "NEDSCHORUS_", "CLAUDE_CODE_SESSION_ATTENDED"))}
+            if not key.startswith(("GIT_", "FAKE_GH_", "NEDSCHORUS_", "CLAUDE_CODE_SESSION_ATTENDED",
+                                   "CLAUDE_PROJECT_DIR"))}
         environment.update({
             "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
             "FAKE_GH_CALLS": str(self.calls),
-            "FAKE_GH_LIST_STDOUT": "[]",
-            "GIT_AUTHOR_NAME": SEAT, "GIT_AUTHOR_EMAIL": "t@example.invalid",
-            "GIT_COMMITTER_NAME": SEAT, "GIT_COMMITTER_EMAIL": "t@example.invalid",
-            "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
+            "FAKE_GH_LIST_STDOUT": "[]", "CLAUDE_PROJECT_DIR": str(self.clone), **GIT_ENVIRONMENT})
 
     def worktree(self, branch, owner_seat=SEAT, commit=True):
         path = self.root / branch
@@ -86,13 +93,13 @@ class StopHookTest(unittest.TestCase):
             else:
                 environment[key] = value
         if stdin_text is None:
-            stdin_text = json.dumps({"cwd": str(self.clone), "stop_hook_active": False, **(payload or {})})
+            stdin_text = json.dumps({"cwd": str(self.root), "stop_hook_active": False, **(payload or {})})
         return subprocess.run([sys.executable, str(HOOK)], input=stdin_text, capture_output=True,
                               text=True, env=environment, cwd=self.clone)
 
     def on_origin(self, branch):
         return subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
-                              cwd=self.origin, capture_output=True).returncode == 0
+                              cwd=self.origin, capture_output=True, env=self.environment).returncode == 0
 
     def gh_calls(self):
         return [json.loads(line) for line in self.calls.read_text().splitlines()]
@@ -235,7 +242,7 @@ class StopHookTest(unittest.TestCase):
     def test_failed_worktree_listing_is_one_stderr_line_with_exit_1(self):
         not_a_clone = self.root / "not-a-clone"
         not_a_clone.mkdir()
-        result = self.run_hook({"cwd": str(not_a_clone)})
+        result = self.run_hook(CLAUDE_PROJECT_DIR=str(not_a_clone))
         self.assertEqual((result.returncode, result.stdout), (1, ""))
         self.assertIn("`git worktree list` failed", result.stderr)
 

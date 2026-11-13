@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Claude Code Stop hook: at each turn end, put the ending agent-seat's committed work on GitHub.
 
-For each worktree of this clone whose owner file, scripts/worktree-owner-file-read-and-write.py's,
+For each worktree of the clone CLAUDE_PROJECT_DIR names (else the payload's cwd), whose owner file, scripts/worktree-owner-file-read-and-write.py's,
 names the agent-seat GIT_AUTHOR_NAME names, and whose checked-out branch is not main and has a
 commit no origin branch holds (`git rev-list <branch> --not --remotes=origin` prints something):
 
@@ -176,7 +176,8 @@ def run(stdin_text, environment, default_directory):
     agent_seat = environment.get("GIT_AUTHOR_NAME", "")
     if not agent_seat or attendance.agent_session_unattended_by_user(environment):
         return "", "", 0
-    clone_directory = payload.get("cwd") or default_directory
+    # Not the payload's cwd first: it follows the agent's `cd`, which can leave the clone.
+    clone_directory = environment.get("CLAUDE_PROJECT_DIR") or payload.get("cwd") or default_directory
     failures = []
     for worktree, branch in agent_seat_owned_nc_topic_branches_with_commits_origin_lacks(
             clone_directory, agent_seat, failures):
@@ -194,7 +195,7 @@ def run(stdin_text, environment, default_directory):
 def main():
     try:
         stdout_text, stderr_text, status = run(
-            sys.stdin.read(), os.environ, os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+            sys.stdin.read(), os.environ, os.getcwd())
     except HookFailure as error:
         print(f"{HOOK_NAME}: {error}", file=sys.stderr)
         return 1
