@@ -1003,6 +1003,45 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a Bash call line that does not parse leaves its task the no-match wait-limit",
           flight.background_task_ids == ["b27dndn4c"], str(flight.background_task_ids))
 
+    # Only a tool_use block whose run_in_background is the boolean true is a background Bash call,
+    # wherever it stands among the line's blocks. The other block types sort before and after
+    # "tool_use", so an ordering comparison in place of != would let one of them through.
+    background_call = {"type": "tool_use", "id": "toolu_late",
+                       "input": {"command": "sleep 1", "run_in_background": True}}
+    for content, expected in (
+            ([{"type": "text", "text": "Launching."}, background_call], {"toolu_late": "sleep 1"}),
+            ([{"type": "server_tool_use", "id": "toolu_server",
+               "input": {"command": "sleep 1", "run_in_background": True}}], {}),
+            ([{"type": "web_search_tool_result", "id": "toolu_result",
+               "input": {"command": "sleep 1", "run_in_background": True}}], {}),
+            ([{"type": "tool_use", "id": "toolu_one",
+               "input": {"command": "sleep 1", "run_in_background": 1}}], {})):
+        line = json.dumps({"type": "assistant", "message": {"role": "assistant", "content": content}})
+        commands = hook.background_bash_commands_by_tool_use_id_from_line(line)
+        check(f"the background Bash calls in content {content!r} are {expected!r}",
+              commands == expected, str(commands))
+
+    # The tool_use id is the first tool_result block's, past blocks of types that sort before
+    # and after "tool_result".
+    for content, expected in (
+            ([{"type": "text", "text": "x"}, {"type": "tool_result", "tool_use_id": "toolu_answered"}],
+             "toolu_answered"),
+            ([{"type": "tool_use", "id": "toolu_call"}, {"type": "tool_result", "tool_use_id": "toolu_answered"}],
+             "toolu_answered"),
+            ([{"type": "text", "text": "x"}], None)):
+        answered = hook.tool_result_tool_use_id({"type": "user", "message": {"role": "user", "content": content}})
+        check(f"the tool_result in content {content!r} answers {expected!r}",
+              answered == expected, str(answered))
+
+    # A limit of 0 or below means the task is never waited for; any positive limit, however
+    # short, waits for a task whose age cannot be read and for one younger than the limit.
+    for age_seconds, wait_limit_seconds, expected in (
+            (None, -60, False), (None, 0, False), (None, 1, True), (0, 1, True), (0.5, 0.75, True),
+            (1, 1, False)):
+        within = hook.background_task_still_within_wait(age_seconds, wait_limit_seconds)
+        check(f"a task aged {age_seconds!r} s under a {wait_limit_seconds!r} s wait-limit is "
+              f"{'within' if expected else 'past'} its wait", within is expected, str(within))
+
     # A launch whose age cannot be read fails closed, like everything else the
     # scan cannot tell: it counts, and the ceiling bounds it.
     undated_launch = transcript_of(workspace, "grid-undated-launch.jsonl", [
