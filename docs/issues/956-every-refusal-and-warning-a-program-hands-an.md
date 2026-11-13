@@ -508,7 +508,7 @@ daily-overview-refresh-reminder-mark: no mark was written, because {date} is aft
 Run this again without --shown-on-pacific-date, or with the date the user was shown the refresh.
 ```
 
-`nc-systems/handoff/tests/handoff-architecture-overview-refresh-user-shown-mark-test.py` has a test case for each date case.
+`nc-systems/handoff/tests/daily-overview-refresh-reminder-mark-test.py` needs a test case for each date case.
 
 **Read by whoever watches the handoff-supervisor's console**, not by the agent-seat's agent (`nc-systems/handoff/handoff-supervisor.py`). They are here as the background to open question 5:
 
