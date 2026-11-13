@@ -5,8 +5,8 @@
 
 On Linux the sandboxes of the Codex and agy cold-read-cells deny a reviewer program only the folders
 CREDENTIAL_DIRECTORIES lists and the login files REVIEWER_PROGRAM_LOGIN_FILES lists, both in
-nc-systems/cold-read/cold-read-cell-common.py, except that the agy cell's sandbox leaves agy's own login
-files readable. They do not deny by the two name patterns of
+nc-systems/cold-read/cold-read-cell-common.py. The Codex cell's sandbox denies Codex's own login file too,
+while the agy cell's sandbox leaves agy's own login files readable. They do not deny by the two name patterns of
 CREDENTIAL_FILE_NAME_PATTERNS, `*.token` and `.env`; only the macOS sandboxes and the Claude cell's
 Read(//**/<pattern>) rule do. A file with such a name anywhere else under the home directory is therefore
 readable to the Codex and agy reviewer programs. This program walks the home directory, read from HOME,
