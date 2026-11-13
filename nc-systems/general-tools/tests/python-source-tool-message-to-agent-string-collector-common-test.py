@@ -115,6 +115,8 @@ NESTED_STRINGS = (
     ("a conditional expression as a + operand",
      'print(f"{PROGRAM}: " + (missing if missing else f"the suite used {cpu_seconds:.1f} CPU seconds"))\n',
      ": the suite used  CPU seconds"),
+    ("a conditional expression in a field of an f-string + operand",
+     'print("- " + f"{\'up\' if ok else \'down\'}")\n', "- up down"),
     ("a join's fallback in an f-string field", 'print(f"| {\', \'.join(flagged) or \'none\'} |")\n', "| none |"),
 )
 for case_name, source, expected in NESTED_STRINGS:

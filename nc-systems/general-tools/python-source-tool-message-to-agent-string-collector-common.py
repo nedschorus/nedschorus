@@ -140,8 +140,7 @@ def message_text_of_addition_chain(operands, literal_only=False):
         if isinstance(operand, ast.Constant) and isinstance(operand.value, str):
             pieces.append(operand.value)
         elif literal_only:
-            pieces.append(literal_text_of_string_node(operand) if isinstance(operand, ast.JoinedStr)
-                          else literal_text_carried_by_placeholder(operand))
+            pieces.append(literal_text_carried_by_placeholder(operand))
         elif isinstance(operand, ast.JoinedStr):
             pieces.extend(part.value if isinstance(part, ast.Constant) else f_string_field_text(part)
                           for part in operand.values)
