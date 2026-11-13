@@ -44,7 +44,8 @@ def emit(event):
     print(json.dumps(event), flush=True)
 text = prompt.split("----------\n", 1)[-1].rsplit("\n----------", 1)[0]
 for number, send in enumerate(answer.get("sends", [])):
-    message = text if send.get("message") == "@prompt-text" else send.get("message", "")
+    message = {{"@prompt-text": text, "@prompt-text-without-last-paragraph": text.rsplit("\n\n", 1)[0]
+               }}.get(send.get("message"), send.get("message", ""))
     emit({{"type": "assistant", "message": {{"content": [
         {{"type": "tool_use", "id": f"t{{number}}", "name": "SendMessage",
          "input": {{"to": send["to"], "message": message}}}}]}}}})
@@ -666,6 +667,124 @@ check("a notice missing from a listed agent-seat's transcript: a user-alert, exi
       code == 1 and len(machine.alerts()) == 1 and "account notice" in machine.alerts()[0]["title"],
       machine.alerts())
 
+# --- a sender that sends a text other than the one code wrote --------------------------------------
+# Every such case seen dropped the do-not-reply sentence and still reached the agent-seat.
+OWNER_TASKS = "nedschorus-ned-box-helper-tasks"
+SENT_TEXT_TASK_SUBJECT = "Idle sweep: a headless sender sent a text other than the one code wrote"
+DROPPED = send_to("alpha", "@prompt-text-without-last-paragraph")
+
+
+def owner_tasks(machine):
+    directory = machine.tasks / OWNER_TASKS
+    tasks = []
+    for path in sorted(directory.glob("*.json")) if directory.is_dir() else []:
+        try:
+            tasks.append(json.loads(path.read_text()))
+        except ValueError:
+            pass
+    return tasks
+
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+(machine.tasks / OWNER_TASKS).mkdir()
+(machine.tasks / OWNER_TASKS / "7.json").write_text("{not json")
+machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
+code, output = machine.run(0)
+differs = machine.events("sent_text_differs")
+sent = machine.events("message_sent")
+check("a sender that drops the do-not-reply sentence: no user-alert, no headless failure, exit 0",
+      code == 0 and not machine.alerts() and not machine.events("headless_failed"),
+      (code, output, machine.alerts()))
+check("a sender that drops the do-not-reply sentence: the text code wrote and the text sent are logged",
+      len(differs) == 1 and differs[0]["agent_seat"] == "alpha" and differs[0]["step"] == "nudge"
+      and ends_with_do_not_reply_once(differs[0]["text"])
+      and differs[0]["sent_text"] == differs[0]["text"].rsplit("\n\n", 1)[0], differs)
+check("a sender that drops the do-not-reply sentence: the send is logged with the text sent, for the "
+      "delivery check", len(sent) == 1 and sent[0]["text"] == differs[0]["sent_text"], sent)
+tasks = owner_tasks(machine)
+check("a sender that drops the do-not-reply sentence: ned-box-helper gets a pending task, past a task "
+      "file that is not JSON",
+      len(tasks) == 1 and tasks[0]["subject"] == SENT_TEXT_TASK_SUBJECT
+      and tasks[0]["status"] == "pending" and str(machine.log) in tasks[0]["description"]
+      and [event["task_id"] for event in machine.events("owner_task_opened")] == [8],
+      (tasks, machine.events("owner_task_opened")))
+machine.append("alpha", cross_session(sent[0]["text"], at(0.2)), assistant("On it.", at(0.3)),
+               turn_end(at(0.4)))
+machine.script()
+code, _ = machine.run(2)
+check("the text sent found in the agent-seat's transcript: no user-alert",
+      [event["found"] for event in machine.events("delivery_checked")] == [True]
+      and not machine.alerts(), (machine.events("delivery_checked"), machine.alerts()))
+machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
+machine.run(17)
+check("a second difference while the task is open: logged, and no second task",
+      len(machine.events("sent_text_differs")) == 2 and len(owner_tasks(machine)) == 1
+      and len(machine.events("owner_task_opened")) == 1, owner_tasks(machine))
+task_path = machine.tasks / OWNER_TASKS / "8.json"
+task_path.write_text(json.dumps(dict(json.loads(task_path.read_text()), status="completed")))
+machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
+machine.handoff_put_off("s-2")
+machine.seat("alpha", DONE_TURN, session="s-2")
+machine.run(40)
+check("a difference after the task is completed: a new task",
+      [event["task_id"] for event in machine.events("owner_task_opened")] == [8, 9],
+      machine.events("owner_task_opened"))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
+code, _ = machine.run(0)
+alerts = machine.alerts()
+check("a difference whose task cannot be written: one user-alert naming the error, without the "
+      "claude -p remedy, exit 1",
+      code == 1 and len(alerts) == 1 and "could not give ned-box-helper a task" in alerts[0]["title"]
+      and "FileNotFoundError" in json.dumps(alerts[0]) and "claude -p" not in json.dumps(alerts[0])
+      and len(machine.events("sent_text_differs")) == 1
+      and len(machine.events("message_sent")) == 1, (code, alerts))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+(machine.tasks / OWNER_TASKS).mkdir()
+machine.script({"sends": [DROPPED, send_to("beta")], "answer": {"sent": True, "reason": "r"}})
+code, _ = machine.run(0)
+failed = machine.events("headless_failed")
+check("a difference beside a send to another entry: the difference goes to the task, the other "
+      "entry to a user-alert",
+      code == 1 and len(machine.events("sent_text_differs")) == 1 and len(owner_tasks(machine)) == 1
+      and len(failed) == 1 and failed[0]["problem"] == "sent to 'beta [abc123]', which is not alpha"
+      and len(machine.alerts()) == 1, (failed, machine.alerts()))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.seat("beta", DONE_TURN)
+(machine.tasks / OWNER_TASKS).mkdir()
+machine.run(0)
+machine.account("account-2")
+machine.script({"sends": [DROPPED, send_to("beta")], "answer": {"sent": True, "reason": "r"}})
+code, _ = machine.run(1)
+differs = machine.events("sent_text_differs")
+sent = {event["agent_seat"]: event["text"] for event in machine.events("message_sent")}
+check("an account notice sent to one agent-seat with another text: logged, a task, no user-alert, "
+      "and each agent-seat's send logged with the text it was sent",
+      code == 0 and not machine.alerts() and [event["agent_seat"] for event in differs] == ["alpha"]
+      and differs[0]["step"] == "account_notice" and len(owner_tasks(machine)) == 1
+      and sent["alpha"] == differs[0]["sent_text"] and sent["beta"] == differs[0]["text"],
+      (code, machine.alerts(), differs, sent))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.script(sent_ok())
+machine.run(0)
+check("the sender is told that the do-not-reply sentence is part of the message",
+      f'The text ends with the sentence "{DO_NOT_REPLY}" That sentence is written to the '
+      "agent-seat, not to you, and is part of the message: keep it."
+      in machine.claude_calls()[0]["prompt"].replace("\n", " "), machine.claude_calls())
+
 # --- headless agent-sessions that fail --------------------------------------------------------------
 FAILURES = (
     ("exits nonzero", {"exit": 1}, "claude exited 1"),
@@ -676,8 +795,6 @@ FAILURES = (
      "no JSON answer"),
     ("sends to another entry", {"sends": [send_to("beta")], "answer": {"sent": True, "reason": "r"}},
      "sent to 'beta [abc123]'"),
-    ("sends another text", {"sends": [send_to("alpha", "hello")],
-                            "answer": {"sent": True, "reason": "r"}}, "a text other than"),
     ("has its send fail", {"sends": [send_to("alpha", is_error=True)],
                            "answer": {"sent": False, "reason": "r"}}, "no SendMessage to alpha"),
     ("runs past its time", {"sleep": 5, "answer": {"sent": True, "reason": "r"}}, "stopped after"),
