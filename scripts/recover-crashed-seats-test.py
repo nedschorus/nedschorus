@@ -465,6 +465,9 @@ def supervisor_first_turn_for_a_by_hand_command(command, workspace):
                        if word.startswith("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="))
     extra_arguments = words[extra_index].split("=", 1)[1]
     after_seat_name = words[extra_index + 3:]  # past the launcher and the name
+    # launch-claude-mac consumes --supervisor-checkout itself; it never reaches the supervisor.
+    if after_seat_name[:1] == ["--supervisor-checkout"]:
+        after_seat_name = after_seat_name[2:]
     supervisor_argv = (["--agent", workspace.name, "--cd", str(workspace.seat_directory),
                         "--agent-command", sys.executable, *after_seat_name]
                        + shlex.split(extra_arguments))
