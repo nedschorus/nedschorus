@@ -866,6 +866,9 @@ with tempfile.TemporaryDirectory() as workspace:
     for command, expected_minutes in (
             ("python3 scripts/run-all-test-suites.py", 90),
             ("python3 scripts/handoff-context-threshold-hook-test.py", 90),
+            # A work kind's name is found past a line break and in any case.
+            ("cd /home/nedlern/x\npython3 scripts/run-all-test-suites.py", 90),
+            ("PYTHON3 SCRIPTS/RUN-ALL-TEST-SUITES.PY", 90),
             ("python3 scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py --quick", 105),
             ("gh pr checks 3101 --watch --interval 30", 0),
             ("gh run watch 12345", 0),
