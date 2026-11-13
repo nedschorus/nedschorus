@@ -1976,10 +1976,10 @@ def record_read(reads, key, item, text, outcome, number_predicted=False):
 
 
 def read_number_predicted(outcome):
-    """Whether the outcome is a read ahead whose item number is only predicted. An outcome written before
-    record_read wrote NUMBER_PREDICTED on every outcome cannot say, so it counts as predicted: matched to an
-    item by its title, never by its number alone."""
-    return outcome.get(NUMBER_PREDICTED, True)
+    """Whether the outcome is a read ahead whose item number is only predicted. An outcome without
+    NUMBER_PREDICTED is not one: record_read once wrote the field only when it was true, so every read step's
+    own read in a walk open then has none."""
+    return outcome.get(NUMBER_PREDICTED, False)
 
 
 def read_ahead_bound_to_item(reads, key, outcome, item):
