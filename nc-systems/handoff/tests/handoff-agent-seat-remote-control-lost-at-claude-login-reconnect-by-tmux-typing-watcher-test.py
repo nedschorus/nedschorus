@@ -667,8 +667,11 @@ def case_tmux_server_gone(namespace):
 
 def case_notice_from_a_checkout_with_a_long_path(namespace):
     """The path is injected because the checkout this test runs from may have a short one."""
-    long_path = ("/home/nedlern/Projects/nedschorus/.claude/worktrees/" + "long-topic-branch-name-" * 12
-                 + "/nc-systems/handoff/" + Path(watcher.__file__).name)
+    # Under this checkout's resolved root, since the watcher resolves its path, and on the Mac /home
+    # resolves to /System/Volumes/Data/home.
+    real_path = Path(watcher.__file__).resolve()
+    long_path = str(real_path.parents[2] / ".claude" / "worktrees" / ("long-topic-branch-name-" * 12)
+                    / "nc-systems" / "handoff" / real_path.name)
     real_file = watcher.__file__
     watcher.__file__ = long_path
     fixture = lost_seat("long-checkout", namespace, pane=False)

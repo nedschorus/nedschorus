@@ -1679,7 +1679,8 @@ def move_cases(root, _repository, _base, _frozen_head):
     corrupt_entry = answers_file(root, "1. Fixed.\n2. Moved to pull request #42\n")
     code, out, err = run(root, repository, corrupt_routes, "--check", "--answers", corrupt_entry)
     check("check: a moved pull request's patch git cannot parse fails with exit 2, not a pass",
-          code == 2 and "on pull request 42's patch: error: corrupt patch at line 5" in err and "PASS" not in out, out + err)
+          # git 2.56 names the patch file and line where git 2.53 says "line 5".
+          code == 2 and "on pull request 42's patch: error: corrupt patch at " in err and "PASS" not in out, out + err)
     moved_entry = answers_file(root, "1. Fixed.\n2. Moved to pull request #41\n")
     for name, moved_kept_here, partly_text, expected in (
             ("a whole moved file", True, PARTLY_KEPT_ONLY, "moved.py"),

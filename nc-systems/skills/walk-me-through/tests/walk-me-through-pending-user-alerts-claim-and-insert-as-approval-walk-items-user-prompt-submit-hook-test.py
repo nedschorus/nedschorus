@@ -8,6 +8,7 @@ sys.platform, and the suite passes on the Mac too. Prints one line per case and 
 import importlib.util
 import json
 import os
+import site
 import subprocess
 import sys
 import tempfile
@@ -85,7 +86,9 @@ class Case:
                                    "(subprocess.run); " if insert_run else "")
                                 + "runpy.run_path(sys.argv[2], run_name='__main__')")
         environment = attendance_check.environment_without_agent_session_attendance_variables(os.environ)
-        environment.update({"HOME": str(self.home)}, **(environment_extra or {}))
+        # Python finds the user's site-packages from HOME, and on the Mac markdown-it-py is installed there.
+        environment.update({"HOME": str(self.home), "PYTHONUSERBASE": site.getuserbase()},
+                           **(environment_extra or {}))
         result = subprocess.run([sys.executable, "-c", run_hook_as_platform, platform, str(HOOK)],
                                 input=stdin or json.dumps(payload),
                                 capture_output=True, text=True, env=environment, check=False)
