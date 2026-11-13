@@ -441,6 +441,11 @@ GH_TIMEOUT_SECONDS = 120
 # git sending the branch.
 PUSH_TIME_MARGIN_SECONDS = 120
 ADJUDICATION_TIMEOUT_SECONDS = 420
+# scripts/ghi-guide-agent-ask.py's GHI_GUIDE_AGENT_ANSWER_NOT_USABLE_MESSAGE_OPENING.
+# Copied rather than imported, because this program runs that one as a
+# subprocess and loads nothing from it; ghi-issue-write-test.py checks the two
+# stay equal.
+GHI_GUIDE_AGENT_ASK_ANSWER_NOT_USABLE_MESSAGE_OPENING = "ghi-guide-agent's answer is not usable:"
 # ghi-guide-agent's ruling questions are kept in the log-store on ned-box, never on
 # main: one proposed-improvements-or-changes-file each (the glossary's entry),
 # named `<GHI-MD name>-proposed-improvements-or-changes-ghi-guide-agent-<YYYY-MM-DD>[-<n>].md`.
@@ -1106,7 +1111,8 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
         with os.fdopen(descriptor, "w", encoding="utf-8") as question_file:
             question_file.write(question)
         completed = runner([sys.executable, str(ask), "--question-file",
-                            question_path, "--print-answer-json"],
+                            question_path, "--print-answer-json",
+                            "--ask-form", "draft-verdict"],
                            timeout=ADJUDICATION_TIMEOUT_SECONDS, check=False)
     except Exception as failure:                      # noqa: BLE001
         report(f"adjudication skipped: ghi-guide-agent did not answer ({failure})")
@@ -1122,23 +1128,23 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
         answer = None
     if not isinstance(answer, dict):
         # The ask prints why it failed, such as ned-box being unreachable,
-        # as its last stderr line.
+        # as its last stderr line, except that an unusable answer's line is
+        # followed by what to do, which is for an agent and not this program.
         stderr_lines = [line.strip() for line in
                         (completed.stderr or "").splitlines() if line.strip()]
+        why = next((line for line in stderr_lines if
+                    GHI_GUIDE_AGENT_ASK_ANSWER_NOT_USABLE_MESSAGE_OPENING in line),
+                   stderr_lines[-1] if stderr_lines else None)
         report("adjudication skipped: ghi-guide-agent did not answer" +
-               (f": {stderr_lines[-1]}" if stderr_lines else ""))
+               (f": {why}" if why else ""))
         return None
-    kind = answer.get("kind")
-    if kind == "ask-user-about-ruling":
+    # The ask's --ask-form draft-verdict allows only a verdict or a ruling question.
+    if answer.get("kind") == "ask-user-about-ruling":
         report("ghi-guide-agent raised a question about a ruling of the "
                "user's; the write goes ahead and records it in a "
                "proposed-improvements-or-changes-file in the log-store")
         return RulingConflict(answer.get("ruling_issue"),
                               str(answer.get("sentence", "")).strip())
-    if kind != "verdict":
-        report(f"adjudication skipped: ghi-guide-agent gave no verdict: it "
-               f"answered with kind {kind}")
-        return None
     issues = answer.get("issues") or []
     verdict = f"verdict: {answer.get('verdict')}" + (
         " " + ",".join(f"#{number}" for number in issues) if issues else "")

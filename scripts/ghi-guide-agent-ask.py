@@ -7,11 +7,12 @@ filing or editing an issue, to learn what already covers the ground.
 Usage:
   ghi-guide-agent-ask.py "<question>" [--include-closed]
   ghi-guide-agent-ask.py --question-file <path> [--include-closed]
-  ... [--print-answer-json]
+  ... [--print-answer-json] [--ask-form draft-verdict]
 
 ghi-guide-agent's answer is a JSON object that `claude -p --json-schema`
-constrains to GHI_GUIDE_AGENT_ANSWER_JSON_SCHEMA; its `kind` says which reply
-it is. By default this program prints what ghi_guide_agent_answer_render_as_caller_stdout_stderr_and_exit_code makes of
+constrains to ghi_guide_agent_answer_json_schema_for_kinds; its `kind` says
+which reply it is, and --ask-form says which kinds it may be
+(GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_ASK_FORM_ALLOWS). By default this program prints what ghi_guide_agent_answer_render_as_caller_stdout_stderr_and_exit_code makes of
 it, with the exit codes below. With --print-answer-json it prints the object
 itself on stdout instead, whatever the exit code, for a program such as
 scripts/ghi-issue-write.py that reads its fields; a failed ask prints nothing
@@ -22,7 +23,9 @@ Exit codes:
      --include-closed, OPEN_ISSUES_ONLY_INCLUDE_CLOSED_HINT_MESSAGE follows on
      stderr, so the caller learns the flag when the answer omits closed issues
   1  a failed ask — gh unreachable, the box unreachable, ghi-guide-agent's own run
-     erroring or timing out: one line on stderr. A failed ask never blocks a
+     erroring or timing out: one line on stderr, or, for an answer that is
+     not usable, GHI_GUIDE_AGENT_ANSWER_NOT_USABLE_MESSAGE_TEMPLATE's two
+     lines, the second saying what to do. A failed ask never blocks a
      write (design's own words): the caller's job is to fall down the
      ghi-write skill's fallback ladder, not to treat exit 1 as fatal.
   2  ghi-guide-agent answered with kind `not-about-issues`: the question was not
@@ -242,43 +245,35 @@ GHI_GUIDE_AGENT_ANSWER_KIND_ASK_USER_ABOUT_RULING = "ask-user-about-ruling"
 VERDICTS = ("too-similar", "related", "unrelated")
 REPAIR_OUTCOMES = ("done", "no-change", "blocked")
 
-# The API refuses oneOf, anyOf and allOf at a schema's top level (Claude Code
-# 2.1.322), so one flat object carries every kind's fields, and
-# GHI_GUIDE_AGENT_ANSWER_FIELDS_EACH_KIND_NEEDS says which of them each kind must fill.
-GHI_GUIDE_AGENT_ANSWER_JSON_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["kind"],
-    "properties": {
-        "kind": {
-            "enum": [GHI_GUIDE_AGENT_ANSWER_KIND_READING_LIST, GHI_GUIDE_AGENT_ANSWER_KIND_VERDICT, GHI_GUIDE_AGENT_ANSWER_KIND_REPAIR,
-                     GHI_GUIDE_AGENT_ANSWER_KIND_NOT_ABOUT_ISSUES, GHI_GUIDE_AGENT_ANSWER_KIND_ASK_USER_ABOUT_RULING],
-            "description": ("Which reply this is: reading-list for request forms 1 and 3, "
-                            "verdict for form 2, repair for form 4, and not-about-issues or "
-                            "ask-user-about-ruling for the Boundaries.")},
-        "issues": {
-            "type": "array", "items": {"type": "integer"},
-            "description": ("For reading-list and verdict: the issue numbers, without #, "
-                            "in the order you would have the asker read them.")},
-        "notes": {
-            "type": "array", "items": {"type": "string"},
-            "description": "For reading-list: note lines in plain sentences, only when needed."},
-        "verdict": {
-            "enum": list(VERDICTS),
-            "description": "For verdict: too-similar, related or unrelated."},
-        "outcome": {
-            "enum": list(REPAIR_OUTCOMES),
-            "description": "For repair: done, no-change or blocked."},
-        "sentence": {
-            "type": "string",
-            "description": ("For repair: the repair, why no change was needed, or what "
-                            "stopped you. For ask-user-about-ruling: one sentence naming "
-                            "the ruling and the doubt.")},
-        "ruling_issue": {
-            "type": "integer",
-            "description": ("For ask-user-about-ruling: the number of the issue that "
-                            "holds the ruling.")},
-    },
+GHI_GUIDE_AGENT_ANSWER_JSON_SCHEMA_PROPERTIES = {
+    "kind": {
+        "enum": [GHI_GUIDE_AGENT_ANSWER_KIND_READING_LIST, GHI_GUIDE_AGENT_ANSWER_KIND_VERDICT, GHI_GUIDE_AGENT_ANSWER_KIND_REPAIR,
+                 GHI_GUIDE_AGENT_ANSWER_KIND_NOT_ABOUT_ISSUES, GHI_GUIDE_AGENT_ANSWER_KIND_ASK_USER_ABOUT_RULING],
+        "description": ("Which reply this is: reading-list for request forms 1 and 3, "
+                        "verdict for form 2, repair for form 4, and not-about-issues or "
+                        "ask-user-about-ruling for the Boundaries.")},
+    "issues": {
+        "type": "array", "items": {"type": "integer"},
+        "description": ("For reading-list and verdict: the issue numbers, without #, "
+                        "in the order you would have the asker read them.")},
+    "notes": {
+        "type": "array", "items": {"type": "string"},
+        "description": "For reading-list: note lines in plain sentences, only when needed."},
+    "verdict": {
+        "enum": list(VERDICTS),
+        "description": "For verdict: too-similar, related or unrelated."},
+    "outcome": {
+        "enum": list(REPAIR_OUTCOMES),
+        "description": "For repair: done, no-change or blocked."},
+    "sentence": {
+        "type": "string",
+        "description": ("For repair: the repair, why no change was needed, or what "
+                        "stopped you. For ask-user-about-ruling: one sentence naming "
+                        "the ruling and the doubt.")},
+    "ruling_issue": {
+        "type": "integer",
+        "description": ("For ask-user-about-ruling: the number of the issue that "
+                        "holds the ruling.")},
 }
 # The fields each kind must fill beyond `kind`.
 GHI_GUIDE_AGENT_ANSWER_FIELDS_EACH_KIND_NEEDS = {
@@ -288,6 +283,55 @@ GHI_GUIDE_AGENT_ANSWER_FIELDS_EACH_KIND_NEEDS = {
     GHI_GUIDE_AGENT_ANSWER_KIND_NOT_ABOUT_ISSUES: (),
     GHI_GUIDE_AGENT_ANSWER_KIND_ASK_USER_ABOUT_RULING: ("ruling_issue", "sentence"),
 }
+# The fields a kind may leave out.
+GHI_GUIDE_AGENT_ANSWER_OPTIONAL_FIELDS_EACH_KIND_MAY_GIVE = {
+    GHI_GUIDE_AGENT_ANSWER_KIND_READING_LIST: ("notes",),
+}
+# The answer kinds each --ask-form allows. No program sends form 4, a link
+# repair, so no ask form allows `repair`.
+GHI_GUIDE_AGENT_ASK_FORM_READING_LIST = "reading-list"
+GHI_GUIDE_AGENT_ASK_FORM_DRAFT_VERDICT = "draft-verdict"
+GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_ASK_FORM_ALLOWS = {
+    GHI_GUIDE_AGENT_ASK_FORM_READING_LIST: (
+        GHI_GUIDE_AGENT_ANSWER_KIND_READING_LIST, GHI_GUIDE_AGENT_ANSWER_KIND_NOT_ABOUT_ISSUES,
+        GHI_GUIDE_AGENT_ANSWER_KIND_ASK_USER_ABOUT_RULING),
+    # scripts/ghi-issue-write.py's adjudication, whose question is always a
+    # draft GHI-MD and so is always about issues.
+    GHI_GUIDE_AGENT_ASK_FORM_DRAFT_VERDICT: (
+        GHI_GUIDE_AGENT_ANSWER_KIND_VERDICT, GHI_GUIDE_AGENT_ANSWER_KIND_ASK_USER_ABOUT_RULING),
+}
+
+
+def ghi_guide_agent_answer_json_schema_for_kinds(kinds) -> dict:
+    """The schema `claude -p --json-schema` holds an answer to: one of
+    `kinds`, only the fields those kinds use, and each kind's needed fields
+    required when `kind` names it.
+
+    The API refuses oneOf, anyOf and allOf at a schema's top level (Claude
+    Code 2.1.323) and accepts if/then/else there, so each kind's needed
+    fields are one link of an if/then/else chain."""
+    used = {"kind"}
+    for kind in kinds:
+        used.update(GHI_GUIDE_AGENT_ANSWER_FIELDS_EACH_KIND_NEEDS[kind])
+        used.update(GHI_GUIDE_AGENT_ANSWER_OPTIONAL_FIELDS_EACH_KIND_MAY_GIVE.get(kind, ()))
+    properties = {field: dict(value) for field, value
+                  in GHI_GUIDE_AGENT_ANSWER_JSON_SCHEMA_PROPERTIES.items() if field in used}
+    properties["kind"]["enum"] = list(kinds)
+    schema = {"type": "object", "additionalProperties": False,
+              "required": ["kind"], "properties": properties}
+    chain = None
+    for kind in reversed(kinds):
+        needed = GHI_GUIDE_AGENT_ANSWER_FIELDS_EACH_KIND_NEEDS[kind]
+        if not needed:
+            continue
+        link = {"if": {"properties": {"kind": {"const": kind}}},
+                "then": {"required": list(needed)}}
+        if chain is not None:
+            link["else"] = chain
+        chain = link
+    if chain is not None:
+        schema.update(chain)
+    return schema
 
 COLD_START_PROMPT_TEMPLATE = """You are ghi-guide-agent: this project's knowledge agent over its GitHub-issue corpus. Other agents send you one request at a time; you answer it from the corpus you hold in context and stop. You are the judgment layer — every mechanical fact (fetching, counting, verifying) is script work done for you before a request reaches you.
 
@@ -383,11 +427,20 @@ OPEN_ISSUES_ONLY_INCLUDE_CLOSED_HINT_MESSAGE = (
     "ghi-guide-agent-ask: this answer covers open issues only.\n"
     "To search closed issues as well, such as for precedent or before saying no issue "
     "covers a subject, rerun the same command with --include-closed added.")
+# The failure when ghi-guide-agent answered but the answer cannot be used.
+# scripts/ghi-issue-write.py finds the line by this opening, which it copies.
+GHI_GUIDE_AGENT_ANSWER_NOT_USABLE_MESSAGE_OPENING = "ghi-guide-agent's answer is not usable:"
+GHI_GUIDE_AGENT_ANSWER_NOT_USABLE_MESSAGE_TEMPLATE = (
+    GHI_GUIDE_AGENT_ANSWER_NOT_USABLE_MESSAGE_OPENING + " {problem}\n"
+    "If you are filing or editing a GHI, go on down the ask's fallback ladder in "
+    ".claude/skills/ghi-write/SKILL.md; for any other ask, go on without "
+    "ghi-guide-agent's answer.")
 
 
-def ghi_guide_agent_answer_extract_and_schema_check_from_claude_result(result: dict):
+def ghi_guide_agent_answer_extract_and_schema_check_from_claude_result(result: dict, kinds):
     """(answer, None) when the result's `structured_output` is an answer
-    this program can use, else (None, a sentence saying what came back).
+    of one of `kinds` that this program can use, else (None, a sentence
+    saying what came back).
 
     `claude -p --json-schema` exits 0 with `"is_error": false` and a null
     `structured_output` when the model never satisfied the schema, so the
@@ -398,9 +451,9 @@ def ghi_guide_agent_answer_extract_and_schema_check_from_claude_result(result: d
                       f"{json.dumps(answer)}); its text reply began: "
                       f"{str(result.get('result') or '')[:200]!r}")
     shown = json.dumps(answer)[:300]
-    properties = GHI_GUIDE_AGENT_ANSWER_JSON_SCHEMA["properties"]
+    properties = ghi_guide_agent_answer_json_schema_for_kinds(kinds)["properties"]
     kind = answer.get("kind")
-    if not isinstance(kind, str) or kind not in GHI_GUIDE_AGENT_ANSWER_FIELDS_EACH_KIND_NEEDS:
+    if not isinstance(kind, str) or kind not in kinds:
         return None, f"the answer's kind {kind!r} is none the schema allows: {shown}"
     unknown = sorted(set(answer) - set(properties))
     if unknown:
@@ -459,13 +512,8 @@ def ghi_guide_agent_answer_render_as_caller_stdout_stderr_and_exit_code(answer: 
                 for number in answer["issues"]))
         lines += [note.strip() for note in answer.get("notes", []) if note.strip()]
         return "\n".join(lines), "", 0
-    if kind == GHI_GUIDE_AGENT_ANSWER_KIND_VERDICT:
-        numbers = ",".join(f"#{number}" for number in answer["issues"])
-        return f"verdict: {answer['verdict']}" + (f" {numbers}" if numbers else ""), "", 0
-    sentence = answer["sentence"].strip()
-    if answer["outcome"] == "no-change":
-        return f"done: no change needed — {sentence}", "", 0
-    return f"{answer['outcome']}: {sentence}", "", 0
+    numbers = ",".join(f"#{number}" for number in answer["issues"])
+    return f"verdict: {answer['verdict']}" + (f" {numbers}" if numbers else ""), "", 0
 
 
 def closed_issue_dates(numbers, cache: dict) -> dict:
@@ -610,7 +658,8 @@ def should_recycle(state: dict, seat_dir: Path, projects_root: Path):
     return False, None
 
 
-def run_claude(prompt: str, resume_session_id, seat_dir: Path, timeout_seconds: int):
+def run_claude(prompt: str, resume_session_id, seat_dir: Path, timeout_seconds: int,
+               json_schema: dict):
     """One `claude -p` turn. Returns (result_dict, error). No terminal exists
     to approve tool use here, so the run is in dontAsk mode: ghi-guide-agent
     reads and searches the mirror, its agent-home and the log-store, and any
@@ -630,7 +679,7 @@ def run_claude(prompt: str, resume_session_id, seat_dir: Path, timeout_seconds: 
     # would read the prompt as one more tool name.
     command = [*command_line_prefix.claude_code_headless_run_command_line_prefix_build("dontAsk"),
                "--output-format", "json", "--setting-sources", "user",
-               "--json-schema", json.dumps(GHI_GUIDE_AGENT_ANSWER_JSON_SCHEMA),
+               "--json-schema", json.dumps(json_schema),
                "--allowedTools", GHI_GUIDE_AGENT_ALLOWED_TOOLS, "--model", GHI_GUIDE_AGENT_MODEL]
     if resume_session_id:
         command += ["--resume", resume_session_id]
@@ -678,10 +727,16 @@ def run_claude(prompt: str, resume_session_id, seat_dir: Path, timeout_seconds: 
 
 def ask(question: str, include_closed: bool, seat_dir: Path, repo: str,
        timeout_seconds: int = ASK_TIMEOUT_SECONDS,
-       projects_root: Path = None):
+       projects_root: Path = None,
+       ask_form: str = GHI_GUIDE_AGENT_ASK_FORM_READING_LIST):
     """The whole ask path (design § The ask path, steps 1-5). Returns
-    (answer, closed_on, error): the checked answer object and
-    closed_issue_dates of its issue numbers, or (None, None, error)."""
+    (answer, closed_on, error): the checked answer object, of a kind
+    `ask_form` allows, and closed_issue_dates of its issue numbers, or
+    (None, None, error)."""
+    kinds = GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_ASK_FORM_ALLOWS[ask_form]
+    # Every turn of the ask, the cold start and the drift recheck included,
+    # gets the same schema.
+    json_schema = ghi_guide_agent_answer_json_schema_for_kinds(kinds)
     if projects_root is None:
         projects_root = Path.home() / ".claude" / "projects"
     state_path = seat_dir / STATE_FILE_NAME
@@ -696,17 +751,17 @@ def ask(question: str, include_closed: bool, seat_dir: Path, repo: str,
         if remaining <= 0:
             return None, (f"the ask's {timeout_seconds}s budget was already spent "
                           "before this turn could start")
-        return run_claude(prompt, resume_session_id, seat_dir, remaining)
+        return run_claude(prompt, resume_session_id, seat_dir, remaining, json_schema)
 
     try:
         return _locked_ask(question, include_closed, seat_dir, repo,
-                           projects_root, state_path, lock_path, turn)
+                           projects_root, state_path, lock_path, turn, kinds)
     except SeatDirectoryUnusable as error:
         return None, None, str(error)
 
 
 def _locked_ask(question, include_closed, seat_dir, repo, projects_root,
-                state_path, lock_path, turn):
+                state_path, lock_path, turn, kinds):
     """Holds the lock, settles which mirror this run publishes into, and
     cleans up a throwaway one on every exit path."""
     with state_lock(lock_path) as locked:
@@ -733,7 +788,7 @@ def _locked_ask(question, include_closed, seat_dir, repo, projects_root,
         try:
             return _ask_within_lock(question, include_closed, seat_dir, repo,
                                     projects_root, state, state_path, locked,
-                                    mirror_dir, turn)
+                                    mirror_dir, turn, kinds)
         finally:
             if throwaway_mirror is not None:
                 shutil.rmtree(throwaway_mirror, ignore_errors=True)
@@ -820,7 +875,7 @@ def fast_forward_seat_checkout(seat_dir: Path) -> str:
 
 
 def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
-                     state, state_path, locked, mirror_dir, turn):
+                     state, state_path, locked, mirror_dir, turn, kinds):
     """The ask itself, with the lock decision and the mirror already settled.
 
     Split out so the throwaway mirror's cleanup is one `finally` around the
@@ -903,7 +958,7 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
     if answer_reply is None:
         return None, None, f"ghi-guide-agent ask failed: {error}"
     session_id = answer_reply.get("session_id", session_id)
-    answer, problem = ghi_guide_agent_answer_extract_and_schema_check_from_claude_result(answer_reply)
+    answer, problem = ghi_guide_agent_answer_extract_and_schema_check_from_claude_result(answer_reply, kinds)
 
     # Step 4: post-check.
     stale = False
@@ -915,7 +970,7 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
             drift_reply, error = turn(compose_drift_notice(unexpected), session_id)
             if drift_reply is not None:
                 session_id = drift_reply.get("session_id", session_id)
-                corrected, _ = ghi_guide_agent_answer_extract_and_schema_check_from_claude_result(drift_reply)
+                corrected, _ = ghi_guide_agent_answer_extract_and_schema_check_from_claude_result(drift_reply, kinds)
                 if corrected is not None:
                     answer = corrected
             # A failed recheck keeps the first answer rather than failing
@@ -932,13 +987,14 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
         save_state(state_path, state)
 
     if answer is None:
-        return None, None, f"ghi-guide-agent's answer is not usable: {problem}"
+        return None, None, GHI_GUIDE_AGENT_ANSWER_NOT_USABLE_MESSAGE_TEMPLATE.format(problem=problem)
     return answer, closed_issue_dates(answer_issue_numbers(answer), cache), None
 
 
 def build_remote_command(question: str, include_closed: bool, repo: str,
                          question_on_stdin: bool = False,
-                         print_answer_json: bool = False) -> str:
+                         print_answer_json: bool = False,
+                         ask_form: str = GHI_GUIDE_AGENT_ASK_FORM_READING_LIST) -> str:
     """The command the box runs, as one string: ssh hands it to the box's
     login shell, which parses it exactly once — no second parse layer here
     (unlike the launchers, which also cross tmux's pane-command parse), so
@@ -970,6 +1026,8 @@ def build_remote_command(question: str, include_closed: bool, repo: str,
         invocation += " --include-closed"
     if print_answer_json:
         invocation += " --print-answer-json"
+    if ask_form != GHI_GUIDE_AGENT_ASK_FORM_READING_LIST:
+        invocation += " --ask-form " + shlex.quote(ask_form)
     invocation += " --repo " + shlex.quote(repo)
     invocation += ' --seat-dir "$PWD"'
     return "\n".join([
@@ -1002,6 +1060,10 @@ def main(argv=None) -> int:
     parser.add_argument("--print-answer-json", action="store_true",
                         help="print ghi-guide-agent's answer as one JSON object on stdout, "
                              "whatever the exit code, instead of the text printed by default")
+    parser.add_argument("--ask-form", choices=list(GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_ASK_FORM_ALLOWS),
+                        default=GHI_GUIDE_AGENT_ASK_FORM_READING_LIST,
+                        help="draft-verdict: the question shows a draft GHI-MD, and the answer "
+                             "is a verdict or a ruling question; default reading-list")
     parser.add_argument("--repo", default=DEFAULT_REPO)
     parser.add_argument("--seat-dir", default=None,
                         help="run locally against this seat directory, skipping the "
@@ -1029,7 +1091,8 @@ def main(argv=None) -> int:
                                                   arguments.include_closed,
                                                   arguments.repo,
                                                   question_on_stdin,
-                                                  arguments.print_answer_json)
+                                                  arguments.print_answer_json,
+                                                  arguments.ask_form)
             try:
                 completed = subprocess.run(
                     ["ssh", AGENT_BOX, remote_command], capture_output=True, text=True,
@@ -1066,7 +1129,7 @@ def main(argv=None) -> int:
         return 1
 
     answer, closed_on, error = ask(question, arguments.include_closed, seat_dir,
-                                   arguments.repo)
+                                   arguments.repo, ask_form=arguments.ask_form)
     if answer is None:
         print(f"ghi-guide-agent-ask: {error}", file=sys.stderr)
         return 1

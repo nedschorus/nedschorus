@@ -296,12 +296,15 @@ _ghi_guide_agent_ask_spec.loader.exec_module(_ghi_guide_agent_ask)
 
 
 def ask_answer(exit_code=0, **fields):
-    """What ghi-guide-agent-ask.py --print-answer-json prints for an answer
-    with these fields, checked against that program's schema, so a field or
-    kind renamed there fails here rather than passing on stale words."""
+    """What ghi-guide-agent-ask.py --print-answer-json --ask-form
+    draft-verdict prints for an answer with these fields, checked against
+    that ask form's schema, so a field or kind renamed or disallowed there
+    fails here rather than passing on stale words."""
     answer, problem = (_ghi_guide_agent_ask
                        .ghi_guide_agent_answer_extract_and_schema_check_from_claude_result(
-                           {"structured_output": fields}))
+                           {"structured_output": fields},
+                           _ghi_guide_agent_ask.GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_ASK_FORM_ALLOWS[
+                               _ghi_guide_agent_ask.GHI_GUIDE_AGENT_ASK_FORM_DRAFT_VERDICT]))
     assert answer is not None, problem
     return Completed(json.dumps(answer) + "\n", returncode=exit_code)
 
@@ -1432,25 +1435,19 @@ def run_cases(scratch: Path):
         except tool.Refused as refusal:
             check(case_name, False, f"refused: {refusal}")
 
-    check("the ask is run with --print-answer-json",
-          (lambda r: (tool.adjudicate(REPO, "t", FILE_TEXT, scratch, r, quiet),
-                      any("--print-answer-json" in call for call in r.calls))[1])(
-              Recorder({ASK: verdict_answer("unrelated")})))
+    recorder = Recorder({ASK: verdict_answer("unrelated")})
+    tool.adjudicate(REPO, "t", FILE_TEXT, scratch, recorder, quiet)
+    ask_call = next((call for call in recorder.calls if ASK in " ".join(call)), [])
+    check("the ask is run with --print-answer-json and --ask-form draft-verdict",
+          "--print-answer-json" in ask_call
+          and ask_call[ask_call.index("--ask-form") + 1:][:1] == ["draft-verdict"],
+          ask_call)
+    check("the ask form the writer names is one the ask program has",
+          "draft-verdict" in _ghi_guide_agent_ask.GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_ASK_FORM_ALLOWS)
 
-    # An answer that is no verdict fails open as any missing verdict does,
-    # and the report names the kind ghi-guide-agent answered with. The exit
-    # code is not read: an argument error exits 2 as not-about-issues does.
+    # The exit code is not read: an argument error exits 2 as
+    # not-about-issues does.
     for case_name, completed, expected in [
-            ("a not-about-issues answer lets the write proceed and says so",
-             ask_answer(_ghi_guide_agent_ask.EXIT_NOT_ABOUT_ISSUES,
-                        kind=_ghi_guide_agent_ask.GHI_GUIDE_AGENT_ANSWER_KIND_NOT_ABOUT_ISSUES),
-             "adjudication skipped: ghi-guide-agent gave no verdict: it "
-             "answered with kind not-about-issues"),
-            ("a reading-list answer lets the write proceed and says so",
-             ask_answer(kind=_ghi_guide_agent_ask.GHI_GUIDE_AGENT_ANSWER_KIND_READING_LIST,
-                        issues=[13]),
-             "adjudication skipped: ghi-guide-agent gave no verdict: it "
-             "answered with kind reading-list"),
             ("an exit 2 with nothing on stdout is a failed ask, not an answer",
              Completed("", returncode=2, stderr="usage: ghi-guide-agent-ask.py\n"),
              "adjudication skipped: ghi-guide-agent did not answer: usage: "
@@ -1464,8 +1461,22 @@ def run_cases(scratch: Path):
             check(case_name, False, f"refused: {refusal}")
 
     # Any other failing exit carries the ask's last stderr line, which says
-    # why, and the bare report stands when the ask printed nothing.
+    # why, and the bare report stands when the ask printed nothing. An
+    # unusable answer's line is followed by an instruction for agents, so
+    # that line is carried instead of the last.
+    check("the not-usable opening this program looks for is the ask program's own",
+          tool.GHI_GUIDE_AGENT_ASK_ANSWER_NOT_USABLE_MESSAGE_OPENING
+          == _ghi_guide_agent_ask.GHI_GUIDE_AGENT_ANSWER_NOT_USABLE_MESSAGE_OPENING)
     for case_name, stderr, expected in [
+            ("an unusable answer's line is carried into the report, not the "
+             "instruction after it",
+             "ghi-guide-agent-ask: refreshed the seat checkout 1 commit(s) to origin/main\n"
+             + "ghi-guide-agent-ask: " + _ghi_guide_agent_ask
+             .GHI_GUIDE_AGENT_ANSWER_NOT_USABLE_MESSAGE_TEMPLATE.format(
+                 problem="the verdict answer lacks its verdict field: {}") + "\n",
+             "adjudication skipped: ghi-guide-agent did not answer: ghi-guide-agent-ask: "
+             "ghi-guide-agent's answer is not usable: the verdict answer lacks its "
+             "verdict field: {}"),
             ("a failing ask's last stderr line is carried into the report",
              "ghi-guide-agent-ask: a progress line\nghi-guide-agent-ask: ned-box cannot "
              "be reached\n",

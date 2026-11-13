@@ -92,13 +92,19 @@ def patch_module_function(module, name, value):
     setattr(module, name, value)
 
 
+SCHEMAS_GIVEN = []
+
+
 def fake_claude_queue(responses):
     """responses: list of (result_dict_or_None, error_or_None) popped in
-    call order. Each call is recorded as (prompt, resume_session_id)."""
+    call order. Each call is recorded as (prompt, resume_session_id), and
+    the schema it was given is appended to SCHEMAS_GIVEN."""
     calls = []
+    SCHEMAS_GIVEN.clear()
 
-    def fake_run_claude(prompt, resume_session_id, seat_dir, timeout_seconds):
+    def fake_run_claude(prompt, resume_session_id, seat_dir, timeout_seconds, json_schema):
         calls.append((prompt, resume_session_id))
+        SCHEMAS_GIVEN.append(json_schema)
         return responses.pop(0)
     patch("run_claude", fake_run_claude)
     return calls
@@ -420,7 +426,7 @@ with tempfile.TemporaryDirectory() as temporary:
                                             closed_at="2026-08-08T00:00:00Z")}, None)])
     budgets = []
 
-    def recording_run_claude(prompt, resume_session_id, seat_dir, timeout_seconds):
+    def recording_run_claude(prompt, resume_session_id, seat_dir, timeout_seconds, json_schema):
         budgets.append(timeout_seconds)
         replies = [
             {"session_id": "sess-T", "result": "(ack)"},
@@ -518,6 +524,10 @@ check("--print-answer-json rides the remote command when requested, and "
       "only then",
       " --print-answer-json" in command_json
       and "--print-answer-json" not in command, command_json)
+command_form = ghi_ask.build_remote_command("q", False, "x/y", False, False, "draft-verdict")
+check("--ask-form rides the remote command when it is not the default, and only then",
+      " --ask-form draft-verdict" in command_form and "--ask-form" not in command,
+      command_form)
 
 # Quoting is measured by a real POSIX shell, not derived: the question is an
 # operator value crossing one shell parse, and this project has been bitten
@@ -703,27 +713,86 @@ try:
         seat_verdict = root / "seat-verdict"
         seat_verdict.mkdir()
         exit_code, out, err = main_with_answer(
-            seat_verdict, {"kind": "verdict", "verdict": "related", "issues": [3, 4]})
+            seat_verdict, {"kind": "verdict", "verdict": "related", "issues": [3, 4]},
+            ("--ask-form", "draft-verdict"))
         check("a verdict prints as one `verdict:` line", exit_code == 0
               and out == "verdict: related #3,#4\n", (exit_code, out, err))
 
-    render = ghi_ask.ghi_guide_agent_answer_render_as_caller_stdout_stderr_and_exit_code
+        # An unusable answer: the user-approved failure line, typed out here,
+        # then on its own line what the agent does next.
+        for extra in ((), ("--print-answer-json",)):
+            seat_unusable = root / f"seat-unusable-answer-{len(extra)}"
+            seat_unusable.mkdir()
+            exit_code, out, err = main_with_answer(seat_unusable, None, extra)
+            check(f"an unusable answer exits 1 with nothing on stdout {extra}",
+                  exit_code == 1 and out == "", (exit_code, out))
+            check(f"an unusable answer ends stderr with the not-usable line and then "
+                  f"the fallback instruction on a line of its own {extra}",
+                  err.endswith(
+                      "ghi-guide-agent-ask: ghi-guide-agent's answer is not usable: "
+                      "claude returned no JSON answer (structured_output is null); "
+                      "its text reply began: ''\n"
+                      "If you are filing or editing a GHI, go on down the ask's fallback "
+                      "ladder in .claude/skills/ghi-write/SKILL.md; for any other ask, go "
+                      "on without ghi-guide-agent's answer.\n"), err)
+
+    render =ghi_ask.ghi_guide_agent_answer_render_as_caller_stdout_stderr_and_exit_code
     check("a closed issue in a reading list is tagged with its close date",
           render(reading_list(31, 5), {31: "2026-08-08"})
           == ("read #31 (closed 2026-08-08), #5", "", 0))
     check("an unrelated verdict prints alone",
           render({"kind": "verdict", "verdict": "unrelated", "issues": []}, {})
           == ("verdict: unrelated", "", 0))
-    check("a repair prints in the three shapes the requests always had",
-          [render({"kind": "repair", "outcome": outcome, "sentence": "s"}, {})[0]
-           for outcome in ("done", "no-change", "blocked")]
-          == ["done: s", "done: no change needed — s", "blocked: s"])
     check("a reading list with notes and no issue prints only its notes",
           render(reading_list(notes=["Nothing covers this."]), {})
           == ("Nothing covers this.", "", 0))
+
+    # Each ask form's schema: only its kinds, only their fields, and each
+    # kind's needed fields required by an if/then link, since the API
+    # refuses oneOf, anyOf and allOf at the top level.
+    for_kinds = ghi_ask.ghi_guide_agent_answer_json_schema_for_kinds
+    forms = ghi_ask.GHI_GUIDE_AGENT_ANSWER_KINDS_EACH_ASK_FORM_ALLOWS
+    check("a reading-list ask allows a reading list and the two boundary answers",
+          forms["reading-list"] == ("reading-list", "not-about-issues", "ask-user-about-ruling"),
+          forms)
+    check("a draft-verdict ask allows a verdict and a ruling question, not not-about-issues",
+          forms["draft-verdict"] == ("verdict", "ask-user-about-ruling"), forms)
+    reading_list_schema = for_kinds(forms["reading-list"])
+    check("the reading-list schema requires issues for a reading list and the "
+          "issue and sentence for a ruling question",
+          {key: reading_list_schema[key] for key in ("if", "then", "else")} == {
+              "if": {"properties": {"kind": {"const": "reading-list"}}},
+              "then": {"required": ["issues"]},
+              "else": {"if": {"properties": {"kind": {"const": "ask-user-about-ruling"}}},
+                       "then": {"required": ["ruling_issue", "sentence"]}}},
+          reading_list_schema)
+    check("the reading-list schema has only the fields its kinds use",
+          list(reading_list_schema["properties"])
+          == ["kind", "issues", "notes", "sentence", "ruling_issue"],
+          list(reading_list_schema["properties"]))
+    draft_schema = for_kinds(forms["draft-verdict"])
+    check("the draft-verdict schema requires the verdict and issues for a verdict",
+          draft_schema["if"] == {"properties": {"kind": {"const": "verdict"}}}
+          and draft_schema["then"] == {"required": ["verdict", "issues"]}
+          and draft_schema["else"]["then"] == {"required": ["ruling_issue", "sentence"]},
+          draft_schema)
+    check("each schema's kind enum is its form's kinds, and no field description changes",
+          all(for_kinds(kinds)["properties"]["kind"]["enum"] == list(kinds)
+              and all(value["description"]
+                      == ghi_ask.GHI_GUIDE_AGENT_ANSWER_JSON_SCHEMA_PROPERTIES[field]["description"]
+                      for field, value in for_kinds(kinds)["properties"].items())
+              for kinds in forms.values()))
+    check("no schema puts oneOf, anyOf or allOf at its top level",
+          not any(key in for_kinds(kinds) for kinds in forms.values()
+                  for key in ("oneOf", "anyOf", "allOf")))
+    check("a kind that needs no field adds no link",
+          "if" not in for_kinds(("not-about-issues",)), for_kinds(("not-about-issues",)))
+    check("building a schema leaves the shared kind enum whole",
+          len(ghi_ask.GHI_GUIDE_AGENT_ANSWER_JSON_SCHEMA_PROPERTIES["kind"]["enum"]) == 5)
+
     check("the cold-start prompt names each kind the schema allows",
           all(f"kind `{kind}`" in ghi_ask.COLD_START_PROMPT_TEMPLATE
-              for kind in ghi_ask.GHI_GUIDE_AGENT_ANSWER_JSON_SCHEMA["properties"]["kind"]["enum"]),
+              for kind in ghi_ask.GHI_GUIDE_AGENT_ANSWER_JSON_SCHEMA_PROPERTIES["kind"]["enum"]),
           ghi_ask.COLD_START_PROMPT_TEMPLATE[-1500:])
     check("the start-up prompt allows gh only for a link repair's issue edit, takes the issue's text from the mirror, and "
           "sends document changes through ghi-issue-write.py's pull request, never a push to main",
@@ -791,7 +860,7 @@ try:
         seat = Path(temporary)
         ghi_ask.subprocess.run = fake_subprocess_run_returning(
             FakeCompletedProcess(1, LOGGED_OUT_STDOUT))
-        result, error = run_claude_real("q", None, seat, 5)
+        result, error = run_claude_real("q", None, seat, 5, {})
         check("run_claude: exit 1 with a JSON result reports the result text, not the blob",
               result is None and "OAuth session expired" in error
               and "duration_api_ms" not in error, (result, error))
@@ -801,20 +870,20 @@ try:
 
         ghi_ask.subprocess.run = fake_subprocess_run_returning(
             FakeCompletedProcess(1, "", stderr="boom"))
-        result, error = run_claude_real("q", None, seat, 5)
+        result, error = run_claude_real("q", None, seat, 5, {})
         check("run_claude: exit 1 without JSON keeps the exit-code message",
               result is None and error == "claude exited 1: boom", (result, error))
 
         ghi_ask.subprocess.run = fake_subprocess_run_returning(
             FakeCompletedProcess(0, json.dumps({"is_error": True, "result": "rate limited"})))
-        result, error = run_claude_real("q", None, seat, 5)
+        result, error = run_claude_real("q", None, seat, 5, {})
         check("run_claude: exit 0 with is_error reports the result, and no login remedy",
               result is None and "rate limited" in error and "auth login" not in error,
               (result, error))
 
         ghi_ask.subprocess.run = fake_subprocess_run_returning(
             FakeCompletedProcess(0, json.dumps({"session_id": "s", "structured_output": reading_list(1)})))
-        result, error = run_claude_real("q", None, seat, 5)
+        result, error = run_claude_real("q", None, seat, 5, {})
         check("run_claude: a clean result is returned unchanged",
               error is None and result["structured_output"] == reading_list(1), (result, error))
 
@@ -828,7 +897,7 @@ try:
             recorded_keyword_arguments.append(kwargs)
             return FakeCompletedProcess(0, json.dumps({"session_id": "s", "structured_output": reading_list(1)}))
         ghi_ask.subprocess.run = recording_run
-        run_claude_real("q", "sess-RESUMED", seat, 5)
+        run_claude_real("q", "sess-RESUMED", seat, 5, {})
         launched_environment = (recorded_keyword_arguments[0].get("env") or {}
                                 if recorded_keyword_arguments else {})
         check("run_claude: claude's environment tells the handoff hook this script "
@@ -1009,7 +1078,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # then answered the checkout-freshness Stop hook 13 seconds later, and
     # the ask returned that last message. The answer is now read from
     # structured_output, so the text a hook drew out after it is not read.
-    def ask_with_one_reply(name, reply, question="q"):
+    def ask_with_one_reply(name, reply, question="q", ask_form="reading-list"):
         seat_case = root / name
         seat_case.mkdir()
         ghi_ask.save_state(seat_case / ghi_ask.STATE_FILE_NAME,
@@ -1017,7 +1086,7 @@ with tempfile.TemporaryDirectory() as temporary:
                             "recent_matches": []})
         fake_refresh_queue([([], {}, None)])
         fake_claude_queue([(reply, None)])
-        return ghi_ask.ask(question, False, seat_case, "x/y")
+        return ghi_ask.ask(question, False, seat_case, "x/y", ask_form=ask_form)
 
     answer, closed_on, error = ask_with_one_reply("seat-hook-reply", {
         "session_id": "sess-U", "structured_output": reading_list(39, 29),
@@ -1030,7 +1099,7 @@ with tempfile.TemporaryDirectory() as temporary:
     unrelated = {"kind": "verdict", "verdict": "unrelated", "issues": []}
     answer, closed_on, error = ask_with_one_reply(
         "seat-unrelated-reply", {"session_id": "sess-U", "structured_output": unrelated},
-        "Does an open issue already cover this ground?")
+        "Does an open issue already cover this ground?", "draft-verdict")
     check("a verdict: unrelated answer is returned, not failed",
           answer == unrelated and error is None, (answer, error))
 
@@ -1044,14 +1113,28 @@ with tempfile.TemporaryDirectory() as temporary:
           answer is None and "structured_output is null" in error
           and "I could not record a verdict" in error, (answer, error))
 
-    for case_name, structured_output, expected in [
+    for case_name, structured_output, expected, *ask_form in [
             ("a verdict answer that lacks its verdict field fails the ask",
-             {"kind": "verdict", "issues": [3]}, "lacks its verdict field"),
+             {"kind": "verdict", "issues": [3]}, "lacks its verdict field", "draft-verdict"),
             ("a ruling question that lacks the issue holding the ruling fails the ask",
              {"kind": "ask-user-about-ruling", "sentence": "s"}, "lacks its ruling_issue field"),
             ("a verdict outside the schema fails the ask",
              {"kind": "verdict", "verdict": "maybe", "issues": []},
-             "verdict 'maybe' is none the schema allows"),
+             "verdict 'maybe' is none the schema allows", "draft-verdict"),
+            ("a verdict to a reading-list ask fails the ask",
+             {"kind": "verdict", "verdict": "unrelated", "issues": []},
+             "kind 'verdict' is none the schema allows"),
+            ("a reading list to a draft-verdict ask fails the ask",
+             reading_list(3), "kind 'reading-list' is none the schema allows", "draft-verdict"),
+            ("not-about-issues to a draft-verdict ask fails the ask",
+             {"kind": "not-about-issues"}, "kind 'not-about-issues' is none the schema allows",
+             "draft-verdict"),
+            ("a repair, which no ask form allows, fails the ask",
+             {"kind": "repair", "outcome": "done", "sentence": "s"},
+             "kind 'repair' is none the schema allows"),
+            ("a field no kind of the ask form uses fails the ask",
+             {"kind": "reading-list", "issues": [1], "verdict": "related"},
+             "fields the schema does not: verdict"),
             ("a kind outside the schema fails the ask",
              {"kind": "escalate"}, "kind 'escalate' is none the schema allows"),
             ("a kind that is not text fails the ask",
@@ -1069,7 +1152,8 @@ with tempfile.TemporaryDirectory() as temporary:
              reading_list(), "names no issue and gives no note")]:
         answer, closed_on, error = ask_with_one_reply(
             "seat-" + case_name.replace(" ", "-")[:60],
-            {"session_id": "sess-U", "structured_output": structured_output})
+            {"session_id": "sess-U", "structured_output": structured_output},
+            ask_form=(ask_form or ["reading-list"])[0])
         check(case_name, answer is None and error is not None and expected in error
               and json.dumps(structured_output)[:40] in error, (answer, error))
 
@@ -1089,6 +1173,30 @@ with tempfile.TemporaryDirectory() as temporary:
           len(recheck_calls) == 3 and answer == reading_list(13)
           and closed_on == {13: "2026-08-08"}, (recheck_calls, answer, closed_on, error))
 
+    # A drift recheck after a verdict is held to the draft-verdict kinds, as
+    # every turn of that ask is, so a reading list given to the drift notice
+    # is not usable and the first verdict stands.
+    seat_verdict_recheck = root / "seat-verdict-recheck"
+    seat_verdict_recheck.mkdir()
+    fake_refresh_queue([([13], {"13": issue(13, state="CLOSED",
+                                            closed_at="2026-08-08T00:00:00Z")}, None)])
+    first_verdict = {"kind": "verdict", "verdict": "too-similar", "issues": [13]}
+    verdict_recheck_calls = fake_claude_queue([
+        ({"session_id": "sess-W", "result": "(ack)"}, None),
+        ({"session_id": "sess-W", "structured_output": first_verdict}, None),
+        ({"session_id": "sess-W", "structured_output": reading_list(14)}, None),
+    ])
+    answer, closed_on, error = ghi_ask.ask("q", False, seat_verdict_recheck, "x/y",
+                                           ask_form="draft-verdict")
+    check("a drift recheck after a verdict that answers with a reading list keeps the verdict",
+          len(verdict_recheck_calls) == 3 and answer == first_verdict and error is None,
+          (verdict_recheck_calls, answer, error))
+    draft_verdict_schema = ghi_ask.ghi_guide_agent_answer_json_schema_for_kinds(
+        ("verdict", "ask-user-about-ruling"))
+    check("every turn of a draft-verdict ask, the cold start and the drift "
+          "recheck included, is given the draft-verdict schema",
+          SCHEMAS_GIVEN == [draft_verdict_schema] * 3, SCHEMAS_GIVEN)
+
     # And the run itself no longer loads this project's hooks.
     seat_flag = root / "seat-setting-sources"
     seat_flag.mkdir()
@@ -1101,14 +1209,14 @@ with tempfile.TemporaryDirectory() as temporary:
     patch_module_function(ghi_ask.subprocess, "run", recording_run)
     try:
         # run_claude_real: the case before this one left a fake in its place.
-        run_claude_real("a question", None, seat_flag, 5)
+        run_claude_real("a question", None, seat_flag, 5, {"type": "object", "x": 1})
     except AssertionError:
         pass
     argv = recorded_command.get("argv", [])
     check("run_claude passes the answer schema with --json-schema",
           "--json-schema" in argv
           and json.loads(argv[argv.index("--json-schema") + 1])
-          == ghi_ask.GHI_GUIDE_AGENT_ANSWER_JSON_SCHEMA, argv)
+          == {"type": "object", "x": 1}, argv)
     check("run_claude passes --setting-sources user, so no project hook runs",
           "--setting-sources" in argv
           and argv[argv.index("--setting-sources") + 1] == "user", argv)
@@ -1125,7 +1233,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     patch_module_function(ghi_ask.subprocess, "run", stdin_recording_run)
     long_prompt = "x" * 300_000
-    run_claude_real(long_prompt, "sess-R", seat_flag, 5)
+    run_claude_real(long_prompt, "sess-R", seat_flag, 5, {})
     check("run_claude hands claude the prompt on stdin and not as an argument",
           recorded_stdin.get("input") == long_prompt
           and long_prompt not in recorded_stdin.get("argv", []),
@@ -1139,6 +1247,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     def recording_ask(question, include_closed, seat_dir, repo, *rest, **keywords):
         asked["question"] = question
+        asked["ask_form"] = keywords.get("ask_form")
         return {"kind": "verdict", "verdict": "unrelated", "issues": []}, {}, None
 
     ask_orig = ghi_ask.ask
@@ -1152,6 +1261,13 @@ with tempfile.TemporaryDirectory() as temporary:
         check("--question-file asks the file's text, verbatim",
               exit_code == 0 and asked.get("question") == question_text,
               (exit_code, len(asked.get("question") or "")))
+        check("an ask without --ask-form is a reading-list ask",
+              asked.get("ask_form") == "reading-list", asked.get("ask_form"))
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            ghi_ask.main(["q", "--ask-form", "draft-verdict", "--seat-dir", str(seat_flag)])
+        check("--ask-form draft-verdict reaches the ask",
+              asked.get("ask_form") == "draft-verdict", asked.get("ask_form"))
         hint = question_file_error.getvalue()
         check("a question from --question-file, asked without --include-closed, "
               "gets a hint naming neither the question nor the file, saying to "
@@ -1213,6 +1329,8 @@ with tempfile.TemporaryDirectory() as temporary:
                 plain_command = remote["argv"][-1]
                 ghi_ask.main(["a short question", "--print-answer-json"])
                 json_command = remote["argv"][-1]
+                ghi_ask.main(["a short question", "--ask-form", "draft-verdict"])
+                form_command = remote["argv"][-1]
         finally:
             patch("running_on_ned_box", running_on_ned_box_orig)
             ghi_ask.subprocess.run = subprocess_run_orig
@@ -1224,6 +1342,9 @@ with tempfile.TemporaryDirectory() as temporary:
         check("off the box, --print-answer-json rides the remote command",
               "--print-answer-json" in json_command
               and "--print-answer-json" not in plain_command, json_command[-300:])
+        check("off the box, --ask-form rides the remote command",
+              "--ask-form draft-verdict" in form_command
+              and "--ask-form" not in plain_command, form_command[-300:])
         remote_command = (from_file.get("argv") or ["", "", ""])[-1]
         check("off the box, --question-file sends the text on ssh's stdin and "
               "the box reads it with --question-file /dev/stdin",
