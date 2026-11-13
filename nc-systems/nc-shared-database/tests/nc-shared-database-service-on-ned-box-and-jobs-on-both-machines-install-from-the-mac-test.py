@@ -14,7 +14,8 @@ run the token and accepted-tokens commands in a real shell under a temporary
 HOME: a token is made once and kept, and the accepted-tokens file holds both,
 and is left as it was when ned-box's token file cannot be read. One case calls
 the real runner with subprocess.run replaced, to check which machine each step
-runs on.
+runs on. One case loads the program as a module under a name that sorts before
+`__main__`, to check that loading it runs nothing.
 
 Run: python3 nc-systems/nc-shared-database/tests/nc-shared-database-service-on-ned-box-and-jobs-on-both-machines-install-from-the-mac-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -25,6 +26,7 @@ import io
 import os
 import shlex
 import subprocess
+import sys
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -281,5 +283,23 @@ check("a Mac step runs in a local shell and a ned-box step through ssh to ned-bo
       [r[0] for r in recorded] == [["sh", "-c", "echo mac step"],
                                    ["ssh", "nedlern@ned-box", "echo ned-box step"]]
       and [r[1].get("input") for r in recorded] == [None, "a token"], recorded)
+
+# "Installer" sorts before "__main__", so only an exact comparison in the program's guard keeps main() from
+# running. sys.platform is not darwin during the load, so a guard that let main() run on the Mac reaches its
+# refusal instead of installing.
+_specification_under_name_sorting_before_main = importlib.util.spec_from_file_location("Installer", PROGRAM_PATH)
+real_platform, sys.platform = sys.platform, "linux"
+load_output, load_exit_code = io.StringIO(), None
+try:
+    with redirect_stdout(load_output), redirect_stderr(load_output):
+        _specification_under_name_sorting_before_main.loader.exec_module(
+            importlib.util.module_from_spec(_specification_under_name_sorting_before_main))
+except SystemExit as stop:
+    load_exit_code = stop.code
+finally:
+    sys.platform = real_platform
+check("loaded as a module under a name that sorts before __main__, the program runs nothing and prints "
+      "nothing", load_exit_code is None and load_output.getvalue() == "",
+      (load_exit_code, load_output.getvalue()))
 
 raise SystemExit(1 if failures else 0)

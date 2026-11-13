@@ -249,7 +249,7 @@ def main(arguments=None, run=run_on):
     mac_token = None
     for number, (name, machine, command, reads_mac_token, expected, advice) in enumerate(
             install_steps(), 1):
-        if name == FIREWALL_STEP_NAME and options.skip_firewall_step_rule_added_by_hand:
+        if name == FIREWALL_STEP_NAME and options.skip_firewall_step_rule_added_by_hand:  # pragma: no mutate, install_steps names this step with FIREWALL_STEP_NAME itself and every other step with other text, so `is` acts as ==
             print(f"step {number} skipped: {name}, on {machine}; the user added the rule by hand")
             continue
         result = run(machine, command, mac_token if reads_mac_token else None)
