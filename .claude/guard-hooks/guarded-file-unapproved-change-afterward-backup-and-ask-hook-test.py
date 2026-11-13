@@ -251,6 +251,8 @@ def cases(scratch):
     check("a Bash(python3:*) rule lets each --approve command through",
           commands and all(bash_allow_rule_matches("Bash(python3:*)", command)
                            for command in commands), commands)
+    check("a Bash(python3:*) rule lets through the bare python3 command, with no arguments",
+          bash_allow_rule_matches("Bash(python3:*)", "python3"))
 
     # -- reminders repeat in the asking session, once in another, and stop once settled
     reminder = world.run()
