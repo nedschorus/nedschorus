@@ -283,7 +283,8 @@ def merge_lane_cases(scratch):
             ("a finding opening with a hand-written blocking mark",
              [finding(2, "must-fix-now", "**Blocks** b")], "REQUEST_CHANGES",
              "comment on scripts/thing.py:2 whose body already opens with the blocking mark "
-             "**Blocks**"),
+             "**Blocks**; this program writes that mark for each must-fix-now comment, so remove the mark "
+             "from the start of its \"body\""),
             ("a fix-next finding opening, after spaces, with a hand-written mark",
              [finding(3, "fix-next", "  **Blocks:** b")], "APPROVE",
              "already opens with the blocking mark **Blocks:**"),
