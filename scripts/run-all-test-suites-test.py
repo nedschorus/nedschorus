@@ -738,6 +738,40 @@ with tempfile.TemporaryDirectory() as scratch:
 # deciding against them was a measured decision and widening the list later
 # should trip a case.
 module = load_program_module()
+
+# --- Output from a runner before the file-path opener is still read ----------
+# A frozen-head, or a saved result, can come from a runner whose lines open with the bare name.
+for opener in ("scripts/run-all-test-suites.py", "run-all-test-suites"):
+    check(f"a run whose output says '{opener}: not run to the end' is read as not ended, though a "
+          "suite's FAIL line precedes it",
+          not module.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(
+              f"FAIL a-test.py exit 1 (0.1s)\n{opener}: not run to the end — stopped by SIGTERM.\n"))
+
+# --- Files made in the temporary directory are named by the stem, not the path --
+# PROGRAM holds a "/", which would name a directory under TMPDIR that does not exist.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": PASSES})
+    temporary = root / "tmp"
+    temporary.mkdir()
+    environment = dict(os.environ, TMPDIR=str(temporary))
+    environment[RAN_FILE_VARIABLE] = str(root / "ran.txt")
+    result = subprocess.run(
+        [sys.executable, str(PROGRAM), "--checkout", str(root / "repo"), "--lock-file", str(root / "run.lock"),
+         "--recorded-inputs-directory", str(root / "recordings"),
+         "--suite-files-only-strace-saw-lists-directory", str(root / "recordings")],
+        capture_output=True, text=True, env=environment, stdin=subprocess.DEVNULL, check=False)
+    check("a run with no --log-dir makes its log directory in TMPDIR and passes",
+          result.returncode == 0 and ran(root) == ["a-test.py"], (result.returncode, result.stdout, result.stderr))
+    was_tempdir = tempfile.tempdir
+    try:
+        tempfile.tempdir = str(temporary)
+        covering = pathlib.Path(module.empty_file_bound_over_a_listening_socket_in_test_sandbox())
+    finally:
+        tempfile.tempdir = was_tempdir
+    check("the empty file covering a listening socket is made in the temporary directory, named by the stem",
+          covering.parent == temporary and covering.name.startswith("run-all-test-suites-empty-file-"), covering)
+
 check("the variable this file sets, so its fixture runs run as in a full run, is the one the "
       "program's signal sandbox sets",
       module.SIGNAL_SANDBOX_INSIDE_VARIABLE == "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX",

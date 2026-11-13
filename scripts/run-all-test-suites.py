@@ -4092,6 +4092,10 @@ SUITE_FAILED_LINE = re.compile(
     r"^FAIL (?P<suite>\S.*?) (?:exit \d+|killed by (?:signal \d+|\S+))"
     r"(?:, OUT OF MEMORY: [^(]*?)?(?: \(| — log )")
 NOT_RUN_TO_THE_END_LINE_PREFIX = f"{PROGRAM}: not run to the end"
+# A runner from before its messages opened with the file path prints the bare-name form, and a
+# frozen-head or a saved result can come from such a runner, so a reader matches either.
+TEST_RUNNER_WHOLE_RUN_NOT_RUN_TO_THE_END_LINE_PREFIXES_FILE_PATH_AND_BARE_NAME_FORMS = (
+    NOT_RUN_TO_THE_END_LINE_PREFIX, "run-all-test-suites: not run to the end")
 RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX = f"{NOT_RUN_TO_THE_END_LINE_PREFIX} — the run passed its run time limit"
 TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX = (
     f"{NOT_RUN_TO_THE_END_LINE_PREFIX} — a suite could not get a test slot")
@@ -4103,7 +4107,7 @@ def run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_b
     A nonzero exit without that, such as an empty output, a run cut short, or records that
     could not be written after every suite passed, judged no suite."""
     lines = text.splitlines()
-    if any(line.startswith(NOT_RUN_TO_THE_END_LINE_PREFIX) for line in lines):
+    if any(line.startswith(TEST_RUNNER_WHOLE_RUN_NOT_RUN_TO_THE_END_LINE_PREFIXES_FILE_PATH_AND_BARE_NAME_FORMS) for line in lines):
         return False
     return any(SUITE_FAILED_LINE.match(line) for line in lines)
 
