@@ -13,6 +13,7 @@ that no process outside its own namespace is visible.
 Run: python3 scripts/run-all-test-suites-signal-sandbox-test.py   (exit 0 = all passed)
 """
 
+import contextlib
 import importlib.util
 import os
 import pathlib
@@ -706,7 +707,33 @@ with tempfile.TemporaryDirectory() as scratch_name:
 
     # Root removes a directory whatever its mode, so the runner's removal cannot be made to fail.
     if os.geteuid() != 0:
-        given_record = scratch / "given"
+        # The TMPDIR is outside scratch, in the real temp directory, so only this removes it.
+        @contextlib.contextmanager
+        def recorded_tmpdir_unlocked_and_removed_afterward(record):
+            try:
+                yield
+            finally:
+                if record.exists():
+                    recorded = pathlib.Path(record.read_text())
+                    if (recorded / "locked").is_dir():
+                        (recorded / "locked").chmod(0o700)
+                    shutil.rmtree(recorded, ignore_errors=True)
+
+        stopped_record = scratch / "given-to-a-case-stopped-by-an-error"
+        stopped_given = pathlib.Path(tempfile.mkdtemp(prefix="locked-left-by-an-error-"))
+        stopped_record.write_text(str(stopped_given))
+        try:
+            with recorded_tmpdir_unlocked_and_removed_afterward(stopped_record):
+                (stopped_given / "locked").mkdir()
+                (stopped_given / "locked" / "file").write_text("x")
+                (stopped_given / "locked").chmod(0o500)
+                raise RuntimeError("a case stopped by an error")
+        except RuntimeError:
+            pass
+        check("a TMPDIR holding a directory without write permission is removed when its case "
+              "stops on an error", not stopped_given.exists(), stopped_given)
+
+        given_record = scratch / "given-to-the-unremovable-case"
         (scratch / "leaves-an-unremovable-directory-test.py").write_text(
             "import os, pathlib\n"
             f"pathlib.Path({str(given_record)!r}).write_text(os.environ['TMPDIR'])\n"
@@ -714,20 +741,20 @@ with tempfile.TemporaryDirectory() as scratch_name:
             "(locked / 'file').parent.mkdir()\n"
             "(locked / 'file').write_text('x')\n"
             "locked.chmod(0o500)\n")
-        unremovable = runner.run_one_suite(scratch, sys.executable,
-                                           "leaves-an-unremovable-directory-test.py", scratch)
-        given = pathlib.Path(given_record.read_text()) if given_record.exists() else None
-        check("a TMPDIR the runner cannot remove is named, with the command that removes it, "
-              "in the suite's output note",
-              unremovable["exit"] == 0 and given is not None and (given / "locked").is_dir()
-              and f"the temporary directory the suite was given, {given}, could not be removed ("
-              in (unremovable["output_note"] or "")
-              and f"`chmod -R u+rwx {shlex.quote(str(given))} && rm -rf {shlex.quote(str(given))}`"
-              in unremovable["output_note"],
-              (unremovable, given))
-        if given is not None and (given / "locked").is_dir():
-            (given / "locked").chmod(0o700)
-            shutil.rmtree(given)
+        with recorded_tmpdir_unlocked_and_removed_afterward(given_record):
+            unremovable = runner.run_one_suite(scratch, sys.executable,
+                                               "leaves-an-unremovable-directory-test.py", scratch)
+            given = pathlib.Path(given_record.read_text()) if given_record.exists() else None
+            check("a TMPDIR the runner cannot remove is named, with the command that removes it, "
+                  "in the suite's output note",
+                  unremovable["exit"] == 0 and given is not None and (given / "locked").is_dir()
+                  and f"the temporary directory the suite was given, {given}, could not be removed ("
+                  in (unremovable["output_note"] or "")
+                  and f"`chmod -R u+rwx {shlex.quote(str(given))} && rm -rf {shlex.quote(str(given))}`"
+                  in unremovable["output_note"],
+                  (unremovable, given))
+        check("the TMPDIR the runner could not remove is gone once the case ends",
+              given is None or not given.exists(), given)
 
     (scratch / "prints-tmpdir-test.py").write_text("import os\nprint(os.environ.get('TMPDIR'))\n")
     (scratch / "bwrap").write_text('#!/bin/sh\n"$@"\n')
