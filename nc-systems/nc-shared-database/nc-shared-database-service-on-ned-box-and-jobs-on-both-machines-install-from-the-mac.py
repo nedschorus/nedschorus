@@ -106,8 +106,12 @@ def install_step_failure_generic_advice(machine, command):
 
 def reference_checkout_missing_commit_failure_advice(machine, command):
     # git pull rejects --no-overwrite-ignore, and without it the merge replaces an ignored file
-    # at a path main tracks.
-    pull = (f"git -C {REFERENCE_CHECKOUT} fetch origin && "
+    # at a path main tracks. git merge fast-forwards whatever branch is checked out, so the
+    # command stops unless it is main.
+    pull = (f"{{ [ \"$(git -C {REFERENCE_CHECKOUT} branch --show-current)\" = main ] || "
+            f"{{ echo \"{REFERENCE_CHECKOUT} is not on main, so nothing was fast-forwarded.\" >&2; "
+            "false; }; } && "
+            f"git -C {REFERENCE_CHECKOUT} fetch origin && "
             f"git -C {REFERENCE_CHECKOUT} merge --ff-only --no-overwrite-ignore origin/main")
     return (f"The reference-checkout {REFERENCE_CHECKOUT} on {machine} does not yet hold main's "
             f"commit {MAIN_COMMIT_EACH_REFERENCE_CHECKOUT_MUST_HOLD[:9]}, which this install's files came "
