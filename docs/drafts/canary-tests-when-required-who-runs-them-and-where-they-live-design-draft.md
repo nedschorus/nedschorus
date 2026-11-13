@@ -14,12 +14,9 @@ What exists today: canary tests run by hand, as PR 1200's was, with their result
 
 ## When a canary test is required
 
-A change needs a canary test when both hold:
+A pull request needs a canary test when any code, message or test double it adds or changes encodes what an outside program will do or print (a flag's effect, an exit code, output or error text, a payload field, a sandbox or permission effect, environment handling, or when a scheduled job runs) and the pull request checks that encoding only against test doubles or expectations written by hand, not against the real program; it is exempt when it encodes no such thing or a repository test runs the real program on what it encodes.
 
-- the change makes the project's code newly rely on a behaviour of an outside program, such as honouring a flag, denying a read, firing a hook, or running a scheduled job; or changes how the code calls that program in a way that the behaviour it relies on could change; or newly depends on the text or format of the program's output; and
-- no test in the repository runs that outside program for real in a way that checks that behaviour. Such a test counts, because the daily full test run runs it again, as it runs a scheduled canary test.
-
-A change that neither newly relies on such a behaviour, nor changes the call in a way that behaviour could turn on, nor depends on the program's output, such as an edit to a prompt passed to an existing `codex exec` call, needs none.
+An edit to a prompt passed to an existing `codex exec` call encodes no such thing.
 
 The canary test runs the outside program as the code runs it, with the same program, subcommand and flags, on throwaway inputs, and may add a control run, as PR 1200's did; it runs on each machine the code runs on. The author runs it before asking for the merge, and posts its result on the pull request, one comment for each machine, beginning with one of these five hashtags:
 
