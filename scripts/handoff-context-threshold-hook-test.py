@@ -633,6 +633,13 @@ with tempfile.TemporaryDirectory() as workspace:
               str(two_compactions)) - 45.0) < 0.01,
           str(hook.context_used_plus_compaction_dropped_percentage_from_transcript(
               str(two_compactions))))
+    fractional_count = transcript_of(workspace, "fractional-count.jsonl", [
+        compaction_record(255_000), usage_record(200_000)])
+    check("that count keeps its fraction",
+          abs(hook.context_used_plus_compaction_dropped_percentage_from_transcript(
+              str(fractional_count)) - 45.5) < 0.01,
+          str(hook.context_used_plus_compaction_dropped_percentage_from_transcript(
+              str(fractional_count))))
     check("that count is None for a transcript with no usage",
           hook.context_used_plus_compaction_dropped_percentage_from_transcript(
               str(Path(workspace) / "not-there.jsonl")) is None)
@@ -1364,6 +1371,14 @@ with tempfile.TemporaryDirectory() as workspace:
         check("the compacted handoff gives both shares",
               ("used 20% (33% counting the tokens its compactions dropped, the figure compared "
                "with the threshold and the ceiling)") in result.stderr,
+              result.stderr[:200])
+        compacted_fractional = transcript_of(workspace, "compacted-fractional.jsonl", [
+            compaction_record(137_000), usage_record(200_000)])  # 20% + 13.7% = 33.7%
+        marker_file.unlink(missing_ok=True)
+        result = run_hook({"session_id": PROBE_SESSION_ID,
+                           "transcript_path": str(compacted_fractional)})
+        check("the compacted handoff rounds the count with the dropped tokens, not truncates it",
+              "used 20% (34% counting the tokens its compactions dropped" in result.stderr,
               result.stderr[:200])
 
         # --- A session its caller reincarnates is left alone ---------------
