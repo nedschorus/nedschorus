@@ -702,9 +702,11 @@ def cosmic_ray_session_pending_mutants_run_by_parallel_workers(
                                   else TestOutcome(said["test_outcome"])),
                     diff=said["diff"]))
             except (ValueError, KeyError, TypeError) as error:
-                last = (completed.stderr.strip() or "nothing").splitlines()[-1]
-                no_result.append(f"work item {job_id}: {error}; its last line on standard "
-                                 f"error: {last}")
+                # All of it: a traceback names its cause before its last line.
+                said = "".join(f"\n      {line}"
+                               for line in (completed.stderr.strip() or "nothing").splitlines())
+                no_result.append(f"work item {job_id}: {error}; it printed on standard "
+                                 f"error:{said}")
         for worker in workers:
             worker.join()
     finally:
