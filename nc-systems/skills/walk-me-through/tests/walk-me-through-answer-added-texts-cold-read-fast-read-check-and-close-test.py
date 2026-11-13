@@ -668,6 +668,26 @@ def test_the_waiting_item_read_step_names_and_reads_the_first_undecided_numbered
           and "item 2 of 2: its cold-read-fast-read" in result.stdout, described(result))
 
 
+def test_the_waiting_item_read_step_leaves_the_walk_minutes_as_they_were_when_the_sub_step_it_moves_to_is_refused():
+    case = Case(document=marks_document(words_of_body(300)))
+    case.run(WAITING_ITEM_READ_STEP_NAME)
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(document.read_text().replace(
+        "word150 ", "\n### Item 3.2 of 9: the second half\n\nword150 ").replace(
+        "word0 ", "### Item 3.1 of 9: the first half\n\nword0 "))
+    case.run(WAITING_ITEM_READ_STEP_NAME, "--after-fixes-reread-only-when-facts-change")
+    for copy in case.reads().glob("*.md"):
+        if "### Item 3.1 of 9" in copy.read_text():
+            copy.unlink()
+    case.minutes.write_text(case.minutes.read_text() + "#next_to_present item 3 of 9\n")
+    before = case.minutes.read_text()
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("when the sub-step 3.1 a line naming item 3 moves to is refused, as its earlier read's copy is missing, the "
+          "read step says it wrote nothing and leaves the walk-minutes as they were",
+          result.returncode == 1 and "nothing written" in result.stderr and case.minutes.read_text() == before
+          and marker(case) == "#next_to_present item 3 of 9", described(result) + case.minutes.read_text()[-300:])
+
+
 def test_the_waiting_item_read_step_reads_an_item_of_300_words_leaving_out_its_approval_walk_item_lines():
     body = ("#approval_walk_item_first_entered 2026-11-12\n- #approval_walk_item_waits_on the opening paragraph\n\n"
             + words_of_body(300 - MARKS_DOCUMENT_WORDS_OUTSIDE_BODY))

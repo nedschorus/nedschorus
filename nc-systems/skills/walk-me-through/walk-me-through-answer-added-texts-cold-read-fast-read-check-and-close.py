@@ -2211,10 +2211,16 @@ def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minut
                  and item.rsplit(".", 1)[0] == numbers[0] and item not in decided), None)
 
 
-def waiting_item_read(arguments):
-    """Give the item the `#next_to_present` line names its cold-read-fast-read, as its text stands."""
+def waiting_item_read(arguments, sub_step_of=None):
+    """Give the item the `#next_to_present` line names its cold-read-fast-read, as its text stands.
+
+    sub_step_of is (the sub-step's `#next_to_present` value, the item it is a sub-step of) when the line names an
+    item split into numbered sub-steps: the sub-step is read in its place, and its line is added to the walk-minutes
+    only once every refusal has passed, so a refused read leaves the walk-minutes as they were."""
     walk_finder = load_walk_finder()
     top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
+    if sub_step_of:
+        value = sub_step_of[0]
     _, numbers, total = waiting_items(walk_finder, value, minutes)
     program = Path(__file__).resolve()
     reads = item_reads_directory(walk_finder, minutes)
@@ -2234,10 +2240,10 @@ def waiting_item_read(arguments):
     approval_walk_item_text_over_word_limit_refused(walk_finder, minutes, value, numbers, total, parser, item, command)
     sub_step = approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minutes, parser, numbers, order)
     if sub_step:
-        sub_step = items_named([sub_step], total)
-        append_to_minutes(minutes, [NEXT_MARKER_LINE.format(value=sub_step)])
-        print(ITEM_READ_SUB_STEP_NAMED.format(item=item, sub_step=sub_step, minutes=minutes))
-        return waiting_item_read(arguments)
+        return waiting_item_read(arguments, (items_named([sub_step], total), item))
+    if sub_step_of:
+        append_to_minutes(minutes, [NEXT_MARKER_LINE.format(value=item)])
+        print(ITEM_READ_SUB_STEP_NAMED.format(item=sub_step_of[1], sub_step=item, minutes=minutes))
     for line in earlier_read_texts_kept_as_withdrawn_versions(walk_finder, minutes, value, numbers, total, parser,
                                                               earlier, item, text):
         print(line)
