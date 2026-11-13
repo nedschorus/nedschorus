@@ -4813,6 +4813,20 @@ def test_gathering_puts_an_unshown_item_standing_above_answered_items_after_the_
           f"{shown}\n{text}")
 
 
+def test_gathering_puts_an_unshown_item_after_the_withdrawn_versions_of_the_last_answered_item():
+    document = ("# A walk in which code picks the order\n\n" + numbered_item(1, "one")
+                + unshown_item("above", f"{CATEGORY_TAG}must_fix_now") + numbered_item(2, "two")
+                + numbered_item(3, "three") + "#### Withdrawn version 1 of item 3\n\nAn older three.\n\n"
+                + "## Summary\n\nThe walk in short.\n")
+    case = Case(next_to_present="item 2 of 9", document=document)
+    shown = titles_shown_in_turn(case)
+    text = walk_document(case)
+    check("an unshown item gathered behind the last answered item goes after that item's withdrawn versions, not "
+          "between the item and them",
+          shown[:2] == ["three", "above"] and text.index("An older three.") < text.index(": above\n"),
+          f"{shown}\n{text}")
+
+
 def test_gathering_places_unshown_items_after_the_answered_items_heading_the_minutes_total_picks():
     """A walk-document renumbered before numbers were never reused keeps two headings for item 2, `of 3` and `of 4`,
     as md-skills-seat-open-decisions-2026-10-13.md does for its items 22 to 27; the minutes' `of 3` picks the
