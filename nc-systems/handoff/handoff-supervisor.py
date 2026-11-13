@@ -2621,7 +2621,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         else:
             consecutive_resumes_without_new_work = 0  # pragma: no mutate, the None below makes the death path reset the count before any read of it
             substantive_turns_at_the_last_resume = None
-        verb ="resuming" if next_launch_resumes_the_session else "launching"
+        verb = "resuming" if next_launch_resumes_the_session else "launching"
         print(f"handoff-supervisor: {verb} session {session_id} (generation {generation})")
         # Read at each launch: a resume after a crash is when a dead agent's work-snapshots appear.
         leftover_work_snapshots = uncommitted_work_snapshot_text(
