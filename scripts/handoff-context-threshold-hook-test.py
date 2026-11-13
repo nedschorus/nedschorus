@@ -2735,6 +2735,27 @@ for flag, default in (("--threshold-used-percentage", 33.0),
           flag_entry is not None and flag_entry.group(1).endswith(f"(default: {default})"),
           flag_entry.group(1) if flag_entry else help_text)
 
+
+def runtime_union_annotations(path):
+    """Each `X | Y` annotation Python evaluates at import, which Python 3.9 cannot."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    if any(isinstance(node, ast.ImportFrom) and node.module == "__future__"
+           and any(alias.name == "annotations" for alias in node.names) for node in tree.body):
+        return []
+    annotations = [node.annotation for node in ast.walk(tree) if isinstance(node, (ast.AnnAssign, ast.arg))]
+    annotations += [node.returns for node in ast.walk(tree)
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    return [f"{path.name}:{annotation.lineno}" for annotation in annotations if annotation is not None
+            and any(isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr) for node in ast.walk(annotation))]
+
+
+# The Mac's python3 is Apple's 3.9, which runs this hook and the handoff writer that imports it.
+for importing_script in (HOOK_SCRIPT,
+                         HOOK_SCRIPT.parent.parent / "nc-systems" / "handoff" / "handoff-write-and-check-supervisor.py"):
+    union_annotations = runtime_union_annotations(importing_script)
+    check(f"{importing_script.name} imports under Python 3.9: no `X | None` annotation evaluated at import",
+          not union_annotations, union_annotations)
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

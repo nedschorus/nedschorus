@@ -32,7 +32,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 # Every Stop hook obeys this rule first: see the module's docstring.
 _stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
@@ -330,9 +330,9 @@ class ClaudeCodeTranscriptTaskEvent(NamedTuple):
     kind: str
     task_id: str
     record: dict
-    description: str | None = None
+    description: Optional[str] = None
     # A Monitor event's task-notification carries no <status>.
-    status: str | None = None
+    status: Optional[str] = None
     is_interim: bool = False
 
 
