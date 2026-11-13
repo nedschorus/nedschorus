@@ -2648,6 +2648,76 @@ with tempfile.TemporaryDirectory() as wait_set_workspace:
           hook.record_time({"timestamp": "2026-10-28T21:12:00+01:00"}) == began,
           hook.record_time({"timestamp": "2026-10-28T21:12:00+01:00"}))
 
+# The shared reader of a transcript line's task events, which work_in_flight and the writer's
+# roster both call.
+read_line = hook.task_events_from_claude_code_transcript_line
+spawn_line = json.dumps(subagent_spawn_record("a2573a7737ae643dc", description="the builder"))
+check("the reader returns a spawn with its subagent's id and description",
+      [(event.kind, event.task_id, event.description)
+       for event in read_line(spawn_line, "here", should_raise_on_unparseable_spawn_or_resume_line=True)]
+      == [(hook.SUBAGENT_SPAWNED_BY_AGENT_TOOL_TASK_EVENT, "a2573a7737ae643dc", "the builder")],
+      read_line(spawn_line, "here", should_raise_on_unparseable_spawn_or_resume_line=True))
+two_ids_notification = (
+    "<task-notification>\n<task-id>a3fe2b9aecae01f3b</task-id>\n<task-id>a677554663305e800</task-id>\n"
+    "<status>stopped</status>\n<summary>No completion record was found</summary>\n"
+    "</task-notification>")
+notification_events = read_line(
+    json.dumps(notification_records(two_ids_notification)[1]), "here",
+    should_raise_on_unparseable_spawn_or_resume_line=True)
+check("the reader returns one notification event for each task-id, with the status",
+      [(event.kind, event.task_id, event.status, event.is_interim) for event in notification_events]
+      == [(hook.TASK_NOTIFICATION_TASK_EVENT, "a3fe2b9aecae01f3b", "stopped", False),
+          (hook.TASK_NOTIFICATION_TASK_EVENT, "a677554663305e800", "stopped", False)],
+      notification_events)
+interim_events = read_line(json.dumps(notification_records(INCIDENT_INTERIM_NOTIFICATION)[1]),
+                           "here", should_raise_on_unparseable_spawn_or_resume_line=True)
+check("the reader marks an interim notification",
+      [(event.task_id, event.is_interim) for event in interim_events]
+      == [(INCIDENT_SUBAGENT_ID, True)], interim_events)
+monitor_event_notification = (
+    "<task-notification>\n<task-id>bzshcbek2</task-id>\n"
+    '<summary>Monitor event: "report files appearing"</summary>\n<event>update</event>\n'
+    "</task-notification>")
+monitor_events = read_line(json.dumps(notification_records(monitor_event_notification)[1]), "here",
+                           should_raise_on_unparseable_spawn_or_resume_line=True)
+check("the reader gives a notification with no <status>, a Monitor event's, no status",
+      [(event.task_id, event.status) for event in monitor_events] == [("bzshcbek2", None)],
+      monitor_events)
+check("the reader returns a resume and a TaskStop",
+      [(event.kind, event.task_id) for line in (
+          json.dumps(subagent_resume_record()), json.dumps(task_stop_record("b5x7", "local_bash")))
+       for event in read_line(line, "here", should_raise_on_unparseable_spawn_or_resume_line=True)]
+      == [(hook.SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT, RESUMED_SUBAGENT_ID),
+          (hook.STOPPED_BY_TASK_STOP_EVENT, "b5x7")])
+cut_resume_line = json.dumps(subagent_resume_record())[:-30]
+for cut_line, marker in ((half_written_spawn_line(), "spawn"), (cut_resume_line, "resume")):
+    try:
+        read_line(cut_line, "transcript.jsonl, line 7",
+                  should_raise_on_unparseable_spawn_or_resume_line=True)
+        refusal = None
+    except hook.TranscriptCouldNotBeFullyRead as problem:
+        refusal = str(problem)
+    check(f"asked to raise, the reader refuses a {marker} line that does not parse, naming the line",
+          refusal is not None and refusal.startswith("transcript.jsonl, line 7: "), refusal)
+    check(f"asked to skip, the reader returns no events for a {marker} line that does not parse",
+          read_line(cut_line, "here", should_raise_on_unparseable_spawn_or_resume_line=False) == [])
+cut_stop_line = json.dumps(task_stop_record("b5x7", "local_bash"))[:-20]
+cut_notification_line = json.dumps(notification_records(FINAL_NOTIFICATION_AFTER_INTERIM)[1])[:-20]
+check("asked to raise, the reader still skips a TaskStop or notification line that does not parse",
+      read_line(cut_stop_line, "here", should_raise_on_unparseable_spawn_or_resume_line=True) == []
+      and read_line(cut_notification_line, "here",
+                    should_raise_on_unparseable_spawn_or_resume_line=True) == [])
+check("the reader returns no events for a marker line that parses to something other than an object",
+      read_line('["async_launched", "resumedAgentId"]', "here",
+                should_raise_on_unparseable_spawn_or_resume_line=True) == [])
+try:
+    read_line(spawn_line, "here")
+    caller_must_choose = False
+except TypeError:
+    caller_must_choose = True
+check("a caller of the reader must choose whether a line that does not parse raises",
+      caller_must_choose)
+
 # --help prints each flag's default, so an agent reads it there and not from the source.
 help_result = subprocess.run([sys.executable, str(HOOK_SCRIPT), "--help"],
                              capture_output=True, text=True, check=False)
@@ -2664,6 +2734,27 @@ for flag, default in (("--threshold-used-percentage", 33.0),
     check(f"--help shows {flag}'s default, {default}",
           flag_entry is not None and flag_entry.group(1).endswith(f"(default: {default})"),
           flag_entry.group(1) if flag_entry else help_text)
+
+
+def runtime_union_annotations(path):
+    """Each `X | Y` annotation Python evaluates at import, which Python 3.9 cannot."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    if any(isinstance(node, ast.ImportFrom) and node.module == "__future__"
+           and any(alias.name == "annotations" for alias in node.names) for node in tree.body):
+        return []
+    annotations = [node.annotation for node in ast.walk(tree) if isinstance(node, (ast.AnnAssign, ast.arg))]
+    annotations += [node.returns for node in ast.walk(tree)
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    return [f"{path.name}:{annotation.lineno}" for annotation in annotations if annotation is not None
+            and any(isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr) for node in ast.walk(annotation))]
+
+
+# The Mac's python3 is Apple's 3.9, which runs this hook and the handoff writer that imports it.
+for importing_script in (HOOK_SCRIPT,
+                         HOOK_SCRIPT.parent.parent / "nc-systems" / "handoff" / "handoff-write-and-check-supervisor.py"):
+    union_annotations = runtime_union_annotations(importing_script)
+    check(f"{importing_script.name} imports under Python 3.9: no `X | None` annotation evaluated at import",
+          not union_annotations, union_annotations)
 
 print()
 if failures:

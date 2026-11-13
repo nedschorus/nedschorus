@@ -108,13 +108,6 @@ _transcript_mirror_spec = importlib.util.spec_from_file_location(
 transcript_mirror = importlib.util.module_from_spec(_transcript_mirror_spec)
 _transcript_mirror_spec.loader.exec_module(transcript_mirror)
 
-_interim_recognizer_spec = importlib.util.spec_from_file_location(
-    "claude_code_subagent_task_notification_interim_recognizer_common",
-    REPOSITORY_ROOT / "scripts" / "claude-code-subagent-task-notification-interim-recognizer-common.py"
-)
-interim_recognizer = importlib.util.module_from_spec(_interim_recognizer_spec)
-_interim_recognizer_spec.loader.exec_module(interim_recognizer)
-
 _threshold_hook_spec = importlib.util.spec_from_file_location(
     "handoff_context_threshold_hook", REPOSITORY_ROOT / "scripts" / "handoff-context-threshold-hook.py"
 )
@@ -163,13 +156,9 @@ BACKGROUND_TASK_PAST_WAIT_LIMIT_FIELD_PREFIX = supervisor.BACKGROUND_TASK_PAST_W
 WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT = "waiting on its own background work"
 
 # Only these imply ongoing work; unrecognized notification statuses count as ended.
-STILL_WORKING_SUBAGENT_LAST_EVENTS = ("spawned", "resumed", WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT)
-
-# Prefilter megabytes of tool output before parsing possible subagent events.
-SUBAGENT_EVENT_RECORD_MARKERS = ("async_launched", "resumedAgentId", "<task-notification>",
-                                 threshold_hook.TASK_STOP_TOOL_RESULT_MARKER_KEY)
-# The last event of a subagent a TaskStop call stopped, which gets no task-notification.
-STOPPED_BY_TASK_STOP_EVENT = "stopped"
+STILL_WORKING_SUBAGENT_LAST_EVENTS = (threshold_hook.SUBAGENT_SPAWNED_BY_AGENT_TOOL_TASK_EVENT,
+                                      threshold_hook.SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT,
+                                      WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT)
 
 
 def collapse_to_one_line(text: str) -> str:
@@ -300,68 +289,50 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
     # final-notification echo does not lift the stop.
     stopped_ids = set()
     with transcript_path.open("r", encoding="utf-8", errors="replace") as handle:
-        for line in handle:
-            if not any(marker in line for marker in SUBAGENT_EVENT_RECORD_MARKERS):
-                continue
-            try:
-                record = json.loads(line)
-            except (json.JSONDecodeError, ValueError):
-                continue  # The transcript writer may still be appending this record.
-            if not isinstance(record, dict):
-                continue
-            stamp = timestamp_to_whole_seconds(record.get("timestamp", ""))
-
-            result = record.get("toolUseResult")
-            if isinstance(result, dict):
-                agent_id = result.get("agentId")
-                if result.get("status") == "async_launched" and agent_id:
-                    if agent_id not in by_agent_id:
+        for line_number, line in enumerate(handle, start=1):
+            # The roster never blocks a session-handoff, and the transcript writer may still be
+            # appending a line that does not parse.
+            for event in threshold_hook.task_events_from_claude_code_transcript_line(
+                    line, f"{transcript_path}, line {line_number}",
+                    should_raise_on_unparseable_spawn_or_resume_line=False):
+                stamp = timestamp_to_whole_seconds(event.record.get("timestamp", ""))
+                entry = by_agent_id.get(event.task_id)
+                if event.kind == threshold_hook.SUBAGENT_SPAWNED_BY_AGENT_TOOL_TASK_EVENT:
+                    if entry is None:
                         entry = {
-                            "agent_id": agent_id,
+                            "agent_id": event.task_id,
                             # Descriptions are free text; newlines would split a handoff field.
-                            "description": collapse_to_one_line(str(result.get("description") or "")),
+                            "description": collapse_to_one_line(str(event.description or "")),
                             "spawned_at": stamp,
-                            "last_event": "spawned",
+                            "last_event": threshold_hook.SUBAGENT_SPAWNED_BY_AGENT_TOOL_TASK_EVENT,
                             "last_event_at": stamp,
                         }
-                        by_agent_id[agent_id] = entry
+                        by_agent_id[event.task_id] = entry
                         roster.append(entry)
                     continue
-                resumed = by_agent_id.get(result.get("resumedAgentId"))
-                if resumed is not None:
-                    stopped_ids.discard(resumed["agent_id"])
-                    resumed["last_event"] = "resumed"
-                    resumed["last_event_at"] = stamp
-                    continue
-                stopped = by_agent_id.get(result.get("task_id"))
-                if stopped is not None and threshold_hook.TASK_STOP_TOOL_RESULT_MARKER_KEY in result:
-                    stopped_ids.add(stopped["agent_id"])
-                    stopped["last_event"] = STOPPED_BY_TASK_STOP_EVENT
-                    stopped["last_event_at"] = stamp
-                    continue
-
-            notification = task_notification_text(record)
-            if notification is None:
-                continue
-            status = re.search(r"<status>(.*?)</status>", notification)
-            if status is None:
-                continue
-            event = (WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT
-                     if interim_recognizer.task_notification_is_interim(notification)
-                     else status.group(1))
-            # One notification can assign a single status to several task IDs.
-            for task_id in re.findall(r"<task-id>(.*?)</task-id>",
-                                      notification):
-                entry = by_agent_id.get(task_id)
                 if entry is None:
                     continue
-                # An interim notice queued before a TaskStop can arrive after it.
-                if task_id in stopped_ids and event == WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT:
-                    continue
-                # Repeated notifications are echoes, not new events; preserve the first arrival time.
-                if event != entry["last_event"]:
-                    entry["last_event"] = event
-                    entry["last_event_at"] = stamp
+                if event.kind == threshold_hook.SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT:
+                    stopped_ids.discard(event.task_id)
+                    last_event = threshold_hook.SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT
+                elif event.kind == threshold_hook.STOPPED_BY_TASK_STOP_EVENT:
+                    stopped_ids.add(event.task_id)
+                    last_event = threshold_hook.STOPPED_BY_TASK_STOP_EVENT
+                else:
+                    # A notification counts only as delivered to the agent-session, not as quoted in
+                    # a tool's output or copied into a later record.
+                    if event.status is None or task_notification_text(event.record) is None:
+                        continue
+                    last_event = (WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT if event.is_interim
+                                  else event.status)
+                    # An interim notice queued before a TaskStop can arrive after it.
+                    if event.task_id in stopped_ids and event.is_interim:
+                        continue
+                    # Repeated notifications are echoes, not new events; keep the first arrival time.
+                    if last_event == entry["last_event"]:
+                        continue
+                entry["last_event"] = last_event
+                entry["last_event_at"] = stamp
     return roster
 
 
