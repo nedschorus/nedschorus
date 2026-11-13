@@ -61,10 +61,24 @@ raise for prerequisites also records the completed blockedBy list, so the
 same blockers do not raise the task a second time. A deleted blocker frees such
 a task without raising it, because nothing it waited on was done.
 
+A PULL REQUEST CLOSED WITHOUT MERGING never meets its `pr_merged`
+condition, so its task would wait in silence. An open task is raised once
+for each such pull request, with the words "closed without merging", so its
+agent re-plans it, whatever its other prerequisites and its blockedBy tasks
+say, and it is not raised for that pull request again when they change. A
+pull request reopened and then merged meets its condition as usual. The
+next-action prompt lists such a task among the tasks nothing holds back, and
+the idle sweep, which counts them with this hook's code, then does not apply
+its rule 4, nothing to do, to the task's agent-seat: an agent-seat that went
+idle before the pull request closed reaches no stop for this hook to raise the
+task at, so the sweep's rule 5 judge decides whether to wake it.
+
 RAISED ONCE. The hook records, per task, the prerequisites list it raised
 the task for, or for a task raised because its blockers completed, its
 blockedBy list, and does not raise the task again for the same value;
-changing either lets the task be raised again. A prerequisites list the
+changing either lets the task be raised again. A task raised because a
+pull request closed without merging records that pull request's number, and is
+never raised again for that number. A prerequisites list the
 hook cannot read, or whose approval-walk item it cannot find, is named to the
 agent once per value of the list, recorded the same way. The Stop hook's
 additionalContext continues the conversation, so a hook that said the same
@@ -96,8 +110,10 @@ gh could not answer, because gh is missing, failed, timed out or printed no
 JSON object, is not an answer: no task waiting on it is raised, it is
 recorded as a failure with its time so it too waits the interval, and the
 stop that asked reports it, as OUTPUT says. No condition is checked for a
-task already raised for its current prerequisites, or held by blockedBy, so
-an agent-seat whose tasks have no prerequisites makes no network call. The same call
+task already raised for its current prerequisites; of a task held by
+blockedBy, only its `pr_merged` pull requests not yet raised as closed without
+merging are checked. An agent-seat whose tasks have no prerequisites makes no
+network call. The same call
 fetches the title and URL the raise line cites; a condition gh never
 answered is cited by its number alone.
 
@@ -143,7 +159,9 @@ which Claude Code delivers to the model as non-error feedback while the
 conversation continues. No `decision` field and no `systemMessage`: the text
 is for the agent. The text is one instruction per due task, then, when any
 task was raised, the instruction for a task that cannot be acted on yet,
-then two lines per prerequisites list the hook cannot use, then the
+then one line per task whose pull request closed without merging and, when
+there is any, the instructions for re-planning it, then two lines per
+prerequisites list the hook cannot use, then the
 next-action prompt's lines, then one line per condition gh could not answer
 at this stop. Nothing to raise or name and no next-action prompt:
 nothing printed, exit 0. A fault, such as a payload
@@ -234,6 +252,9 @@ WALK_MINUTES_FIELD = "approval_walk_minutes_file_path"
 ITEM_HEADING_FIELD = "approval_walk_item_heading"
 WALK_MINUTES_SUFFIX = "-minutes.md"
 PREREQUISITES_KEY = "prerequisites"
+PULL_REQUEST_KIND = "pr_merged"
+CLOSED_WITHOUT_MERGING_ANSWER_KEY = "closed_without_merging"
+CLOSED_WITHOUT_MERGING_RECORD_KEY = "pull_requests_closed_without_merging"
 PREREQUISITES_PROBLEM_RECORD_KEY = "prerequisites_problem"
 PREREQUISITE_FORMS = (
     '{"pr_merged": <number>}, {"issue_closed": <number>} or {"' + APPROVAL_WALK_ITEM_KIND
@@ -244,6 +265,17 @@ DEFER_INSTRUCTION = (
     "If a task above cannot be acted on yet, record what it now waits on with TaskUpdate "
     "instead: a pull request, a GHI or an approval-walk item in a new "
     "metadata.prerequisites, or a task with addBlockedBy."
+)
+CLOSED_WITHOUT_MERGING_LINE_TEMPLATE = (
+    'Task {task_id} "{subject}" is not raised while a pull request in its metadata.prerequisites '
+    "stays closed without merging: {citations}.")
+CLOSED_WITHOUT_MERGING_INSTRUCTIONS = (
+    "If a task named above as closed without merging is still wanted, put what it now waits on "
+    "in its metadata.prerequisites with TaskUpdate, in place of that pull request, or act on the "
+    "task now.",
+    "If such a task is no longer wanted, delete it with TaskUpdate.",
+    "If you expect such a pull request to be reopened and merged, leave its task as it is: this "
+    "hook raises the task when the pull request merges, and does not name the closing again.",
 )
 PREREQUISITES_PROBLEM_LINE_TEMPLATE = (
     'Task {task_id} "{subject}" is never raised as its metadata.prerequisites stand, because '
@@ -540,6 +572,9 @@ class GitHubConditionChecker:
         if not isinstance(answer, dict):
             return {"gh_failure": f"{command_text} exited 0 without printing a JSON object"}
         result = {"met": answer.get("state") == met_state}
+        if kind == PULL_REQUEST_KIND:
+            # MERGED is a closed pull request too, but gh reports it apart from CLOSED.
+            result[CLOSED_WITHOUT_MERGING_ANSWER_KEY] = answer.get("state") == "CLOSED"
         for citation_field in ("title", "url"):
             if isinstance(answer.get(citation_field), str):
                 result[citation_field] = answer[citation_field]
@@ -550,12 +585,28 @@ def condition_citation(kind: str, number, answer: dict) -> str:
     if kind == APPROVAL_WALK_ITEM_KIND:
         return (f'the approval-walk item "{single_line(number[ITEM_HEADING_FIELD])}" is decided '
                 f"in {number[WALK_MINUTES_FIELD]}")
-    _, _, id_type, met_word = CONDITION_KINDS[kind]
+    return f"{github_item_citation(kind, number, answer)} is {CONDITION_KINDS[kind][3]}"
+
+
+def github_item_citation(kind: str, number: int, answer: dict) -> str:
+    """The pull request or GHI by its title and link, or by its number when gh gave neither."""
+    id_type = CONDITION_KINDS[kind][2]
     title = answer.get("title")
     url = answer.get("url")
     if isinstance(title, str) and title.strip() and isinstance(url, str) and url:
-        return f'{id_type} "{single_line(title)}" ({url}) is {met_word}'
-    return f"{id_type} {number} is {met_word}"
+        return f'{id_type} "{single_line(title)}" ({url})'
+    return f"{id_type} {number}"
+
+
+def pull_requests_closed_without_merging(conditions, checker) -> list:
+    """(number, answer) for each `pr_merged` condition gh says is closed without merging."""
+    found = []
+    for kind, number in conditions:
+        if kind == PULL_REQUEST_KIND:
+            answer = checker.answer(kind, number)
+            if answer.get(CLOSED_WITHOUT_MERGING_ANSWER_KEY) is True:
+                found.append((number, answer))
+    return found
 
 
 def gh_failure_line(kind: str, number: int, cause: str) -> str:
@@ -580,15 +631,17 @@ def raise_line(task: dict, met_citations, done_blockers=None) -> str:
 
 
 def due_task_lines(tasks: dict, directory: Path, state: dict,
-                   checker: "GitHubConditionChecker") -> "tuple[list, list, bool]":
-    """The raise lines, the lines naming prerequisites the hook cannot use, and whether the
-    state changed apart from `checker`'s cache.
+                   checker: "GitHubConditionChecker") -> "tuple[list, list, list, bool]":
+    """The raise lines, the lines naming tasks whose pull request closed without merging, the
+    lines naming prerequisites the hook cannot use, and whether the state changed apart from
+    `checker`'s cache.
 
     Mutates `state` to record every raise and every named fault it returns, and to prune entries
     for tasks and conditions that no longer need them.
     """
     raised = state["raised"]
     lines = []
+    closed_lines = []
     problem_lines = []
     state_changed = False
     conditions_still_named = set()
@@ -616,6 +669,21 @@ def due_task_lines(tasks: dict, directory: Path, state: dict,
         if conditions is not None:
             conditions_still_named.update(condition_key(k, n) for k, n in conditions
                                           if k in CONDITION_KINDS)
+
+        if (conditions is not None
+                and record.get(PREREQUISITES_KEY) != canonical_prerequisites(prerequisites_value)):
+            already_closed = record.get(CLOSED_WITHOUT_MERGING_RECORD_KEY) or []
+            newly_closed = pull_requests_closed_without_merging(
+                [(kind, number) for kind, number in conditions
+                 if kind == PULL_REQUEST_KIND and number not in already_closed],
+                checker)
+            if newly_closed:
+                new_record[CLOSED_WITHOUT_MERGING_RECORD_KEY] = sorted(
+                    set(already_closed) | {number for number, _ in newly_closed})
+                closed_lines.append(CLOSED_WITHOUT_MERGING_LINE_TEMPLATE.format(
+                    task_id=task["id"], subject=single_line(task.get("subject", "")),
+                    citations="; ".join(github_item_citation(PULL_REQUEST_KIND, number, answer)
+                                        for number, answer in newly_closed)))
 
         prerequisite_citations = None
         done_blockers = None
@@ -672,7 +740,7 @@ def due_task_lines(tasks: dict, directory: Path, state: dict,
         if key not in conditions_still_named:
             del state["checks"][key]
             state_changed = True
-    return lines, problem_lines, state_changed
+    return lines, closed_lines, problem_lines, state_changed
 
 
 WALK_FINDER_FILE = (_HOOK_DIRECTORY.parent / "nc-systems" / "skills" / "walk-me-through"
@@ -703,8 +771,9 @@ NEXT_ACTION_INSTRUCTIONS = (
     "items.",
 )
 NEXT_ACTION_UNHELD_TASKS_HEADER = (
-    "Your open tasks that no recorded prerequisite or blocker holds back; which of them are "
-    "ready, and which need the user, is yours to judge:")
+    "Your open tasks that no recorded prerequisite or blocker holds back, or that wait on a pull "
+    "request closed without merging; which of them are ready, and which need the user, is yours "
+    "to judge:")
 NEXT_ACTION_HELD_TASKS_LINE = (
     "{count} more open task(s) are not listed: each waits on a blocker task, a pull request or "
     "GHI that is not done, an approval-walk item not yet decided, or a pull request or GHI whose "
@@ -753,23 +822,29 @@ def open_outcome_lines(walk_directory: Path) -> list:
 
 
 def unheld_and_held_tasks(tasks: dict, directory: Path, checker) -> "tuple[list, int]":
-    """The ids of open tasks nothing recorded holds back, oldest first, and the count of those held."""
+    """The ids of open tasks nothing recorded holds back, or that wait on a pull request closed
+    without merging, oldest first, and the count of the rest."""
     unheld = []
     held = 0
     for task_id in sorted(tasks, key=lambda text: (len(text), text)):
         task = tasks[task_id]
         if task.get("status") not in OPEN_TASK_STATUSES:
             continue
-        if is_held_by_blockers(task, tasks, directory):
-            held += 1
-            continue
         metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
         prerequisites_value = metadata.get(PREREQUISITES_KEY)
+        conditions = None
         if prerequisites_value is not None:
             try:
                 conditions = parse_prerequisites(prerequisites_value)
             except UnreadablePrerequisites:
-                conditions = None  # due_task_lines names it to the agent
+                pass  # due_task_lines names it to the agent
+        if conditions and pull_requests_closed_without_merging(conditions, checker):
+            unheld.append(task_id)  # its agent must re-plan it, whatever else holds it
+            continue
+        if is_held_by_blockers(task, tasks, directory):
+            held += 1
+            continue
+        if prerequisites_value is not None:
             if conditions is None or not all(
                     condition_answer(kind, number, checker).get("met") is True
                     for kind, number in conditions):
@@ -875,9 +950,10 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
     state = read_state(state_path)
     # One checker for the whole run, so its GitHub budget bounds every gh call the run makes.
     checker = GitHubConditionChecker(state["checks"], now.timestamp())
-    lines, problem_lines, state_changed = due_task_lines(tasks, directory, state, checker)
+    lines, closed_lines, problem_lines, state_changed = due_task_lines(
+        tasks, directory, state, checker)
     next_action_lines = []
-    if not lines:
+    if not lines and not closed_lines:
         try:
             next_action_lines = next_action_prompt_lines(payload, tasks, directory, state,
                                                          checker, now) or []
@@ -900,23 +976,25 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
         try:
             write_state_atomically(state_path, state)
         except OSError as error:
-            if lines:
-                outcome = (f"so {len(lines)} due task(s) were not raised at this stop; the "
+            if lines or closed_lines:
+                outcome = (f"so {len(lines) + len(closed_lines)} due task(s) were not raised at this stop; the "
                            f"first stop after the state file can be written raises them")
             else:
                 outcome = "no task was due at this stop, so none went unraised"
             raise HookFault(f"the state file {state_path} could not be written, and {outcome}. "
                             f"Make {state_path.parent} a directory this user can write to: "
                             f"{error}") from error
-    if not lines and not problem_lines and not next_action_lines:
+    if not lines and not closed_lines and not problem_lines and not next_action_lines:
         if gh_failure_lines:
             raise HookFault(" ".join(gh_failure_lines))
         return None
     defer_lines = [DEFER_INSTRUCTION] if lines else []
+    if closed_lines:
+        closed_lines += CLOSED_WITHOUT_MERGING_INSTRUCTIONS
     return json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "Stop",
-            "additionalContext": "\n".join(lines + defer_lines + problem_lines
+            "additionalContext": "\n".join(lines + defer_lines + closed_lines + problem_lines
                                            + next_action_lines + gh_failure_lines),
         }
     }, ensure_ascii=False)

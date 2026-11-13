@@ -638,6 +638,15 @@ try:
           verdicts["alpha"]["rule"] == 5
           and verdicts["alpha"]["open_tasks_nothing_holds"] == [{"id": "3", "subject": "task 3"}],
           verdicts["alpha"])
+    machine.task("alpha", "3", metadata={"prerequisites": [{"pr_merged": 50}]},
+                 blocked_by=["2"])
+    machine.gh_responses.write_text(json.dumps({"pr:50": {"state": "CLOSED"}}))
+    _, verdicts, _ = machine.run()
+    check("a task whose pull request closed without merging, though a blocker holds it: rule 5, "
+          "and the task is named",
+          verdicts["alpha"]["rule"] == 5
+          and verdicts["alpha"]["open_tasks_nothing_holds"] == [{"id": "3", "subject": "task 3"}],
+          verdicts["alpha"])
     machine.gh_responses.write_text("{}")
     machine.seat("beta", [user("go"), assistant("Done."), turn_end()])
     code, verdicts, _ = machine.run()
