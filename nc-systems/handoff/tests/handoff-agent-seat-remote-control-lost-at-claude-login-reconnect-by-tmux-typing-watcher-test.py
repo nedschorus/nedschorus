@@ -196,7 +196,7 @@ class Fixture:
         return exit_code, errors.getvalue()
 
     def entries(self):
-        path = self.logs / "decisions.jsonl"
+        path = self.logs / watcher.DECISIONS_FILE_NAME
         if not path.is_file():
             return []
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
@@ -299,6 +299,24 @@ def case_types_on_disconnect(namespace):
         exit_code, errors = fixture.run()
         check("a new disconnect line in the same session is typed for again",
               exit_code == 0 and fixture.decisions() == ["typed", "typed"], (exit_code, errors, fixture.entries()))
+    finally:
+        fixture.close()
+
+
+def case_typing_logged_under_decisions_file_name_before_program_prefix(namespace):
+    fixture = lost_seat("earlier-name", namespace)
+    try:
+        fixture.run()
+        earlier = fixture.logs / watcher.DECISIONS_FILE_NAME_BEFORE_PROGRAM_PREFIX
+        (fixture.logs / watcher.DECISIONS_FILE_NAME).rename(earlier)
+        logged = earlier.read_text(encoding="utf-8")
+        exit_code, errors = fixture.run()
+        time.sleep(1)
+        check("a typing logged only in the decisions file's earlier name: a later run does not type again, "
+              "and leaves that file as it was",
+              exit_code == 0 and fixture.pane().count("/remote-control") == 1
+              and fixture.decisions() == [] and earlier.read_text(encoding="utf-8") == logged,
+              (exit_code, errors, fixture.pane(), fixture.entries(), logged))
     finally:
         fixture.close()
 
@@ -449,7 +467,7 @@ def case_saved_read_positions():
               missing == {} and errors.getvalue() == "", (missing, errors.getvalue()))
         saved_positions = logs / watcher.TRANSCRIPT_READ_POSITIONS_FILE_NAME
         whole_read = ("A whole read types nothing twice, "
-                      "because decisions.jsonl records each disconnect already typed for.")
+                      f"because {watcher.DECISIONS_FILE_NAME} records each disconnect already typed for.")
         for text, name, said in (
                 ("{not json", "not JSON",
                  f"{watcher.PROGRAM}: the saved read positions {saved_positions} could not be read "
@@ -479,7 +497,7 @@ def case_saved_read_positions():
         said = (f"{watcher.PROGRAM}: the read positions were not saved to {unsaved} ([Errno 2] No such file or "
                 f"directory: '{unsaved_temporary}'), so the next run reads every transcript whole again. Every run "
                 "still checks every agent-seat, then exits 1 until a save succeeds. The one exception is a run that "
-                f"starts while an earlier run still holds {unsaved_directory}/run.lock: that new run exits 0 without saving.\n"
+                f"starts while an earlier run still holds {unsaved_directory / watcher.RUN_LOCK_FILE_NAME}: that new run exits 0 without saving.\n"
                 f"{whole_read}\n"
                 "When the error says No space left on device: free space on the disk that holds "
                 f"{unsaved_directory}.\n"
@@ -912,7 +930,7 @@ def case_run_failure(namespace):
     try:
         fixture.add_seat_processes()
         fixture.logs.mkdir()
-        (fixture.logs / "decisions.jsonl").write_text("{broken\n", encoding="utf-8")
+        (fixture.logs / watcher.DECISIONS_FILE_NAME).write_text("{broken\n", encoding="utf-8")
         raised = []
         for _ in range(2):
             try:
@@ -934,7 +952,7 @@ def case_run_failure_notice_not_shown(namespace):
     try:
         fixture.add_seat_processes()
         fixture.logs.mkdir()
-        (fixture.logs / "decisions.jsonl").write_text("{broken\n", encoding="utf-8")
+        (fixture.logs / watcher.DECISIONS_FILE_NAME).write_text("{broken\n", encoding="utf-8")
         fixture.ssh_exit.write_text("255", encoding="utf-8")
         errors = io.StringIO()
         with redirect_stderr(errors):
@@ -944,7 +962,7 @@ def case_run_failure_notice_not_shown(namespace):
                 pass
         check("a run failure whose notice the Mac does not open: said on stderr, and not marked as told",
               "did not open on the user's Mac" in errors.getvalue()
-              and not (fixture.logs / "reported-run-failures.txt").exists(), errors.getvalue())
+              and not (fixture.logs / watcher.REPORTED_RUN_FAILURES_FILE_NAME).exists(), errors.getvalue())
     finally:
         fixture.close()
 
@@ -953,7 +971,7 @@ def case_overlapping_run(namespace):
     fixture = lost_seat("overlap", namespace)
     try:
         fixture.logs.mkdir()
-        with (fixture.logs / "run.lock").open("w") as holder:
+        with (fixture.logs / watcher.RUN_LOCK_FILE_NAME).open("w") as holder:
             fcntl.flock(holder, fcntl.LOCK_EX)
             exit_code, errors = fixture.run()
         time.sleep(1)
@@ -1036,9 +1054,10 @@ def case_on_the_mac(namespace):
     watcher.MAC_LOG_DIRECTORY, watcher.LOG_DIRECTORY = mac_logs, ned_box_logs
     try:
         exit_code, errors = MacStandIns(fixture, mac_listing(fixture.seat)).run()
-        check("on the Mac, with no log directory given, as cron runs it: decisions.jsonl and run.lock "
+        check("on the Mac, with no log directory given, as cron runs it: the decisions file and the lock file "
               "go under MAC_LOG_DIRECTORY, and nothing under LOG_DIRECTORY",
-              exit_code == 0 and (mac_logs / "decisions.jsonl").is_file() and (mac_logs / "run.lock").is_file()
+              exit_code == 0 and (mac_logs / watcher.DECISIONS_FILE_NAME).is_file()
+              and (mac_logs / watcher.RUN_LOCK_FILE_NAME).is_file()
               and not ned_box_logs.exists(), (exit_code, errors))
     finally:
         watcher.MAC_LOG_DIRECTORY, watcher.LOG_DIRECTORY = saved_directories
@@ -1154,6 +1173,7 @@ def main():
         case_prompt_line_reading()
         case_seat_finding(namespace)
         case_types_on_disconnect(namespace)
+        case_typing_logged_under_decisions_file_name_before_program_prefix(namespace)
         case_reconnected(namespace)
         case_no_disconnect(namespace)
         case_no_transcript_yet(namespace)

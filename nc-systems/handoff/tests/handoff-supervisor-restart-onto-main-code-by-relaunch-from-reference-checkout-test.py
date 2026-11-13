@@ -462,7 +462,7 @@ def foreground_cases():
     state = json.loads(started[0].read_text()) if started else {}
     check("foreground: the handoff-supervisor is frozen and the agent-seat told to write its session-handoff",
           status == 0 and program.process_is_stopped(supervisor_id)
-          and "write your session-handoff now" in output and "result.txt" in output, output + errors)
+          and "write your session-handoff now" in output and program.RESULT_FILE_NAME in output, output + errors)
     check("foreground: the state for the second half names both processes and the agent-home's processes",
           state.get("supervisor_id") == supervisor_id and state.get("claude_id") == claude_id
           and str(claude_id) in state.get("agent_home_processes", {}), state)
@@ -511,7 +511,7 @@ def fresh_state(**changes):
              "agent_home_processes": {str(claude_id): table[claude_id][1],
                                       str(supervisor_id): table[supervisor_id][1]}}
     state.update(changes)
-    state_path = directory / "state.json"
+    state_path = directory / program.FROZEN_HANDOFF_SUPERVISOR_DETAILS_FILE_NAME
     state_path.write_text(json.dumps(state))
     return supervisor_id, claude_id, state_path
 
@@ -531,10 +531,10 @@ def second_half_cases():
     check("second half: no session-handoff within the limit unfreezes the old handoff-supervisor",
           status == 1 and not program.process_is_stopped(supervisor_id) and running(supervisor_id)
           and "unfrozen with SIGCONT" in output
-          and "step 4" not in (state_path.parent / "result.txt").read_text(), output)
+          and "step 4" not in (state_path.parent / program.RESULT_FILE_NAME).read_text(), output)
     check("second half: that failure is a notice for the user and a line in the result file",
-          opened and (state_path.parent / "notice.txt").is_file()
-          and "FAILED" in (state_path.parent / "result.txt").read_text(), opened)
+          opened and (state_path.parent / program.FAILURE_NOTICE_TO_USER_FILE_NAME).is_file()
+          and "FAILED" in (state_path.parent / program.RESULT_FILE_NAME).read_text(), opened)
     stop_fake(claude_id)
     stop_fake(supervisor_id)
 
@@ -547,7 +547,7 @@ def second_half_cases():
     opened = []
     status, half, output = second_half(state_path, opened)
     time.sleep(0.3)
-    result = (state_path.parent / "result.txt").read_text()
+    result = (state_path.parent / program.RESULT_FILE_NAME).read_text()
     check("second half: the old handoff-supervisor and its claude are ended",
           not running(supervisor_id) and not running(claude_id), output)
     check("second half: resupervise-seat.py --prepare-only and recover-crashed-seats.py run from the reference-checkout",
@@ -639,13 +639,13 @@ def second_half_cases():
     status, half, output = second_half(state_path, opened, now=lambda: next(clock))
     check("second half: no reply from the successor within 5 minutes is a notice with what ps shows",
           status == 1 and opened and "no new transcript" in output and "as ps lists them" in output
-          and "tmux -L restart-test-seat attach" in (state_path.parent / "notice.txt").read_text(),
+          and "tmux -L restart-test-seat attach" in (state_path.parent / program.FAILURE_NOTICE_TO_USER_FILE_NAME).read_text(),
           output)
-    notice_text = (state_path.parent / "notice.txt").read_text()
+    notice_text = (state_path.parent / program.FAILURE_NOTICE_TO_USER_FILE_NAME).read_text()
     check("second half: off the Mac, the notice's attach command is wrapped in ssh to ned-box, "
           "and it names the result file for an agent-seat to read",
           "`ssh -t nedlern@ned-box 'tmux -L restart-test-seat attach -t restart-test-seat'`" in notice_text
-          and f"to read {state_path.parent / 'result.txt'}" in notice_text, notice_text)
+          and f"to read {state_path.parent / program.RESULT_FILE_NAME}" in notice_text, notice_text)
 
     reset_control()
     control("resupervise-exit-codes", "0")
@@ -708,7 +708,7 @@ def step_4_and_leftover_cases():
     supervisor_id, claude_id, state_path = fresh_state(supervisor_command="python3 a command no process runs")
     write_session_handoff()
     status, half, output = second_half(state_path)
-    result = (state_path.parent / "result.txt").read_text()
+    result = (state_path.parent / program.RESULT_FILE_NAME).read_text()
     check("step 4: an old handoff-supervisor whose process ID now names another command gets no SIGKILL",
           f"the old handoff-supervisor {supervisor_id} had already ended" in result
           and "was ended with SIGKILL" not in result, result)
@@ -754,7 +754,7 @@ def step_4_and_leftover_cases():
     write_session_handoff()
     status, half, output = second_half(state_path)
     time.sleep(0.2)
-    result = (state_path.parent / "result.txt").read_text()
+    result = (state_path.parent / program.RESULT_FILE_NAME).read_text()
     ended_line = f"step 5: process {leftover_id} (sleep 600) ended"
     check("step 5: a failed resupervise-seat.py ends step 2's leftovers before it is run once more",
           status == 0 and not running(leftover_id) and ended_line in result
@@ -768,7 +768,7 @@ def step_4_and_leftover_cases():
     write_session_handoff()
     status, half, output = second_half(state_path)
     time.sleep(0.2)
-    result = (state_path.parent / "result.txt").read_text()
+    result = (state_path.parent / program.RESULT_FILE_NAME).read_text()
     ended_line = f"step 5: process {leftover_id} (sleep 600) ended"
     check("step 5: a leftover of step 2 that outlives step 4 is ended before recover-crashed-seats.py runs",
           status == 0 and not running(leftover_id) and ended_line in result
@@ -901,10 +901,10 @@ def notice_cases():
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
         half.notice("something failed <badly>")
-    page = (state_path.parent / "notice.html").read_text()
+    page = (state_path.parent / program.FAILURE_NOTICE_TO_USER_PAGE_FILE_NAME).read_text()
     check("a notice page that does not open is reported, and the notice stays on disk",
           "was not opened on the Mac (exit 1): the Mac is asleep" in output.getvalue()
-          and (state_path.parent / "notice.txt").read_text().startswith("something failed")
+          and (state_path.parent / program.FAILURE_NOTICE_TO_USER_FILE_NAME).read_text().startswith("something failed")
           and "&lt;badly&gt;" in page, output.getvalue())
     stop_fake(claude_id)
     stop_fake(supervisor_id)
@@ -959,7 +959,7 @@ def mac_cases():
 
 def detached_start_cases():
     directory = Path(tempfile.mkdtemp(dir=SCRATCH_HOME))
-    state_path = directory / "state.json"
+    state_path = directory / program.FROZEN_HANDOFF_SUPERVISOR_DETAILS_FILE_NAME
     state_path.write_text("{}")
     process_id = program.start_second_half(state_path)
     started_process_ids.append(process_id)
@@ -967,8 +967,8 @@ def detached_start_cases():
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline and running(process_id):
         time.sleep(0.1)
-    log = (directory / "detached-output.log").read_text()
-    check("the second half starts in a session of its own, with its output in detached-output.log",
+    log = (directory / program.DETACHED_SECOND_HALF_OUTPUT_FILE_NAME).read_text()
+    check("the second half starts in a session of its own, with its output in the detached second half's output file",
           session != os.getsid(0) and "KeyError" in log, log)
 
 

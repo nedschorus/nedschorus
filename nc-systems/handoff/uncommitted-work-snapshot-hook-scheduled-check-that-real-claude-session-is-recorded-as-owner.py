@@ -29,7 +29,7 @@ WHAT ONE RUN DOES, in order.
      temporary directory.
   2. Runs `claude -p` on Haiku from that clone, with the hook registered for
      Bash calls through --settings, and asks it to run one shell command that
-     writes the file live-check.txt.
+     writes the file LIVE_CHECK_FILE_NAME.
   3. Checks that claude exited 0 with a result that is not an error; that the
      clone has exactly one work-snapshot; that the work-snapshot holds the
      file; that its owner key names the process this program started as
@@ -89,7 +89,7 @@ GIT_OUTPUT_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 TASK_WRITE_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/agent-seat-task-list-new-pending-task-write-common.py")
-LIVE_CHECK_FILE_NAME = "live-check.txt"
+LIVE_CHECK_FILE_NAME = "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner-marker-file-created-by-real-claude-session.txt"
 LIVE_CHECK_PROMPT = (f"Run this one shell command and nothing else: "
                      f"echo live > {LIVE_CHECK_FILE_NAME}")
 LIVE_CHECK_MODEL = "haiku"
