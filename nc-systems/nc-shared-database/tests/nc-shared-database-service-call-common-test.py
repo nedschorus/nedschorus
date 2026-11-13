@@ -3,11 +3,12 @@
 
 The cases call a fake service on a loopback port that answers each request with
 the status the case sets, a listening socket that never answers, and a port
-nothing listens on: success, the 400, 401 and 422 refusals, a 409 and a 500
-counted as no answer, no answer within the time limit, a refused connection,
-an unreadable token file, and the handoff-supervisor's variant, which calls
-again with the same event ID, logs once when its wait starts and once when it
-stops, and does not call again after a refusal. One case records an event in
+nothing listens on: success, the 400, 401 and 422 refusals, a 422 whose answer
+is cut short, a 409 and a 500 counted as no answer, no answer within the time
+limit, a name lookup that stalls past it, a refused connection, an unreadable
+token file, and the handoff-supervisor's variant, which calls again with the
+same event ID, logs once when its wait starts and once when it stops, and does
+not call again after a refusal or an unreadable token file. One case records an event in
 the real service, nc-shared-database-service.py, to show the event the module
 builds is one the service stores.
 
@@ -20,6 +21,7 @@ import json
 import socket
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -184,6 +186,45 @@ with tempfile.TemporaryDirectory() as scratch:
           and str(scratch / "no-such.token") in str(failure)
           and str(failure).startswith("FAILED: GET"), failure and str(failure))
 
+    cut_short = socket.socket()
+    cut_short.bind(("127.0.0.1", 0))
+    cut_short.listen(1)
+
+    def answer_422_and_close_before_the_answer_ends():
+        connection, _ = cut_short.accept()
+        connection.recv(65536)
+        connection.sendall(b"HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: 100\r\n\r\nshort")
+        connection.close()
+
+    threading.Thread(target=answer_422_and_close_before_the_answer_ends, daemon=True).start()
+    failure = failure_of(lambda: caller.nc_shared_database_event_send_single_attempt(
+        "agent-seat-paused", "seat-1", {}, service_url=f"http://127.0.0.1:{cut_short.getsockname()[1]}",
+        token_file=token_file))
+    cut_short.close()
+    check("a 422 whose answer is cut short raises the refusal's FAILED line, saying the answer "
+          "could not be read",
+          failure is not None and failure.service_answered and "with 422" in str(failure)
+          and "its answer could not be read: " in str(failure),
+          failure and str(failure))
+
+    real_getaddrinfo = socket.getaddrinfo
+
+    def name_lookup_that_stalls(host, *arguments, **keywords):
+        if host == "stalled-name-lookup.invalid":
+            time.sleep(3)
+        return real_getaddrinfo(host, *arguments, **keywords)
+
+    socket.getaddrinfo = name_lookup_that_stalls
+    started = time.monotonic()
+    failure = failure_of(lambda: caller.nc_shared_database_service_http_request_single_attempt(
+        "/agent-seats", service_url="http://stalled-name-lookup.invalid:8765",
+        token_file=token_file, timeout_seconds=0.2))
+    took = time.monotonic() - started
+    socket.getaddrinfo = real_getaddrinfo
+    check("a stalled name lookup ends the call at the time limit: ned-box cannot be reached",
+          failure is not None and not failure.service_answered and took < 1
+          and "got no answer within 0.2 seconds" in str(failure), (took, failure and str(failure)))
+
     # The handoff-supervisor's variant
     logged, slept = [], []
     fake.statuses = [500, 500, 200]
@@ -231,6 +272,15 @@ with tempfile.TemporaryDirectory() as scratch:
           and logged[0].startswith("waiting for ned-box") and logged[1].startswith("ned-box "
                                                                                    "answered again")
           and logged[2].startswith("FAILED"), logged)
+
+    logged, slept = [], []
+    requests_before = len(fake.requests)
+    answer = caller.nc_shared_database_event_send_retrying_every_30_seconds_until_service_answers(
+        "handoff-supervisor-ended", "seat-1", {"run_id": "run-1"}, logged.append,
+        sleep=slept.append, service_url=fake.url, token_file=scratch / "no-such.token")
+    check("an unreadable token file is logged as its FAILED line, returns None and sends nothing",
+          answer is None and len(fake.requests) == requests_before and slept == []
+          and len(logged) == 1 and logged[0].startswith("FAILED: POST"), (answer, logged))
 
     database = scratch / "nc-shared-database.sqlite3"
     tokens = scratch / "accepted-tokens"

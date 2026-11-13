@@ -47,7 +47,8 @@ POST /events answers:
 An agent-seat's state is its events applied in sequence-number order, as each
 is stored. An agent-seat stops being parked at its next handoff-supervisor-began,
 paused or retired event, and stops being paused at its next
-handoff-supervisor-began or retired event; the end clears the column.
+handoff-supervisor-began or retired event; when either state stops, its column,
+parked_at or paused_at, is set to null.
 
 Exit codes: 2 a bad invocation; otherwise the program runs until stopped.
 """

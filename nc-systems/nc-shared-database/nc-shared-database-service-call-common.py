@@ -21,19 +21,22 @@ A handoff-supervisor calls
 nc_shared_database_event_send_retrying_every_30_seconds_until_service_answers,
 which sends the same event ID every 30 seconds until the service answers, and
 returns None, after logging the FAILED line, when the service refuses the
-event.
+event or this machine's token file cannot be read.
 
 Which answer counts as what:
   200            success
   400, 401, 422  the service answered and refused the request: a FAILED line
-                 with the service's answer; calling again would be refused again
-  anything else  no answer in 2 seconds, a refused connection, or any other
-                 status, such as a 500: ned-box cannot be reached
+                 with the service's answer; calling again is refused again until
+                 the cause is corrected
+  anything else  no answer within 2 seconds, name lookup of ned-box.local
+                 included, a refused connection, or any other status, such as a
+                 500: ned-box cannot be reached
 """
 
 import http.client
 import json
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -53,9 +56,10 @@ STATUSES_THE_SERVICE_REFUSES_WITH = (400, 401, 422)
 
 
 class NcSharedDatabaseServiceCallFailed(Exception):
-    """The call stored or read nothing. service_answered is True when the service
-    refused the request (400, 401 or 422), so calling again would not help, and
-    False when ned-box could not be reached."""
+    """The call stored or read nothing. service_answered is True when calling again
+    would not help: the service refused the request (400, 401 or 422), or this
+    machine's token file cannot be read, so nothing was sent. It is False when
+    ned-box could not be reached."""
 
     def __init__(self, message, service_answered):
         super().__init__(message)
@@ -68,8 +72,8 @@ def utc_now():
 
 # Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 SUBAGENT_PASSES_IT_TO_DISPATCHING_AGENT_LINE = (
-    "If you are a subagent, send the quoted sentence above to the agent that dispatched you "
-    "instead of telling the user.")
+    "If you are a subagent, on either machine, and a line above says to tell the user, send "
+    "the quoted text to the agent that dispatched you instead.")
 NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND = (
     "python3 ~/Projects/nedschorus/nc-systems/nc-shared-database/"
     "nc-shared-database-service-on-ned-box-and-jobs-on-both-machines-install-from-the-mac.py")
@@ -104,12 +108,13 @@ def _refused(method, url, status, answer, token_file, body):
             f"{NC_SHARED_DATABASE_SERVICE_ACCEPTED_TOKENS_FILE_ON_NED_BOX} on ned-box, and this "
             f"machine sent the token in {token_file}.\n"
             f"If you are on the Mac: run `{NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND}` "
-            f"once, which writes both machines' tokens into that file, and follow what it prints "
-            f"if it stops.\n"
+            f"once, which writes both machines' tokens into that file; if it stops with an error, "
+            f"follow what it prints. Then run the step that failed again.\n"
             f"If you are on ned-box: tell the user: \"The nc-shared-database service on ned-box "
             f"refuses ned-box's token in {token_file}. Running "
             f"`{NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND}` in a Terminal on the Mac "
-            f"puts it into the service's accepted-tokens file.\"\n"
+            f"puts it into the service's accepted-tokens file.\" Then leave the step that needs "
+            f"the service until he has run it, and go on with work that does not need it.\n"
             f"{SUBAGENT_PASSES_IT_TO_DISPATCHING_AGENT_LINE}",
             service_answered=True)
     sent = f" the event {json.dumps(body)}" if body is not None else ""
@@ -118,7 +123,7 @@ def _refused(method, url, status, answer, token_file, body):
         f"{sys.argv[0] or 'python3 -c'}, with {status}, and stored nothing. The service's answer: "
         f"{answer}. A 400 or 422 means the service could not read the request or found a value "
         f"it does not accept, such as an unknown machine or a seat_id it holds no agent-seat "
-        f"for; the same request sent again is refused again.\n"
+        f"for; the same request sent again is refused again until that cause is corrected.\n"
         f"Find the cause from the service's answer, and correct the program that sent the "
         f"request. The docstring of nc-systems/nc-shared-database/nc-shared-database-service.py "
         f"says what each answer means and which keys and fields each operation takes; an event "
@@ -147,28 +152,52 @@ def nc_shared_database_service_http_request_single_attempt(
             f"read ({error}). Every call to the service carries this machine's token from that "
             f"file.\n"
             f"If you are on the Mac: run `{NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND}` "
-            f"once, which writes the token file, and follow what it prints if it stops.\n"
+            f"once, which writes the token file; if it stops with an error, follow what it "
+            f"prints. Then run the step that failed again.\n"
             f"If you are on ned-box: tell the user: \"The nc-shared-database service cannot be "
             f"called from ned-box: its token file {token_file} cannot be read ({error}). Running "
             f"`{NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND}` in a Terminal on the Mac "
-            f"writes it.\"\n"
+            f"writes it.\" Then leave the step that needs the service until he has run it, and "
+            f"go on with work that does not need it.\n"
             f"{SUBAGENT_PASSES_IT_TO_DISPATCHING_AGENT_LINE}", service_answered=True)
     request = urllib.request.Request(
         url, method=method,
         data=None if body is None else json.dumps(body).encode("utf-8"),
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            return json.loads(response.read())
-    except urllib.error.HTTPError as error:
-        answer = error.read().decode("utf-8", "replace").strip()
-        if error.code in STATUSES_THE_SERVICE_REFUSES_WITH:
-            raise _refused(method, url, error.code, answer, token_file, body)
-        raise _not_reached(method, url, f"was answered {error.code}: {answer}")
-    except (OSError, http.client.HTTPException) as error:
-        # urllib.error.URLError, a timeout and a refused connection are all OSError.
-        raise _not_reached(method, url, f"got no answer within {timeout_seconds} seconds "
-                                        f"({type(error).__name__}: {error})")
+    outcome = {}
+
+    def call():
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                outcome["answer"] = response.read()
+        except urllib.error.HTTPError as error:
+            outcome["status"] = error.code
+            try:
+                outcome["status_answer"] = error.read().decode("utf-8", "replace").strip()
+            except (OSError, http.client.HTTPException) as read_error:
+                outcome["status_answer"] = (f"<its answer could not be read: "
+                                            f"{type(read_error).__name__}: {read_error}>")
+        except (OSError, http.client.HTTPException) as error:
+            # urllib.error.URLError, a timeout and a refused connection are all OSError.
+            outcome["error"] = error
+
+    # urlopen's timeout bounds each socket operation but not the name lookup of
+    # ned-box.local, so the whole call runs in a thread that is abandoned at the limit.
+    calling = threading.Thread(target=call, daemon=True)
+    calling.start()
+    calling.join(timeout_seconds)
+    if calling.is_alive():
+        raise _not_reached(method, url, f"got no answer within {timeout_seconds} seconds")
+    if "answer" in outcome:
+        return json.loads(outcome["answer"])
+    if "status" in outcome:
+        status, answer = outcome["status"], outcome["status_answer"]
+        if status in STATUSES_THE_SERVICE_REFUSES_WITH:
+            raise _refused(method, url, status, answer, token_file, body)
+        raise _not_reached(method, url, f"was answered {status}: {answer}")
+    error = outcome["error"]
+    raise _not_reached(method, url, f"got no answer within {timeout_seconds} seconds "
+                                    f"({type(error).__name__}: {error})")
 
 
 def nc_shared_database_event_body(operation, seat_id, fields, event_id=None):
@@ -193,8 +222,9 @@ def nc_shared_database_event_send_retrying_every_30_seconds_until_service_answer
     ned-box cannot be reached.
 
     log takes one line of text. It is called once when the wait starts, once when it
-    stops, and with the FAILED line when the service refuses the event. Returns the
-    service's answer, or None when the service refused the event; never raises
+    stops, and with the FAILED line when the service refuses the event or this
+    machine's token file cannot be read. Returns the service's answer, or None
+    after such a FAILED line; never raises
     NcSharedDatabaseServiceCallFailed.
     """
     body = nc_shared_database_event_body(operation, seat_id, fields)
