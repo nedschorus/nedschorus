@@ -995,7 +995,7 @@ APPROVAL_WALK_ITEM_OVER_WORD_LIMIT = (
     "walk-document {document}, `{heading}`, has {count} words, over the limit of {limit} words for an item or a "
     "sub-step, and the user is shown no item longer than that. A word here is a run of characters between spaces or line "
     "breaks that holds a letter or a digit; every line of the item counts, heading, code and hashtag marker lines "
-    "included, except a line opening with {left_out}, and each `###` sub-step counts on its own.\n"
+    "included, except a line opening with {left_out}, and each `###` sub-step, numbered or not, counts on its own.\n"
     "Split that text into `###` sub-steps, each within {limit} words, headed and ended as the walk-me-through skill's "
     "paragraph opening \"Limit each item to 300 words\" says; do not cut the text down to fit, since the user wants "
     "long material broken into steps, not compressed.\n"
@@ -1136,14 +1136,38 @@ def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None
     return document, "\n".join(line for first, end in ranges for line in lines[first:end]).strip()
 
 
+def approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parser, spans, numbers):
+    """Return the (first, end) line ranges counted for the items numbered, one per item the skill counts on its
+    own: each numbered item's own lines, even under a heading it shares with other items, and each of its
+    numbered sub-steps, such as `### Item 3.1 of 9`, which item_unit_spans reads as units of their own."""
+    openings = walk_finder.item_opening_lines(text, parser, tokens)
+    all_units = walk_finder.item_unit_spans(text, parser)
+
+    def own_range(unit, number):
+        unit_numbers, unit_total, _, first, end = unit
+        if len(unit_numbers) > 1:
+            return walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+                openings, first, end, number, unit_numbers, unit_total)
+        return first, end
+
+    ranges = []
+    for number in numbers:
+        ranges += [own_range(unit, number) for unit in spans if number in unit[0]][:1]
+        ranges += [own_range(unit, part) for unit in all_units for part in unit[0]
+                   if part.startswith(number + ".") and part not in numbers]
+    return sorted(set(ranges))
+
+
 def approval_walk_item_text_over_word_limit_refused(walk_finder, minutes, value, numbers, total, parser, item, command):
     """Raise Failure when an item's text up to its first `###` sub-step, or a sub-step, has more words than
-    APPROVAL_WALK_ITEM_WORD_LIMIT, naming the first such text."""
-    document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
+    APPROVAL_WALK_ITEM_WORD_LIMIT, naming the first such text. A sub-step is a `###` heading, numbered or not;
+    a deeper heading is part of the text it falls in."""
+    document, text, tokens, _ = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
+    _, spans = walk_finder.waiting_item_units(document, value, numbers, total, parser)
     lines = text.split("\n")
     sub_steps = {token.map[0] for token in tokens if token.type == "heading_open" and token.level == 0
-                 and token.map is not None and len(token.markup) >= len(APPROVAL_WALK_ITEM_SUB_STEP_HEADING_MARKUP)}
-    for first, end in ranges:
+                 and token.map is not None and token.markup == APPROVAL_WALK_ITEM_SUB_STEP_HEADING_MARKUP}
+    for first, end in approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parser, spans, numbers):
         starts = sorted({first} | {line for line in sub_steps if first < line < end})
         for start, stop in zip(starts, starts[1:] + [end]):
             count = sum(len(APPROVAL_WALK_ITEM_WORD.findall(line)) for line in lines[start:stop]

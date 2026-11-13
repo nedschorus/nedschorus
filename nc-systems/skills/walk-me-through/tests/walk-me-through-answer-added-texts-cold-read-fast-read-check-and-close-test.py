@@ -644,6 +644,38 @@ def test_the_waiting_item_read_step_reads_an_item_of_300_words_leaving_out_its_a
           and "word284" in case.calls.read_text(), described(result))
 
 
+def test_the_waiting_item_read_step_counts_each_numbered_sub_step_of_the_item_the_minutes_name():
+    document = ("# A walk\n\n## Item 3 of 9: the opening sentence\n\n### Item 3.1 of 9: the first half\n\n"
+                + words_of_body(320) + "\n### Item 3.2 of 9: the second half\n\nShort.\n\n"
+                "#case_against weak: the page grows.\n\nRecommendation: change it.\n")
+    case = Case(document=document)
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("with `#next_to_present item 3 of 9`, the read step refuses the item's over-long numbered sub-step 3.1",
+          result.returncode == 1 and "the text from line 5 of the walk-document" in result.stderr
+          and "`### Item 3.1 of 9: the first half`, has 327 words" in result.stderr
+          and case.calls.read_text() == "", described(result))
+
+
+def test_the_waiting_item_read_step_counts_a_detail_heading_below_a_sub_step_as_part_of_its_text():
+    body = words_of_body(160) + "\n#### Details\n\n" + words_of_body(160)
+    case = Case(document=marks_document(body))
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("a `####` heading starts no sub-step, so 160 words, `#### Details` and 160 words are refused as one text",
+          result.returncode == 1 and "the text from line 3 of the walk-document" in result.stderr
+          and "has 336 words" in result.stderr and case.calls.read_text() == "", described(result))
+
+
+def test_the_waiting_item_read_step_counts_each_item_of_a_shared_heading_on_its_own():
+    document = ("# A walk\n\n## Items 6 and 7 of 9: two short items\n\n**Item 6 of 9:** the first.\n\n"
+                + words_of_body(200) + "\n#case_against weak: one.\n\nRecommendation: do one.\n\n"
+                "**Item 7 of 9:** the second.\n\n" + words_of_body(200)
+                + "\n#case_against weak: two.\n\nRecommendation: do two.\n")
+    case = Case(next_to_present="items 6 and 7 of 9", document=document)
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("items 6 and 7 of 9 under one heading, of about 200 words each, are counted on their own and read",
+          result.returncode == 0 and "had to be run now" in result.stdout, described(result))
+
+
 def test_a_failed_fast_read_stops_the_check():
     case = Case()
     before = case.minutes.read_text()
