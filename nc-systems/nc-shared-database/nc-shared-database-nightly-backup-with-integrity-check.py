@@ -22,11 +22,17 @@ PRAGMA integrity_check:
     and older ones deleted;
   - when the check fails, the older copies stay as they are, the copy is
     renamed to end in .failed-integrity-check, and the program prints the
-    check's output and exits 1.
+    check's output, writes it as a user-alert and exits 1.
 
-Exit codes: 0 a copy was made and passed its check; 1 the copy failed its check;
-any other failure, such as a database that cannot be opened, ends with Python's
-traceback and exit 1.
+Any other failure, such as a database that cannot be opened, writes a user-alert
+naming the error, then ends with Python's traceback and exit 1. A user-alert is
+written through
+nc-systems/general-tools/user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py,
+because cron appends this program's output to a log no one reads. When the
+user-alert cannot be written either, both tracebacks go to that log.
+
+Exit codes: 0 a copy was made and passed its check; 1 the copy failed its check,
+or any other failure.
 """
 
 import argparse
@@ -43,11 +49,29 @@ FAILED_CHECK_SUFFIX = ".failed-integrity-check"
 EXIT_COPY_KEPT = 0
 EXIT_COPY_FAILED_ITS_CHECK = 1
 
-_service_spec = importlib.util.spec_from_file_location(
-    "nc_shared_database_service",
-    Path(__file__).resolve().with_name("nc-shared-database-service.py"))
-service = importlib.util.module_from_spec(_service_spec)
-_service_spec.loader.exec_module(service)
+
+def _load(name, path):
+    specification = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+service = _load("nc_shared_database_service",
+                Path(__file__).resolve().with_name("nc-shared-database-service.py"))
+user_alerts = _load(
+    "user_alerts_pending_and_claimed_files_write_claim_release_and_delete_common",
+    Path(__file__).resolve().parents[1] / "general-tools"
+    / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
+
+FAILED_CHECK_TITLE = "The nightly backup copy of the nc-shared-database failed its integrity check"
+FAILED_CHECK_ACTION = (
+    "An agent on ned-box can follow the 'What to do' steps in the alert text. If the database itself "
+    "fails its check, only the user can decide on a restore.")
+FAILED_TITLE = "The nightly backup of the nc-shared-database on ned-box failed, so no new copy was kept"
+FAILED_ACTION = (
+    f"An agent on ned-box can run python3 {PROGRAM} by hand, read the error it prints, and fix its cause; "
+    "until then each night's run fails the same way and the newest backup copy grows older.")
 
 
 def integrity_check(connection):
@@ -59,6 +83,21 @@ def main(argv=None):
     parser.add_argument("--database", default=str(service.NC_SHARED_DATABASE_FILE_PATH))
     parser.add_argument("--backup-directory", default=str(BACKUP_DIRECTORY))
     arguments = parser.parse_args(argv)
+    try:
+        return back_up_and_check(arguments)
+    except Exception as error:
+        database = Path(arguments.database)
+        user_alerts.user_alert_write_to_pending(
+            FAILED_TITLE,
+            f"{PROGRAM} stopped with {error!r} while backing up {database} into "
+            f"{arguments.backup_directory}. The database file "
+            f"{'exists' if database.exists() else 'does not exist'}. The traceback is in "
+            f"/home/nedlern/.claude/nc-shared-database-nightly-backup-with-integrity-check.log on ned-box.",
+            FAILED_ACTION)
+        raise
+
+
+def back_up_and_check(arguments):
     backup_directory = Path(arguments.backup_directory)
     backup_directory.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -87,27 +126,28 @@ def main(argv=None):
         check_command = (f'python3 -c "import sqlite3, sys; print(sqlite3.connect(sys.argv[1])'
                          f'.execute(sys.argv[2]).fetchall())" "{arguments.database}" '
                          f'"PRAGMA integrity_check"')
-        print(f"{PROGRAM}: FAILED — the copy of {arguments.database} failed PRAGMA "
-              f"integrity_check, so it is not kept as a backup and the older copies in "
-              f"{backup_directory} stay as they are. The failed copy is {failed_path}. "
-              f"The check printed:\n" + "\n".join(check) + "\n"
-              f"What to do: check the database itself. On ned-box run\n"
-              f"  {check_command}\n"
-              f"or from the Mac run\n"
-              f"  ssh nedlern@ned-box '{check_command}'\n"
-              f"If the command itself fails, such as with a Python traceback, it checked "
-              f"nothing: it says nothing about the database, so find why it failed and run "
-              f"it again.\n"
-              f"If it prints [('ok',)], only the copy was damaged: delete the failed copy, on "
-              f"ned-box with `rm {failed_path}` or from the Mac with "
-              f"`ssh nedlern@ned-box 'rm {failed_path}'`; the next night's run makes a new "
-              f"copy.\n"
-              f"If it prints anything else, the database itself is damaged: leave the "
-              f"database and the copies as they are, and tell the user that the agent-seat "
-              f"database {arguments.database} fails its integrity check, quoting both checks' "
-              f"output; a restore is his decision. If you are a subagent, tell the agent that "
-              f"dispatched you instead, with the same quotes.",
-              file=sys.stderr)
+        failure = (f"{PROGRAM}: FAILED — the copy of {arguments.database} failed PRAGMA "
+                   f"integrity_check, so it is not kept as a backup and the older copies in "
+                   f"{backup_directory} stay as they are. The failed copy is {failed_path}. "
+                   f"The check printed:\n" + "\n".join(check) + "\n"
+                   f"What to do: check the database itself. On ned-box run\n"
+                   f"  {check_command}\n"
+                   f"or from the Mac run\n"
+                   f"  ssh nedlern@ned-box '{check_command}'\n"
+                   f"If the command itself fails, such as with a Python traceback, it checked "
+                   f"nothing: it says nothing about the database, so find why it failed and run "
+                   f"it again.\n"
+                   f"If it prints [('ok',)], only the copy was damaged: delete the failed copy, on "
+                   f"ned-box with `rm {failed_path}` or from the Mac with "
+                   f"`ssh nedlern@ned-box 'rm {failed_path}'`; the next night's run makes a new "
+                   f"copy.\n"
+                   f"If it prints anything else, the database itself is damaged: leave the "
+                   f"database and the copies as they are, and tell the user that the agent-seat "
+                   f"database {arguments.database} fails its integrity check, quoting both checks' "
+                   f"output; a restore is his decision. If you are a subagent, tell the agent that "
+                   f"dispatched you instead, with the same quotes.")
+        print(failure, file=sys.stderr)
+        user_alerts.user_alert_write_to_pending(FAILED_CHECK_TITLE, failure, FAILED_CHECK_ACTION)
         return EXIT_COPY_FAILED_ITS_CHECK
 
     partial_path.rename(copy_path)
