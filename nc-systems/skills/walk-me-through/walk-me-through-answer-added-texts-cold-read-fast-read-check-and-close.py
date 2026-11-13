@@ -1523,9 +1523,9 @@ def not_asked_kind(value):
 def not_asked_label(kind, rating=None):
     """How the minutes and messages name a --not-asked value: `kind 3`, `case against none`, or, for `none` on an
     item rated weak, `case against weak, cost only`."""
-    if kind != NOT_ASKED_RATED_NONE:
+    if kind in NOT_ASKED_KINDS:
         return f"kind {kind}"
-    return NOT_ASKED_WEAK_COST_ONLY_LABEL if rating == NOT_ASKED_RATED_WEAK else "case against none"
+    return NOT_ASKED_WEAK_COST_ONLY_LABEL if rating == NOT_ASKED_RATED_WEAK else "case against none"  # pragma: no mutate, rating is a rating word and weak sorts after the others, so `>=` acts as `==`
 
 
 def guarded_paths(top, paths):
@@ -1713,7 +1713,7 @@ def not_asked_problems(kind, rating, lines, marks, top, item):
             if not (top / path).exists():
                 problems.append(NOT_ASKED_MISSING_PATH_PROBLEM.format(marker=TOUCHES, path=path, top=top))
         for path in guarded_paths(top, touched):
-            if rating != NOT_ASKED_RATED_WEAK:
+            if rating != NOT_ASKED_RATED_WEAK:  # pragma: no mutate, rating is a rating word and weak sorts after the others, so `<` acts as `!=`
                 problems.append(NOT_ASKED_GUARDED_FILE_PROBLEM.format(marker=TOUCHES, path=path))
             elif path.endswith(".md"):
                 problems.append(NOT_ASKED_WEAK_GUARDED_MARKDOWN_PROBLEM.format(marker=TOUCHES, path=path))
@@ -1931,7 +1931,7 @@ def check(arguments):
     if arguments.not_asked is not None:
         output += [line.format(item=item, label=not_asked_label(arguments.not_asked, rating))
                    for line in NOT_ASKED_JUDGEMENT_LINES]
-        if arguments.not_asked == NOT_ASKED_RATED_NONE and rating == NOT_ASKED_RATED_WEAK:
+        if arguments.not_asked == NOT_ASKED_RATED_NONE and rating == NOT_ASKED_RATED_WEAK:  # pragma: no mutate, not_asked_kind returns the constant itself and weak sorts after the other rating words, so `is` and `>=` act as `==`
             output.append(NOT_ASKED_WEAK_JUDGEMENT_LINE.format(item=item))
     output.append(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
     log = arguments.counts_log or (log_store_records.parent / COUNTS_LOG_FILE_NAME if log_store_records else None)
