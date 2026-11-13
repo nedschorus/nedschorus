@@ -27,8 +27,8 @@ first that fails:
   8.   ned-box installs the nightly backup job;
   9.   the Mac installs the job that copies the newest backup to the Mac;
   10-13. on each machine, curl asks the service for the agent-seats with that
-       machine's token, which must be answered 412, the token accepted and no
-       generation ID sent, and without a token, which must be answered 401.
+       machine's token, which must be answered 200, and without a token, which
+       must be answered 401.
 
 Every step can be run again: a token file that holds a token is kept, and the
 unit, the firewall rule and the jobs are left as they are when already there.
@@ -195,7 +195,7 @@ def install_steps():
     ]
     for machine in ("mac", "ned-box"):
         steps.append((f"from the {machine}, the service accepts the token", machine,
-                      service_status_code_command(True), False, "412", service_wrong_http_answer_failure_advice))
+                      service_status_code_command(True), False, "200", service_wrong_http_answer_failure_advice))
         steps.append((f"from the {machine}, the service refuses a request without a token",
                       machine, service_status_code_command(False), False, "401",
                       service_wrong_http_answer_failure_advice))

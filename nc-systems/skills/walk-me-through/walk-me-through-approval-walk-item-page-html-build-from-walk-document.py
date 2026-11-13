@@ -81,7 +81,7 @@ def item_lines_and_count(walk_finder, document, text, number, parser):
         numbered = ", ".join(each for unit in units for each in unit[0]) or "none"
         raise Refused(NO_HEADING.format(document=document, number=number, problems=problems, numbered=numbered))
     lines = text.split("\n")
-    if len(naming) > 1:
+    if len(naming) > 1:  # pragma: no mutate, naming is not empty here, so > 1 and != 1 pick the same lists
         headings = "\n".join(f"line {unit[3] + 1}: {lines[unit[3]]}" for unit in naming)
         raise Refused(SEVERAL_HEADINGS.format(document=document, number=number, headings=headings))
     numbers, total, _, first, end = naming[0]

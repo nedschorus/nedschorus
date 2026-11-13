@@ -3249,7 +3249,7 @@ def main_with_stop_signals_raising_system_exit(argv):
         if arguments.operation == "create":
             create(path, arguments.repo, root, run, report)
             return 0
-        if arguments.operation == "close":
+        if arguments.operation == "close":  # pragma: no mutate, create returned above and argparse allows only edit or close here, and "edit" sorts after "close", so <= matches only close
             close_ghi_after_its_outcome_edit_merges_to_main(
                 path, arguments.reason, arguments.repo, root, run, report)
             return 0

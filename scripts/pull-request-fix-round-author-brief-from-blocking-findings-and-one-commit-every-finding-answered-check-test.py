@@ -4,7 +4,9 @@
 Each case runs the program in a scratch git repository with a fake `gh` first on PATH. The fake
 answers from a routes file the case writes, keyed by its arguments joined with spaces, or by a
 prefix of them when the key ends with "*"; it exits 1 on an unarranged call, and appends each
-call's arguments to the calls file.
+call's arguments to the calls file. A fake `git` beside it answers `git ls-remote` with FAKE_GIT_LS_REMOTE_STDOUT,
+FAKE_GIT_LS_REMOTE_STDERR and FAKE_GIT_LS_REMOTE_EXIT, by default origin's branch at the head and branch the case's gh pr view route
+names, and hands every other git command to the real git.
 
 Run: python3 scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check-test.py
 """
@@ -13,6 +15,7 @@ import datetime
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -63,6 +66,18 @@ route = routes[key]
 sys.stdout.write(route.get("stdout", ""))
 sys.stderr.write(route.get("stderr", ""))
 sys.exit(route.get("exit", 0))
+'''
+
+FAKE_GIT = r'''#!/bin/sh
+for argument in "$@"; do
+    if [ "$argument" = ls-remote ]; then
+        printf '%s\n' "$*" >> "$FAKE_GIT_LS_REMOTE_CALLS"
+        printf '%s' "$FAKE_GIT_LS_REMOTE_STDOUT"
+        printf '%s' "$FAKE_GIT_LS_REMOTE_STDERR" >&2
+        exit "${FAKE_GIT_LS_REMOTE_EXIT:-0}"
+    fi
+done
+exec REAL_GIT "$@"
 '''
 
 # Stands in for scripts/run-all-test-suites.py in every scratch repository's base commit. The suites that
@@ -238,15 +253,31 @@ def routes_for(head, reviews, comments=BLOCKING_COMMENTS, review_id=11):
     }
 
 
+def origin_branch_line_of_pull_request_view_route(routes):
+    """git ls-remote's line for the head and branch the gh pr view route names, or "" when it names none."""
+    try:
+        facts = json.loads(routes.get(PR_VIEW, {}).get("stdout", ""))
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(facts, dict) or not facts.get("headRefOid") or not facts.get("headRefName"):
+        return ""
+    return f"{facts['headRefOid']}\trefs/heads/{facts['headRefName']}\n"
+
+
 def run(root, repository, routes, *arguments, path_has_gh=True, environment_extra=None):
     bin_directory = root / "bin"
     bin_directory.mkdir(exist_ok=True)
     (bin_directory / "gh").write_text(FAKE_GH)
     (bin_directory / "gh").chmod(0o755)
+    (bin_directory / "git").write_text(FAKE_GIT.replace("REAL_GIT", shlex.quote(shutil.which("git"))))
+    (bin_directory / "git").chmod(0o755)
     (root / "routes.json").write_text(json.dumps(routes))
     (root / "calls.jsonl").write_text("")
+    (root / "ls-remote-calls.txt").write_text("")
     environment = dict(os.environ, FAKE_GH_ROUTES=str(root / "routes.json"),
-                       FAKE_GH_CALLS=str(root / "calls.jsonl"))
+                       FAKE_GH_CALLS=str(root / "calls.jsonl"),
+                       FAKE_GIT_LS_REMOTE_CALLS=str(root / "ls-remote-calls.txt"),
+                       FAKE_GIT_LS_REMOTE_STDOUT=origin_branch_line_of_pull_request_view_route(routes))
     git_only_directory = root / "git-only-bin"
     if not git_only_directory.exists():
         git_only_directory.mkdir()
@@ -791,37 +822,17 @@ def check_cases(root, repository, base, frozen_head):
     merge = git(repository, "rev-parse", "HEAD")
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers)
-    check("check: a merge without --after-conflict-merge refuses", code == 1
-          and "one non-merge commit" in err, err)
-    code, out, err = run(root, repository, routes_for(merge, reviews),
-                         "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a merge of origin/main alone passes with --after-conflict-merge",
-          code == 0 and f"New head {merge}" in out, out + err)
+    check("check: a merge of origin/main refuses, and says to drop it", code == 1
+          and "one non-merge commit" in err and "drop any merge of main" in err
+          and "(2 parents)" in err, err)
     after_merge = commit_file(repository, "hook.py", "four\n", "fix after merge")
-    code, out, err = run(root, repository, routes_for(after_merge, reviews),
-                         "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a merge of origin/main and one commit pass with --after-conflict-merge, "
-          "and main's files are not listed", code == 0 and "main.txt" not in out, out + err)
-    commit_file(repository, "hook.py", "five\n", "a third commit")
+    code, out, err = run(root, repository, routes_for(after_merge, reviews), "--check", "--answers", answers)
+    check("check: a merge of origin/main and one commit refuse", code == 1
+          and "has 2 commits" in err, err)
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a merge and two commits refuse", code == 1 and "has 3 commits" in err, err)
-
-    git(repository, "reset", "-q", "--hard", frozen_head)
-    git(repository, "checkout", "-q", "-b", "elsewhere", base)
-    stray = commit_file(repository, "stray.txt", "s\n", "not on main")
-    git(repository, "checkout", "-q", BRANCH)
-    git(repository, "merge", "-q", "--no-edit", stray)
-    code, out, err = run(root, repository, routes_for(frozen_head, reviews),
-                         "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a merge of a commit not on origin/main refuses", code == 1
-          and "not on origin/main" in err, err)
-
-    git(repository, "update-ref", "-d", "refs/remotes/origin/main")
-    code, out, err = run(root, repository, routes_for(frozen_head, reviews),
-                         "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a missing origin/main fails with exit 2", code == 2
-          and "merge-base --is-ancestor" in err, err)
+    check("check: --after-conflict-merge is no longer accepted", code == 2
+          and "--after-conflict-merge" in err, err)
 
     git(repository, "reset", "-q", "--hard", base)
     rewritten = commit_file(repository, "hook.py", "rewritten\n", "rewritten")
@@ -918,7 +929,7 @@ def check_cases(root, repository, base, frozen_head):
           code == 1 and ANSWERS_NAME in err and "git rm --cached" in err, out + err)
     git(repository, "rm", "-q", "--cached", ANSWERS_NAME)
     git(repository, "commit", "-q", "--amend", "--no-edit")
-    # origin/main was deleted above, so the new shared names cannot be listed.
+    git(repository, "update-ref", "-d", "refs/remotes/origin/main")
     code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews), "--check")
     check("check: a round's commit whose new shared names git cannot list fails with exit 2, before any suite runs",
           code == 2 and "the new shared names the round's commit adds could not be listed: git rev-parse exited 128"
@@ -929,29 +940,11 @@ def check_cases(root, repository, base, frozen_head):
           out + err)
     git(repository, "reset", "-q", "--hard", unignored_head)
     git(repository, "update-ref", "refs/remotes/origin/main", "main-line")
-    git(repository, "merge", "-q", "--no-edit", "origin/main")
     (repository / "other-answers").mkdir()
     commit_file(repository, "other-answers/fix-round-answers-pull-request-1901.md", "1. x\n", "fix")
-    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews),
-                         "--check", "--after-conflict-merge")
-    check("check: after a conflict merge, any pull request's answers file in a subdirectory refuses",
+    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews), "--check")
+    check("check: any pull request's answers file in a subdirectory refuses",
           code == 1 and "other-answers/fix-round-answers-pull-request-1901.md" in err, out + err)
-
-    git(repository, "reset", "-q", "--hard", unignored_head)
-    git(repository, "merge", "-q", "--no-ff", "--no-commit", "origin/main")
-    (repository / "other-answers").mkdir(exist_ok=True)
-    (repository / "other-answers/fix-round-answers-pull-request-1899.md").write_text("1. x\n")
-    git(repository, "add", "other-answers/fix-round-answers-pull-request-1899.md")
-    git(repository, "commit", "-q", "--no-edit")
-    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews),
-                         "--check", "--after-conflict-merge")
-    check("check: an answers file added in the conflict merge's own commit refuses",
-          code == 1 and "other-answers/fix-round-answers-pull-request-1899.md" in err, out + err)
-    commit_file(repository, "hook.py", "fixed after merge\n", "fix after the merge")
-    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews),
-                         "--check", "--after-conflict-merge")
-    check("check: an answers file the conflict merge adds refuses when a fix commit sits on top",
-          code == 1 and "other-answers/fix-round-answers-pull-request-1899.md" in err, out + err)
 
     git(repository, "reset", "-q", "--hard", unignored_head)
     held = commit_file(repository, "fix-round-answers-pull-request-1900.md", "1. x\n",
@@ -976,6 +969,17 @@ def check_cases(root, repository, base, frozen_head):
                          "--check", "--answers", answers_file(root, GOOD_ANSWERS), "--commit", "no-such-ref")
     check("check: an unknown --commit fails with exit 2", code == 2 and "rev-parse" in err, err)
     del rewritten, second
+
+
+def history_git_cannot_walk_case(root, repository, _base, frozen_head):
+    middle = commit_file(repository, "hook.py", "two\n", "middle")
+    last = commit_file(repository, "hook.py", "three\n", "last")
+    # A missing commit between the frozen-head and the checked commit makes git merge-base --is-ancestor exit 128.
+    (repository / ".git" / "objects" / middle[:2] / middle[2:]).unlink()
+    code, out, err = run(root, repository, routes_for(frozen_head, [review(commit_id=frozen_head)]),
+                         "--check", "--answers", answers_file(root, GOOD_ANSWERS), "--commit", last)
+    check("check: a history git cannot walk from the checked commit to the frozen-head fails with exit 2",
+          code == 2 and "merge-base --is-ancestor" in err and "exited 128" in err, out + err)
 
 
 def pull_request_2213_review(review_id, login, state, commit_id, body):
@@ -1386,6 +1390,14 @@ def moved_into_body_cases(root, repository, base, frozen_head):
         "Comments on lines outside this pull request's diff:\n- `setup.py:3`: **Blocks** the moved finding.")
     check("a line in the moved-comment form above the moved-comment heading is not read back as a moved comment",
           read_back == [{"path": "setup.py", "line": 3, "body": "**Blocks** the moved finding."}], repr(read_back))
+
+    read_back = load_program().outside_the_diff_comments_read_back_from_review_body(
+        "Comments on lines outside this pull request's diff:\n  an indented line before any moved comment\n"
+        "- `setup.py:3`: **Blocks** the moved finding.\n  its continuation.\n\nA closing paragraph.")
+    check("only an indented line after a moved comment continues it: an indented line before the first one, "
+          "a blank line and an unindented paragraph after it are not read back",
+          read_back == [{"path": "setup.py", "line": 3, "body": "**Blocks** the moved finding.\nits continuation."}],
+          repr(read_back))
     del base
 
 
@@ -2053,6 +2065,38 @@ def suite_cases(root, repository, _base, _frozen_head):
     runner_calls(root)
 
 
+def pushed_head_read_from_origin_cases(root, repository, _base, frozen_head):
+    """GitHub's headRefOid can still name the frozen-head for seconds after the push moved origin's branch."""
+    reviews = [review(commit_id=frozen_head)]
+    answers = answers_file(root, GOOD_ANSWERS)
+    fix = commit_file(repository, "hook.py", "two\n", "fix")
+    stale_github = routes_for(frozen_head, reviews)
+
+    def check_with_origin(stdout, exit_code="0", stderr=""):
+        return run(root, repository, stale_github, "--check", "--answers", answers, environment_extra={
+            "FAKE_RUNNER_CALLS": str(root / "runner-calls.jsonl"), "FAKE_GIT_LS_REMOTE_STDOUT": stdout,
+            "FAKE_GIT_LS_REMOTE_STDERR": stderr, "FAKE_GIT_LS_REMOTE_EXIT": exit_code})
+
+    code, out, err = check_with_origin(f"{fix}\trefs/heads/{BRANCH}\n")
+    check("pushed head: origin's branch at the round's commit while GitHub's head is still the frozen-head is "
+          "pushed: the message for merge-lane-2, and no suite run",
+          code == 0 and f"New head {fix}" in out and "Not pushed yet" not in out and runner_calls(root) == []
+          and (root / "ls-remote-calls.txt").read_text() == f"-C . ls-remote origin refs/heads/{BRANCH}\n",
+          out + err)
+
+    code, out, err = check_with_origin(f"{fix}\trefs/heads/other/refs/heads/{BRANCH}\n")
+    check("pushed head: origin without the pull request's branch, only one whose name ends the same, fails with "
+          "exit 2, naming the branch",
+          code == 2 and out == "" and f"found no branch {BRANCH} on origin" in err
+          and f"\"The fix-round check of {URL} found no branch {BRANCH} on origin, so the round's commit is not "
+          "pushed.\"" in err, err + out)
+
+    code, out, err = check_with_origin("", exit_code="128", stderr="fatal: Could not read from remote repository.\n")
+    check("pushed head: git ls-remote that fails fails the check with exit 2, passing git's message on",
+          code == 2 and out == "" and f"git ls-remote origin refs/heads/{BRANCH} failed: fatal: Could not read "
+          "from remote repository." in err, err + out)
+
+
 def nit_cases(root, repository, base, frozen_head):
     """merge-lane-2's nits, posted opening with the nit mark beside its blocking findings, ride in the fix-round."""
     nit = comment("nit.txt", " **fix-in-maintenance, nit** nit.txt misspells the name.", line=20, comment_id=6)
@@ -2359,6 +2403,8 @@ case("brief", brief_cases)
 case("topic-worktree", topic_worktree_cases)
 case("conflict check", conflict_check_cases)
 case("check", check_cases)
+case("pushed head read from origin", pushed_head_read_from_origin_cases)
+case("history git cannot walk", history_git_cannot_walk_case)
 case("commissioned reviewer", commissioned_reviewer_cases)
 case("split review", split_review_cases)
 case("rounds on one head", rounds_on_one_head_cases)
