@@ -115,6 +115,7 @@ import pathlib
 import shutil
 import signal
 import subprocess
+import threading
 import sys
 import tempfile
 import time
@@ -260,8 +261,8 @@ sys.exit(step.get("exit", 0))
 # backup sees it fail. "report" writes the report and succeeds; "fail_stderr"
 # is what a failure prints; "dump_prompt" saves the prompt; "pid_file" saves
 # the stub's process ID, first thing; "wait_for_file" fails unless that file
-# appears within 20 s; "hang" sleeps past any deadline a case sets;
-# "concurrent_read_answer" exits 0 without writing its own report, after
+# appears within 20 s; "sleep_seconds" sleeps that long after it; "hang"
+# sleeps past any deadline a case sets; "concurrent_read_answer" exits 0 without writing its own report, after
 # writing that text where a concurrent fast read, in a temporary directory of
 # its own, would write its Question 4 answer; it saves that directory, then
 # that file, one per line, to the file "concurrent_read_answer_path_file" names;
@@ -292,6 +293,7 @@ if "wait_for_file" in plan:
     else:
         sys.stderr.write("stub claude: %s never appeared\\n" % plan["wait_for_file"])
         sys.exit(1)
+time.sleep(plan.get("sleep_seconds", 0))
 if plan.get("hang"):
     time.sleep(300)
 own_report = (pathlib.Path(re.search(r"Write your report to (\\S+), once", prompt).group(1))
@@ -1037,6 +1039,29 @@ with tempfile.TemporaryDirectory() as scratch:
 
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    copied_agy_cell = repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"
+    copied_agy_cell.write_text(
+        copied_agy_cell.read_text(encoding="utf-8").replace(launcher_entry, (
+            'if __name__ == "__main__":\n'
+            '    counter = pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_COUNTER_PATH"])\n'
+            '    counter.write_text(str((int(counter.read_text()) if counter.is_file() else 0) + 1))\n'
+            '    sys.exit(common.EXIT_BAD_INVOCATION + 6)\n')),
+        encoding="utf-8")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: never\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: after the launcher's exit 70\n"},
+    )
+    check("an agy launcher exit above 64 is retried like any failure other than its "
+          "refusal: two Gemini launches, then the backup",
+          result.returncode == 0 and launches_counted(counter) == 2
+          and launches_counted(claude_counter_path(counter)) == 1,
+          f"exit {result.returncode}; launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
@@ -1236,6 +1261,75 @@ with tempfile.TemporaryDirectory() as scratch:
           hanging_stub_pid is not None and not process_is_running(hanging_stub_pid),
           f"pid {hanging_stub_pid}")
 
+    # Questions 1 to 3 outlast Question 4's time limit: the fast-clarify stub
+    # waits for a file that this case writes only once the hanging Question 4
+    # stub has died, or after 15 s if it never does.
+    repository = build_scratch_repository(scratch)
+    copied_fast_read = repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"
+    copied_fast_read.write_text(
+        copied_fast_read.read_text(encoding="utf-8").replace(
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n",
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 2\n"),
+        encoding="utf-8")
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    slow_read_stub_pid_file = scratch / "slow-questions-1-to-3-question-4-stub.pid"
+    slow_read_stub_pid_file.unlink(missing_ok=True)
+    question_4_stopped_file = scratch / "question-4-stub-stopped-while-questions-1-to-3-ran"
+    question_4_stopped_file.unlink(missing_ok=True)
+    question_4_died_while_questions_1_to_3_ran = []
+
+    def release_questions_1_to_3_once_question_4_stub_dies():
+        started = time.monotonic()
+        while time.monotonic() - started < 15:
+            if slow_read_stub_pid_file.is_file():
+                pid = int(slow_read_stub_pid_file.read_text())
+                if not process_is_running(pid):
+                    question_4_died_while_questions_1_to_3_ran.append(True)
+                    break
+            time.sleep(0.1)
+        question_4_stopped_file.write_text("released", encoding="utf-8")
+
+    releaser = threading.Thread(target=release_questions_1_to_3_once_question_4_stub_dies)
+    releaser.start()
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"wait_for_file": str(question_4_stopped_file),
+               "report": "STUB FAST READ: questions 1 to 3\n"}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"hang": True, "report": QUESTION_4_STUB_ANSWER,
+                         "pid_file": str(slow_read_stub_pid_file)},
+    )
+    releaser.join()
+    report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
+    check("a Question 4 cell is stopped at its time limit while Questions 1 to 3 are "
+          "still running, not only once the read waits for it, and its section says it "
+          "gave no answer within the limit",
+          question_4_died_while_questions_1_to_3_ran == [True]
+          and result.returncode == 0
+          and f"no answer within {2 / 60:g} minutes" in report_text
+          and QUESTION_4_STUB_ANSWER.strip() not in report_text,
+          f"died while 1 to 3 ran: {question_4_died_while_questions_1_to_3_ran}; "
+          f"exit {result.returncode}; report={report_text!r}; stderr={result.stderr!r}")
+
+    # On a machine up for hours, deadline / now is about 1, so a wait given
+    # that ratio instead of the time left gives up after about a second.
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    fast_clarify_started = scratch / "fast-clarify-cell-started"
+    fast_clarify_started.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n",
+                                  "started_file": str(fast_clarify_started)}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"report": QUESTION_4_STUB_ANSWER,
+                         "wait_for_file": str(fast_clarify_started), "sleep_seconds": 4},
+    )
+    report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
+    check("a Question 4 cell still answering seconds after Questions 1 to 3 are done is "
+          "waited for, within its time limit, and its answer is the report's",
+          result.returncode == 0 and QUESTION_4_STUB_ANSWER.strip() in report_text,
+          f"exit {result.returncode}; report={report_text!r}; stderr={result.stderr!r}")
+
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     concurrent_answer = "STUB CONCURRENT READ: another document's Question 4 answer\n"
@@ -1314,6 +1408,56 @@ with tempfile.TemporaryDirectory() as scratch:
           abandoned_stub_pid is not None and not process_is_running(abandoned_stub_pid),
           f"pid {abandoned_stub_pid}")
 
+    # Questions 1 to 3 fail only after the time limit has stopped the Question
+    # 4 cell, which leaves the cell's exit code set though no section took it.
+    repository = build_scratch_repository(scratch)
+    copied_fast_read = repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"
+    copied_fast_read.write_text(
+        copied_fast_read.read_text(encoding="utf-8").replace(
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n",
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 2\n"),
+        encoding="utf-8")
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    reaped_stub_pid_file = scratch / "reaped-question-4-stub.pid"
+    reaped_stub_pid_file.unlink(missing_ok=True)
+    questions_1_to_3_released_file = scratch / "questions-1-to-3-released-to-fail"
+    questions_1_to_3_released_file.unlink(missing_ok=True)
+    question_4_died_before_questions_1_to_3_failed = []
+
+    def release_questions_1_to_3_to_fail_once_question_4_stub_dies():
+        started = time.monotonic()
+        while time.monotonic() - started < 15:
+            if reaped_stub_pid_file.is_file():
+                pid = int(reaped_stub_pid_file.read_text())
+                if not process_is_running(pid):
+                    question_4_died_before_questions_1_to_3_failed.append(True)
+                    break
+            time.sleep(0.1)
+        # The timer reaps the launcher a moment after the stub dies.
+        time.sleep(1)
+        questions_1_to_3_released_file.write_text("released", encoding="utf-8")
+
+    releaser = threading.Thread(target=release_questions_1_to_3_to_fail_once_question_4_stub_dies)
+    releaser.start()
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"wait_for_file": str(questions_1_to_3_released_file),
+               "fail_first_attempts": 99}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"hang": True, "report": QUESTION_4_STUB_ANSWER,
+                         "pid_file": str(reaped_stub_pid_file)},
+    )
+    releaser.join()
+    check("when Questions 1 to 3 fail after the time limit has stopped the Question 4 "
+          "cell, the read still says Question 4 was abandoned, and that its cell was "
+          "stopped at its time limit",
+          question_4_died_before_questions_1_to_3_failed == [True]
+          and result.returncode == 1 and result.stdout.startswith("FAILED")
+          and "Question 4 was abandoned" in result.stderr
+          and "its cell was stopped at its time limit" in result.stderr,
+          f"died before 1 to 3 failed: {question_4_died_before_questions_1_to_3_failed}; "
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
     # A session-handoff stops a background read with SIGTERM, and a closing
     # terminal stops a read run in it with SIGHUP, while the fast-clarify cell
     # runs; the Question 4 cell, in a session of its own, must not outlive it,
@@ -1368,7 +1512,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- The embedded instructions: two cases, and why both are needed ---
     # The case below and the one after it are a pair. The first proves the
-    # runtime uses the text embedded in the script: that text, and not the
+    # agent-binary uses the text embedded in the script: that text, and not the
     # skill's prompt file, is what the model receives. The second proves that
     # embedded text is current: still byte-for-byte the user's editable
     # source. Neither covers the other. The first compares the prompt the

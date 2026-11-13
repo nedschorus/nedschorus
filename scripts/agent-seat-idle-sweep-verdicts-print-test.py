@@ -18,6 +18,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 PROGRAM = Path(__file__).with_name("agent-seat-idle-sweep-verdicts-print.py")
@@ -157,6 +158,9 @@ _scratch_directory_common_spec.loader.exec_module(_scratch_directory_common)
 SUITE_ROOT = _scratch_directory_common.scratch_directory_after_removing_ones_killed_runs_left(
     "agent-seat-idle-sweep-verdicts-print-test-")
 
+# Set in the copy of this suite the SIGTERM case starts, which waits to be stopped.
+STOPPED_BY_SIGTERM_RUN_VARIABLE = "AGENT_SEAT_IDLE_SWEEP_VERDICTS_PRINT_TEST_WAITS_FOR_SIGTERM"
+
 
 def stopped_by_sigterm(*_):
     raise SystemExit(1)  # So the finally below removes SUITE_ROOT.
@@ -164,6 +168,9 @@ def stopped_by_sigterm(*_):
 
 signal.signal(signal.SIGTERM, stopped_by_sigterm)
 try:
+    if os.environ.get(STOPPED_BY_SIGTERM_RUN_VARIABLE):
+        print(SUITE_ROOT, flush=True)
+        time.sleep(60)
     ANNOUNCED = "I'm starting the PR 1633 work now."
     IDLE_TURN = [user("go"), assistant(ANNOUNCED), turn_end()]
 
@@ -199,6 +206,17 @@ try:
     check("the judge is handed the tool calls from the judged sentence's turn on, inputs cut short",
           calls is not None and [call["name"] for call in calls] == ["Bash"]
           and len(calls[0]["input"]) == fields.TOOL_CALL_INPUT_CHARACTERS_KEPT, calls)
+    # {"command": "<n x>"} is n + 15 characters of JSON.
+    for command_length, expected_input_length in ((1485, 1500), (1486, 1500)):
+        machine = Machine()
+        machine.seat("alpha", [user("go"), assistant(ANNOUNCED),
+                               assistant(tool=("Bash", {"command": "x" * command_length})), turn_end()])
+        _, verdicts, _ = machine.run()
+        calls = verdicts["alpha"].get("tool_calls_since_start_of_earliest_turn_with_sentence_to_judge")
+        check(f"a tool call input of {command_length + 15} characters of JSON is handed to the judge "
+              f"as {expected_input_length}",
+              calls is not None and [len(call["input"]) for call in calls] == [expected_input_length],
+              calls)
 
     # --- rule 2: a promise after an event, unbacked, then backed by a task with prerequisites ---
     PROMISE = "I'll report when PR 927 merges."
@@ -729,6 +747,22 @@ try:
     check("tasks with unreadable or unmet prerequisites are held, and the next free task is still found",
           verdicts["alpha"]["open_tasks_nothing_holds"] == [{"id": "3", "subject": "task 3"}],
           verdicts["alpha"])
+    walk_minutes = machine.agents / "alpha" / "docs" / "walk" / "w-minutes.md"
+    machine.walk_minutes("alpha", "item 1 of 2: deferred; it moves to just before the summary item. <open>\n")
+    (walk_minutes.parent / "w.md").write_text("# Walk\n\n## Item 1 of 2: The fix\n\n## Item 2 of 2: Summary\n")
+    machine.task("alpha", "5", metadata={"prerequisites": [{"approval_walk_item_decided": {
+        "approval_walk_minutes_file_path": str(walk_minutes), "approval_walk_item_heading": "The fix"}}]})
+    code, verdicts, _ = machine.run()
+    check("a task waiting on an approval-walk item the walk-minutes record as deferred is held",
+          code == 0 and verdicts["alpha"]["open_tasks_nothing_holds"] == [{"id": "3", "subject": "task 3"}],
+          verdicts["alpha"])
+    machine.walk_minutes("alpha", "item 1 of 2: approved; every text the change adds has had a fast read. "
+                                  "<accepted>\n")
+    code, verdicts, _ = machine.run()
+    check("a task waiting on an approval-walk item the walk-minutes record as approved is free",
+          code == 0 and verdicts["alpha"]["open_tasks_nothing_holds"]
+          == [{"id": "3", "subject": "task 3"}, {"id": "5", "subject": "task 5"}], verdicts["alpha"])
+    machine.task("alpha", "5", status="completed")
     machine.task("alpha", "3", status="completed")
     machine.task("alpha", "4", metadata={"prerequisites": [{"pr_merged": 51}, {"pr_merged": 52}]})
     code, verdicts, _ = machine.run()
@@ -877,6 +911,22 @@ try:
         problems = fields.verdict_field_problems(broken)
         check(f"the fields module finds: {expected}",
               any(problem.startswith(expected) for problem in problems), problems)
+
+    stopped_temp = Path(tempfile.mkdtemp(dir=str(SUITE_ROOT)))
+    stopped = subprocess.Popen([sys.executable, __file__], stdout=subprocess.PIPE, text=True,
+                               env={**os.environ, STOPPED_BY_SIGTERM_RUN_VARIABLE: "1",
+                                    "TMPDIR": str(stopped_temp)})
+    stopped_root = Path(stopped.stdout.readline().strip())
+    root_made = stopped_root.is_dir()
+    stopped.send_signal(signal.SIGTERM)
+    try:
+        stopped.communicate(timeout=30)
+    except subprocess.TimeoutExpired:
+        stopped.kill()
+        stopped.communicate()
+    check("a run of this suite stopped by SIGTERM exits 1 and removes its scratch directory",
+          root_made and stopped.returncode == 1 and not stopped_root.exists(),
+          (stopped.returncode, stopped_root, root_made))
 finally:
     shutil.rmtree(SUITE_ROOT, ignore_errors=True)
 print()

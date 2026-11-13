@@ -28,11 +28,19 @@ the Stop hook before it has written the final message to the transcript.
 
 THE TEXT CHECKED is the reply, line by line, without:
 - every item of the walk-document the reply shows: an item is shown when a
-  reply line matches its heading, and then every reply line matching a line
-  of the item, from its heading to its answer line, is left out, apart from
-  a Withdrawn version's lines, from its Withdrawn heading to the next
-  opening that names an item, as the approval-walk finder reads them, and so is
-  one matching the answer line's first sentence, the walk-me-through skill's
+  reply line matches the heading of its unit, the item's own opening, as the
+  approval-walk finder reads openings, or `Item N of M: <the point>` or
+  `Item N of M` alone naming that item, whatever M it gives; and then every
+  reply line matching its unit's heading or a line of the item is left out,
+  and, when a reply line matches the unit's heading, one matching a line
+  between that heading and the unit's first item or first Withdrawn
+  heading, a `#new` or `#new_if_d` line there included as shown below.
+  The item's lines are those the approval-walk finder's line-range helper
+  gives it, which leave out a Withdrawn version's lines, up to its answer
+  line; an item without an opening under a heading shared by several items
+  holds the whole unit, every answer line included, since its lines cannot
+  be told from the other items'. So is a reply line matching
+  the answer line's first sentence, the walk-me-through skill's
   answer line without what the item adds after it, such as ` D: <the
   alternative>`; and one showing a line of the item that opens with the
   mark `#new` or `#new_if_d` as the agent shows it, the mark replaced by
@@ -369,6 +377,8 @@ def load_module(name, path):
 
 walk_finder = load_module("walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
                           WALK_FINDER_FILE)
+# An item's own heading as the agent shows it, normalized: `Item N of M: <the point>` with one item, whatever M gives.
+ITEM_OWN_HEADING = re.compile(rf"item ({walk_finder.NUMBER}) of \d+(?::|$)")
 current_item_hook = load_module("walk_me_through_agent_reply_to_user_not_ending_with_waiting_item_closing_line_refusal_stop_hook",
                                 CURRENT_ITEM_HOOK_FILE)
 answer_hook = load_module(
@@ -447,25 +457,35 @@ def new_text_as_shown(line):
 
 
 def shown_item_lines(reply_lines, document_lines, units, openings):
-    """The normalized lines, heading to answer line, of every unit whose heading a reply line matches, the answer
-    line's answer sentence alone, and each `#new` or `#new_if_d` line as the agent shows it; a Withdrawn version's
-    lines, from its Withdrawn heading to the next of the approval-walk finder's openings that names an item, are
-    not the item's, so they are left out."""
+    """The normalized lines of every item the reply shows, as the module docstring's THE TEXT CHECKED says: the
+    heading of its unit, the unit's lines before its first item's or its first Withdrawn heading when the reply
+    holds that heading, and its lines as the approval-walk finder's line-range helper gives them, up to its answer
+    line, or, for an item without an opening under a heading shared by several items, the whole unit; with each
+    answer line's answer sentence alone and each `#new` or `#new_if_d` line as the agent shows it."""
     reply_set = normalized_lines(reply_lines)
+    own_headings = {heading[1] for heading in map(ITEM_OWN_HEADING.match, reply_set) if heading}
     shown = set()
-    for _, _, _, first, end in units:
-        if normalized(document_lines[first]) not in reply_set:
-            continue
-        withdrawn = False
-        for number, line in enumerate(document_lines[first:end], first):
-            if number in openings:
-                withdrawn = not openings[number][0]
-            if withdrawn:
+    for numbers, total, _, first, end in units:
+        unit_shown = normalized(document_lines[first]) in reply_set
+        spans = [(number, *(walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+            openings, first, end, number, numbers, total) if len(numbers) > 1 else (first, end)))
+                 for number in numbers or [None]]
+        if unit_shown:
+            # A Withdrawn heading, an opening that names no item, ends the lead-in as it ends an item's lines.
+            withdrawn = [line for line in openings if first < line < end and not openings[line][0]]
+            for line in document_lines[first:min([start for _, start, _ in spans] + withdrawn)]:
+                shown |= normalized_lines([line, new_text_as_shown(line) or ""])
+        for number, start, stop in spans:
+            if not (unit_shown or number in own_headings or normalized(document_lines[start]) in reply_set):
                 continue
-            shown |= normalized_lines([line, new_text_as_shown(line) or ""])
-            if normalized(line).startswith(ANSWER_LINE_START):
-                shown |= normalized_lines([answer_sentence(line)])
-                break
+            # The whole unit stands for each of its items, so no item's answer line ends it.
+            whole_shared_unit = len(numbers) > 1 and start == first
+            for line in document_lines[start:stop]:
+                shown |= normalized_lines([line, new_text_as_shown(line) or ""])
+                if normalized(line).startswith(ANSWER_LINE_START):
+                    shown |= normalized_lines([answer_sentence(line)])
+                    if not whole_shared_unit:
+                        break
     return shown
 
 

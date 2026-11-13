@@ -740,6 +740,169 @@ def run_carry_on_and_job_failure_task_cases():
           "the cores", counts == [12, 1, 16, 1], counts)
 
 
+def errored_mutant(line, operator, reason, diff=""):
+    return {"module_path": "scripts/thing.py", "line": line, "operator": operator,
+            "diff": diff, "reason": reason}
+
+
+def run_errored_mutants_cases():
+    """A merge with mutants the mutation testing program reports ERRORED."""
+    disk_full = errored_mutant(
+        1, "core/NumberReplacer",
+        "no verdict: the suite runner exited nonzero but judged no suite failing, so this "
+        "mutant was not judged; its output says: run-all-test-suites: not run to the end — a "
+        "suite could not be started: [Errno 28] No space left on device: '/tmp/tmpx'",
+        "--- a/scripts/thing.py\n+++ b/scripts/thing.py\n-VALUE = 1\n+VALUE = 2\n")
+    timed_out = errored_mutant(
+        2, "core/AddNot", "timeout: the suites ran past the limit of 605 s on one run of them, "
+                          "so this mutant was not judged")
+    # Two mutants alike but for their line, as cosmic-ray reports one with no diff.
+    not_judgeable = errored_mutant(3, "core/ExceptionReplacer", "")
+    not_judgeable_on_another_line = errored_mutant(4, "core/ExceptionReplacer", "")
+    errored = [disk_full, timed_out, not_judgeable, not_judgeable_on_another_line]
+
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        alpha_list = fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        merge = fixture.commit("scripts/thing.py", "VALUE = 1\nA = 2\nB = 3\nC = 4\n",
+                               author="alpha")
+        completed = fixture.run({merge: {"json": verdict(survived=[survivor()],
+                                                         errored=errored), "exit": 1}})
+        tasks = job_failure_tasks(fixture)
+        description = tasks[0]["description"] if tasks else ""
+        record = fixture.records()[-1].read_text() if fixture.records() else ""
+        check("a merge with ERRORED mutants is recorded as tested, with none of its mutants "
+              "left to run, and the run exits 0",
+              completed.returncode == job.EXIT_ALL_DONE
+              and fixture.state_json()["last_tested_main_commit"] == merge
+              and merge not in fixture.state_json().get(NOT_RUN_KEY, {}),
+              (completed.returncode, completed.stderr, fixture.state_json()))
+        check("a merge with ERRORED mutants opens exactly one job failure task, naming the "
+              "merge, and its surviving mutant still gets its survivor task",
+              [task["subject"] for task in tasks]
+              == [job.errored_mutants_job_failure_task_subject(merge)]
+              and merge in description
+              and task_files(alpha_list) == ["1.json"],
+              (tasks, task_files(alpha_list)))
+        check("the job failure task names each ERRORED mutant by file, line and operator with "
+              "the reason its output gives, and the diff of one that has a diff",
+              "- scripts/thing.py:1 core/NumberReplacer, reason: no verdict: " in description
+              and "No space left on device" in description
+              and "\n      +VALUE = 2" in description
+              and "- scripts/thing.py:2 core/AddNot, reason: timeout: the suites ran past the "
+                  "limit of 605 s" in description
+              and "- scripts/thing.py:3 core/ExceptionReplacer, reason: cosmic-ray could not "
+                  "judge it" in description
+              and "- scripts/thing.py:4 core/ExceptionReplacer, reason: cosmic-ray could not "
+                  "judge it" in description
+              and "does not run these mutants again" in description,
+              description)
+        check("the record names each ERRORED mutant with its reason and its job failure task",
+              "ERRORED scripts/thing.py:2 core/AddNot (timeout: the suites ran past the limit "
+              f"of 605 s on one run of them, so this mutant was not judged): named in task "
+              f"#{tasks[0]['id'] if tasks else ''}" in record
+              and "ERRORED scripts/thing.py:4 core/ExceptionReplacer (cosmic-ray could not judge "
+                  "it): named in task #" in record
+              and f"JOB FAILURE TASK: opened task #{tasks[0]['id'] if tasks else ''} on "
+                  f"{job.JOB_FAILURE_TASK_AGENT_SEAT}'s task list, "
+                  f"{job.errored_mutants_job_failure_task_subject(merge)}" in record,
+              record)
+        calls_before = len(fixture.calls())
+        later = fixture.commit("scripts/other.py", "VALUE = 3\n", author="alpha")
+        completed = fixture.run({later: {"json": verdict()}, "recheck": {"exit": 1}})
+        tested_again = [call for call in fixture.calls()[calls_before:]
+                        if "--recorded-mutant-killed-check" not in call]
+        check("the next run runs no ERRORED mutant again: it tests only the later merge, and "
+              "opens no second job failure task",
+              completed.returncode == job.EXIT_ALL_DONE
+              and [option_value(call, "--head") for call in tested_again] == [later]
+              and len(job_failure_tasks(fixture)) == 1,
+              (completed.returncode, tested_again, job_failure_tasks(fixture)))
+
+    # The task cannot be opened: a failed step, the merge not recorded as tested.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        merge = fixture.commit("scripts/thing.py", "VALUE = 1\n")
+        completed = fixture.run({merge: {"json": verdict(errored=[timed_out]), "exit": 1}})
+        check("a merge whose ERRORED mutants' job failure task cannot be opened stops the run, "
+              "exit 4, with the merge not recorded as tested",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and f"merge {merge[:12]} (change scripts/thing.py): 1 of its mutants ended "
+                  f"ERRORED, but their job failure task could not be opened or added to on "
+                  f"{job.JOB_FAILURE_TASK_AGENT_SEAT}'s task list (FileNotFoundError"
+                  in completed.stderr
+              and fixture.state_json()["last_tested_main_commit"] == start,
+              (completed.returncode, completed.stderr, fixture.state_json()))
+
+    # The second pass reports the merge's ERRORED mutants again, with every earlier run's.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        merge = fixture.commit("scripts/thing.py", "VALUE = 1\n", author="alpha")
+        schedule_file = scheduled_jobs_file_with_schedule(fixture,
+                                                          schedule_due_in_seconds(12 * 3600))
+        schedule_flags = ["--scheduled-jobs-on-each-machine-json-file", str(schedule_file)]
+        completed = fixture.run({
+            merge: {"json": verdict(errored=[timed_out], not_run=3), "exit": 1},
+            f"{merge} second pass": {"json": verdict(errored=[timed_out], not_run=2),
+                                     "exit": 1}}, *schedule_flags)
+        tasks = job_failure_tasks(fixture)
+        record = fixture.records()[-1].read_text() if fixture.records() else ""
+        check("a second pass that reports only ERRORED mutants an earlier run of the merge "
+              "reported opens no second job failure task, and the record says so",
+              completed.returncode == job.EXIT_ALL_DONE
+              and len(tasks) == 1
+              and "ERRORED scripts/thing.py:2 core/AddNot (timeout: the suites ran past the "
+                  "limit of 605 s on one run of them, so this mutant was not judged): an "
+                  "earlier run of this merge already gave it a job failure task" in record
+              and fixture.state_json()[NOT_RUN_KEY][merge][
+                  job.ERRORED_MUTANT_KEYS_ALREADY_REPORTED_STATE_KEY]
+              == [job.errored_mutant_key(timed_out)],
+              (completed.returncode, completed.stderr, tasks, record))
+        task_file = (fixture.tasks / f"nedschorus-{job.JOB_FAILURE_TASK_AGENT_SEAT}-tasks"
+                     / f"{tasks[0]['id']}.json")
+        note = "Judged: the timeout came from a busy machine; nothing needs fixing."
+        task_file.write_text(json.dumps(
+            {**tasks[0], "description": f"{tasks[0]['description']}\n\n{note}"}))
+        completed = fixture.run({f"{merge} second pass": {
+            "json": verdict(errored=[timed_out, disk_full], not_run=1), "exit": 1}},
+            *schedule_flags)
+        tasks = job_failure_tasks(fixture)
+        description = tasks[0]["description"] if tasks else ""
+        added = description.partition(note)[2]
+        record = fixture.records()[-1].read_text() if fixture.records() else ""
+        check("a second pass that reports an ERRORED mutant no earlier run of the merge "
+              "reported while its job failure task is open adds only that mutant to the end of "
+              "the task's description, keeping the note the agent-seat wrote there",
+              completed.returncode == job.EXIT_ALL_DONE
+              and len(tasks) == 1 and tasks[0]["status"] == "pending"
+              and "- scripts/thing.py:1 core/NumberReplacer, reason: no verdict: " in added
+              and "core/AddNot" not in added
+              and "already open, so none opened, and the ERRORED mutants no earlier run "
+                  "reported are added to the end of its description: task #" in record,
+              (completed.returncode, completed.stderr, description, record))
+        task_file.write_text(json.dumps({**tasks[0], "status": "completed"}))
+        completed = fixture.run({f"{merge} second pass": {
+            "json": verdict(errored=[timed_out, disk_full, not_judgeable]), "exit": 1}},
+            *schedule_flags)
+        tasks = job_failure_tasks(fixture)
+        check("a second pass that reports an ERRORED mutant no earlier run of the merge "
+              "reported opens a job failure task again once the first is completed, naming "
+              "every ERRORED mutant reported, and the merge leaves the mutants not run",
+              completed.returncode == job.EXIT_ALL_DONE
+              and [task["status"] for task in tasks] == ["completed", "pending"]
+              and "scripts/thing.py:1 core/NumberReplacer" in tasks[1]["description"]
+              and "scripts/thing.py:2 core/AddNot" in tasks[1]["description"]
+              and merge not in fixture.state_json().get(NOT_RUN_KEY, {}),
+              (completed.returncode, completed.stderr, tasks, fixture.state_json()))
+
+
 def scheduled_jobs_file_with_schedule(fixture, schedule, file_name="scheduled-jobs.json"):
     path = fixture.root / file_name
     path.write_text(json.dumps({"jobs": [
@@ -1143,6 +1306,7 @@ def run_cases():
                                author="alpha")
         second = fixture.commit("scripts/other.py", "VALUE = 1\n", author="beta")
         alpha_list = fixture.seat("alpha")
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
         (alpha_list / "3.json").write_text("{}")
         (alpha_list / ".highwatermark").write_text("5")
         (alpha_list / ".lock").write_text("")
@@ -1210,8 +1374,8 @@ def run_cases():
               f"merge {first[:12]} change scripts/thing.py: SUMMARY: 3 mutants" in record
               and "SURVIVED scripts/thing.py:2 core/ReplaceBinaryOperator_Add_Mul: task #6 "
                   "opened on alpha's task list" in record
-              and "ERRORED scripts/thing.py:1 core/NumberReplacer (timeout: slow): no task"
-                  in record
+              and "ERRORED scripts/thing.py:1 core/NumberReplacer (timeout: slow): named in "
+                  "task #1" in record
               and "NO SUITE scripts/untested.py" in record
               and f"merge {second[:12]} change scripts/other.py: SUMMARY: 0 mutants" in record
               and "merges tested: 2" in record, record)
@@ -1296,6 +1460,7 @@ def run_cases():
 
     run_carry_on_and_job_failure_task_cases()
     run_untestable_merge_cases()
+    run_errored_mutants_cases()
     run_first_pass_and_second_pass_cases()
 
     # No task list for the survivor at all: the merge is not recorded as tested.
@@ -1398,27 +1563,93 @@ def run_cases():
               (completed.returncode, task_files(alpha_list), fixture.state_json(),
                completed.stderr))
 
-        # Each run checks that the tasks it opened still hold their survivors, and reports, once,
-        # each that does not and is not completed; it opens no task in its place.
-        (alpha_list / "1.json").write_text(json.dumps({"id": "1", "description": "rewritten"}))
+        # An agent rewrites the description of an open survivor task, as TaskUpdate does, keeping
+        # the task's other keys: the task still holds its mutant, and the recheck lists it again.
+        rewritten = json.loads((alpha_list / "1.json").read_text())
+        rewritten["description"] = "Rewritten by its owner; the mutant is not named here."
+        (alpha_list / "1.json").write_text(json.dumps(rewritten))
         diff_file = job.mutant_diff_file_path(fixture.log_store, key)
+        calls_before = len(fixture.calls())
         completed = fixture.run()
-        check("a task rewritten so it no longer names its mutant is reported in the record and "
-              "on stderr, no task is opened, the state stops naming it, and the run exits 7",
-              completed.returncode == job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR
-              and task_files(alpha_list) == ["1.json"]
-              and fixture.state_json()["tasks_opened"] == {}
-              and f"TASK LOST: task #1 on alpha's task list ({alpha_list / '1.json'}) no "
-                  f"longer holds the surviving mutant {diff_file}: its description no longer "
-                  f"names the mutant's diff file" in fixture.records()[-1].read_text()
-              and "1 task(s) that an earlier run opened" in completed.stderr
-              and "later runs do not report them again" in completed.stderr,
-              (completed.returncode, task_files(alpha_list), completed.stderr))
-        completed = fixture.run()
-        check("a lost task already reported is not reported again, and the run exits 0",
-              completed.returncode == 0 and "TASK LOST" not in fixture.records()[-1].read_text()
-              and task_files(alpha_list) == ["1.json"],
-              (completed.returncode, completed.stderr))
+        recheck_calls = [call for call in fixture.calls()[calls_before:]
+                         if call[:1] == ["--recorded-mutant-killed-check"]]
+        task = json.loads((alpha_list / "1.json").read_text())
+        check("an open task whose description was rewritten so it no longer names its mutant "
+              "still holds the mutant: nothing is reported lost, the state still names the "
+              "task, the recheck judges the mutant, the description names the diff file again, "
+              "and the run exits 0",
+              completed.returncode == 0
+              and "TASK LOST" not in fixture.records()[-1].read_text()
+              and fixture.state_json()["tasks_opened"] == {key: {"agent_seat": "alpha",
+                                                                 "task_id": 1}}
+              and [call[1] for call in recheck_calls] == [str(diff_file)]
+              and task["status"] == rewritten["status"]
+              and f"This task's command: {job.survivor_task_recorded_mutant_killed_check_command_line([diff_file])}\n"
+                  in task["description"],
+              (completed.returncode, completed.stderr, fixture.state_json(), recheck_calls, task))
+        rewritten = json.loads((alpha_list / "1.json").read_text())
+        rewritten["description"] = "Rewritten by its owner again."
+        (alpha_list / "1.json").write_text(json.dumps(rewritten))
+        completed = fixture.run({"recheck": {"verdicts": {key: "killed"}}})
+        check("the recheck completes a rewritten task whose mutant is killed, and the state "
+              "stops naming the mutant",
+              completed.returncode == 0
+              and json.loads((alpha_list / "1.json").read_text())["status"] == "completed"
+              and fixture.state_json()["tasks_opened"] == {},
+              (completed.returncode, completed.stderr, fixture.state_json()))
+
+    # An open task whose description no longer names its mutant: when one other open task names
+    # the diff file, the mutant moves there; when two or more do, the mutant is reported lost.
+    for others_naming in (1, 2):
+        with tempfile.TemporaryDirectory() as scratch:
+            fixture = Fixture(scratch)
+            alpha_list = fixture.seat("alpha")
+            fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+            merge = fixture.commit("scripts/thing.py",
+                                   "def double(x):\n    return x + x\nVALUE = 1\n",
+                                   author="alpha")
+            fixture.run({merge: {"json": verdict(
+                survived=[survivor(), survivor(1, "core/ReplaceBinaryOperator_Add_Sub"),
+                          survivor(3, "core/ReplaceBinaryOperator_Add_Div")])}})
+            keys = {given["task_id"]: key
+                    for key, given in fixture.state_json()["tasks_opened"].items()}
+            left = json.loads((alpha_list / "1.json").read_text())
+            left["description"] = "Rewritten by its owner."
+            (alpha_list / "1.json").write_text(json.dumps(left))
+            for task_id in (2, 3)[:others_naming]:
+                other = json.loads((alpha_list / f"{task_id}.json").read_text())
+                other["description"] += f"\n{keys[1]}.diff"
+                (alpha_list / f"{task_id}.json").write_text(json.dumps(other))
+            completed = fixture.run()
+            record = fixture.records()[-1].read_text()
+            diff_file = job.mutant_diff_file_path(fixture.log_store, keys[1])
+            if others_naming == 1:
+                check("a mutant whose open task no longer names its diff file moves to the one "
+                      "other open task naming it, and the run exits 0",
+                      completed.returncode == 0 and "TASK LOST" not in record
+                      and f"TASK MOVED: the surviving mutant {diff_file} is now held by task #2 "
+                          f"on alpha's task list, not task #1 (its description no longer names "
+                          f"the mutant's diff file)" in record
+                      and fixture.state_json()["tasks_opened"].get(keys[1])
+                      == {"agent_seat": "alpha", "task_id": 2},
+                      (completed.returncode, record, fixture.state_json()))
+            else:
+                check("a mutant whose open task no longer names its diff file, while two other "
+                      "open tasks do, is reported lost, and the run exits 7",
+                      completed.returncode == job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR
+                      and f"TASK LOST: task #1 on alpha's task list ({alpha_list / '1.json'}) no "
+                          f"longer holds the surviving mutant {diff_file}: its description no "
+                          f"longer names the mutant's diff file" in record
+                      and "TASK MOVED" not in record
+                      and "1 task(s) that an earlier run opened" in completed.stderr
+                      and "later runs do not report them again" in completed.stderr
+                      and keys[1] not in fixture.state_json()["tasks_opened"],
+                      (completed.returncode, record, completed.stderr, fixture.state_json()))
+                completed = fixture.run()
+                check("a lost task already reported is not reported again, and the run exits 0",
+                      completed.returncode == 0
+                      and "TASK LOST" not in fixture.records()[-1].read_text(),
+                      (completed.returncode, completed.stderr))
 
     # A task whose file is gone is reported once; a completed task is dropped from the state
     # without a report, and a pending one that holds its mutant is kept.

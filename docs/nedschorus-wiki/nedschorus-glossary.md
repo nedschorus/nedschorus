@@ -35,6 +35,7 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **build-slice** — one numbered increment of a build plan, built and merged on its own.
 - **C-numbers** — the identifiers `C1`, `C2` … of the main-gatekeeper's decisions on the credential that pushes to main, defined in `nc-systems/main-gatekeeper/main-gatekeeper-design.md` § The credential and enforcement.
 - **case fix** — a change that fixes only the case in front of the author.
+- **close-GHI** — the ghi-write-tool operation that merges a GHI-MD's recorded outcome into main through edit-GHI, then closes the GHI with a reason and no comment.
 - **code-prompt-code (aka CPC)** — a program whose code does every step that needs no judgment, such as sequencing, saving and reading state, validation and retries, and hands an agent a prompt only for work that needs judgment, then checks the form of what the agent returns, such as its required sections, before its code uses it. Example: `nc-systems/cold-read/cold-read-grid.py`, which runs reviewer prompts through `claude`, `codex` and `agy`.
 - **conversation-tail** — the verbatim tail of an agent-session's dialog, `~/.claude/handoffs/<seat>-dialog-NNNN.md`, which the handoff-supervisor writes when it replaces the agent-session, for the successor to read first.
 - **cosmetic-change** — a change to prose that alters only its formatting or its place, never what it says, as `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` defines it. #prose
@@ -54,7 +55,7 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **GHI** — GitHub issue
 - **ghi-guide-agent** — the GHI knowledge agent, which an agent asks, with `scripts/ghi-guide-agent-ask.py`, which issues to read before filing or editing an issue.
 - **GHI-MD** — the MD file used to explain a GitHub issue.
-- **ghi-write-tool** — `scripts/ghi-issue-write.py`, the program whose operations are create-GHI and edit-GHI.
+- **ghi-write-tool** — `scripts/ghi-issue-write.py`, the program whose operations are create-GHI, edit-GHI and close-GHI.
 - **guarded-file** — a file that the instruction-file guard, `.claude/guard-hooks/instruction-file-guard.py`, protects: `CLAUDE.md` and `CLAUDE.local.md`, everything under a `.claude/` directory apart from `worktrees/`, `jobs/` and `handoffs/`, a `-prompt.md` or `-instructions.md` file, and a reviewed document (a `.md` file under `docs/agents/`, `docs/nedschorus-wiki/` or `nc-systems/skills/`, or a `-design.md` file), with the exceptions that guard makes; plus `~/.claude/CLAUDE.md` and `~/.claude/settings.json`.
 - **guide-agent** — a long-lived agent that answers other agents' questions about one domain (the GHIs, PRs, the wiki, one system) and keeps that domain's knowledge current. It is not an agent-seat: a script runs it one question at a time, with no seat-brief and no handoffs, and the user does not talk to it. ghi-guide-agent is the first.
 - **hand-merge** — a merge of main into a conflicting pull-request branch, with each conflict resolved by hand and nothing else changed, pushed on top of the frozen-head.

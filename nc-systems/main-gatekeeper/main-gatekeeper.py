@@ -19,6 +19,10 @@ import time
 from pathlib import Path
 
 WORKSPACE_ROOT_NAME = "nedschorus-gatekeeper"
+RESOLVED_REQUEST_RECORD_FILE_NAME = "main-gatekeeper-check-in-request-record-resolved-at-screening.json"
+REFUSAL_RECORD_FILE_NAME = "main-gatekeeper-refusal-record-kept-for-status-command.json"
+CLAIMED_REFUSAL_RECORD_FILE_NAME = "main-gatekeeper-refusal-record-claimed-by-status-command.json"
+REQUEST_HOLDER_PID_FILE_NAME = "main-gatekeeper-check-in-request-holder.pid"
 CANDIDATE_BRANCH = "main-gatekeeper-candidate"
 MAIN_BRANCH = "main"
 
@@ -717,7 +721,7 @@ def process_start_time(pid: int) -> str:
         ["ps", "-o", "lstart=", "-p", str(pid)],
         capture_output=True, text=True, check=False,
     )
-    # worker.pid splits on whitespace, so the ps timestamp must be a single token.
+    # The request holder's PID file splits on whitespace, so the ps timestamp must be a single token.
     return "_".join(started.stdout.split())
 
 
@@ -730,7 +734,7 @@ def write_atomically(target: Path, content: str) -> None:
 
 def write_worker_identity(workspace: Path) -> None:
     pid = os.getpid()
-    write_atomically(workspace / "worker.pid", f"{pid} {process_start_time(pid)}")
+    write_atomically(workspace / REQUEST_HOLDER_PID_FILE_NAME, f"{pid} {process_start_time(pid)}")
 
 
 def signal_worker(pid: int, signal_number: int) -> None:
@@ -768,7 +772,7 @@ def worker_state(workspace: Path) -> str:
     if not workspace.is_dir():
         return "none"
     try:
-        tokens = (workspace / "worker.pid").read_text(encoding="utf-8").split()
+        tokens = (workspace / REQUEST_HOLDER_PID_FILE_NAME).read_text(encoding="utf-8").split()
         pid = int(tokens[0])
     except (OSError, ValueError, IndexError):
         return "unknown"
@@ -801,7 +805,7 @@ def sweep_stale_workspaces() -> None:
                 continue
             if not entry.is_dir():
                 continue
-            if (entry / "refusal.json").is_file():
+            if (entry / REFUSAL_RECORD_FILE_NAME).is_file():
                 if age > REFUSAL_RECORD_RETENTION_SECONDS:
                     shutil.rmtree(entry, ignore_errors=True)
                 continue
@@ -817,13 +821,13 @@ def retain_refusal_record(workspace: Path, digest: str, refusal: Refusal) -> Non
     for entry in ("candidate", "declared"):
         shutil.rmtree(workspace / entry, ignore_errors=True)
     # Publish the refusal atomically before removing worker state, so status never loses the reason.
-    write_atomically(workspace / "refusal.json", json.dumps({
+    write_atomically(workspace / REFUSAL_RECORD_FILE_NAME, json.dumps({
         "outcome": "refused", "error": refusal.error, "facts": refusal.facts,
         "next_action": refusal.next_action, "digest": digest,
         "summary": f"refused: {refusal.error} — {refusal.facts}",
     }))
-    (workspace / "worker.pid").unlink(missing_ok=True)
-    (workspace / "request.json").unlink(missing_ok=True)
+    (workspace / REQUEST_HOLDER_PID_FILE_NAME).unlink(missing_ok=True)
+    (workspace / RESOLVED_REQUEST_RECORD_FILE_NAME).unlink(missing_ok=True)
 
 
 def require_digest(arguments, command: str) -> str:
@@ -863,13 +867,13 @@ def worker_phase(workspace: Path, phase: str) -> None:
     paused_at = os.environ.get("GATEKEEPER_TEST_WORKER_PAUSE_AT")
     if not paused_at:
         return
-    (workspace / f".reached-{phase}").write_text("", encoding="utf-8")
+    (workspace / f".main-gatekeeper-test-worker-reached-{phase}").write_text("", encoding="utf-8")
     if paused_at != phase:
         return
     if os.environ.get("GATEKEEPER_TEST_WORKER_IGNORES_TERM"):
         # Simulate an unsignalable worker or surviving push child so cancellation must verify its outcome.
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    release = workspace / f".release-{phase}"
+    release = workspace / f".main-gatekeeper-test-worker-paused-at-{phase}-release-signal-from-test"
     deadline = time.monotonic() + WORKER_PHASE_RELEASE_TIMEOUT
     while not release.exists() and time.monotonic() < deadline:
         time.sleep(0.02)
@@ -882,7 +886,7 @@ def run_worker(arguments) -> int:
         return EXIT_DEFECT
     # Only the detached worker writes its PID, avoiding a race with the spawner.
     write_worker_identity(workspace)
-    record_path = workspace / "request.json"
+    record_path = workspace / RESOLVED_REQUEST_RECORD_FILE_NAME
     if not record_path.is_file():
         return EXIT_DEFECT
     request = json.loads(record_path.read_text(encoding="utf-8"))
@@ -932,10 +936,10 @@ def status_query(arguments) -> int:
                                 "if it was submitted from another machine, ask "
                                 "there; otherwise submit it, submitting is "
                                 "always safe"}, EXIT_SUCCESS)
-    record_path = workspace / "refusal.json"
+    record_path = workspace / REFUSAL_RECORD_FILE_NAME
     if record_path.is_file():
         # Atomic rename gives only one concurrent status call ownership of the refusal record.
-        claimed = workspace / "refusal.claimed.json"
+        claimed = workspace / CLAIMED_REFUSAL_RECORD_FILE_NAME
         try:
             os.replace(record_path, claimed)
         except OSError:
@@ -988,7 +992,7 @@ def cancel_request(arguments) -> int:
     if worker_state(workspace) in LIVE_STATES:
         # Wait for the worker and push children before consulting history, or a push can race the answer.
         try:
-            pid = int((workspace / "worker.pid").read_text(encoding="utf-8").split()[0])
+            pid = int((workspace / REQUEST_HOLDER_PID_FILE_NAME).read_text(encoding="utf-8").split()[0])
         except (OSError, ValueError, IndexError):
             pid = None
         if pid is not None:
@@ -1217,7 +1221,7 @@ def check_in(arguments) -> int:
         if not getattr(arguments, "no_wait", False):
             write_worker_identity(workspace)
         submitting_host = socket.gethostname()
-        (workspace / "request.json").write_text(
+        (workspace / RESOLVED_REQUEST_RECORD_FILE_NAME).write_text(
             json.dumps({**request, "digest": digest, "remote": remote,
                         "host": submitting_host}, indent=2),
             encoding="utf-8",

@@ -894,7 +894,14 @@ with tempfile.TemporaryDirectory() as scratch_name:
     log_dir = scratch / "logs"
     log_dir.mkdir()
     # Case lines are timed on Linux only; the timing itself is plain Python, so it is
-    # tested on every platform by asking for the Linux path.
+    # tested on every platform by asking for the Linux path. That path starts the suite under
+    # the child subreaper launcher, whose prctl exists only on Linux, so elsewhere a launcher
+    # that only runs the command stands in for it.
+    real_launcher = runner.ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH
+    if not sys.platform.startswith("linux"):
+        runner.ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH = scratch / "command-only-launcher.py"
+        runner.ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH.write_text(
+            "import os, sys\nos.execvp(sys.argv[1], sys.argv[1:])\n")
     result = runner.run_one_suite(repository, sys.executable, "timed-test.py", log_dir,
                                   platform="linux")
     cases = result["cases"]
@@ -971,6 +978,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
         raised = str(error)
     finally:
         runner.open_for_writing_without_following_symlinks = original_open
+        runner.ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH = real_launcher
     check("a log that cannot be written while the suite runs fails the suite's run, naming "
           "the error, and the suite is not left blocked on its output",
           raised is not None and "could not be written" in raised

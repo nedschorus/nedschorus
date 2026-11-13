@@ -111,7 +111,7 @@ def make_home(root: pathlib.Path) -> pathlib.Path:
     (agents / "notes.txt").write_text("not an agent-home\n")
     watcher_log = home / ".local" / "state" / "claude" / WATCHER_PROGRAM
     watcher_log.mkdir(parents=True)
-    (watcher_log / "decisions.jsonl").write_text('{"seat": "MD-skills"}\n')
+    (watcher_log / f"{WATCHER_PROGRAM}-decisions.jsonl").write_text('{"seat": "MD-skills"}\n')
     return home
 
 
@@ -182,7 +182,7 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
           and "local 1 files, store 1 files" in lines[5],
           result.stdout)
     check("the Mac's Remote Control reconnect watcher log lands under agent-session-files-by-machine/<machine>/<watcher program>/",
-          text_or_none(store / machine / WATCHER_PROGRAM / "decisions.jsonl") == '{"seat": "MD-skills"}\n')
+          text_or_none(store / machine / WATCHER_PROGRAM / f"{WATCHER_PROGRAM}-decisions.jsonl") == '{"seat": "MD-skills"}\n')
 
     # A transcript grows and a session's scratch directory disappears: the
     # grown file is re-sent, the vanished one stays in the store.

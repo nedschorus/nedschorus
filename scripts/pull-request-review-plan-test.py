@@ -1003,6 +1003,11 @@ def run_named_cold_read_record_cases(fixture):
     check("two record paths joined by a comma and no space are read as two records",
           [record["path"] for record in adjacent] == [matching, second]
           and all(record["problem"] is None for record in adjacent), adjacent)
+    for delimiter in (";", ":"):
+        joined = review_plan_module.named_cold_read_records_with_target_texts(f"Records: {matching}{delimiter}{second}.")
+        check(f"two record paths joined by {delimiter!r} and no space are read as two records",
+              [record["path"] for record in joined] == [matching, second]
+              and all(record["problem"] is None for record in joined), joined)
 
     names = review_plan_module.cold_read_record_names
     saved_lookup = names.cold_read_record_file_path_prefixed_name_else_name_before_prefix

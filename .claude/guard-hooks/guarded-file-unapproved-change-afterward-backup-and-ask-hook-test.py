@@ -251,6 +251,8 @@ def cases(scratch):
     check("a Bash(python3:*) rule lets each --approve command through",
           commands and all(bash_allow_rule_matches("Bash(python3:*)", command)
                            for command in commands), commands)
+    check("a Bash(python3:*) rule lets through the bare python3 command, with no arguments",
+          bash_allow_rule_matches("Bash(python3:*)", "python3"))
 
     # -- reminders repeat in the asking session, once in another, and stop once settled
     reminder = world.run()
@@ -1569,10 +1571,12 @@ def cases(scratch):
     check("when a file cannot be put back, --restore says what a failed file may hold and that "
           "the git commit --only command from the asking message would commit the declined "
           "version",
-          "A file that failed is either unchanged, still holding the version the user declined, "
-          "or fully put back, or deleted when it has no approved version, with no log line "
-          "recording it" in result.stderr
-          and "<its path>.<process id>.restore" in result.stderr
+          "A file that failed is in one of two states. Either it is unchanged, still holding the "
+          "version the user declined; or it was put back, or deleted when it has no approved "
+          "version, but no line in the store's log records that it was." in result.stderr
+          and "a file whose name begins with the file's name and ends in .restore"
+          in result.stderr
+          and "giving the error on each file's Failed on line" in result.stderr
           and "For a file that failed, do not run git commit --only -m \"Put back the approved "
           "<file name>\" -- <path>, the command this hook's message asking about the change "
           "gave" in result.stderr
@@ -2063,17 +2067,7 @@ def cases(scratch):
     def counted_run(directory):
         for name in store:
             store[name] = 0
-        saved_environment, saved_directory = dict(os.environ), os.getcwd()
-        try:
-            os.environ.update(world.environment())
-            os.chdir(directory)
-            return hook.run_hook({"session_id": "session-a", "hook_event_name": "PostToolUse",
-                                  "tool_name": "Bash", "cwd": str(directory),
-                                  "tool_input": {"command": "x"}})
-        finally:
-            os.chdir(saved_directory)
-            os.environ.clear()
-            os.environ.update(saved_environment)
+        return run_hook_in_this_process(world, hook, "session-a", "owner-a", directory)
 
     texts = counted_run(worktree)
     git_directory = subprocess.run(["git", "-C", str(worktree), "rev-parse", "--absolute-git-dir"],
@@ -2152,15 +2146,16 @@ def copy_in_this_process(world, hook, path, copy_hash, data):
     return None
 
 
-def run_hook_in_this_process(world, hook, session, owner):
-    """The texts run_hook of the loaded hook module returns for a Bash call in the world's
-    repository, run as session and owner."""
+def run_hook_in_this_process(world, hook, session, owner, directory=None):
+    """The texts run_hook of the loaded hook module returns for a Bash call in directory, the
+    world's repository by default, run as session and owner."""
+    directory = world.repo if directory is None else directory
     saved_environment, saved_directory = dict(os.environ), os.getcwd()
     try:
         os.environ.update(world.environment(owner))
-        os.chdir(world.repo)
+        os.chdir(directory)
         return hook.run_hook({"session_id": session, "hook_event_name": "PostToolUse",
-                              "tool_name": "Bash", "cwd": str(world.repo),
+                              "tool_name": "Bash", "cwd": str(directory),
                               "tool_input": {"command": "x"}})
     finally:
         os.chdir(saved_directory)
