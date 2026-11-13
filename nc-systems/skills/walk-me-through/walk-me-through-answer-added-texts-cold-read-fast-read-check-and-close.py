@@ -2102,11 +2102,25 @@ def heading_body(walk_finder, text):
 
 
 def item_title(walk_finder, line):
-    """The text of an item's heading line after its markup, running count and deferred note, which renumbering the
-    item does not change."""
+    """The text of an item's heading line without its `#` marks, running count, deferred note and the emphasis
+    delimiters around the count, which renumbering the item does not change; every other character stays."""
     line = walk_finder.approval_walk_item_heading_with_deferred_note_removed(line).lstrip("#").strip()
     count = walk_finder.HEADING_COUNT.match(line)
-    return re.sub(r"\*\*|__", "", line[count.end():] if count else line).lstrip(" :,.;").rstrip()
+    if not count:
+        return line
+    opener = re.match(r"[*_]*", line)[0]
+    title = line[count.end():].lstrip(" :,.;")
+    if opener and title.startswith(opener):
+        return title[len(opener):].lstrip(" :,.;").rstrip()
+    # The emphasis that opened before the count closes after the title; a delimiter inside a code span, or with
+    # a space before it, as in `x ** 2`, closes nothing.
+    code = [span.span() for span in walk_finder.CODE_SPAN.finditer(title)]
+    closer = next((found.start() for found in re.finditer(re.escape(opener), title) if opener
+                   and found.start() > 0 and not title[found.start() - 1].isspace()
+                   and not any(start <= found.start() < end for start, end in code)), None)
+    if closer is not None:
+        title = title[:closer] + title[closer + len(opener):]
+    return title.rstrip()
 
 
 def earlier_read_texts_of_item(walk_finder, minutes, value, numbers, total, parser, reads, command):

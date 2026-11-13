@@ -4134,6 +4134,24 @@ def test_a_bold_paragraph_items_changed_first_line_recommendation_is_kept_as_a_w
           document.read_text(), described(result) + document.read_text())
 
 
+def test_a_kept_versions_first_line_loses_only_the_running_count_and_its_markup_never_a_code_spans_characters():
+    program = load_program()
+    finder = program.load_walk_finder()
+    for first, kept in (
+            ("**Item 3 of 5** Recommendation: rename `__init__.py` and use `x ** 2`.",
+             "Recommendation: rename `__init__.py` and use `x ** 2`."),
+            ("__Item 3 of 5:__ Recommendation: rename `a__b.py`.", "Recommendation: rename `a__b.py`."),
+            ("**Item 3 of 5: rename `__init__.py`.** Recommendation: x ** 2 stays.",
+             "rename `__init__.py`. Recommendation: x ** 2 stays."),
+            ("**Item 3 of 5 (deferred: moved to just before the summary item)** Recommendation: `a**b`.",
+             "Recommendation: `a**b`.")):
+        result = program.heading_body(finder, first + "\n\n#case_against none.")
+        check(f"a kept version of the bold-paragraph item `{first}` keeps the rest of its first line as written",
+              result == kept + "\n\n#case_against none.", repr(result))
+    title = program.item_title(finder, "## Item 3 of 5: rename `__init__.py`")
+    check("an item's title keeps a code span's underscores", title == "rename `__init__.py`", repr(title))
+
+
 def test_a_missing_copy_refuses_before_anything_is_written_even_a_first_entered_line():
     case = Case(next_to_present="item 1 of 4", document=UNNUMBERED_ITEMS_DOCUMENT)
     answered_and_closed(case)
