@@ -17,7 +17,10 @@ names it to the next item or the next `Withdrawn` heading, a sub-step such as `#
 its own, and an item that shares a heading with others keeps only its own lines, under that heading. Since a
 sub-step's closing line links to its item's page, item 4's page also carries, after its own lines, each of its
 sub-steps' units, in the walk-document's order, each under its own heading; a sub-step's page, built with 4.1,
-holds that sub-step alone. A version under a `Withdrawn` heading is on no page. The text is rendered with the shared
+holds that sub-step alone. Under a heading that names several items, as in `## Items 12 to 12.2 of 13`, item 12's
+page carries the lines of each of its sub-steps that has an opening of its own, such as `**Item 12.1:**`. A version
+under a `Withdrawn` heading is on no page, except under a sub-step heading that names several sub-steps, as in
+`### Items 4.1 and 4.2 of 9`, which item 4's page carries whole, its Withdrawn versions included. The text is rendered with the shared
 CommonMark parser, each line break kept, as the walk-document shows it. A paragraph that opens with
 `Recommendation:` gets the class `rec`, and one that opens with `#approval_walk` gets the class `tag`.
 
@@ -89,16 +92,20 @@ def item_lines_and_count(walk_finder, document, text, number, parser):
         raise Refused(SEVERAL_HEADINGS.format(document=document, number=number, headings=headings))
     numbers, total, _, first, end = naming[0]
     heading = walk_finder.approval_walk_item_heading_with_deferred_note_removed(lines[first])
-    start = first
+    # The skill links a sub-step's closing line to its item's page, so the item's page carries its sub-steps.
+    sub_step = number + "."
     if len(numbers) > 1:
         openings = walk_finder.item_opening_lines(text, parser)
-        start, end = walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
-            openings, first, end, number, numbers, total)
-    body = lines[start + 1:end] if start == first else lines[start:end]
-    # The skill links a sub-step's closing line to its item's page, so the item's page carries its sub-steps.
-    # Each sub-step's unit already ends at its first Withdrawn heading, so withdrawn versions stay off the page.
+        ranges = [walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+            openings, first, end, each, numbers, total) for each in [number, *(n for n in numbers if n.startswith(sub_step))]]
+        # A sub-step with no opening of its own would repeat the unit's first lines.
+        ranges = ranges[:1] + [(start, stop) for start, stop in ranges[1:] if start != first]
+    else:
+        ranges = [(first, end)]
+    body = [line for start, stop in ranges for line in (lines[start + 1:stop] if start == first else ["", *lines[start:stop]])]
+    # A sub-step under its own heading is a unit of its own, which the finder ends at its first Withdrawn heading.
     for sub_numbers, _, _, sub_first, sub_end in units:
-        if sub_numbers and all(each.startswith(number + ".") for each in sub_numbers):
+        if sub_numbers and all(each.startswith(sub_step) for each in sub_numbers):
             body += ["", walk_finder.approval_walk_item_heading_with_deferred_note_removed(lines[sub_first])]
             body += lines[sub_first + 1:sub_end]
     return body, heading, total
