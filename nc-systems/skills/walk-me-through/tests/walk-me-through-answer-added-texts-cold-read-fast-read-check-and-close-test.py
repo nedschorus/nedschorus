@@ -486,6 +486,13 @@ UNREADABLE_MARK_CASES = (
     ("a mark with no text whose text runs on right below it", '#new\n"The page lists\none poem."\n',
      ["- line 5: `#new` has no text after it on its line. The mark's line with its text joined onto it: "
       '#new "The page lists one poem."']),
+    ("a mark with no text, on the line below a line of prose, whose text runs on right below it",
+     'The line above.\n#new\n"The page lists\none poem."\n',
+     ["- line 6: `#new` has no text after it on its line. The mark's line with its text joined onto it: "
+      '#new "The page lists one poem."']),
+    ("a mark whose text runs onto a last line holding only an empty quotation", '#new "The page lists\n""\n',
+     ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
+      'its text joined onto it: #new "The page lists ""']),
     ("a mark inside fenced code", 'Before.\n\n```\n#new "The page lists\none poem."\n```\n',
      ["- line 8: `#new` is inside fenced or indented code, where no mark's text is read. The mark's line with its text joined onto "
       'it: #new "The page lists one poem."']),
@@ -787,6 +794,37 @@ def test_the_waiting_item_read_step_steps_straight_to_a_sub_sub_step_whose_paren
           and marker(case) == "#next_to_present item 3.1.1 of 9"
           and "item 3.1.1 of 9: its cold-read-fast-read" in result.stdout, described(result))
 
+
+def test_the_waiting_item_read_step_steps_into_the_shortest_sub_step_with_a_heading_when_its_parent_has_none():
+    document = ("# A walk\n\n## Item 3 of 9: the opening sentence\n\n#### Item 3.1.1 of 9: its first part\n\n"
+                '#new "The page lists\none poem."\n\n##### Item 3.1.1.1 of 9: its first piece\n\nOne.\n\n'
+                "##### Item 3.1.1.2 of 9: its second piece\n\nTwo.\n\n"
+                "#case_against weak: the page grows.\n\nRecommendation: change it.\n")
+    case = Case(document=document)
+    case.minutes.write_text("# Minutes\n\nitem 3.1.1 of 9: deferred; it moves to just before the summary item. "
+                            "<open>\n#next_to_present item 3 of 9\n")
+    before = case.minutes.read_text()
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("with no heading `Item 3.1`, a line naming item 3 steps into 3.1.1, which has a heading, not straight to "
+          "3.1.1.1, so 3.1.1's broken `#new` mark is refused and the walk-minutes are left as they were",
+          result.returncode == 1 and case.minutes.read_text() == before, described(result))
+
+
+
+def test_the_waiting_item_read_step_steps_into_the_shortest_of_two_levels_with_a_heading():
+    document = ("# A walk\n\n## Item 3 of 9: the opening sentence\n\n#### Item 3.1.1 of 9: its first part\n\n"
+                '#new "The page lists\none poem."\n\n##### Item 3.1.1.1 of 9: its first piece\n\nOne.\n\n'
+                "###### Item 3.1.1.1.1 of 9: its first bit\n\nUno.\n\n"
+                "###### Item 3.1.1.1.2 of 9: its second bit\n\nDos.\n\n"
+                "#case_against weak: the page grows.\n\nRecommendation: change it.\n")
+    case = Case(document=document)
+    case.minutes.write_text("# Minutes\n\nitem 3.1.1 of 9: deferred; it moves to just before the summary item. "
+                            "<open>\n#next_to_present item 3 of 9\n")
+    before = case.minutes.read_text()
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("with no heading `Item 3.1` and headings for both 3.1.1 and 3.1.1.1 above the named 3.1.1.1.1, the read "
+          "step steps into the shorter, 3.1.1, so its broken `#new` mark is refused, not into 3.1.1.1",
+          result.returncode == 1 and case.minutes.read_text() == before, described(result))
 
 def test_the_waiting_item_read_step_keeps_no_withdrawn_version_when_the_sub_step_read_is_refused():
     case = Case(document=marks_document(words_of_body(200)))

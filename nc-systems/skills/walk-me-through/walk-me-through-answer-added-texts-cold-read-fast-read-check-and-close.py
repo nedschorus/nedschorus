@@ -1523,9 +1523,9 @@ def not_asked_kind(value):
 def not_asked_label(kind, rating=None):
     """How the minutes and messages name a --not-asked value: `kind 3`, `case against none`, or, for `none` on an
     item rated weak, `case against weak, cost only`."""
-    if kind != NOT_ASKED_RATED_NONE:
+    if kind in NOT_ASKED_KINDS:
         return f"kind {kind}"
-    return NOT_ASKED_WEAK_COST_ONLY_LABEL if rating == NOT_ASKED_RATED_WEAK else "case against none"
+    return NOT_ASKED_WEAK_COST_ONLY_LABEL if rating == NOT_ASKED_RATED_WEAK else "case against none"  # pragma: no mutate, rating is a rating word and weak sorts after the others, so `>=` acts as `==`
 
 
 def guarded_paths(top, paths):
@@ -1713,7 +1713,7 @@ def not_asked_problems(kind, rating, lines, marks, top, item):
             if not (top / path).exists():
                 problems.append(NOT_ASKED_MISSING_PATH_PROBLEM.format(marker=TOUCHES, path=path, top=top))
         for path in guarded_paths(top, touched):
-            if rating != NOT_ASKED_RATED_WEAK:
+            if rating != NOT_ASKED_RATED_WEAK:  # pragma: no mutate, rating is a rating word and weak sorts after the others, so `<` acts as `!=`
                 problems.append(NOT_ASKED_GUARDED_FILE_PROBLEM.format(marker=TOUCHES, path=path))
             elif path.endswith(".md"):
                 problems.append(NOT_ASKED_WEAK_GUARDED_MARKDOWN_PROBLEM.format(marker=TOUCHES, path=path))
@@ -1931,7 +1931,7 @@ def check(arguments):
     if arguments.not_asked is not None:
         output += [line.format(item=item, label=not_asked_label(arguments.not_asked, rating))
                    for line in NOT_ASKED_JUDGEMENT_LINES]
-        if arguments.not_asked == NOT_ASKED_RATED_NONE and rating == NOT_ASKED_RATED_WEAK:
+        if arguments.not_asked == NOT_ASKED_RATED_NONE and rating == NOT_ASKED_RATED_WEAK:  # pragma: no mutate, not_asked_kind returns the constant itself and weak sorts after the other rating words, so `is` and `>=` act as `==`
             output.append(NOT_ASKED_WEAK_JUDGEMENT_LINE.format(item=item))
     output.append(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
     log = arguments.counts_log or (log_store_records.parent / COUNTS_LOG_FILE_NAME if log_store_records else None)
@@ -2263,7 +2263,8 @@ def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minut
     next_item names first among the item's sub-steps and theirs, such as 3.1.1, taken from the walk-document's
     units right after the item's own; next_item's rule decides, so the read step and the close step name the
     same sub-step. When the walk-document has no heading for that sub-step, such as no 3.1 above 3.1.1, the
-    sub-step next_item names. None when numbers names several items or next_item names none."""
+    shortest of the named sub-step's levels below the item that has one, such as 3.1.1 for 3.1.1.1. None when
+    numbers names several items or next_item names none."""
     if len(numbers) != 1:
         return None
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
@@ -2277,9 +2278,10 @@ def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minut
                       unresolved=held_answers_unresolved(walk_finder, text, parser))
     if not named:
         return None
-    # A walk-document may give sub-sub-steps 2.1.1 to 2.1.3 no heading for 2.1: step straight to what next_item names.
-    level = numbers[0] + "." + named[0][len(numbers[0]) + 1:].split(".")[0]
-    return level if level in sub_steps else named[0]
+    # A walk-document may give sub-sub-steps 2.1.1 to 2.1.3 no heading for 2.1: step into the next level that has one.
+    parts = named[0][len(numbers[0]) + 1:].split(".")
+    return next(level for level in (numbers[0] + "." + ".".join(parts[:depth]) for depth in range(1, len(parts) + 1))
+                if level in sub_steps)
 
 
 def waiting_item_read(arguments, sub_step_of=None):

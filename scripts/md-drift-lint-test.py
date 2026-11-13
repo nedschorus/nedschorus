@@ -356,7 +356,7 @@ with tempfile.TemporaryDirectory() as workspace:
     # findings on main were this. The first case is the repository's own text,
     # from docs/design-to-main/design-to-main-state-machine-design.md:521.
     findings = problems_for(
-        "| `<component's directory>/design-to-main-record/user-rulings.md` | every ruling |",
+        "| `<component's directory>/design-to-main-record/design-to-main-component-user-rulings-log.md` | every ruling |",
         root)
     check("a placeholder containing a space is not checked as a path",
           findings == [], str(findings))
