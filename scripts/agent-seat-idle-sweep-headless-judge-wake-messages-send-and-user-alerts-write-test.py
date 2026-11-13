@@ -692,7 +692,7 @@ machine.handoff_put_off()
 (machine.tasks / OWNER_TASKS / "7.json").write_text("{not json")
 machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
 code, output = machine.run(0)
-differs = machine.events("sent_text_differs")
+differs = machine.events("sent_text_differs_from_code_text")
 sent = machine.events("message_sent")
 check("a sender that drops the do-not-reply sentence: no user-alert, no headless failure, exit 0",
       code == 0 and not machine.alerts() and not machine.events("headless_failed"),
@@ -708,8 +708,8 @@ check("a sender that drops the do-not-reply sentence: ned-box-helper gets a pend
       "file that is not JSON",
       len(tasks) == 1 and tasks[0]["subject"] == SENT_TEXT_TASK_SUBJECT
       and tasks[0]["status"] == "pending" and str(machine.log) in tasks[0]["description"]
-      and [event["task_id"] for event in machine.events("owner_task_opened")] == [8],
-      (tasks, machine.events("owner_task_opened")))
+      and [event["task_id"] for event in machine.events("owning_agent_seat_task_opened")] == [8],
+      (tasks, machine.events("owning_agent_seat_task_opened")))
 machine.append("alpha", cross_session(sent[0]["text"], at(0.2)), assistant("On it.", at(0.3)),
                turn_end(at(0.4)))
 machine.script()
@@ -720,8 +720,8 @@ check("the text sent found in the agent-seat's transcript: no user-alert",
 machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
 machine.run(17)
 check("a second difference while the task is open: logged, and no second task",
-      len(machine.events("sent_text_differs")) == 2 and len(owner_tasks(machine)) == 1
-      and len(machine.events("owner_task_opened")) == 1, owner_tasks(machine))
+      len(machine.events("sent_text_differs_from_code_text")) == 2 and len(owner_tasks(machine)) == 1
+      and len(machine.events("owning_agent_seat_task_opened")) == 1, owner_tasks(machine))
 task_path = machine.tasks / OWNER_TASKS / "8.json"
 task_path.write_text(json.dumps(dict(json.loads(task_path.read_text()), status="completed")))
 machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
@@ -729,8 +729,8 @@ machine.handoff_put_off("s-2")
 machine.seat("alpha", DONE_TURN, session="s-2")
 machine.run(40)
 check("a difference after the task is completed: a new task",
-      [event["task_id"] for event in machine.events("owner_task_opened")] == [8, 9],
-      machine.events("owner_task_opened"))
+      [event["task_id"] for event in machine.events("owning_agent_seat_task_opened")] == [8, 9],
+      machine.events("owning_agent_seat_task_opened"))
 
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
@@ -742,7 +742,7 @@ check("a difference whose task cannot be written: one user-alert naming the erro
       "claude -p remedy, exit 1",
       code == 1 and len(alerts) == 1 and "could not give ned-box-helper a task" in alerts[0]["title"]
       and "FileNotFoundError" in json.dumps(alerts[0]) and "claude -p" not in json.dumps(alerts[0])
-      and len(machine.events("sent_text_differs")) == 1
+      and len(machine.events("sent_text_differs_from_code_text")) == 1
       and len(machine.events("message_sent")) == 1, (code, alerts))
 
 machine = Machine()
@@ -754,7 +754,7 @@ code, _ = machine.run(0)
 failed = machine.events("headless_failed")
 check("a difference beside a send to another entry: the difference goes to the task, the other "
       "entry to a user-alert",
-      code == 1 and len(machine.events("sent_text_differs")) == 1 and len(owner_tasks(machine)) == 1
+      code == 1 and len(machine.events("sent_text_differs_from_code_text")) == 1 and len(owner_tasks(machine)) == 1
       and len(failed) == 1 and failed[0]["problem"] == "sent to 'beta [abc123]', which is not alpha"
       and len(machine.alerts()) == 1, (failed, machine.alerts()))
 
@@ -766,7 +766,7 @@ machine.run(0)
 machine.account("account-2")
 machine.script({"sends": [DROPPED, send_to("beta")], "answer": {"sent": True, "reason": "r"}})
 code, _ = machine.run(1)
-differs = machine.events("sent_text_differs")
+differs = machine.events("sent_text_differs_from_code_text")
 sent = {event["agent_seat"]: event["text"] for event in machine.events("message_sent")}
 check("an account notice sent to one agent-seat with another text: logged, a task, no user-alert, "
       "and each agent-seat's send logged with the text it was sent",

@@ -50,7 +50,7 @@ because a tool call that ended a promise wait would let an agent-seat that makes
 at each rule 2 message be nudged again forever and never escalated.
 
 How it fails, and what the user sees: a sender that sends a text other than the one code wrote
-still reached the agent-seat, so the text it sent is logged as a sent_text_differs event, the
+still reached the agent-seat, so the text it sent is logged as a sent_text_differs_from_code_text event, the
 delivery check looks for that text, and OWNING_AGENT_SEAT gets a task to find why, one task at a
 time; only a failure to write that task is a user-alert. A headless agent-session that fails, is
 stopped, answers JSON code cannot use, or sends to the wrong entry; a message missing from the
@@ -565,12 +565,12 @@ class Sweep:
         defect, with nothing for the user to do."""
         differing = sent_texts_other_than_code_wrote(outcome, seats, text)
         for seat, sent_text in differing:
-            self.record({"event": "sent_text_differs", "agent_seat": seat, "step": step,
+            self.record({"event": "sent_text_differs_from_code_text", "agent_seat": seat, "step": step,
                          "text": text, "sent_text": sent_text})
         if not differing:
             return
         try:
-            task_id = self.owner_task_opened_unless_open()
+            task_id = self.owning_agent_seat_task_opened_unless_open()
         except OSError as error:
             self.alert(f"owner-task-not-written:{type(error).__name__}: {error}:{self.now.date()}",
                        f"The idle sweep could not give {OWNING_AGENT_SEAT} a task",
@@ -580,14 +580,14 @@ class Sweep:
                        f"{type(error).__name__}: {error}",
                        f"An agent on ned-box can fix what the error names, such as the task list "
                        f"directory of {OWNING_AGENT_SEAT} not existing, and give "
-                       f"{OWNING_AGENT_SEAT} the sent_text_differs events of the idle sweep's "
+                       f"{OWNING_AGENT_SEAT} the sent_text_differs_from_code_text events of the idle sweep's "
                        f"log, {self.log.path}.")
             return
         if task_id is not None:
-            self.record({"event": "owner_task_opened", "agent_seat": OWNING_AGENT_SEAT,
+            self.record({"event": "owning_agent_seat_task_opened", "agent_seat": OWNING_AGENT_SEAT,
                          "task_id": task_id, "subject": SENT_TEXT_DIFFERS_TASK_SUBJECT})
 
-    def owner_task_opened_unless_open(self):
+    def owning_agent_seat_task_opened_unless_open(self):
         """Open the sent-text task on OWNING_AGENT_SEAT's task list unless one not marked
         completed is there; return the new task's id, or None. Raises OSError."""
         list_directory = self.paths.tasks_root / f"nedschorus-{OWNING_AGENT_SEAT}-tasks"
@@ -604,7 +604,7 @@ class Sweep:
             list_directory, SENT_TEXT_DIFFERS_TASK_SUBJECT,
             "A headless agent-session the idle sweep, scripts/agent-seat-idle-sweep-headless-"
             "judge-wake-messages-send-and-user-alerts-write.py, started to send a message sent a "
-            "text other than the one code wrote. Each time is a sent_text_differs event in the "
+            "text other than the one code wrote. Each time is a sent_text_differs_from_code_text event in the "
             f"idle sweep's log, {self.log.path}, with the text code wrote and the text sent.\n"
             "Compare the two, find why the sender changed the text, such as a sender prompt "
             "that lets it, and fix the cause in a pull request.\n"
