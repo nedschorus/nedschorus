@@ -55,7 +55,7 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **GHI** — GitHub issue
 - **ghi-guide-agent** — the GHI knowledge agent, which an agent asks, with `scripts/ghi-guide-agent-ask.py`, which issues to read before filing or editing an issue.
 - **GHI-MD** — the MD file used to explain a GitHub issue.
-- **ghi-write-tool** — `scripts/ghi-issue-write.py`, the program whose operations are create-GHI and edit-GHI.
+- **ghi-write-tool** — `scripts/ghi-issue-write.py`, the program whose operations are create-GHI, edit-GHI and close-GHI.
 - **guarded-file** — a file that the instruction-file guard, `.claude/guard-hooks/instruction-file-guard.py`, protects: `CLAUDE.md` and `CLAUDE.local.md`, everything under a `.claude/` directory apart from `worktrees/`, `jobs/` and `handoffs/`, a `-prompt.md` or `-instructions.md` file, and a reviewed document (a `.md` file under `docs/agents/`, `docs/nedschorus-wiki/` or `nc-systems/skills/`, or a `-design.md` file), with the exceptions that guard makes; plus `~/.claude/CLAUDE.md` and `~/.claude/settings.json`.
 - **guide-agent** — a long-lived agent that answers other agents' questions about one domain (the GHIs, PRs, the wiki, one system) and keeps that domain's knowledge current. It is not an agent-seat: a script runs it one question at a time, with no seat-brief and no handoffs, and the user does not talk to it. ghi-guide-agent is the first.
 - **hand-merge** — a merge of main into a conflicting pull-request branch, with each conflict resolved by hand and nothing else changed, pushed on top of the frozen-head.
