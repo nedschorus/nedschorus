@@ -110,10 +110,11 @@ HANDOFF_INSTRUCTION = (
 )
 
 MODEL_ID_NOT_IN_CONTEXT_WINDOW_TABLE_LINE = (
-    "The model id {model} is not in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the threshold-hook's "
-    "context-window table in scripts/handoff-context-threshold-hook.py, so the {share} of its "
-    "context window this session has used assumes a {default_window_thousands}K window; tell the "
-    "user, so the table can be updated."
+    "The model id {model} has no prefix in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the "
+    "threshold-hook's context-window table in scripts/handoff-context-threshold-hook.py, so the "
+    "{share} of its context window this session has used assumes a "
+    "{default_window_thousands}K-token window. Before you run /handoff, tell the user, so the "
+    "table can be updated."
 )
 
 BACKGROUND_TASKS_LIST_MISSING_SENTENCE = (
