@@ -11,7 +11,9 @@ Checks, per file type:
   .md   - repo paths named in backticks or markdown links exist on disk
           (a path this repository deliberately does not track is skipped;
           a backtick citation with a line number, `file.md:120`, or a line
-          range, `file.md:120-125`, is checked as the file it names)
+          range, `file.md:120-125`, is checked as the file it names; the line
+          numbers themselves, past the file's end or a range written backwards,
+          are not checked)
         - markdown link targets resolve (external schemes skipped; a target
           that is only a `<placeholder>` skipped; a target written in angle
           brackets, `[x](<docs/file.md>)`, checked as the path inside them
@@ -24,8 +26,9 @@ Checks, per file type:
         - a backtick span that is only a number, in a sentence naming
           exactly one existing project code file (.py/.sh), appears in that
           file's source, digit-group separators ignored. A sentence ends at
-          ".", "!", "?" or ";" followed by whitespace; a number in another
-          sentence of the same line is not paired with the file. Prose
+          ".", "!", "?" or ";" followed by whitespace, and at a table cell's
+          " | "; a number in another sentence or cell of the same line is not
+          paired with the file. Prose
           numbers — counts, issue numbers, cardinalities — are never
           checked: backticks are what opt a number into the check.
   .json - no duplicate keys at any nesting depth (a duplicate key is legal
@@ -313,7 +316,8 @@ def referenced_files(line: str, md_path: Path, repo_root: Path):
     return list(distinct.values())
 
 
-SENTENCE_END = re.compile(r"(?<=[.!?;])\s+")
+# A table row's cells are separate claims, as sentences are.
+SENTENCE_END = re.compile(r"(?<=[.!?;])\s+|\s+\|\s+")
 
 
 def sentences(line: str):

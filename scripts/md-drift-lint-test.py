@@ -454,6 +454,17 @@ with tempfile.TemporaryDirectory() as workspace:
         root)
     check("a number and a code file in one sentence of a longer line are still checked",
           findings == ["number 9999 not found in real-script.py"], str(findings))
+    # A table row's cells are separate claims. The shape is row 44 of
+    # docs/issues/1518-*.md: the failure text `401` in one cell, and a
+    # citation of cold-read-fast-read.py in another.
+    findings = problems_for(
+        "| 44 | the text `9999` | `agy` | `scripts/real-script.py:1-2` |", root)
+    check("a number in another table cell is not paired with the code file",
+          findings == [], str(findings))
+    findings = problems_for(
+        "| 44 | the floor `9999` in `scripts/real-script.py` | `agy` |", root)
+    check("a number and a code file in one table cell are still checked",
+          findings == ["number 9999 not found in real-script.py"], str(findings))
     # A sentence end inside a command span does not split it: a split there
     # leaves the span's backticks unpaired, so the number goes unchecked.
     findings = problems_for(
